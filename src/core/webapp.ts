@@ -362,7 +362,7 @@ export class WebAppService {
     this.banners.set(tabId, info.id)
     const banner: WebAppBanner = {
       tabId,
-      name: launcherName(info),
+      name: launcherName(info, this.surface),
       origin: originOf(tab.url),
       icon: displayIcon(info),
       tint: this.tileColorFor(info, tab)
@@ -410,7 +410,7 @@ export class WebAppService {
     const info = tab.webApp
     const prompt: WebAppInstallPrompt = {
       tabId,
-      title: info ? launcherName(info) : fallbackShortcutTitle(tab.title, tab.url),
+      title: info ? launcherName(info, this.surface) : fallbackShortcutTitle(tab.title, tab.url),
       url: info?.startUrl ?? tab.url,
       origin: originOf(tab.url),
       icon: (info && displayIcon(info)) ?? tab.favicon,
@@ -433,7 +433,7 @@ export class WebAppService {
     const info = tab.webApp
     const name =
       title.replace(/\s+/g, ' ').trim().slice(0, 60) ||
-      (info ? launcherName(info) : fallbackShortcutTitle(tab.title, tab.url))
+      (info ? launcherName(info, this.surface) : fallbackShortcutTitle(tab.title, tab.url))
     const icon = info ? shortcutIcon(info) : null
     const request: ShortcutRequest = {
       id: info?.id ?? tab.url,

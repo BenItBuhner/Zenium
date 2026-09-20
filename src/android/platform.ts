@@ -985,7 +985,9 @@ export class AndroidPlatform implements Platform {
           headers: options.headers ?? {},
           timeoutMs: options.timeoutMs ?? 0,
           // Kotlin stops reading there and fails the fetch (`readBody`'s cap); 0 is its own limit.
-          maxBytes: options.maxBytes ?? 0
+          maxBytes: options.maxBytes ?? 0,
+          method: options.method ?? 'GET',
+          body: options.method === 'POST' ? (options.body ?? '') : null
         })
         let text = result.text
         if (result.body) {

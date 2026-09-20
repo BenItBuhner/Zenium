@@ -341,6 +341,8 @@ export class ElectronPlatform implements Platform {
         const live = signals.filter((s): s is AbortSignal => Boolean(s))
         const target = redirectedOrigin(url)
         const res = await net.fetch(target.url, {
+          method: options.method ?? 'GET',
+          body: options.method === 'POST' ? (options.body ?? '') : undefined,
           signal: live.length > 0 ? AbortSignal.any(live) : undefined,
           headers: target.origin
             ? { ...options.headers, 'x-zen-origin': target.origin }

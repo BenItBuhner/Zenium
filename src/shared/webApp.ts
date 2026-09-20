@@ -466,8 +466,16 @@ export function markDismissed(record: EngagementRecord, now: number): Engagement
   return { ...record, dismissedAt: now, promptedAt: now }
 }
 
-/** The name the launcher shows: the short name when there is one (tiles truncate long names). */
-export function launcherName(info: Pick<WebAppInfo, 'name' | 'shortName'>): string {
+/**
+ * The name the launcher shows. A Home screen tile takes the short name when there is one (tiles
+ * truncate long names, Chrome's Android rule); a desktop launcher, the Start menu and the app
+ * window's title take the full name first, as desktop Chrome's installed apps do.
+ */
+export function launcherName(
+  info: Pick<WebAppInfo, 'name' | 'shortName'>,
+  surface: InstallSurface = 'homeScreen'
+): string {
+  if (surface === 'desktop') return info.name || (info.shortName ?? info.name)
   return info.shortName ?? info.name
 }
 
@@ -482,7 +490,9 @@ export type InstallSurface = 'homeScreen' | 'desktop'
 /** The app menu item that installs: Chrome's "Install <app>…" / "Create shortcut…" on desktop. */
 export function installMenuLabel(surface: InstallSurface, info: WebAppInfo | null): string {
   if (surface === 'homeScreen') return 'Add to Home Screen'
-  return info && isInstallable(info) ? `Install ${launcherName(info)}…` : 'Create shortcut…'
+  return info && isInstallable(info)
+    ? `Install ${launcherName(info, surface)}…`
+    : 'Create shortcut…'
 }
 
 /** The app menu item inside an installed app's scope ("Open in <app>" launches its window). */

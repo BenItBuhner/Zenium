@@ -491,7 +491,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyAutofillProvider()
                 reply(null)
             }
-            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), args.num("maxBytes").toLong(), reply)
+            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), args.num("maxBytes").toLong(), args.str("method", "GET"), args.strOrNull("body"), reply)
             // The chrome has read a spilled body (`BootHandoff.readBody`): its file goes.
             "net.release" -> { io.execute { handoff.release(args.str("token")) }; reply(null) }
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
@@ -926,9 +926,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * (`body: {token, bytes}`; `fetchText` in `src/android/platform.ts` reads it and releases it).
      * `maxBytes` > 0 caps the body: the read stops there and the fetch fails (`ok: false`), so a
      * caller's cap (an OpenSearch description's 64 KB) bounds the download, not just the parse;
-     * ≤ 0 is `BootHandoff.NET_BODY_LIMIT`.
+     * ≤ 0 is `BootHandoff.NET_BODY_LIMIT`. `method` is a GET, or a POST carrying `requestBody`
+     * (the network location query).
      */
-    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, maxBytes: Long, reply: (Any?) -> Unit) {
+    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, maxBytes: Long, method: String, requestBody: String?, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
                 val timeout = if (timeoutMs > 0) timeoutMs else 2500
@@ -936,7 +937,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeout
                     readTimeout = timeout
+                    requestMethod = if (method == "POST") "POST" else "GET"
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
+                    if (method == "POST") {
+                        doOutput = true
+                        outputStream.use { it.write((requestBody ?: "").toByteArray()) }
+                    }
                 }
                 val status = conn.responseCode
                 val ok = status in 200..299
