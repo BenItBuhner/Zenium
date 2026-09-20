@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
+import type { WithheldPermissions } from '../../../core/extensions/withheldPermissions'
 import { PermissionsApi } from '../extensionApi/permissions'
 import type { ApiContext, ApiHost, LoadedExtension } from '../extensionApi/types'
 
-function loaded(manifest: ExtensionManifest, id = 'stylus'): LoadedExtension {
+function loaded(
+  manifest: ExtensionManifest,
+  id = 'stylus',
+  withheld: WithheldPermissions = { required: [], optional: [] }
+): LoadedExtension {
   return {
     id,
     manifest,
     path: `/ext/${id}`,
     sessions: [],
-    unpacked: false
+    unpacked: false,
+    withheld
   } as unknown as LoadedExtension
 }
 
@@ -171,5 +177,70 @@ describe('permissions.request', () => {
     expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['tabs'] })).toBe(true)
     expect(w.prompts).toEqual([])
     expect(w.dispatched).toEqual([])
+  })
+})
+
+/** The engine's copy of a manifest that declared `system.storage` as optional: the entry is out. */
+const engineCopyOptional: ExtensionManifest = {
+  manifest_version: 3,
+  name: 'Disk probe',
+  version: '1.0',
+  permissions: ['storage'],
+  optional_permissions: ['bookmarks']
+}
+
+describe('permissions withheld from the engine (system.storage)', () => {
+  it('request answers false without a prompt, a grant or an event, and the rest of the request waits with it', async () => {
+    const w = world()
+    const ext = loaded(engineCopyOptional, 'disk', { required: [], optional: ['system.storage'] })
+    w.api.load(ext)
+    expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['system.storage'] })).toBe(
+      false
+    )
+    expect(
+      await w.api.handlers.request(w.ctx(ext), { permissions: ['system.storage', 'bookmarks'] })
+    ).toBe(false)
+    expect(w.prompts).toEqual([])
+    expect(w.dispatched).toEqual([])
+    expect(w.api.grants('disk').permissions).toEqual(['storage'])
+    expect(w.api.handlers.contains(w.ctx(ext), { permissions: ['system.storage'] })).toBe(false)
+  })
+
+  it('counts a withheld optional permission as declared: requesting it is not the manifest error', async () => {
+    const w = world()
+    const ext = loaded(engineCopyOptional, 'disk', { required: [], optional: ['system.storage'] })
+    w.api.load(ext)
+    await expect(
+      w.api.handlers.request(w.ctx(ext), { permissions: ['system.display'] })
+    ).rejects.toThrow('Only permissions specified in the manifest may be requested.')
+    expect(await w.api.handlers.request(w.ctx(ext), { permissions: ['system.storage'] })).toBe(
+      false
+    )
+  })
+
+  it('grants a withheld required permission as Chrome grants required ones, and keeps it from being removed', () => {
+    const w = world()
+    const ext = loaded({ ...engineCopyOptional, optional_permissions: [] }, 'disk', {
+      required: ['system.storage'],
+      optional: []
+    })
+    w.api.load(ext)
+    expect(w.api.grants('disk').permissions).toEqual(['storage', 'system.storage'])
+    expect(w.api.handlers.contains(w.ctx(ext), { permissions: ['system.storage'] })).toBe(true)
+    expect(w.api.handlers.getAll(w.ctx(ext))).toEqual({
+      permissions: ['storage', 'system.storage'],
+      origins: []
+    })
+    expect(() => w.api.handlers.remove(w.ctx(ext), { permissions: ['system.storage'] })).toThrow(
+      'You cannot remove required permissions.'
+    )
+  })
+
+  it('drops a withheld optional permission granted before it was withheld and persists the corrected set', () => {
+    const w = world({ permissions: ['storage', 'system.storage'], origins: [] })
+    const ext = loaded(engineCopyOptional, 'stylus', { required: [], optional: ['system.storage'] })
+    w.api.load(ext)
+    expect(w.api.grants('stylus').permissions).toEqual(['storage'])
+    expect(w.saved.get('stylus')).toEqual({ permissions: ['storage'], origins: [] })
   })
 })

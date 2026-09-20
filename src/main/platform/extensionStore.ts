@@ -1,6 +1,6 @@
 import { net } from 'electron'
 import { createHash } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import {
   writeExtensionFiles,
@@ -20,6 +20,10 @@ import {
   transformManifestBytes,
   withContentScriptPrelude
 } from '../../core/extensions/contentScriptPrelude'
+import {
+  DECLARED_MANIFEST_FILE,
+  withoutWithheldPermissions
+} from '../../core/extensions/withheldPermissions'
 import type { StoreFetch } from '../../core/extensions/store'
 
 /**
@@ -91,11 +95,26 @@ export function idForUnpackedPath(path: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * The manifest the engine loads, from the manifest as declared: the content-script storage
+ * prelude first in each `content_scripts[].js` list (`core/extensions/contentScriptPrelude.ts`),
+ * and the permissions the engine must not see taken out (`core/extensions/withheldPermissions.ts`).
+ */
+function engineManifest(declared: Record<string, unknown>): {
+  manifest: Record<string, unknown>
+  changed: boolean
+} {
+  const prelude = withContentScriptPrelude(declared)
+  const withheld = withoutWithheldPermissions(prelude.manifest)
+  return { manifest: withheld.manifest, changed: prelude.changed || withheld.changed }
+}
+
+/**
  * Writes a package to `<root>/<id>/<version>/` through a staging directory and returns the final
  * directory. Unsigned zips get a synthetic `manifest.key` so Electron derives the same id the
  * package carries (Chromium accepts any base64 bytes there and hashes them). Every install
- * directory also carries the content-script storage prelude, first in each `content_scripts[].js`
- * list of the manifest the engine loads (`core/extensions/contentScriptPrelude.ts`).
+ * directory also carries the content-script storage prelude, and its `manifest.json` is the
+ * engine's copy (`engineManifest`); the manifest as declared is kept beside it under
+ * `DECLARED_MANIFEST_FILE`, which `declaredManifestPath` prefers.
  */
 export async function writePackage(root: string, pkg: ExtensionPackage): Promise<string> {
   const manifestOverride = zipManifestOverride(pkg)
@@ -110,13 +129,19 @@ export async function writePackage(root: string, pkg: ExtensionPackage): Promise
     }
     for (const directory of pkg.directories) await fs.mkdir(fileIn(directory), { recursive: true })
     const files: ExtensionFile[] = pkg.files
-      .filter((file) => file.path !== prelude.path)
-      .map((file) => {
-        if (file.path !== 'manifest.json') return file
-        const source = manifestOverride ? async () => manifestOverride : file.bytes
+      .filter((file) => file.path !== prelude.path && file.path !== DECLARED_MANIFEST_FILE)
+      .flatMap((file): ExtensionFile[] => {
+        if (file.path !== 'manifest.json') return [file]
+        // One read of the entry serves both copies (a package entry decompresses once).
+        let declared: Promise<Uint8Array> | null = null
+        const source = (): Promise<Uint8Array> =>
+          (declared ??= manifestOverride ? Promise.resolve(manifestOverride) : file.bytes())
         const bytes = async (): Promise<Uint8Array> =>
-          transformManifestBytes(await source(), (m) => withContentScriptPrelude(m).manifest)
-        return { ...file, bytes }
+          transformManifestBytes(await source(), (m) => engineManifest(m).manifest)
+        return [
+          { path: DECLARED_MANIFEST_FILE, size: file.size, bytes: source },
+          { ...file, bytes }
+        ]
       })
     files.push({ path: prelude.path, size: prelude.bytes.length, bytes: async () => prelude.bytes })
     await writeExtensionFiles(
@@ -133,12 +158,16 @@ export async function writePackage(root: string, pkg: ExtensionPackage): Promise
 }
 
 /**
- * An install directory written before the prelude existed (or by an older prelude) gets the
- * current one at load: the file is (re)written when its header differs, and the manifest gets
- * the prelude first in its content-script lists when it lacks it. Idempotent; a directory whose
- * manifest cannot be read is left to the engine's loader. Returns whether the prelude is there.
+ * An install directory written by an earlier Zenium is brought to the current layout at load:
+ * the prelude file is (re)written when its header differs, the manifest as declared is copied to
+ * `DECLARED_MANIFEST_FILE` when that copy is missing (before anything else touches the manifest,
+ * so a declaration is never lost), and `manifest.json` becomes the engine's copy
+ * (`engineManifest`) when it is not one yet. Idempotent; a directory whose manifest cannot be
+ * read is left to the engine's loader. Returns whether the directory is in shape; the caller
+ * decides what a failure means (an extension declaring a withheld permission must not load
+ * from a manifest still carrying it).
  */
-export async function ensureContentScriptPrelude(dir: string): Promise<boolean> {
+export async function prepareInstallDir(dir: string): Promise<boolean> {
   const prelude = contentScriptPreludeFile()
   const preludePath = join(dir, prelude.path)
   try {
@@ -147,9 +176,11 @@ export async function ensureContentScriptPrelude(dir: string): Promise<boolean> 
       await fs.writeFile(preludePath, prelude.bytes)
     const manifestPath = join(dir, 'manifest.json')
     const bytes = await fs.readFile(manifestPath)
+    const declaredPath = join(dir, DECLARED_MANIFEST_FILE)
+    if (!(await nodeLayoutFs.exists(declaredPath))) await fs.writeFile(declaredPath, bytes)
     let changed = false
     const next = transformManifestBytes(bytes, (manifest) => {
-      const rewrite = withContentScriptPrelude(manifest)
+      const rewrite = engineManifest(manifest)
       changed = rewrite.changed
       return rewrite.manifest
     })
@@ -157,11 +188,22 @@ export async function ensureContentScriptPrelude(dir: string): Promise<boolean> 
     return true
   } catch (error) {
     console.warn(
-      `[zen] extensions: could not add the storage prelude to ${dir}:`,
+      `[zen] extensions: could not prepare ${dir} for the engine:`,
       (error as Error).message
     )
     return false
   }
+}
+
+/**
+ * The manifest as the extension declared it: an install directory's `DECLARED_MANIFEST_FILE`
+ * when it has one, else its `manifest.json` (an unpacked folder, or an install directory from
+ * before the copy existed, whose `manifest.json` is still the declaration until the first load
+ * rewrites it).
+ */
+export function declaredManifestPath(dir: string): string {
+  const declared = join(dir, DECLARED_MANIFEST_FILE)
+  return existsSync(declared) ? declared : join(dir, 'manifest.json')
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -179,8 +221,9 @@ export const SHADOW_DIR = '.shadow'
 /**
  * The developer's folder is never written to. What the engine loads instead is a shadow under
  * `<root>/.shadow/<id>/`: every top-level entry of the folder linked in (copied when the
- * platform refuses symlinks), the prelude beside them, and a manifest with the prelude first in
- * its content-script lists and a synthetic `key` that hashes to the id Chrome gives the folder
+ * platform refuses symlinks), the prelude beside them, and the engine's manifest
+ * (`engineManifest`: the prelude first in its content-script lists, the withheld permissions
+ * out) with a synthetic `key` that hashes to the id Chrome gives the folder
  * (`idForUnpackedPath`), so the id survives the move. Rebuilt on every load, so a reload picks
  * up the folder's manifest changes as it did before; links keep the other files live.
  */
@@ -191,7 +234,12 @@ export async function shadowUnpacked(root: string, id: string, path: string): Pr
   await fs.mkdir(staging, { recursive: true })
   const prelude = contentScriptPreludeFile()
   for (const entry of await fs.readdir(path, { withFileTypes: true })) {
-    if (entry.name === 'manifest.json' || entry.name === prelude.path) continue
+    if (
+      entry.name === 'manifest.json' ||
+      entry.name === prelude.path ||
+      entry.name === DECLARED_MANIFEST_FILE
+    )
+      continue
     const from = join(path, entry.name)
     const to = join(staging, entry.name)
     try {
@@ -202,7 +250,7 @@ export async function shadowUnpacked(root: string, id: string, path: string): Pr
   }
   const raw = await fs.readFile(join(path, 'manifest.json'))
   const manifest = transformManifestBytes(raw, (parsed) => ({
-    ...withContentScriptPrelude(parsed).manifest,
+    ...engineManifest(parsed).manifest,
     key: unpackedKeyFor(path)
   }))
   await fs.writeFile(join(staging, 'manifest.json'), manifest)
