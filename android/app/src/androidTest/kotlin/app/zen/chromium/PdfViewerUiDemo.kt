@@ -98,18 +98,20 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
         val zoomed = awaitReport(tabId, 8_000) { it.optDouble("zoom") > before * 1.3 }
         if (zoomed == null) touchFault("a pinch out over the pages did not zoom them (zoom stayed at $before)")
         note("after the pinch: zoom ${zoomed?.optDouble("zoom")}, fit ${zoomed?.optString("fit")}")
-        val percent = awaitNode(8_000) { it.startsWith("Zoom, ") && it.endsWith("%") }
-        expect(percent != null, "the bar's zoom reads a percentage after a free zoom (${percent?.contentDescription})")
+        val percent = awaitNode(8_000, matches = PERCENT)
+        val zoomLabel = percent?.let { labelOf(it, PERCENT) }
+        expect(zoomLabel != null, "the bar's zoom reads a percentage after a free zoom ($zoomLabel)")
+        note("geometry after the pinch: ${geometry()}")
         SystemClock.sleep(1_200)
         snap("pinched")
         beat()
 
         // 4. The zoom menulist opens the zoom sheet (the two fits, Chrome's presets); a finger on
         //    Fit to width brings the pages back to the width.
-        val zoomLabel = percent?.contentDescription?.toString() ?: "Zoom, "
-        val zoomSheet = touchTapLabelExpecting(zoomLabel, "the zoom sheet is up", prefix = percent == null) {
+        val zoomSheet = touchTapLabelExpecting(zoomLabel ?: "Zoom, ", "the zoom sheet is up", prefix = zoomLabel == null) {
             findByLabel(FIT_PAGE) != null
         }
+        if (!zoomSheet) touchFault("the zoom menulist did not open the zoom sheet")
         if (zoomSheet) {
             SystemClock.sleep(1_200)
             snap("zoom-sheet")
@@ -157,7 +159,7 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
                 val went = touchTapLabelExpecting("Go", "the viewer is on page 2", timeoutMs = 8_000) {
                     report(tabId)?.optInt("page") == 2
                 }
-                note("go to page 2: ${if (went) "took" else "did not take"}")
+                note("go to page 2: ${if (went) "took" else "did not take"}; geometry ${geometry()}")
             }
             awaitSurface(false)
             awaitIme(false)
@@ -217,10 +219,11 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
                 SystemClock.sleep(1_200)
                 snap("contents-sheet")
                 beat()
+                note("geometry before the outline entry: ${geometry()}")
                 val there = touchTapLabelExpecting(lastLabel, "the viewer is on page ${last.optInt("page")}", timeoutMs = 8_000) {
                     report(tabId)?.optInt("page") == last.optInt("page")
                 }
-                note("outline's last entry: ${if (there) "took" else "did not take"}")
+                note("outline's last entry: ${if (there) "took" else "did not take"}; report page ${report(tabId)?.optInt("page")}; geometry ${geometry()}")
                 awaitSurface(false)
                 expect(waitFor(pageIndicator(last.optInt("page"), pageCount), 8_000) != null, "the bar's page indicator reads ${last.optInt("page")} / $pageCount")
                 SystemClock.sleep(1_000)
@@ -317,6 +320,20 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
         return w to h
     }
 
+    /**
+     * What the viewer document sees, for the findings: its scroll and viewport, the visual
+     * viewport when the WebView reports one, and each page's band on screen (CSS px), the
+     * numbers the viewer's `pageInView` reads, so a page indicator that trails a touch can be read back.
+     */
+    private fun geometry(): String = tabJs(
+        "(function(){var v=window.visualViewport;" +
+            "var pages=[].slice.call(document.querySelectorAll('.zen-pdf-page')).map(function(p){var r=p.getBoundingClientRect();return Math.round(r.top)+'..'+Math.round(r.bottom)});" +
+            "return 'scroll '+Math.round(window.scrollX)+','+Math.round(window.scrollY)+' inner '+window.innerWidth+'x'+window.innerHeight" +
+            "+' root '+document.documentElement.clientWidth+'x'+document.documentElement.clientHeight+' doc '+document.documentElement.scrollHeight" +
+            "+(v?' visual '+Math.round(v.width)+'x'+Math.round(v.height)+' @'+v.scale.toFixed(2)+' off '+Math.round(v.offsetLeft)+','+Math.round(v.offsetTop):'')" +
+            "+' hidden '+document.hidden+' pages ['+pages.join(' ')+']'})()"
+    )
+
     /** Evaluate in the active tab's WebView (the viewer document, not the chrome); the value as text. */
     private fun tabJs(code: String): String {
         val tabId = activeCoreTab()?.optString("id") ?: return ""
@@ -368,6 +385,10 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
 
     /** The first editable node on screen (a sheet's one field). */
     private fun editText(): AccessibilityNodeInfo? = findNodeWhere { it.isEditable }
+
+    /** The node's label as the tree reads it: the one of its content description and text that `matches`. */
+    private fun labelOf(node: AccessibilityNodeInfo, matches: (String) -> Boolean): String? =
+        listOfNotNull(node.contentDescription?.toString(), node.text?.toString()).firstOrNull(matches)
 
     /** Whether the chrome's focused element is a field of one of `modes` (its inputmode, else its type), within the time. */
     private fun awaitChromeFocus(vararg modes: String, timeoutMs: Long = 6_000): Boolean {
@@ -434,5 +455,7 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
         /** The zoom sheet's fits, as `PDF_FIT_LABELS` names them. */
         private const val FIT_WIDTH = "Fit to width"
         private const val FIT_PAGE = "Fit to page"
+        /** The bar's zoom menulist after a free zoom: `Zoom, 183%`. */
+        private val PERCENT: (String) -> Boolean = { it.startsWith("Zoom, ") && it.endsWith("%") }
     }
 }
