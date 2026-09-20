@@ -132,9 +132,6 @@ export function stepReaderFontSize(current: number, direction: number): number {
   return sizes[next]
 }
 
-/** The key a page posts its toolbar changes under (`window.postMessage`), relayed by the page script. */
-export const READER_MESSAGE_KEY = '__zenReader'
-
 /**
  * The root attributes the reader page's script renders the extras as (`data-line-focus`,
  * `data-syllables`, `data-spacing`): the stylesheet applies the spacing, the page script's
