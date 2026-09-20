@@ -629,7 +629,12 @@ describe('ReadAloudService', () => {
         [
           { text: 'Head', kind: 'heading', at: { path: [0], run: 0, offset: 0 } },
           { text: 'Body one. Body two.', at: { path: [1], run: 0, offset: 0 } },
-          { text: 'Bonjour', kind: 'list-item', lang: 'fr', at: { path: [2, 0], run: 0, offset: 0 } }
+          {
+            text: 'Bonjour',
+            kind: 'list-item',
+            lang: 'fr',
+            at: { path: [2, 0], run: 0, offset: 0 }
+          }
         ],
         { title: 'The article', lang: 'en' }
       )

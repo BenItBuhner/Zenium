@@ -469,7 +469,10 @@ describe('readAloud.highlight', () => {
     const w = window as unknown as { Highlight?: unknown }
     delete w.Highlight
     // The previous session's clear (the core sends `off` on stop) resets what was painted last.
-    paintHighlight(document, highlightMessage({ blockId: '', sentence: { start: 0, end: 0 }, mode: 'off' }))
+    paintHighlight(
+      document,
+      highlightMessage({ blockId: '', sentence: { start: 0, end: 0 }, mode: 'off' })
+    )
     const announced: Array<string | null> = []
     onReadAloudSentence((range) => announced.push(range ? range.toString() : null))
     paintHighlight(
@@ -478,7 +481,10 @@ describe('readAloud.highlight', () => {
     )
     expect(registry.size).toBe(0)
     expect(announced).toEqual(['The headline'])
-    paintHighlight(document, highlightMessage({ blockId: 'b0', sentence: { start: 0, end: 0 }, mode: 'off' }))
+    paintHighlight(
+      document,
+      highlightMessage({ blockId: 'b0', sentence: { start: 0, end: 0 }, mode: 'off' })
+    )
     expect(announced).toEqual(['The headline', null])
   })
 
@@ -495,7 +501,11 @@ describe('readAloud.highlight', () => {
     } as DOMRect)
     const scrolledBy: number[] = []
     const scrollBy = vi.fn((options: { top: number }) => scrolledBy.push(options.top))
-    Object.defineProperty(window, 'scrollBy', { value: scrollBy, configurable: true, writable: true })
+    Object.defineProperty(window, 'scrollBy', {
+      value: scrollBy,
+      configurable: true,
+      writable: true
+    })
     const elementScrolls: Element[] = []
     const original = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = function (this: Element) {
@@ -504,7 +514,11 @@ describe('readAloud.highlight', () => {
     try {
       paintHighlight(
         document,
-        highlightMessage({ blockId: 'b4', at: at('Quoted words.'), sentence: { start: 0, end: 13 } })
+        highlightMessage({
+          blockId: 'b4',
+          at: at('Quoted words.'),
+          sentence: { start: 0, end: 13 }
+        })
       )
       // The sentence's top lands 30% down the view: 2000 - 800 * 0.3.
       expect(scrolledBy).toEqual([1760])
@@ -551,7 +565,9 @@ describe('the reader document', () => {
     })
     expect(extraction.title).toBe('The article')
     expect(extraction.lang).toBe('en')
-    expect(extraction.blocks.map((b) => [b.id, b.kind, b.text, b.lang ?? '', b.at.path, b.at.run])).toEqual([
+    expect(
+      extraction.blocks.map((b) => [b.id, b.kind, b.text, b.lang ?? '', b.at.path, b.at.run])
+    ).toEqual([
       ['b0', 'heading', 'Head', '', [0], 0],
       ['b1', 'paragraph', 'Intro text', '', [1], 0],
       ['b2', 'paragraph', 'Nested para.', '', [1, 0], 0],
@@ -560,7 +576,9 @@ describe('the reader document', () => {
       ['b5', 'list-item', 'Bonjour', 'fr', [3, 0], 0]
     ])
     // The chrome of the reader page (its toolbar, the title row) is not the article's text.
-    expect(extraction.blocks.some((b) => b.text.includes('A−') || b.text === 'The article')).toBe(false)
+    expect(extraction.blocks.some((b) => b.text.includes('A−') || b.text === 'The article')).toBe(
+      false
+    )
     // The same blocks the core's HTML walk names (`blocksFromHtml`): ids line up.
     expect(blocksFromHtml(ARTICLE, 'en').map((b) => [b.id, b.text])).toEqual(
       extraction.blocks.map((b) => [b.id, b.text])

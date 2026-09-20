@@ -141,11 +141,7 @@ export function sanitizeReadAloudSettings(raw: unknown): ReadAloudSettings {
  * article, or one sentence.
  */
 export type ReadAloudStartFrom =
-  | 'top'
-  | 'selection'
-  | 'selection-on'
-  | 'reader'
-  | { blockId: string; sentenceIndex: number }
+  'top' | 'selection' | 'selection-on' | 'reader' | { blockId: string; sentenceIndex: number }
 
 /** What the `readAloud.voices` query answers: the list and the per-language default from it. */
 export interface ReadAloudVoicesResult {

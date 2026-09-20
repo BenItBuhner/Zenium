@@ -13,7 +13,13 @@ describe('reader text preferences', () => {
     expect(sanitizeReaderPreferences('serif')).toEqual(DEFAULT_READER_PREFERENCES)
     expect(
       sanitizeReaderPreferences({ fontSize: 22, font: 'mono', theme: 'sepia', width: 'wide' })
-    ).toEqual({ ...DEFAULT_READER_PREFERENCES, fontSize: 22, font: 'mono', theme: 'sepia', width: 'wide' })
+    ).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 22,
+      font: 'mono',
+      theme: 'sepia',
+      width: 'wide'
+    })
     // The extras (EDGE-13): a stored set from before them comes back with them off.
     expect(
       sanitizeReaderPreferences({ lineFocus: 3, spacing: 'wider', syllables: true })

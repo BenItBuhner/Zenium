@@ -47,8 +47,37 @@ const VOWELS = new Set(['a', 'e', 'i', 'o', 'u'])
 const DIGRAPHS = new Set(['ch', 'sh', 'th', 'ph', 'wh'])
 /** Consonant blends a syllable starts with: never split, the boundary goes before them. */
 const BLENDS = new Set([
-  'bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'sc', 'sk', 'sl', 'sm', 'sn',
-  'sp', 'st', 'sw', 'tr', 'tw', 'scr', 'spl', 'spr', 'str', 'squ', 'thr', 'shr', 'chr', 'phr', 'sch'
+  'bl',
+  'br',
+  'cl',
+  'cr',
+  'dr',
+  'fl',
+  'fr',
+  'gl',
+  'gr',
+  'pl',
+  'pr',
+  'sc',
+  'sk',
+  'sl',
+  'sm',
+  'sn',
+  'sp',
+  'st',
+  'sw',
+  'tr',
+  'tw',
+  'scr',
+  'spl',
+  'spr',
+  'str',
+  'squ',
+  'thr',
+  'shr',
+  'chr',
+  'phr',
+  'sch'
 ])
 /** Words shorter than this are one syllable to the marker. */
 const MIN_WORD_LENGTH = 4
@@ -90,8 +119,11 @@ function isVowelAt(word: string, i: number): boolean {
  * sibilant, `box-es`, and `-ed` after `t` / `d`, `want-ed`); between two cores one consonant goes
  * with the next (`ba-sic`, `x` with the first: `ex-it`), a digraph stays whole and goes with the
  * next (`fa-ther`), two or more split after the first (`bet-ter`, `mon-ster`), and consonant +
- * `le` takes the consonant (`lit-tle`). Adjacent vowels are one core (`cre-ate` and `li-on` are
- * missed). Words with anything but ASCII letters, or shorter than four letters, get none.
+ * `le` takes the consonant (`lit-tle`); a final `-ing` after a consonant keeps the stem whole
+ * (`read-ing`, `walk-ing`; a doubled consonant splits, `run-ning`). Adjacent vowels are one core
+ * (`cre-ate`, `li-on` and `go-ing` are missed) and a silent `e` inside a word is a core
+ * (`hope-ful` comes out `ho-pe-ful`). Words with anything but ASCII letters, or shorter than
+ * four letters, get none.
  */
 export function syllableBoundaries(word: string): number[] {
   if (word.length < MIN_WORD_LENGTH || !/^[A-Za-z]+$/.test(word)) return []
@@ -110,7 +142,11 @@ export function syllableBoundaries(word: string): number[] {
   let finalLe = false
   /** The last core is a sounded `-es` / `-ed` ending (`box-es`, `want-ed`): the boundary goes before its `e`. */
   let finalEnding = false
-  if (last[1] === n && last[1] - last[0] === 1 && w[n - 1] === 'e' && !isVowelAt(w, n - 2)) {
+  /** The last core is `-ing` after a consonant (`read-ing`, `walk-ing`): the consonants stay with the stem, a doubled one splits (`run-ning`). */
+  let finalIng = false
+  if (w.endsWith('ing') && n >= 5 && last[0] === n - 3 && !isVowelAt(w, n - 4)) {
+    finalIng = true
+  } else if (last[1] === n && last[1] - last[0] === 1 && w[n - 1] === 'e' && !isVowelAt(w, n - 2)) {
     // A single final `e` after a consonant: silent, unless the word ends consonant + `le`.
     if (w[n - 2] === 'l' && !isVowelAt(w, n - 3)) finalLe = true
     else groups.pop()
@@ -123,9 +159,11 @@ export function syllableBoundaries(word: string): number[] {
       if (sibilant) finalEnding = true
       else groups.pop()
     } else if (w[n - 1] === 'd') {
-      // `-ed`: a syllable after `t` / `d` (`want-ed`), silent otherwise (`walked`).
+      // `-ed`: a syllable after `t` / `d` (`want-ed`); `-red` after another consonant is a
+      // syllable the cluster rule places (`hun-dred`, `sa-cred`); silent otherwise (`walked`,
+      // `cared`, `stirred`).
       if (before === 't' || before === 'd') finalEnding = true
-      else groups.pop()
+      else if (!(before === 'r' && n >= 5 && !isVowelAt(w, n - 4) && w[n - 4] !== 'r')) groups.pop()
     }
   }
   if (groups.length < 2) return []
@@ -139,7 +177,9 @@ export function syllableBoundaries(word: string): number[] {
     let boundary: number
     if (lastCore && finalLe && cluster.length >= 2) boundary = clusterEnd - 2
     else if (lastCore && finalEnding) boundary = clusterEnd
-    else boundary = clusterBoundary(cluster, clusterStart, clusterEnd)
+    else if (lastCore && finalIng) {
+      boundary = cluster.length === 2 && cluster[0] === cluster[1] ? clusterStart + 1 : clusterEnd
+    } else boundary = clusterBoundary(cluster, clusterStart, clusterEnd)
     if (boundary > 0 && boundary < n) boundaries.push(boundary)
   }
   return boundaries
@@ -434,7 +474,10 @@ export class LineFocus {
     const { lineTop, lineHeight } = this.placement()
     const above = Math.floor((this.lines - 1) / 2)
     const bandTop = Math.max(0, Math.round(lineTop - above * lineHeight))
-    const bandBottom = Math.max(bandTop, Math.round(lineTop - above * lineHeight + this.lines * lineHeight))
+    const bandBottom = Math.max(
+      bandTop,
+      Math.round(lineTop - above * lineHeight + this.lines * lineHeight)
+    )
     this.masks.top.style.height = `${bandTop}px`
     this.masks.bottom.style.top = `${bandBottom}px`
   }
@@ -486,7 +529,11 @@ export class LineFocus {
     const height = this.viewHeight()
     const next = current.lineTop + direction * current.lineHeight
     const view = this.doc.defaultView
-    if (view && ((direction > 0 && next > height * LINE_FOCUS_HIGH) || (direction < 0 && next < height * LINE_FOCUS_LOW))) {
+    if (
+      view &&
+      ((direction > 0 && next > height * LINE_FOCUS_HIGH) ||
+        (direction < 0 && next < height * LINE_FOCUS_LOW))
+    ) {
       view.scrollBy({ top: direction * current.lineHeight, behavior: 'auto' })
       this.anchor = current
     } else {
@@ -503,7 +550,9 @@ export class LineFocus {
 /** The extras' state as the reader root's attributes say it. */
 export function extrasOf(root: Element): { lineFocus: ReaderLineFocus; syllables: boolean } {
   const raw = Number(root.getAttribute(READER_LINE_FOCUS_ATTRIBUTE))
-  const lineFocus = READER_LINE_FOCUS.includes(raw as ReaderLineFocus) ? (raw as ReaderLineFocus) : 0
+  const lineFocus = READER_LINE_FOCUS.includes(raw as ReaderLineFocus)
+    ? (raw as ReaderLineFocus)
+    : 0
   return { lineFocus, syllables: root.getAttribute(READER_SYLLABLES_ATTRIBUTE) === 'true' }
 }
 

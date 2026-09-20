@@ -258,7 +258,8 @@ export function selectionBlocks(
     else out.pop()
     const rest = last.text.slice(end)
     const restText = rest.trimStart()
-    if (restText) remainder = { ...last, text: restText, offset: end + (rest.length - restText.length) }
+    if (restText)
+      remainder = { ...last, text: restText, offset: end + (rest.length - restText.length) }
   }
   const first = out[0]
   if (first) {

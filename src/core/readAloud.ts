@@ -732,9 +732,10 @@ export class ReadAloudService {
     if (!this.host) return []
     let voices: ReadAloudVoice[] = []
     try {
-      voices = refresh && this.host.refreshVoices
-        ? await this.host.refreshVoices()
-        : await this.host.voices()
+      voices =
+        refresh && this.host.refreshVoices
+          ? await this.host.refreshVoices()
+          : await this.host.voices()
     } catch {
       voices = []
     }
