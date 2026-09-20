@@ -242,7 +242,9 @@ class TabWebView(
         webViewClient = Client()
         webChromeClient = Chrome()
         setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
-            host.downloads.start(url, userAgent, contentDisposition, mimetype, contentLength, tabId)
+            // A response the engine cannot show ends the navigation here; the core decides whether
+            // it is a PDF for the viewer or a file for Downloads (`navigation`).
+            host.downloads.start(url, userAgent, contentDisposition, mimetype, contentLength, tabId, navigation = true)
         }
         setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
             host.viewEvent(
@@ -1069,9 +1071,29 @@ class TabWebView(
 
     // --- operations used by the core -------------------------------------------------------------
 
-    fun loadHtml(url: String, html: String) {
+    /**
+     * A `zen://` page of the core's, rendered straight into the view under its own address. The
+     * PDF viewer page comes with a base URL of its own and the file it shows (`PdfViewer`): the
+     * document runs on that origin, so pdf.js can fetch its worker and the bytes, while the
+     * history entry – what [getUrl] and the navigation events show – stays `url`.
+     */
+    fun loadHtml(url: String, html: String, baseUrl: String? = null, document: PdfViewer.Document? = null) {
         rememberCurrentPage()
-        loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
+        pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, document) else null
+        loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
+    }
+
+    /** The viewer page this view shows, while it does (see [loadHtml]); read on the network thread too. */
+    @Volatile private var pdfPage: PdfViewer.Page? = null
+
+    /**
+     * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
+     * for anything under the viewer's origin (WebView may report either the base or the history
+     * URL of a `loadDataWithBaseURL` document), the URL itself otherwise.
+     */
+    private fun pageUrlFor(url: String): String {
+        val page = pdfPage ?: return url
+        return if (PdfViewer.isViewerUrl(url)) page.url else url
     }
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
@@ -1332,10 +1354,11 @@ class TabWebView(
      * What the core hears as the tab's URL. An extension page loaded from its served origin is
      * reported as Chrome spells it (`chrome-extension://<id>/...`, [ExtensionUrls.present]): that
      * is the tab's canonical URL for the core's model, the URL bar and the extension APIs, and
-     * [loadUrl] takes it back to the served origin.
+     * [loadUrl] takes it back to the served origin. The PDF viewer page, loaded on its own origin
+     * the same way, is reported under its `zen://pdf` address ([pageUrlFor]).
      */
     fun navState(): JSONObject = json(
-        "url" to ExtensionUrls.present(url ?: ""),
+        "url" to ExtensionUrls.present(pageUrlFor(url ?: "")),
         "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
@@ -1517,9 +1540,14 @@ class TabWebView(
          * whose rule sets include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)
+            PdfViewer.intercept(context, request, pdfPage)
+                ?: host.extensions?.intercept(request, this@TabWebView, null)
+                ?: host.blocking.intercept(this@TabWebView, request)
 
-        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
+            val url = pageUrlFor(rawUrl)
+            // Another document is on its way: the viewer page's file is not to be served for it.
+            if (pdfPage != null && url != pdfPage?.url) pdfPage = null
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
@@ -1551,7 +1579,8 @@ class TabWebView(
          * failed load too (right before `onReceivedError`), so reporting from there would record
          * a visit to a page that never loaded.
          */
-        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+        override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
+            val url = pageUrlFor(rawUrl)
             onHistoryCommitted()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (failedUrl != null && url == failedUrl) {

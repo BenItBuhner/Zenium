@@ -21,8 +21,13 @@ export type LevelId =
   'overview' | 'connection' | 'cookies' | 'permissions' | 'clear-data' | 'clear-cookies'
 
 export function security(info: SiteInfoSnapshot | null, url: string): SiteSecurity {
+  // The host's reading is of the connection under the page; an extension page has none to speak
+  // of, whatever origin the Android runtime serves it from (`describeSite` says `extension`).
+  const site = describeSite(url)
+  if (site.state === 'extension')
+    return { state: 'extension', certificate: null, mixedContent: null }
   if (info) return info.security
-  return { state: describeSite(url).state, certificate: null, mixedContent: null }
+  return { state: site.state, certificate: null, mixedContent: null }
 }
 
 /** "Secure connection", "Not secure", … as the connection row and level headline say it. */
@@ -36,6 +41,8 @@ export function connectionHeadline(s: SiteSecurity): string {
       return 'Local page'
     case 'internal':
       return 'Zenium page'
+    case 'extension':
+      return 'Extension page'
     default:
       return 'Unknown'
   }
@@ -53,6 +60,8 @@ export function connectionDetail(s: SiteSecurity): string {
       return 'Served from this device; nothing crosses the network.'
     case 'internal':
       return 'Built into the browser; no site is involved.'
+    case 'extension':
+      return 'A page of an installed extension; no site is involved.'
     default:
       return 'Zenium could not tell how this page reached you.'
   }

@@ -76,9 +76,19 @@ export class PageService {
     return parseInternalPageUrl(url, this.pages)
   }
 
-  /** The page definition an address names, if it is one this service routes. */
+  /**
+   * The page definition an address names, if it is one this service routes: registered, and
+   * one this host can show (`requires`) – on a host without the print preview, `zen://print`
+   * is no page at all and loads as a document would.
+   */
   pageAt(url: string): InternalPageDefinition | null {
-    return internalPageOf(url, this.pages)
+    const page = internalPageOf(url, this.pages)
+    return page && this.available(page) ? page : null
+  }
+
+  /** Whether this host has what the page needs. */
+  available(page: InternalPageDefinition): boolean {
+    return !page.requires || Boolean(this.browser.platform.capabilities[page.requires])
   }
 
   /** The page definition behind a tab, if the tab shows an internal page. */
@@ -141,7 +151,7 @@ export class PageService {
     opts: { fromIntent?: boolean } = {}
   ): string | null {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
-    if (!page) return null
+    if (!page || !this.available(page)) return null
     const asked = win
     win = this.hostWindowFor(asked)
     const rerouted = win !== asked
@@ -222,6 +232,8 @@ export class PageService {
     const ref = this.parse(url)
     if (!ref) return false
     const page = this.pages[ref.id]
+    // A page this host cannot show loads as a document would (its blank page).
+    if (!this.available(page)) return false
     const tabs = this.browser.tabs
     const tab = tabs.tab(tabId)
     if (page.render === 'chrome') {

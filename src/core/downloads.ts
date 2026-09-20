@@ -78,6 +78,14 @@ export interface DownloadInit {
   referrer?: string
   /** Tab whose page started it ("familiar site" check); null for retries and resumes. */
   sourceTabId?: string | null
+  /**
+   * The transfer is what the tab's own navigation produced – a response the engine could not
+   * show (Android's WebView on a PDF) – rather than a "Download link" or a save the user asked
+   * for. With `disposition`, what decides whether a PDF opens in the viewer (`core/pdf.ts`).
+   */
+  navigation?: boolean
+  /** The response's `Content-Disposition` type, when the host has it. */
+  disposition?: 'inline' | 'attachment' | null
   /** Chromium's user-gesture flag when the host has it; null when unknown (Android's WebView). */
   userGesture?: boolean | null
   canResume?: boolean
@@ -102,6 +110,11 @@ export interface DownloadServiceDeps {
   referrerFamiliar: (referrer: string) => boolean
   /** A dangerous or suspicious download finished and waits for Keep / Discard. */
   onDanger?: (item: DownloadItem) => void
+  /**
+   * A transfer began, with what the host said of it (`begin`'s `init`, which the record does
+   * not keep): the PDF viewer notes the ones that open in a tab when they complete.
+   */
+  onBegin?: (item: DownloadItem, init: DownloadInit) => void
   /** Providers asked for a verdict on every new download; the shared registry by default. */
   verdicts?: DangerVerdictRegistry
   now?: () => number
@@ -315,6 +328,7 @@ export class DownloadService {
     this.transfers.set(record.id, transfer)
     if (!existing && this.registry.size > 0) transfer.verdicts = this.askProviders(record, transfer)
     this.persist()
+    if (!existing) this.deps.onBegin?.(record, init)
     this.onChange(record, 'started')
     return record
   }

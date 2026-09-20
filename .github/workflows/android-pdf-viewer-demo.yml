@@ -1,0 +1,39 @@
+name: Android PDF viewer demo
+
+# Records the inline PDF viewer (zen://pdf, CT-02) on a hardware-accelerated Android emulator and
+# uploads the video and screenshots: a page of the driver's loopback server links to a PDF it
+# sends as application/pdf; a finger on the link has the WebView hand the response to the
+# downloader and, complete, the tab shows the file in the viewer instead of the system chooser.
+# Then the viewer under real fingers and the chrome's commands: a pinch out zooms, Fit width
+# brings the pages back, a fling reaches the next page, find counts and marks the matches, the
+# outline leads to its page, Share brings the system share sheet and Open with the chooser.
+# PdfViewerDemo asserts on the viewer's report after every step and fails the run when a touch
+# or a command did not take. Dispatch-only, like the downloads demo: it takes about ten minutes
+# and says nothing about a change being correct. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file picks the driver and names the artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-pdf-viewer-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: PDF viewer demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PdfViewerDemo
+        DEMO_DIR=pdf-viewer-demo
+        DEMO_OUT=artifacts/android-pdf-viewer-demo
+        DEMO_VIDEO=android-pdf-viewer-demo.mp4
+      artifact-name: android-pdf-viewer-demo
+      artifact-path: artifacts/android-pdf-viewer-demo/
+      # The downloader writes through MediaStore.Downloads (API 29+); the downloads demo's image.
+      api-level: '34'

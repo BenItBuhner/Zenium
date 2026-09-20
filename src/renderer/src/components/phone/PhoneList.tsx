@@ -228,6 +228,12 @@ export interface PhoneListRowProps {
   onSwipeDelete?: () => void
   /** A destructive action row (v2 draft §10.4): label and glyph in the danger ink. */
   danger?: boolean
+  /**
+   * The row stays, laid out at full size, at the one disabled number (§9.30) and takes no tap;
+   * a hold still opens its menu (an extension's action turned off for this tab keeps its
+   * context menu, as the desktop button does). `aria-disabled`, so it stays reachable.
+   */
+  disabled?: boolean
   ariaLabel?: string
 }
 
@@ -254,6 +260,7 @@ export function PhoneListRow({
   onLongPress,
   onSwipeDelete,
   danger = false,
+  disabled = false,
   ariaLabel
 }: PhoneListRowProps): JSX.Element {
   const frameRef = useRef<HTMLDivElement>(null)
@@ -262,7 +269,9 @@ export function PhoneListRow({
   const contentRef = useRef<HTMLDivElement>(null)
   const swipe = useSwipeToDelete({ frameRef, underRef, glyphRef, contentRef }, onSwipeDelete)
   const { onKeyDown, ...pointer } = useRowGestures({
-    onTap,
+    onTap: () => {
+      if (!disabled) onTap()
+    },
     onLongPress,
     swipe: onSwipeDelete && !selecting ? swipe : null
   })
@@ -271,6 +280,7 @@ export function PhoneListRow({
       data-selected={selected}
       data-two-line={Boolean(subtitle)}
       data-danger={danger || undefined}
+      data-disabled={disabled || undefined}
       className="zen-v2-row zen-phone-row select-none"
       style={{ touchAction: onSwipeDelete && !selecting ? 'pan-y' : undefined }}
       {...pointer}
@@ -278,6 +288,7 @@ export function PhoneListRow({
       <div
         role={selecting ? 'checkbox' : 'button'}
         aria-checked={selecting ? selected : undefined}
+        aria-disabled={disabled || undefined}
         aria-label={ariaLabel ?? title}
         tabIndex={0}
         className="zen-list-main"

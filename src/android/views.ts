@@ -12,6 +12,7 @@ import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
+import { PDF_VIEWER_ORIGIN, pdfPageDownloadId, type PdfPageLookup } from '@shared/pdfPage'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -127,7 +128,11 @@ export class AndroidTabView implements TabView {
   constructor(
     readonly tabId: string,
     private readonly bridge: Bridge,
-    private readonly pages: ZenPageLookups = { reader: () => null, image: () => null },
+    private readonly pages: ZenPageLookups = {
+      reader: () => null,
+      image: () => null,
+      pdf: () => null
+    },
     private readonly navigation: NavigationBridge = new NavigationBridge(bridge)
   ) {}
 
@@ -270,10 +275,17 @@ export class AndroidTabView implements TabView {
     if (url.startsWith('zen://')) {
       // Internal pages are rendered straight into the WebView; the URL stays `zen://…`.
       this.pendingHtml = true
+      const pdfId = pdfPageDownloadId(url)
+      const pdf = pdfId ? this.pages.pdf(pdfId) : null
       this.bridge.send('view.loadHtml', {
         tabId: this.tabId,
         url,
-        html: zenPageHtml(url, this.pages.reader, this.pages.image)
+        html: zenPageHtml(url, this.pages.reader, this.pages.image, this.pages.pdf),
+        // The PDF viewer runs on an origin of its own, so pdf.js can fetch its worker and the
+        // document; Kotlin serves both (`PdfViewer.kt`) from the file the download left.
+        ...(pdf
+          ? { baseUrl: `${PDF_VIEWER_ORIGIN}/`, document: { path: pdf.path, name: pdf.name } }
+          : {})
       })
       return
     }
@@ -726,12 +738,14 @@ export interface ZenPageLookups {
   reader: ReaderPageLookup
   /** Resolves `zen://image` pictures shared into the browser. */
   image: ImagePageLookup
+  /** `zen://pdf?id=…` → the download it shows (`core/pdf.ts`), or null once the file is gone. */
+  pdf: PdfPageLookup
 }
 
 /** Creates and tracks the JS mirrors of Kotlin's tab WebViews. */
 export class AndroidTabViewHost implements TabViewHost {
   private readonly views = new Map<string, AndroidTabView>()
-  readonly pages: ZenPageLookups = { reader: () => null, image: () => null }
+  readonly pages: ZenPageLookups = { reader: () => null, image: () => null, pdf: () => null }
   /** Shared by the views: what the host offers is learnt once for the run, not per view. */
   private readonly navigation: NavigationBridge
 

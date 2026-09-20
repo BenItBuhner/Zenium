@@ -875,6 +875,58 @@ abstract class DemoHarness(
     }
 
     /**
+     * Two fingers on a horizontal line through (`cx`, `cy`), `fromSpan` px apart, moving to
+     * `toSpan` apart over `durationMs` in real time: a pinch out when the span grows, in when it
+     * shrinks. Injected as one multi-pointer gesture, so the page sees a genuine two-touch
+     * sequence (touchstart with two touches, touchmove, the fingers lifting one after the other).
+     */
+    protected fun pinch(cx: Float, cy: Float, fromSpan: Float, toSpan: Float, durationMs: Long) {
+        val downTime = SystemClock.uptimeMillis()
+        fun inject(action: Int, count: Int, span: Float) {
+            val half = span / 2
+            val properties = Array(count) { i ->
+                MotionEvent.PointerProperties().apply {
+                    id = i
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }
+            }
+            val coords = Array(count) { i ->
+                MotionEvent.PointerCoords().apply {
+                    x = if (i == 0) cx - half else cx + half
+                    y = cy
+                    pressure = 1f
+                    size = 1f
+                }
+            }
+            val event = MotionEvent.obtain(
+                downTime, SystemClock.uptimeMillis(), action, count, properties, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+            )
+            try {
+                ui.injectInputEvent(event, false)
+            } finally {
+                event.recycle()
+            }
+        }
+        val second = 1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT
+        inject(MotionEvent.ACTION_DOWN, 1, fromSpan)
+        SystemClock.sleep(30)
+        inject(MotionEvent.ACTION_POINTER_DOWN or second, 2, fromSpan)
+        val steps = max(1L, durationMs / STEP_MS)
+        val start = SystemClock.uptimeMillis()
+        for (i in 1..steps) {
+            val due = start + (durationMs * i) / steps
+            val now = SystemClock.uptimeMillis()
+            if (due > now) SystemClock.sleep(due - now)
+            inject(MotionEvent.ACTION_MOVE, 2, fromSpan + (toSpan - fromSpan) * i / steps)
+        }
+        SystemClock.sleep(40)
+        inject(MotionEvent.ACTION_POINTER_UP or second, 2, toSpan)
+        SystemClock.sleep(20)
+        inject(MotionEvent.ACTION_UP, 1, toSpan)
+    }
+
+    /**
      * One finger. Moves are interpolated and injected in real time (asynchronously, with their own
      * timestamps), so the velocity the chrome measures is the one asked for even when the WebView
      * is busy painting.

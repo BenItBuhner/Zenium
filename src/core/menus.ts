@@ -16,6 +16,7 @@ import {
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
+  type MenuItemDescriptor,
   type Rect,
   type Settings,
   type Shortcut,
@@ -28,6 +29,7 @@ import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
+import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
@@ -140,6 +142,13 @@ export class Menus {
   /** What the host's menu bar shows right now, so it is only rebuilt when that changes. */
   private applicationMenuSignature: string | null = null
   private applicationMenuTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * The extension action menu last handed to a renderer as data (`extensionActionMenuItems`):
+   * its items' handlers by id, live until the next request retires them.
+   */
+  private actionMenuHandlers: { id: string; handlers: Map<string, () => void> } | null = null
+  private actionMenuSeq = 0
 
   /**
    * Give hosts with a menu bar (macOS) the application menu: every item's chord from the active
@@ -1081,6 +1090,42 @@ export class Menus {
       }
     )
     this.popup(template, win, 'app', anchor)
+  }
+
+  /**
+   * The extension's own items of its action's context menu as data, for a chrome that draws the
+   * menu itself (the phone's long-press menu sheet, which puts them above its own rows as
+   * `showExtensionActionMenu` does): the `contextMenus` items with the `action` context in
+   * Chrome's layout, serialised like a renderer-drawn menu. Their `click`s are kept by id for
+   * `runExtensionActionMenuItem`; a new request retires the previous ones (a menu can only be
+   * open once at a time). Empty for an extension the browser does not know or that adds none.
+   */
+  extensionActionMenuItems(id: string, win: ZenWindow): MenuItemDescriptor[] {
+    const { extensions } = this.browser
+    if (!extensions.list().some((entry) => entry.id === id)) {
+      this.actionMenuHandlers = null
+      return []
+    }
+    const own = extensions.actionContextMenuItems(id, win)
+    const { items, handlers } = serialiseMenu(own, `action_${++this.actionMenuSeq}`)
+    this.actionMenuHandlers = { id, handlers }
+    return items
+  }
+
+  /**
+   * The user picked `itemId` of the menu `extensionActionMenuItems` last answered for `id`: its
+   * click runs – the host fires `contextMenus.onClicked` with `OnClickData` for the `action`
+   * context and the active tab, as a pick in the native menu does. A stale or unknown id is
+   * nothing (the menu the pick came from was retired).
+   */
+  runExtensionActionMenuItem(id: string, itemId: string): void {
+    const open = this.actionMenuHandlers
+    if (!open || open.id !== id) return
+    const handler = open.handlers.get(itemId)
+    if (!handler) return
+    // One pick per menu: the sheet has gone by now, its handles with it.
+    this.actionMenuHandlers = null
+    handler()
   }
 
   /** Zen 1.20: Boosts live in the page context menu (and the site control button). */
@@ -2310,6 +2355,13 @@ export class Menus {
         ...when(caps.passwords, {
           label: 'Passwords',
           click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
+        }),
+        // The phone's way to the extensions' actions (Firefox for Android's Extensions item, in
+        // the library block before the management page): the chrome's sheet of one row per
+        // action. The desktop has the toolbar buttons and the puzzle panel; its menu is unchanged.
+        ...when(phone && caps.extensions, {
+          label: 'Extensions',
+          click: () => this.browser.emit('extensions.open', undefined, win)
         }),
         ...when(caps.extensions, {
           label: 'Add-ons and Themes',

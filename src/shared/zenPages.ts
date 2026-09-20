@@ -20,6 +20,7 @@ import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitia
 import { isCertificateError } from './siteInfo'
 import { errorPageCertificate } from './url'
 import { newTabPageHtml } from './newTabPage'
+import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -813,7 +814,8 @@ export function overlayForUrl(rawUrl: string): OverlayKind | null {
 export function zenPageHtml(
   rawUrl: string,
   reader?: ReaderPageLookup,
-  image?: ImagePageLookup
+  image?: ImagePageLookup,
+  pdf?: PdfPageLookup
 ): string {
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
@@ -830,6 +832,10 @@ export function zenPageHtml(
     case 'image': {
       const data = image?.(url.searchParams.get('id') ?? '')
       return data ? imagePageHtml(data) : imageMissingPageHtml()
+    }
+    case 'pdf': {
+      const doc = pdf?.(url.searchParams.get('id') ?? '')
+      return doc ? pdfViewerPageHtml(doc) : pdfMissingPageHtml()
     }
     default:
       return blankPageHtml()

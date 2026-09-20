@@ -68,6 +68,14 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
 
     class Live(val token: String, val kind: Kind, val url: String, val userAgent: String, val sourceTabId: String?) {
         var coreId: String? = null
+        /**
+         * The response the tab's own navigation produced (the `DownloadListener`, no `download`
+         * attribute behind the link), as against "Download link" or a retry: the core opens a
+         * PDF of this kind in its viewer (`core/pdf.ts`).
+         */
+        var navigation = false
+        /** The response's Content-Disposition type (`inline` / `attachment`), when it named one. */
+        var disposition: String? = null
         /** Record this transfer continues (a retry); the core keeps the row instead of adding one. */
         var resumes: String? = null
         var referrer = ""
@@ -115,7 +123,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         sourceTabId: String?,
         referrer: String? = null,
         containerId: String? = null,
-        resumes: String? = null
+        resumes: String? = null,
+        navigation: Boolean = false
     ) {
         val kind = when {
             url.startsWith("blob:") -> Kind.BLOB
@@ -133,6 +142,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
         val l = Live("dl-${++seq}-${SystemClock.elapsedRealtime()}", kind, url, userAgent.ifEmpty { defaultUserAgent() }, sourceTabId)
         l.resumes = resumes
+        l.navigation = navigation
+        l.disposition = DownloadLogic.dispositionType(contentDisposition)
         l.containerId = tab?.containerId ?: containerId?.ifEmpty { null } ?: Profiles.DEFAULT_CONTAINER
         l.isPrivate = l.containerId == PRIVATE_CONTAINER
         l.referrer = referrer ?: tab?.url?.takeIf { it.startsWith("http") } ?: ""
@@ -167,13 +178,16 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
 
     private fun announce(l: Live, contentDisposition: String?, suggestedName: String?) {
         l.filename = DownloadLogic.filenameFor(l.url, contentDisposition, l.mimeType.ifEmpty { null }, DownloadSink::extensionFor, suggestedName)
+        // A link with a `download` attribute asked for a file, whatever the response: not a navigation.
+        if (suggestedName != null) l.navigation = false
         live[l.token] = l
         emit(
             "download.started",
             json(
                 "token" to l.token, "url" to l.url, "referrer" to l.referrer, "filename" to l.filename,
                 "totalBytes" to l.total.coerceAtLeast(0), "mimeType" to l.mimeType, "sourceTabId" to l.sourceTabId,
-                "containerId" to l.containerId, "resumes" to l.resumes
+                "containerId" to l.containerId, "resumes" to l.resumes,
+                "navigation" to l.navigation, "disposition" to l.disposition
             )
         )
     }
@@ -370,15 +384,58 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
 
     fun open(savePath: String, mimeType: String) {
         val uri = shareUri(savePath) ?: return
-        val type = mimeType.ifEmpty { activity.contentResolver.getType(uri) ?: DownloadSink.mimeFor(savePath) }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, type)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
         try {
-            activity.startActivity(intent)
+            activity.startActivity(viewIntent(uri, savePath, mimeType))
         } catch (e: ActivityNotFoundException) {
             toast("No app can open this file")
+        }
+    }
+
+    /**
+     * The PDF viewer's "Open with": the system's chooser over every app that takes the file,
+     * as Chrome offers it from its viewer's menu – the way out of the viewer for a reader of the
+     * user's own.
+     */
+    fun openWith(savePath: String, mimeType: String) {
+        val uri = chooserUri(savePath) ?: return
+        val chooser = Intent.createChooser(viewIntent(uri, savePath, mimeType), null)
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            activity.startActivity(chooser)
+        } catch (e: ActivityNotFoundException) {
+            toast("No app can open this file")
+        }
+    }
+
+    /** The share sheet with the downloaded file itself (its name as the subject). */
+    fun share(savePath: String, mimeType: String, name: String) {
+        val uri = chooserUri(savePath) ?: return
+        val type = mimeType.ifEmpty { activity.contentResolver.getType(uri) ?: DownloadSink.mimeFor(savePath) }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            setType(type)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            if (name.isNotEmpty()) {
+                putExtra(Intent.EXTRA_SUBJECT, name)
+                putExtra(Intent.EXTRA_TITLE, name)
+            }
+            clipData = android.content.ClipData.newUri(activity.contentResolver, name.ifEmpty { "PDF" }, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(send, null)
+        chooser.putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(android.content.ComponentName(activity, MainActivity::class.java)))
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            activity.startActivity(chooser)
+        } catch (e: ActivityNotFoundException) {
+            toast("No app can share this file")
+        }
+    }
+
+    private fun viewIntent(uri: Uri, savePath: String, mimeType: String): Intent {
+        val type = mimeType.ifEmpty { activity.contentResolver.getType(uri) ?: DownloadSink.mimeFor(savePath) }
+        return Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, type)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
     }
 
@@ -756,6 +813,28 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         savePath.startsWith("content:") -> Uri.parse(savePath)
         savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { shareableUri(File(it)) }
         else -> shareableUri(File(savePath))
+    }
+
+    /**
+     * The URI the share sheet and the "Open with" chooser get: a MediaStore download as the app's
+     * own FileProvider URI when its file is on disk where the provider reaches and the app may
+     * read it (the public Downloads, written by this install), so the sheet reads the file's name
+     * and size from it as it does from Chrome's FileProvider – Android 14's chooser asks
+     * MediaProvider for a column it refuses ("Invalid column flags") and then shows the row id
+     * for the file. Otherwise the URI `shareUri` gives.
+     */
+    private fun chooserUri(savePath: String): Uri? = shareUri(savePath)?.let { providerUriFor(it) ?: it }
+
+    @Suppress("DEPRECATION") // DATA: the one column that names the file on disk
+    private fun providerUriFor(uri: Uri): Uri? {
+        if (uri.authority != MediaStore.AUTHORITY) return null
+        val path = runCatching {
+            activity.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: return null
+        val file = File(path)
+        if (!file.isFile || !file.canRead()) return null
+        return fileProviderUri(file)
     }
 
     /**
