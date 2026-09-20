@@ -19,6 +19,7 @@ import {
   viewCover
 } from '@renderer/lib/layout'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
+import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
 import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
@@ -116,8 +117,10 @@ export function useLayoutReporter(
 
   // Under a chrome overlay, a revealed compact sidebar or toolbar, or a frame dialog host that
   // keeps the page behind its capture while a panel it placed is still on its way out, after
-  // the dialog's own flag has cleared (`holdFrameDialogCover`).
-  const contentHidden = pageHidden(ui)
+  // the dialog's own flag has cleared (`holdFrameDialogCover`); or under the lock cover of a
+  // locked private tab (INC-05, `PrivateLockCover`), until the cover has lifted.
+  const lockCover = usePrivateCoverUp(state)
+  const contentHidden = pageHidden(ui) || lockCover
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the

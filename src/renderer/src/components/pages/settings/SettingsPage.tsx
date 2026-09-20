@@ -16,6 +16,7 @@ import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { SettingsBody } from '../../overlays/SettingsPanel'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -102,6 +103,8 @@ function PhoneSettings({
   // The vault's lists are fetched while Settings › Autofill is the section shown; the landing's
   // search builds the section with none (its switches and choices match, its entries do not).
   const autofill = useAutofillSettings(state, current?.id === 'autofill')
+  // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch.
+  const screenLock = privateLockStore.use((s) => s.screenLock)
   const ctx: SectionContext = {
     state,
     tab,
@@ -113,7 +116,8 @@ function PhoneSettings({
       run('tab.activate', { tabId })
       void openOverlay('boosts', tabId)
     },
-    autofill
+    autofill,
+    screenLock
   }
   const searching = current === null && query.trim() !== ''
   // The section shown, or – while the landing's search is on – every section for its results.

@@ -2086,7 +2086,7 @@ describe('the chrome switch in the stylesheet', () => {
     expect(declared(tab, 'font-weight')).toBe('var(--v2-weight-heading)')
   })
 
-  it('nothing on the phone tweens a theme token per element: the blend is the one colour animation (v2 §11.5)', () => {
+  it('nothing on the phone tweens a theme token per element: the blend is the one colour animation (v2 §11.6)', () => {
     // The two fills in the theme's ink that used to re-tween each frame of the blend and trail it.
     expect(declared('.zen-pill-well', 'background')).toContain('--zen-fg-rgb')
     expect(declared('.zen-pill-well', 'transition')).toBeUndefined()

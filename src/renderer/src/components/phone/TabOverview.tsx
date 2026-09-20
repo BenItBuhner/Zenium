@@ -28,6 +28,7 @@ import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAd
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import {
   overviewPane,
   pickOverviewPane,
@@ -57,6 +58,7 @@ import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
+import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
@@ -147,6 +149,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const hasPrivate = state.capabilities.privateTabs
   const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
   const privatePane = pane === 'private'
+  // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
+  // blurred beneath it; the Tabs pane and the header are not.
+  const locked = privateLockStore.use((s) => s.locked)
   // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
   // here – a drag rearranges them and nothing more (`hoverAt`, `dropCard`), as Chrome's incognito
   // grid lets it; the regular pane keeps its structure.
@@ -868,6 +873,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 </div>
               </div>
             )}
+            {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
           </PaneSlot>
           <PaneStills stills={stills} onDone={stillDone} />
         </div>

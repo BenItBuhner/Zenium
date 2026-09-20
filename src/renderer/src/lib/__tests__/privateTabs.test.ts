@@ -133,7 +133,7 @@ describe('private tabs on the phone', () => {
   })
 })
 
-describe('the theme blend (MOT-14, design language v2 §11.5)', () => {
+describe('the theme blend (MOT-14, design language v2 §11.6)', () => {
   const space = resolveTheme(null, false)
   const privateTheme = resolveTheme(PRIVATE_THEME, true)
   const frameMs = 1000 / 60

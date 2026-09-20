@@ -140,6 +140,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val webNotifications = WebNotifications(this, io)
     /** The private session's card while private tabs are open (`private.*`). */
     val privateSession = PrivateSession(this)
+    /**
+     * "Lock private tabs when you leave Zenium" (`private.setLockOnLeave`, `private.unlock`; the
+     * `private.lock` event): armed as the window leaves the screen ([onStop]), in memory only.
+     */
+    val privateLock = PrivateLock()
+    /**
+     * The private page views this host hid itself as the lock went on ([onStop]), for which the
+     * core has not yet asked the same ([setTabVisible] takes a tab off the list as it does): on
+     * release they are the ones to bring back here, the rest the core's next layout brings back.
+     */
+    private val lockHidden = HashSet<String>()
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
     /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
@@ -285,7 +296,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
-                "deviceModel" to Build.MODEL
+                "deviceModel" to Build.MODEL,
+                // A screen lock (or biometric) the device can verify the user with: the "Lock
+                // private tabs when you leave Zenium" switch is enabled (`PrivateLock`); the lock
+                // itself is never on at boot (it lives in memory).
+                "screenLock" to reauth.available()
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -633,7 +648,22 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
             "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
             "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
-            "private.setOpenTabs" -> { privateSession.setOpenTabs(args.num("count").toInt()); reply(null) }
+            "private.setOpenTabs" -> {
+                val count = args.num("count").toInt()
+                privateSession.setOpenTabs(count)
+                // The last private tab closed: nothing is left to lock (the session's wipe is the core's).
+                if (privateLock.setOpenTabs(count)) onPrivateLockReleased()
+                reply(null)
+            }
+            // The chrome's mirror of the Settings switch; off releases a lock that is on.
+            "private.setLockOnLeave" -> {
+                if (privateLock.setEnabled(args.bool("enabled"))) onPrivateLockReleased()
+                reply(null)
+            }
+            // The cover's Unlock: the system's prompt (fingerprint or face where enrolled, else the
+            // device PIN, pattern or password); a pass lifts the lock, a cancel or an error leaves
+            // it (the prompt carried its own message). Answers the lock as it stands after.
+            "private.unlock" -> unlockPrivateTabs(args.str("reason")) { reply(json("locked" to privateLock.locked)) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -840,6 +870,52 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         voice.abort()
         // A camera scanning a screen that is gone: the session ends, the sheet with it (#187).
         qrScan.abort()
+        // "Lock private tabs when you leave Zenium": the lock goes on as the window leaves. The
+        // private page views on screen go now, so the app's first frame back shows the chrome's
+        // cover and never the page ahead of the chrome's own report of it hidden.
+        if (privateLock.onLeave(reauth.available())) {
+            for (tab in tabs.all()) {
+                if (!Profiles.isPrivate(tab.containerId) || tab.visibility != View.VISIBLE) continue
+                tabs.setVisible(tab.tabId, false)
+                lockHidden.add(tab.tabId)
+            }
+            refreshGuard()
+            announcePrivateLock()
+        }
+    }
+
+    /**
+     * The lock came off – the screen lock passed, the last private tab closed, the switch turned
+     * off: the views this host hid on its own come back (the core's next layout brings back the
+     * ones it asked hidden itself), the guard follows and the chrome hears.
+     */
+    private fun onPrivateLockReleased() {
+        for (tabId in lockHidden) tabs.setVisible(tabId, true)
+        lockHidden.clear()
+        refreshGuard()
+        announcePrivateLock()
+    }
+
+    /** The cover's Unlock, `reason` the prompt's subtitle (the chrome's words, as `reauth.verify`). `done` runs once, after the prompt closed and the lock updated. */
+    private fun unlockPrivateTabs(reason: String, done: () -> Unit) {
+        if (!privateLock.locked) {
+            done()
+            return
+        }
+        reauth.authenticate(reason, strong = false) { ok ->
+            if (ok && privateLock.release()) onPrivateLockReleased()
+            done()
+        }
+    }
+
+    /** `private.lock`: the lock as it stands and whether a screen lock is set to pass it with. */
+    private fun announcePrivateLock() {
+        chrome.hostEvent("private.lock", json("locked" to privateLock.locked, "screenLock" to reauth.available()))
+    }
+
+    /** The one call on the window's screenshot guard: the chrome's word, and the lock's hidden views. */
+    private fun refreshGuard() {
+        PrivateBrowsing.guard(activity.window, privateSurface, lockedContent = lockHidden.isNotEmpty())
     }
 
     /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
@@ -982,7 +1058,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The private surface came or went: the window's screenshot guard goes up or down with it. */
     fun setPrivateSurface(on: Boolean) {
         privateSurface = on
-        PrivateBrowsing.guard(activity.window, on)
+        refreshGuard()
     }
 
     private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
@@ -1161,6 +1237,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onStart() {
         chrome.resumeTimers()
+        // The lock as the app comes back, ahead of the layout the chrome re-applies on `resume`:
+        // a screen lock removed while the app was away leaves nothing to pass, and the lock
+        // comes off rather than cover the private tabs for good; the switch follows the device.
+        val screenLock = reauth.available()
+        if (privateLock.onReturn(screenLock)) onPrivateLockReleased() else announcePrivateLock()
         chrome.hostEvent("resume", null)
         repaint()
     }
@@ -1193,6 +1274,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * holds the page's stand-in picture – or for [PageVisibility.DEADLINE_MS] (see [PageVisibility]).
      */
     private fun setTabVisible(tabId: String, visible: Boolean) {
+        // The core's word on a view this host hid under the private lock replaces the host's: the
+        // core now brings it back itself (its layout), or asks it hidden as the lock cover is up.
+        if (lockHidden.remove(tabId)) refreshGuard()
         val ticket = pageVisibility.request(tabId, visible) ?: return
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a

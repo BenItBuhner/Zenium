@@ -69,6 +69,7 @@ import {
   NEW_TAB_PRESET_LABELS,
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
+import { setPrivateLockOnLeave } from '@renderer/lib/privateLock'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { openOverlay } from '@renderer/lib/ui'
 import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
@@ -148,6 +149,12 @@ export interface SectionContext {
    * vault to read (a test, the landing's search).
    */
   autofill: AutofillSettingsData
+  /**
+   * The device has a screen lock (a PIN, a pattern, a biometric) for "Lock private tabs when
+   * you leave Zenium" to be passed with – the phone host's word (`privateLockStore.screenLock`,
+   * told at boot and on each return). Without one the switch is disabled (§9.30) and says why.
+   */
+  screenLock: boolean
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -1198,7 +1205,49 @@ function privacySection(ctx: SectionContext): RowGroup[] {
     ...siteSettingsGroups(ctx),
     ...httpsOnlyGroups(state, set),
     ...secureDnsGroups(state, set),
-    ...signalsGroups(state, set)
+    ...signalsGroups(state, set),
+    ...privateLockGroups(ctx)
+  ]
+}
+
+/** The lock row's label, description and the description that says why it is disabled. */
+export const PRIVATE_LOCK_ROW = {
+  label: 'Lock private tabs when you leave Zenium',
+  // One line each at 13 px beside the switch, a full stop like the page's other descriptions.
+  description: 'Use your screen lock to see them again.',
+  noScreenLock: 'Needs a screen lock on this device.'
+} as const
+
+/**
+ * "Lock private tabs when you leave Zenium" (INC-05 / SET-17; Chrome's "Lock Incognito tabs when
+ * you leave Chrome", at its place in Privacy and security after Do Not Track): a §10.4 switch
+ * row, off by default as Chrome's. Device-local, as Chrome's is – the lock is this device's
+ * screen lock, and another device has its own – so it is `state.privateLockOnLeave`
+ * (`BrowserState.privateDevice`, the `newTabDevice` shape), never a synced setting. The change
+ * is confirmed by the device first, on or off (`setPrivateLockOnLeave`: the system's prompt,
+ * else turning the lock off would be the way past it); without a screen lock the row is
+ * disabled at .4 and its description says a screen lock is needed (§9.30). Phone-host-only,
+ * as `confirmCloseAll` is: a desktop private window has no lock.
+ */
+function privateLockGroups({ state, screenLock }: SectionContext): RowGroup[] {
+  if (state.capabilities.windows || !state.capabilities.privateTabs) return []
+  return [
+    {
+      id: 'private-lock',
+      heading: 'Private tabs',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'private-lock-on-leave',
+          label: PRIVATE_LOCK_ROW.label,
+          description: screenLock ? PRIVATE_LOCK_ROW.description : PRIVATE_LOCK_ROW.noScreenLock,
+          keywords: ['incognito', 'lock', 'biometric', 'fingerprint', 'screen lock', 'pin'],
+          checked: state.privateLockOnLeave,
+          disabled: !screenLock,
+          onChange: (enabled) => void setPrivateLockOnLeave(enabled)
+        }
+      ]
+    }
   ]
 }
 

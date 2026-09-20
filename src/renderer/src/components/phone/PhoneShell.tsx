@@ -20,6 +20,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
+import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -151,7 +152,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       const media = (e.target as HTMLElement).closest('[data-media]')
       const session = media ? mediaSession(state) : null
       if (overviewIsOpen()) closeOverview()
-      else if (session) {
+      else if (tab && privateTabLocked(state)) {
+        // The pill over a locked private tab says nothing of the page and opens nothing of it
+        // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
+        // Unlock does (INC-05).
+        void unlockPrivateTabs()
+      } else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
         void openMediaSheet(session.tabId, activeTabId)
@@ -499,25 +505,32 @@ export function PillContent({
   // translation chip – it is neither a secure site nor an insecure one, whatever origin the
   // Android runtime serves it from (§10.1 applied to extension pages, `extensionPageChrome`).
   const extension = shown ? extensionPageChrome(shown.url, state.extensions) : null
+  // A private tab under the lock (INC-05): the pill says nothing of its page – no address, no
+  // lock, no shield, no translation glyph – only that it is a private tab, behind the mask; the
+  // whole pill asks for the screen lock when tapped (the shell's onTap).
+  const locked = privateLockStore.use((s) => s.locked) && shown !== null && isPrivateTab(shown)
   // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the
   // pill. The PDF viewer page reads as its document (the file's name, then the title the
   // document names), the way Chrome's tab does; there is no site to show.
-  const url = shown
-    ? extension
-      ? extension.name
-      : isPdfViewerTab(state, shown.id) && shown.title
-        ? shown.title
-        : displayHost(shown.url)
-    : ''
+  const url =
+    shown && !locked
+      ? extension
+        ? extension.name
+        : isPdfViewerTab(state, shown.id) && shown.title
+          ? shown.title
+          : displayHost(shown.url)
+      : ''
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
-  const secure = shown?.url.startsWith('https://') && !shown.certificateError && !extension
+  const secure =
+    shown?.url.startsWith('https://') && !shown.certificateError && !extension && !locked
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
   // Translation: the glyph is there once the page has been offered or translated (in the accent
   // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
-  const translation = shown && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
+  const translation =
+    shown && !locked && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
   const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
   // The private marker: the mask glyph in the pill's leading slot on every private tab, page or
   // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
@@ -538,12 +551,24 @@ export function PillContent({
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
-        aria-label={interactive ? (url ? `Address, ${url}` : 'Search or enter address') : undefined}
+        aria-label={
+          interactive
+            ? locked
+              ? 'Private tab locked, unlock'
+              : url
+                ? `Address, ${url}`
+                : 'Search or enter address'
+            : undefined
+        }
       >
         <span
-          className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
+          className={cn(
+            'min-w-0 flex-1 truncate text-[14px]',
+            !url && !locked && 'text-[var(--zen-muted)]'
+          )}
+          data-private-locked={locked || undefined}
         >
-          {url || 'Search or enter address'}
+          {locked ? 'Private tab' : url || 'Search or enter address'}
         </span>
       </Control>
       {shown && page ? (
@@ -581,7 +606,7 @@ export function PillContent({
         badge would cost the host its room on a phone; badges are for lists that mix private and
         normal items.
       */}
-      {shown && !page && !extension && state.capabilities.requestBlocking && (
+      {shown && !page && !extension && !locked && state.capabilities.requestBlocking && (
         <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
       )}
       {url && secure && !page && (
