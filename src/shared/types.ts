@@ -280,6 +280,11 @@ export interface SpaceTheme {
   monochrome: boolean
   /** Gradient rotation in degrees. */
   rotation: number
+  /**
+   * A theme muted for one scheme whatever the OS uses: the private window's purple stays dark
+   * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
+   */
+  scheme?: 'light' | 'dark'
 }
 
 // ---------------------------------------------------------------------------
@@ -1774,6 +1779,11 @@ export interface Settings {
   phoneBar: PhoneBarLayout
   /** Touch hosts: drag down from the top of a page to reload it. */
   pullToRefresh: boolean
+  /**
+   * Phone layout: the bar slides off its edge as the page scrolls down and back as it scrolls
+   * up (`lib/barHide.ts`). Absent in profiles from before it existed (read as true).
+   */
+  hideToolbarOnScroll: boolean
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
   pinnedCloseBehavior: PinnedCloseBehavior

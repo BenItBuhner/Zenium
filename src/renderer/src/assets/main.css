@@ -34,7 +34,11 @@
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
   --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
-  --zen-muted: rgb(var(--zen-fg-rgb) / 0.6);
+  /*
+   * Secondary text is the ink at 69 %, the same role as `--v2-text-deemphasized` (design
+   * language v2 §1, §9.29): at 60 % it reached 4.5:1 only on near-white surfaces (a11y-30).
+   */
+  --zen-muted: rgb(var(--zen-fg-rgb) / 0.69);
   --zen-faint: rgb(var(--zen-fg-rgb) / 0.4);
   /*
    * The accent as ink (text, glyphs) and as a fill (the one primary control, a toggle that is
@@ -294,6 +298,19 @@
 :root[data-theme='dark'] [class^='zen-v2-']:focus-visible,
 :root[data-theme='dark'] [class*=' zen-v2-']:focus-visible {
   outline-offset: -2px;
+}
+/*
+ * A v2 control that is the accent when on – the primary button, a checked checkbox, a switch or
+ * a radio that is itself the control – would draw dark's inset ring (the accent again, 2 px
+ * inside its edge) on its own fill and show nothing (a11y-10): on those the ring stays outside
+ * the edge in dark as it does in light, on the surface around them (the zoom slider's accent
+ * thumb does the same in its own rule).
+ */
+:root[data-theme='dark'] .zen-v2-button[data-primary]:focus-visible,
+:root[data-theme='dark'] .zen-v2-checkbox:checked:focus-visible,
+:root[data-theme='dark'] .zen-v2-switch[aria-checked='true']:focus-visible,
+:root[data-theme='dark'] .zen-v2-radio[aria-checked='true']:focus-visible {
+  outline-offset: 0;
 }
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
@@ -708,6 +725,38 @@
   }
 }
 
+/*
+ * The chrome's focus ring (v2 §1, a11y-10). Left to the UA, a control the keyboard lands on draws
+ * `outline: auto 1px` in the platform's focus colour – the GTK theme's on Linux, blue elsewhere –
+ * which is neither the token nor sure to read against the window's gradient. Every control of the
+ * chrome document takes the §1 ring instead: 2 px solid `--v2-ring`, 2 px inside its own edge
+ * (Firefox's `--focus-outline-inset`), so a scroller (the tab strip, a Settings nav), the
+ * bookmarks strip's clip or a bar the control fills to the edge cannot cut it, and a control
+ * scrolled flush to a scroller's edge keeps the whole ring. The base layer is the floor: a
+ * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
+ * its pill or face carries – and so does `outline-none` on a container that focuses itself by
+ * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ *
+ * The ring snaps on whole, as Chrome's does. At rest every element already holds the ring's
+ * colour, width and offset – with the style at `none` nothing shows – so a control's own
+ * transition (Tailwind's `transition-all` and `transition-colors` carry `outline-color`, the
+ * former the width and offset too) has nothing to animate when the keyboard lands; without this
+ * the ring faded in from a 3 px ring in the text colour (`outline-color`'s initial
+ * `currentColor`, `outline-width`'s `medium`) over the control's 150 ms. Every rule that draws a
+ * standing outline (a card's hairline, a picked tile's accent) sets its own width and offset.
+ */
+@layer base {
+  * {
+    outline-color: var(--v2-ring);
+    outline-width: 2px;
+    outline-offset: -2px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
+  }
+}
+
 @layer components {
   .zen-drag {
     -webkit-app-region: drag;
@@ -798,6 +847,10 @@
   }
   .zen-toolbar-button:hover:not(:disabled) {
     background: var(--zen-element-bg);
+    opacity: 1;
+  }
+  /* The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10). */
+  .zen-toolbar-button:focus-visible {
     opacity: 1;
   }
   .zen-toolbar-button:active:not(:disabled) {
@@ -1833,14 +1886,15 @@
   .zen-app-icon:active svg {
     transform: scale(0.98);
   }
-  .zen-app-icon[aria-checked='true'] svg,
-  .zen-app-icon:focus-visible svg {
+  .zen-app-icon[aria-checked='true'] svg {
     outline: 2px solid var(--zen-accent);
     outline-offset: 2px;
   }
-  .zen-app-icon:focus-visible {
-    outline: none;
-  }
+  /*
+   * The keyboard's ring is the chrome's, round the whole card (artwork and name): drawn round the
+   * artwork it was the picked card's own outline again, so the keyboard on the picked card showed
+   * nothing (a11y-10).
+   */
   .zen-app-icon[aria-checked='true'] {
     color: var(--zen-fg);
   }
@@ -2947,9 +3001,14 @@
   .zen-bm-chip[data-open='true'] {
     background: var(--v2-window-fill-hover);
   }
+  /*
+   * The keyboard's ring (§1) sits inside the chip: the strip is the chip's height and clips
+   * anything outside it, and so would cut a ring drawn round the chip at the top, the bottom and
+   * the strip's end (a11y-10).
+   */
   .zen-bm-chip:focus-visible {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
   }
   /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
@@ -5145,9 +5204,45 @@
  * does not fade: it stays at its opacity, inert (`holdChromeInert`) and dimmed by the scrim
  * like the page (ruled 23:50). The shell writes no rest opacity of its own over this; a pill
  * carry composes its share into the same product at the bottom edge (`barFade`, recede.ts).
+ * The hide on scroll below adds no fade of its own: the fade is the sheet's vocabulary.
  */
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
   opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
+}
+
+/*
+ * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity; design language v2 draft
+ * §11.5, chrome that hides on scroll): `--zen-bar-hide` on the root is 0 with the bar in place
+ * and 1 with it off its edge, written per frame as the page scrolls and by the spring that
+ * snaps it. The bar slides by the band the page gains (the whole bar
+ * band – the row and, while the active tab is grouped, the tab-group strip (`--zen-phone-band`,
+ * #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one to one with the page's
+ * edge, and is clipped at the line where the system inset begins (the clip grows with the
+ * travel, since it moves with the bar): the chrome is drawn edge to edge, so a bar that only slid
+ * would stay in view under a status bar or a gesture bar. Slide and clip, no fade: the band's
+ * outer gutter is the bar's own padding (the row's, or the strip's when there is one: the tray
+ * sits a gutter in from the band's edge), so at the full travel the near edge of the pill – or of
+ * the tray – lands on the inset line and only transparent padding is left in frame; a fade would
+ * remove nothing, would cost legibility at every frame between, and is §11.1's vocabulary for a
+ * sheet's arrival (the bottom bar's recede above). The strip rides the bar's transform, being
+ * inside the bar element. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
+ * touches (the page has its band) but stays in the accessibility tree, where focus brings it
+ * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
+ */
+:root {
+  --zen-bar-hide-travel: calc(var(--zen-phone-band) - var(--zen-padding));
+  --zen-bar-hide-shift: calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel));
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
+  transform: translate3d(0, var(--zen-bar-hide-shift), 0);
+  clip-path: inset(0 0 calc(var(--zen-inset-bottom) + var(--zen-bar-hide-shift)) 0);
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
+  transform: translate3d(0, calc(-1 * var(--zen-bar-hide-shift)), 0);
+  clip-path: inset(calc(var(--zen-inset-top) + var(--zen-bar-hide-shift)) 0 0 0);
+}
+:root[data-bar-hidden] .zen-phone-bar {
+  pointer-events: none;
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
@@ -5664,6 +5759,14 @@
   box-shadow: 0 0 0 2px var(--v2-accent);
 }
 /*
+ * The picked card already wears the accent 2 px outside its edge; the shared ring at offset 0
+ * lands on the same pixels, so the keyboard on the picked card showed nothing. Its ring goes
+ * inside the edge instead (as it does in dark), leaving both visible (a11y-10).
+ */
+.zen-v2-card-radio[aria-checked='true']:focus-visible {
+  outline-offset: -2px;
+}
+/*
  * The group editor's colour swatches (components/sidebar/GroupEditorBubble.tsx; §9.14's swatch
  * form of the image radio, tabs-13): the card radio made round – a 28 px target with the colour
  * as a 20 px disc inside – the picked one's 2 px accent outline moved to the disc, 2 px outside
@@ -5693,6 +5796,14 @@
   box-shadow:
     0 0 0 2px var(--v2-panel),
     0 0 0 4px var(--v2-accent);
+}
+/*
+ * The picked swatch's accent ring fills the target's outer 2 px, where the shared ring lands in
+ * dark (and the card radio's inset rule above would put it); the keyboard's ring on the picked
+ * swatch goes 2 px outside the target instead – a second ring with the panel between (a11y-10).
+ */
+.zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']:focus-visible {
+  outline-offset: 2px;
 }
 @media (hover: hover) {
   .zen-v2-card-radio.zen-group-editor-swatch:hover {
@@ -7786,12 +7897,13 @@
   position: absolute;
   inset: -4px;
 }
+/*
+ * Outside the thumb in both themes: the thumb is the accent, so dark's inset ring (the shared
+ * v2 rule's -2) would sit on its own fill, under the panel-colour border, and show nothing (a11y-10).
+ */
 .zen-zoom-slider [role='slider']:focus-visible {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
-}
-:root[data-theme='dark'] .zen-zoom-slider [role='slider']:focus-visible {
-  outline-offset: -2px;
 }
 /* Disabled (§9.30): the whole control at .4 – track, run and thumb together – laid out at full size. */
 .zen-zoom-slider[data-disabled] {
@@ -7876,5 +7988,117 @@
   .zen-v2-segment > [role='tab'],
   .zen-v2-segment > [role='tab']::after {
     transition-duration: 120ms !important;
+  }
+}
+
+/*
+ * `forced-colors: active` (a11y-15): Windows High Contrast and any forced palette. Chromium
+ * repaints the chrome in the palette's keywords – Canvas and CanvasText, ButtonFace, Highlight –
+ * and drops every box-shadow, so a state or an edge the design carries with a fill, a tint or a
+ * shadow alone is gone: the active tab row read like its neighbours, a switch that is on like
+ * one that is off, the pill and the content frame had no edge. The rules here say those in the
+ * palette's own keywords, which forcing leaves alone: what is selected or checked wears Highlight
+ * with HighlightText on it, and edges become borders (in the box, so nothing moves) or, on the
+ * frame the page view covers, an outline. Colour that is the content – the app icon's artwork,
+ * the group editor's swatches – opts out and keeps its own. Unlayered so the base ring and the
+ * components' fills yield to it; a focus ring still wins over a selection outline.
+ */
+@media (forced-colors: active) {
+  /*
+   * Selected: the active tab row, folder or Essential, the active space, the picked segment, the
+   * current Settings section, the checked app icon. Chromium paints a Canvas plate behind the text
+   * of every element it adjusts (invisible where the fill is Canvas too, a white box over a
+   * Highlight fill with the HighlightText lost on it), so these opt out of adjustment: they carry
+   * only the palette's own keywords, and their text – and a favicon's letter tile – inherits the
+   * opt-out. Opting out also leaves the ring's colour alone, so it is said here: HighlightText,
+   * inside the Highlight fill, the pair the palette made to contrast.
+   */
+  .zen-tab[data-active='true'],
+  .zen-essential[data-active='true'],
+  [data-space-target][aria-current='true'],
+  .zen-segment[data-active='true'],
+  nav > button[aria-current='page'],
+  .zen-app-icon[aria-checked='true'] {
+    background-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .zen-tab[data-active='true']:focus-visible,
+  .zen-essential[data-active='true']:focus-visible,
+  [data-space-target][aria-current='true']:focus-visible,
+  .zen-segment[data-active='true']:focus-visible,
+  nav > button[aria-current='page']:focus-visible,
+  .zen-app-icon[aria-checked='true']:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -2px;
+  }
+  /* Multi-selected tabs: the accent outline becomes Highlight; the keyboard's ring takes over when focused. */
+  .zen-tab[data-selected]:not(:focus-visible),
+  .zen-essential[data-selected]:not(:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  /* Edges: the address pill, the segmented control, the app icon cards; the content frame's edge outside the page view. */
+  .zen-pill,
+  .zen-segment,
+  .zen-app-icon {
+    border: 1px solid ButtonBorder;
+  }
+  .zen-content-frame {
+    outline: 1px solid CanvasText;
+    outline-offset: 0;
+  }
+  /* The v2 switch: a bordered track with a CanvasText thumb; on, a Highlight track with a HighlightText thumb. */
+  .zen-v2-switch {
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+  }
+  .zen-v2-switch::after {
+    background-color: CanvasText;
+  }
+  .zen-v2-switch[aria-checked='true'],
+  [aria-checked='true'] .zen-v2-switch {
+    border-color: Highlight;
+    background-color: Highlight;
+  }
+  .zen-v2-switch[aria-checked='true']::after,
+  [aria-checked='true'] .zen-v2-switch::after {
+    background-color: HighlightText;
+  }
+  /* The Radix switch (ui/switch.tsx: the button is the track, its only child the thumb): the same. */
+  button[role='switch']:not(:has(.zen-v2-switch)) {
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+  }
+  button[role='switch']:not(:has(.zen-v2-switch)) > span {
+    background-color: CanvasText;
+  }
+  button[role='switch'][aria-checked='true']:not(:has(.zen-v2-switch)) {
+    border-color: Highlight;
+    background-color: Highlight;
+  }
+  button[role='switch'][aria-checked='true']:not(:has(.zen-v2-switch)) > span {
+    background-color: HighlightText;
+  }
+  /* Checked radios, checkboxes, image cards and app icons: filled Highlight (the radio's inset shadow and the card's ring are gone). */
+  .zen-v2-radio[aria-checked='true'],
+  [aria-checked='true'] > .zen-v2-radio,
+  .zen-v2-checkbox:checked,
+  .zen-app-icon[aria-checked='true'] {
+    border-color: Highlight;
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  .zen-v2-checkbox:checked::after {
+    background-color: HighlightText;
+  }
+  .zen-v2-card-radio[aria-checked='true']:not(:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: 0;
+  }
+  /* Colour that is the content keeps its own. */
+  .zen-app-icon svg,
+  .zen-group-editor-swatch-disc {
+    forced-color-adjust: none;
   }
 }

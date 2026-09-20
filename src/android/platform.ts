@@ -327,6 +327,13 @@ export interface BootInfo {
   fullscreen: boolean
   /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
   environment?: PageEnvironment
+  /**
+   * An accessibility service explores the screen by touch (TalkBack;
+   * `AccessibilityManager.isTouchExplorationEnabled`): the bar that hides on scroll stays put
+   * (`lib/barHide.ts`). Changes come as `__zenHost.barTouchExploration`. Absent in old hosts
+   * and in the preview host.
+   */
+  touchExploration?: boolean
 }
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */

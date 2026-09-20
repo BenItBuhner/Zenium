@@ -21,6 +21,8 @@ import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -68,12 +70,45 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
     val siteData = SiteData()
+    private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
+    private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
+        Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
+        chrome.barTouchExploration(enabled)
+    }
+
+    /** An accessibility service explores the screen by touch right now (TalkBack). */
+    val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
 
     init {
         // A private session the last run did not get to end (a crash, the system killing the app)
         // ends now, before any tab exists and while its profile is free to be deleted; the card
         // that offered to close its tabs goes with the PrivateSession below.
         Profiles.wipePrivate(activity)
+        // Accessibility focus (TalkBack's swipe, or a service's focus action) landing in the
+        // chrome while the bar that hides on scroll is off its edge: the bar comes back, as
+        // Chrome's controls do, so what was focused is on screen. Chromium raises the event
+        // through the WebView's parent; with the bar off nothing else of the chrome is up to land
+        // on (a sheet or a panel keeps the bar shown), so the pill and its buttons are the only
+        // way here. Not while a finger is on the page: a service's focus never comes with one
+        // (TalkBack's swipe is its own gesture and explore by touch is hover), and Chromium
+        // re-raises the event for the node it already has as it restores its state, which under a
+        // drag would snap a bar the finger is moving one to one. The event goes on unchanged.
+        root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
+                if (child === chrome && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    val frame = tabs.barHide
+                    val touching = tabs.touchingPage()
+                    val shows = frame?.away == true && !touching
+                    if (shows) chrome.barShow()
+                    Log.d(TAG, "accessibility focus in the chrome: bar ${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "at rest"}, finger on the page $touching: ${if (shows) "the bar comes back" else "left as it is"}")
+                }
+                return super.onRequestSendAccessibilityEvent(host, child, event)
+            }
+        }
+        // Touch exploration (TalkBack) on: the bar does not hide on scroll at all, and comes back
+        // if it was off – Chrome never hides its controls while an accessibility service is on. The
+        // chrome starts from the state in the boot payload and hears each change from here.
+        accessibility?.addTouchExplorationStateChangeListener(touchExplorationListener)
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
@@ -168,6 +203,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
+    override fun barScroll(tabId: String, phase: String, payload: JSONObject?) = chrome.barScroll(tabId, phase, payload)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
@@ -207,7 +243,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A speech recogniser on the device: the mic buttons show (voice search, OMN-19).
                 "voiceSearch" to voice.available,
                 // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
-                "qrScan" to qrScan.available
+                "qrScan" to qrScan.available,
+                // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
+                "touchExploration" to touchExploration
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -402,6 +440,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyPullToRefreshMode()
                 reply(null)
             }
+            // The bar that hides on scroll says where it is (per frame while it moves) or that it
+            // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
+            "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
             "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
@@ -1200,6 +1241,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
+        accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         extensions.destroy()
         cancelProbe()
         media.destroy()

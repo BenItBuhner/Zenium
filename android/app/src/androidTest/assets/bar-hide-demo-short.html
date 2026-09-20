@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A short page</title>
+<style>
+  /*
+   * A short page for the bar-hide demo's camera: its body is the viewport's height plus the
+   * `over` query parameter in CSS px – negative for a page shorter than its viewport, which does
+   * not scroll at all, or a few px for one that scrolls by less than the bar's travel. On either
+   * the bar stays shown under any drag (v2 draft 11.5: the band stays shown on a page shorter
+   * than its viewport; `BarHideScrollFilter` holds a scroll with less than the travel left, and
+   * `BarHideShare` takes nothing from a drag the page has not scrolled under), and the page's last
+   * line is reached with the bar in place. Nothing here is fetched from the network.
+   */
+  html { background: #fff; color: #15141a; }
+  @media (prefers-color-scheme: dark) { html { background: #16161b; color: #ececf1; } }
+  body {
+    margin: 0; padding: 12px 20px 40px; box-sizing: border-box; position: relative;
+    font: 17px/1.45 -apple-system, Roboto, sans-serif;
+  }
+  h1 { margin: 0 0 6px; font-size: 24px; line-height: 1.2; }
+  p { margin: 0 0 10px; }
+  .meta { font-size: 13px; opacity: 0.7; margin-bottom: 10px; }
+  #last { position: absolute; left: 20px; right: 20px; bottom: 12px; margin: 0; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1 id="title">A short page</h1>
+<p class="meta">Served from inside the browser's own process, for the demo's camera.</p>
+<p id="about">This page fits its viewport, or runs a few pixels over it: too little for the bar to hide on. A drag down it moves no bar, and its last line is on screen with the bar in place.</p>
+<p id="last">The last line of the page.</p>
+<script>
+  var over = Number(new URLSearchParams(location.search).get('over')) || 0
+  document.body.style.minHeight = 'calc(100vh + ' + over + 'px)'
+  document.getElementById('title').textContent = over > 0
+    ? 'A page ' + over + ' px over its viewport'
+    : 'A page shorter than its viewport'
+  document.title = document.getElementById('title').textContent
+</script>
+</body>
+</html>

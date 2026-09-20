@@ -208,7 +208,7 @@ function SpaceHeader({
   return (
     <button
       type="button"
-      className="mb-1 flex h-7 w-full items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-[var(--zen-muted)] hover:bg-[var(--zen-element-bg)]"
+      className="mb-1 flex h-7 w-full items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-[var(--zen-fg)] hover:bg-[var(--zen-element-bg)]"
       title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
       aria-label={`${space.name} pinned tabs`}
       aria-expanded={!space.pinnedCollapsed}
@@ -288,7 +288,7 @@ function NewTabButton({
     <button
       type="button"
       className={cn(
-        'zen-tab h-8 text-[var(--zen-muted)] hover:text-[var(--zen-fg)]',
+        'zen-tab h-8 text-[var(--zen-fg)]',
         compact && 'justify-center px-0',
         spaced && 'mt-0.5'
       )}
