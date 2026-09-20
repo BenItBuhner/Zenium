@@ -75,27 +75,26 @@ const lightBlock = bare.slice(
   bare.indexOf('\n}', bare.indexOf('--v2-page:'))
 )
 const ROOM = px(/--v2-ring-room:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
+/** The shared ring's offset from a row's edge (§1: 2 outside on rows, `--v2-ring-offset`). */
+const OFFSET = px(/--v2-ring-offset:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
+/** How far the ring paints past the row's edge: its offset and its 2 px. */
+const REACH = OFFSET + 2
 const ROW = '.zen-bm-popover-body .zen-v2-row'
 
 describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', () => {
-  it('has one token for the room, in the light block only: the ring’s 2 px past the row at the shared offset 0', () => {
-    expect(ROOM).toBe(2)
+  it('has one token for the room, in the light block only: the ring’s 2 px past the row at the shared offset of 2 outside, so 4', () => {
+    expect(OFFSET).toBe(2)
+    expect(ROOM).toBe(4)
     expect(bare.match(/--v2-ring-room:/g) ?? []).toHaveLength(1)
-    // The shared ring the room is measured against: 2 px, offset 0 in light, −2 (inside) in dark.
+    // The shared ring the room is measured against: 2 px at `--v2-ring-offset`, the same in both
+    // themes (§1; the #247 chassis note took the 0 light / −2 dark split out).
     const shared = bare.indexOf("[class^='zen-v2-']:focus-visible")
     expect(shared).toBeGreaterThan(0)
     const ring = bare.slice(shared, bare.indexOf('}', shared))
     expect(ring).toMatch(/outline: 2px solid var\(--v2-ring\)/)
-    expect(ring).toMatch(/outline-offset: 0;/)
-    const dark = bare.slice(
-      bare.indexOf(":root[data-theme='dark'] [class^='zen-v2-']:focus-visible"),
-      bare.indexOf('}', bare.indexOf(":root[data-theme='dark'] [class^='zen-v2-']:focus-visible"))
-    )
-    expect(dark).toMatch(/outline-offset: -2px;/)
-    const lightReach = 0 + 2
-    const darkReach = -2 + 2
-    expect(ROOM).toBeGreaterThanOrEqual(lightReach)
-    expect(ROOM).toBeGreaterThanOrEqual(darkReach)
+    expect(ring).toMatch(/outline-offset: var\(--v2-ring-offset\);/)
+    expect(bare).not.toMatch(/:root\[data-theme='dark'\] \[class\^='zen-v2-'\]:focus-visible/)
+    expect(ROOM).toBeGreaterThanOrEqual(REACH)
   })
 
   it('is one unlayered rule beside the row primitive, tokens only: the row stands in by the room and gives it back from its gutter', () => {
@@ -126,10 +125,10 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
     const width = resolve(value(ROW, 'width'), ROOM)
     const gutter = resolve(value(ROW, 'padding-inline'), ROOM)
     const row = { x0: clip.x0 + inset, x1: clip.x0 + inset + width }
-    expect(row).toEqual({ x0: 3, x1: 317 })
-    // The light ring, 2 px outside the row at offset 0: its outer edge on both sides lies on or
-    // inside the clip, so both sides paint – no longer two horizontal bars.
-    const reach = 0 + 2
+    expect(row).toEqual({ x0: 5, x1: 315 })
+    // The ring, 2 px at 2 outside the row: its outer edge on both sides lies on or inside the
+    // clip, so both sides paint – no longer two horizontal bars.
+    const reach = REACH
     expect(row.x0 - reach).toBeGreaterThanOrEqual(clip.x0)
     expect(row.x1 + reach).toBeLessThanOrEqual(clip.x1)
     // Box to box (§5): the row's text starts 16 from the panel's inner edge, where the title

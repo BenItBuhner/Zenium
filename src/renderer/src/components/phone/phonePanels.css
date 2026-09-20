@@ -257,22 +257,23 @@
     color: var(--v2-text);
     transition: opacity 120ms var(--zen-ease);
   }
+  /*
+   * The text field's ring (section 1): 2 px inside its edge in both themes, as the shared
+   * `.zen-v2-field` draws it (main.css) – the wrapper sets the offset itself rather than the
+   * `--v2-ring-offset` token, which its clear button (`zen-v2-field-clear`, a button ringed 2
+   * outside) would inherit.
+   */
   .zen-phone-field:focus-within {
     outline: 2px solid var(--v2-ring);
-    outline-offset: 0;
-  }
-  /* Like the shared `zen-v2-*` ring (main.css): the offset turns inward in dark. */
-  :root[data-theme='dark'] .zen-phone-field:focus-within {
     outline-offset: -2px;
   }
   /*
    * Invalid (9.12): the danger border `.zen-v2-field[aria-invalid='true']` draws (main.css), the
    * state on the input the wrapper holds, where assistive technology reads it; and, focused, the
-   * ring in the danger ink as the shared field's, so dark's inset ring never covers the border.
+   * ring in the danger ink as the shared field's, so the inset ring never covers the border.
    * `outline-color` here, not the shared field's `--v2-ring` override: the wrapper's children
    * would inherit the token, and its clear button (`zen-v2-field-clear`) draws the shared ring.
-   * Its `:focus-within` at (0,3,1) outweighs the ring above at (0,2,0); the dark form sets the
-   * offset only.
+   * Its `:focus-within` at (0,3,1) outweighs the ring above at (0,2,0).
    */
   .zen-phone-field:has(> input[aria-invalid='true']) {
     border-color: var(--v2-danger);
