@@ -883,12 +883,14 @@ class Extensions(private val host: Host) {
      * `onPageStarted(url)` of a WebView: the previous document's endpoints are gone. The callback
      * is posted at commit and can land after the new document's bootstrap already said hello
      * (measured on the emulator: background pages register and make their first calls before
-     * it arrives), so endpoints of a main frame that reported exactly the new URL are kept.
+     * it arrives), so endpoints of a main frame that reported exactly the new URL are kept – or
+     * [documentUrl], the address the document reads as its own where that differs from the
+     * tab's (the PDF viewer page: `zen://pdf` for the tab, the PDF's URL for the document).
      * Passing no URL (the view is going away) drops everything.
      */
-    fun onDocumentGone(view: WebView, url: String? = null) {
+    fun onDocumentGone(view: WebView, url: String? = null, documentUrl: String? = null) {
         val mine = endpoints.filterValues { it.view === view }
-        val kept = if (url == null) emptyMap() else mine.filterValues { it.isMainFrame && it.url == url }
+        val kept = if (url == null) emptyMap() else mine.filterValues { it.isMainFrame && (it.url == url || it.url == documentUrl) }
         if (kept.isNotEmpty()) {
             lateOnPageStarted++
             Log.d(TAG, "onPageStarted($url) after ${kept.size} endpoint(s) of the new document said hello; kept")
@@ -1039,7 +1041,8 @@ class Extensions(private val host: Host) {
      * Tab pages: a top-level navigation to an extension origin gets any file (Chrome lets any
      * extension page open as a tab), other frames only its web-accessible resources; a fetch of
      * an extension page to a permitted host goes through the CORS proxy. Extension WebViews: any
-     * file, and the background view's document is the generated background page wherever the
+     * file of their own extension, another extension's web-accessible resources only, and the
+     * background view's document is the generated background page wherever the
      * core put it (`backgroundDocument`: an MV3 worker's page lives at the worker script's URL,
      * so `self.location` reads as in Chrome). Null for everything else: a tab's request then
      * goes to `Blocking.intercept`, where the extensions' declarativeNetRequest sets are among
@@ -1069,7 +1072,12 @@ class Extensions(private val host: Host) {
                     request.requestHeaders?.get("Referer")?.startsWith(origin) == true ||
                     tab.currentUrl?.startsWith(origin) == true
                 )
-            if (extensionPage == null && !ownPage && !ext.webAccessible.any { it.matches(path) }) return notFound()
+            // A foreign page (a web page, or another extension's own view asking for this one's
+            // files: `chrome-extension://<other>/...` spelled out in Read&Write's offscreen
+            // document resolves here, ExtensionPageNavigation) gets the web-accessible resources
+            // only, as Chrome serves them; the extension's own pages get any file.
+            val foreign = if (extensionPage != null) extensionPage.id != id else !ownPage
+            if (foreign && !ext.webAccessible.any { it.matches(path) }) return notFound()
             if (backgroundDocument && request.isForMainFrame && ext.backgroundHtml != null && "$origin$path" == ext.backgroundUrl) {
                 return response("text/html", 200, "OK", ext.backgroundHtml.toByteArray())
             }

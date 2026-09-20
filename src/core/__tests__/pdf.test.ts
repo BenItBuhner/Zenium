@@ -217,12 +217,37 @@ describe('a PDF the tab navigates to', () => {
     await completeDownload(f, item.id)
     expect(f.loads.at(-1)).toEqual({ tabId: tab.id, url: `zen://pdf?id=${item.id}` })
     expect(f.browser.tabs.tab(tab.id)?.url).toBe(`zen://pdf?id=${item.id}`)
-    // The page resolves to the file the download left, under its final name.
-    expect(f.browser.pdf.document(item.id)).toEqual({
+    // The page resolves to the file the download left, under its final name, with the document's
+    // own address (what its document runs under) and a token of its own that holds across lookups.
+    const doc = f.browser.pdf.document(item.id)
+    expect(doc).toEqual({
       id: item.id,
       name: 'report.pdf',
-      path: '/sdcard/Download/report.pdf'
+      path: '/sdcard/Download/report.pdf',
+      url: 'https://example.test/report.pdf',
+      token: expect.any(String)
     })
+    expect(doc?.token).not.toBe('')
+    expect(f.browser.pdf.document(item.id)?.token).toBe(doc?.token)
+    // What the tab stands for outside the chrome: the PDF's URL, as Chrome's PDF tab reads.
+    expect(f.browser.pdf.documentUrl(`zen://pdf?id=${item.id}`)).toBe(
+      'https://example.test/report.pdf'
+    )
+    expect(f.browser.pdf.documentUrl('zen://pdf?id=dl_nothing')).toBeNull()
+    expect(f.browser.pdf.documentUrl('https://example.test/')).toBeNull()
+  })
+
+  it('reads as its own viewer address when the PDF has no http(s) URL to run under', async () => {
+    const f = fixture()
+    const tab = openSite(f, 'https://example.test/')
+    const item = f.browser.downloads.begin(
+      PDF_INIT(tab.id, { url: 'blob:https://example.test/0b1c', filename: 'generated.pdf' })
+    )
+    await completeDownload(f, item.id)
+    // The document runs on the viewer's origin (`pdfViewerBaseUrl`), so the tab stands for no
+    // web address: extensions read it as the viewer page.
+    expect(f.browser.pdf.document(item.id)?.url).toBe('blob:https://example.test/0b1c')
+    expect(f.browser.pdf.documentUrl(`zen://pdf?id=${item.id}`)).toBeNull()
   })
 
   it('opens in a new tab when the tab that asked for it closed meanwhile', async () => {
@@ -300,6 +325,7 @@ describe('the viewer page', () => {
     expect(f.browser.pdf.document(item.id)).not.toBeNull()
     f.browser.downloads.item(item.id)!.fileMissing = true
     expect(f.browser.pdf.document(item.id)).toBeNull()
+    expect(f.browser.pdf.documentUrl(`zen://pdf?id=${item.id}`)).toBeNull()
     expect(f.browser.pdf.document('dl_nothing')).toBeNull()
   })
 
@@ -344,7 +370,13 @@ describe('the viewer page', () => {
       find: null,
       outline: [{ title: 'Summary', page: 2, children: [] }]
     }
+    // Only with the document's token: the viewer's document runs under the PDF's own origin,
+    // which a web page could share, so a report without it, or with another, is no one's.
     f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report })
+    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, token: 'not-the-token' })
+    expect(f.browser.pdf.report(tab.id)).toBeNull()
+    const token = f.browser.pdf.document(item.id)!.token
+    f.browser.handlePageMessage(tab.id, { type: 'pdf', pdf: report, token })
     expect(f.browser.pdf.report(tab.id)).toEqual(report)
     expect(await f.browser.handleCommand(f.win, 'pdf.state', { tabId: tab.id })).toEqual(report)
     expect(f.sent.find((s) => s.name === 'pdf.changed')?.payload).toEqual({ tabId: tab.id, report })

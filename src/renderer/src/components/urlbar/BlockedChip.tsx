@@ -26,16 +26,23 @@ export function BlockedChip({
   tab,
   state,
   variant,
-  interactive = true
+  interactive = true,
+  collapsed = false
 }: {
   tab: Tab
   state: UIState
   variant: 'desktop' | 'phone'
   interactive?: boolean
+  /**
+   * The pill has no room for the chip (`pillChipTiers.ts`): it hides – the blocking state and
+   * its count stay in the site information – unless the site information is up on it (§9.20).
+   */
+  collapsed?: boolean
 }): JSX.Element | null {
   const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
   const expanded = uiStore.use((s) => s.siteInfoOpen)
   if (siteState === 'no-site') return null
+  if (collapsed && !expanded) return null
   const label = blockedChipLabel(siteState, tab.blockedCount)
   const Icon = siteState === 'blocking' ? Shield : ShieldOff
   const showCount = siteState === 'blocking' && tab.blockedCount > 0

@@ -809,11 +809,19 @@ const DEFS: Def[] = [
 
   // --- Search & find -----------------------------------------------------------
   {
+    // Edge's F4 (Windows and Linux; Ctrl+F4 stays Close Tab) focuses the address bar as well.
     id: 'focusURLBar',
     action: 'urlbar.focus',
     group: 'searchAndFind',
     label: 'Focus Address Bar',
-    ...both({ key: 'l', mods: ACCEL, extra: [{ key: 'd', mods: ALT }] })
+    ...both({
+      key: 'l',
+      mods: ACCEL,
+      extra: [
+        { key: 'd', mods: ALT },
+        { key: 'F4', platforms: WINLIN }
+      ]
+    })
   },
   {
     id: 'key_search',

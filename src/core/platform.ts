@@ -215,6 +215,8 @@ export interface PageMessage {
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
   pdf?: PdfViewerReport
+  /** `pdf`: the document's token, as the core wrote it into the viewer's shell (`PdfDocumentInfo.token`). */
+  token?: string
   /** `share`: what the page asked to share (validated by the core). */
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */

@@ -7,12 +7,14 @@ import {
   HistoryService,
   type ImportedVisit,
   isRecordableUrl,
+  matchesAtWordStart,
   MAX_ENTRIES,
   MAX_VISITS,
   migrateHistory,
   prune,
   RETENTION_MS,
   scoreFrecency,
+  scoreHistoryMatch,
   searchVisits,
   selectRange,
   topSites
@@ -186,6 +188,93 @@ describe('scoreFrecency', () => {
       lastVisit: NOW - DAY
     })
     expect(scoreFrecency(typed, NOW)).toBe(scoreFrecency(today, NOW) + 2 * 100)
+  })
+})
+
+describe('matchesAtWordStart', () => {
+  it('finds the term at the start of the text or after a non-letter, not inside a word', () => {
+    expect(matchesAtWordStart('Docs home', 'docs')).toBe(true)
+    expect(matchesAtWordStart('example.com/docs/intro', 'docs')).toBe(true)
+    expect(matchesAtWordStart('example.com/my-docs', 'docs')).toBe(true)
+    expect(matchesAtWordStart('Googledocs', 'docs')).toBe(false)
+    expect(matchesAtWordStart('example.com/googledocs', 'docs')).toBe(false)
+    // A later occurrence at a word start counts even when an earlier one is mid-word.
+    expect(matchesAtWordStart('Googledocs – docs', 'docs')).toBe(true)
+    expect(matchesAtWordStart('anything', '')).toBe(false)
+  })
+
+  it('reads letters and digits of every script as word characters', () => {
+    expect(matchesAtWordStart('Überdocs', 'docs')).toBe(false)
+    expect(matchesAtWordStart('über docs', 'docs')).toBe(true)
+    expect(matchesAtWordStart('v2docs', 'docs')).toBe(false)
+  })
+})
+
+describe('scoreHistoryMatch (omnibox-02: HistoryURL + HistoryQuick)', () => {
+  const base = { visitCount: 3, lastVisit: NOW - DAY }
+
+  it('is null when a term is missing, a number when every term is somewhere', () => {
+    const e = entry({ url: 'https://news.example/', title: 'Daily news', ...base })
+    expect(scoreHistoryMatch(e, ['news', 'weekly'], NOW)).toBeNull()
+    expect(scoreHistoryMatch(e, ['daily', 'news'], NOW)).not.toBeNull()
+  })
+
+  it('typed visits count three times a plain visit', () => {
+    const plain = entry({ url: 'https://a.example/', title: 'A', ...base, visitCount: 4 })
+    const typed = entry({
+      url: 'https://b.example/',
+      title: 'B',
+      ...base,
+      visitCount: 1,
+      typedCount: 1
+    })
+    expect(scoreHistoryMatch(typed, ['example'], NOW)).toBe(
+      scoreHistoryMatch(plain, ['example'], NOW)
+    )
+    const typedMore = entry({ ...typed, typedCount: 3 })
+    expect(scoreHistoryMatch(typedMore, ['example'], NOW)!).toBeGreaterThan(
+      scoreHistoryMatch(plain, ['example'], NOW)!
+    )
+  })
+
+  it('a term at a word start in the title or a path segment outranks one inside a word', () => {
+    const wordStart = entry({ url: 'https://x.example/docs/', title: 'Team docs', ...base })
+    const midWord = entry({ url: 'https://y.example/googledocs', title: 'Googledocs', ...base })
+    expect(scoreHistoryMatch(wordStart, ['docs'], NOW)!).toBeGreaterThan(
+      scoreHistoryMatch(midWord, ['docs'], NOW)!
+    )
+    // Every term must sit at a word start for the bonus.
+    const oneMid = entry({ url: 'https://z.example/googledocs', title: 'Team pages', ...base })
+    const bothStart = entry({ url: 'https://z.example/google/docs', title: 'Team pages', ...base })
+    expect(scoreHistoryMatch(oneMid, ['google', 'docs'], NOW)!).toBeLessThan(
+      scoreHistoryMatch(bothStart, ['google', 'docs'], NOW)!
+    )
+  })
+
+  it('the start of the address (scheme and www. aside) counts on top of a word start', () => {
+    const host = entry({ url: 'https://www.docs.example/', title: 'Home', ...base })
+    const path = entry({ url: 'https://other.example/docs', title: 'Home', ...base })
+    expect(scoreHistoryMatch(host, ['docs'], NOW)!).toBeGreaterThan(
+      scoreHistoryMatch(path, ['docs'], NOW)!
+    )
+  })
+
+  it('recency still tells two otherwise equal pages apart', () => {
+    const fresh = entry({
+      url: 'https://a.example/docs',
+      title: 'Docs',
+      visitCount: 2,
+      lastVisit: NOW
+    })
+    const stale = entry({
+      url: 'https://b.example/docs',
+      title: 'Docs',
+      visitCount: 2,
+      lastVisit: NOW - 30 * DAY
+    })
+    expect(scoreHistoryMatch(fresh, ['docs'], NOW)!).toBeGreaterThan(
+      scoreHistoryMatch(stale, ['docs'], NOW)!
+    )
   })
 })
 
