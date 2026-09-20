@@ -188,15 +188,17 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         val hiddenPage = pageInnerHeight()
         val hiddenFrame = frameHeight()
         finding("[$edge] hidden: hide ${hideValue()}, page $hiddenPage px, frame $hiddenFrame px")
+        // Exact to a rounding px: the page's height is device px read back as CSS px, and the
+        // frame is the chrome's CSS px written as device px (1.75 to one on the emulator).
         val travel = barTravel()
         check(
             "$edge: the page's innerHeight grew by the bar's travel ($travel CSS px) once the bar rests hidden",
-            hiddenPage - shownPage in (travel * 0.75).roundToInt()..(travel * 1.25).roundToInt(),
+            abs(hiddenPage - shownPage - travel) <= 1.0,
             "innerHeight $shownPage -> $hiddenPage"
         )
         check(
             "$edge: the page WebView's frame grew by the bar's travel (${(travel * density).roundToInt()} px)",
-            hiddenFrame - shownFrame in (travel * density * 0.75).roundToInt()..(travel * density * 1.25).roundToInt(),
+            abs(hiddenFrame - shownFrame - travel * density) <= 1.0,
             "frame $shownFrame -> $hiddenFrame"
         )
 
