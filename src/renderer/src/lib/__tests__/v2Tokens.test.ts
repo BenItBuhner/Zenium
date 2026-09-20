@@ -3,7 +3,11 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
+import { REDUCED_FADE_MS, TOAST_CARD, TOAST_SHOW_MS } from '@shared/toastCard'
+import { MESSAGE_INSET } from '../../components/messages/stack'
+import { FULLSCREEN_RETURN_MS } from '../../components/phone/useFullscreenReturn'
 import { TOOLBAR_STROKE } from '../../components/v2/controls'
+import { TOAST_DURATION } from '../ui'
 
 /**
  * The design-language v2 tokens live in one block of main.css (docs/design-language-v2-draft.md).
@@ -895,6 +899,44 @@ describe('the fullscreen hint palette', () => {
       expect(palette.text).toBe(value(selector, from, '--v2-text'))
       expect(palette.fill).toBe(value(selector, from, '--v2-fill'))
     }
+  })
+
+  it("is the toast card's geometry by value: the numbers the page-drawn twin carries are the stylesheet's (§9.33's single exception)", () => {
+    // The tokens the card reads, by value.
+    expect(`${TOAST_CARD.radiusPx}px`).toBe(value(':root', lightBlockStart, '--v2-radius-card'))
+    expect(TOAST_CARD.shadow).toBe(value(':root', lightBlockStart, '--v2-shadow-panel'))
+    expect(`${TOAST_CARD.fontPx}px`).toBe(value(':root', lightBlockStart, '--v2-font-body'))
+    expect(`${TOAST_CARD.linePx}px`).toBe(value(':root', lightBlockStart, '--v2-line-body'))
+    expect(`${TOAST_CARD.weight}`).toBe(value(':root', lightBlockStart, '--v2-weight-body'))
+    expect(`${TOAST_CARD.rowPx}px`).toBe(
+      value(":root[data-form-factor='phone']", lightStart, '--v2-row')
+    )
+    const insetBlock = css.lastIndexOf(':root {', css.indexOf('--zen-message-inset:'))
+    expect(`${TOAST_CARD.insetPx}px`).toBe(value(':root', insetBlock, '--zen-message-inset'))
+    // The card reads those tokens – so the twin's copies are the card's – and states the rest
+    // of its geometry once, where the twin's numbers come from.
+    const card = block('.zen-message')
+    expect(card).toMatch(/^ {4}min-height: var\(--v2-row\);$/m)
+    expect(card).toMatch(/^ {4}border-radius: var\(--v2-radius-card\);$/m)
+    expect(card).toMatch(/^ {4}box-shadow: var\(--v2-shadow-panel\);$/m)
+    expect(card).toMatch(/^ {4}font-size: var\(--v2-font-body\);$/m)
+    expect(card).toMatch(/^ {4}line-height: var\(--v2-line-body\);$/m)
+    expect(card).toMatch(/^ {4}font-weight: var\(--v2-weight-body\);$/m)
+    expect(card).toMatch(new RegExp(`^ {4}gap: ${TOAST_CARD.gapPx}px;$`, 'm'))
+    expect(card).toMatch(
+      new RegExp(
+        `^ {4}padding: ${TOAST_CARD.padPx}px \\d+px ${TOAST_CARD.padPx}px ${TOAST_CARD.gutterPx}px;$`,
+        'm'
+      )
+    )
+    // A toast without an action closes its control side to the same gutter.
+    expect(block('.zen-message-toast:not([data-action])')).toMatch(
+      new RegExp(`^ {4}padding-right: ${TOAST_CARD.gutterPx}px;$`, 'm')
+    )
+    // The chrome's own constants are the same numbers, not copies.
+    expect(TOAST_DURATION).toBe(TOAST_SHOW_MS)
+    expect(MESSAGE_INSET).toBe(TOAST_CARD.insetPx)
+    expect(FULLSCREEN_RETURN_MS).toBe(REDUCED_FADE_MS)
   })
 })
 

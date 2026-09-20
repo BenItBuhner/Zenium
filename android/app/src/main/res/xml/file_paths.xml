@@ -4,6 +4,8 @@
     <!-- Images and favicons handed to the share sheet (Share.kt). -->
     <cache-path name="share" path="share/" />
     <cache-path name="updates" path="updates/" />
+    <!-- Photos and videos the camera app writes for a page's file input (BrowserActivity.showFileChooser). -->
+    <cache-path name="capture" path="capture/" />
     <external-files-path name="downloads" path="Download/" />
     <!-- Downloads on Android 8–9 land in the public directory (Android 10+ uses MediaStore). -->
     <external-path name="public-downloads" path="Download/" />

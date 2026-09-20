@@ -175,6 +175,10 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         val y = (rect.num("y") * d).toInt()
         val w = (rect.num("width") * d).toInt().coerceAtLeast(0)
         val h = (rect.num("height") * d).toInt().coerceAtLeast(0)
+        // A frame that does not fit the container is a stale measurement of a window that is
+        // gone (the chrome behind a rotation, BH-32): it would lay the page out cropped until the
+        // chrome's next report, which lays it out right. Refused, the last good frame stands.
+        if (!PageFrameFit.fits(w, h, container.width, container.height, d)) return
         // Recorded for a view filling the window too ([fillWindow]): the frame it is put back to.
         reported[tabId] = Rect(x, y, x + w, y + h)
         place(view)

@@ -1,4 +1,5 @@
 import { installPageScript, type PageScriptFlags, type WebAppHostMessage } from '@shared/pageScript'
+import type { PageHint } from '@shared/fullscreenHint'
 import type { PageRules } from '@shared/types'
 import { installFormsScript } from '@shared/formsScript'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
@@ -105,6 +106,7 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onMediaSession: ((message: MediaSessionHostMessage) => void) | null = null
   let onNotification: ((message: NotificationHostMessage) => void) | null = null
   let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
+  let onHint: ((hint: PageHint | null) => void) | null = null
   const selectionMemory = rememberClearedSelection(document)
   const onMessage = (event: { data: string }): void => {
     try {
@@ -121,9 +123,12 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         seekOffset?: number
         status?: NotificationHostMessage['status']
         id?: string
+        hint?: PageHint | null
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
+      // The browser's fullscreen hint, drawn over the page in its top layer (null takes it down).
+      else if (data.type === 'hint') onHint?.(data.hint ?? null)
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
       else if (data.type === 'webapp' && data.action)
         onWebApp?.({
@@ -206,7 +211,18 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     reportBlockedPopups: true,
     // A page's OpenSearch description makes it a "Recently visited" engine in Settings > Search.
     discoverSearchEngines: true,
+    // A fullscreen video's size turns the screen (Host.kt, MED-01). This script runs in the top
+    // document and in every frame, and each reports its own fullscreen: an embed's video goes
+    // fullscreen from its frame's document, the one that knows the size, while the top document
+    // sees only the <iframe>. The view lets a frame's fullscreen report through alone
+    // (TabWebView.onPageMessage); the host weighs it against the top document's.
+    reportFullscreen: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+    // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint
+    // is drawn in the page's top layer, as the desktop's fullscreen hints are.
+    onHint: (listener) => {
+      onHint = listener
+    },
     onFlags: (listener) => {
       onFlags = listener
       // Ask for the current flags; the reply arrives through the listener above.

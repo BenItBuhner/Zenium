@@ -1,0 +1,104 @@
+name: Android fullscreen video demo
+
+# Records fullscreen video and the file chooser's camera (MED-01, GN-20, OS-22) on a
+# hardware-accelerated Android emulator and uploads the video, the screenshots and the driver's
+# notes: a landscape WebM clip into fullscreen under a finger turning the screen to landscape
+# (the display's rotation, `dumpsys window`), the first-time exit hint along the bottom edge,
+# Back turning the screen back with the chrome fading in over 120 ms (sampled per frame) once the
+# page has landed, the page's resizes on the way logged (none beyond the portrait window), no hint
+# the second time, Home from fullscreen into picture-in-picture by itself (#223's auto-enter) and
+# the expand back inline, a portrait clip that turns nothing; then the file chooser: the capture
+# input meeting the system's camera prompt (Don't allow: the picker alone and the toast on why,
+# the toast card measured for the hint's twin; While using the app: straight to the camera app,
+# its shutter and Done under fingers, the photo's name and size in the page) and the plain image
+# input's chooser with Camera beside the files, the photo taken through it; then a same-origin
+# iframe's clip going fullscreen from its own document (the turn on the frame's report, the hint)
+# and a canvas going fullscreen with no video in it (the hint, no turn) (see FullscreenDemo).
+# The recipe: the media demo's. The hint is drawn in the page's top layer through the `popover`
+# attribute, which the API 34 image's WebView 113 predates (Chrome 114), so – as the media demos
+# do for other reasons – the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk
+# swapped in (android-webview-swap.sh), booted -writable-system, swiftshader_indirect. The
+# emulator's back camera is `emulated` (the QR demo's) so the camera app has one to shoot with;
+# CAMERA is revoked after the install (DEMO_REVOKE) so the system's prompt shows for real.
+# Dispatch-only, like the other demos: it takes about fifteen minutes and says nothing about a
+# change being correct beyond the driver's own checks (FullscreenDemo fails the run when one does
+# not hold). The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-fullscreen-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Fullscreen video demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system
+      # The shared driver picks the demo from its environment (see the script's header). The
+      # handshake directory is the media demos' (the driver is built on their base).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.FullscreenDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-fullscreen-demo
+        DEMO_VIDEO=android-fullscreen-demo.mp4
+        DEMO_REVOKE=android.permission.CAMERA
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
+      # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-fullscreen-demo
+      artifact-path: artifacts/android-fullscreen-demo/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Fullscreen video demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.FullscreenDemo
+        DEMO_DIR=media-demo
+        DEMO_OUT=artifacts/android-fullscreen-demo
+        DEMO_VIDEO=android-fullscreen-demo.mp4
+        DEMO_REVOKE=android.permission.CAMERA
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-fullscreen-demo-second-boot
+      artifact-path: artifacts/android-fullscreen-demo/
+      timeout-minutes: 60

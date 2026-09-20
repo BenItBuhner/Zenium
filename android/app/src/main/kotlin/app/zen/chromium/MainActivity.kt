@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
@@ -163,7 +164,11 @@ class MainActivity : BrowserActivity() {
         )
     }
 
-    /** Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px. */
+    /**
+     * Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px,
+     * and whether the bars are still on their way back from a page's fullscreen (`settling`,
+     * [FullscreenLanding]): the chrome holds its return fade while they are.
+     */
     private fun applyInsets(windowInsets: WindowInsetsCompat) {
         val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
@@ -174,7 +179,43 @@ class MainActivity : BrowserActivity() {
             "bottom" to maxOf(bars.bottom, ime.bottom) / d,
             "left" to bars.left / d
         )
-        host.chrome.hostEvent("insets", insets)
+        sendInsets()
+    }
+
+    /** The insets as last measured, with the landing's word as it stands now; judged again when the landing asks. */
+    private fun sendInsets() {
+        val now = SystemClock.uptimeMillis()
+        val settling = host.landing.settle(landingWindow(), now)
+        val payload = JSONObject(insets.toString()).put("settling", settling)
+        host.chrome.hostEvent("insets", payload)
+        root.removeCallbacks(landingCheck)
+        val at = host.landing.nextCheckAt()
+        if (at >= 0) root.postDelayed(landingCheck, (at - now).coerceAtLeast(0))
+    }
+
+    private val landingCheck = Runnable { sendInsets() }
+
+    /** The window as the chrome is told it: its insets, on the screen they were measured for. */
+    fun landingWindow(): FullscreenLanding.Window {
+        val c = resources.configuration
+        return FullscreenLanding.Window(
+            insets.optDouble("top", 0.0),
+            insets.optDouble("right", 0.0),
+            insets.optDouble("bottom", 0.0),
+            insets.optDouble("left", 0.0),
+            c.screenWidthDp,
+            c.screenHeightDp
+        )
+    }
+
+    /**
+     * A page's fullscreen ends ([Host.exitFullscreen]): the chrome hears that the bars are on
+     * their way back before it hears of the exit itself, so its first inline layout is not
+     * mistaken for the landing.
+     */
+    fun onFullscreenExit() {
+        host.landing.onExit(SystemClock.uptimeMillis())
+        sendInsets()
     }
 
     override fun onNewIntent(intent: Intent) {

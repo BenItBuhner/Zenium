@@ -91,6 +91,7 @@ import {
   type ExtRequestEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { onFullscreenEntered } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
@@ -351,7 +352,12 @@ export interface BootInfo {
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
 export interface HostEventPayloads {
-  insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * The window's safe-area insets, and whether the system bars are still on their way back from
+   * a page's fullscreen (`FullscreenLanding.kt`): the chrome's return fade waits while they are
+   * (`lib/fullscreenLanding.ts`). Absent from a host without the word.
+   */
+  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
   /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
   environment: PageEnvironment
   focus: { focused: boolean }
@@ -386,6 +392,11 @@ export interface HostEventPayloads {
   memoryPressure: { level: 'low' | 'critical' }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * A page view laid out at a new size (CSS px) has drawn the page at it (`Host.viewSized`):
+   * the chrome's return from a fullscreen fades in on the page's landing (`lib/fullscreenLanding.ts`).
+   */
+  'view.sized': { tabId: string; width: number; height: number }
   /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
   'thumbnail.captured': ThumbnailPicture & { tabId: string }
   /**
@@ -521,6 +532,19 @@ export interface HostEventPayloads {
   'notification.blocked': { origin: string }
   /** "Close all private tabs" pressed on the private session's notification (`PrivateSession.kt`). */
   'private.closeAll': Record<string, never>
+  /**
+   * A page's element went fullscreen: the engine's view is up in the fullscreen layer
+   * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike. The first-time exit
+   * hint's cue (GN-20); the video's size, which turns the screen, stays the host's own.
+   */
+  'fullscreen.entered': { tabId: string }
+  /**
+   * A toast the host raises itself on the chrome's message cards (v2 §9.33), where it cannot
+   * go through the core's own (`Browser.toast` has no action): the file chooser's camera
+   * refused, `action: 'settings'` for a refusal for good, whose Open settings is the app's
+   * details page (`app.openSettings`). Handled in `boot.ts`, where the renderer is in reach.
+   */
+  toast: { message: string; kind?: 'info' | 'error'; action?: 'settings' }
 }
 
 /**
@@ -1268,6 +1292,9 @@ export class AndroidPlatform implements Platform {
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
+      case 'view.sized':
+        this.events.send('view.sized', payload as HostEventPayloads['view.sized'])
+        return
       case 'thumbnail.captured':
         this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])
         return
@@ -1557,6 +1584,21 @@ export class AndroidPlatform implements Platform {
       case 'private.closeAll':
         browser.tabs.closePrivateTabs(this.window)
         return
+      case 'fullscreen.entered': {
+        const p = payload as Partial<HostEventPayloads['fullscreen.entered']>
+        if (typeof p.tabId !== 'string') return
+        const tabId = p.tabId
+        // The chrome is under the fullscreen layer: the hint is drawn in the page's top layer
+        // (`shared/pageHint.ts`), as the desktop's fullscreen hints are.
+        onFullscreenEntered({
+          settings: () => browser.state.settings,
+          dark: () => browser.darkScheme(),
+          markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),
+          post: (hint) =>
+            this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
+        })
+        return
+      }
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

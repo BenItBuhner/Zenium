@@ -253,6 +253,7 @@ export const DEFAULT_SETTINGS: Settings = {
   privacy: structuredClone(DEFAULT_PRIVACY_SETTINGS),
   newTab: structuredClone(DEFAULT_NEW_TAB_SETTINGS),
   gestureHintDone: false,
+  fullscreenHintDone: false,
   spellcheck: structuredClone(DEFAULT_SPELLCHECK),
   reader: structuredClone(DEFAULT_READER_PREFERENCES),
   readAloud: structuredClone(DEFAULT_READ_ALOUD_SETTINGS)

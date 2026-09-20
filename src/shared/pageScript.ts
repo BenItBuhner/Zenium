@@ -53,6 +53,7 @@ export interface PageScriptMessage {
     | 'pdf'
     | 'opensearch'
     | 'readAloud'
+    | 'fullscreen'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
@@ -78,6 +79,14 @@ export interface PageScriptMessage {
   pdf?: PdfViewerReport
   /** `readAloud`: the answer to a `readAloud.extract` request (`readAloudScript.ts`). */
   readAloud?: ReadAloudExtraction
+  /**
+   * `fullscreen` (hosts with `reportFullscreen`): the document has a fullscreen element
+   * (`active`), and when it is a `<video>` or holds one, the video's natural size – 0 × 0 while
+   * the size is not known (no video, or its metadata still to come).
+   */
+  active?: boolean
+  videoWidth?: number
+  videoHeight?: number
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -130,6 +139,12 @@ export interface PageScriptTransport {
    * the page's handlers where it registered any, the playing element otherwise.
    */
   onMediaSession?(listener: (message: MediaSessionHostMessage) => void): void
+  /**
+   * Hosts whose screen turns with a fullscreen video (Android, as Chrome's does): the script
+   * reports every `fullscreenchange` with the fullscreen video's natural size
+   * (`installFullscreenReporter`).
+   */
+  reportFullscreen?: boolean
   /**
    * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
    * the script posts the address of the first `<link rel="search"
@@ -221,6 +236,7 @@ export function installPageScript(transport: PageScriptTransport): void {
       send: transport.send.bind(transport),
       onReadAloud: transport.onReadAloud.bind(transport)
     })
+  if (transport.reportFullscreen) installFullscreenReporter(transport)
 
   window.addEventListener(
     'click',
@@ -304,6 +320,78 @@ export function installActivationReporter(transport: Pick<PageScriptTransport, '
     },
     true
   )
+}
+
+// ---------------------------------------------------------------------------
+// Fullscreen video: the size the host turns the screen by
+// ---------------------------------------------------------------------------
+
+/** The document's fullscreen element, under either name the engines have given it. */
+function fullscreenElementOf(doc: Document): Element | null {
+  return (
+    doc.fullscreenElement ??
+    (doc as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
+    null
+  )
+}
+
+/**
+ * The video a fullscreen element shows: the element itself, or – a player's wrapper in
+ * fullscreen, YouTube's way – the first video inside it with a size, else the first at all.
+ * Null for an element without one (a game's canvas, a slide deck), which turns nothing.
+ */
+export function fullscreenVideoOf(element: Element): HTMLVideoElement | null {
+  if (typeof HTMLVideoElement === 'undefined') return null
+  if (element instanceof HTMLVideoElement) return element
+  const videos = [...element.querySelectorAll('video')].filter(
+    (v): v is HTMLVideoElement => v instanceof HTMLVideoElement
+  )
+  return videos.find((v) => v.videoWidth > 0) ?? videos[0] ?? null
+}
+
+/**
+ * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element
+ * and the natural size of the video it shows (0 × 0 for none, or none known yet). The host
+ * turns the screen by it: a landscape video takes Android to landscape as Chrome's does
+ * (MED-01). A video in fullscreen before its metadata arrived reports again at
+ * `loadedmetadata`, as Chrome's orientation lock waits for the size before it locks. The
+ * engine's own `onShowCustomView` comes before the page's event, so the host pairs the two.
+ */
+export function installFullscreenReporter(transport: Pick<PageScriptTransport, 'send'>): void {
+  let awaitingMetadata: HTMLVideoElement | null = null
+  const send = (active: boolean, video: HTMLVideoElement | null): void =>
+    transport.send({
+      type: 'fullscreen',
+      active,
+      videoWidth: video?.videoWidth ?? 0,
+      videoHeight: video?.videoHeight ?? 0
+    })
+  const onMetadata = (e: Event): void => {
+    const video = awaitingMetadata
+    awaitingMetadata = null
+    if (!video || e.target !== video) return
+    const element = fullscreenElementOf(document)
+    if (element && fullscreenVideoOf(element) === video) send(true, video)
+  }
+  const report = (): void => {
+    if (awaitingMetadata) {
+      awaitingMetadata.removeEventListener('loadedmetadata', onMetadata)
+      awaitingMetadata = null
+    }
+    const element = fullscreenElementOf(document)
+    if (!element) {
+      send(false, null)
+      return
+    }
+    const video = fullscreenVideoOf(element)
+    send(true, video)
+    if (video && video.videoWidth === 0) {
+      awaitingMetadata = video
+      video.addEventListener('loadedmetadata', onMetadata, { once: true })
+    }
+  }
+  document.addEventListener('fullscreenchange', report, true)
+  document.addEventListener('webkitfullscreenchange', report, true)
 }
 
 /**
