@@ -35,8 +35,9 @@ import org.junit.runner.RunWith
  *  2. Back: the layer goes, the screen turns back, the chrome fades in over 120 ms (sampled per
  *     frame in the chrome), the hint is gone; the page's resize count says how often it relaid.
  *  3. The same clip into fullscreen again: no hint the second time.
- *  4. Home while it plays fullscreen: #223's auto-enter into picture-in-picture; the app brought
- *     back expands into fullscreen landscape again; Back leaves it.
+ *  4. Home while it plays fullscreen: #223's auto-enter into picture-in-picture, the engine's
+ *     fullscreen ending as the window goes small (the layer and the orientation given back, the
+ *     tab's view filling the small window); the app brought back shows the page inline, portrait.
  *  5. The portrait clip into fullscreen: the screen does not turn.
  *  6. The capture input, the camera refused at the system's prompt (a finger on Don't allow):
  *     the picker alone, and once it is cancelled the toast on why.
@@ -45,6 +46,8 @@ import org.junit.runner.RunWith
  *  8. The plain image input: the system chooser with Camera beside the files; Camera under a
  *     finger opens the camera app, Back cancels it, and the photo file it would have written is
  *     gone while the kept one from step 7 stays.
+ *  9. The once-key reset and the colour scheme flipped to dark through the core: the hint again,
+ *     in the dark palette (the design still beside step 1's light one).
  *
  * The emulator's camera is `-camera-back emulated` (the workflow), so the camera app has one; the
  * permission flow is real (CAMERA revoked after the install, `DEMO_REVOKE`). Every touch a step
@@ -94,6 +97,11 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     override fun warmUp() {
         notes = File(out, "android-fullscreen-notes.txt")
         notes.writeText("Zenium Android fullscreen video and file chooser camera checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n")
+        // The system's one-time "Viewing full screen" notice (a device shows it once, ever) would
+        // stand over the video and take the Back of step 2; it counts as seen, as the error pages
+        // demo has it.
+        shell("settings put secure immersive_mode_confirmations confirmed")
+        note("the system's one-time immersive notice counted as seen (settings put secure immersive_mode_confirmations confirmed)")
         note("demo server: ${server.selfCheck()}")
         val webView = runCatching { WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } }.getOrNull()
         note("webview: ${webView ?: "unknown"}")
@@ -123,40 +131,45 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         captureRefusedOnce()
         captureGranted()
         chooserWithCameraAndFiles()
+        hintInTheDarkScheme()
         note("\nend: fullscreenTab=${host.fullscreenTab?.tabId} rotation ${rotation()} requested ${requested()} capture directory ${captureFiles()}")
     }
 
     // --- the sequence ----------------------------------------------------------------------------
 
-    /** 1. A finger on "Play landscape fullscreen": the layer, the turn, the hint. */
+    /** 1. A finger on "Play landscape fullscreen": the layer, the hint (read while it stands), the turn. */
     private fun landscapeFullscreenWithTheHint() {
         note("\n1. the landscape clip into fullscreen")
         val enteredAt = SystemClock.uptimeMillis()
         tapPageButton("fs-land", "Play landscape fullscreen", "the video goes fullscreen", 15_000) {
             host.fullscreenTab?.tabId == TAB || field("fs") == "1"
         }
-        val turned = poll(10_000) { landscape() }
-        note("  fullscreen ${SystemClock.uptimeMillis() - enteredAt} ms after the touch: host fullscreenTab=${host.fullscreenTab?.tabId} page fs=${field("fs")} el=${field("el")} state=${field("state")}")
-        check("the screen turned to landscape for the landscape clip", turned)
-        check("the activity asks for SENSOR_LANDSCAPE", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
-        check("the host holds the orientation for the video", host.fullscreenLandscape)
-        note("  rotation ${rotation()}; requestedOrientation ${requested()}; dumpsys window: ${dumpsysRotation()}")
-        // The hint: its host element in the page's top layer, along the bottom edge.
+        val fullscreenAt = SystemClock.uptimeMillis() - enteredAt
+        // The hint first: it stands 2.8 s, less than the emulator takes to turn the screen. Its
+        // host element is in the page's top layer, along the bottom edge; it rides in on a spring
+        // from below the edge, so its place is read once it has landed.
         val seen = awaitHint(6_000, present = true)
         val seenAt = SystemClock.uptimeMillis() - enteredAt
-        check("the first-time exit hint stands in the page", seen != null)
-        // It rides in on a spring from below the edge: its place is read once it has landed.
         val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
         shot("01-landscape-fullscreen-hint")
+        shot("design-hint-toast-light")
+        note("  fullscreen $fullscreenAt ms after the touch: host fullscreenTab=${host.fullscreenTab?.tabId} page fs=${field("fs")} el=${field("el")} state=${field("state")}")
+        check("the first-time exit hint stands in the page", seen != null)
         if (hint != null) {
             val viewport = hint.optDouble("viewportHeight")
             val bottom = hint.optDouble("top") + hint.optDouble("height")
             note("  hint $seenAt ms after the touch; at rest: $hint; top layer through popover: ${hint.optBoolean("popover")}")
             check("the hint is along the bottom edge (a toast, not the top bubble)", viewport - bottom in 0.0..60.0 && hint.optDouble("top") > viewport / 2)
             check("the hint is the one 44 px row", hint.optDouble("height") in 40.0..72.0)
+            check("the hint wears the light palette", paletteOf(hint) == "light")
         }
+        val turned = poll(10_000) { landscape() }
+        note("  screen landscape ${SystemClock.uptimeMillis() - enteredAt} ms after the touch: $turned; rotation ${rotation()}; requestedOrientation ${requested()}; dumpsys window: ${dumpsysRotation()}")
+        check("the screen turned to landscape for the landscape clip", turned)
+        check("the activity asks for SENSOR_LANDSCAPE", requested() == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        check("the host holds the orientation for the video", host.fullscreenLandscape)
         check("the once-key is set (fullscreenHintDone)", poll(4_000) { hintDone() })
-        // Its stand is 2.8 s: it should have gone on its own before the exit below.
+        // Its stand is 2.8 s: it goes on its own before the exit below.
         val gone = awaitHint(6_000, present = false) == null
         note("  hint gone on its own: $gone")
         SystemClock.sleep(800)
@@ -181,8 +194,12 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         SystemClock.sleep(2_500)
         shot("04-back-in-portrait")
         val samples = fadeSamples()
+        val fades = fadeCalls()
         note("  chrome opacity per frame around the return (ms:opacity, the frames under 1 with their neighbours): $samples")
-        check("the chrome faded in (frames with opacity under 1 were seen)", samples.contains(":0"))
+        note("  animate() calls on the chrome window since the back: $fades")
+        check("the chrome's return started a 120 ms opacity fade on the window", fades.contains("\"duration\":120"))
+        // At the emulator's frame rate (swiftshader) 120 ms is a frame or two: mid-fade frames are noted, not demanded.
+        note("  frames with the chrome under full opacity seen: ${samples.contains(":0")}")
         check("the chrome is fully back", chromeOpacity() == "1")
         check("the hint left with the fullscreen", awaitHint(3_000, present = false) == null)
         val resizesAfter = field("resizes")?.toIntOrNull() ?: 0
@@ -201,7 +218,13 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         shot("05-second-fullscreen-no-hint")
     }
 
-    /** 4. Home while playing fullscreen: #223's auto-enter; back in, still fullscreen landscape; Back leaves it. */
+    /**
+     * 4. Home while playing fullscreen: #223's auto-enter. The engine hides its custom view as the
+     * window goes small (Chrome's fullscreen ends the same way), so the host gives the layer and
+     * the orientation back and the tab's own view fills the small window ([TabHost.fillWindow]:
+     * one owner of the bounds at a time); the expand brings the page back inline in the chrome,
+     * as Chrome does, in portrait.
+     */
     private fun homeIntoPictureInPicture() {
         note("\n4. Home while the clip plays fullscreen (#223's auto-enter)")
         if (field("state") != "playing") note("  the clip is not playing (state=${field("state")}); the auto-enter needs it playing")
@@ -209,22 +232,20 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         val auto = awaitPip(true, 10_000)
         check("Home with the video playing fullscreen enters picture-in-picture by itself", auto)
         SystemClock.sleep(1_500)
-        note("  in picture-in-picture: $auto; window ${appWindowBounds()} (${ratio(appWindowBounds())}); rotation ${rotation()}; requested ${requested()}; host fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab}")
+        note("  in picture-in-picture: $auto; window ${appWindowBounds()} (${ratio(appWindowBounds())}); rotation ${rotation()}; requested ${requested()}; " +
+            "host fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling} state=${field("state")}")
+        check("in the small window the fullscreen layer is gone and the tab's view fills it (one owner of the bounds)", host.fullscreenTab == null && host.tabs.filling == TAB)
+        check("the orientation is given back with the layer (UNSPECIFIED)", requested() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
         shot("06-pip-auto-enter")
         bringToFront()
         val expanded = awaitPip(false, 8_000)
-        val landscapeAgain = poll(8_000) { landscape() && host.fullscreenTab?.tabId == TAB }
-        note("  expanded back: $expanded; fullscreen landscape again: $landscapeAgain; rotation ${rotation()}; host fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}")
+        val inline = poll(8_000) { host.fullscreenTab == null && host.tabs.filling == null && !landscape() }
+        SystemClock.sleep(1_500)
+        note("  expanded back: $expanded; inline in the chrome: $inline; rotation ${rotation()}; requested ${requested()}; host fullscreenTab=${host.fullscreenTab?.tabId} pip tab=${host.media.pictureInPictureTab} filling=${host.tabs.filling}; ${describeTab(TAB)}")
         check("the window expands back out of picture-in-picture", expanded)
-        check("the video is fullscreen in landscape again after the expand", landscapeAgain)
-        SystemClock.sleep(1_000)
+        check("the page is back inline in the chrome, in portrait, the view filling nothing", inline)
+        check("the page is still there after the round trip", field("fs") == "0")
         shot("07-expanded-from-pip")
-        back()
-        check("back leaves fullscreen after the expand", poll(10_000) { host.fullscreenTab == null })
-        check("portrait again after the expand and back", poll(10_000) { !landscape() })
-        check("the tab's view fills nothing once fullscreen is over", poll(3_000) { host.tabs.filling == null })
-        SystemClock.sleep(2_000)
-        note("  after back: rotation ${rotation()} requested ${requested()} filling=${host.tabs.filling} state=${field("state")}")
         // The clip keeps playing behind; pause it so the portrait step's play is the one playing.
         pageJs("document.getElementById('land').pause()")
     }
@@ -340,6 +361,36 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         shot("17-end")
     }
 
+    /**
+     * 9. The hint under the dark colour scheme, for the design still: the once-key reset and the
+     * scheme flipped through the core (`settings.update`), the landscape clip into fullscreen
+     * again, the hint in the dark palette, Back, the scheme given back.
+     */
+    private fun hintInTheDarkScheme() {
+        note("\n9. the hint under the dark colour scheme (design still)")
+        coreInvoke("settings.update", """{"colorScheme":"dark","fullscreenHintDone":false}""")
+        check("the once-key is reset through settings.update", poll(4_000) { !hintDone() })
+        SystemClock.sleep(1_000)
+        tapPageButton("fs-land", "Play landscape fullscreen", "the video goes fullscreen under the dark scheme", 15_000) {
+            host.fullscreenTab?.tabId == TAB || field("fs") == "1"
+        }
+        poll(10_000) { landscape() }
+        val seen = awaitHint(6_000, present = true)
+        val hint = if (seen == null) null else awaitHintAtRest(2_500) ?: seen
+        shot("design-hint-toast-dark")
+        check("the hint stands again once its key is reset", seen != null)
+        note("  hint under dark: $hint")
+        check("the hint wears the dark palette", hint != null && paletteOf(hint) == "dark")
+        check("the once-key is set again", poll(4_000) { hintDone() })
+        awaitHint(6_000, present = false)
+        back()
+        check("back leaves fullscreen under the dark scheme", poll(10_000) { host.fullscreenTab == null })
+        poll(10_000) { !landscape() }
+        coreInvoke("settings.update", """{"colorScheme":"light"}""")
+        SystemClock.sleep(1_500)
+        shot("18-light-again")
+    }
+
     // --- the screen ------------------------------------------------------------------------------
 
     private fun rotation(): Int {
@@ -406,15 +457,39 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
 
     private fun hintDone(): Boolean = coreState().getJSONObject("settings").optBoolean("fullscreenHintDone")
 
+    /**
+     * The palette the hint wears, by its host's text colour (the panel sits in a closed shadow
+     * root the page cannot read): `#15141a` in light, `#fbfbfe` in dark (`HINT_PALETTE`).
+     */
+    private fun paletteOf(hint: JSONObject): String = when (hint.optString("color").replace(" ", "")) {
+        "rgb(21,20,26)" -> "light"
+        "rgb(251,251,254)" -> "dark"
+        else -> "unknown(${hint.optString("color")})"
+    }
+
     // --- the chrome's fade -----------------------------------------------------------------------
 
-    /** Sample the chrome window's opacity every frame (some seconds' worth) so the 120 ms fade is on record. */
+    /**
+     * Sample the chrome window's opacity every frame (some seconds' worth) so the 120 ms fade is
+     * on record, and log every `animate()` the window starts (its keyframes and timing: the fade
+     * itself, whatever the frame rate makes of it).
+     */
     private fun installFadeSampler() {
         chromeJs(
-            "(function(){window.__fade=[];var t0=performance.now();var w=document.querySelector('.zen-window');" +
-                "(function s(){if(w)window.__fade.push(Math.round(performance.now()-t0)+':'+getComputedStyle(w).opacity);" +
+            "(function(){window.__fade=[];window.__fadeCalls=[];var t0=performance.now();" +
+                "if(!window.__fadeHooked){window.__fadeHooked=true;var orig=Element.prototype.animate;" +
+                "Element.prototype.animate=function(k,o){if(this.classList&&this.classList.contains('zen-window'))" +
+                "window.__fadeCalls.push(JSON.stringify({at:Math.round(performance.now()-t0),keyframes:k,options:o}));return orig.apply(this,arguments)}}" +
+                "(function s(){var w=document.querySelector('.zen-window');" +
+                "window.__fade.push(Math.round(performance.now()-t0)+':'+(w?getComputedStyle(w).opacity:'none'));" +
                 "if(window.__fade.length<900)requestAnimationFrame(s)})()})()"
         )
+    }
+
+    /** The `animate()` calls the chrome window made since the sampler went in, as JSON text. */
+    private fun fadeCalls(): String {
+        val raw = chromeJs("JSON.stringify(window.__fadeCalls||[])")
+        return (JSONTokener(raw).nextValue() as? String) ?: raw
     }
 
     /** The samples where the chrome was not fully opaque, with a neighbour on each side. */
@@ -424,9 +499,13 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         val all = runCatching { org.json.JSONArray(text) }.getOrNull() ?: return "none"
         val samples = (0 until all.length()).map { all.getString(it) }
         val kept = LinkedHashSet<Int>()
-        samples.forEachIndexed { i, s -> if (!s.endsWith(":1")) { kept += maxOf(0, i - 1); kept += i; kept += minOf(samples.size - 1, i + 1) } }
+        samples.forEachIndexed { i, s ->
+            val opacity = s.substringAfter(':').toDoubleOrNull()
+            if (opacity != null && opacity < 1.0) { kept += maxOf(0, i - 1); kept += i; kept += minOf(samples.size - 1, i + 1) }
+        }
         val picked = kept.sorted().map { samples[it] }
-        return "${samples.size} frames; ${if (picked.isEmpty()) "every frame at 1" else picked.joinToString(" ")}"
+        val missing = samples.count { it.endsWith(":none") }
+        return "${samples.size} frames${if (missing > 0) " ($missing without the window)" else ""}; ${if (picked.isEmpty()) "every frame at 1" else picked.joinToString(" ")}"
     }
 
     private fun chromeOpacity(): String {

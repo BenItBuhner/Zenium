@@ -104,7 +104,7 @@
     var r = h.getBoundingClientRect();
     return JSON.stringify({ top: r.top, left: r.left, width: r.width, height: r.height,
       opacity: h.style.opacity, transform: h.style.transform, viewportHeight: window.innerHeight,
-      popover: typeof h.showPopover === 'function' });
+      color: getComputedStyle(h).color, popover: typeof h.showPopover === 'function' });
   };
   render();
 })();
