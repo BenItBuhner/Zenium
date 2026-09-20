@@ -2810,16 +2810,26 @@
     height: var(--v2-icon);
     stroke-width: var(--v2-icon-stroke);
   }
-  .zen-menu-star {
+  /*
+   * The stateful bookmark star (`BarGlyphs.tsx`), the menu row's and the bar's optional Bookmark
+   * alike: the icon token's square, the outline and the filled star stacked in it, each star the
+   * square's size – so in the bar, where no row rule sizes the svgs, the star is the 20 of its
+   * neighbours (the stroke stays the surface's own: the row's token, the bar's default).
+   */
+  .zen-star-glyph {
     position: relative;
     display: flex;
     width: var(--v2-icon);
     height: var(--v2-icon);
   }
-  .zen-menu-star > span {
+  .zen-star-glyph > span {
     position: absolute;
     inset: 0;
     display: flex;
+  }
+  .zen-star-glyph svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
   }
   .zen-sheet-item-two-line {
     height: auto;
