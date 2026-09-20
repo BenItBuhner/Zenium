@@ -93,10 +93,9 @@ export function BookmarkAllTabsDialog({
         id={TITLE_ID}
         title="Bookmark all tabs"
         description={
-          <span id={`${TITLE_ID}-desc`}>
-            {count === 1 ? '1 page goes into a new folder' : `${count} pages go into a new folder`}
-          </span>
+          count === 1 ? '1 page goes into a new folder' : `${count} pages go into a new folder`
         }
+        descriptionId={`${TITLE_ID}-desc`}
         scrolled={scrolled}
       />
       <form
