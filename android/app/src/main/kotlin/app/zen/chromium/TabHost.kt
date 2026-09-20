@@ -7,8 +7,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.json.JSONObject
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * Owns the tab WebViews and places them above the chrome exactly where the core says, in device
@@ -193,66 +191,23 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /**
      * Lay `view` out where the chrome put it, adjusted for the bar that hides on scroll
-     * (`lib/barHide.ts`; the preview host's `applyFrame` does the same in CSS px):
-     *
-     * The chrome's content column takes one of two layouts – short, with the bar's band left
-     * free (`S`), or tall, into the band, once the bar is hidden and at rest (`H`) – and reports
-     * whichever it is in; the report can trail the bar by a frame or two either way, so which
-     * one it is is read off the frame's `shownEdge`, not assumed. From that the page's edge on
-     * the bar's side follows the bar: at rest the layout is the chrome's own, `S` or `H`, and
-     * while the bar is off its edge but not fully the page is laid out tall once (one relayout
-     * per gesture, not one per frame, and it never pushes the page's content) and its far edge
-     * is clipped to what the bar has left. A bottom-docked bar's page grows at the bottom under
-     * the clip; a top-docked bar's page is slid up with the bar and clipped at the frame's bottom,
-     * so the content under the bar moves with it and the page holds still under the finger.
-     *
-     * The tall layout has a band less to scroll, so Chromium clamps a page that was within the
-     * band of its end: the gesture starts no hide there ([BarHideScrollFilter], [BarHideShare]),
-     * and a page in its last band keeps its bar, laid out short, with all of it reachable.
+     * ([BarHidePlacement] has the geometry). A view filling the window (picture-in-picture,
+     * [fillWindow]) is laid out by nobody else until it is put back: the chrome's frames for it
+     * are recorded meanwhile ([setBounds], [setBarHide]) and applied then.
      */
     private fun place(view: TabWebView) {
-        // A view filling the window (picture-in-picture, [fillWindow]) is laid out by nobody else
-        // until it is put back; the chrome's frames for it are recorded meanwhile and applied then.
-        if (filled?.tabId == view.tabId) return
         val r = reported[view.tabId] ?: return
         val frame = barHide
-        var top = r.top
-        var bottom = r.bottom
-        var shift = 0f
-        var clip = 0
-        if (frame != null) {
-            val t = frame.travelPx
-            val o = frame.offsetPx
-            when (frame.edge) {
-                BarHideFrame.Edge.TOP -> {
-                    // `S` starts at the shown edge, `H` a band above it; whichever the report is nearer.
-                    val shownTop = if (abs(r.top - frame.shownEdgePx) <= abs(r.top + t - frame.shownEdgePx)) r.top else r.top + t
-                    when {
-                        o <= 0f -> top = shownTop
-                        o < t -> {
-                            top = shownTop
-                            bottom = r.bottom + t
-                            shift = -o
-                            clip = (t - o).roundToInt()
-                        }
-                        else -> top = shownTop - t
-                    }
-                }
-                BarHideFrame.Edge.BOTTOM -> {
-                    val shownBottom = if (abs(r.bottom - frame.shownEdgePx) <= abs(r.bottom - t - frame.shownEdgePx)) r.bottom else r.bottom - t
-                    bottom = if (o <= 0f) shownBottom else shownBottom + t
-                    if (o > 0f && o < t) clip = (t - o).roundToInt()
-                }
-            }
-        }
+        // The gesture's knowledge of the bar is not a layout: it stays current, held or not.
         view.barHide.frame = frame
-        view.setBarHideShift(shift, clip)
+        val p = BarHidePlacement.of(r.top, r.bottom, frame, held = filled?.tabId == view.tabId) ?: return
+        view.setBarHideShift(p.shiftPx, p.clipPx)
         val w = r.width()
-        val h = (bottom - top).coerceAtLeast(0)
+        val h = p.height
         val lp = (view.layoutParams as? FrameLayout.LayoutParams) ?: FrameLayout.LayoutParams(w, h)
-        if (lp.leftMargin == r.left && lp.topMargin == top && lp.width == w && lp.height == h) return
+        if (lp.leftMargin == r.left && lp.topMargin == p.top && lp.width == w && lp.height == h) return
         lp.leftMargin = r.left
-        lp.topMargin = top
+        lp.topMargin = p.top
         lp.width = w
         lp.height = h
         view.layoutParams = lp
@@ -300,7 +255,12 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     // --- picture-in-picture ----------------------------------------------------------------------
 
-    /** The tab whose view fills the window ([fillWindow]), with what it had before, to put back. */
+    /**
+     * The tab whose view fills the window ([fillWindow]), with what it had before, to put back.
+     * `bounds` is the layout the view had as it filled, for a view the chrome never laid out; one
+     * with a reported frame is put back through [place], which lays it out for the bar that hides
+     * on scroll as it stands then.
+     */
     private class Filled(val tabId: String, val bounds: FrameLayout.LayoutParams, var visible: Boolean, var radiusPx: Float, var coverTop: Float, var coverBottom: Float)
     private var filled: Filled? = null
 
@@ -309,10 +269,12 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
 
     /**
      * The window is (or is about to be) the picture-in-picture one: `tabId`'s view alone fills it
-     * – over the chrome, without its corners, its covers or the bounds the core lays it out at
-     * (which keep arriving and are held for later) – so the small window shows nothing but the
-     * page, whose video the core lays over the viewport. `null` puts the view back where the
-     * chrome had it. A view that is gone by then is simply not restored.
+     * – over the chrome, without its corners, its covers, the slide and clip of a bar hiding on
+     * scroll, or the bounds the core lays it out at (which keep arriving and are recorded for
+     * later, [setBounds]; the bar's frames too, [setBarHide]) – so the small window shows nothing
+     * but the page, whose video the core lays over the viewport. `null` puts the view back where
+     * the chrome has it by now, laid out for the bar as it stands ([place]). A view that is gone
+     * by then is simply not restored.
      */
     fun fillWindow(tabId: String?) {
         val before = filled
@@ -320,7 +282,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
             filled = null
             val view = views[before.tabId]
             if (view != null) {
-                view.layoutParams = before.bounds
+                if (reported.containsKey(before.tabId)) place(view) else view.layoutParams = before.bounds
                 view.setRadius(before.radiusPx)
                 view.cover.set(before.coverTop, before.coverBottom, snap = true)
                 view.visibility = if (before.visible) View.VISIBLE else View.GONE
@@ -333,6 +295,7 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.setRadius(0f)
         view.cover.set(0f, 0f, snap = true)
+        view.setBarHideShift(0f, 0)
         view.visibility = View.VISIBLE
         view.bringToFront()
     }
