@@ -29,6 +29,7 @@ import type {
 import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
+import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
@@ -101,6 +102,7 @@ import {
 import {
   BLANK_URL,
   displayHost,
+  displayUrl,
   extensionPageOf,
   getDomain,
   inputToUrl,
@@ -200,6 +202,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
 export class Browser {
   readonly state: BrowserState
   readonly history: HistoryService
+  /** Typed text → chosen destination memory, the omnibox's shortcuts provider (omnibox-03). */
+  readonly omniboxShortcuts: OmniboxShortcutsService
   /**
    * The new tab page on both platforms: `zen://newtab`'s state and the pages preloaded for
    * Ctrl+T (desktop), the shortcuts, the removed hosts and the background image (both).
@@ -330,6 +334,12 @@ export class Browser {
       })
     }
     this.history = new HistoryService(platform.io)
+    this.omniboxShortcuts = new OmniboxShortcutsService(platform.io)
+    // Clearing history clears what the omnibox learned from it (Chromium's ShortcutsBackend
+    // follows the history service's deletions).
+    this.history.onChange((kind) => {
+      if (kind === 'clear') this.omniboxShortcuts.clear()
+    })
     this.bookmarks = new BookmarkService(this.state)
     this.downloads = new DownloadService(
       platform.io,
@@ -1791,6 +1801,7 @@ export class Browser {
   flushSync(): void {
     this.state.flushSync()
     this.history.flushSync()
+    this.omniboxShortcuts.flushSync()
     this.downloads.flushSync()
     this.boosts.flushSync()
     this.liveFolders.flushSync()
@@ -1926,6 +1937,39 @@ export class Browser {
       return
     }
     this.tabs.navigate(target.id, url, { upgradedFrom })
+  }
+
+  /**
+   * The shortcuts provider learns a pick (omnibox-03): what was typed → where it went, never in
+   * a private window or for a private tab, never for Zenium's own pages. A search's row shows
+   * the query; an address's the page's title, from history when the pick did not carry one.
+   */
+  private learnShortcut(
+    text: string,
+    url: string,
+    tabId: string | null,
+    win: ZenWindow,
+    learn: { typed: string; title: string; kind?: 'url' | 'search' } | undefined
+  ): void {
+    if (!learn || !learn.typed.trim()) return
+    if (win.isPrivate) return
+    const tab = tabId ? this.state.model.tabs[tabId] : undefined
+    if (tab?.containerId === PRIVATE_CONTAINER_ID) return
+    if (!/^https?:\/\//i.test(url)) return
+    const kind = learn.kind ?? (inputToUrl(text) ? 'url' : 'search')
+    const engine =
+      kind === 'search'
+        ? this.state.searchEngines.find((e) => url.startsWith(e.searchUrl.split('%s')[0] ?? ''))
+        : undefined
+    const title =
+      learn.title ||
+      (kind === 'search' ? text : (this.history.titleFor(url) ?? displayUrl(url) ?? url))
+    this.omniboxShortcuts.learn(learn.typed, {
+      url,
+      title,
+      kind,
+      ...(engine ? { engineId: engine.id } : {})
+    })
   }
 
   /**
@@ -2572,7 +2616,11 @@ export class Browser {
 
       'history.search': ({ query, limit }) => this.history.search(query, limit),
       'history.recent': ({ limit }) => this.history.recent(limit),
-      'history.delete': ({ url }) => this.history.delete(url),
+      'history.delete': ({ url }) => {
+        this.history.delete(url)
+        // A page forgotten is not to be recalled by what was typed for it either.
+        this.omniboxShortcuts.forgetUrl(url)
+      },
       'history.clear': () => this.history.clear(),
       'history.visits': ({ query }) => this.history.visits(query),
       'history.grouped': ({ query }) => this.history.groupedByDay(query),

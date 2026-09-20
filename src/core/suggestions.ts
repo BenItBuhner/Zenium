@@ -32,11 +32,15 @@ import { AnswerService } from './answers'
  * above the verbatim when one should be inlined).
  */
 export const RELEVANCE = {
+  /** The best learned shortcut, over the history completion (Chromium's shortcut boost, 1414). */
+  shortcut: 1414,
   autofill: 1400,
   verbatim: 1300,
   keywordStarter: 1290,
   answer: 1250,
   intranet: 1240,
+  /** Further shortcuts for the typing: under the verbatim row, over every other local source. */
+  shortcutOther: 1199,
   entity: 1150,
   tabPrefix: 1120,
   bookmarkPrefix: 1100,
@@ -185,6 +189,10 @@ export class SuggestionService {
         relevance: RELEVANCE.verbatim
       })
     }
+
+    // What was typed before led somewhere (the shortcuts provider, omnibox-03): that
+    // destination first, completed inline when its text extends the typing.
+    if (!keyword && wantsHistory) rows.push(...this.shortcutRows(query, engines))
 
     // The default match to complete inline: the most frecent visited host or URL with this prefix.
     if (!keyword && !isPrivate) {
@@ -536,6 +544,35 @@ export class SuggestionService {
         fill: query,
         deletable: true,
         relevance: base - out.length
+      })
+    }
+    return out
+  }
+
+  /**
+   * The shortcuts provider's rows: destinations the typing led to before, the best of them
+   * boosted over the history completion (Chromium's shortcut boost) and completed inline when
+   * its text extends what was typed, the others under the verbatim row. Every one is removable.
+   */
+  private shortcutRows(query: string, engines: SearchEngine[]): Ranked[] {
+    const q = query.toLowerCase()
+    const out: Ranked[] = []
+    for (const s of this.browser.omniboxShortcuts.match(query, 3)) {
+      const shown = displayUrl(s.url) || s.url
+      const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
+      const extendsTyped = s.fill.toLowerCase().startsWith(q) && s.fill.length > query.length
+      out.push({
+        id: `shortcut:${s.url}`,
+        kind: s.kind === 'search' ? 'search' : 'url',
+        title: s.kind === 'search' ? s.fill : s.title || shown,
+        subtitle: s.kind === 'search' ? `Search with ${engine?.name ?? 'the web'}` : shown,
+        url: s.url,
+        favicon: s.kind === 'search' ? null : this.browser.history.faviconFor(s.url),
+        targetId: engine?.id ?? null,
+        // Keep the user's casing for what they typed, so the selection does not flicker.
+        fill: extendsTyped ? query + s.fill.slice(query.length) : query,
+        deletable: true,
+        relevance: out.length === 0 ? RELEVANCE.shortcut : RELEVANCE.shortcutOther - out.length
       })
     }
     return out

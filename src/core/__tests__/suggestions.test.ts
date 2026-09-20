@@ -5,6 +5,7 @@ import type { NetHost, StoreIO } from '../platform'
 import type { Browser } from '../browser'
 import { BookmarkService } from '../bookmarks'
 import { HistoryService } from '../history'
+import { OmniboxShortcutsService } from '../omniboxShortcuts'
 import { createTabRecord } from '../model'
 import { BrowserState } from '../state'
 import { RELEVANCE, SuggestionService, isIntranetWord } from '../suggestions'
@@ -15,6 +16,9 @@ const io: StoreIO = {
   write: async () => {},
   writeSync: () => {}
 }
+
+/** The fixtures' "now": a fixed instant, so nothing here depends on the real date. */
+const NOW = Date.parse('2026-09-17T12:00:00Z')
 
 interface FakeNet extends NetHost {
   /** Body served per URL substring; unknown URLs get a 404. */
@@ -47,6 +51,7 @@ function setup(
   suggestions: SuggestionService
   bookmarks: BookmarkService
   history: HistoryService
+  shortcuts: OmniboxShortcutsService
   win: ZenWindow
   net: FakeNet
   state: BrowserState
@@ -57,6 +62,8 @@ function setup(
   state.settings.searchSuggestions = opts.online ?? false
   const bookmarks = new BookmarkService(state)
   const history = new HistoryService(io)
+  // The shortcuts provider on the fixture's clock (never the real date).
+  const shortcuts = new OmniboxShortcutsService(io, () => NOW)
   const net = fakeNet(opts.resolver ?? true)
   // No extension holds an omnibox keyword: the URL bar's own sources answer.
   const extensions = { omniboxSuggest: async () => null }
@@ -66,6 +73,7 @@ function setup(
     state,
     bookmarks,
     history,
+    omniboxShortcuts: shortcuts,
     extensions,
     searchEngines,
     platform: { net }
@@ -84,7 +92,7 @@ function setup(
     material: 'none'
   })
   const suggestions = new SuggestionService(browser)
-  return { suggestions, bookmarks, history, win, net, state }
+  return { suggestions, bookmarks, history, shortcuts, win, net, state }
 }
 
 const kinds = (rows: Suggestion[]): string[] => rows.map((r) => r.kind)
@@ -647,5 +655,102 @@ describe('SuggestionService: a private tab in a regular window', () => {
     expect(empty.map((r) => r.kind)).toEqual(['history'])
     // Nothing named, the window's own answer holds too.
     expect((await suggestions.suggest('', null, win)).length).toBe(1)
+  })
+})
+
+describe('SuggestionService: the shortcuts provider (omnibox-03)', () => {
+  it('boosts a remembered destination to the top of the popup, completed inline', async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    history.visit('https://mailing-lists.example/', 'Mailing lists', null)
+    shortcuts.learn('mai', { url: 'https://mail.google.com/mail/', title: 'Gmail', kind: 'url' })
+
+    // "Ma" is a prefix of the remembered typing and of the destination's text: boosted to the
+    // top and completed inline, the typed prefix keeping its casing.
+    const results = await suggestions.suggest('Ma', null, win)
+    expect(results[0]).toMatchObject({
+      kind: 'url',
+      title: 'Gmail',
+      url: 'https://mail.google.com/mail/',
+      fill: 'Mail.google.com/mail/',
+      deletable: true,
+      relevance: RELEVANCE.shortcut
+    })
+    // Over the history completion (Chromium's shortcut boost) and the verbatim row.
+    expect(results[1]).toMatchObject({ id: 'autofill', url: 'https://mailing-lists.example/' })
+    expect(results.some((r) => r.kind === 'search' && r.title === 'Ma')).toBe(true)
+
+    // A typing the destination's text does not extend is boosted but not completed inline
+    // (Chromium's fill_into_edit rule): the field keeps what was typed.
+    shortcuts.learn('gm', { url: 'https://mail.google.com/mail/', title: 'Gmail', kind: 'url' })
+    const byOtherText = await suggestions.suggest('g', null, win)
+    expect(byOtherText[0]).toMatchObject({ url: 'https://mail.google.com/mail/', fill: 'g' })
+  })
+
+  it('shows a remembered search as a search row for its engine, other shortcuts under verbatim', async () => {
+    const { suggestions, shortcuts, win } = setup()
+    shortcuts.learn('ca', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('ca', { url: 'https://cats.example/', title: 'Cats', kind: 'url' })
+
+    const results = await suggestions.suggest('ca', null, win)
+    const shortcutRows = results.filter((r) => r.id.startsWith('shortcut:'))
+    expect(shortcutRows).toHaveLength(2)
+    expect(shortcutRows[0].relevance).toBe(RELEVANCE.shortcut)
+    expect(shortcutRows[1].relevance).toBeLessThan(RELEVANCE.verbatim)
+    const search = shortcutRows.find((r) => r.kind === 'search')!
+    expect(search).toMatchObject({
+      title: 'cats',
+      subtitle: 'Search with Google',
+      targetId: 'google',
+      fill: 'cats',
+      deletable: true
+    })
+  })
+
+  it('offers nothing from the shortcuts in a private window or with history suggestions off', async () => {
+    const priv = setup('private')
+    priv.shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+    expect(
+      (await priv.suggestions.suggest('g', null, priv.win)).some((r) =>
+        r.id.startsWith('shortcut:')
+      )
+    ).toBe(false)
+
+    const { suggestions, shortcuts, state, win } = setup()
+    shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+    state.settings.historySuggestions = false
+    expect(
+      (await suggestions.suggest('g', null, win)).some((r) => r.id.startsWith('shortcut:'))
+    ).toBe(false)
+  })
+})
+describe('SuggestionService: search mode (omnibox-26, -08)', () => {
+  it('with an engine given, an address-like typing is a search for that engine', async () => {
+    const { suggestions, history, win } = setup()
+    history.visit('https://example.org/', 'Example Domain', null, { transition: 'typed' })
+    const results = await suggestions.suggest('example.org', null, win, { engineId: 'duckduckgo' })
+    expect(results[0]).toMatchObject({
+      kind: 'search',
+      title: 'example.org',
+      subtitle: 'Search with DuckDuckGo',
+      url: 'https://duckduckgo.com/?q=example.org',
+      fill: 'example.org'
+    })
+    expect(results.some((r) => r.kind === 'url' || r.kind === 'history')).toBe(false)
+  })
+
+  it('Chrome\u2019s legacy ? prefix is search mode for the default engine, and nothing on ? alone', async () => {
+    const { suggestions, win } = setup()
+    const results = await suggestions.suggest('?example.org', null, win)
+    expect(results[0]).toMatchObject({
+      kind: 'search',
+      title: 'example.org',
+      url: 'https://www.google.com/search?q=example.org'
+    })
+    expect(await suggestions.suggest('?', null, win)).toEqual([])
   })
 })
