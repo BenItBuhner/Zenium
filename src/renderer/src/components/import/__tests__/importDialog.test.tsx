@@ -334,9 +334,11 @@ describe('the import dialog', () => {
       source: CHROME_1.id,
       kinds: ['bookmarks', 'passwords']
     })
-    // Busy from the press: the primary spins, Cancel is off, the fields are read-only in place.
+    // Busy from the press: the primary spins at full ink – busy is not disabled (§9.30) – Cancel
+    // is off, the fields are read-only in place.
     expect(panel().dataset.phase).toBe('busy')
     expect(submitButton().getAttribute('aria-busy')).toBe('true')
+    expect(submitButton().disabled).toBe(false)
     const cancel = Array.from(panel().querySelectorAll('button')).find(
       (b) => b.textContent === 'Cancel'
     )!

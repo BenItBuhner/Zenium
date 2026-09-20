@@ -168,7 +168,9 @@ function Dialog({ state, preselect }: { state: UIState; preselect: string | null
           <BusyButton
             variant="primary"
             busy={busy}
-            disabled={!canImport(form)}
+            // Busy is not disabled (§9.30): the working primary keeps its ink under the spinner
+            // and only Cancel goes to .4; `BusyButton` already drops the press while it spins.
+            disabled={!busy && !canImport(form)}
             onClick={form.submit}
             data-testid="import-submit"
           >
