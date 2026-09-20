@@ -402,10 +402,18 @@ export function PillRuler({
 // ---------------------------------------------------------------------------
 
 /** Each chip's slot counted from the run's end, where the run is anchored. */
-function slotsFromEnd(chips: readonly PillChipModel[]): Map<string, number> {
+function slotsFromEnd(ids: readonly string[]): Map<string, number> {
   const slots = new Map<string, number>()
-  chips.forEach((chip, i) => slots.set(chip.id, chips.length - 1 - i))
+  ids.forEach((id, i) => slots.set(id, ids.length - 1 - i))
   return slots
+}
+
+interface Ghost {
+  key: number
+  /** The run the pill showed until the change: the ghost's copies. */
+  chips: readonly PillChipModel[]
+  /** The run it changed to, by id: what fades in, what keeps its slot. */
+  live: readonly string[]
 }
 
 /**
@@ -429,14 +437,18 @@ export function ChipRun({
   const key = chips.map((c) => c.id).join('|')
   /** What the last commit drew: the run a change of set keeps as the ghost. */
   const shown = useRef<{ key: string; chips: readonly PillChipModel[] } | null>(null)
-  const [ghost, setGhost] = useState<{ key: number; chips: readonly PillChipModel[] } | null>(null)
+  const [ghost, setGhost] = useState<Ghost | null>(null)
   useLayoutEffect(() => {
     const last = shown.current
     shown.current = { key, chips }
     if (interactive && last && last.key !== key) {
-      setGhost((g) => ({ key: (g?.key ?? 0) + 1, chips: last.chips }))
+      const live = chips.map((c) => c.id)
+      setGhost((g) => ({ key: (g?.key ?? 0) + 1, chips: last.chips, live }))
     }
   }, [key, chips, interactive])
+  // Keyed on the ghost alone: the pill re-renders freely during the 120 ms (a blocked count
+  // ticking up, a store change) without the fade starting over; a further set change makes a
+  // new ghost of the run it interrupted.
   useLayoutEffect(() => {
     if (!ghost) return
     // Started before the paint, so the first frame already has the ghost over the new run.
@@ -451,8 +463,8 @@ export function ChipRun({
       anim.finished.catch(() => undefined)
       return anim
     }
-    const live = slotsFromEnd(chips)
-    const was = slotsFromEnd(ghost.chips)
+    const live = slotsFromEnd(ghost.live)
+    const was = slotsFromEnd(ghost.chips.map((c) => c.id))
     const anims: Animation[] = []
     ghost.chips.forEach((chip, i) => {
       const copy = ghostRef.current?.children[i]
@@ -460,8 +472,8 @@ export function ChipRun({
       if (live.get(chip.id) === was.get(chip.id)) copy.style.visibility = 'hidden'
       else anims.push(...[fade(copy, 0)].filter((a): a is Animation => a !== null))
     })
-    chips.forEach((chip, i) => {
-      if (was.get(chip.id) === live.get(chip.id)) return
+    ghost.live.forEach((id, i) => {
+      if (was.get(id) === live.get(id)) return
       // The live chip itself: its wrapper is `display: contents` and paints nothing.
       const el = runRef.current?.children[i]?.firstElementChild
       anims.push(...[fade(el, 1)].filter((a): a is Animation => a !== null))
@@ -474,7 +486,7 @@ export function ChipRun({
       window.clearTimeout(timer)
       for (const a of anims) a.cancel()
     }
-  }, [ghost, chips])
+  }, [ghost])
   if (chips.length === 0 && !ghost) return null
   return (
     <span ref={runRef} className="zen-pill-run" data-testid="pill-chips">
