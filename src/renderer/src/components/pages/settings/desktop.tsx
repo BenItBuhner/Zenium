@@ -322,7 +322,7 @@ function FindResults({
           className="zen-settings-group zen-settings-other-categories"
           aria-label="Other categories"
         >
-          <h3 className="zen-settings-heading">Other categories</h3>
+          <h3 className="zen-v2-heading zen-settings-heading">Other categories</h3>
           <div className="zen-settings-results">
             {elsewhere.map((hit) => (
               <RowView
