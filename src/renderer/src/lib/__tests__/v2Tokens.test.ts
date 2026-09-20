@@ -286,6 +286,7 @@ const SCALE = [
   'card-padding',
   'content-max',
   'ring',
+  'ring-room',
   'selection',
   'ok',
   'warn',

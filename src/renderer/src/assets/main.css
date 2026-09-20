@@ -169,6 +169,10 @@
   --v2-nav-active: #e9ecf2;
   /* Focus ring and text selection: one accent, one rule (§1, §9.6). */
   --v2-ring: var(--v2-accent);
+  /* The room a clipped list leaves a row's ring (§1, §9.20; pr-245 chassis (b)): the ring's
+     width past the row's edge – its 2 px at the shared rule's offset 0 (light; dark's -2 lies
+     inside the row). When §1's +2 outside lands on rows, the room grows to 4 with it. */
+  --v2-ring-room: 2px;
   --v2-selection: color-mix(in srgb, var(--v2-accent) 30%, transparent);
   /* A selected row (selection mode, a picked item), not text selection: the accent at 12 % (§9.6). */
   --v2-selected: color-mix(in srgb, var(--v2-accent) 12%, transparent);
@@ -3960,11 +3964,13 @@
     animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
   }
   /*
-   * The bubble's list: flush with the popover's sides, so the row's 16 gutter puts its text on
-   * the title block's 16 (§5, box to box) and its fill spans the popover; rows touch. The footer
-   * under the hairline is one full-width row (§6 has no text-only buttons): the popover's 32 row
-   * with the hover fill, its 15/400 label at the 16 gutter; the popover's clipped corners round
-   * its bottom.
+   * The bubble's list: flush with the popover's sides – the rows stand `--v2-ring-room` in from
+   * them (the shared row's popover form, beside the primitive) and their text on the title
+   * block's 16 (§5, box to box); rows touch. Its first row is the first thing under the title
+   * block, so the list leaves the ring's room above it as well, and 8 under the last row to the
+   * footer's hairline. The footer under the hairline is one full-width row (§6 has no text-only
+   * buttons): the popover's 32 row with the hover fill, its 15/400 label at the 16 gutter; the
+   * popover's clipped corners round its bottom.
    */
   .zen-dl-list {
     list-style: none;
@@ -3972,7 +3978,7 @@
     padding: 0;
   }
   .zen-dl-bubble .zen-dl-list {
-    padding: 0 0 8px;
+    padding: var(--v2-ring-room) 0 8px;
   }
   .zen-dl-bubble-footer {
     flex-shrink: 0;
@@ -6167,6 +6173,24 @@
   .zen-v2-row:hover:not([aria-disabled='true'], [data-static]) {
     background: var(--v2-fill);
   }
+}
+/*
+ * A row in a clipped popover's scrolling body (§9.20, §1; pr-245 chassis (b)): the panel clips
+ * at its edge (`.zen-bm-popover { overflow: hidden }`) and its body is a scroll container, so a
+ * row that runs edge to edge has its ring's sides cut off – two horizontal bars where the ring
+ * should be. The list leaves the ring its room: the row stands `--v2-ring-room` in from each
+ * side of the body and gives that much back from its gutter, so its text stays at the 16 the
+ * title block and the headings hold (§5, box to box) and only its fill moves in. Nothing else in
+ * the body – headings, forms, the empty line – shifts; a list whose first or last row touches
+ * the body's edge leaves the same room there itself (the downloads bubble's list). Clipping
+ * stays on the panel. One rule for every desktop popover on the shared body: the downloads
+ * bubble, tab search, the folder editor, blocked pop-ups, share, the bookmark bubbles. A
+ * modifier on the primitive by context, unlayered as the primitive is (§9.34).
+ */
+.zen-bm-popover-body .zen-v2-row {
+  width: calc(100% - 2 * var(--v2-ring-room));
+  margin-inline: var(--v2-ring-room);
+  padding-inline: calc(16px - var(--v2-ring-room));
 }
 
 /* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
