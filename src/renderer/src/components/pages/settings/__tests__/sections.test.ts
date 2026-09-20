@@ -2953,3 +2953,175 @@ describe('searching the rows', () => {
     ])
   })
 })
+
+describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
+  it('states the keyboard’s checker and leads to its settings on a host with no checker of its own', () => {
+    const languages = section('languages')
+    const group = languages.groups.find((g) => g.id === 'spellcheck')
+    expect(group?.heading).toBe('Spell check')
+    expect(group?.description).toContain('spell checker of the keyboard in use')
+    expect(group?.rows.map((r) => r.id)).toEqual(['spellcheck-keyboard'])
+    const open = row(languages, 'spellcheck-keyboard')
+    if (open.kind !== 'action') throw new Error('not an action')
+    expect(open.label).toBe('Keyboard settings')
+    expect(open.leaves).toBe('external')
+    open.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('spellcheck.openKeyboardSettings', undefined)
+    // Nothing of the desktop's own checker: no switch, no list, no dictionary.
+    expect(findRow(languages.groups, 'spellcheck-enabled')).toBeNull()
+    expect(languages.groups.map((g) => g.id)).not.toContain('spellcheck-languages')
+  })
+
+  it('carries the switch, the languages checked in with their dictionary’s state, Remove and an Add sheet where the host checks itself', () => {
+    const s = state({
+      spellcheck: {
+        available: true,
+        systemLanguages: false,
+        languages: [
+          { code: 'en-US', name: 'English (United States)', enabled: true, status: 'ready' },
+          { code: 'de', name: 'German', enabled: true, status: 'downloading' },
+          { code: 'fr', name: 'French', enabled: true, status: 'failed' },
+          { code: 'es', name: 'Spanish', enabled: false, status: 'unknown' }
+        ]
+      }
+    })
+    const languages = section('languages', s)
+    expect(languages.groups.map((g) => g.id).slice(-3)).toEqual([
+      'spellcheck',
+      'spellcheck-languages',
+      'spellcheck-add'
+    ])
+    const on = row(languages, 'spellcheck-enabled')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.checked).toBe(true)
+    on.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('spellcheck.setEnabled', { enabled: false })
+
+    // The languages checked in are items; what their dictionary is doing is the description.
+    expect(row(languages, 'spellcheck-language:en-US')).toMatchObject({
+      kind: 'item',
+      label: 'English (United States)',
+      description: undefined
+    })
+    expect(row(languages, 'spellcheck-language:de').description).toBe('Downloading dictionary…')
+    expect(row(languages, 'spellcheck-language:fr').description).toBe('Dictionary download failed')
+    expect(findRow(languages.groups, 'spellcheck-language:es')).toBeNull()
+    const remove = row(languages, 'spellcheck-language:de:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('spellcheck.setLanguage', { code: 'de', on: false })
+
+    // Add opens the §9.13 sheet with the languages not yet checked in.
+    const add = row(languages, 'spellcheck-add')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.label).toBe('Add a language')
+    expect(add.form?.title).toBe('Add a language to check in')
+    expect(add.disabled).toBeFalsy()
+  })
+
+  it('reads the list at .4 with the switch off, replaces Add with Chrome’s limit at five, and names the system where it chooses', () => {
+    const five = ['en-US', 'de', 'fr', 'es', 'it'].map((code) => ({
+      code,
+      name: code,
+      enabled: true,
+      status: 'ready' as const
+    }))
+    const off = section(
+      'languages',
+      state(
+        { spellcheck: { available: true, systemLanguages: false, languages: five } },
+        { spellcheck: { ...DEFAULT_SETTINGS.spellcheck, enabled: false } }
+      )
+    )
+    expect(row(off, 'spellcheck-enabled')).toMatchObject({ kind: 'switch', checked: false })
+    expect(row(off, 'spellcheck-language:de').disabled).toBe(true)
+    // Five checked in: the limit's info row stands where Add stood, dependent like the list.
+    expect(row(off, 'spellcheck-limit')).toMatchObject({
+      kind: 'info',
+      label: 'Up to 5 languages can be checked at a time',
+      description: 'Remove one to add another.',
+      disabled: true
+    })
+    expect(findRow(off.groups, 'spellcheck-add')).toBeNull()
+
+    const system = section(
+      'languages',
+      state({ spellcheck: { available: true, systemLanguages: true, languages: five } })
+    )
+    expect(row(system, 'spellcheck-system-languages')).toMatchObject({
+      kind: 'info',
+      label: 'Languages follow the system'
+    })
+    expect(findRow(system.groups, 'spellcheck-language:de')).toBeNull()
+    expect(system.groups.map((g) => g.id)).not.toContain('spellcheck-add')
+  })
+})
+
+describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words', () => {
+  it('has the switch and the 30 s to 12 h ladder, dependent on the switch', () => {
+    const c = context()
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      c.ctx
+    )
+    const group = tabs.groups.find((g) => g.id === 'sleeping-tabs')
+    expect(group?.heading).toBe('Sleeping tabs')
+    expect(group?.rows.map((r) => r.id)).toEqual(['unload-enabled', 'unload-after'])
+    const on = row(tabs, 'unload-enabled')
+    if (on.kind !== 'switch') throw new Error('not a switch')
+    expect(on.label).toBe('Save resources with sleeping tabs')
+    expect(on.checked).toBe(true)
+    on.onChange(false)
+    expect(c.patches.at(-1)).toEqual({ unloadEnabled: false })
+
+    const after = row(tabs, 'unload-after')
+    if (after.kind !== 'value') throw new Error('not a choice')
+    expect(after.label).toBe('Put inactive tabs to sleep after')
+    // Edge's ladder; the default (20 minutes) is off it and is listed in its place, not lost.
+    expect(after.options.map((o) => o.label)).toEqual([
+      '30 seconds',
+      '1 minute',
+      '5 minutes',
+      '15 minutes',
+      '20 minutes',
+      '30 minutes',
+      '1 hour',
+      '2 hours',
+      '3 hours',
+      '6 hours',
+      '12 hours'
+    ])
+    expect(after.value).toBe('20')
+    expect(after.disabled).toBe(false)
+    after.onChange('0.5')
+    expect(c.patches.at(-1)).toEqual({ unloadTimeoutMinutes: 0.5 })
+
+    const off = section('tabs', state({}, { unloadEnabled: false }))
+    expect(row(off, 'unload-after').disabled).toBe(true)
+    expect(row(off, 'never-sleep-add').disabled).toBe(true)
+  })
+
+  it('lists the sites that never sleep with Remove, and an Add sheet that takes a host from what was typed', () => {
+    const c = context(state({}, { unloadExcludedDomains: ['mail.example.com', 'chat.example'] }))
+    const tabs = buildSection(
+      PAGE.sections.find((x) => x.id === 'tabs')!,
+      c.ctx
+    )
+    const group = tabs.groups.find((g) => g.id === 'never-sleep')
+    expect(group?.heading).toBe('Never put these sites to sleep')
+    expect(group?.rows.map((r) => r.id)).toEqual([
+      'never-sleep:chat.example',
+      'never-sleep:mail.example.com',
+      'never-sleep-add'
+    ])
+    const remove = row(tabs, 'never-sleep:chat.example:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com'] })
+
+    const add = row(tabs, 'never-sleep-add')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.label).toBe('Add a site')
+    expect(add.form?.title).toBe('Never put this site to sleep')
+  })
+})

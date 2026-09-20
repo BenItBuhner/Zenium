@@ -144,7 +144,9 @@ const TRANSLATE: TranslateUIState = {
 
 /** Electron's checker with dictionaries for a few languages, `enabled` ones checked in. */
 function checker(
-  languages: Array<[code: string, name: string, enabled: boolean, status?: SpellcheckDictionaryStatus]>,
+  languages: Array<
+    [code: string, name: string, enabled: boolean, status?: SpellcheckDictionaryStatus]
+  >,
   systemLanguages = false
 ): SpellcheckStatus {
   return {
@@ -273,13 +275,18 @@ describe('Settings › Languages › Spell check on the desktop', () => {
       ['pt', 'Portuguese', false]
     ])
     const markup = render(s)
-    expect(markup).toContain('Up to 5 languages can be checked at a time. Remove one to add another.')
+    expect(markup).toContain(
+      'Up to 5 languages can be checked at a time. Remove one to add another.'
+    )
     expect(markup).not.toContain('Add a language to check in')
   })
 
-  it("reads the list at .4 with the switch off, the switch alone live (§9.30)", () => {
+  it('reads the list at .4 with the switch off, the switch alone live (§9.30)', () => {
     const s = state(DESKTOP, 'linux')
-    s.settings = { ...DEFAULT_SETTINGS, spellcheck: { ...DEFAULT_SETTINGS.spellcheck, enabled: false } }
+    s.settings = {
+      ...DEFAULT_SETTINGS,
+      spellcheck: { ...DEFAULT_SETTINGS.spellcheck, enabled: false }
+    }
     s.spellcheck = checker([['en-US', 'English (United States)', true]])
     const markup = render(s)
     const row = markup.match(/<div[^>]*data-language="en-US"[^>]*>/)?.[0] ?? ''
