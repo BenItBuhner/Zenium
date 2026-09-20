@@ -323,8 +323,10 @@ function ClearHistorySheet({
   return (
     <PhoneSheet
       name="history-clear"
-      title="Clear all history?"
-      prompt={{
+      // A prompt: the title block (§9.23) with the glyph on the title's start.
+      title={{
+        pose: 'block',
+        text: 'Clear all history?',
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: `${visits} will be removed from Zenium's history. Recently closed tabs and windows stay.`
       }}

@@ -136,7 +136,6 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
     <BottomSheet
       ref={sheet}
       hosted
-      fadeEdges={false}
       onDismissed={closeCustomize}
       handleLabel="Resize sheet"
       header={<h2 className="zen-sheet-title">New tab page</h2>}

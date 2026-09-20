@@ -756,7 +756,12 @@ describe('focus lands in a sheet held for the page’s cover (§9.22, regression
     render(
       <>
         <FrameDialogHost frame />
-        <PhoneSheet name="bookmark-edit" title="Edit bookmark" focus="dialog" onClose={() => {}}>
+        <PhoneSheet
+          name="bookmark-edit"
+          title={{ pose: 'header', text: 'Edit bookmark' }}
+          focus="dialog"
+          onClose={() => {}}
+        >
           <form>
             <input aria-label="Name" />
             <div className="zen-sheet-footer">
@@ -790,8 +795,11 @@ describe('focus lands in a sheet held for the page’s cover (§9.22, regression
         <FrameDialogHost frame />
         <PhoneSheet
           name="clear-history"
-          title="Clear browsing history?"
-          prompt={{ description: 'This removes every visit from the history.' }}
+          title={{
+            pose: 'block',
+            text: 'Clear browsing history?',
+            description: 'This removes every visit from the history.'
+          }}
           focus="first"
           onClose={() => {}}
         >

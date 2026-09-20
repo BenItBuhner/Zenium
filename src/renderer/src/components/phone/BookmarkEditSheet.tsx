@@ -58,7 +58,8 @@ export function BookmarkEditSheet({
   return (
     <PhoneSheet
       name="bookmark-edit"
-      title={title}
+      // A form: the 48 header (§9.16), never a title block – a form has no description.
+      title={{ pose: 'header', text: title }}
       focus="dialog"
       onClose={closeBookmarkEditor}
       contentKey={`${edit.id ?? 'new'}:${folder ? 'folder' : 'url'}:${waiting ? 'waiting' : 'ready'}`}

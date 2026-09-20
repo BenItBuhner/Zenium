@@ -103,7 +103,7 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
     <>
       <PhoneSheet
         name="extensions"
-        title="Extensions"
+        title={{ pose: 'header', text: 'Extensions' }}
         focus="dialog"
         onClose={closeExtensionsSheet}
         sheetRef={sheet}
@@ -269,13 +269,10 @@ function ActionMenuSheet({
   return (
     <PhoneSheet
       name="extensions-action-menu"
-      title={inside ? inside.label : name}
-      focus="first"
-      onClose={onClose}
-      sheetRef={sheet}
-      contentKey={`${own.length}:${path.map((item) => item.id).join('/')}`}
-      leading={
-        inside ? (
+      title={{
+        pose: 'header',
+        text: inside ? inside.label : name,
+        leading: inside ? (
           <button
             type="button"
             className="zen-sheet-header-control"
@@ -286,7 +283,11 @@ function ActionMenuSheet({
             <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
           </button>
         ) : undefined
-      }
+      }}
+      focus="first"
+      onClose={onClose}
+      sheetRef={sheet}
+      contentKey={`${own.length}:${path.map((item) => item.id).join('/')}`}
     >
       <div className="zen-ext-action-menu flex flex-col pb-1">
         {groups.map((group, index) => (
@@ -367,8 +368,9 @@ function RemoveSheet({
   return (
     <PhoneSheet
       name="extensions-remove"
-      title={confirm.title}
-      prompt={{
+      title={{
+        pose: 'block',
+        text: confirm.title,
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: confirm.description
       }}

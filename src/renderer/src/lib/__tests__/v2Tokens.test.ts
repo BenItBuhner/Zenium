@@ -87,10 +87,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
-  // The zen-v2-* controls inside the chassis (components/newtab/CustomizeSheet.tsx): headings and
-  // sections, descriptions, the control row; the rows, switch and card radio are the shared
+  // The zen-v2-* controls inside the chassis (components/newtab/CustomizeSheet.tsx): the
+  // description and the control row; the rows, heading, switch and card radio are the shared
   // primitives below (§9.34, the Settings tab's block).
-  ['.zen-v2-heading {', '.zen-ntp-field {'],
+  ['.zen-v2-description {', '.zen-ntp-field {'],
   // The new tab page, one .zen-ntp-* block for both platforms (§9.29): the shared vocabulary –
   // search field, .zen-v2-shortcut tiles, captions, fallbacks, scrim – that shared/newTabPage.ts
   // cuts out for the desktop's zen://newtab document, then the phone page's gated additions:
@@ -477,7 +477,11 @@ describe('the v2 primitives (§9.34)', () => {
     '.zen-v2-menulist-option',
     // The segment (#203, the overview's Tabs | Private): its tabs and their underline are rules
     // on the one class (`> [role='tab']`, `::after`), so the primitive is the whole control.
-    '.zen-v2-segment'
+    '.zen-v2-segment',
+    // The group heading (§9.27, §10.3) with its 20 / 4 beat: the customise sheet's layered copy
+    // and the Settings tab's and phone panels' local beats went with it; what each surface adds
+    // (the first heading's 8 under a header, a popover's tighter 12) is an unlayered modifier.
+    '.zen-v2-heading'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -494,6 +498,49 @@ describe('the v2 primitives (§9.34)', () => {
         expect(body, `"${selector}" states a colour`).not.toMatch(/#[0-9a-f]{3,8}\b/i)
       }
     }
+  })
+
+  it('state the group heading’s beat once: 20 above, 4 below, the text at the 16 gutter (§9.27, §10.3)', () => {
+    // The base rule (`ruleAt` finds the unscoped one; `block` would stop at the customise
+    // sheet's `.zen-v2-section:first-child > .zen-v2-heading` modifier before it).
+    const base = ruleAt('.zen-v2-heading')
+    const heading = bare.slice(base, bare.indexOf('\n}', base))
+    expect(heading).toMatch(/^ {2}margin: 20px 0 4px;$/m)
+    expect(heading).toMatch(/^ {2}padding: 0 16px;$/m)
+    expect(heading).toMatch(/font-size: var\(--v2-font-body\)/)
+    expect(heading).toMatch(/font-weight: var\(--v2-weight-heading\)/)
+    // No consumer keeps a copy of the beat: the Settings tab's groups, the customise sheet's
+    // sections and the phone panels' day groups read the primitive, and what each adds (the
+    // first heading's 8 under a header, a popover's tighter 12) is an unlayered modifier.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const sheets = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css'))
+    for (const file of sheets) {
+      const text = readFileSync(join(root, file), 'utf8')
+      const copies = [...text.matchAll(/margin: 20px 0 4px;/g)]
+      expect(copies.length, `${file} restates the heading beat`).toBe(
+        file === 'assets/main.css' ? 1 : 0
+      )
+    }
+    expect(readFileSync(join(root, 'components/phone/phonePanels.css'), 'utf8')).not.toMatch(
+      /padding: 20px 16px 4px/
+    )
+    for (const modifier of [
+      '.zen-v2-section:first-child > .zen-v2-heading',
+      '.zen-v2-heading.zen-tab-search-heading',
+      '.zen-v2-heading.zen-settings-heading'
+    ])
+      expect(layered(ruleAt(modifier)), `"${modifier}" is layered`).toBe(false)
+    const panels = readFileSync(join(root, 'components/phone/phonePanels.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    )
+    const list = panels.indexOf(
+      '.zen-phone-list > :first-child > .zen-v2-heading.zen-list-heading {'
+    )
+    expect(list).toBeGreaterThanOrEqual(0)
+    expect(layered(list, panels)).toBe(false)
   })
 
   it('pad the row with the --v2-row-pad token, not a local knob', () => {

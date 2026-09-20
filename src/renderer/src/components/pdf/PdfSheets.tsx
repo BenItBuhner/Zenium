@@ -44,7 +44,13 @@ export function PdfZoomSheet({
   const pick = (choice: ZoomPick): void => sheet.current?.dismiss(() => onPick(choice))
   const fits: PdfFitMode[] = ['width', 'page']
   return (
-    <PhoneSheet name="pdf-zoom" title="Zoom" focus="dialog" onClose={onClose} sheetRef={sheet}>
+    <PhoneSheet
+      name="pdf-zoom"
+      title={{ pose: 'header', text: 'Zoom' }}
+      focus="dialog"
+      onClose={onClose}
+      sheetRef={sheet}
+    >
       <div role="radiogroup" aria-label="Zoom" className="pb-2">
         {fits.map((mode) => (
           <RadioRow
@@ -114,7 +120,7 @@ export function PdfOutlineSheet({
   return (
     <PhoneSheet
       name="pdf-outline"
-      title="Contents"
+      title={{ pose: 'header', text: 'Contents' }}
       focus="dialog"
       onClose={onClose}
       sheetRef={sheet}
@@ -180,7 +186,13 @@ export function PdfMoreSheet({
   const sheet = useRef<BottomSheetHandle>(null)
   const act = (action: () => void): void => sheet.current?.dismiss(action)
   return (
-    <PhoneSheet name="pdf-more" title={title} focus="first" onClose={onClose} sheetRef={sheet}>
+    <PhoneSheet
+      name="pdf-more"
+      title={{ pose: 'header', text: title }}
+      focus="first"
+      onClose={onClose}
+      sheetRef={sheet}
+    >
       <div className="pb-2">
         <ActionRow icon={<Share2 />} label="Share" onSelect={() => act(onShare)} />
         <ActionRow icon={<ExternalLink />} label="Open with" onSelect={() => act(onOpenWith)} />
@@ -253,7 +265,7 @@ export function PdfGoToPageSheet({
   return (
     <PhoneSheet
       name="pdf-goto"
-      title="Go to page"
+      title={{ pose: 'header', text: 'Go to page' }}
       focus="dialog"
       onClose={onClose}
       sheetRef={sheet}
@@ -340,8 +352,9 @@ export function PdfPasswordSheet({
   return (
     <PhoneSheet
       name="pdf-password"
-      title="Password required"
-      prompt={{
+      title={{
+        pose: 'block',
+        text: 'Password required',
         icon: <Lock className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: `${fileName} is password protected. Enter the password to open it.`
       }}
