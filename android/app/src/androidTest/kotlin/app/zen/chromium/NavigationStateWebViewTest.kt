@@ -210,7 +210,8 @@ class NavigationStateWebViewTest {
         load(source) { it.loadUrl(PAGES[0]) }
         assertNotNull(onMain { NavigationState.hostStateOf(source, private = false) })
         assertNull("nothing of a private session is written", onMain { NavigationState.hostStateOf(source, private = true) })
-        assertNull("a view with no list has nothing to give", onMain { NavigationState.hostStateOf(webView(), private = false) })
+        val empty = webView()
+        assertNull("a view with no list has nothing to give", onMain { NavigationState.hostStateOf(empty, private = false) })
     }
 
     // --- plumbing --------------------------------------------------------------------------------
