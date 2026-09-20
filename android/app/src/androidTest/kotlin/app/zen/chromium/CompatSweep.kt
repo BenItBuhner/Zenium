@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -26,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -940,29 +942,97 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${installWaitMs / 1000} s (${extra.optJSONObject("installPageAtDeadline")?.optString("text")?.take(60)})"}, " +
                 "userScripts: ${extra.opt("userScripts")}, target page: $readings" +
                 (extra.optJSONArray("targetErrors")?.takeIf { it.length() > 0 }?.let { "; first error: ${it.optJSONObject(0)?.optString("message")?.take(80)}" } ?: "") +
-                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms)" else "",
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: ${speedNote(entry)})" else "",
             extra
         )
     }
 
-    /** The fixture page's uncaught errors and their stacks, as `us-target.html` keeps them. */
+    /**
+     * The page's uncaught errors and their stacks: the fixture's own (`window.__errors`, from its
+     * first inline script on) and the runtime's debug capture (`__zenExtStats.errors`, from
+     * document start on, with the throwing inline script's source for an error a console line
+     * gives as `<document URL>:1`), each marked with where it was kept.
+     */
     private fun targetErrors(view: WebView): JSONArray =
-        runCatching { JSONArray(JSONTokener(tabEval(view, "JSON.stringify((window.__errors||[]).slice(0,6))")).nextValue() as? String ?: "[]") }.getOrDefault(JSONArray())
+        runCatching {
+            JSONArray(
+                JSONTokener(
+                    tabEval(
+                        view,
+                        "JSON.stringify([].concat((window.__errors||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='page';return e})," +
+                            "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})))"
+                    )
+                ).nextValue() as? String ?: "[]"
+            )
+        }.getOrDefault(JSONArray())
 
     /**
-     * How much slower this job runs than the 113 job at normal speed, read off the row's own
-     * store install: about 8 s there for these rows (6.8-11 s in round 3's runs), 12-18 s on a
-     * 156 job at its normal speed, 25-29 s on the slow 156 job of round 2's final run. A core
-     * check's fixed waits scale by it, so a slow job does not fail a working runtime; bounded, so
-     * a wait never grows past four times its size.
+     * How much slower this job runs than the 113 job at normal speed, the larger of two readings,
+     * bounded so a wait never grows past four times its size (a core check's fixed waits scale
+     * by it, so a slow job does not fail a working runtime):
+     *  - the row's own store install against about 8 s on the 113 job (6.8-11 s in round 3's
+     *    runs; 12-18 s on a 156 job at its normal speed, 25-29 s on round 2's slow final run);
+     *  - the app's UI frame interval against about 100 ms on the 113 job. Every bridge hop between
+     *    an extension's page, the core and its worker takes a turn of the UI thread
+     *    (`evaluateJavascript`, the reply proxy's `postMessage`), so a handshake of many hops runs
+     *    at one hop per frame: on the 156 job's snapshot WebView a frame took about 830 ms in
+     *    round 3's mid run (`Choreographer: Skipped 49 frames` all run long) and Stylus's install
+     *    page needed 21 s for the 25 hops of its build before its Install button was armed, where
+     *    the 113 job needs under a second. The install time alone (x1.7 there) does not see this.
+     * Measured once per row and kept on its entry (`speed`).
      */
     private fun speedFactor(entry: JSONObject): Double {
+        entry.optJSONObject("speed")?.let { return it.optDouble("factor", 1.0) }
         val installMs = entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms", 0L) ?: 0L
-        if (installMs <= 0L) return 1.0
-        return (installMs.toDouble() / NOMINAL_INSTALL_MS).coerceIn(1.0, 4.0)
+        val installRatio = if (installMs <= 0L) 1.0 else installMs.toDouble() / NOMINAL_INSTALL_MS
+        val frameMs = frameIntervalMs()
+        val frameRatio = if (frameMs <= 0L) 1.0 else frameMs.toDouble() / NOMINAL_FRAME_MS
+        val factor = maxOf(installRatio, frameRatio).coerceIn(1.0, 4.0)
+        entry.put("speed", JSONObject().put("installMs", installMs).put("frameMs", frameMs).put("installRatio", installRatio).put("frameRatio", frameRatio).put("factor", factor))
+        Log.i(TAG, "SPEED ${entry.optString("name")}: install ${installMs} ms (x${"%.2f".format(installRatio)}), frame ${frameMs} ms (x${"%.2f".format(frameRatio)}) -> waits x${"%.2f".format(factor)}")
+        return factor
+    }
+
+    /**
+     * The UI thread's frame interval right now: the mean gap between [FRAME_PROBE_FRAMES]
+     * consecutive Choreographer frames (a redraw is requested so frames come even when nothing
+     * animates), or the time the probe waited when fewer frames came; 0 when none did.
+     */
+    private fun frameIntervalMs(): Long {
+        val stamps = CopyOnWriteArrayList<Long>()
+        val done = CountDownLatch(1)
+        val started = SystemClock.uptimeMillis()
+        instrumentation.runOnMainSync {
+            val choreographer = Choreographer.getInstance()
+            val callback = object : Choreographer.FrameCallback {
+                override fun doFrame(frameTimeNanos: Long) {
+                    stamps.add(frameTimeNanos / 1_000_000)
+                    if (stamps.size > FRAME_PROBE_FRAMES) done.countDown()
+                    else {
+                        activity.window.decorView.invalidate()
+                        choreographer.postFrameCallback(this)
+                    }
+                }
+            }
+            activity.window.decorView.invalidate()
+            choreographer.postFrameCallback(callback)
+        }
+        done.await(FRAME_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val list = stamps.toList()
+        return when {
+            list.size >= 2 -> (list.last() - list.first()) / (list.size - 1)
+            list.isEmpty() -> 0L
+            else -> SystemClock.uptimeMillis() - started
+        }
     }
 
     private fun scaled(ms: Long, factor: Double): Long = (ms * factor).toLong()
+
+    /** The two readings behind the row's speed factor, for a grade's note. */
+    private fun speedNote(entry: JSONObject): String {
+        val speed = entry.optJSONObject("speed") ?: return "install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms"
+        return "install took ${speed.optLong("installMs")} ms, a UI frame ${speed.optLong("frameMs")} ms"
+    }
 
     /**
      * What the extension's background and the bridge said during one core step: the console lines
@@ -1141,14 +1211,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         if (installTab != null) {
             val installView = waitForView(installTab.key)
             // The page parses the usercss in a worker of its own origin reached through the
-            // service worker (round 2, 8.6) and shows a spinner until then: the Install button
-            // coming up is the cue, not a fixed wait.
+            // service worker (round 2, 8.6): `getInstallCode`, `build`, then the button's `onclick`
+            // is assigned. The button is in the HTML from the start, enabled and visible, so the
+            // handler being armed is the cue (round 3's mid run on the 156 job clicked a button
+            // without one, 21 s of hops before the build came back), not the button, not a wait.
             val readyAt = SystemClock.elapsedRealtime()
             ready = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE, scaled(20_000, factor))
             extra.put("installPage", ready.put("readyMs", SystemClock.elapsedRealtime() - readyAt).put("console", JSONArray(consoleOf(installView).takeLast(8))))
             snap("${entry.optString("slug")}-usercss-install")
             for (i in 0 until 10) {
-                click = json(tabEval(installView, "(function(){var b=document.querySelector('button.install');if(!b||b.offsetParent===null||b.disabled)return JSON.stringify({clicked:false,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null});b.click();return JSON.stringify({clicked:true})})()"))
+                click = json(tabEval(installView, "(function(){var b=document.querySelector('button.install');if(!b||b.offsetParent===null||b.disabled||typeof b.onclick!=='function')return JSON.stringify({clicked:false,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,armed:!!b&&typeof b.onclick==='function'});b.click();return JSON.stringify({clicked:true})})()"))
                 if (click.optBoolean("clicked")) break
                 SystemClock.sleep(1_000)
             }
@@ -1158,8 +1230,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             // page-to-service-worker `usercss.install` round trip.
             snap("${entry.optString("slug")}-usercss-after-click")
             extra.put("installPageAfterClick", json(tabEval(installView, STYLUS_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
-            // The style's save and the broadcast to the open tabs, scaled with the job.
-            val landed = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE.replace("pass:!!b&&b.offsetParent!==null&&!b.disabled", "pass:!!b&&(b.disabled||/installed/i.test(b.textContent||''))"), scaled(3_000, factor))
+            // The style's save (the `usercss.install` round trip, several hops) and the broadcast
+            // to the open tabs, scaled with the job.
+            val landed = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE.replace("pass:!!b&&b.offsetParent!==null&&!b.disabled&&armed", "pass:!!b&&(b.disabled||/installed/i.test(b.textContent||''))"), scaled(8_000, factor))
             extra.put("installPageLanded", landed)
             since.record(extra, "afterInstall")
         }
@@ -1175,7 +1248,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "usercss install page ${if (installTab != null) "opened, ready after ${ready.optLong("readyMs")} ms${if (ready.optBoolean("pass")) "" else " (button not up: ${ready.toString().take(100)})"}" else "did not open within ${scaled(25_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(120)})"}, " +
                 "install ${click.toString().take(100)}, after the click: ${extra.optJSONObject("installPageLanded")?.let { "button ${if (it.optBoolean("disabled")) "disabled" else "enabled"} \"${it.optString("label").take(30)}\"${it.optString("message").takeIf { m -> m.isNotEmpty() && m != "null" }?.let { m -> ", message \"${m.take(60)}\"" } ?: ""}" } ?: "n/a"}, " +
                 "page: ${found.toString().take(120)}" +
-                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms)" else "",
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: ${speedNote(entry)})" else "",
             extra
         )
     }
@@ -1971,6 +2044,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val USERSCRIPT_EFFECT_MS = 45_000L
         /** A store install of these rows on the 113 job at normal speed; a row's own install against it is the job's speed factor ([speedFactor]). */
         private const val NOMINAL_INSTALL_MS = 8_000L
+        /** The 113 job's UI frame interval (`app_time_stats avg=99-134ms` in round 3's runs). */
+        private const val NOMINAL_FRAME_MS = 100L
+        private const val FRAME_PROBE_FRAMES = 4
+        private const val FRAME_PROBE_TIMEOUT_MS = 8_000L
         /**
          * A userscript manager's install page: whether its Install button is up and its spinner
          * down (Tampermonkey's `ask.html` shows "Please wait..." while its background answers),
@@ -1983,9 +2060,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var hit=buttons.find(isInstall)||nodes.find(isInstall);var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
                 "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),disabled:!!hit.disabled}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
         /** Stylus's install page: its `button.install` (present, shown, enabled, label, classes), its message box, the page's text. */
+        /**
+         * Stylus's install page: the Install button (in the HTML from the start; `armed` once the
+         * page assigned its `onclick`, after its `build` came back from the worker), the page's
+         * message box, its text.
+         */
         private const val STYLUS_INSTALL_PAGE_STATE =
-            "(function(){var b=document.querySelector('button.install');var m=document.querySelector('#message-box, .message-box, #message-box-contents');var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
-                "return JSON.stringify({pass:!!b&&b.offsetParent!==null&&!b.disabled,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,label:b?(b.textContent||'').trim():null,classes:b?String(b.className):null," +
+            "(function(){var b=document.querySelector('button.install');var armed=!!b&&typeof b.onclick==='function';var m=document.querySelector('#message-box, .message-box, #message-box-contents');var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!b&&b.offsetParent!==null&&!b.disabled&&armed,armed:armed,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,label:b?(b.textContent||'').trim():null,classes:b?String(b.className):null,title:document.title," +
                 "message:m?(m.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):null,text:text.slice(0,160),readyState:document.readyState})})()"
         /**
          * What an account-backed extension's sign-in surface says (the account rows' core grade,

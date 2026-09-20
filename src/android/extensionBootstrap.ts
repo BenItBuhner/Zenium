@@ -1,5 +1,6 @@
 import type {
   BootConfig,
+  BootErrorStat,
   BootGroup,
   BootStats,
   ContentBootConfig,
@@ -539,12 +540,46 @@ declare const __zenExtBoot: Boot
         trustedTypes: null
       }
     : null
-  if (stats)
+  if (stats) {
     Object.defineProperty(g, '__zenExtStats', {
       value: stats,
       enumerable: false,
       configurable: true
     })
+    // The document's first uncaught errors, for the compat sweep: a console line gives an inline
+    // script's error as `<document URL>:1`, which tells neither the code nor the caller; the
+    // event still carries the stack, and the script element still runs while it is dispatched.
+    const errors: BootErrorStat[] = (stats.errors = [])
+    window.addEventListener(
+      'error',
+      (event) => {
+        if (errors.length >= 12 || !('message' in event) || typeof event.message !== 'string')
+          return
+        const err = event as ErrorEvent
+        const cause = err.error as { stack?: unknown } | null | undefined
+        let inline: string | null = null
+        const current = document.currentScript
+        if (current && !(current as HTMLScriptElement).src && err.lineno === 1) {
+          const text = current.textContent ?? ''
+          const at = Math.max(0, err.colno - 1)
+          inline = text.slice(Math.max(0, at - 240), at) + ' >>> ' + text.slice(at, at + 160)
+        }
+        errors.push({
+          message: err.message,
+          source: err.filename,
+          line: err.lineno,
+          column: err.colno,
+          stack:
+            cause && typeof cause === 'object' && typeof cause.stack === 'string'
+              ? cause.stack.slice(0, 1200)
+              : null,
+          at: performance.now(),
+          inline
+        })
+      },
+      true
+    )
+  }
 
   /**
    * A real isolated world enforces the page's Trusted Types CSP on the world's own DOM sinks

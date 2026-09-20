@@ -55,6 +55,31 @@ describe('the scope proxy of the with-fallback', () => {
     expect(scope.document).toBe(win.document)
   })
 
+  it('shows the top frame its own global as `top` and `parent`, a subframe the real ones', () => {
+    const top = fakeWindow()
+    Object.defineProperty(Object.getPrototypeOf(top) as object, 'top', {
+      get(this: Any) {
+        return this === top || this === child ? top : undefined
+      },
+      configurable: true
+    })
+    Object.defineProperty(Object.getPrototypeOf(top) as object, 'parent', {
+      get(this: Any) {
+        return this === child ? top : this === top ? top : undefined
+      },
+      configurable: true
+    })
+    const child: Any = Object.create(Object.getPrototypeOf(top) as object) as Any
+    const topScope = createScopeProxy(top, collectBuiltins(top))
+    expect(topScope.top).toBe(topScope)
+    expect(topScope.parent).toBe(topScope)
+    expect(topScope.top === topScope.window).toBe(true)
+    const childScope = createScopeProxy(child, collectBuiltins(child))
+    expect(childScope.top).toBe(top)
+    expect(childScope.parent).toBe(top)
+    expect(childScope.top === childScope.window).toBe(false)
+  })
+
   it('binds native methods to the real window and keeps constructors as they are', () => {
     const win = fakeWindow()
     const scope = createScopeProxy(win, collectBuiltins(win))

@@ -111,6 +111,25 @@ export interface BootStats {
   groups: BootGroupStat[]
   /** The Trusted Types shield of an isolated world: policy created, sinks patched. */
   trustedTypes: { policy: boolean; patched: number } | null
+  /**
+   * The first uncaught errors of the document after the bootstrap ran (a debug world's
+   * capturing `error` listener), with the stack and, for a script the page holds inline (an
+   * element a content script wrote), the source around the throw: a console line names such a
+   * script `<document URL>:1` only.
+   */
+  errors?: BootErrorStat[]
+}
+
+export interface BootErrorStat {
+  message: string
+  source: string
+  line: number
+  column: number
+  stack: string | null
+  /** ms after the navigation started. */
+  at: number
+  /** The throwing inline script's text around the column (`document.currentScript`). */
+  inline: string | null
 }
 
 export type PageContext = 'background' | 'popup' | 'options' | 'offscreen' | 'page'
