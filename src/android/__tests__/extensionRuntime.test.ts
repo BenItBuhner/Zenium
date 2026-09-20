@@ -1416,6 +1416,32 @@ describe('AndroidExtensionRuntime: i18n.detectLanguage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
+  it("routes to the store and answers Chrome's shape; without a store there is nothing to install", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const bare = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(bare.ok).toBe(true)
+    expect(bare.result).toEqual({ status: 'no_update' })
+
+    const asked: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async (id) => {
+        asked.push(id)
+        return { status: 'update_available', version: '2.0.0' }
+      }
+    }
+    const found = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(found.result).toEqual({ status: 'update_available', version: '2.0.0' })
+    expect(asked).toEqual([ID])
+  })
+})
+
 describe('AndroidExtensionRuntime: native messaging', () => {
   it('sendNativeMessage fails as Chrome does for a host that does not exist', async () => {
     const h = harness()

@@ -26,6 +26,7 @@ import { ActiveTabGrants } from './extensionActiveTab'
 import { AndroidContextMenus } from './extensionContextMenus'
 import { AndroidCookies, type JarReading } from './extensionCookies'
 import type { AndroidDeclarativeNetRequest } from './extensionDnr'
+import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 
@@ -131,6 +132,8 @@ export interface ApiHost {
   /** `runtime.reload()` and `management.uninstallSelf()`: the store re-reads or removes the extension. */
   reload(id: string): Promise<void>
   uninstall(id: string): Promise<void>
+  /** `runtime.requestUpdateCheck()`: the store's update check for this one extension, Chrome's answer. */
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer>
   isEnabled(id: string): boolean
 }
 
@@ -1265,6 +1268,9 @@ export class ExtensionApi {
       case 'reload':
         await this.host.reload(id)
         return undefined
+      // Chrome 109+ hands the callback one `{ status, version }`; the promise form resolves with it.
+      case 'requestUpdateCheck':
+        return this.host.requestUpdateCheck(id)
       case 'getContexts':
         // An extension page's URL as Chrome spells it (`extensionUrls.ts`); its origin stays the
         // served one, what `location.origin` answers inside the page, as for a message sender.
