@@ -2,7 +2,8 @@ import type { JSX } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Ellipsis, Globe, History, Trash2, X } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { displayUrl, getHost } from '@shared/url'
+import { displayUrl } from '@shared/url'
+import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { run } from '@renderer/lib/api'
 import {
   historyAdapter,
@@ -357,7 +358,8 @@ function HistoryVisitRow({
   onLongPress: () => void
   onDelete: () => void
 }): JSX.Element {
-  const host = getHost(row.url).replace(/^www\./, '') || displayUrl(row.url)
+  const extensions = useExtensionList()
+  const host = presentedHost(row.url, extensions) || displayUrl(row.url)
   const time = visitTime(row.visitTime)
   return (
     <PhoneListRow
@@ -392,11 +394,12 @@ function RecentlyClosedRow({
   onTap: () => void
 }): JSX.Element {
   const window = entry.kind === 'window'
+  const extensions = useExtensionList()
   const title = entry.title || (entry.url ? displayUrl(entry.url) : 'Window')
   const subtitle = window
     ? `${entry.tabCount} ${entry.tabCount === 1 ? 'tab' : 'tabs'}`
     : entry.url
-      ? getHost(entry.url).replace(/^www\./, '') || displayUrl(entry.url)
+      ? presentedHost(entry.url, extensions) || displayUrl(entry.url)
       : undefined
   return (
     <PhoneListRow

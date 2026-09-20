@@ -9,13 +9,19 @@ import { FILE_SITE } from './contentSettings'
 import {
   BLANK_URL,
   ERROR_URL_PREFIX,
+  EXTENSION_SCHEME,
   READER_URL_PREFIX,
+  extensionPageOf,
   getDomain,
   getHost,
   interstitialKindOf
 } from './url'
 
-export type SecurityState = 'secure' | 'insecure' | 'internal' | 'local' | 'unknown'
+/**
+ * `extension`: a page of an installed extension (`extensionPageOf`), which is neither a secure
+ * site nor an insecure one and has no site of its own – the chrome shows the extension instead.
+ */
+export type SecurityState = 'secure' | 'insecure' | 'internal' | 'local' | 'extension' | 'unknown'
 
 export interface SiteCertificate {
   /** Who the certificate was issued to (the subject's common or organisation name). */
@@ -159,6 +165,9 @@ export function describeSite(url: string): SiteDescription {
   }
   const scheme = parsed.protocol.replace(/:$/, '').toLowerCase()
   if (scheme === 'zen' || scheme === 'about' || scheme === 'chrome') return none(scheme, 'internal')
+  // An extension page, in Chrome's scheme or on the Android runtime's emulated https origin:
+  // no site, no connection to speak of, whatever the origin under it says.
+  if (extensionPageOf(url)) return none(EXTENSION_SCHEME, 'extension')
   // Local files share one site for permissions (Chrome's `file:///`), so the sheet can list them.
   if (scheme === 'file') return { ...none(scheme, 'local'), origin: FILE_SITE }
   if (scheme !== 'http' && scheme !== 'https') return none(scheme, 'unknown')
@@ -193,6 +202,7 @@ export type IndicatorState =
   | 'dangerous'
   | 'local'
   | 'internal'
+  | 'extension'
   | 'unknown'
 
 export interface SecurityIndicator {
@@ -265,6 +275,8 @@ export function securityIndicator(
       }
     case 'internal':
       return { state: 'internal', label: null, title: 'Zenium page' }
+    case 'extension':
+      return { state: 'extension', label: null, title: 'Extension page' }
     default:
       return { state: 'unknown', label: null, title: 'Site information' }
   }

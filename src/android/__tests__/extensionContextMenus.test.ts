@@ -222,9 +222,43 @@ describe('chrome.contextMenus on the long-press menu', () => {
     const menu = h.runtime.api.actionContextMenuItems(ID)
     expect(menu.map((i) => i.label)).toEqual([0, 1, 2, 3, 4, 5].map((i) => `Item ${i}`))
     menu[0].click?.()
-    const [info] = events(h, 'bg1', 'contextMenus.onClicked')[0].args as [Record<string, unknown>]
+    const [info, tab] = events(h, 'bg1', 'contextMenus.onClicked')[0].args as [
+      Record<string, unknown>,
+      Record<string, unknown>
+    ]
     expect(info.menuItemId).toBe('i0')
     expect(info.pageUrl).toBe('https://example.com/')
+    // Chrome's `OnClickData` for the `action` context: no link, media, frame or selection under
+    // the pointer – the button was pressed, over the active tab, which comes along as the tab.
+    expect(info).toEqual({
+      menuItemId: 'i0',
+      editable: false,
+      pageUrl: 'https://example.com/',
+      frameId: 0
+    })
+    expect(tab.url).toBe('https://example.com/')
+    expect(tab.active).toBe(true)
+  })
+
+  it('runs an action-context item against the active tab as the phone’s menu sheet picks it', async () => {
+    // The sheet lists `extension.actionMenuItems` and reports the pick with the item's handle
+    // (`extension.actionMenuClick`); the runtime's template click behind it is this one.
+    const h = harness()
+    await withMenus(h)
+    await call(h, 'bg1', 'contextMenus', 'create', [
+      { id: 'night', title: 'Night Mode', type: 'checkbox', checked: false, contexts: ['action'] },
+      'night'
+    ])
+    const [item] = h.runtime.api.actionContextMenuItems(ID)
+    expect(item.type).toBe('checkbox')
+    expect(item.checked).toBe(false)
+    item.click?.()
+    const [info] = events(h, 'bg1', 'contextMenus.onClicked')[0].args as [Record<string, unknown>]
+    expect(info.menuItemId).toBe('night')
+    expect(info.wasChecked).toBe(false)
+    expect(info.checked).toBe(true)
+    // The pick toggled the item, as Chrome's MenuManager does; the next menu shows it checked.
+    expect(h.runtime.api.actionContextMenuItems(ID)[0].checked).toBe(true)
   })
 
   it('forgets the items with the extension', async () => {

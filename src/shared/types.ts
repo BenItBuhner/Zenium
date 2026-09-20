@@ -3540,6 +3540,21 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /**
+   * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
+   * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
+   * phone's long-press menu sheet, which shows them above the browser's rows as Chrome does
+   * (the desktop's native menu gets the same items through `extension.actionContextMenu`). Each
+   * item's `id` is a handle for `extension.actionMenuClick`; a fresh request retires the
+   * previous handles. Empty when the extension adds none.
+   */
+  'extension.actionMenuItems': { args: { id: string }; result: MenuItemDescriptor[] }
+  /**
+   * The user picked one of the items `extension.actionMenuItems` answered: the extension's
+   * `contextMenus.onClicked` fires with Chrome's `OnClickData` for the `action` context and the
+   * active tab, as a pick in the desktop's menu does.
+   */
+  'extension.actionMenuClick': { args: { id: string; itemId: string }; result: void }
   /** Empties the extension's error console (`ExtensionInfo.errors`). */
   'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
@@ -3914,6 +3929,11 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /**
+   * The app menu's Extensions row on a phone: the chrome opens its sheet of the extensions'
+   * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
+   */
+  'extensions.open': void
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
@@ -4001,8 +4021,12 @@ export interface Events {
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
-  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
-  'extension.popupClosed': { id: string }
+  /**
+   * Main closed the popup itself (blur, Escape inside it, a link opened a tab). `reason` is
+   * `'escape'` when the document trapped the key: focus then goes back to the anchor (§9.22),
+   * where every other close leaves it where the close put it.
+   */
+  'extension.popupClosed': { id: string; reason?: 'escape' }
   /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
   extensionInstallRequest: ExtensionPromptRequest
   /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */

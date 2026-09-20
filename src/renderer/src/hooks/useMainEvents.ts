@@ -22,6 +22,7 @@ import {
   closeMenu,
   closeUrlbar,
   openBookmarkChrome,
+  openExtensionsSheet,
   openFindBar,
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
@@ -160,6 +161,10 @@ export function useMainEvents(): void {
         closeUrlbar()
         openZoom(tabId)
       }),
+      onEvent('extensions.open', () => {
+        closeUrlbar()
+        openExtensionsSheet()
+      }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
@@ -211,7 +216,9 @@ export function useMainEvents(): void {
       onEvent('extension.popupSize', ({ id, width, height }) =>
         popupSizeReported(id, width, height)
       ),
-      onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
+      onEvent('extension.popupClosed', ({ reason }) =>
+        closeExtensionPopup(false, reason === 'escape' ? 'anchor' : 'page')
+      ),
       onEvent(
         'extensionInstallRequest',
         (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())

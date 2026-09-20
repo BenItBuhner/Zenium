@@ -24,11 +24,23 @@ export const PREVIEW_PULL_MAX = 2.5
 /**
  * A step taken on a page once it is open, in order: `tap` presses the first button whose label
  * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
- * asks first), `back` is one system back (the top sheet closes, a section pops), `overview` opens
- * the tab overview over the page, `urlbar` opens the pill for editing.
+ * asks first), `hold` long-presses it (a row's menu opens), `back` is one system back (the top
+ * sheet closes, a section pops), `overview` opens the tab overview over the page, `urlbar` opens
+ * the pill for editing.
  */
 export type PreviewStep =
-  { kind: 'tap'; text: string } | { kind: 'back' } | { kind: 'overview' } | { kind: 'urlbar' }
+  | { kind: 'tap'; text: string }
+  | { kind: 'hold'; text: string }
+  | { kind: 'back' }
+  | { kind: 'overview' }
+  | { kind: 'urlbar' }
+
+/** The chrome's own sheets a preview state may open by name (`sheet=<name>`). */
+export const PREVIEW_SHEETS = ['extensions'] as const
+export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
+
+/** An extension id as Chrome forms them: 32 letters a–p. */
+const EXTENSION_ID = /^[a-p]{32}$/
 
 /**
  * The "Add to Home screen" surfaces a preview state may raise on the active tab: the install
@@ -113,6 +125,18 @@ export type PreviewState =
     }
   | {
       /**
+       * An extension's page open as a tab (`chrome-extension://<id>/<path>`, the way its
+       * options page opens), the stand-in host serving a page for it; `then` steps are taken
+       * once it has loaded. With `extensions=<variant>` seeded, the chrome knows the extension.
+       */
+      kind: 'extension-page'
+      id: string
+      /** The page's path within the extension, no leading slash. */
+      path: string
+      then?: PreviewStep[]
+    }
+  | {
+      /**
        * The active tab in a group of this many members, made on the spot (the group strip is up
        * in the bar band); `then` steps are taken once the group has formed.
        */
@@ -134,6 +158,12 @@ export type PreviewState =
       kind: 'menu'
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
+    }
+  | {
+      /** One of the chrome's own sheets, open over the active page; `then` steps are taken on it. */
+      kind: 'sheet'
+      sheet: PreviewSheet
+      then?: PreviewStep[]
     }
   | {
       /** The active page asks for a permission (`prompt=<permission>`; the security dialogs' `prompt=` values are `kind: 'prompt'`). */
@@ -253,14 +283,19 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
- * afterwards, `;`-separated: `tap:<text>`, `back`, `overview`, `urlbar`), `group=<n>` for the
+ * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `back`, `overview`, `urlbar`),
+ * `extension-page=<id>/<path>` for an extension's page open as a tab (its options page, say;
+ * `extensions=<variant>` alongside seeds the extensions the chrome knows, `then=<steps>` takes
+ * steps once it has loaded), `group=<n>` for the
  * active tab in a group of n members made on the spot, the group strip up in the bar band (with
  * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
  * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `prompt=<permission>` for the active page asking for that permission (the
+ * item into view), `sheet=<name>` for one of PREVIEW_SHEETS, the chrome's own sheets (the
+ * Extensions sheet the app menu's row opens; `then=<steps>` takes steps on it: `tap:<row>` is
+ * the row's tap, `hold:<row>` its long press), `prompt=<permission>` for the active page asking for that permission (the
  * prompt sheet), `private=new` for a blank private tab (`private=<url>` opens one on that page),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
@@ -281,8 +316,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `prompt=<any other value>` is the permission that page asks for (the permission prompt
  * sheet), `private=new|<url>` opens a private tab, and `overview` opens the tab overview over
  * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
- * When several are given, `page` wins over `group`, `group` over `overlay`, `overlay` over
- * `menu`, `menu` over the permission `prompt`, that over `private`, `private` over `autofill`,
+ * When several are given, `page` wins over `extension-page`, that over `group`, `group` over
+ * `overlay`, `overlay` over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`,
+ * that over `private`, `private` over `autofill`,
  * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
  * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
  * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
@@ -306,6 +342,11 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (then.length > 0) state.then = then
     return state
   }
+  const extensionPage = parseExtensionPage(params.get('extension-page'))
+  if (extensionPage) {
+    const then = parsePreviewSteps(params.get('then'))
+    return then.length > 0 ? { ...extensionPage, then } : extensionPage
+  }
   const group = params.get('group')
   if (group !== null && group !== '' && Number.isFinite(Number(group))) {
     const members = Math.min(MAX_PREVIEW_GROUP, Math.max(1, Math.floor(Number(group))))
@@ -328,6 +369,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (params.get('menu') === 'app') {
     const show = params.get('show')
     return show ? { kind: 'menu', show } : { kind: 'menu' }
+  }
+  const sheet = params.get('sheet')
+  if (sheet !== null && (PREVIEW_SHEETS as readonly string[]).includes(sheet)) {
+    const then = parsePreviewSteps(params.get('then'))
+    const state: Extract<PreviewState, { kind: 'sheet' }> = {
+      kind: 'sheet',
+      sheet: sheet as PreviewSheet
+    }
+    return then.length > 0 ? { ...state, then } : state
   }
   // `prompt=` names a permission the page asks for, unless it names one of the security dialogs
   // (`http-auth`, `certificate`), which come up last in this order (below).
@@ -415,20 +465,39 @@ export function parsePreviewSpec(spec: string): PreviewState {
   return { kind: 'idle' }
 }
 
-/** The `then=` list: `tap:<text>;back;overview;urlbar`; blanks and unknown steps are dropped. */
+/**
+ * The `then=` list: `tap:<text>;hold:<text>;back;overview;urlbar`; blanks and unknown steps are
+ * dropped.
+ */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
   const steps: PreviewStep[] = []
   for (const raw of list.split(';')) {
     const step = raw.trim()
-    if (step.startsWith('tap:')) {
-      const text = step.slice('tap:'.length).trim()
-      if (text) steps.push({ kind: 'tap', text })
+    if (step.startsWith('tap:') || step.startsWith('hold:')) {
+      const kind = step.startsWith('tap:') ? 'tap' : 'hold'
+      const text = step.slice(kind.length + 1).trim()
+      if (text) steps.push({ kind, text })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
     }
   }
   return steps
+}
+
+/**
+ * `extension-page=<id>/<path>`: the id as Chrome forms them, then the page's path within the
+ * extension (`<id>` alone or `<id>/` is the extension's root). Null for anything else.
+ */
+function parseExtensionPage(
+  value: string | null
+): Extract<PreviewState, { kind: 'extension-page' }> | null {
+  if (!value) return null
+  const slash = value.indexOf('/')
+  const id = slash === -1 ? value : value.slice(0, slash)
+  if (!EXTENSION_ID.test(id)) return null
+  const path = slash === -1 ? '' : value.slice(slash + 1).replace(/^\/+/, '')
+  return { kind: 'extension-page', id, path }
 }
 
 function parseDownload(filename: string, params: URLSearchParams): PreviewDownloadSpec {

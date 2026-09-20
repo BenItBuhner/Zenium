@@ -1,5 +1,6 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useRef } from 'react'
+import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -35,6 +36,11 @@ interface Props {
    * (§9.23): the glyph on the title's start, the description 4 below.
    */
   prompt?: { icon?: ReactNode; description: string }
+  /**
+   * A control at the header's start (a Back chevron once a menu sheet has drilled into a
+   * submenu), on the 48 header only; `zen-sheet-header-control` with `data-side="leading"`.
+   */
+  leading?: ReactNode
   focus: SheetFocus
   /** The sheet has left the screen. */
   onClose(): void
@@ -58,6 +64,7 @@ function HostedSheet({
   name,
   title,
   prompt,
+  leading,
   focus,
   onClose,
   children,
@@ -79,16 +86,9 @@ function HostedSheet({
   })
   useReturnFocus()
   useFocusOnOpen(body, focus)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [sheet])
+  // Escape is the top popup's (§9.24): a sheet under another (the Extensions sheet under a
+  // row's long-press menu) leaves the key to the one on top until it has gone.
+  useEscape(dismiss)
   return (
     <BottomSheet
       ref={sheet}
@@ -99,9 +99,12 @@ function HostedSheet({
       labelledBy={titleId}
       header={
         prompt ? undefined : (
-          <h2 id={titleId} className="zen-sheet-title">
-            {title}
-          </h2>
+          <>
+            {leading}
+            <h2 id={titleId} className="zen-sheet-title">
+              {title}
+            </h2>
+          </>
         )
       }
     >

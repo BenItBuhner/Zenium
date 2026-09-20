@@ -335,6 +335,8 @@ export interface UiState {
   qrScan: QrPrompt | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
+  extensionsSheetOpen: boolean
   /**
    * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
    * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
@@ -459,6 +461,7 @@ export const uiStore = createStore<UiState>(
     voice: null,
     qrScan: null,
     barEditorOpen: false,
+    extensionsSheetOpen: false,
     frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
@@ -781,6 +784,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.extensionsSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
@@ -834,6 +838,7 @@ export function invalidateSnapshot(): void {
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.extensionsSheetOpen &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
@@ -1538,6 +1543,29 @@ export async function openBarEditor(activeTabId: string | null): Promise<void> {
 export function closeBarEditor(): void {
   if (!uiStore.get().barEditorOpen) return
   uiStore.set({ barEditorOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// Phone Extensions sheet
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the app menu's Extensions sheet (`extensions.open` from the core; the phone's entry to
+ * the extensions' actions). The sheet is a frame-dialog sheet on the chassis, which captures
+ * the page and takes its cover itself as it comes up (`coverPageUnderSheet`), so nothing is
+ * captured here; the flag holds the keyboard and the capture while it is up.
+ */
+export function openExtensionsSheet(): void {
+  if (uiStore.get().extensionsSheetOpen) return
+  uiStore.set({ extensionsSheetOpen: true, drawerOpen: false })
+}
+
+/** The sheet has left the screen (its own dismissal, a row that opened something, the back gesture). */
+export function closeExtensionsSheet(): void {
+  if (!uiStore.get().extensionsSheetOpen) return
+  uiStore.set({ extensionsSheetOpen: false })
   invalidateSnapshot()
   returnFocusToPage()
 }

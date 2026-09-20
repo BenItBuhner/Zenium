@@ -1,5 +1,12 @@
 import type { Rect } from '@shared/types'
-import { BLANK_URL, displayHost, ERROR_URL_PREFIX, getHost, READER_URL_PREFIX } from '@shared/url'
+import {
+  BLANK_URL,
+  displayHost,
+  ERROR_URL_PREFIX,
+  extensionPageOf,
+  getHost,
+  READER_URL_PREFIX
+} from '@shared/url'
 import type { PopoverBox, Size } from './portals'
 import {
   chromeInertHeld,
@@ -305,11 +312,14 @@ export function placeHoverCard(
 /**
  * The card's second line, what Chrome shows under the title: the page's site for web pages as
  * the URL pill shows it (`displayHost`: a leading `www.` trimmed, a non-default port kept, an
- * error or Reader page standing in for its site), the address itself for Zenium's own pages, a
+ * error or Reader page standing in for its site), the address itself for Zenium's own pages and
+ * for an extension's (`chrome-extension://<id>/<path>`, whichever form the tab carries), a
  * plain word for a local file, nothing for a blank tab.
  */
 export function hoverCardHost(url: string): string {
   if (!url || url === 'about:blank' || url === BLANK_URL) return ''
+  const extension = extensionPageOf(url)
+  if (extension) return extension.url.replace(/[?#].*$/, '')
   if (
     /^https?:\/\//i.test(url) ||
     url.startsWith(ERROR_URL_PREFIX) ||

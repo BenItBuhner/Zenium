@@ -155,6 +155,45 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     expect(rule('.zen-v2-row.zen-phone-row[data-danger]')).toMatch(/color: var\(--v2-danger\)/)
   })
 
+  it('keeps a disabled row laid out at the one number, reachable, and deaf to a tap (§9.30)', () => {
+    let taps = 0
+    let holds = 0
+    const el = render(
+      <PhoneListRow
+        icon={<span />}
+        title="Blocker"
+        disabled
+        onTap={() => taps++}
+        onLongPress={() => holds++}
+      />
+    )
+    const row = el.querySelector<HTMLElement>('.zen-v2-row.zen-phone-row')!
+    expect(row.hasAttribute('data-disabled')).toBe(true)
+    // `aria-disabled` on the accessible row, not `disabled`: it stays in the order and keeps its
+    // hold (the desktop's action button keeps its context menu the same way).
+    const main = row.firstElementChild!
+    expect(main.getAttribute('aria-disabled')).toBe('true')
+    expect(main.getAttribute('tabindex')).toBe('0')
+    act(() => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(taps).toBe(0)
+    act(() => {
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    expect(holds).toBe(1)
+    // Opacity .4 on the whole row, no fill on a press, and the hover fill gated on a mouse.
+    expect(rule('.zen-v2-row.zen-phone-row[data-disabled]')).toMatch(/opacity: 0\.4/)
+    expect(rule('.zen-v2-row.zen-phone-row[data-disabled]:active')).toMatch(
+      /background: transparent/
+    )
+    const hover = css.indexOf('.zen-v2-row.zen-phone-row[data-disabled]:hover')
+    expect(hover).toBeGreaterThan(0)
+    expect(css.lastIndexOf('@media (hover: hover)', hover)).toBeGreaterThan(
+      css.lastIndexOf('}', hover)
+    )
+  })
+
   it('makes no static row: headings and empty notes are not rows, and every row is a target', () => {
     const el = render(
       <div>

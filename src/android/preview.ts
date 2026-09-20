@@ -4,6 +4,7 @@ import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
+import { extensionPageOf } from '@shared/url'
 import { createPreviewDownloads } from './previewDownloads'
 import { CHUNK_CHARS } from './storeIo'
 
@@ -252,6 +253,15 @@ export function createPreviewBridge(): NativeBridge {
     }
   }
 
+  // An extension's page a preview state opens as a tab (`extension-page=<id>/<path>`): the
+  // runtime that would serve it from the emulated origin is not here, so the host shows a
+  // stand-in options page for it, titled as the state announced (`PREVIEW_EXTENSION_PAGE_EVENT`).
+  const extensionPages = new Map<string, PreviewExtensionPage>()
+  window.addEventListener(PREVIEW_EXTENSION_PAGE_EVENT, (e) => {
+    const page = (e as CustomEvent<PreviewExtensionPage>).detail
+    extensionPages.set(page.url, page)
+  })
+
   let pieceSeq = 0
   const pieceWrites = new Map<number, { name: string; parts: string[] }>()
   const pieceReads = new Map<number, { text: string; at: number }>()
@@ -372,7 +382,18 @@ export function createPreviewBridge(): NativeBridge {
       // however fresh the last (Kotlin's `Thumbnails.stale`, BH-14).
       cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
-      frame.src = String(url)
+      const extensionPage = extensionPageOf(String(url))
+      if (extensionPage) {
+        // What the runtime would serve; the frame reports the page loaded like any other.
+        const page = extensionPages.get(extensionPage.url) ?? {
+          url: extensionPage.url,
+          name: extensionPage.id,
+          title: ''
+        }
+        void showDocument(frame, extensionPageDocument(page))
+      } else {
+        frame.src = String(url)
+      }
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.postMessage': () => undefined,
@@ -854,6 +875,67 @@ export function createPreviewBridge(): NativeBridge {
       return result === undefined ? '' : JSON.stringify(result)
     }
   }
+}
+
+/**
+ * A preview state announces an extension page it is about to open as a tab: the event's detail
+ * names the page, and the host shows a stand-in for it when the tab loads that URL.
+ */
+export const PREVIEW_EXTENSION_PAGE_EVENT = 'zen-preview-extension-page'
+
+export interface PreviewExtensionPage {
+  /** `chrome-extension://<id>/<path>`, what the tab is created with. */
+  url: string
+  /** The extension's name, the page's heading. */
+  name: string
+  /** The document's title; empty for none, so the tab falls back to the extension's name. */
+  title: string
+}
+
+/**
+ * The stand-in for an extension's options page (`extension-page=<id>/<path>`): a document in
+ * the extension's name with a few settings rows, following the system colour scheme like a
+ * well-behaved extension page. Any resemblance to a particular extension's page is not intended;
+ * the still is of the chrome around it.
+ */
+export function extensionPageDocument(page: PreviewExtensionPage): string {
+  const escape = (text: string): string =>
+    text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
+  const row = (label: string, detail: string, on: boolean): string =>
+    `<label class="row"><span><b>${escape(label)}</b><small>${escape(detail)}</small></span>` +
+    `<input type="checkbox"${on ? ' checked' : ''}></label>`
+  return (
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    (page.title ? `<title>${escape(page.title)}</title>` : '') +
+    `<style>` +
+    `:root{color-scheme:light dark;--fg:#1f1f24;--muted:#6b6b76;--line:#e4e4ea;--bg:#fff;--card:#f6f6f8;--accent:#3f51b5}` +
+    `@media(prefers-color-scheme:dark){:root{--fg:#ececf1;--muted:#9a9aa6;--line:#2c2c34;--bg:#141418;--card:#1e1e24;--accent:#8c9eff}}` +
+    `body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,Roboto,sans-serif}` +
+    `header{padding:28px 20px 12px}h1{margin:0;font-size:22px;font-weight:600}` +
+    `header p{margin:4px 0 0;color:var(--muted);font-size:14px}` +
+    `h2{margin:20px 20px 8px;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}` +
+    `.card{margin:0 16px;background:var(--card);border-radius:14px;overflow:hidden}` +
+    `.row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border-top:1px solid var(--line)}` +
+    `.row:first-child{border-top:0}.row span{display:flex;flex-direction:column;min-width:0}` +
+    `.row b{font-weight:500}.row small{color:var(--muted);font-size:13px}` +
+    `input{appearance:none;width:44px;height:26px;border-radius:13px;background:var(--line);position:relative;flex:none;margin:0}` +
+    `input:checked{background:var(--accent)}` +
+    `input::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:10px;background:#fff;transition:left .15s}` +
+    `input:checked::after{left:21px}` +
+    `</style></head><body>` +
+    `<header><h1>${escape(page.name)}</h1><p>Settings</p></header>` +
+    `<h2>General</h2><div class="card">` +
+    row('Enable on all sites', 'New sites are handled as soon as they open', true) +
+    row('Show notifications', 'A note when something needs your attention', false) +
+    row('Sync settings', 'Keep these settings the same on every device', true) +
+    `</div><h2>Appearance</h2><div class="card">` +
+    row('Follow the system theme', 'Light and dark as the device decides', true) +
+    row('Compact layout', 'Smaller controls in the popup', false) +
+    `</div><h2>Advanced</h2><div class="card">` +
+    row('Developer tools', 'Extra options for debugging', false) +
+    `</div></body></html>`
+  )
 }
 
 /** A preview state picks the stand-in recogniser's script: the event's detail is the script's name. */
