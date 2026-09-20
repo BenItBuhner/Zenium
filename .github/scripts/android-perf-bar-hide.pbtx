@@ -1,0 +1,58 @@
+# Perfetto trace config for the Android performance drivers (PerfCapture.kt starts it as a
+# detached session; android-gesture-demo.sh pushes it to /data/local/tmp/zen-perfetto.pbtx when
+# DEMO_PERFETTO_CONFIG names it, and pulls the trace afterwards).
+#
+# What is in the trace: the scheduler (which thread ran when, and who woke whom), the atrace
+# categories the method asks for – gfx, view (Choreographer#doFrame, traversal, measure, layout,
+# draw on the app's main thread; DrawFrames and the buffer queue on its RenderThread), input, wm,
+# am, binder_driver (every binder transaction), webview (Chromium's own slices where the
+# WebView forwards them to atrace) – every app's own Trace sections (the drivers' scene markers
+# among them), and SurfaceFlinger's frame timeline (per frame: expected against actual, and the
+# jank type SurfaceFlinger assigned). The trace is streamed into the output file as it goes, so a
+# run the emulator cuts short still leaves what was recorded.
+buffers: {
+  size_kb: 131072
+  fill_policy: RING_BUFFER
+}
+buffers: {
+  size_kb: 8192
+  fill_policy: RING_BUFFER
+}
+data_sources: {
+  config {
+    name: "linux.ftrace"
+    ftrace_config {
+      atrace_categories: "sched"
+      atrace_categories: "gfx"
+      atrace_categories: "view"
+      atrace_categories: "input"
+      atrace_categories: "wm"
+      atrace_categories: "am"
+      atrace_categories: "binder_driver"
+      atrace_categories: "webview"
+      atrace_apps: "*"
+      buffer_size_kb: 32768
+      drain_period_ms: 250
+    }
+  }
+}
+data_sources: {
+  config {
+    name: "linux.process_stats"
+    target_buffer: 1
+    process_stats_config {
+      scan_all_processes_on_start: true
+      proc_stats_poll_ms: 5000
+    }
+  }
+}
+data_sources: {
+  config {
+    name: "android.surfaceflinger.frametimeline"
+  }
+}
+duration_ms: 900000
+write_into_file: true
+file_write_period_ms: 2500
+max_file_size_bytes: 1000000000
+flush_period_ms: 30000

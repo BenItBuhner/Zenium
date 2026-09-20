@@ -73,6 +73,14 @@ on:
         required: false
         type: string
         default: ''
+      post-script:
+        description: >-
+          Bash run from the repository root once the driver is done, whether it passed or not, and
+          before the artifact is uploaded (a profiling driver's trace analysis, which reads and
+          writes the artifact path); it sees script-env too
+        required: false
+        type: string
+        default: ''
       api-level:
         description: API level of the system image, e.g. 34 or 35-ext15
         required: false
@@ -287,6 +295,9 @@ jobs:
           node .github/scripts/android-jank-report.mjs summary "$ARTIFACT_PATH" \
             --gate "$JANK_GATE" --out "$RUNNER_TEMP/jank-report" >> "$GITHUB_STEP_SUMMARY" \
             || echo "::warning::the frame statistics could not be rendered (see the step's log)"
+      - name: Read what the driver left behind
+        if: always() && inputs.post-script != ''
+        run: ${{ inputs.post-script }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
