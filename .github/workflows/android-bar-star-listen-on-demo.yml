@@ -17,10 +17,6 @@ name: Android bar star, Listen reads on, fullscreen gone-tab demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY: one run per push of the working branch while the demo is recorded; removed before merge.
-  push:
-    branches:
-      - cursor/android-bar-star-listen-on-v2-6f1c
 
 permissions:
   contents: read
