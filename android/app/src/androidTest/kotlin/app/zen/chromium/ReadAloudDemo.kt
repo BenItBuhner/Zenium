@@ -835,10 +835,14 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
 
     private fun chipLabel(): String? = findNode { it.startsWith("Speed ") }?.let(::label)
 
-    /** The play box's busy spinner's width in CSS px (`.zen-read-aloud-toggle > .zen-v2-spinner`), 0 while there is none. */
+    /**
+     * The play box's busy spinner's width in CSS px (`.zen-read-aloud-toggle > .zen-v2-spinner`),
+     * 0 while there is none. The computed width, not the bounding rect: the spinner turns, and a
+     * turning 20 px box's rect runs 20 to 28 px with the angle.
+     */
     private fun spinnerSize(): Double =
-        jsonString(chromeJs("(function(){var e=document.querySelector('.zen-read-aloud-toggle > .zen-v2-spinner');return e?String(e.getBoundingClientRect().width):'0'})()"))
-            .toDoubleOrNull() ?: 0.0
+        jsonString(chromeJs("(function(){var e=document.querySelector('.zen-read-aloud-toggle > .zen-v2-spinner');return e?getComputedStyle(e).width:'0'})()"))
+            .removeSuffix("px").toDoubleOrNull() ?: 0.0
 
     /** The header's trailing line, from the chrome's own document (the tree runs the title and it together). */
     private fun progressText(): String =
