@@ -380,7 +380,7 @@ export function createPreviewBridge(): NativeBridge {
       const frame = document.createElement('iframe')
       frame.className = 'zen-preview-view'
       frame.style.cssText =
-        'position:fixed;left:0;top:0;width:0;height:0;border:0;background:#fff;display:none;z-index:50;'
+        'position:fixed;left:0;top:0;width:0;height:0;border:0;background:#fff;visibility:hidden;z-index:50;'
       frame.dataset.tabId = String(tabId)
       frame.addEventListener('load', () => {
         let title = ''
@@ -492,8 +492,11 @@ export function createPreviewBridge(): NativeBridge {
       const frame = views.get(String(tabId))
       if (!frame) return
       // Like Kotlin, a page on its way off the screen has its card picture taken first.
-      if (!visible && frame.style.display !== 'none') void captureCard(String(tabId), frame)
-      frame.style.display = visible ? 'block' : 'none'
+      if (!visible && frameShown(frame)) void captureCard(String(tabId), frame)
+      // Hidden, not `display: none`: a GONE WebView keeps the size it was laid out at, and so
+      // does the document in it – a command that lands while the chrome covers the page (the PDF
+      // viewer's "go to page" as its sheet leaves) measures the pages, not a zero viewport.
+      frame.style.visibility = visible ? 'visible' : 'hidden'
       requestAnimationFrame(() =>
         host().hostEvent('view.drawn', JSON.stringify({ tabId: String(tabId), visible }))
       )
@@ -508,7 +511,7 @@ export function createPreviewBridge(): NativeBridge {
     },
     'view.snapshot': ({ tabId }) => {
       const frame = views.get(String(tabId))
-      if (!frame || frame.style.display === 'none') return null
+      if (!frame || !frameShown(frame)) return null
       // The cover's capture is the card's picture too (Kotlin derives it from the same copy).
       const capture = snapshotFrame(frame)
       void captureCard(String(tabId), frame, capture)
@@ -827,9 +830,14 @@ export function createPreviewBridge(): NativeBridge {
   document.addEventListener('visibilitychange', () => {
     if (unloading || document.visibilityState !== 'hidden') return
     for (const [tabId, frame] of views) {
-      if (frame.style.display !== 'none') void captureCard(tabId, frame)
+      if (frameShown(frame)) void captureCard(tabId, frame)
     }
   })
+
+  /** Whether the page's frame is on screen (`view.setVisible`; a VISIBLE WebView). */
+  function frameShown(frame: HTMLIFrameElement): boolean {
+    return frame.style.visibility !== 'hidden'
+  }
 
   /**
    * The preview's stand-in for the hosts' page capture: same-origin frames are serialised into an

@@ -51,10 +51,12 @@ describe('the preview host’s view.setVisible', () => {
     const bridge = createPreviewBridge()
     call(bridge, 'view.create', { tabId: 't1' })
     const frame = document.querySelector<HTMLIFrameElement>('iframe[data-tab-id="t1"]')!
-    expect(frame.style.display).toBe('none')
+    // Hidden the way a GONE WebView is: laid out, so the document in it keeps its measures.
+    expect(frame.style.visibility).toBe('hidden')
+    expect(frame.style.display).not.toBe('none')
 
     call(bridge, 'view.setVisible', { tabId: 't1', visible: true })
-    expect(frame.style.display).toBe('block')
+    expect(frame.style.visibility).toBe('visible')
     // Not before the frame that shows it: the chrome must never hear "drawn" ahead of the paint.
     expect(host.hostEvent).not.toHaveBeenCalled()
     expect(frames).toHaveLength(1)
@@ -65,7 +67,7 @@ describe('the preview host’s view.setVisible', () => {
     )
 
     call(bridge, 'view.setVisible', { tabId: 't1', visible: false })
-    expect(frame.style.display).toBe('none')
+    expect(frame.style.visibility).toBe('hidden')
     frames.shift()!(32)
     expect(host.hostEvent).toHaveBeenLastCalledWith(
       'view.drawn',
