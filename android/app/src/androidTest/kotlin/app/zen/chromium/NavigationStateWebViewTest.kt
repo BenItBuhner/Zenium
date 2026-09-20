@@ -17,8 +17,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -27,9 +29,10 @@ import java.util.concurrent.TimeUnit
  * marshalled and base64-encoded ([NavigationState.hostStateOf]), decoded and unmarshalled again
  * ([NavigationState.decodeHostState], [NavigationState.bundleOf]) and restored into a fresh
  * WebView (`restoreState`), which then has the same three entries with the same current one; the
- * same with an internal page (`loadDataWithBaseURL`, a `data:` item shown as `zen://…`) on top,
- * matched to the snapshot's entries off the lists alone and back as one document, its document
- * inside the state. And the refusals: a bundle that is not shaped like a WebView's state
+ * same with two internal pages (`loadDataWithBaseURL`: `data:` items, both under one and the
+ * same placeholder URL, each committed under its `zen://` URL) on the list, matched to the
+ * snapshot's entries off the lists alone, named by position, and back as their own documents,
+ * the documents inside the state. And the refusals: a bundle that is not shaped like a WebView's state
  * (another host's, a hand-made one, one naming Parcelables) never reaches the WebView; one
  * shaped like a state but not holding one is refused by `restoreState`; bytes that are not a
  * bundle at all never become one; a private tab's view has no state to give. The pages come
@@ -91,64 +94,86 @@ class NavigationStateWebViewTest {
     }
 
     /**
-     * An internal page as the current entry (a reader page over the article it was made from):
-     * the list holds it as its `data:` document while the view shows it under its `zen://` name,
-     * the way `TabWebView.loadHtml` puts one there. Restored into a fresh WebView, the list is
-     * matched to the snapshot's entries off the two lists alone – the item's `data:` document
-     * where the snapshot names the `zen://` page – with nothing asked of `getUrl()`, whose word
-     * right after `restoreState` is logged for the record; the page comes back as one document
-     * with its title, under its name, and the snapshot gives the fresh view the name to publish.
+     * Internal pages in the list – a reader page over the article it was made from, a history
+     * page over that – the way `TabWebView.loadHtml` puts them there (`loadDataWithBaseURL`, the
+     * page's `zen://` URL as its base and history URL). The list holds each as a `data:` item,
+     * the two under one and the same URL (the header the document was loaded under; the document
+     * is the entry's), while the commit is reported under the page's `zen://` URL – the base URL,
+     * which is what `TabWebView` names the position by. What `getUrl()` says is logged, not
+     * relied on. Restored into a fresh WebView, the list is matched to the snapshot's entries off
+     * the two lists alone, and the snapshot gives the fresh view the names to publish, each at
+     * its position (the reader page two back is not `about:blank`, nor the history page's name);
+     * the pages come back as one document each, with their titles, and Back walks them.
      */
     @Test
-    fun anInternalPageOnTopOfTheListComesBackAsItsOwnDocument() {
+    fun internalPagesOnTheListComeBackAsTheirOwnDocumentsUnderTheirNames() {
         val source = webView()
         load(source) { it.loadUrl(PAGES[0]) }
         load(source) { it.loadDataWithBaseURL(READER, READER_HTML, "text/html", "utf-8", READER) }
+        load(source) { it.loadDataWithBaseURL(HISTORY, HISTORY_HTML, "text/html", "utf-8", HISTORY) }
         val list = onMain { source.copyBackForwardList() }
-        assertEquals(2, list.size)
-        val document = list.getItemAtIndex(1).url
-        assertTrue("the list holds the page as its data: document, not: $document", document.startsWith("data:"))
-        assertEquals("the view shows it under its name", READER, onMain { source.url })
-        assertTrue(NavigationState.standsInFor(document, READER))
-        // What the snapshot names the two entries by (the saving view's publicUrl).
-        val entries = listOf(PAGES[0], READER)
+        assertEquals(3, list.size)
+        assertEquals(2, list.currentIndex)
+        val items = (0 until list.size).map { list.getItemAtIndex(it).url }
+        assertEquals(PAGES[0], items[0])
+        assertTrue("the list holds the reader page as a data: item, not: ${items[1]}", items[1].startsWith("data:"))
+        assertTrue("and the history page, not: ${items[2]}", items[2].startsWith("data:"))
+        val shown = onMain { source.url }
+        Log.i(TAG, "the internal pages' items: '${items[1]}' and '${items[2]}'${if (items[1] == items[2]) " (one and the same)" else ""}; getUrl() says '$shown' for the current one")
+        // The commits were reported under the pages' own URLs: what TabWebView names the positions by.
+        assertEquals("each commit under the page's URL", listOf(PAGES[0], READER, HISTORY), committed[source])
+        assertTrue(NavigationState.standsInFor(items[2], HISTORY))
+        // What the snapshot names the three entries by: the saving view's names, at their positions.
+        val entries = listOf(PAGES[0], READER, HISTORY)
+        val names = mapOf(1 to READER, 2 to HISTORY)
+        val listItems = (0 until list.size).map { list.getItemAtIndex(it).let { item -> NavigationState.Item(item.url, item.title, item.originalUrl) } }
+        assertEquals(entries, urlsOf(NavigationState.snapshotJson(listItems, 2, names)))
 
         val hostState = onMain { NavigationState.hostStateOf(source, private = false) }
-        assertNotNull("a list with an internal page on top has a state to give", hostState)
+        assertNotNull("a list with internal pages in it has a state to give", hostState)
         assertTrue("within the cap: ${hostState!!.length} chars", hostState.length <= NavigationState.HOST_STATE_MAX)
-        // The document is inside the state (saveState pickles the entry's data: URL whole): what
-        // puts a stack with a large internal page over the cap, and has it restore URL-only.
-        assertTrue("the state carries the document: ${hostState.length} chars for a ${READER_HTML.length}-char page", hostState.length > READER_HTML.length)
-        Log.i(TAG, "hostState of a page and a reader page: ${hostState.length} chars (the reader document is ${READER_HTML.length})")
+        // The documents are inside the state (saveState pickles each entry's document): what puts
+        // a stack with a large internal page over the cap, and has it restore URL-only.
+        val documents = READER_HTML.length + HISTORY_HTML.length
+        assertTrue("the state carries the documents: ${hostState.length} chars for $documents chars of pages", hostState.length > documents)
+        Log.i(TAG, "hostState of a page, a reader page and a history page: ${hostState.length} chars (the documents are $documents)")
         val bundle = NavigationState.bundleOf(NavigationState.decodeHostState(hostState)!!)
         assertNotNull(bundle)
 
         val fresh = webView()
         var shownRightAfter: String? = null
         val restored = load(fresh) { view -> view.restoreState(bundle!!).also { shownRightAfter = view.url } }
-        assertNotNull("restoreState accepts a list with a data: document in it", restored)
-        Log.i(TAG, "right after restoreState the view shows ${if (shownRightAfter == READER) "the internal page's name" else "'$shownRightAfter'"} for the internal entry")
-        assertEquals(2, restored!!.size)
-        assertEquals(1, restored.currentIndex)
-        val items = (0 until restored.size).map { restored.getItemAtIndex(it).url }
-        assertEquals("the same data: document", document, items[1])
-        assertTrue("the restored list is the one the snapshot describes", NavigationState.restoredMatches(items, restored.currentIndex, entries, 1))
-        // A snapshot that named the entry as a web page would not be matched by the document.
-        assertFalse(NavigationState.restoredMatches(items, restored.currentIndex, listOf(PAGES[0], "https://nav-snapshot.test/reader"), 1))
+        assertNotNull("restoreState accepts a list with data: documents in it", restored)
+        Log.i(TAG, "right after restoreState getUrl() says '$shownRightAfter' for the current internal entry")
+        assertEquals(3, restored!!.size)
+        assertEquals(2, restored.currentIndex)
+        val restoredItems = (0 until restored.size).map { restored.getItemAtIndex(it).url }
+        assertEquals("the same items", items, restoredItems)
+        assertTrue("the restored list is the one the snapshot describes", NavigationState.restoredMatches(restoredItems, restored.currentIndex, entries, 2))
+        // A snapshot that named an entry as a web page would not be matched by the document.
+        assertFalse(NavigationState.restoredMatches(restoredItems, restored.currentIndex, listOf(PAGES[0], "https://nav-snapshot.test/reader", HISTORY), 2))
+        // The fresh view names the entries the way the snapshot does, each at its position, from
+        // its first list on; off nothing, both internal pages would be about:blank.
+        val seeded = NavigationState.internalNamesOf(restoredItems, entries)
+        assertEquals(names, seeded)
+        val restoredListItems = restoredItems.map { NavigationState.Item(it, null, null) }
+        assertEquals(entries, urlsOf(NavigationState.snapshotJson(restoredListItems, 2, seeded)))
+        assertEquals(listOf(PAGES[0], NavigationState.BLANK_URL, NavigationState.BLANK_URL), urlsOf(NavigationState.snapshotJson(restoredListItems, 2)))
 
-        // One document, with its title, under its name: nothing for the core to load on top.
-        assertEquals(READER, onMain { fresh.url })
-        assertEquals("Story", onMain { fresh.title })
-        assertEquals(2, onMain { fresh.copyBackForwardList().size })
+        // One document, with its title, committed under its own URL: nothing for the core to load on top.
+        assertEquals("History", onMain { fresh.title })
+        assertEquals(3, onMain { fresh.copyBackForwardList().size })
         assertTrue(onMain { fresh.canGoBack() })
-        // The fresh view names the entry the way the snapshot does, from its first list on.
-        val names = NavigationState.internalNamesOf(items, entries)
-        assertEquals(entries, items.map { NavigationState.publicUrl(it) { key -> names[key] } })
+        assertEquals("the restore's commit, under the page's URL", listOf(HISTORY), committed[fresh])
 
-        // And the list is live: back is the article.
+        // And the list is live: Back is the reader page, under its name and with its title, then the article.
         load(fresh) { it.goBack() }
-        assertEquals(PAGES[0], onMain { fresh.url })
+        assertEquals(1, onMain { fresh.copyBackForwardList().currentIndex })
+        assertEquals(listOf(HISTORY, READER), committed[fresh])
+        assertEquals("Story", onMain { fresh.title })
+        load(fresh) { it.goBack() }
         assertEquals(0, onMain { fresh.copyBackForwardList().currentIndex })
+        assertEquals(PAGES[0], committed[fresh]?.last())
     }
 
     /**
@@ -249,9 +274,26 @@ class NavigationStateWebViewTest {
             return WebResourceResponse("text/html", "utf-8", ByteArrayInputStream(html.toByteArray()))
         }
 
+        override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
+            committed.getOrPut(view) { CopyOnWriteArrayList() } += rawUrl
+        }
+
         override fun onPageFinished(view: WebView, url: String) {
             finished[view]?.countDown()
         }
+    }
+
+    /**
+     * The URL each view's commits were reported under (`doUpdateVisitedHistory`), in order: for
+     * a `loadDataWithBaseURL` document the base URL it was loaded with, by WebView's contract
+     * (`NavigationHandleProxy::DidFinish` hands the Java side the base URL where there is one),
+     * which is what `TabWebView` names an internal page's position by.
+     */
+    private val committed = ConcurrentHashMap<WebView, CopyOnWriteArrayList<String>>()
+
+    private fun urlsOf(snapshot: JSONObject): List<String> {
+        val entries = snapshot.getJSONArray("entries")
+        return (0 until entries.length()).map { entries.getJSONObject(it).getString("url") }
     }
 
     private fun <T> onMain(block: () -> T): T {
@@ -267,5 +309,8 @@ class NavigationStateWebViewTest {
         /** A reader page's name, the way the core makes one (`zen://reader?id=…&url=…`). */
         private const val READER = "zen://reader?id=article_test&url=https%3A%2F%2Fnav-snapshot.test%2Fone"
         private const val READER_HTML = "<!doctype html><html><head><meta charset=\"utf-8\"><title>Story</title></head><body><h1>Story</h1><p>The article, read.</p></body></html>"
+        /** Another internal page over the reader page: two `data:` items in one list, under one and the same URL. */
+        private const val HISTORY = "zen://history"
+        private const val HISTORY_HTML = "<!doctype html><html><head><meta charset=\"utf-8\"><title>History</title></head><body><h1>History</h1><p>Today.</p></body></html>"
     }
 }

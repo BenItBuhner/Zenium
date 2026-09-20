@@ -113,20 +113,25 @@ class TabWebView(
     val cover = ContentCover({ resources.displayMetrics.density }) { invalidateOutline() }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
     var backTransition: PageBackTransition? = null
-    /** The history entry the page on screen belongs to (updated as navigations commit). */
+    /** The history entry the page on screen belongs to (updated as navigations commit), and how long the list was. */
     private var committedIndex = -1
     private var committedUrl = ""
+    private var committedSize = 0
     private var lastRememberedAt = 0L
     /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
     private val captureShare = CaptureShare<Bitmap>()
     /**
-     * The internal pages this view showed, by the key of the `data:` URL their list entry
-     * carries ([NavigationState.dataUrlKey]) to the `zen://` URL they were shown as; the newest
-     * [NavigationState.INTERNAL_URLS_MAX] (see [NavigationState.publicUrl]).
+     * The internal pages in this view's list, by position, to the `zen://` URL each was shown
+     * as. Their items all carry one and the same URL (the `data:` header WebView loads a
+     * `loadDataWithBaseURL` document under, [NavigationState.isDocumentPlaceholder]), so a name
+     * is its position's: set as the entry commits ([onHistoryCommitted], off the URL the commit
+     * reports, which for such a document is the base URL the page was loaded with – its own),
+     * seeded from the snapshot when a restore rebuilds the list ([restoreFromHostState]), and
+     * kept while the position holds a `data:` item ([NavigationState.keptNames]).
      */
-    private val internalUrls = object : LinkedHashMap<Long, String>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>?): Boolean = size > NavigationState.INTERNAL_URLS_MAX
-    }
+    private val internalNames = HashMap<Int, String>()
+    /** A restore just rebuilt the list: the commit that follows reports it as built (see [onHistoryCommitted]). */
+    private var restoredList = false
     /** The last `historyChanged` payload sent, as text: the same list again is not sent twice. */
     private var lastHistoryText: String? = null
     private var replyProxy: JavaScriptReplyProxy? = null
@@ -988,15 +993,44 @@ class TabWebView(
         host.snapshots.remember(HistorySnapshots.Entry(tabId, index, url, pageTitle, favicon, bitmap))
     }
 
-    /** The navigation has committed: which entry is on screen now, and which snapshots still hold. */
-    private fun onHistoryCommitted() {
+    /**
+     * The navigation has committed: which entry is on screen now, which snapshots still hold, and
+     * which internal pages' names still stand ([internalNames]). `shown` is the URL the commit
+     * was reported under (`doUpdateVisitedHistory`'s; for an internal page the `zen://` URL it
+     * was loaded with, where its list item is a `data:` placeholder), null when the commit is not
+     * a callback's (a restore: the snapshot named the entries, and the commit that follows confirms
+     * the current one). `reload` is the callback's word too.
+     */
+    private fun onHistoryCommitted(shown: String?, reload: Boolean = false) {
         val history = copyBackForwardList()
+        val items = (0 until history.size).map { history.getItemAtIndex(it)?.url }
+        // The commit of a restored list's current entry reports the list the restore built,
+        // unchanged: not a drop, whatever its size.
+        val afterRestore = restoredList
+        restoredList = false
+        if (!afterRestore && NavigationState.listDroppedAnEntry(committedIndex, committedSize, history.currentIndex, history.size, reload)) {
+            // The oldest entry went for this one: every position before it moved, and no name is
+            // its position's any more (the current one is named again below).
+            internalNames.clear()
+        }
         committedIndex = history.currentIndex
+        committedSize = history.size
         committedUrl = history.currentItem?.url ?: url ?: ""
-        // An internal page: the list holds its document as a `data:` URL, the view shows its name.
-        val shown = url
-        if (committedUrl.isNotEmpty() && NavigationState.standsInFor(committedUrl, shown)) {
-            internalUrls[NavigationState.dataUrlKey(committedUrl)] = shown!!
+        val kept = NavigationState.keptNames(internalNames, items)
+        if (kept.size != internalNames.size) {
+            internalNames.clear()
+            internalNames.putAll(kept)
+        }
+        // The commit decides its own position's name: an internal page (the list holds its
+        // document under a `data:` URL, the commit reports the page's URL) is named by it; any
+        // other page committing there (a web page; a `data:` page opened as one, whose commit
+        // reports the URL itself) takes the name a previous internal page left at the position.
+        if (committedIndex >= 0 && shown != null) {
+            if (committedUrl.isNotEmpty() && NavigationState.standsInFor(committedUrl, shown)) {
+                internalNames[committedIndex] = shown
+            } else {
+                internalNames.remove(committedIndex)
+            }
         }
         host.snapshots.validate(tabId, history)
     }
@@ -1015,9 +1049,7 @@ class TabWebView(
             val item = history.getItemAtIndex(i)
             NavigationState.Item(item?.url ?: "", item?.title, item?.originalUrl)
         }
-        return NavigationState.snapshotJson(items, history.currentIndex) { entryUrl ->
-            NavigationState.publicUrl(entryUrl) { key -> internalUrls[key] }
-        }
+        return NavigationState.snapshotJson(items, history.currentIndex, internalNames)
     }
 
     /**
@@ -1055,8 +1087,8 @@ class TabWebView(
      * `view.restoreNavigation`: the whole list from `hostState`, when there is one and it is
      * ours ([NavigationState.decodeHostState]), this view is still empty, `restoreState` accepts
      * it and the list it gives back is the one `entries` describes, position for position, the
-     * current one at `index` ([NavigationState.restoredMatches]; an internal page's item is its
-     * `data:` document where the entry names the `zen://` page) (true). Anything else is false
+     * current one at `index` ([NavigationState.restoredMatches]; an internal page's item is a
+     * `data:` placeholder where the entry names the `zen://` page) (true). Anything else is false
      * and loads nothing: the core loads the current entry itself then (`loadURL`, which is also
      * what gives an internal page its document), so a load here would be a second one. Main thread.
      */
@@ -1095,10 +1127,12 @@ class TabWebView(
             Log.i("ZenTab", "the restored list of $tabId is not the one described (${restored.size} entries, current ${restored.currentIndex}; ${names.size} expected, current $index); the core loads the entry")
             return false
         }
-        // The internal pages' names, from the snapshot: their items are their `data:` documents,
-        // and the view that saved the list is not this one (see internalUrls).
-        internalUrls.putAll(NavigationState.internalNamesOf(items, names))
-        onHistoryCommitted()
+        // The internal pages' names, from the snapshot: their items are `data:` placeholders,
+        // and the view that saved the list is not this one (see internalNames).
+        internalNames.clear()
+        internalNames.putAll(NavigationState.internalNamesOf(items, names))
+        onHistoryCommitted(shown = null)
+        restoredList = true
         pushHistory(force = true)
         Log.i("ZenTab", "restored the list of $tabId: ${restored.size} entries, current ${restored.currentIndex}")
         return true
@@ -1746,7 +1780,7 @@ class TabWebView(
          */
         override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
             val url = pageUrlFor(rawUrl)
-            onHistoryCommitted()
+            onHistoryCommitted(shown = url, reload = isReload)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (failedUrl != null && url == failedUrl) {
                 // WebView's own error page, committing under the failed URL while the core's

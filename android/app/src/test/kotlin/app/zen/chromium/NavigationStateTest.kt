@@ -4,7 +4,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -101,14 +100,15 @@ class NavigationStateTest {
     }
 
     @Test
-    fun entriesGoByTheUrlTheResolverGives() {
-        val data = "data:text/html;charset=utf-8,%3Chtml%3E" + "x".repeat(4000)
-        val items = listOf(NavigationState.Item("https://a.example/", "A", null), NavigationState.Item(data, "Settings", data))
-        val snapshot = NavigationState.snapshotJson(items, 1) { url -> if (url == data) "zen://settings" else url }
+    fun entriesGoByTheNamesAtTheirPositions() {
+        val items = listOf(NavigationState.Item("https://a.example/", "A", null), NavigationState.Item(PLACEHOLDER, "Settings", PLACEHOLDER))
+        val snapshot = NavigationState.snapshotJson(items, 1, mapOf(1 to "zen://settings"))
         val settings = snapshot.getJSONArray("entries").getJSONObject(1)
         assertEquals("zen://settings", settings.getString("url"))
-        // The original URL resolves the same way and so says nothing.
+        // The original URL (the same placeholder) goes by the same name and so says nothing.
         assertFalse(settings.has("originalUrl"))
+        // A name at a web page's position is not consulted.
+        assertEquals(listOf("https://a.example/", NavigationState.BLANK_URL), urlsOf(NavigationState.snapshotJson(items, 1, mapOf(0 to "zen://history"))))
     }
 
     @Test
@@ -157,8 +157,10 @@ class NavigationStateTest {
         // A reader page on top of the article it was made from: the list holds the page as its
         // data: document, the snapshot names it zen://reader?…, and nothing is asked of getUrl().
         val reader = "zen://reader?id=article_1&url=https%3A%2F%2Fa.example%2Fstory"
-        val items = listOf("https://a.example/story", "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ch1%3EStory%3C%2Fh1%3E")
+        val items = listOf("https://a.example/story", PLACEHOLDER)
         assertTrue(NavigationState.restoredMatches(items, 1, listOf("https://a.example/story", reader), 1))
+        // A data: page the user opened as one is its own item, and is matched as such.
+        assertTrue(NavigationState.restoredMatches(listOf("https://a.example/story", "data:text/html,<h1>Story</h1>"), 1, listOf("https://a.example/story", "data:text/html,<h1>Story</h1>"), 1))
         // An internal page behind the current one, too.
         assertTrue(NavigationState.restoredMatches(items + "https://b.example/", 2, listOf("https://a.example/story", reader, "https://b.example/"), 2))
         // A data: page nobody remembered the name of is about:blank in the snapshot: still its document.
@@ -179,46 +181,77 @@ class NavigationStateTest {
     }
 
     @Test
-    fun theInternalNamesOfARestoredListComeFromTheSnapshot() {
-        val doc1 = "data:text/html,one"
-        val doc2 = "data:text/html,two"
-        val items = listOf("https://a.example/", doc1, doc2, "data:text/html,short")
+    fun theInternalNamesOfARestoredListComeFromTheSnapshotByPosition() {
+        // Two internal pages: one and the same item URL in the list, two names in the snapshot.
+        val items = listOf("https://a.example/", PLACEHOLDER, PLACEHOLDER, "data:text/html,short")
         val entries = listOf("https://a.example/", "zen://reader?id=1", "zen://image?id=2", "data:text/html,short")
         val names = NavigationState.internalNamesOf(items, entries)
-        assertEquals(
-            mapOf(NavigationState.dataUrlKey(doc1) to "zen://reader?id=1", NavigationState.dataUrlKey(doc2) to "zen://image?id=2"),
-            names
-        )
+        assertEquals(mapOf(1 to "zen://reader?id=1", 2 to "zen://image?id=2"), names)
         // What publicUrl then gives the fresh view's list: the names, and the short data: page as itself.
-        assertEquals(entries, items.map { NavigationState.publicUrl(it!!) { key -> names[key] } })
+        assertEquals(entries, items.mapIndexed { i, item -> NavigationState.publicUrl(item!!, names[i]) })
         // A data: page named about:blank has no name to remember; a null item is skipped.
-        assertTrue(NavigationState.internalNamesOf(listOf(doc1, null), listOf(NavigationState.BLANK_URL, "zen://history")).isEmpty())
+        assertTrue(NavigationState.internalNamesOf(listOf(PLACEHOLDER, null), listOf(NavigationState.BLANK_URL, "zen://history")).isEmpty())
     }
 
     /**
-     * The case the names are for: a reader page two entries back, its document longer than a
-     * `data:` URL is kept verbatim, in a fresh view that never showed it. Off the snapshot the
-     * view's first list names it `zen://reader…`; off nothing it would be `about:blank` until
-     * the user went back to it.
+     * The case the names are for: a reader page two entries back, in a fresh view that never
+     * showed it, with another internal page current. Their items are the same placeholder, so
+     * nothing in the list tells them apart: off the snapshot the view's first list names each
+     * by its position; off nothing both would be `about:blank` until the user went back to them.
      */
     @Test
-    fun aNonCurrentInternalEntryIsNamedFromTheSnapshotNotBlank() {
-        val readerDoc = "data:text/html," + "<p>the article, read</p>".repeat(200)
-        assertTrue(readerDoc.length > NavigationState.DATA_URL_KEEP_MAX)
+    fun nonCurrentInternalEntriesAreNamedFromTheSnapshotNotBlankAndNotEachOther() {
         val reader = "zen://reader?id=a1&url=https%3A%2F%2Fa.example%2Farticle"
-        val items = listOf(readerDoc, "https://b.example/", "https://c.example/")
-        val entries = listOf(reader, "https://b.example/", "https://c.example/")
+        val items = listOf(PLACEHOLDER, "https://b.example/", PLACEHOLDER)
+        val entries = listOf(reader, "https://b.example/", "zen://history")
         assertTrue(NavigationState.restoredMatches(items, 2, entries, 2))
 
         val names = NavigationState.internalNamesOf(items, entries)
-        assertEquals(mapOf(NavigationState.dataUrlKey(readerDoc) to reader), names)
+        assertEquals(mapOf(0 to reader, 2 to "zen://history"), names)
         val listItems = items.map { NavigationState.Item(it, "", null) }
-        val named = NavigationState.snapshotJson(listItems, 2) { url -> NavigationState.publicUrl(url) { key -> names[key] } }
+        val named = NavigationState.snapshotJson(listItems, 2, names)
         assertEquals(entries, urlsOf(named))
         assertEquals(2, named.getInt("index"))
         // Without the seed, the fresh view has no name for an entry it never showed.
-        val unnamed = NavigationState.snapshotJson(listItems, 2) { url -> NavigationState.publicUrl(url) { null } }
-        assertEquals(listOf(NavigationState.BLANK_URL, "https://b.example/", "https://c.example/"), urlsOf(unnamed))
+        val unnamed = NavigationState.snapshotJson(listItems, 2)
+        assertEquals(listOf(NavigationState.BLANK_URL, "https://b.example/", NavigationState.BLANK_URL), urlsOf(unnamed))
+    }
+
+    /**
+     * How a view keeps the names across commits: a position keeps its name while its item is a
+     * `data:` document; one pruned with the entries past the current page, or taken by a web
+     * page, loses it; the commit of another internal page at a position names it anew.
+     */
+    @Test
+    fun namesStandWhileTheirPositionsHoldInternalPages() {
+        val names = mapOf(1 to "zen://newtab", 3 to "zen://history")
+        // Nothing changed: nothing goes.
+        assertEquals(names, NavigationState.keptNames(names, listOf("https://a.example/", PLACEHOLDER, "https://b.example/", PLACEHOLDER)))
+        // Back to position 1 and on to a web page: the entries past it went, position 3 with them.
+        assertEquals(mapOf(1 to "zen://newtab"), NavigationState.keptNames(names, listOf("https://a.example/", PLACEHOLDER, "https://c.example/")))
+        // Back to position 0 and on to a web page: position 1 is that page's now.
+        assertTrue(NavigationState.keptNames(names, listOf("https://a.example/", "https://c.example/")).isEmpty())
+        // Position 1 taken by another internal page: the name stands until that page's commit replaces it.
+        assertEquals(mapOf(1 to "zen://newtab"), NavigationState.keptNames(names, listOf("https://a.example/", PLACEHOLDER)))
+        // A list gone empty keeps nothing; a null item is not an internal page.
+        assertTrue(NavigationState.keptNames(names, emptyList()).isEmpty())
+        assertTrue(NavigationState.keptNames(names, listOf("https://a.example/", null)).isEmpty())
+    }
+
+    @Test
+    fun aNewEntryFromTheEndOfAFullListDroppedTheOldest() {
+        val full = NavigationState.LIST_MAX
+        // A load or a pushState from the last position of a full list: as long, last position current.
+        assertTrue(NavigationState.listDroppedAnEntry(full - 1, full, full - 1, full, reload = false))
+        // A reload of that position moves nothing.
+        assertFalse(NavigationState.listDroppedAnEntry(full - 1, full, full - 1, full, reload = true))
+        // From anywhere before the end, the entries past it go instead, and the list is no longer than it was.
+        assertFalse(NavigationState.listDroppedAnEntry(full - 2, full, full - 1, full, reload = false))
+        assertFalse(NavigationState.listDroppedAnEntry(10, full, 11, 12, reload = false))
+        // A list under the cap grows instead; a traversal within a full list changes the position.
+        assertFalse(NavigationState.listDroppedAnEntry(full - 2, full - 1, full - 1, full, reload = false))
+        assertFalse(NavigationState.listDroppedAnEntry(full - 1, full, full - 2, full, reload = false))
+        assertFalse(NavigationState.listDroppedAnEntry(-1, 0, 0, 1, reload = false))
     }
 
     private fun urlsOf(snapshot: JSONObject): List<String> {
@@ -252,21 +285,30 @@ class NavigationStateTest {
     fun publicUrlNamesInternalPagesAndKeepsShortDataUrls() {
         val long = "data:text/html," + "y".repeat(NavigationState.DATA_URL_KEEP_MAX + 1)
         val short = "data:text/html,<p>hi</p>"
-        val known = mapOf(NavigationState.dataUrlKey(long) to "zen://history")
-        assertEquals("zen://history", NavigationState.publicUrl(long) { known[it] })
-        // A long data: URL nobody remembers would bloat every snapshot of the tab; a short one is the page.
-        assertEquals(NavigationState.BLANK_URL, NavigationState.publicUrl(long) { null })
-        assertEquals(short, NavigationState.publicUrl(short) { null })
-        assertEquals("https://a.example/", NavigationState.publicUrl("https://a.example/") { error("not asked for a web page") })
+        assertEquals("zen://history", NavigationState.publicUrl(PLACEHOLDER, "zen://history"))
+        assertEquals("zen://history", NavigationState.publicUrl(long, "zen://history"))
+        // An internal page's placeholder nobody has a name for says nothing about the page; a long
+        // data: URL would bloat every snapshot of the tab; a short one is the page.
+        assertEquals(NavigationState.BLANK_URL, NavigationState.publicUrl(PLACEHOLDER, null))
+        assertEquals(NavigationState.BLANK_URL, NavigationState.publicUrl(long, null))
+        assertEquals(short, NavigationState.publicUrl(short, null))
+        // A web page goes by its URL, whatever name its position has.
+        assertEquals("https://a.example/", NavigationState.publicUrl("https://a.example/", "zen://history"))
+        assertEquals("https://a.example/", NavigationState.publicUrl("https://a.example/", null))
     }
 
     @Test
-    fun dataUrlKeysTellLengthAndContentApart() {
-        val a = "data:text/html,aaaa"
-        val b = "data:text/html,aaab"
-        assertEquals(NavigationState.dataUrlKey(a), NavigationState.dataUrlKey(a))
-        assertNotEquals(NavigationState.dataUrlKey(a), NavigationState.dataUrlKey(b))
-        assertNotEquals(NavigationState.dataUrlKey(a), NavigationState.dataUrlKey(a + "a"))
-        assertEquals(a.length.toLong(), NavigationState.dataUrlKey(a) ushr 32)
+    fun theDocumentPlaceholderIsADataHeaderWithNothingBehindTheComma() {
+        assertTrue(NavigationState.isDocumentPlaceholder(PLACEHOLDER))
+        assertTrue(NavigationState.isDocumentPlaceholder("data:text/html,"))
+        assertFalse(NavigationState.isDocumentPlaceholder("data:text/html,<p>hi</p>"))
+        assertFalse(NavigationState.isDocumentPlaceholder("data:text/html;charset=utf-8;base64,PHA+"))
+        assertFalse(NavigationState.isDocumentPlaceholder("https://a.example/?q=a,"))
+        assertFalse(NavigationState.isDocumentPlaceholder(""))
+    }
+
+    private companion object {
+        /** What every `loadDataWithBaseURL` document's list item carries: the `data:` header the document was loaded under. */
+        private const val PLACEHOLDER = "data:text/html;charset=utf-8;base64,"
     }
 }

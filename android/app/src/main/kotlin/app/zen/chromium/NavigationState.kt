@@ -25,13 +25,16 @@ import java.util.Base64
  * is logged.
  *
  * The internal pages (`zen://…`, rendered by `loadDataWithBaseURL`) sit in the WebView's list
- * as `data:` URLs carrying their whole HTML; the snapshot's entries name them by the URL the
- * view showed for them ([publicUrl]), which is what the core, the session store and the back
- * list want, and what keeps the document out of the entries. Not out of `hostState`: `saveState`
- * pickles every entry's URL, an internal page's document with it, so a stack holding a large
- * one (the new tab page, an error page, a long reader page) is over [HOST_STATE_MAX] once
- * encoded, no state goes out for it, and that tab restores URL-only – the core loads the
- * current entry. A reader page of ordinary length fits.
+ * as `data:` items, and every one of them under the same URL: the `data:` header the document
+ * was loaded under with nothing behind its comma ([isDocumentPlaceholder]; the document itself
+ * is the entry's, not the URL's, which is how the list's items stay small). The snapshot's
+ * entries name them by the URL the view showed for them – by position, since the items cannot
+ * be told apart ([publicUrl], [internalNamesOf]) – which is what the core, the session store
+ * and the back list want. The document is inside `hostState`, though: `saveState` pickles
+ * every entry, an internal page's document with it, so a stack holding a large one (the new
+ * tab page, an error page, a long reader page) is over [HOST_STATE_MAX] once encoded, no state
+ * goes out for it, and that tab restores URL-only – the core loads the current entry. A reader
+ * page of ordinary length fits.
  */
 object NavigationState {
     /** The longest `hostState` string that leaves the host (`sanitizeSnapshot` in the core keeps the same bound). */
@@ -43,14 +46,14 @@ object NavigationState {
     /** A `data:` entry the view never showed under another URL is kept verbatim up to this length. */
     const val DATA_URL_KEEP_MAX = 2048
 
-    /** What a `data:` entry too long to keep becomes in the snapshot. */
+    /** What a `data:` entry too long to keep, or an internal page's item nobody has a name for, becomes in the snapshot. */
     const val BLANK_URL = "about:blank"
 
     /** The internal pages' scheme: what the view shows for a `loadDataWithBaseURL` document of the chrome's. */
     const val INTERNAL_URL_PREFIX = "zen://"
 
-    /** How many internal pages a tab remembers the `data:` URL of (a stack rarely holds more). */
-    const val INTERNAL_URLS_MAX = 32
+    /** The most entries a WebView's list holds (Chromium's session history cap): one goes when another would be the 51st. */
+    const val LIST_MAX = 50
 
     private const val TAG = "ZenNavState"
 
@@ -62,15 +65,15 @@ object NavigationState {
 
     /**
      * `{ entries: [{ url, title, originalUrl? }], index }`. `originalUrl` goes along only where it
-     * says something the URL does not (the address a redirect was requested at); `resolve` maps
-     * each list URL to the one the snapshot names ([publicUrl]).
+     * says something the URL does not (the address a redirect was requested at); `names` are the
+     * internal pages' by position, and each URL goes by [publicUrl].
      */
-    fun snapshotJson(items: List<Item>, currentIndex: Int, resolve: (String) -> String = { it }): JSONObject {
+    fun snapshotJson(items: List<Item>, currentIndex: Int, names: Map<Int, String> = emptyMap()): JSONObject {
         val entries = JSONArray()
-        for (item in items) {
-            val url = resolve(item.url)
+        for ((i, item) in items.withIndex()) {
+            val url = publicUrl(item.url, names[i])
             val entry = json("url" to url, "title" to (item.title ?: ""))
-            val original = item.originalUrl?.let(resolve)
+            val original = item.originalUrl?.let { publicUrl(it, names[i]) }
             if (!original.isNullOrEmpty() && original != url) entry.put("originalUrl", original)
             entries.put(entry)
         }
@@ -219,16 +222,16 @@ object NavigationState {
         itemUrl.startsWith("data:") && (entryUrl.startsWith(INTERNAL_URL_PREFIX) || entryUrl == BLANK_URL)
 
     /**
-     * The names of the internal pages in a restored list, from the snapshot's entries: the key
-     * of each `data:` item's URL ([dataUrlKey]) to the `zen://` URL the entry at its position
-     * names it by, the way the view that saved the list remembered them (`internalUrls`), so the
-     * fresh view names them the same from its first push. Positions that do not match are skipped.
+     * The names of the internal pages in a restored list, from the snapshot's entries: each
+     * position whose item is a `data:` document and whose entry names a `zen://` page, to that
+     * name, the way the view that saved the list had them ([keptNames]), so the fresh view
+     * names them the same from its first push. Positions that do not match are skipped.
      */
-    fun internalNamesOf(items: List<String?>, entries: List<String>): Map<Long, String> {
-        val names = LinkedHashMap<Long, String>()
+    fun internalNamesOf(items: List<String?>, entries: List<String>): Map<Int, String> {
+        val names = LinkedHashMap<Int, String>()
         for (i in 0 until minOf(items.size, entries.size)) {
             val item = items[i] ?: continue
-            if (item.startsWith("data:") && entries[i].startsWith(INTERNAL_URL_PREFIX)) names[dataUrlKey(item)] = entries[i]
+            if (item.startsWith("data:") && entries[i].startsWith(INTERNAL_URL_PREFIX)) names[i] = entries[i]
         }
         return names
     }
@@ -247,21 +250,47 @@ object NavigationState {
         entryUrl.startsWith("data:") && !shownUrl.isNullOrEmpty() && !shownUrl.startsWith("data:") && shownUrl != entryUrl
 
     /**
-     * The URL the snapshot names an entry by: the entry's own, unless it is a `data:` URL the view
-     * once showed under another name (`internal` answers by [dataUrlKey]); a `data:` URL nobody
-     * remembers is kept while it is short (a page the user opened as one) and is [BLANK_URL] when
-     * it is not, rather than kilobytes of markup in every snapshot of the tab.
+     * Whether `url` is the URL WebView gives every `loadDataWithBaseURL` document's list item:
+     * the `data:` header it loaded the document under, with nothing behind the comma (the
+     * document travels with the entry, not in the URL). One and the same for every internal
+     * page of a tab, so the item says which kind of page it is and not which one.
      */
-    fun publicUrl(entryUrl: String, internal: (Long) -> String?): String {
+    fun isDocumentPlaceholder(url: String): Boolean = url.startsWith("data:") && url.endsWith(",")
+
+    /**
+     * The URL the snapshot names an entry by: the entry's own, unless it is a `data:` item with
+     * a `name` (the `zen://` URL the view showed it as, by position). A `data:` URL nobody has a
+     * name for is kept while it is a page's own and short (one the user opened as such), and is
+     * [BLANK_URL] when it is an internal page's placeholder ([isDocumentPlaceholder]) or too long
+     * to carry in every snapshot of the tab.
+     */
+    fun publicUrl(entryUrl: String, name: String?): String {
         if (!entryUrl.startsWith("data:")) return entryUrl
-        internal(dataUrlKey(entryUrl))?.let { return it }
-        return if (entryUrl.length <= DATA_URL_KEEP_MAX) entryUrl else BLANK_URL
+        if (name != null) return name
+        return if (isDocumentPlaceholder(entryUrl) || entryUrl.length > DATA_URL_KEEP_MAX) BLANK_URL else entryUrl
     }
 
     /**
-     * A key for a `data:` URL that does not keep the URL: its length and its hash. Two internal
-     * pages with the same length and hash would share a name, which is as likely as a hash
-     * collision between two documents, and costs a wrong title in a list at worst.
+     * The names still standing once the list is `items`: a position keeps its name while it
+     * holds a `data:` item. One pruned (the entries past the current one go when a new page
+     * commits) or taken by a web page has none; the commit of a new internal page at a position
+     * names it afresh, so a name is never older than the item at its position.
      */
-    fun dataUrlKey(url: String): Long = (url.length.toLong() shl 32) or (url.hashCode().toLong() and 0xffffffffL)
+    fun keptNames(names: Map<Int, String>, items: List<String?>): Map<Int, String> =
+        names.filterKeys { i -> i in items.indices && items[i]?.startsWith("data:") == true }
+
+    /**
+     * Whether the commit that took the list from `previousSize` entries with `previousIndex`
+     * current to `size` with `currentIndex` current dropped the list's oldest entry: a new entry
+     * from the last position of a list at [LIST_MAX] (a load, a `pushState`) leaves the list as
+     * long and the last position current, with everything before it moved down one. A reload of
+     * that position looks the same and moves nothing, and is told apart; a navigation replacing
+     * that entry (`location.replace`, `replaceState`) looks the same too and is not, so it
+     * counts as a drop: the names go for nothing, which costs an `about:blank` where a name
+     * was, never a name at the wrong position. Which entry a drop takes is Chromium's choice
+     * (the oldest it may skip, else the first), so after one no name is its position's any
+     * more, other than the one the commit itself brings.
+     */
+    fun listDroppedAnEntry(previousIndex: Int, previousSize: Int, currentIndex: Int, size: Int, reload: Boolean): Boolean =
+        !reload && size >= LIST_MAX && previousSize == size && previousIndex == size - 1 && currentIndex == size - 1
 }
