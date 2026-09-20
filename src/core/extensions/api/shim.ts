@@ -971,22 +971,25 @@ export function installExtensionApi(
 
   /**
    * A `types.ChromeSetting`: `get` / `set` / `clear` route as `<namespace>.<method>(object,
-   * setting, details)` and `onChange` is an event the host fires under the setting's full name.
+   * setting, details)` (or `(setting, details)` for a setting that is a member of the namespace
+   * itself, `object` null) and `onChange` is an event the host fires under the setting's full
+   * name.
    */
-  function chromeSetting(namespace: string, object: string, setting: string): object {
+  function chromeSetting(namespace: string, object: string | null, setting: string): object {
     const result: Record<string, unknown> = {}
+    const path = object === null ? [setting] : [object, setting]
     for (const method of ['get', 'set', 'clear']) {
       const qualified = `types.ChromeSetting.${method}(object details, optional function callback)`
       define(result, method, function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
-        return settle(qualified, invoke(namespace, method, [object, setting, details]), callback)
+        return settle(qualified, invoke(namespace, method, [...path, details]), callback)
       })
     }
     define(
       result,
       'onChange',
-      createEvent(`${namespace}.${object}.${setting}.onChange`, undefined, {
+      createEvent(`${namespace}.${path.join('.')}.onChange`, undefined, {
         nativeDelivers: false
       })
     )
@@ -1350,6 +1353,10 @@ export function installExtensionApi(
         const value = chromeSetting(namespace, object, setting)
         for (const holder of holders) define(holder, setting, value)
       }
+    }
+    for (const setting of nsSpec.ownSettings ?? []) {
+      const value = chromeSetting(namespace, null, setting)
+      for (const target of targets) define(target, setting, value)
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {

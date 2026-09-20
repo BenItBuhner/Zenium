@@ -22,6 +22,8 @@ interface PersistedApi {
   sidePanelOnActionClick?: Record<string, boolean>
   /** `chrome.privacy` values per extension, by `category.setting`, then scope. */
   privacy?: Record<string, Record<string, ScopedValues>>
+  /** `chrome.proxy.settings` values per extension (canonical configs as JSON text), by scope. */
+  proxy?: Record<string, ScopedValues>
 }
 
 function emptyPersisted(): PersistedApi {
@@ -33,7 +35,8 @@ function emptyPersisted(): PersistedApi {
     uninstallUrls: {},
     workerEvents: {},
     sidePanelOnActionClick: {},
-    privacy: {}
+    privacy: {},
+    proxy: {}
   }
 }
 
@@ -138,6 +141,17 @@ export class ApiStore {
     this.save()
   }
 
+  proxyValues(extensionId: string): ScopedValues {
+    return this.data.proxy?.[extensionId] ?? {}
+  }
+
+  setProxyValues(extensionId: string, values: ScopedValues): void {
+    const proxy = this.data.proxy ?? (this.data.proxy = {})
+    if (Object.keys(values).length === 0) delete proxy[extensionId]
+    else proxy[extensionId] = values
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -147,6 +161,7 @@ export class ApiStore {
     delete this.data.workerEvents[extensionId]
     delete this.data.sidePanelOnActionClick?.[extensionId]
     delete this.data.privacy?.[extensionId]
+    delete this.data.proxy?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
     this.setUserScripts(extensionId, null)

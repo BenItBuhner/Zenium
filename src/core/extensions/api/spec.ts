@@ -9,6 +9,7 @@
  * works), everything else replaces the engine's inert binding in place.
  */
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
+import { PROXY_SETTING } from './proxy'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
@@ -95,6 +96,12 @@ export interface NamespaceSpec {
    * `<namespace>.<object>.<setting>.onChange`.
    */
   settings?: Readonly<Record<string, readonly string[]>>
+  /**
+   * `proxy`: `types.ChromeSetting`s that are members of the namespace itself (`proxy.settings`),
+   * routed as `<namespace>.<method>(setting, details)`; the host fires
+   * `<namespace>.<setting>.onChange`. The engine's inert copy of the member is replaced.
+   */
+  ownSettings?: readonly string[]
   /**
    * `userScripts`: Chrome hides the namespace behind a per-extension toggle ("Allow user
    * scripts"). While `ShimOptions.toggles[key]` is false, reading `chrome.<namespace>` throws
@@ -844,6 +851,33 @@ export const API_SPEC: ApiSpec = {
     permissions: ['privacy'],
     settings: PRIVACY_SETTING_NAMES
   },
+  // Electron's binding defines `proxy.settings` but its calls reject ("Access to extension API
+  // denied.": Chrome's preference service is not part of the engine). The setting lives in the
+  // host (`core/extensions/api/proxy.ts` has Chrome's checks and the config's canonical form,
+  // the precedence rules are `privacy`'s) and is applied to the sessions through Electron's
+  // `setProxy`; `onProxyError` reports a configuration the sessions refused.
+  proxy: {
+    methods: {},
+    events: { onProxyError: {} },
+    constants: {
+      Mode: {
+        DIRECT: 'direct',
+        AUTO_DETECT: 'auto_detect',
+        PAC_SCRIPT: 'pac_script',
+        FIXED_SERVERS: 'fixed_servers',
+        SYSTEM: 'system'
+      },
+      Scheme: {
+        HTTP: 'http',
+        HTTPS: 'https',
+        QUIC: 'quic',
+        SOCKS4: 'socks4',
+        SOCKS5: 'socks5'
+      }
+    },
+    permissions: ['proxy'],
+    ownSettings: [PROXY_SETTING]
+  },
   // Site storage and the cache through the engine's sessions, history and downloads through the models.
   browsingData: {
     methods: {
@@ -956,6 +990,12 @@ export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as
  * not members of `chrome.privacy`, but routed like one (with the setting's names first).
  */
 export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
+
+/**
+ * The calls the shim makes on behalf of `proxy.settings`' `get` / `set` / `clear`: not members
+ * of `chrome.proxy`, but routed like one (with the setting's name first).
+ */
+export const PROXY_INTERNAL_METHODS = PRIVACY_METHODS
 
 /**
  * The call the shim makes on behalf of `tabs.sendMessage` for an extension holding
