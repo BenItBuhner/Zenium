@@ -260,12 +260,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             report.put("verdict", "n/m").put("note", "the options page did not render as a tab before the restart")
             return
         }
-        // The session file must name the tab before the start-over, or nothing is restored.
+        // The session file must name the tab before the start-over, or nothing is restored. The
+        // core writes it on a cadence; the wait scales with the job like the step's other waits
+        // (a 156 job at x3.1 rendered the page and missed a fixed 10 s here).
         val state = File(app.filesDir, "zen/state.json")
-        val persisted = poll(10_000, 300) { if (state.isFile && state.readText().contains(url)) true else null }
+        val persistDeadline = scaled(10_000, factor)
+        val persisted = poll(persistDeadline, 300) { if (state.isFile && state.readText().contains(url)) true else null }
         report.put("persisted", persisted == true)
         if (persisted != true) {
-            report.put("verdict", "n/m").put("note", "the session file did not name the tab within 10 s")
+            report.put("verdict", "n/m").put("note", "the session file did not name the tab within ${persistDeadline / 1000} s")
             return
         }
         Log.i(TAG, "RESTORE: starting the browser over with $url active")
