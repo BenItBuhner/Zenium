@@ -106,7 +106,7 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             ))}
             <button
               type="button"
-              className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100"
+              className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100 focus-visible:opacity-100"
               title={hint('New Space', state, 'space.new')}
               onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
             >

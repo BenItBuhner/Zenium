@@ -34,10 +34,26 @@ describe('the chrome focus ring (§1, a11y-10)', () => {
     expect(at).toBeGreaterThan(0)
     const block = css.slice(at, css.indexOf('@layer components {', at))
     expect(block).toMatch(
-      /@layer base \{\s*:focus-visible \{\s*outline: 2px solid var\(--v2-ring\);\s*outline-offset: -2px;\s*\}\s*\}/
+      /@layer base \{\s*\* \{\s*outline-color: var\(--v2-ring\);\s*outline-width: 2px;\s*outline-offset: -2px;\s*\}\s*:focus-visible \{\s*outline: 2px solid var\(--v2-ring\);\s*outline-offset: -2px;\s*\}\s*\}/
     )
     // Before the first components layer, so every component rule can still speak over it.
     expect(at).toBeLessThan(css.indexOf('@layer components {'))
+  })
+
+  it('snaps on: every standing outline sets its own offset, so the at-rest values animate nothing and move nothing', () => {
+    // A rule drawing an outline that is not a focus ring (a card's hairline, a picked tile's
+    // accent) must say where it sits, or the at-rest `outline-offset: -2px` would pull it inward.
+    const rule = /([^{}]+)\{([^{}]*)\}/g
+    for (const [file, text] of sheets) {
+      for (const m of text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(rule)) {
+        const selector = (m[1] ?? '').trim().replace(/\s+/g, ' ')
+        const body = m[2] ?? ''
+        if (!/(?:^|;)\s*outline\s*:(?!\s*none\s*(?:;|$))/.test(body)) continue
+        expect(body, `${file}: ${selector} draws an outline without an outline-offset`).toMatch(
+          /(?:^|;)\s*outline-offset\s*:/
+        )
+      }
+    }
   })
 
   it('is one ring: every :focus-visible outline in the stylesheets is 2px solid in an accent token, or none', () => {

@@ -295,6 +295,19 @@
 :root[data-theme='dark'] [class*=' zen-v2-']:focus-visible {
   outline-offset: -2px;
 }
+/*
+ * A v2 control that is the accent when on – the primary button, a checked checkbox, a switch or
+ * a radio that is itself the control – would draw dark's inset ring (the accent again, 2 px
+ * inside its edge) on its own fill and show nothing (a11y-10): on those the ring stays outside
+ * the edge in dark as it does in light, on the surface around them (the zoom slider's accent
+ * thumb does the same in its own rule).
+ */
+:root[data-theme='dark'] .zen-v2-button[data-primary]:focus-visible,
+:root[data-theme='dark'] .zen-v2-checkbox:checked:focus-visible,
+:root[data-theme='dark'] .zen-v2-switch[aria-checked='true']:focus-visible,
+:root[data-theme='dark'] .zen-v2-radio[aria-checked='true']:focus-visible {
+  outline-offset: 0;
+}
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
 @supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
@@ -719,8 +732,21 @@
  * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
  * its pill or face carries – and so does `outline-none` on a container that focuses itself by
  * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ *
+ * The ring snaps on whole, as Chrome's does. At rest every element already holds the ring's
+ * colour, width and offset – with the style at `none` nothing shows – so a control's own
+ * transition (Tailwind's `transition-all` and `transition-colors` carry `outline-color`, the
+ * former the width and offset too) has nothing to animate when the keyboard lands; without this
+ * the ring faded in from a 3 px ring in the text colour (`outline-color`'s initial
+ * `currentColor`, `outline-width`'s `medium`) over the control's 150 ms. Every rule that draws a
+ * standing outline (a card's hairline, a picked tile's accent) sets its own width and offset.
  */
 @layer base {
+  * {
+    outline-color: var(--v2-ring);
+    outline-width: 2px;
+    outline-offset: -2px;
+  }
   :focus-visible {
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
@@ -7831,12 +7857,13 @@
   position: absolute;
   inset: -4px;
 }
+/*
+ * Outside the thumb in both themes: the thumb is the accent, so dark's inset ring (the shared
+ * v2 rule's -2) would sit on its own fill, under the panel-colour border, and show nothing (a11y-10).
+ */
 .zen-zoom-slider [role='slider']:focus-visible {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
-}
-:root[data-theme='dark'] .zen-zoom-slider [role='slider']:focus-visible {
-  outline-offset: -2px;
 }
 /* Disabled (§9.30): the whole control at .4 – track, run and thumb together – laid out at full size. */
 .zen-zoom-slider[data-disabled] {
