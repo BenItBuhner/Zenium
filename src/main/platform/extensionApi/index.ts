@@ -90,6 +90,8 @@ import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
+import { SystemDisplayApi } from './systemDisplay'
+import { electronDisplayScreen } from './systemDisplayBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
@@ -198,6 +200,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
+  readonly systemDisplay: SystemDisplayApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
   readonly debugger: DebuggerApi
@@ -288,6 +291,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.downloads = new DownloadsApi(this, downloadBridge)
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
+    this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
@@ -319,6 +323,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       downloads: this.downloads.handlers,
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
+      'system.display': this.systemDisplay.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
       debugger: this.debugger.handlers,
@@ -583,6 +588,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.privacy.load(ext.id)
     this.proxy.load(ext.id)
     this.contentSettings.load(ext.id)
+    this.systemDisplay.load(loaded)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
@@ -613,6 +619,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
     this.debugger.unload(ext.id)
+    this.systemDisplay.unload()
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.tts.unload(ext.id)

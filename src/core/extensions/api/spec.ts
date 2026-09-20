@@ -15,6 +15,7 @@ import {
 } from './contentSettings'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
+import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
@@ -724,6 +725,37 @@ export const API_SPEC: ApiSpec = {
     methods: { get: { params: [] } },
     events: {},
     permissions: ['topSites']
+  },
+  // The engine makes the namespace but has no display provider behind it (every call fails with
+  // "System display API is not available."): `getInfo` answers from the browser's screens as
+  // Chrome does on Windows, macOS and Linux, `getDisplayLayout` is empty there, and the functions
+  // Chrome restricts to ChromeOS fail with its error. `onDisplayChanged` follows the screens.
+  'system.display': {
+    methods: {
+      getInfo: { params: [object('flags', true)] },
+      getDisplayLayout: { params: [] },
+      setDisplayProperties: { params: [string('id'), object('info')] },
+      setDisplayLayout: { params: [{ name: 'layouts', type: 'array' }] },
+      enableUnifiedDesktop: { params: [boolean('enabled')] },
+      overscanCalibrationStart: { params: [string('id')] },
+      overscanCalibrationAdjust: { params: [string('id'), object('delta')] },
+      overscanCalibrationReset: { params: [string('id')] },
+      overscanCalibrationComplete: { params: [string('id')] },
+      showNativeTouchCalibration: { params: [string('id')] },
+      startCustomTouchCalibration: { params: [string('id')] },
+      completeCustomTouchCalibration: {
+        params: [{ name: 'pairs', type: 'object' }, object('bounds')]
+      },
+      clearTouchCalibration: { params: [string('id')] },
+      setMirrorMode: { params: [object('info')] }
+    },
+    events: { onDisplayChanged: {} },
+    constants: {
+      ActiveState: { ACTIVE: 'active', INACTIVE: 'inactive' },
+      LayoutPosition: { TOP: 'top', RIGHT: 'right', BOTTOM: 'bottom', LEFT: 'left' },
+      MirrorMode: { OFF: 'off', NORMAL: 'normal', MIXED: 'mixed' }
+    },
+    permissions: [SYSTEM_DISPLAY_PERMISSION]
   },
   // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
   omnibox: {

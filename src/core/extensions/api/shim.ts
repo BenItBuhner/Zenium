@@ -256,18 +256,36 @@ export function installExtensionApi(
   }
 
   /** The namespace object on a root, created when the engine has none. */
+  /**
+   * The object at `name` under `root`, made when missing; a dotted name (`system.display`) is a
+   * path of namespaces, each made the same way (`chrome.system` holds `display`).
+   */
   function namespaceOn(root: Any, name: string): Any {
-    let ns: Any
-    try {
-      ns = root[name]
-    } catch {
-      ns = undefined
+    let holder = root
+    for (const part of name.split('.')) {
+      let ns: Any
+      try {
+        ns = holder[part]
+      } catch {
+        ns = undefined
+      }
+      if (!ns || typeof ns !== 'object') {
+        ns = {}
+        define(holder, part, ns)
+      }
+      holder = ns
     }
-    if (!ns || typeof ns !== 'object') {
-      ns = {}
-      define(root, name, ns)
+    return holder
+  }
+
+  /** The value at a dotted path under `root`, or undefined anywhere along the way. */
+  function memberAt(root: Any, name: string): unknown {
+    let value: Any = root
+    for (const part of name.split('.')) {
+      if (!isObject(value)) return undefined
+      value = value[part]
     }
-    return ns
+    return value
   }
 
   function matchesType(value: unknown, type: ParamType): boolean {
@@ -1299,7 +1317,7 @@ export function installExtensionApi(
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
     if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
-    return isObject(safely(() => roots[0][namespace]))
+    return isObject(safely(() => memberAt(roots[0], namespace)))
   }
 
   /** Permission-gated events (`runtime.onUserScriptMessage`) exist for extensions declaring one. */
