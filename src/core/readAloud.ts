@@ -792,10 +792,15 @@ export class ReadAloudService {
     }
   }
 
-  /** Web pages get the highlight's style inserted once per session; the reader page styles it itself. */
+  /**
+   * Web pages get the highlight's style inserted once per session; the reader page styles it
+   * itself. Author origin: Blink registers but never paints a `::highlight()` rule from a
+   * user-origin sheet (Chromium 152; a plain user rule applies, the same highlight rule as an
+   * author sheet or a `<style>` element paints).
+   */
   private ensureCss(session: Session, view: TabView): void {
     if (session.cssKey || session.url.startsWith('zen:')) return
-    session.cssKey = view.insertCSS(READ_ALOUD_HIGHLIGHT_CSS).catch(() => null)
+    session.cssKey = view.insertCSS(READ_ALOUD_HIGHLIGHT_CSS, 'author').catch(() => null)
   }
 
   private view(tabId: string): TabView | undefined {

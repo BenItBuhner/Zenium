@@ -126,12 +126,14 @@ interface FakeView {
   destroyed: boolean
   posted: PageHostMessage[]
   inserted: string[]
+  /** The cascade origin each `insertCSS` asked for (`undefined` when it left the host's default). */
+  insertedOrigins: Array<string | undefined>
   removed: string[]
   scripts: string[]
   scriptResult: unknown
   isDestroyed(): boolean
   postToPage(message: PageHostMessage): void
-  insertCSS(css: string): Promise<string>
+  insertCSS(css: string, origin?: 'user' | 'author'): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
   executeJavaScript(code: string): Promise<unknown>
 }
@@ -261,13 +263,15 @@ function harness(options: { host?: FakeHost | null } = {}): Harness {
         destroyed: false,
         posted: [],
         inserted: [],
+        insertedOrigins: [],
         removed: [],
         scripts: [],
         scriptResult: null,
         isDestroyed: () => view.destroyed,
         postToPage: (m) => view.posted.push(m),
-        insertCSS: async (css) => {
+        insertCSS: async (css, origin) => {
           view.inserted.push(css)
+          view.insertedOrigins.push(origin)
           return `css${view.inserted.length}`
         },
         removeInsertedCSS: async (key) => {
@@ -386,6 +390,8 @@ describe('ReadAloudService', () => {
       ])
       expect(h.views.get('t1')!.inserted).toHaveLength(1)
       expect(h.views.get('t1')!.inserted[0]).toContain('::highlight(zenium-read-sentence)')
+      // Blink paints `::highlight()` from author sheets only; a user-origin sheet registers, never paints.
+      expect(h.views.get('t1')!.insertedOrigins).toEqual(['author'])
     })
 
     it('falls back to the translate engine’s detection, then the UI language, for an untagged document', async () => {

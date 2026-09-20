@@ -573,6 +573,9 @@ export interface WindowOpenTicket {
   adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
+/** The cascade origin of a stylesheet a host injects into a page (`TabView.insertCSS`). */
+export type InsertedCssOrigin = 'user' | 'author'
+
 /**
  * One live web page. Mirrors the subset of Electron's `WebContentsView` + `WebContents` the core
  * uses; on Android every method is a call into the Kotlin host.
@@ -618,8 +621,14 @@ export interface TabView {
    * is gone; hosts without frames run it in the main frame.
    */
   executeJavaScript(code: string, frameId?: number): Promise<unknown>
-  /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
-  insertCSS(css: string): Promise<string>
+  /**
+   * Inject a stylesheet; resolves with a key for `removeInsertedCSS`. `origin` is the sheet's
+   * cascade origin on hosts that distinguish one (Electron; absent, `user`, under the page's own
+   * rules); `author` for rules Blink honours only from author sheets – `::highlight()` among
+   * them (a highlight rule in a user-origin sheet registers but never paints). Hosts that inject
+   * a `<style>` element (Android) are author-origin either way.
+   */
+  insertCSS(css: string, origin?: InsertedCssOrigin): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
   sendPageFlags(flags: PageFlags): void
   /**
