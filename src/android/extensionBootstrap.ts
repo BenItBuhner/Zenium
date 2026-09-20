@@ -43,6 +43,7 @@ import {
 } from './extensionServiceWorker'
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
+import { installExtensionUrlRewrite } from './extensionFrameUrls'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -438,6 +439,9 @@ declare const __zenExtBoot: Boot
       postBody: (ticket, body) => engine.post({ t: 'proxyBody', ticket, body }),
       nextTicket: () => `${endpointId}:${++ticketSeq}`
     })
+    // What the page spells `chrome-extension://<id>/...` by hand (a frame's src, an image's, a
+    // script's) loads from the served origin: the WebView has no such scheme (extensionFrameUrls.ts).
+    installExtensionUrlRewrite(window)
 
     if (context === 'background' && workerScript) {
       // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
