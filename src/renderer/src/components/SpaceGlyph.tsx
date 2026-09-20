@@ -31,10 +31,13 @@ export function SpaceGlyph({
       </span>
     )
   }
+  // A ring of ink, filled with the space's colour when one is given: the ring keeps the dot at
+  // the ink's contrast on whatever gradient is under it (a11y-30), where a ring drawn in the
+  // colour itself sat at 1.5:1 on a like-coloured window, and the colour still shows.
   return (
     <span
-      className={cn('inline-block rounded-full border-2', className)}
-      style={{ width: size * 0.7, height: size * 0.7, borderColor: dotColor ?? 'var(--zen-fg)' }}
+      className={cn('inline-block rounded-full border-2 border-[var(--zen-fg)]', className)}
+      style={{ width: size * 0.7, height: size * 0.7, background: dotColor }}
       aria-hidden
     />
   )

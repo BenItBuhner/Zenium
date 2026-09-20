@@ -188,13 +188,16 @@ function SpaceIcon({
       type="button"
       className={cn(
         'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-[10px] px-1 text-[17px] leading-none transition-all',
+        // The other spaces stand back, but no further than 3:1 on the window (a11y-30): at 45 %
+        // a glyph's thin strokes fell to 1.9:1 on a light gradient.
         active
           ? 'bg-[var(--zen-element-bg-active)] opacity-100'
-          : 'opacity-45 hover:opacity-90 focus-visible:opacity-100 hover:bg-[var(--zen-element-bg)]',
+          : 'opacity-70 hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--zen-element-bg)]',
         isDrop && 'opacity-100'
       )}
       data-drop-into={isDrop || undefined}
       data-space-target={space.id}
+      aria-current={active ? 'true' : undefined}
       title={space.name}
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {
