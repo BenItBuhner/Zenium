@@ -57,7 +57,7 @@ export const DEFAULT_BROWSER_PROMPT_TITLE = 'Make Zenium your default browser'
 export function describeDefaultBrowserRequest(platform: Platform): string {
   switch (platform) {
     case 'win32':
-      return 'Windows will open Default apps so you can choose Zenium.'
+      return 'Windows will open Default apps, where you can choose Zenium.'
     case 'darwin':
       return 'macOS will ask you to confirm.'
     default:

@@ -145,7 +145,7 @@ describe('the default-browser strip', () => {
 
 describe('the desktop prompt', () => {
   it.each<[Platform, string]>([
-    ['win32', 'Windows will open Default apps so you can choose Zenium.'],
+    ['win32', 'Windows will open Default apps, where you can choose Zenium.'],
     ['darwin', 'macOS will ask you to confirm.'],
     ['linux', 'Zenium will register itself with your desktop.']
   ])('says in one sentence what %s does once the user says yes', (platform, sentence) => {
@@ -172,7 +172,9 @@ describe('the desktop prompt', () => {
     )
     expect(block.querySelector('.zen-v2-title-block-title svg')).toBeNull()
     const description = block.querySelector('.zen-v2-title-block-description')!
-    expect(description.textContent).toBe('Windows will open Default apps so you can choose Zenium.')
+    expect(description.textContent).toBe(
+      'Windows will open Default apps, where you can choose Zenium.'
+    )
     expect(d.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
     expect(d.getAttribute('aria-describedby')).toBe(description.id)
     const [notNow, makeDefault] = buttons(d)
