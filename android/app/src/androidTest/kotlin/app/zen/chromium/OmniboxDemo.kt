@@ -154,8 +154,18 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
         step("OMN-05 Edit under a finger") {
             tapPill()
             awaitNode(8_000) { it == EDIT_LABEL } ?: error("the header row did not come back")
-            val touched = touchTapLabel(EDIT_LABEL)
-            val filled = touched && awaitChrome("(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(pageUrl)}", 6_000)
+            val fillExpr = "(document.querySelector('$FIELD')||{}).value===${JSONObject.quote(pageUrl)}"
+            var touched = touchTapLabel(EDIT_LABEL)
+            var filled = touched && awaitChrome(fillExpr, 6_000)
+            if (touched && !filled) {
+                // Run 5: the tap landed while the chrome's UI thread was posting frames of over a
+                // second (the Share sheet's close and the keyboard's insets still settling), and
+                // no click came of it; the same touch had filled the field in runs 2 to 4. One
+                // more touch, said so in the findings; the claim is still the field's.
+                finding("  the first touch on Edit filled nothing within 6 s; Edit touched once more")
+                touched = touchTapLabel(EDIT_LABEL, timeoutMs = 4_000)
+                filled = touched && awaitChrome(fillExpr, 6_000)
+            }
             SystemClock.sleep(800)
             val caret = chromeValue("(function(){var i=document.querySelector('$FIELD');return i?i.selectionStart+'/'+i.selectionEnd+'/'+i.value.length:''})()")
             val atEnd = caret.isNotEmpty() && caret.split('/').let { it.size == 3 && it[0] == it[2] && it[1] == it[2] }
