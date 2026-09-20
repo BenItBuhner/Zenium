@@ -5107,9 +5107,12 @@
 @layer components {
   /*
    * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
-   * controls) as a §9.20 popover at 400 under the toolbar row. The body runs from the title
-   * block's 16 (§9.23) with one player per tab, parted by air alone – 28 from one's transport
-   * to the next one's artwork, no line (§9.7) – each at the 16 gutter with 12 between its parts:
+   * controls) as a §9.20 popover at 400 under the toolbar row. It opens on its cards with no
+   * title block, like a menu (§9.7: the cards name themselves; the hub's name is the toolbar
+   * button's), so the body carries the popover's own 16 above the first player (§9.20's
+   * padding; 16 under the last one as well), one player per tab, parted by air alone – 28 from
+   * one's transport to the next one's artwork, no line – each at the 16 gutter with 12 between
+   * its parts:
    * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
    * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
    * when there is no picture) beside the title at 15/600 and the
@@ -5125,7 +5128,7 @@
   .zen-mhub-body {
     display: flex;
     flex-direction: column;
-    padding-bottom: 4px;
+    padding: 16px 0 4px;
   }
   .zen-mhub-player {
     display: flex;

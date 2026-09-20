@@ -39,11 +39,18 @@ export function mediaHubVisible(state: UIState): boolean {
   return mediaHubEntries(state).length > 0
 }
 
+/**
+ * The one name of the hub: the toolbar button's, and the popover's accessible name. The
+ * popover carries no title block of its own (§9.7: a list of items that name themselves opens
+ * on its cards, like a menu, and its name lives on the control that opens it).
+ */
+export const MEDIA_HUB_NAME = 'Media controls'
+
 /** The button's name: what is playing, or that the players are there. */
 export function mediaHubLabel(entries: MediaState[]): string {
   const playing = entries.filter((m) => m.playing).length
-  if (playing === 0) return 'Media controls'
-  return playing === 1 ? 'Media controls, 1 playing' : `Media controls, ${playing} playing`
+  if (playing === 0) return MEDIA_HUB_NAME
+  return `${MEDIA_HUB_NAME}, ${playing} playing`
 }
 
 /**

@@ -191,7 +191,10 @@ describe('MediaHubPopover', () => {
     const panel = hub()!
     expect(panel.getAttribute('role')).toBe('dialog')
     expect(panel.style.width).toBe('400px')
-    expect(panel.querySelector('h2')!.textContent).toBe('Media controls')
+    // No title block: the hub opens on its cards like a menu (§9.7), named as the button is.
+    expect(panel.querySelector('h2, .zen-v2-title-block')).toBeNull()
+    expect(panel.getAttribute('aria-label')).toBe('Media controls')
+    expect(panel.firstElementChild!.classList.contains('zen-mhub-body')).toBe(true)
     const players = [...panel.querySelectorAll<HTMLElement>('[data-media-player]')]
     expect(players.map((p) => p.dataset.mediaPlayer)).toEqual(['t1', 't2'])
 

@@ -19,7 +19,13 @@ import { usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, placeUnder } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { formatMediaTime, handlesAction, mediaDetail } from '@renderer/lib/media'
-import { closeMediaHub, mediaHubEntries, mediaHubUi, mediaTitle } from '@renderer/lib/mediaHub'
+import {
+  MEDIA_HUB_NAME,
+  closeMediaHub,
+  mediaHubEntries,
+  mediaHubUi,
+  mediaTitle
+} from '@renderer/lib/mediaHub'
 import { useLightDismiss } from '@renderer/lib/popoverStore'
 import {
   ChromePortal,
@@ -32,12 +38,11 @@ import {
 } from '@renderer/lib/portals'
 import { browserStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { V2IconButton, V2TitleBlock } from '../extensions/v2'
+import { V2IconButton } from '../extensions/v2'
 import { Slider } from '../ui/slider'
 import { V2_GLYPH } from '../v2/controls'
 import { MEDIA_HUB_BUTTON } from './MediaHubButton'
 
-const TITLE_ID = 'zen-mhub-title'
 /** Rows with trailing controls: the 400 popover (§9.20). */
 const WIDTH = POPOVER_WIDTH.form
 
@@ -52,24 +57,25 @@ export function MediaHubLayer(): JSX.Element | null {
 /**
  * Chrome's global media controls (MW-16) as a §9.20 popover 400 wide hanging from the toolbar
  * button's row, end-aligned with the button, through the chrome layer over a picture of the
- * page (`useFloatingChrome`; it holds its first paint until the picture is in place). A title
- * block (§9.23) then one player per tab with media, the session first, parted by hairlines:
- * the artwork (the page's, else a note on a fill tile) beside the title and the artist and site
- * – the title is the way to the tab, as Chrome's card is – with picture-in-picture trailing for
- * a video where the host has it; the seek row (§10.4's slider row: the times in tabular numerals
- * at the track's ends, the position carried forward from the report while it plays, a drag
- * scrubbing and a release seeking there) when the media has a duration; and the transport –
- * previous track, ten seconds back, play or pause, ten seconds on, next track – as §9.3 icon
- * buttons, the track buttons at .4 (§9.30) until the page handles them. Every control sends the
- * Media Session action the OS controls send (`media.action`, `media.toggle`). The popover leaves
- * with the last player; Escape returns the keyboard to the button, a press anywhere else, a
- * resize and another popover opening put it away (§9.22).
+ * page (`useFloatingChrome`; it holds its first paint until the picture is in place). It opens
+ * on its cards with no title block, like a menu (§9.7: the cards name themselves, and the
+ * hub's name lives on the button that opens it – `aria-label` here): one player per tab with
+ * media, the session first, parted by air alone: the artwork (the page's, else the kind's glyph
+ * on the players' shared tile) beside the title and the artist and site – the title is the way
+ * to the tab, as Chrome's card is – with picture-in-picture trailing for a video where the host
+ * has it; the seek row (§10.4's slider row: the times in tabular numerals at the track's ends,
+ * the position carried forward from the report while it plays, a drag scrubbing and a release
+ * seeking there) when the media has a duration; and the transport – previous track, ten seconds
+ * back, play or pause, ten seconds on, next track – as §9.3 icon buttons, the track buttons at
+ * .4 (§9.30) until the page handles them. Every control sends the Media Session action the OS
+ * controls send (`media.action`, `media.toggle`). The popover leaves with the last player;
+ * Escape returns the keyboard to the button, a press anywhere else, a resize and another
+ * popover opening put it away (§9.22).
  */
 function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
   const [fromKeyboard] = useState(() => mediaHubUi.get().fromKeyboard)
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
-  const [scrolled, setScrolled] = useState(false)
   const [box, setBox] = useState<PopoverBox>(place)
   const entries = mediaHubEntries(state)
 
@@ -102,17 +108,13 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
       <div
         ref={ref}
         role="dialog"
-        aria-labelledby={TITLE_ID}
+        aria-label={MEDIA_HUB_NAME}
         data-zen-media-hub
         className="zen-v2 zen-animate-pop zen-bm-popover zen-mhub fixed z-[70] flex flex-col outline-none"
         style={popoverStyle(box)}
         tabIndex={-1}
       >
-        <V2TitleBlock id={TITLE_ID} title="Media controls" scrolled={scrolled} />
-        <div
-          className="zen-bm-popover-body zen-mhub-body"
-          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
-        >
+        <div className="zen-bm-popover-body zen-mhub-body">
           {entries.map((media) => (
             <Player
               key={media.tabId}
