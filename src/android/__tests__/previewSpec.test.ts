@@ -60,6 +60,41 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('docks the read-aloud player at a scripted status, speed and with its voice picker', () => {
+    expect(parsePreviewSpec('readAloud=')).toEqual({
+      kind: 'readAloud',
+      status: 'playing',
+      rate: 1,
+      voices: false
+    })
+    expect(parsePreviewSpec('readAloud=paused&rate=1.5')).toEqual({
+      kind: 'readAloud',
+      status: 'paused',
+      rate: 1.5,
+      voices: false
+    })
+    expect(parsePreviewSpec('readAloud=loading&voices')).toEqual({
+      kind: 'readAloud',
+      status: 'loading',
+      rate: 1,
+      voices: true
+    })
+    // An unknown status is the default; a rate off the model's range too.
+    expect(parsePreviewSpec('readAloud=idle&rate=9')).toEqual({
+      kind: 'readAloud',
+      status: 'playing',
+      rate: 1,
+      voices: false
+    })
+    expect(parsePreviewSpec('zoom=2&readAloud=paused')).toEqual({ kind: 'zoom', factor: 2 })
+    expect(parsePreviewSpec('readAloud=error&reader=article')).toEqual({
+      kind: 'readAloud',
+      status: 'error',
+      rate: 1,
+      voices: false
+    })
+  })
+
   it('puts the active tab in Reader View on the stand-in article, with or without its text sheet', () => {
     expect(parsePreviewSpec('reader=article')).toEqual({ kind: 'reader', preferences: false })
     expect(parsePreviewSpec('reader=preferences')).toEqual({ kind: 'reader', preferences: true })

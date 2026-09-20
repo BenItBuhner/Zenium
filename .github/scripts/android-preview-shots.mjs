@@ -34,7 +34,10 @@
 //                      of its states; `&then=tap:More` opens the overview's header menu on the
 //                      pane, `;tap:Close Private Tabs (1)` after it the question), `find=<text>`,
 //                      `pull=<n>`,
-//                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
+//                      `zoom=<factor>` (the page zoom sheet), `readAloud=<status>` (read
+//                      aloud's docked player with the model scripted to `playing`, `paused`,
+//                      `loading`, `ended` or `error`; `&rate=<n>` sets the speed chip, `&voices`
+//                      opens the voice picker), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,

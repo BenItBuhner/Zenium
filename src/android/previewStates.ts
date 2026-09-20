@@ -11,7 +11,7 @@ import type {
   UIState
 } from '@shared/types'
 import type { Browser } from '@core/browser'
-import { READER_URL_PREFIX, type RawArticle } from '@core/reader'
+import { READER_URL_PREFIX } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
@@ -63,9 +63,11 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  PREVIEW_ARTICLE,
   PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
+  PREVIEW_READ_ALOUD_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
@@ -74,6 +76,7 @@ import {
   type PreviewExtensionPage
 } from './preview'
 import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
+import type { ReadAloudStatus } from '@shared/readAloud'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
@@ -136,7 +139,10 @@ const QR_EVENT_MARGIN_MS = 250
  * `previewPdf.ts`), `find=<text>` (the find
  * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
  * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
- * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
+ * that factor), `readAloud=<status>` (read aloud's docked player on the active tab, the
+ * model's state scripted – the stand-in article's title, sentence 9 of 42 – at `playing`,
+ * `paused`, `loading`, `ended` or `error`; `rate=<n>` on the speed chip, `voices` opens the
+ * voice picker over it), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
  * `url=<target>` naming the URL that failed: the zen://error page is up), the message surfaces
  * and the load bar: `toast=<text>&action=<label>`, `banners=<n>`, `progress=<0…1>`,
  * `webapp=<surface>` (an "Add to Home screen" surface on the active tab), `download=<file>`
@@ -202,6 +208,8 @@ function apply(browser: Browser, spec: string): void {
     cancelVoiceSearch()
     cancelQrScan()
     resetBarHide()
+    // A read-aloud session a previous state scripted ends: its docked player goes with it.
+    browser.readAloud.stop()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
@@ -406,24 +414,6 @@ async function leavePdf(): Promise<void> {
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
-/** The article `reader=` shows: a few paragraphs, a heading and a quote, enough to fill a phone. */
-const PREVIEW_ARTICLE: RawArticle = {
-  title: 'Why coffee tastes different at altitude',
-  byline: 'Ada Marlowe',
-  siteName: 'The Roastery Journal',
-  excerpt: 'Pressure, water and a slow boil: what changes in a cup a mile up.',
-  lang: 'en',
-  dir: 'ltr',
-  content: [
-    '<p>Water boils cooler the higher you climb: at a mile up it gives out near 95 °C, and a brew that leans on a rolling boil never quite gets there. The grounds sit in water a few degrees short of what the recipe assumed, and the cup comes out thinner, brighter, a little sour at the edges.</p>',
-    '<p>Roasters who work at altitude learn to lean the other way. A finer grind gives the water more surface to pull from; a longer steep makes up for the cooler pour. Neither is a fix so much as a trade – more body, but more of the bitter compounds that a hotter, shorter brew would have left behind.</p>',
-    '<h2>The pressure in the pot</h2>',
-    '<p>Espresso complicates the story. A machine holds its water at nine bars whatever the air outside is doing, so the extraction itself changes little. What changes is everything around it: the beans lose moisture faster in thin, dry air, and a bag opened on Monday tastes of Thursday by Wednesday.</p>',
-    '<blockquote><p>“We do not roast for the bean. We roast for the room it will be drunk in.”</p></blockquote>',
-    '<p>The oldest advice still holds. Taste as you go, and let the cup, not the recipe, have the last word.</p>'
-  ].join('\n')
-}
-
 const PREVIEW_GROUP_NAME = 'Research'
 /** Pages for the members a `group=<n>` state has to make when the space has too few tabs. */
 const PREVIEW_GROUP_PAGES = [
@@ -688,6 +678,19 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'pdf' && tab) {
     seed()
     reachPdf(tab, target, () => done(spec))
+  } else if (target.kind === 'readAloud' && tab) {
+    // The panel mounts on the render after the state; the picker's sheet, once the panel's
+    // Voice is there – then a step's settle for the stand-in voices to arrive and the sheet to open.
+    scriptReadAloud(tab, target, () => {
+      afterFrames(2, () => {
+        if (!target.voices) {
+          finish()
+          return
+        }
+        tap('Voice')
+        window.setTimeout(finish, STEP_SETTLE_MS)
+      })
+    })
   } else if (target.kind === 'reader' && tab && state) {
     // Reader View is a web page's: a Settings tab left active by a previous state is not the one
     // to read, so a site's tab in the space is made active first. The stand-in host cannot run
@@ -1645,6 +1648,68 @@ function applyPrivate(
  * A finger's worth of pull events, as the host would send them (`lib/pull.ts`): down, one move
  * to the travel that puts the page at `progress` of the threshold, and – released – a lift there.
  */
+/**
+ * Read aloud's player over the active page: the core's own session (`readAloud.start`, the real
+ * `ReadAloudService`), driven to `target.status`. The stand-in host answers the core's
+ * extraction with the stand-in article and lists – or withholds – its voices as the status needs
+ * (PREVIEW_READ_ALOUD_EVENT: `loading` never lists them, so the session waits in the player's
+ * busy state; `error` lists none, so the core lands on `no-voice` after its grace), and the walk
+ * is moved on once the first sentence speaks: to sentence 4 for a playing or paused still (a
+ * word under way at the engine's pace), to the last for `ended` (the engine ends it at once).
+ * `then` runs when the state reads `target.status`. The panel's controls then drive the service
+ * as on a device: a pause keeps the place, play speaks through the stand-in engine.
+ */
+function scriptReadAloud(
+  tab: Tab,
+  target: Extract<PreviewState, { kind: 'readAloud' }>,
+  then: () => void
+): void {
+  window.dispatchEvent(new CustomEvent(PREVIEW_READ_ALOUD_EVENT, { detail: target.status }))
+  // The speed is a setting the session takes on start (the chip shows it at once).
+  run('readAloud.setRate', { rate: target.rate })
+  const at = (status: ReadAloudStatus, s: UIState): boolean =>
+    s.readAloud?.tabId === tab.id && s.readAloud.status === status
+  void cmd('readAloud.start', { tabId: tab.id }).catch(() => undefined)
+  switch (target.status) {
+    case 'loading':
+    case 'error':
+      untilState((s) => at(target.status, s), then)
+      return
+    case 'ended':
+      untilState(
+        (s) => at('playing', s),
+        () => {
+          const count = browserStore.get().state?.readAloud?.sentenceCount ?? 1
+          run('readAloud.seek', { sentenceIndex: count - 1 })
+          untilState((s) => at('ended', s), then)
+        }
+      )
+      return
+    case 'playing':
+    case 'paused':
+      untilState(
+        (s) => at('playing', s),
+        () => {
+          run('readAloud.seek', { sentenceIndex: 3 })
+          // A word under way: the engine's first word event comes a pace after the start.
+          untilState(
+            (s) =>
+              at('playing', s) && s.readAloud?.sentenceIndex === 3 && s.readAloud.word !== null,
+            () => {
+              if (target.status === 'playing') {
+                then()
+                return
+              }
+              run('readAloud.pause', undefined)
+              untilState((s) => at('paused', s), then)
+            }
+          )
+        }
+      )
+      return
+  }
+}
+
 function pull(tabId: string, progress: number, released: boolean): void {
   const time = performance.now()
   // The inverse mapping lands a hair under the threshold in floating point (71.999… for 1), which
