@@ -251,6 +251,9 @@ function SidePanelStrip({
     <aside
       className="flex w-[360px] shrink-0 flex-col border-l border-[var(--zen-border)] bg-[var(--zen-bg)]"
       aria-label={`${panel.name} side panel`}
+      // The side panel pane of the F6 rotation (lib/panes.ts): the strip's controls are what
+      // the chrome can focus; the panel's own page is a host view.
+      data-pane="sidepanel"
     >
       <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px]">
         {panel.icon && <img src={panel.icon} alt="" className="h-4 w-4" draggable={false} />}

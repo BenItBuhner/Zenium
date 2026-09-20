@@ -316,6 +316,12 @@ export interface UiState {
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
   selectionAnchorId: string | null
+  /**
+   * The tab strip's one tab stop (lib/tabStrip.ts): the strip item – a row, a tile, a folder or
+   * pinned header – the keyboard is on, `tab:<id>` and the like; null when the keyboard is
+   * elsewhere, and the active row is the stop.
+   */
+  stripFocus: string | null
   /** The glance parent has been captured and the card is animating in / shown. */
   glanceActive: boolean
   /** The card animation finished – the glance view may be placed. */
@@ -451,6 +457,7 @@ export const uiStore = createStore<UiState>(
     autofillPassphrase: null,
     selectedTabIds: [],
     selectionAnchorId: null,
+    stripFocus: null,
     glanceActive: false,
     glanceReady: false,
     spaceSlideDirection: 0,
@@ -1115,12 +1122,17 @@ export function openNewTabPageUrlbar(
   })
 }
 
-export function closeUrlbar(): void {
+/**
+ * Close the URL bar. The keyboard goes back to the page unless `keepKeyboard`: a pane shortcut
+ * (F6 from the bar, lib/panes.ts) has already put it on another chrome control, and asking for
+ * the page's focus as well would take it back off that control.
+ */
+export function closeUrlbar(opts: { keepKeyboard?: boolean } = {}): void {
   typeahead = null
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepKeyboard) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,10 @@
 import type { JSX } from 'react'
 import type { Tab } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
-import { activeTab, tabTooltip } from '@renderer/lib/selectors'
+import { activeTab, tabTitle, tabTooltip } from '@renderer/lib/selectors'
+import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import {
   browserStore,
   clearTabSelection,
@@ -41,11 +43,15 @@ export function Essentials({ essentials, activeTabId, compact }: Props): JSX.Ele
       {showZone && (
         <div data-drop="section:essential:" className="absolute inset-0 z-10 rounded-xl" />
       )}
+      {/* The tiles are tabs too (a11y-07, a11y-31): their own tablist ahead of the space's, walked
+          with the arrows as part of the strip (lib/tabStrip.ts) – Left and Right along a line. */}
       <div
         className={cn(
           'grid gap-1.5',
           compact ? 'grid-cols-1' : 'grid-cols-[repeat(auto-fill,minmax(52px,1fr))]'
         )}
+        role={essentials.length > 0 ? 'tablist' : undefined}
+        aria-label={essentials.length > 0 ? 'Essentials' : undefined}
       >
         {essentials.map((tab) => (
           <EssentialTile
@@ -82,17 +88,26 @@ function EssentialTile({
   dropKey: string | null
 }): JSX.Element {
   const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
+  const tabIndex = useStripTabIndex(`tile:${tab.id}`, active)
   return (
     <div
       className="zen-essential relative"
+      role="tab"
+      aria-selected={active}
+      aria-label={tabTitle(tab)}
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
       data-tab-id={tab.id}
+      data-strip-item={`tile:${tab.id}`}
+      tabIndex={tabIndex}
       data-frozen={tab.frozen}
       data-lifted={lifted || undefined}
       data-drop-into={dropKey === `tab:${tab.id}:into` || undefined}
       title={tabTooltip(tab)}
+      onFocus={stripFocusIn}
+      onBlur={stripFocusOut}
+      onKeyDown={stripKeyDown}
       onPointerDown={(e) => {
         if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
           startTabDrag(tab, e)
@@ -113,11 +128,12 @@ function EssentialTile({
       }}
       onContextMenu={(e) => {
         e.preventDefault()
+        const anchor = contextMenuAnchor(e)
         const ids = uiStore.get().selectedTabIds
         if (ids.length > 1 && ids.includes(tab.id))
-          return run('tab.selectionContextMenu', { tabIds: ids })
+          return run('tab.selectionContextMenu', { tabIds: ids, ...anchor })
         clearTabSelection()
-        run('tab.contextMenu', { tabId: tab.id })
+        run('tab.contextMenu', { tabId: tab.id, ...anchor })
       }}
     >
       {showDropZones && (

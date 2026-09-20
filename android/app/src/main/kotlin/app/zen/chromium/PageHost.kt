@@ -75,9 +75,6 @@ interface PageHost {
     /** Something happened outside any one page: a download, a permission request, a popup. */
     fun hostEvent(name: String, payload: Any?)
 
-    /** The set of pages in [tabs], or which of them show, changed (the window's secure flag follows private ones). */
-    fun onViewsChanged() {}
-
     /** Load progress of a page's main document, 0…100 (at most one report per 100 ms, and 100 always). */
     fun progress(tabId: String, percent: Int) {}
 

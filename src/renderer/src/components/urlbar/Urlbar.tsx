@@ -27,6 +27,7 @@ import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { URLBAR_LEAVE_EVENT } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -275,16 +276,23 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   // `keepDraft` is the desktop's: the phone discards what was typed on every dismissal (see
   // `drafts`), so the system back, the scrim and the pill's close all reopen it search-ready.
   const close = useCallback(
-    (keepDraft: boolean) => {
+    (keepDraft: boolean, keepKeyboard = false) => {
       if (keepDraft && !phone && text.trim() && (!tab || text !== pageTextFor(tab))) {
         drafts.set(draftKey, text)
       } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
-      closeUrlbar()
+      closeUrlbar({ keepKeyboard })
     },
     [draftKey, phone, tab, text]
   )
+  // F6 / Shift+F6 from the bar (lib/panes.ts): the keyboard has moved on to another chrome pane;
+  // the bar goes away as on Escape – draft kept, extension session ended – and leaves it there.
+  useEffect(() => {
+    const onLeave = (): void => close(true, true)
+    window.addEventListener(URLBAR_LEAVE_EVENT, onLeave)
+    return () => window.removeEventListener(URLBAR_LEAVE_EVENT, onLeave)
+  }, [close])
 
   // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;
   // commit closes it keeping the draft, like Escape, cancel springs it back. On the phone the
@@ -728,6 +736,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         className="zen-omnibox zen-animate-in absolute flex flex-col overflow-hidden"
         data-surface="page"
         data-attached={!floating}
+        // The open URL bar is the toolbar's field: F6 from it moves on to the next pane and
+        // puts it away (lib/panes.ts).
+        data-pane="toolbar"
         style={style}
         onMouseDown={(e) => e.stopPropagation()}
       >

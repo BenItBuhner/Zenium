@@ -10,6 +10,7 @@ import { cssColorToHex, resolveTheme, rgbToHex } from '@shared/theme'
 import { Browser } from '@core/browser'
 import type { SelectionToolbarItem } from '@core/menus'
 import type { KeyEventInput } from '@core/platform'
+import { THEME_PAINTED_EVENT, type ThemePaintedDetail } from '@renderer/hooks/useTheme'
 import {
   backStore,
   dispatchBackEvent,
@@ -17,6 +18,7 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
   dispatchPullEvent,
   setPullHost,
@@ -28,6 +30,7 @@ import { fetchDeferredDocuments } from './handoff'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
+import { openShortcutPrivateTab } from './privateShortcut'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -66,8 +69,9 @@ export interface HostGlobal {
    * evaluation's result (the array as JSON text) while the system's action mode is coming up.
    */
   selectionMenu(tabId: string, json: string | null): SelectionToolbarItem[]
+  /** The launcher's "New private tab" shortcut: a private tab in the current space. */
+  newPrivateTab(): void
 }
-
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
  * renderer API and the host callbacks. Falls back to the iframe preview host when there is no
@@ -104,6 +108,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   platform.bind(browser)
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
+  syncPrivateSurface(bridge)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   browser.start()
@@ -145,26 +150,34 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
 }
 
 /**
- * Keep the system bars and the window background in step with the active space's theme, so the
- * gradient reaches behind the status bar and its icons stay legible – and hand the chrome's
- * `--zen-scrim` token over, so what the host draws natively (the page behind an in-page back)
- * dims with the same space-tinted scrim as the chrome's own sheets.
+ * Keep the system bars and the window background in step with the theme the chrome has painted
+ * – the active space's, or the private blend's once it has crossed to its dark side (MOT-14:
+ * the status bar follows the chrome's own spring, not a guess at it) – so the gradient reaches
+ * behind the status bar and its icons stay legible; and hand the chrome's `--zen-scrim` token
+ * over, so what the host draws natively (the page behind an in-page back) dims with the same
+ * space-tinted scrim as the chrome's own sheets. `useTheme` announces each paint that matters
+ * (`zen-theme-painted`); before its first one the space theme is worked out from the state.
  */
 function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Browser): void {
   let last = ''
   let frame: number | null = null
+  let painted: ThemePaintedDetail | null = null
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
-  const apply = (state: UIState): void => {
+  const fromState = (state: UIState): ThemePaintedDetail => {
     const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
     const scheme = state.settings.colorScheme
     const dark = scheme === 'system' ? systemDark.matches : scheme === 'dark'
     const resolved = resolveTheme(space?.theme ?? null, dark)
-    const background = rgbToHex(resolved.averageColor)
+    return { dark, background: rgbToHex(resolved.averageColor) }
+  }
+  const apply = (state: UIState): void => {
+    const scheme = state.settings.colorScheme
     // The token is read back from the document a frame later, once React has written the
-    // space's variables (`useTheme`); the state event this runs on precedes that render.
+    // theme's variables (`useTheme`); the state event this runs on precedes that render.
     if (frame !== null) cancelAnimationFrame(frame)
     frame = requestAnimationFrame(() => {
       frame = null
+      const { dark, background } = painted ?? fromState(state)
       const scrim = computedTokenColor('--zen-scrim') ?? ''
       const key = `${scheme}|${dark}|${background}|${scrim}`
       if (key === last) return
@@ -174,8 +187,26 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
       bridge.send('chrome.setTheme', { dark, scheme, background, scrim })
     })
   }
+  const current = (): UIState => browser.state.snapshot(platform.window)
   platform.events.on('state', apply)
-  systemDark.addEventListener('change', () => apply(browser.state.snapshot(platform.window)))
+  systemDark.addEventListener('change', () => apply(current()))
+  window.addEventListener(THEME_PAINTED_EVENT, (e) => {
+    painted = (e as CustomEvent<ThemePaintedDetail>).detail
+    apply(current())
+  })
+}
+
+/**
+ * The window's screenshot guard (`FLAG_SECURE`, `window.setSecure`): up while a private tab is
+ * in view or the overview shows the private pane, so Recents shows no private page and none is
+ * captured (Chrome hides Incognito from the app switcher the same way); down again the moment
+ * the chrome leaves the private surface. The stores fire before React renders, so the flag is
+ * up before the private page's view is placed on screen.
+ */
+function syncPrivateSurface(bridge: Bridge): void {
+  const send = (secure: boolean): void => bridge.send('window.setSecure', { secure })
+  subscribePrivateSurface(send)
+  send(privateSurfaceNow())
 }
 
 /** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
@@ -276,7 +307,11 @@ function installHostGlobal(
             tabId,
             parse<{ text?: unknown } | undefined>(json) ?? {}
           ) ?? [])
-        : []
+        : [],
+    newPrivateTab: () =>
+      withPlatform((platform) => {
+        openShortcutPrivateTab(platform.browser, platform.window)
+      })
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
   return {

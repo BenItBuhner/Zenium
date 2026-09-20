@@ -314,6 +314,7 @@ export class ElectronTabView implements TabView {
       }
       if (ev.onKey(key)) event.preventDefault()
     })
+    wc.on('focus', () => ev.onFocused?.())
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
     wc.on('will-prevent-unload', (event) => this.onWillPreventUnload(event))
     // Internal pages are the user's to open, never a web page's (Chrome's rule for chrome://):
