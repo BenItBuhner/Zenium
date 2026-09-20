@@ -252,7 +252,13 @@ function DesktopOnboarding({
               bookmarks, browsing history and saved passwords you kept there – you choose what comes
               over, and nothing in the other browser changes.
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            {/* One choice among the browsers and "Not now": a radio group (§9.14's image radio
+                cards), not a set of toggles – each card says whether it is the one checked. */}
+            <div
+              className="grid grid-cols-2 gap-2"
+              role="radiogroup"
+              aria-label="Import from another browser"
+            >
               {browsers.map((b) => {
                 const first = b.profiles[0]!
                 const on = importFrom !== null && b.profiles.some((p) => p.id === importFrom)
@@ -264,11 +270,12 @@ function DesktopOnboarding({
                   <button
                     key={b.key}
                     type="button"
+                    role="radio"
                     className={cn(
                       'zen-squircle flex flex-col items-start gap-1 rounded-xl border border-[var(--zen-border)] p-3 text-left hover:bg-[var(--zen-element-bg)]',
                       on && 'bg-[var(--zen-element-bg-active)] ring-2 ring-[var(--zen-accent)]'
                     )}
-                    aria-pressed={on}
+                    aria-checked={on}
                     onClick={() => setImportFrom(first.id)}
                     data-import-browser={b.browser}
                   >
@@ -279,12 +286,13 @@ function DesktopOnboarding({
               })}
               <button
                 type="button"
+                role="radio"
                 className={cn(
                   'zen-squircle flex flex-col items-start gap-1 rounded-xl border border-[var(--zen-border)] p-3 text-left hover:bg-[var(--zen-element-bg)]',
                   importFrom === null &&
                     'bg-[var(--zen-element-bg-active)] ring-2 ring-[var(--zen-accent)]'
                 )}
-                aria-pressed={importFrom === null}
+                aria-checked={importFrom === null}
                 onClick={() => setImportFrom(null)}
                 data-import-browser="none"
               >
