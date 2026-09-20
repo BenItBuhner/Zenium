@@ -4873,6 +4873,79 @@
     gap: 8px;
     padding: 16px;
   }
+
+  /*
+   * The desktop's share popover (`share/SharePopover.tsx`, §9.20 at 320): only what the popover
+   * chrome, the title block and the shared row do not say. The body runs from the title block's
+   * 16 (§9.23): the preview at the 16 gutter – what is shared as 15/600 clamped to two lines
+   * over its link or text at 13 at 69% on one – then the QR's symbol centred 16 below inside the
+   * card's border and radius (its white and black are the symbol's own, in the SVG: a scanner's
+   * contrast, not the chrome's), then the targets as rows edge to edge 12 below, a hairline in
+   * the gutter above them and 4 inside at each end (§9.20's list form).
+   */
+  .zen-share-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-share-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 16px;
+  }
+  .zen-share-preview-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-share-preview-detail {
+    overflow: hidden;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-share-glyph {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .zen-share-qr {
+    display: flex;
+    justify-content: center;
+    margin: 16px 16px 0;
+  }
+  .zen-share-qr svg {
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-share-targets {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    margin-top: 12px;
+    padding: 4px 0;
+  }
+  .zen-share-targets::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 16px;
+    left: 16px;
+    height: 1px;
+    background: var(--v2-border);
+  }
+  .zen-v2-row.zen-share-row-two {
+    min-height: var(--v2-row-two-line);
+  }
 }
 
 @layer components {

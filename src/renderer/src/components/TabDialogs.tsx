@@ -30,6 +30,7 @@ import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
 import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { MediaLayer } from './phone/MediaSheet'
+import { ShareLayer } from './share/SharePopover'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
@@ -124,6 +125,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
       <InstallDialogLayer state={state} />
+      <ShareLayer state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
       <PassphraseDialog />
