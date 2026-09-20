@@ -1,0 +1,38 @@
+name: Android focus ring demo
+
+# Photographs the shared focus ring on a device (design language v2 §1 offsets by control, §4 the
+# accent fill's ring; the primitives pass 3, #272): the install sheet's primary, a Settings row,
+# the Close-all prompt's checkbox unticked and ticked – each reached with the Tab key injected as
+# a hardware keyboard's, each ring read off the chrome's computed style beside its still, in the
+# light scheme and the dark – and the History list's multi-select checkbox on the span form under
+# a real long press and a real touch. The driver (FocusRingDemo) writes its findings next to the
+# recording; a ring that is not 2 px of --v2-ring at the control's offset fails the run.
+# Dispatch-only, like the other demos: it takes about ten minutes. The build, the emulator and the
+# Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  # TEMPORARY (#272's verification run); removed in the final head.
+  push:
+    branches: [cursor/android-primitives-pass-3-37f1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-focus-ring-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Focus ring demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.FocusRingDemo
+        DEMO_DIR=focus-ring-demo
+        DEMO_OUT=artifacts/android-focus-ring-demo
+        DEMO_VIDEO=android-focus-ring-demo.mp4
+      artifact-name: android-focus-ring-demo
+      artifact-path: artifacts/android-focus-ring-demo/
