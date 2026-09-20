@@ -534,7 +534,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 // shows it) is the extension's answer as much as a new tab is.
                 val activeNow = activeCoreTab()
                 val raised = activeNow?.optString("url")?.takeIf {
-                    activeNow.optString("id") != activeBefore && it.contains("${row.id}.ext.zenium.invalid/")
+                    activeNow.optString("id") != activeBefore && extensionPage(it, row.id)
                 }
                 raised?.let { detail.put("raisedTab", it) }
                 val answered = if (opened.isNotEmpty()) opened else listOfNotNull(raised)
@@ -570,7 +570,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val view = runCatching { waitForView(tabId) }.getOrNull() ?: return null
         val dom = runCatching { json(tabEval(view, DOM_REPORT)) }.getOrNull() ?: return null
         val page = JSONObject().put("url", url).put("dom", dom)
-        if (url.contains(".ext.zenium.invalid/") && (ERROR_ROUTE.containsMatchIn(url) || !LOGIN_WORDS.containsMatchIn(dom.optString("text")))) {
+        if (extensionPage(url) && (ERROR_ROUTE.containsMatchIn(url) || !LOGIN_WORDS.containsMatchIn(dom.optString("text")))) {
             page.put("blankTab", blankPageEvidence(view, row, 0L))
         }
         return page
@@ -603,7 +603,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 dismissDialog()?.let { text -> Log.w(TAG, "${row.name} options: a dialog pressed away: $text") }
                 return@poll null
             }
-            val opened = urls.filterKeys { it !in tabsBefore }.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }
+            val opened = urls.filterKeys { it !in tabsBefore }.entries.firstOrNull { extensionPage(it.value) }
             if (opened != null) {
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(opened.key) }
@@ -628,7 +628,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             stage(
                 entry, "options",
                 if (uncaught.isEmpty()) "P" else "PARTIAL",
-                "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${dom.optString("url").substringAfter(".ext.zenium.invalid").take(60)})" +
+                "in a $where: ${dom.optInt("els")} elements, ${dom.optInt("w")}x${dom.optInt("h")} css px, text \"${dom.optString("text").take(80)}\" (${extensionPath(dom.optString("url")).take(60)})" +
                     (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
                 detail
             )
@@ -643,7 +643,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             // evidence of why (Adblock Plus's and Ghostery's options pages stayed blank on both jobs,
             // their documents complete and their consoles empty; Adblock Plus's options.js awaits one
             // runtime.sendMessage before it shows its body).
-            openedTabs.entries.firstOrNull { it.value.contains(".ext.zenium.invalid/") }?.let { blank ->
+            openedTabs.entries.firstOrNull { extensionPage(it.value) }?.let { blank ->
                 var v: TabWebView? = null
                 instrumentation.runOnMainSync { v = host.tabs.get(blank.key) }
                 v?.let { detail.put("blankTab", blankPageEvidence(it, row, since)) }
@@ -817,7 +817,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 // `app.html#/page/error`): the same evidence as a blank options tab, the whole
                 // row's trace since the page was opened in the popup stage.
                 val evidence = when {
-                    pass || !url.contains(".ext.zenium.invalid/") -> null
+                    pass || !extensionPage(url) -> null
                     view != null -> blankPageEvidence(view, row, 0L)
                     else -> stored?.optJSONObject("blankTab")
                 }
@@ -883,7 +883,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val before = tabUrls().keys
         createTab("$BASE/hello.user.js")
         val installTab = poll(scaled(30_000, factor), 500) {
-            tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && installPage.containsMatchIn(it.value) }
+            tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value) && installPage.containsMatchIn(it.value) }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         if (installTab == null) {
@@ -954,7 +954,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             (extra.optJSONObject("targetReload")?.let { ", after reload ${it.toString().take(120)}" } ?: "")
         return Grade(
             if (page.optBoolean("pass")) "P" else "F",
-            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), ready after ${ready.optLong("readyMs")} ms ${if (ready.optBoolean("pass")) "" else "(still waiting: ${ready.optString("text").take(60)}) "}" +
+            "install page opened (${extensionPath(installTab.value).take(50)}), ready after ${ready.optLong("readyMs")} ms ${if (ready.optBoolean("pass")) "" else "(still waiting: ${ready.optString("text").take(60)}) "}" +
                 "install click ${click.toString().take(120)}, " +
                 "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${installWaitMs / 1000} s (${extra.optJSONObject("installPageAtDeadline")?.optString("text")?.take(60)})"}, " +
                 "userScripts: ${extra.opt("userScripts")}, target page: $readings" +
@@ -1199,7 +1199,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreInvoke("tab.new", "null") }.onFailure { coreInvoke("tab.create", """{"active":true}""") }
         val extra = JSONObject()
         val opened = poll(20_000, 500) {
-            tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("${row.id}.ext.zenium.invalid/") }
+            tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) }
         }
         val after = tabUrls()
         extra.put("tabsAfter", JSONArray(after.values.toList()))
@@ -1224,7 +1224,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val before = tabUrls().keys
         createTab("$BASE/hello.user.css")
         val installTab = poll(scaled(25_000, factor), 500) {
-            tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && it.value.contains("install-usercss") }
+            tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value) && it.value.contains("install-usercss") }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         var click = JSONObject().put("clicked", false)
@@ -1321,7 +1321,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             (promptButton()?.rect ?: findPositiveButton())?.let { tapRect(it); allowed++ }
             if (tabUrls().values.any { it.contains("onetab.html") }) true else null
         }
-        val listTab = poll(15_000, 500) { tabUrls().entries.firstOrNull { it.value.contains("${row.id}.ext.zenium.invalid/onetab.html") } }
+        val listTab = poll(15_000, 500) { tabUrls().entries.firstOrNull { extensionPage(it.value, row.id) && extensionPath(it.value).startsWith("/onetab.html") } }
         var list = JSONObject()
         if (listTab != null) {
             val view = waitForView(listTab.key)
@@ -1378,6 +1378,369 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     private fun notOnThePhone(reason: String): (Row, JSONObject) -> Grade = { _, _ -> Grade("n/a", reason) }
 
+    // --- the core checks of compat round 4 (the next 30 by installs) -----------------------------
+
+    /**
+     * A row whose whole reachable surface on the phone is its background: a signed-in Google
+     * account (Docs Offline), a desktop companion over native messaging (Remote Desktop, Webex,
+     * Power Automate, the Windows Accounts broker behind Microsoft Single Sign On, McAfee's
+     * dispatcher). The core is `n/m` with the reason, as the desktop table has it; what is
+     * measured is the runtime's shape for the row: the worker up (the background stage) and, for
+     * a native-messaging row, `runtime.connectNative` / `sendNativeMessage` answering as Chrome
+     * does without the host installed ("Specified native messaging host not found."), not a
+     * missing function or a "not implemented" rejection – that would be `F`, ours.
+     */
+    private fun serviceBacked(label: String, reason: String, native: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
+        val background = entry.optJSONObject("background")?.optString("verdict")
+        val extra = JSONObject()
+        val bg = backgroundView(row.id)
+        val probe = if (native && bg != null) nativeMessagingProbe(bg).also { extra.put("nativeMessaging", it) } else null
+        if (native && bg == null) extra.put("nativeMessaging", "no background view to probe from")
+        val shapeOk = probe == null || probe.optBoolean("pass")
+        when {
+            background != "P" && background != "PARTIAL" ->
+                Grade("F", "$label: background ${background ?: "?"} (${entry.optJSONObject("background")?.optString("note")?.take(160)})", extra)
+            !shapeOk -> Grade("F", "$label: the native messaging API does not answer as Chrome's does: ${probe.toString().take(240)}", extra)
+            else -> Grade(
+                "n/m",
+                "$label: $reason (not measurable here); background $background" +
+                    (probe?.let { "; native messaging: ${it.optString("error").take(80)} (connectNative ${it.optString("connectNative")}, port ${it.optString("disconnect").take(60)})" } ?: ""),
+                extra
+            )
+        }
+    }
+
+    /** `runtime.sendNativeMessage` / `connectNative` to a host that does not exist, from the background: Chrome's error is the pass. */
+    private fun nativeMessagingProbe(bg: WebView): JSONObject {
+        tabEval(bg, NATIVE_MESSAGING_PROBE)
+        val text = poll(10_000, 250) {
+            tabEval(bg, "window.__zenNativeProbe && window.__zenNativeProbe.done ? JSON.stringify(window.__zenNativeProbe) : null").takeIf { it != "null" }
+        }
+        return text?.let(::json) ?: JSONObject().put("pass", false).put("note", "no answer within 10 s")
+    }
+
+    /**
+     * An account-gated row without a popup (Claude, Capital One Shopping, Online Security, Avira
+     * Password Manager, Read&Write): the action click, on a settled fixture tab, opens or
+     * navigates to the vendor's sign-in / setup page (`opens`), or the row's own page (`page`,
+     * Claude's side panel document, which the phone has no panel to host: opened as a tab) shows
+     * its sign-in. Either is the row's sign-in surface: `n/m`, the account being the gate. A row
+     * whose click does nothing and whose page shows nothing is `F`, with the bridge trace.
+     */
+    private fun accountGate(label: String, opens: Regex, page: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+        val popup = entry.optJSONObject("popup")?.optString("verdict")
+        val opened = entry.optJSONArray("popupOpened")
+        val extra = JSONObject()
+        val factor = speedFactor(entry)
+        when {
+            popup == "P" || popup == "PARTIAL" ->
+                Grade("n/m", "$label: popup renders (\"${entry.optString("popupText").take(80)}\"); the core needs an account (not measurable here)")
+            opened != null && opened.length() > 0 && opens.containsMatchIn(opened.optString(0)) ->
+                Grade("n/m", "$label: the action click opened ${opened.optString(0).take(100)} (its sign-in / setup page); the core needs an account (not measurable here)")
+            else -> {
+                val tab = createTab("$BASE/page-b.html?gate")
+                val view = waitForView(tab)
+                poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+                SystemClock.sleep(scaled(2_000, factor))
+                val before = tabUrls()
+                val since = StepEvidence(row)
+                coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+                val landed = poll(scaled(20_000, factor), 500) {
+                    val now = tabUrls()
+                    now.entries.firstOrNull { (it.key !in before || before[it.key] != it.value) && opens.containsMatchIn(it.value) }
+                        ?: now.entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) }
+                }
+                runCatching { coreInvoke("extension.closePopup", "null") }
+                extra.put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
+                var text = ""
+                if (landed != null) {
+                    val landedView = runCatching { waitForView(landed.key) }.getOrNull()
+                    text = landedView?.let { v -> pollExpr(v, DOM_REPORT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:document.body&&document.body.innerText.trim().length>0,text:"), scaled(15_000, factor)).optString("text") } ?: ""
+                    extra.put("landed", JSONObject().put("url", landed.value).put("text", text.take(200)))
+                }
+                var ownPage: JSONObject? = null
+                if (landed == null && page != null) {
+                    val pageTab = createTab("chrome-extension://${row.id}/$page")
+                    val pageView = waitForView(pageTab)
+                    ownPage = pollExpr(pageView, DOM_REPORT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:document.body&&document.body.innerText.trim().length>20,text:"), scaled(20_000, factor))
+                    ownPage.put("console", JSONArray(consoleOf(pageView).takeLast(10)))
+                    if (!ownPage.optBoolean("pass")) ownPage.put("blankTab", blankPageEvidence(pageView, row, 0L))
+                    extra.put("ownPage", ownPage)
+                    snap("${entry.optString("slug")}-own-page")
+                }
+                since.record(extra, "atEnd")
+                when {
+                    landed != null && opens.containsMatchIn(landed.value) ->
+                        Grade("n/m", "$label: the action click ${if (landed.key in before) "navigated the tab to" else "opened"} ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs an account (not measurable here)", extra)
+                    landed != null ->
+                        Grade(if (LOGIN_WORDS.containsMatchIn(text) || text.isNotEmpty()) "n/m" else "F", "$label: the action click showed ${landed.value.take(100)} (\"${text.take(80)}\")${if (text.isEmpty()) ", which stayed blank" else "; the core needs an account (not measurable here)"}", extra)
+                    ownPage?.optBoolean("pass") == true ->
+                        Grade("n/m", "$label: the action click showed nothing on the phone; its $page renders as a tab (\"${ownPage.optString("text").take(80)}\"); the core needs an account (not measurable here)", extra)
+                    ownPage != null ->
+                        Grade("F", "$label: the action click showed nothing within ${scaled(20_000, factor) / 1000} s and its $page stayed blank (${ownPage.toString().take(200)})", extra)
+                    else -> Grade("F", "$label: the action click opened nothing within ${scaled(20_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
+                }
+            }
+        }
+    }
+
+    /**
+     * A VPN extension: its core (an egress change) needs the vendor's live service and, for the
+     * free tiers, an account (`n/m`, as on the desktop), but the engine part is measured: the
+     * worker sees `chrome.proxy` and `proxy.settings.get` answers (Chrome's `ChromeSetting`
+     * shape), the popup renders its connect control, and the egress address the fixture reads
+     * before and after a tap on that control (through open shadow roots) is kept – a changed
+     * address is `P`. A missing `chrome.proxy` (the worker's `TypeError`) or a "not implemented"
+     * rejection is `F`, ours.
+     */
+    private fun vpn(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val extra = JSONObject()
+        val factor = speedFactor(entry)
+        val bg = backgroundView(row.id)
+        val proxy = if (bg != null) {
+            tabEval(bg, PROXY_PROBE)
+            poll(10_000, 250) { tabEval(bg, "window.__zenProxyProbe && window.__zenProxyProbe.done ? JSON.stringify(window.__zenProxyProbe) : null").takeIf { it != "null" } }?.let(::json)
+                ?: JSONObject().put("pass", false).put("note", "no answer within 10 s")
+        } else JSONObject().put("pass", false).put("note", "no background view")
+        extra.put("proxy", proxy)
+        val egressTab = createTab("$BASE/proxy-check.html")
+        val egressView = waitForView(egressTab)
+        val before = pollExpr(egressView, EGRESS_REPORT, scaled(20_000, factor))
+        extra.put("egressBefore", before)
+        showTab(fixtureTab)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            click = json(tabEval(popup, VPN_CONNECT_CLICK))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(300))
+            if (click.optBoolean("clicked")) {
+                SystemClock.sleep(scaled(6_000, factor))
+                snap("${entry.optString("slug")}-vpn-after-connect")
+                extra.put("popupTextAfterClick", json(tabEval(popup, DEEP_TEXT)).optString("text").take(300))
+            }
+        }
+        extra.put("connectClick", click)
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        var after = JSONObject()
+        if (click.optBoolean("clicked")) {
+            showTab(egressTab)
+            coreInvoke("tab.reload", """{"tabId":${JSONObject.quote(egressTab)}}""")
+            SystemClock.sleep(1_500)
+            after = pollExpr(egressView, EGRESS_REPORT, scaled(20_000, factor))
+            extra.put("egressAfter", after)
+        }
+        val changed = before.optBoolean("pass") && after.optBoolean("pass") &&
+            before.optString("ipify") != after.optString("ipify") && after.optString("ipify").isNotEmpty()
+        val note = "chrome.proxy: ${proxy.toString().take(200)}; popup ${if (popup != null) "rendered" else "absent"}, connect control ${click.toString().take(120)}; egress ${before.optString("ipify").ifEmpty { "unread" }}" +
+            (if (click.optBoolean("clicked")) " -> ${after.optString("ipify").ifEmpty { "unread" }}" else "")
+        when {
+            changed -> Grade("P", "$label: the egress address changed after the connect tap: $note", extra)
+            !proxy.optBoolean("pass") -> Grade("F", "$label: the proxy API is not Chrome's shape in the worker: $note", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check: $note", extra)
+            else -> Grade("n/m", "$label: the proxy API answers and the popup renders its controls; a routed egress needs the vendor's live VPN service and its account (not measurable here): $note", extra)
+        }
+    }
+
+    /**
+     * A PDF tool: opening `sample.pdf` is either taken over (the tab lands on the extension's own
+     * viewer, `chrome-extension://<id>/...`) or annotated (a button of the extension's injected
+     * into the document, `pattern` on ids, classes and text). Kami passes on the desktop this
+     * way ("Open with Kami" in the PDF viewer); Acrobat's takeover is opt-in and its viewer
+     * needs an Adobe account, so its miss is `n/m` (`missing`), as on the desktop.
+     */
+    private fun pdfTool(label: String, pattern: Regex, missing: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val extra = JSONObject()
+        val factor = speedFactor(entry)
+        val before = tabUrls().keys
+        val tab = createTab("$BASE/sample.pdf")
+        val expr = "(function(){var pat=/${pattern.pattern}/i;var hits=[];var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var s=(e.id||'')+' '+String(e.className||'')+' '+(e.getAttribute('src')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('aria-label')||'');if(pat.test(s)||(e.children.length===0&&pat.test(e.textContent||'')&&(e.textContent||'').length<80))hits.push((e.tagName+'#'+(e.id||'')+'.'+String(e.className||'').slice(0,40)+' '+(e.textContent||'').trim().slice(0,40)).trim());if(e.shadowRoot)walk(e.shadowRoot)}};if(document.body)walk(document.body);" +
+            "return JSON.stringify({pass:hits.length>0,hits:hits.slice(0,6),url:location.href,title:document.title,contentType:document.contentType,els:document.body?document.body.querySelectorAll('*').length:0})})()"
+        var landed: Map.Entry<String, String>? = null
+        var page = JSONObject()
+        poll(scaled(30_000, factor), 700) {
+            val urls = tabUrls()
+            landed = urls.entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) }
+            if (landed != null) return@poll true
+            val view = runCatching { waitForView(tab) }.getOrNull()
+            if (view != null) {
+                page = json(tabEval(view, expr))
+                if (page.optBoolean("pass")) return@poll true
+            }
+            null
+        }
+        extra.put("tabs", JSONArray(tabUrls().values.toList())).put("page", page)
+        val view = runCatching { waitForView(tab) }.getOrNull()
+        view?.let { extra.put("console", JSONArray(consoleOf(it).takeLast(10))) }
+        val taken = landed
+        if (taken != null) {
+            val ownView = runCatching { waitForView(taken.key) }.getOrNull()
+            val own = ownView?.let { pollExpr(it, DOM_REPORT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:document.body&&document.body.querySelectorAll('*').length>3,text:"), scaled(20_000, factor)) } ?: JSONObject()
+            extra.put("ownViewer", own)
+            Grade(if (own.optBoolean("pass")) "P" else "PARTIAL", "$label took the PDF over: ${taken.value.take(100)} (${own.optInt("els")} elements, \"${own.optString("text").take(80)}\")", extra)
+        } else if (page.optBoolean("pass")) {
+            Grade("P", "$label injected into the PDF page: ${page.optJSONArray("hits")?.toString()?.take(200)}", extra)
+        } else {
+            Grade(
+                missing,
+                "$label: no takeover and nothing injected on sample.pdf within ${scaled(30_000, factor) / 1000} s (page: ${page.toString().take(200)})" +
+                    if (missing == "n/m") "; its viewer is opt-in per PDF and needs an Adobe account (the desktop table has the same reading)" else "",
+                extra
+            )
+        }
+    }
+
+    /** MetaMask: the fixture asks for an EIP-1193 provider on `window.ethereum`; the wallet's page-world script answers before the page runs. */
+    private fun walletProvider(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val tab = createTab("$BASE/wallet.html")
+        val view = waitForView(tab)
+        val found = pollExpr(view, "JSON.stringify({pass: !!(window.__wallet && window.__wallet.isMetaMask), wallet: window.__wallet || null, ethereum: typeof window.ethereum, providers: window.ethereum && window.ethereum.providers ? window.ethereum.providers.length : null})", scaled(25_000, factor))
+        val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!found.optBoolean("pass")) extra.put("errors", targetErrors(view))
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "F",
+            "window.ethereum with isMetaMask on the dapp page: ${found.toString().take(240)}" +
+                (extra.optJSONArray("errors")?.takeIf { it.length() > 0 }?.let { "; first error: ${it.optJSONObject(0)?.optString("message")?.take(100)}" } ?: ""),
+            extra
+        )
+    }
+
+    /**
+     * GoFullPage: the action's popup runs the capture (`tabs.captureVisibleTab` while its script
+     * scrolls the page) and opens `capture.html` with the stitched image; that page rendering an
+     * image of the fixture is the pass.
+     */
+    private fun fullPageCapture(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val tab = createTab("$BASE/page-b.html?capture")
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(1_500, factor))
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        val result = poll(scaled(45_000, factor), 700) {
+            tabUrls().entries.firstOrNull { it.key !in before && (it.value.contains("capture.html") || it.value.contains("editor.html")) }
+        }
+        popup?.let { extra.put("popup", json(tabEval(it, DOM_REPORT))).put("popupConsole", JSONArray(consoleOf(it).takeLast(12))) }
+        snap("${entry.optString("slug")}-capture-popup")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        var image = JSONObject()
+        if (result != null) {
+            val resultView = waitForView(result.key)
+            image = pollExpr(resultView, "(function(){var imgs=Array.prototype.slice.call(document.querySelectorAll('img, canvas')).map(function(e){var r=e.getBoundingClientRect();return {tag:e.tagName,w:Math.round(e.naturalWidth||e.width||r.width),h:Math.round(e.naturalHeight||e.height||r.height),shown:r.width>0&&r.height>0}});var big=imgs.filter(function(i){return i.w>=200&&i.h>=200});return JSON.stringify({pass:big.length>0,images:imgs.slice(0,6),url:location.href,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()", scaled(30_000, factor))
+            extra.put("result", image).put("resultConsole", JSONArray(consoleOf(resultView).takeLast(10)))
+            showTab(result.key)
+            SystemClock.sleep(800)
+        }
+        since.record(extra, "atEnd")
+        return Grade(
+            if (image.optBoolean("pass")) "P" else "F",
+            "capture page ${if (result == null) "never opened within ${scaled(45_000, factor) / 1000} s" else "opened (${result.value.substringAfter("/", "").take(60)})"}; " +
+                "image: ${image.toString().take(200)}; popup: \"${extra.optJSONObject("popup")?.optString("text")?.take(100)}\"" +
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)})" else "",
+            extra
+        )
+    }
+
+    /**
+     * Authenticator: a TOTP account saved the way its own manual entry saves one (an `OTPStorage`
+     * item in `chrome.storage.sync`, the default location), then the popup lists it with a
+     * six-digit code computed from the secret: the storage round trip and the code generation
+     * are the observable.
+     */
+    private fun authenticator(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val bg = backgroundView(row.id) ?: return Grade("F", "no background view to save the account through")
+        tabEval(bg, AUTHENTICATOR_SEED)
+        val seeded = poll(10_000, 250) { tabEval(bg, "window.__zenSeed").takeIf { it != "null" } } ?: "no answer within 10 s"
+        extra.put("seed", seeded)
+        showTab(fixtureTab)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(
+                popup,
+                "(function(){var entries=Array.prototype.slice.call(document.querySelectorAll('.entry'));var rows=entries.map(function(e){return (e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,80)});" +
+                    "var zen=entries.find(function(e){return /Zenium/.test(e.textContent||'')});var code=zen?((zen.querySelector('.code')||zen).textContent||'').replace(/\\s+/g,''):'';" +
+                    "return JSON.stringify({pass:!!zen&&/\\d{6}/.test(code),entries:entries.length,rows:rows.slice(0,5),code:code.slice(0,12),text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,160):''})})()",
+                scaled(20_000, factor)
+            )
+            extra.put("popup", found).put("console", JSONArray(consoleOf(popup).takeLast(12)))
+        }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-authenticator-code")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "F",
+            "account saved (${seeded.take(60)}); popup ${if (popup == null) "did not render" else "lists ${found.optInt("entries")} entries: ${found.optJSONArray("rows")?.toString()?.take(160)}, code ${found.optString("code")}"}",
+            extra
+        )
+    }
+
+    /**
+     * Zotero Connector: on a page carrying Highwire / Dublin Core citation metadata its content
+     * script detects the Embedded Metadata translator and the connector renames its toolbar
+     * button "Save to Zotero (Embedded Metadata)" for that tab (`action.setTitle`, per tab);
+     * "Web Page with Snapshot" is the generic translator (the connector ran, nothing detected).
+     */
+    private fun zotero(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val tab = createTab("$BASE/zotero.html")
+        val view = waitForView(tab)
+        var title = ""
+        poll(scaled(30_000, factor), 700) {
+            title = extensionAction(row.id)?.optString("title") ?: ""
+            if (title.contains("Embedded Metadata", ignoreCase = true)) true else null
+        }
+        val extra = JSONObject().put("title", title).put("action", extensionAction(row.id) ?: JSONObject.NULL).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!title.contains("Embedded Metadata", ignoreCase = true)) extra.put("errors", targetErrors(view))
+        return when {
+            title.contains("Embedded Metadata", ignoreCase = true) -> Grade("P", "the toolbar button reads \"$title\" on the citation page", extra)
+            title.contains("Save to Zotero", ignoreCase = true) -> Grade("PARTIAL", "the connector ran but detected no translator: the button reads \"$title\"", extra)
+            else -> Grade("F", "the button never changed on the citation page within ${scaled(30_000, factor) / 1000} s: title \"$title\"", extra)
+        }
+    }
+
+    /**
+     * Avira Browser Safety: its tracker blocking on the ad fixture first (the desktop's ad-blocker
+     * bar), else the popup's fetched verdict for the fixture site ("safe", "secure", "no threats",
+     * "protected", the blocked count) – what the desktop graded.
+     */
+    private fun siteVerdict(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val blocked = adBlocker(row, entry)
+        if (blocked.verdict == "P") blocked
+        else {
+            closeExtraTabs()
+            val factor = speedFactor(entry)
+            showTab(fixtureTab)
+            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+            var found = JSONObject()
+            if (popup != null) {
+                found = pollExpr(popup, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:/\\b(safe|secure|no threats?|protected|trusted|blocked|trackers?)\\b/i.test(text),text:"), scaled(20_000, factor))
+                found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+            }
+            SystemClock.sleep(600)
+            snap("${entry.optString("slug")}-verdict-popup")
+            runCatching { coreInvoke("extension.closePopup", "null") }
+            val extra = JSONObject().put("adBlock", blocked.extra ?: JSONObject()).put("popup", found)
+            Grade(
+                if (found.optBoolean("pass")) "P" else if (blocked.verdict == "PARTIAL") "PARTIAL" else "F",
+                "$label: ad fixture ${blocked.verdict} (${blocked.note.take(120)}); popup verdict ${if (popup == null) "no popup" else "\"${found.optString("text").take(120)}\""}",
+                extra
+            )
+        }
+    }
+
     // --- the table -------------------------------------------------------------------------------
 
     /** The desktop sweep's thirty, the twenty-seven the feasibility table calls feasible first, the three it does not last. */
@@ -1427,7 +1790,41 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Not feasible on the phone (feasibility table): a DevTools panel and screen capture have no WebView equivalent.
         Row("fmkadmapgofadopljbjfkapdkoienihi", "React Developer Tools", "react-devtools", feasible = false, core = notOnThePhone("devtools_page: the phone has no DevTools panel to host it (WebView limit)")),
         Row("nhdogjmejiglipccpnnnanhbledajbpd", "Vue.js devtools", "vue-devtools", feasible = false, core = notOnThePhone("devtools_page: the phone has no DevTools panel to host it (WebView limit)")),
-        Row("liecbddmkiiihnedobmlmillhodjkdmb", "Loom", "loom", feasible = false, core = notOnThePhone("desktopCapture / tabCapture: no screen or tab capture on the phone (WebView limit); the recorder itself needs an account"))
+        Row("liecbddmkiiihnedobmlmillhodjkdmb", "Loom", "loom", feasible = false, core = notOnThePhone("desktopCapture / tabCapture: no screen or tab capture on the phone (WebView limit); the recorder itself needs an account")),
+        // Compat round 4: the next 30 by installs (`.github/scripts/ext-compat/next30.json`, the
+        // desktop round-2 list), so the phone's table grows on the desktop's axis. Feasibility as
+        // the top-30 sweep set it: a row needing a native host, a desktop app or an account is
+        // n/m at core with the reason, graded on its other surfaces anyway.
+        Row("ghbmnnjooekpmoecnnnilnnbdlolhkhi", "Google Docs Offline", "google-docs-offline", core = serviceBacked("Google Docs Offline", "offline editing needs a signed-in Google account on docs.google.com")),
+        Row("efaidnbmnnnibpcajpcglclefindmkaj", "Adobe Acrobat", "adobe-acrobat", core = pdfTool("Acrobat", Regex("acrobat|adobe"), missing = "n/m")),
+        Row("fheoggkfdfchfphceeifdbepaooicaho", "McAfee WebAdvisor", "mcafee-webadvisor", core = serviceBacked("McAfee WebAdvisor", "site ratings come from McAfee's cloud through its native dispatcher (a desktop companion)", native = true)),
+        Row("lmjegmlicamnimmfhcmpkclmigmmcbeh", "Application Launcher For Drive", "drive-app-launcher", core = serviceBacked("Application Launcher For Drive", "launching needs Drive for desktop over native messaging and a Google account", native = true)),
+        Row("gighmmpiobklfepjocnamgkkbiglidom", "AdBlock", "adblock", core = ::adBlocker),
+        Row("inomeogfingihgjfjlpeplalcfajhgai", "Chrome Remote Desktop", "chrome-remote-desktop", core = serviceBacked("Chrome Remote Desktop", "remote access needs its native host (a desktop companion) and a Google account", native = true)),
+        Row("ppnbnpeolgkicgegkbkbjmhlideopiji", "Microsoft Single Sign On", "microsoft-sso", core = serviceBacked("Microsoft Single Sign On", "sign-on needs the Windows Accounts broker over native messaging and a work account", native = true)),
+        Row("jlhmfgmfgeifomenelglieieghnjghma", "Cisco Webex Extension", "cisco-webex", core = serviceBacked("Cisco Webex Extension", "joining needs the Webex desktop app over native messaging", native = true)),
+        Row("ecnphlgnajanjnkcmbpancdjoidceilk", "Kami", "kami", core = pdfTool("Kami", Regex("kami"), missing = "F")),
+        Row("bgnkhhnnamicmpeenaelnjfhikgbkllg", "AdGuard AdBlocker", "adguard", core = ::adBlocker),
+        Row("inoeonmfapjbbkmdafoankkfajkcphgd", "Read&Write for Google Chrome", "read-and-write", core = accountGate("Read&Write", Regex("texthelp|readwrite|read&write", RegexOption.IGNORE_CASE))),
+        Row("fcoeoabgfenejglbffodgkkbkcdhcgfn", "Claude", "claude", core = accountGate("Claude", Regex("claude\\.ai|anthropic", RegexOption.IGNORE_CASE), page = "sidepanel.html")),
+        Row("majdfhpaihoncoakbjgbdhglocklcgno", "VeePN", "veepn", core = vpn("VeePN")),
+        Row("fjoaledfpmneenckfbpdfhkmimnjocfa", "NordVPN", "nordvpn", core = vpn("NordVPN")),
+        Row("ljglajjnnkapghbckkcmodicjhacbfhk", "Microsoft Power Automate", "power-automate", core = serviceBacked("Microsoft Power Automate", "flows run through Power Automate for desktop over native messaging and a work account", native = true)),
+        Row("nkbihfbeogaeaoehlefnkodbefgpgknn", "MetaMask", "metamask", core = ::walletProvider),
+        Row("nenlahapcbofgnanklpelkaejcehkggg", "Capital One Shopping", "capital-one-shopping", core = accountGate("Capital One Shopping", Regex("capitalone|wikibuy", RegexOption.IGNORE_CASE))),
+        Row("cmedhionkhpnakcndndgjdbohmhepckk", "Adblock for Youtube", "adblock-for-youtube", core = ::adBlocker),
+        Row("ihcjicgdanjaechkgeegckofjjedodee", "Malwarebytes Browser Guard", "malwarebytes-browser-guard", core = ::adBlocker),
+        Row("llbcnfanfmjhpedaedhbcnpgeepdnnok", "Online Security", "online-security", core = accountGate("Online Security", Regex("getmozo|reasonlabs|reasonsecurity|onlinesecurity|online-security", RegexOption.IGNORE_CASE))),
+        Row("fdpohaocaechififmbbbbbknoalclacl", "GoFullPage", "gofullpage", core = ::fullPageCapture),
+        Row("oocalimimngaihdkbihfgmpkcpnmlaoa", "Teleparty", "teleparty", account = true, core = popupLogin("Teleparty")),
+        Row("mmeijimgabbpbgpdklnllpncmdofkcpn", "Screencastify", "screencastify", feasible = false, core = notOnThePhone("tabCapture / desktopCapture: no screen or tab capture on the phone (WebView limit); recording itself needs an account")),
+        Row("bhghoamapcdpbohphigoooaddinpkbai", "Authenticator", "authenticator", core = ::authenticator),
+        Row("kgjfgplpablkjnlkjmjdecgdpfankdle", "Zoom Chrome Extension", "zoom", account = true, core = popupLogin("Zoom")),
+        Row("eiaeiblijfjekdanodkjadfinkhbfgcd", "NordPass", "nordpass", account = true, core = popupLogin("NordPass")),
+        Row("ekhagklcjbdpajgpjgmbionohlpdbjgc", "Zotero Connector", "zotero", core = ::zotero),
+        Row("flliilndjeohchalpbbcdekjklbdgfkk", "Avira Browser Safety", "avira-browser-safety", core = siteVerdict("Avira Browser Safety")),
+        Row("omghfjlpggmjjaagoclmmobgdodcjboh", "Browsec VPN", "browsec", core = vpn("Browsec")),
+        Row("caljgklbbfbcjjanaijlacgncafpegll", "Avira Password Manager", "avira-password-manager", core = accountGate("Avira Password Manager", Regex("avira", RegexOption.IGNORE_CASE)))
     )
 
     // --- stages and evidence ---------------------------------------------------------------------
@@ -1487,6 +1884,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     private fun tabIdByUrl(prefix: String): String? = tabUrls().entries.firstOrNull { it.value.startsWith(prefix) }?.key
+
+    /**
+     * An extension page's URL in either spelling – Chrome's `chrome-extension://<id>/…`, the
+     * tab model's canonical form, or the served `https://<id>.ext.zenium.invalid/…` the WebView
+     * loads – of any extension, or of `id`'s. The driver reads both so a run before and after the
+     * model's spelling changed grades the same.
+     */
+    private fun extensionPage(url: String, id: String? = null): Boolean {
+        val presented = ExtensionUrls.present(url)
+        return presented.startsWith("chrome-extension://") && (id == null || presented.startsWith("chrome-extension://$id/", ignoreCase = true))
+    }
+
+    /** The path (query and fragment kept) of an extension page's URL in either spelling, for a note; the URL itself for any other. */
+    private fun extensionPath(url: String): String {
+        val presented = ExtensionUrls.present(url)
+        if (!presented.startsWith("chrome-extension://")) return url
+        val rest = presented.removePrefix("chrome-extension://").substringAfter("/", "")
+        return "/$rest"
+    }
 
     private fun createTab(url: String): String = coreInvoke("tab.create", """{"url":${JSONObject.quote(url)},"active":true}""").trim('"')
 
@@ -2209,5 +2625,63 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val YT_CLOSE_UPSELL =
             "(function(){var d=Array.prototype.find.call(document.querySelectorAll('dialog[open], [role=\"dialog\"]'),function(el){return /YouTube app|best experience/i.test(el.textContent||'')});" +
                 "if(!d)return 'none';var c=d.querySelector('button[aria-label*=\"lose\"], [role=\"button\"][aria-label*=\"lose\"], button[aria-label*=\"ismiss\"]');if(!c)return 'no close button';c.click();return 'closed'})()"
+        /**
+         * From the background of a row with the `nativeMessaging` permission: `sendNativeMessage`
+         * and `connectNative` to a host that does not exist. Chrome answers both with "Specified
+         * native messaging host not found." (the callback's `lastError`, the port's disconnect);
+         * a missing function, a synchronous throw or another wording is not Chrome's shape. The
+         * answers, or their absence after 8 s, land on `window.__zenNativeProbe`.
+         */
+        private const val NATIVE_MESSAGING_PROBE =
+            "(function(){var rt=typeof chrome==='object'&&chrome?chrome.runtime:null;var p=window.__zenNativeProbe={done:false,pass:false,sendNativeMessage:typeof (rt&&rt.sendNativeMessage),connectNative:typeof (rt&&rt.connectNative),error:null,disconnect:null,askedAt:Date.now()};" +
+                "var chromes=/native messaging host not found/i;var finish=function(){if(p.error!==null&&p.disconnect!==null&&!p.done){p.pass=p.sendNativeMessage==='function'&&p.connectNative==='function'&&chromes.test(p.error)&&chromes.test(p.disconnect);p.ms=Date.now()-p.askedAt;p.done=true}};" +
+                "setTimeout(function(){if(!p.done){if(p.error===null)p.error='no answer within 8 s';if(p.disconnect===null)p.disconnect='no disconnect within 8 s';p.done=true}},8000);" +
+                "try{rt.sendNativeMessage('com.zenium.sweep.missing_host',{ping:1},function(v){p.error=rt.lastError?String(rt.lastError.message):'answered: '+JSON.stringify(v).slice(0,80);finish()})}catch(e){p.error='threw: '+String(e&&e.message||e);finish()}" +
+                "try{var port=rt.connectNative('com.zenium.sweep.missing_host');port.onDisconnect.addListener(function(){p.disconnect=rt.lastError?String(rt.lastError.message):'disconnected without lastError';finish()});port.onMessage.addListener(function(m){p.disconnect='message: '+JSON.stringify(m).slice(0,80);finish()})}catch(e){p.disconnect='threw: '+String(e&&e.message||e);finish()}" +
+                "return 'asked'})()"
+        /**
+         * From a VPN row's background: `chrome.proxy` as Chrome defines it with the `proxy`
+         * permission – `proxy.settings.get({})` answering a `ChromeSetting` reading (`value.mode`,
+         * `levelOfControl`), `set` / `clear` / `onChange` and `onProxyError` present, the `Mode`
+         * constants. What answered, or a `TypeError` for a missing namespace, lands on
+         * `window.__zenProxyProbe`.
+         */
+        private const val PROXY_PROBE =
+            "(function(){var px=typeof chrome==='object'&&chrome?chrome.proxy:undefined;var p=window.__zenProxyProbe={done:false,pass:false,proxy:typeof px,settings:typeof (px&&px.settings),get:typeof (px&&px.settings&&px.settings.get),set:typeof (px&&px.settings&&px.settings.set),clear:typeof (px&&px.settings&&px.settings.clear)," +
+                "onChange:typeof (px&&px.settings&&px.settings.onChange&&px.settings.onChange.addListener),onProxyError:typeof (px&&px.onProxyError&&px.onProxyError.addListener),modes:px&&px.Mode?Object.keys(px.Mode).length:0,reading:null,error:null};" +
+                "var finish=function(){p.pass=p.get==='function'&&p.set==='function'&&p.clear==='function'&&p.onChange==='function'&&p.onProxyError==='function'&&!!p.reading&&typeof p.reading.levelOfControl==='string'&&!!p.reading.value&&typeof p.reading.value.mode==='string';p.done=true};" +
+                "if(p.get!=='function'){p.error='chrome.proxy.settings.get is '+p.get;finish();return 'asked'}" +
+                "setTimeout(function(){if(!p.done){p.error='no answer within 8 s';finish()}},8000);" +
+                "try{var r=px.settings.get({},function(v){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);p.reading=v||null;finish()});if(r&&typeof r.then==='function')r.then(function(v){p.reading=v||null;finish()},function(e){p.error=String(e&&e.message||e);finish()})}catch(e){p.error='threw: '+String(e&&e.message||e);finish()}" +
+                "return 'asked'})()"
+        /** proxy-check.html's reading: the public address its two echo services saw (`window.__egress`). */
+        private const val EGRESS_REPORT =
+            "JSON.stringify({pass:!!(window.__egress&&window.__egress.ipify&&!/error/i.test(window.__egress.ipify)),ipify:window.__egress?window.__egress.ipify:null,ifconfig:window.__egress?window.__egress.ifconfig:null,errors:window.__egress?window.__egress.errors:['no __egress on the page'],readyState:document.readyState})"
+        /**
+         * A VPN popup's connect control: the first shown button, link, switch or checkbox labelled
+         * connect / turn on / enable / start / protect / activate (through open shadow roots) that
+         * is not a disconnect, a sign-in or an upgrade; a tap on it, and what the popup offered.
+         */
+        private const val VPN_CONNECT_CLICK =
+            "(function(){var want=/\\b(connect|turn on|enable|start|protect|activate|power|switch on|quick connect)\\b/i;var avoid=/\\b(disconnect|turn off|disable|log ?in|sign ?in|sign up|register|upgrade|premium|buy|trial)\\b/i;var cands=[];" +
+                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var shown=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], [role=switch], input[type=checkbox], input[type=button], input[type=submit], label, div, span');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length<40&&l.length>0&&want.test(l)&&!avoid.test(l)&&shown(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "if(document.body)walk(document.body);var switches=Array.prototype.slice.call(document.querySelectorAll('[role=switch], input[type=checkbox]')).filter(shown);var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||cands[0]||switches[0]||null;" +
+                "if(hit){try{hit.click()}catch(e){return JSON.stringify({clicked:false,error:String(e&&e.message||e)})}}" +
+                "return JSON.stringify({clicked:!!hit,label:hit?label(hit).slice(0,60):null,tag:hit?hit.tagName+(hit.getAttribute('role')?'[role='+hit.getAttribute('role')+']':''):null,candidates:cands.slice(0,6).map(function(e){return e.tagName+':'+label(e).slice(0,30)}),switches:switches.length})})()"
+        /** A document's text through open shadow roots (`innerText` stops at a shadow host), scripts and styles left out. */
+        private const val DEEP_TEXT =
+            "(function(){var parts=[];var walk=function(root){var it=document.createNodeIterator(root,NodeFilter.SHOW_TEXT);var n;while((n=it.nextNode())){var par=n.parentNode;if(par&&/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(par.nodeName))continue;var t=n.textContent.replace(/\\s+/g,' ').trim();if(t)parts.push(t)}" +
+                "var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++)if(all[i].shadowRoot)walk(all[i].shadowRoot)};if(document.body)walk(document.body);var text=parts.join(' ').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({text:text.slice(0,400),len:text.length,els:document.body?document.body.querySelectorAll('*').length:0,readyState:document.readyState})})()"
+        /**
+         * From Authenticator's background: one TOTP account saved as its own manual entry saves
+         * one – an `OTPStorage` item keyed by its hash in `chrome.storage.sync`, the default
+         * location (a sync area with entries and an empty local one is read as sync). The set,
+         * read back, or the error lands on `window.__zenSeed`.
+         */
+        private const val AUTHENTICATOR_SEED =
+            "(function(){window.__zenSeed=null;var hash='zenium-sweep-totp-0001';var item={};item[hash]={account:'sweep@zenium.invalid',issuer:'Zenium',secret:'JBSWY3DPEHPK3PXP',type:'totp',index:0,hash:hash,encrypted:false,counter:0,period:30,digits:6,algorithm:'SHA1',pinned:false};" +
+                "try{chrome.storage.sync.set(item).then(function(){return chrome.storage.sync.get(hash)}).then(function(v){window.__zenSeed='saved, read back '+Object.keys(v||{}).length+' key'},function(e){window.__zenSeed='error: '+String(e&&e.message||e)})}catch(e){window.__zenSeed='threw: '+String(e&&e.message||e)}return 'asked'})()"
     }
 }
