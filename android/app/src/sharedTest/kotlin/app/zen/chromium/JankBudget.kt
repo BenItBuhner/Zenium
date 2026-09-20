@@ -73,22 +73,35 @@ object JankBudget {
 
     // --- THE NUMBERS -----------------------------------------------------------------------------
     //
-    // PLACEHOLDERS until PERF-3's baseline run of the two adopted drivers has been read: wide
-    // enough that nothing on the shared recipe can breach them, so a soft gate and a hard one
-    // report the same. PERF-3 replaces them with that run's numbers plus headroom (still
-    // provisional: the unfixed chrome); PERF-1 and PERF-2 then hand over the FIXED baselines:
-    // replace the three again, set `provisional = false`, flip the gate to hard. The rule for the
-    // fixed numbers: the fixed scene's janky share plus 10 points and its 95th percentile plus 25
-    // percent, so a chrome that regresses to the unfixed numbers fails.
+    // PROVISIONAL: seeded from PERF-3's baseline run of the two adopted drivers on the UNFIXED
+    // chrome at e59cb52e (2026-09-20; bar hide on API 34: run 35540006687, sheet recede on API 35:
+    // run 35540006663), with headroom for the recipe's noise (HWUI's histogram is 50 ms wide up
+    // there and a scene has 4 to 14 frames, so a run moves a scene's 95th by a bucket or two).
+    // Read on that run, per kind: gesture p95 500 / 700 ms (scroll, top / bottom dock), spring
+    // 650 / 700 ms (the snap home), open 700 / 900 ms (the menu sheet closing / opening); the
+    // janky share 100 percent in every scene.
+    //
+    // THE SHARE IS 100 PERCENT BY CONSTRUCTION on this recipe: ANGLE over SwiftShader needs
+    // 100 ms and more to composite a 720x1600 frame, so every frame misses HWUI's 16.7 ms
+    // deadline and the share cannot fall below 1.0 here whatever the chrome does. On the shared
+    // recipe the 95TH PERCENTILE is the number that moves (a fix that paints less or drops a
+    // blur shows there and in the `commands` / `swap` means); the share's half of the budget
+    // bites on a hardware recipe or a phone. The main-thread stages (input, animation, layout,
+    // draw: 0 to 6 ms mean on the baseline) are in every record for the eye, not in the budget.
+    //
+    // PERF-1 and PERF-2 hand over the FIXED baselines: replace the three [Budget]s with the fixed
+    // scene's janky share plus 10 points (capped at 1.0) and its 95th percentile plus 25 percent,
+    // so a chrome that regresses to the unfixed numbers fails; set `provisional = false`; flip the
+    // gate to hard (`JANK_GATE=hard`).
 
-    /** A finger-driven scene (the bar-hide scroll under the finger). */
-    val GESTURE_BUDGET = Budget(jankyShare = 1.0, p95Ms = 5_000, provisional = true)
+    /** A finger-driven scene (the bar-hide scroll under the finger): baseline p95 500 to 700 ms. */
+    val GESTURE_BUDGET = Budget(jankyShare = 1.0, p95Ms = 1_000, provisional = true)
 
-    /** A release settling (the bar's snap home after the finger lifts). */
-    val SPRING_BUDGET = Budget(jankyShare = 1.0, p95Ms = 5_000, provisional = true)
+    /** A release settling (the bar's snap home after the finger lifts): baseline p95 650 to 700 ms. */
+    val SPRING_BUDGET = Budget(jankyShare = 1.0, p95Ms = 1_000, provisional = true)
 
-    /** A surface coming or going (the menu sheet's open and close). */
-    val OPEN_BUDGET = Budget(jankyShare = 1.0, p95Ms = 5_000, provisional = true)
+    /** A surface coming or going (the menu sheet's open and close): baseline p95 700 to 900 ms. */
+    val OPEN_BUDGET = Budget(jankyShare = 1.0, p95Ms = 1_300, provisional = true)
 
     /** The budget of a kind. */
     fun budgetFor(kind: Kind): Budget = when (kind) {
