@@ -88,6 +88,9 @@ interface PageHost {
      */
     fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = reply(null)
 
+    /** A page scrolled under the bar that hides on scroll: `start`, `move`, `end` or `show` (see `lib/barHide.ts`). */
+    fun barScroll(tabId: String, phase: String, payload: JSONObject?) {}
+
     /** A physical key the shortcut table matched (`tabId` null: typed into the chrome). */
     fun onKey(tabId: String?, input: JSONObject)
 

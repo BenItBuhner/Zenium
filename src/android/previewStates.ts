@@ -17,6 +17,7 @@ import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
+import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
@@ -182,6 +183,7 @@ function apply(browser: Browser, spec: string): void {
     abortPull()
     cancelVoiceSearch()
     cancelQrScan()
+    resetBarHide()
     const state = browserStore.get().state
     const tab = state ? activeTab(state) : null
     clearMessages(tab?.loading ? tab.id : null)
@@ -532,6 +534,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'pull' && tab) {
     pull(tab.id, target.progress, target.released)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'barhide' && tab) {
+    barHide(tab.id, target.progress, target.released, () => requestAnimationFrame(finish))
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
     requestAnimationFrame(finish)
@@ -1454,6 +1458,48 @@ function pull(tabId: string, progress: number, released: boolean): void {
     dispatchPullEvent(tabId, 'move', { travel, time: time + 16 })
     dispatchPullEvent(tabId, 'release', { travel, time: time + 32 })
   }
+}
+
+/**
+ * A finger's worth of scroll reports for the bar that hides on scroll, as the host would send
+ * them (`lib/barHide.ts`): down, one move of the page by the part of the bar's travel that puts
+ * it at `progress`, and – released – a lift there, on which the bar snaps to the nearer end.
+ * Sent once the bar's gate is open and the page has loaded, and a frame after either: a spec in
+ * the URL at boot is applied before the shell has mounted and told the machine it is there (a
+ * scroll the machine hears with its gate shut is dropped, as a real one would be), before the
+ * stand-in page has started its load, whose start puts the bar back (`lib/barHide.ts`, as a load
+ * on a device does), and the shell's first mount is, in development, followed at once by React's
+ * rehearsal unmount, which closes the gate again for the moment – a finger cannot land inside
+ * that commit, and neither does this.
+ */
+function barHide(tabId: string, progress: number, released: boolean, then: () => void): void {
+  const ready = (): boolean => {
+    const state = browserStore.get().state
+    return barHideStore.get().allowed && Boolean(state) && !state?.tabs[tabId]?.loading
+  }
+  const send = (): void => {
+    const time = performance.now()
+    const delta = progress * barHideStore.get().travel
+    dispatchBarScroll(tabId, 'start', null)
+    dispatchBarScroll(tabId, 'move', { delta, time })
+    if (released) {
+      dispatchBarScroll(tabId, 'move', { delta: 0, time: time + 16 })
+      dispatchBarScroll(tabId, 'end', { time: time + 32 })
+    }
+    then()
+  }
+  let unsubscribes: Array<() => void> = []
+  const check = (): void => {
+    if (!ready()) return
+    for (const unsubscribe of unsubscribes) unsubscribe()
+    unsubscribes = []
+    requestAnimationFrame(() => (ready() ? send() : wait()))
+  }
+  const wait = (): void => {
+    unsubscribes = [barHideStore.subscribe(check), browserStore.subscribe(check)]
+  }
+  if (ready()) check()
+  else wait()
 }
 
 /** Scroll the first element whose own text reads `text` to the middle of its scroller. */
