@@ -38,11 +38,13 @@ import java.util.concurrent.TimeUnit
  *     checks expect the player's error state in place of the speech ones;
  *  2. the app menu's Listen to This Page (a real touch; the item is enabled by the reader core's
  *     readability probe on the article served from this process): the player docks under the
- *     live page, the engine speaks the first of the article's sentences (`speech.event start` ->
- *     `playing`, the progress line `1 / n`), word ranges come from `onRangeStart`, the core's
- *     page script paints the sentence (and the word) into the page through the CSS Custom
- *     Highlight API, the read-aloud source holds the media session (services' MediaStyle
- *     notification) and the host holds audio focus for the speech stream (2.4);
+ *     live page busy while the engine binds (the play box's spinner, 20 px on the phone, §9.30,
+ *     when the bind lasts long enough to be caught), the engine speaks the first of the
+ *     article's sentences (`speech.event start` -> `playing`, the progress line `1 / n`), word
+ *     ranges come from `onRangeStart`, the core's page script paints the sentence (and the word)
+ *     into the page through the CSS Custom Highlight API, the read-aloud source holds the media
+ *     session (services' MediaStyle notification) and the host holds audio focus for the speech
+ *     stream (2.4);
  *  3. a real touch on Pause (the engine stops, focus goes) and on Play (the sentence starts
  *     again from its beginning: `TextToSpeech` has no pause);
  *  4. NOT-06: Home while reading – the reading goes on behind the launcher on services'
@@ -50,8 +52,11 @@ import java.util.concurrent.TimeUnit
  *     player is where it was;
  *  5. another app taking the audio (a focus request from this process's second listener) pauses
  *     the reading through `media.action pause`, and nothing resumes it when the audio comes back;
- *  6. the speed chip under a finger steps 1x -> 1.2x -> 1.5x -> 2x -> 0.5x -> 0.8x -> 1x (the
- *     model's ladder up to Edge's 2x), the state's rate following each step;
+ *  6. the speed chip ("1×", the multiplication sign) under a finger steps 1x -> 1.2x -> 1.5x ->
+ *     2x -> 0.5x -> 0.8x -> 1x (the model's ladder up to Edge's 2x), the state's rate following
+ *     each step; the first step taken while the engine speaks sentence N, and the host's log
+ *     (`ZenReadAloud`) then showing the prepared N+1 flushed and spoken again at the new rate
+ *     the moment N ends – the change heard from the next sentence, not the one after;
  *  7. Previous / Next under a finger on the model's sentence walk, the walk held with a real
  *     touch on Pause before each step (the first sentence is the two-second heading): Previous
  *     disabled at the first sentence, a touch on Next speaks the sentence after the one held, a
@@ -62,10 +67,14 @@ import java.util.concurrent.TimeUnit
  *  9. Close under a finger: the session ends, the panel leaves, the page grows back;
  * 10. the selection toolbar's Read Aloud (GN-13's toolbar, #206): a long press on a word, the
  *     item (behind the overflow on a phone) under a finger starts a session that reads the
- *     selection (the mode's finish collapses the page's selection first; the page script stands
- *     the cleared one in, `selectionMemory.ts`); then the system back with the player up closes
- *     it like a page (predictive back, MOT-35);
- * 11. the player in dark, for the design record.
+ *     selection (`source: selection`; the mode's finish collapses the page's selection first,
+ *     the page script stands the cleared one in, `selectionMemory.ts`, and the document is left
+ *     collapsed); then the system back with the player up closes it like a page (predictive
+ *     back, MOT-35);
+ * 11. the player in dark, for the design record;
+ * 12. no engine (interface 3.2): the app started again with the host saying the device has no
+ *     speech engine, `capabilities.readAloud` off, neither Listen to This Page in the menu nor
+ *     Read Aloud on the selection toolbar (Google's own process-text item left as it is).
  *
  * The article comes from a loopback server inside this process ([DemoServer]). The model behind
  * the player is services' `ReadAloudService` (#246): the page script's extraction of the
@@ -193,7 +202,84 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         closePanel()
         fromSelection()
         darkPlayer()
+        noEngine()
         finding("\nend: session=${readAloud()}${if (failures == 0) "" else "; $failures FAIL"}")
+    }
+
+    // --- 12. no engine: the entries are absent ---------------------------------------------------------
+
+    /**
+     * Interface 3.2: without a speech engine `capabilities.readAloud` is false, `Platform.speech`
+     * is not built, and both entry points are hidden. The capability is read at boot, so the app
+     * is started again with the host saying no ([ReadAloud.availabilityOverride] = false: what
+     * the package manager answers on a build without an engine), and the menu and the selection
+     * toolbar are read for the items that must not be there. Google's own process-text item
+     * ("Read aloud", sentence case) is the system's and stays whatever the app says.
+     */
+    private fun noEngine() {
+        finding("\n3.2 no speech engine: the entries are absent")
+        frontApp()
+        if (readAloud() != null) {
+            coreInvoke("readAloud.stop")
+            poll(5_000) { readAloud() == null }
+        }
+        ReadAloud.availabilityOverride = false
+        launch()
+        awaitLoaded("$ORIGIN/")
+        poll(15_000) { tab()?.optBoolean("readerable") == true }
+        val caps = coreState().getJSONObject("capabilities")
+        finding("  after a fresh boot with the host saying no engine: host.readAloud.available=${host.readAloud.available}; capabilities.readAloud=${caps.optBoolean("readAloud")}; ${describeTab()}")
+        check("capabilities.readAloud is off when the host has no engine", !caps.optBoolean("readAloud"))
+        // The menu opened and pulled up as `openMenuItem` does, the reading group scrolled into
+        // view (Reader View, the row Listen to This Page sits under when it shows), nothing touched.
+        tapMenuButton()
+        val opened = waitFor(MENU_HANDLE_LABEL, 6_000) != null
+        if (opened) {
+            SystemClock.sleep(1_200)
+            findByLabel(MENU_HANDLE_LABEL)?.let { handle ->
+                Finger().apply {
+                    down(handle.exactCenterX(), handle.exactCenterY())
+                    moveBy(0f, -0.4f * height, 130)
+                    up()
+                }
+                SystemClock.sleep(2_000)
+            }
+        }
+        val readerView = if (opened) reveal("Reader View") else null
+        val listen = findNode { it == MENU_ITEM }
+        finding("  the app menu: open=$opened; Reader View ${if (readerView != null) "at $readerView" else "MISSING"}; '$MENU_ITEM' ${if (listen == null) "ABSENT" else "PRESENT"}")
+        check("the app menu has no Listen to This Page without an engine (Reader View still there)", opened && readerView != null && listen == null)
+        shot("16-no-engine-menu")
+        if (opened) {
+            back()
+            SystemClock.sleep(1_200)
+        }
+        frontApp()
+        val items = longPress("#word") { list -> list.any { it.label == "Copy" } }
+        finding("  long press on 'arithmetic': toolbar ${items?.joinToString(" | ") { it.label } ?: "MISSING"}")
+        if (items == null) {
+            check("the selection toolbar comes up for the no-engine check", false)
+        } else {
+            val inBar = items.any { it.label == "Read Aloud" }
+            var inOverflow = false
+            val more = items.find { it.label == "More options" }
+            if (more != null) {
+                touchTapPoint(more.node)
+                SystemClock.sleep(1_200)
+                inOverflow = findInWindows { it == "Read Aloud" } != null
+                val system = findInWindows { it == "Read aloud" } != null
+                finding("  behind the overflow: ours ('Read Aloud') ${if (inOverflow) "PRESENT" else "absent"}; Google's process-text item ('Read aloud') ${if (system) "present (the system's, left alone)" else "absent"}")
+                shot("17-no-engine-toolbar")
+                findInWindows { it == "Close overflow" }?.let { touchTapPoint(it) } ?: back()
+                SystemClock.sleep(600)
+            } else {
+                shot("17-no-engine-toolbar")
+            }
+            check("the selection toolbar has no Read Aloud without an engine", !inBar && !inOverflow)
+        }
+        clearSelection()
+        ReadAloud.availabilityOverride = null
+        beat()
     }
 
     // --- 2. Listen to This Page -----------------------------------------------------------------
@@ -211,6 +297,17 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         val session = readAloud()
         finding("  real touch on '$MENU_ITEM': session ${session?.let { "up: status=${it.optString("status")} source=${it.optString("source")} title=\"${it.optString("title").take(60)}…\"" } ?: "MISSING"}")
         if (!came) touchFault("a touch on '$MENU_ITEM' started no read-aloud session")
+        // The busy state (§9.30) while the engine binds on first use: the play box's spinner, at
+        // the phone's glyph size (20 px, not the primitive's 16). Caught while the bind lasts.
+        var size = 0.0
+        val spinner = poll(3_000) { size = spinnerSize(); size > 0 }
+        if (spinner) {
+            shot("00b-busy")
+            finding("  busy while the engine binds: the play box's spinner is $size CSS px (status ${status()})")
+            check("the busy spinner is 20 px on the phone (§9.30: the row glyph size)", Math.abs(size - 20.0) < 0.6)
+        } else {
+            finding("  NOTE the engine bound before the busy state could be measured (status ${status()}); the design still busy-light.png stands for it")
+        }
         check("a real touch on Listen to This Page starts a session on the article's tab", came && session?.optString("tabId") == TAB)
         check("the session's source is the page (from: top), not the reader document", session?.optString("source") == "page")
         val panel = poll(8_000) { panelUp() }
@@ -348,7 +445,16 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         finding("\nEDGE-11 the speed chip: 1x -> 1.2x -> 1.5x -> 2x -> 0.5x -> 0.8x -> 1x (READ_ALOUD_RATE_STEPS)")
         frontApp()
         val before = rate()
-        finding("  chip reads '${chipLabel()}' (rate $before)")
+        val label0 = chipLabel()
+        finding("  chip reads '$label0' (rate $before)")
+        check("the chip's label is the rate with the multiplication sign (§9.32, lead nit 2: '1×')", label0 == "Speed 1×")
+        // The first step is taken while the engine speaks, so the change can be heard from the
+        // very next sentence: the tap lands during sentence N, and the host's log then shows the
+        // prepared N+1 – queued at 1x while N spoke – flushed and spoken again at 1.2x the moment
+        // the core asks for it (`ReadAloudLogic.speakPlan`'s restart rule; run 4 read the chip
+        // and the state's rate alone, and the engine heard a change one sentence late).
+        val speaking = engineless || ensurePlaying()
+        val logBefore = hostLog().size
         val ladder = listOf(1.2, 1.5, 2.0, 0.5, 0.8, 1.0)
         var all = true
         for ((i, expected) in ladder.withIndex()) {
@@ -359,8 +465,12 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
                 break
             }
             val took = touchTapLabelExpecting(label, "the rate reads $expected", timeoutMs = 5_000) { Math.abs(rate() - expected) < 0.001 }
-            finding("  touch on '$label' -> rate ${rate()}, chip '${chipLabel()}'")
+            // The sentence the finger came down in (read as the touch registers, so a sentence
+            // ending while the chip was looked up does not shift the count).
+            val n = sentenceIndex()
+            finding("  touch on '$label' -> rate ${rate()}, chip '${chipLabel()}'${if (i == 0) " (during sentence ${n + 1})" else ""}")
             all = all && took
+            if (i == 0 && speaking && !engineless) nextSentenceAtTheNewRate(n, expected, logBefore)
             if (i == 1) {
                 SystemClock.sleep(600)
                 shot("07-speed-1-5x")
@@ -374,6 +484,33 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         check("the chip steps the rate through the ladder and back to 1x", all && Math.abs(rate() - 1.0) < 0.001)
         beat()
     }
+
+    /**
+     * The engine's side of a speed change made during sentence [n]: once the walk has moved on to
+     * n + 1, the host's log (`ZenReadAloud`, one line per utterance the engine is handed) must
+     * show that utterance FLUSHed at [rate] – the prepared one restarted with the change – and no
+     * utterance spoken at the old rate after it.
+     */
+    private fun nextSentenceAtTheNewRate(n: Int, rate: Double, logBefore: Int) {
+        val tapped = SystemClock.uptimeMillis()
+        val moved = poll(25_000) { sentenceIndex() >= n + 1 || status() != "playing" }
+        SystemClock.sleep(600)
+        val at = sentenceIndex()
+        val since = hostLog().drop(logBefore)
+        // The lines for utterances the engine was handed (a `speak` for one it already has is a
+        // "nothing to do" line and hands it nothing).
+        val handed = since.filter { ": FLUSH at " in it || ": ADD at " in it }
+        val restart = handed.filter { "FLUSH at ${rate}x" in it && "restarted with the change" in it }
+        finding("  the walk after the tap during sentence ${n + 1}: index $n -> $at (moved=$moved, ${SystemClock.uptimeMillis() - tapped} ms, status ${status()})")
+        finding("  the host's log since the tap (${since.size} speak lines):\n    ${since.joinToString("\n    ") { it.substringAfter("$HOST_TAG").trimStart(':', ' ') }}")
+        check("the speed tap during sentence ${n + 1} is heard from sentence ${n + 2}: the engine log shows N+1 flushed and spoken again at ${rate}x", moved && at == n + 1 && restart.isNotEmpty())
+        // Nothing the engine was handed after the change is at the old rate (the sentence after it is prepared at the new one).
+        val afterRestart = handed.dropWhile { it !in restart }.drop(1)
+        check("every utterance the engine is handed after the change is at ${rate}x (${afterRestart.size} since)", restart.isNotEmpty() && afterRestart.all { "at ${rate}x" in it })
+    }
+
+    /** The host's log lines about utterances (`ReadAloud.speakNow`, tag `ZenReadAloud`), oldest first. */
+    private fun hostLog(): List<String> = shell("logcat -d -s $HOST_TAG:*").lines().filter { "speak " in it }
 
     // --- 7. previous / next --------------------------------------------------------------------------
 
@@ -556,6 +693,14 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             val session = readAloud()
             finding("  player up=$up; status after a moment: ${status()}; sentences ${session?.optInt("sentenceCount")}; error ${session?.optString("error")}")
             check("the selection's text is what the session reads (playing, no 'no-text')", engineless || (spoke && (session?.optInt("sentenceCount") ?: 0) >= 1))
+            check("the session's source is the selection", session?.optString("source") == "selection")
+            // The mode's finish collapsed the selection and the page script put it back only for
+            // the extraction's duration: the document is left with a collapsed selection, no
+            // handles, the highlight on the sentence read.
+            val collapsed = poll(3_000) { jsonString(pageJs("String(getSelection().isCollapsed)")) == "true" }
+            val selectedNow = jsonString(pageJs("String(getSelection())"))
+            finding("  the document's selection after the touch: collapsed=$collapsed, text '$selectedNow'; highlight ${pageHighlight()}")
+            check("the document's selection is left collapsed (no handles stay up)", collapsed && selectedNow.isEmpty())
             SystemClock.sleep(800)
             shot("13-from-selection")
             beat()
@@ -646,6 +791,11 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     private fun panelBounds(): Rect? = findNode { it == PANEL_LABEL }?.let { Rect().also(it::getBoundsInScreen) }
 
     private fun chipLabel(): String? = findNode { it.startsWith("Speed ") }?.let(::label)
+
+    /** The play box's busy spinner's width in CSS px (`.zen-read-aloud-toggle > .zen-v2-spinner`), 0 while there is none. */
+    private fun spinnerSize(): Double =
+        jsonString(chromeJs("(function(){var e=document.querySelector('.zen-read-aloud-toggle > .zen-v2-spinner');return e?String(e.getBoundingClientRect().width):'0'})()"))
+            .toDoubleOrNull() ?: 0.0
 
     /** The header's trailing line, from the chrome's own document (the tree runs the title and it together). */
     private fun progressText(): String =
@@ -965,5 +1115,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         /** The player's `role=region` label (`ReadAloudPanel`). */
         private const val PANEL_LABEL = "Read aloud"
         private const val SYSTEM_UI = "com.android.systemui"
+        /** The host's log tag (`ReadAloud.kt`): one line per utterance the engine is handed. */
+        private const val HOST_TAG = "ZenReadAloud"
     }
 }
