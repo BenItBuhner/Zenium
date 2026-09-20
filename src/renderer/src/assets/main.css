@@ -6248,25 +6248,36 @@
 
 /*
  * The sidebar: 44 px rows and targets (§9.3 phone row, the brief's number), the row's text at
- * 14, its glyphs at 20. The close – and the row's other buttons: sleeping, frozen, audio,
- * reload – fill the row as 44 × 44 boxes with the 20 glyph, at the fill radius of the phone's
- * icon button; each shows without hover (the coarse rule above) so a finger finds it.
+ * 14. The close fills the row as a 44 × 44 box with the 20 glyph, at the fill radius of the
+ * phone's icon button, and shows without hover (the coarse rule above) so a finger finds it. The
+ * row's state buttons – sleeping, frozen, slowed, audio, reload – are indicators first (the row
+ * itself wakes a sleeping tab), so they take the 32 box the coarse rule gives them and keep their
+ * glyph: two 44 boxes in a 240 sidebar would leave the title no room.
  */
 .zen-tablet .zen-tab {
   height: var(--v2-row, 44px);
   min-height: 44px;
   border-radius: 12px;
-  padding-right: 4px;
+  padding-right: 2px;
   font-size: 14px;
 }
-.zen-tablet .zen-tab .zen-toolbar-button {
+.zen-tablet .zen-tab .zen-tab-close {
   width: 44px;
   height: 44px;
   border-radius: 8px;
 }
-.zen-tablet .zen-tab .zen-toolbar-button > svg {
+.zen-tablet .zen-tab .zen-tab-close > svg {
   width: var(--v2-icon);
   height: var(--v2-icon);
+}
+/*
+ * The pinned separator's "Clear unpinned tabs" brush is a hover affordance with no hover here
+ * (the coarse rule shows it at .7 on the phone-sized desktop layout); on the tablet the action is
+ * the space menu's – a long press on the space – and the brush stays out of the list's rhythm.
+ */
+.zen-tablet .zen-tablet-sidebar .group\/sep .zen-toolbar-button,
+.zen-tablet-drawer .group\/sep .zen-toolbar-button {
+  display: none;
 }
 /* The rail's rows (`compact`, centred on the favicon): the 44 px box with no side padding. */
 .zen-tablet .zen-tab.justify-center {

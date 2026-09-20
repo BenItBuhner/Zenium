@@ -56,6 +56,7 @@ interface Props {
  */
 export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const tab = activeTab(state)
+  const activeTabId = tab?.id ?? null
   const viewport = useViewport()
   const side = state.settings.sidebarSide
   const drawerLayout = tabletDrawerLayout(viewport.width)
@@ -68,12 +69,11 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const toggleSidebar = (): void => {
     if (drawerLayout) {
       if (drawerUp) closeTabletDrawer()
-      else openTabletDrawer()
+      else void openTabletDrawer(activeTabId)
     } else run('sidebar.toggleExpanded', undefined)
   }
   const onboarding = !state.settings.onboardingDone && state.window.kind === 'synced'
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
-  const activeTabId = tab?.id ?? null
   // The window surfaces are on the private theme (blending to it): a private tab is in view, or
   // the overview shows the private pane (§9.29; MOT-14).
   const privateSurface = usePrivateSurface(state)
@@ -109,7 +109,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
       else if (expanded) run('sidebar.toggleExpanded', undefined)
     },
     onExpand: () => {
-      if (drawerLayout) openTabletDrawer()
+      if (drawerLayout) void openTabletDrawer(activeTabId)
       else if (!expanded) run('sidebar.toggleExpanded', undefined)
     }
   })

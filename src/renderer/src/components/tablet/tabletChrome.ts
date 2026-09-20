@@ -1,6 +1,8 @@
+import { run } from '@renderer/lib/api'
 import { pushBackSurface } from '@renderer/lib/back'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { createStore } from '@renderer/lib/store'
+import { holdFloatingChrome, uiStore } from '@renderer/lib/ui'
 
 /**
  * The tablet chrome's numbers and its transient state (TABLET-01, TABLET-08).
@@ -53,6 +55,16 @@ export function setTabletDrawerTravel(px: number): void {
   if (px > 0) travel = px
 }
 
+/**
+ * The page under the drawer. On Android the chrome is drawn under the page views (`lib/cover.ts`),
+ * so the drawer – over the page – is only visible once the page has given way to its picture:
+ * the open captures the active tab and holds the content frame behind the capture, as the
+ * desktop's renderer-hosted popovers do (`holdFloatingChrome`), for as long as the drawer is up.
+ */
+let hold: ReturnType<typeof holdFloatingChrome> | null = null
+/** An open under way: the capture is being taken. A second open joins it. */
+let opening: Promise<void> | null = null
+
 const spring = new SpringAnimation(
   SPRING_GENTLE,
   (x) => {
@@ -62,7 +74,7 @@ const spring = new SpringAnimation(
   (x) => {
     if (tabletDrawerStore.get().phase !== 'settling') return
     if (Math.round(x / travel) >= 1) tabletDrawerStore.set({ phase: 'open', progress: 1 })
-    else tabletDrawerStore.set(CLOSED)
+    else finishClose()
   }
 )
 
@@ -73,27 +85,66 @@ function settle(target: 0 | 1): void {
   spring.start(progress * travel, 0, target * travel, target ? SPRING_GENTLE : SPRING_SNAPPY)
 }
 
-/** Slide the expanded sidebar in over the page (the toolbar's toggle, a swipe on the rail). */
-export function openTabletDrawer(): void {
+function finishClose(): void {
+  spring.stop()
+  tabletDrawerStore.set(CLOSED)
+  hold?.release()
+  hold = null
+}
+
+/**
+ * Slide the expanded sidebar in over the page (the toolbar's toggle, a swipe on the rail). The
+ * page is captured first and the chrome takes focus, as for the phone's Spaces drawer.
+ */
+export function openTabletDrawer(activeTabId: string | null): Promise<void> {
   const { phase } = tabletDrawerStore.get()
-  if (phase === 'open') return
-  if (phase === 'settling') spring.stop()
-  settle(1)
+  if (phase === 'open') return Promise.resolve()
+  if (phase !== 'closed') {
+    // Already up (closing, or held by the back gesture): bring it back in.
+    if (phase === 'settling') spring.stop()
+    settle(1)
+    return Promise.resolve()
+  }
+  if (opening) return opening
+  const held = holdFloatingChrome(activeTabId)
+  hold = held
+  opening = held.ready
+    .then((ready) => {
+      if (!ready || hold !== held) return
+      run('focus.chrome', undefined)
+      tabletDrawerStore.set({ phase: 'dragging', progress: 0 })
+      settle(1)
+    })
+    .finally(() => {
+      opening = null
+    })
+  return opening
 }
 
 /** Slide the drawer out (a tap on the scrim, a tab picked, a swipe towards the edge, back). */
 export function closeTabletDrawer(): void {
   const { phase } = tabletDrawerStore.get()
-  if (phase === 'closed') return
+  if (phase === 'closed') {
+    // An open still waiting for its capture: let go of it.
+    hold?.release()
+    hold = null
+    return
+  }
   if (phase === 'settling') spring.stop()
   settle(0)
 }
 
-/** Drop the drawer without motion (the layout changed under it: room for a docked sidebar). */
+/**
+ * Drop the drawer without motion (the layout changed under it: room for a docked sidebar; the
+ * URL bar or an overlay opened over it, which own the page's picture from then on).
+ */
 export function dismissTabletDrawer(): void {
-  if (tabletDrawerStore.get().phase === 'closed') return
-  spring.stop()
-  tabletDrawerStore.set(CLOSED)
+  if (tabletDrawerStore.get().phase === 'closed') {
+    hold?.release()
+    hold = null
+    return
+  }
+  finishClose()
 }
 
 export function tabletDrawerOpen(): boolean {
@@ -145,6 +196,15 @@ if (!flags.__zenTabletDrawerWired) {
     } else if (!open && popBackSurface) {
       popBackSurface()
       popBackSurface = null
+    }
+  })
+  // The URL bar or an overlay opened over the drawer: they cover the page from here on, and a
+  // sidebar under a popup that hangs from the toolbar is a tap target with nothing to tap. The
+  // phone's Spaces drawer goes the same way (`lib/ui.ts` clears `drawerOpen` as they open).
+  uiStore.subscribe(() => {
+    const ui = uiStore.get()
+    if ((ui.urlbar.open || ui.overlay !== 'none') && tabletDrawerStore.get().phase !== 'closed') {
+      dismissTabletDrawer()
     }
   })
 }
