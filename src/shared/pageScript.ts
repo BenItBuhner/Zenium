@@ -12,6 +12,7 @@ import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
 import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
+import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -46,7 +47,11 @@ export interface PageScriptMessage {
     | 'webapp'
     | 'notification'
     | 'reader'
+    | 'pdf'
+    | 'opensearch'
   url?: string
+  /** `opensearch`: the link's `title`, the engine's name when its description has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
@@ -65,6 +70,8 @@ export interface PageScriptMessage {
   notification?: NotificationPageRequest
   /** `reader`: the text preferences a `zen://reader` page's toolbar changed (a partial). */
   reader?: unknown
+  /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
+  pdf?: PdfViewerReport
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -109,6 +116,13 @@ export interface PageScriptTransport {
    * the page's handlers where it registered any, the playing element otherwise.
    */
   onMediaSession?(listener: (message: MediaSessionHostMessage) => void): void
+  /**
+   * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
+   * the script posts the address of the first `<link rel="search"
+   * type="application/opensearchdescription+xml">` once per document; the browser fetches and
+   * parses the description itself (`shared/search`).
+   */
+  discoverSearchEngines?: boolean
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -171,8 +185,10 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   installReaderRelay(transport)
+  installPdfViewerRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
+  if (transport.discoverSearchEngines) installOpenSearch(transport)
 
   window.addEventListener(
     'click',
@@ -344,6 +360,20 @@ function installReaderRelay(transport: PageScriptTransport): void {
     const patch = data && typeof data === 'object' ? data[READER_MESSAGE_KEY] : undefined
     if (!patch || typeof patch !== 'object') return
     transport.send({ type: 'reader', reader: patch })
+  })
+}
+
+/**
+ * The PDF viewer document (`zen://pdf`, `pdfPage.ts`) posts its state on its window; only a
+ * document of the viewer's own origin – one the host itself served – may relay it, so a web page
+ * cannot pose as the viewer to the chrome's PDF controls.
+ */
+function installPdfViewerRelay(transport: PageScriptTransport): void {
+  if (location.origin !== PDF_VIEWER_ORIGIN) return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const report = pdfReportOf(e.data)
+    if (report) transport.send({ type: 'pdf', pdf: report })
   })
 }
 
@@ -702,4 +732,70 @@ function installWebApp(transport: PageScriptTransport): void {
       /* never let the polyfill throw into the page */
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// OpenSearch: the page's own search engine
+// ---------------------------------------------------------------------------
+
+/** The longest link title carried across the bridge; the description's ShortName wins anyway. */
+const MAX_OPENSEARCH_TITLE = 64
+
+/**
+ * Whether a `<link>` names an OpenSearch description: `rel` carries the `search` token (case-
+ * insensitive, in a token list) and `type` is `application/opensearchdescription+xml` (any
+ * parameters and case aside). A `rel="search"` without the type is a site's own search page.
+ */
+export function isOpenSearchLink(rel: string, type: string): boolean {
+  const mime = type.split(';')[0].trim().toLowerCase()
+  if (mime !== 'application/opensearchdescription+xml') return false
+  return rel
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => token === 'search')
+}
+
+/**
+ * The first OpenSearch link of the top frame of an http(s) document, posted once per document
+ * (at DOMContentLoaded and once more at load for frameworks that inject the link late). The
+ * description itself is fetched by the browser, off the page: what leaves the page is a URL and
+ * the link's title. Best effort; never throws into the page.
+ */
+function installOpenSearch(transport: PageScriptTransport): void {
+  try {
+    if (window !== window.top) return
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return
+  } catch {
+    return
+  }
+  let posted = false
+  const probe = (): void => {
+    if (posted) return
+    let link: HTMLLinkElement | null = null
+    try {
+      for (const candidate of document.querySelectorAll('link[rel]')) {
+        const l = candidate as HTMLLinkElement
+        if (
+          isOpenSearchLink(l.getAttribute('rel') ?? '', l.getAttribute('type') ?? '') &&
+          /^https?:\/\//i.test(l.href)
+        ) {
+          link = l
+          break
+        }
+      }
+    } catch {
+      return
+    }
+    if (!link) return
+    posted = true
+    transport.send({
+      type: 'opensearch',
+      url: link.href,
+      title: (link.getAttribute('title') ?? '').trim().slice(0, MAX_OPENSEARCH_TITLE)
+    })
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', probe, { once: true })
+  else probe()
+  window.addEventListener('load', probe, { once: true })
 }

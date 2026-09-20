@@ -89,6 +89,65 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
   })
 
+  it('opens one of the chrome’s sheets by name, behind the menu, its rows tapped or held', () => {
+    expect(parsePreviewSpec('sheet=extensions')).toEqual({ kind: 'sheet', sheet: 'extensions' })
+    expect(parsePreviewSpec('sheet=extensions&extensions=installed')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    expect(
+      parsePreviewSpec('sheet=extensions&then=hold:Dark Reader;tap:Remove from Zenium')
+    ).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions',
+      then: [
+        { kind: 'hold', text: 'Dark Reader' },
+        { kind: 'tap', text: 'Remove from Zenium' }
+      ]
+    })
+    expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    expect(parsePreviewSpec('sheet=recently-closed')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSteps('hold:Dark Reader;hold:;hold')).toEqual([
+      { kind: 'hold', text: 'Dark Reader' }
+    ])
+  })
+
+  it('opens an extension’s page as a tab by id and path, behind an internal page but ahead of a group', () => {
+    const id = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
+    expect(parsePreviewSpec(`extension-page=${id}/ui/options/index.html`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'ui/options/index.html'
+    })
+    expect(parsePreviewSpec(`extension-page=${id}&extensions=installed&then=overview`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: '',
+      then: [{ kind: 'overview' }]
+    })
+    expect(parsePreviewSpec(`extension-page=${id}//options.html`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'options.html'
+    })
+    expect(parsePreviewSpec(`extension-page=${id}/options.html&group=3`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'options.html'
+    })
+    expect(parsePreviewSpec(`page=settings&extension-page=${id}/options.html`)).toEqual({
+      kind: 'page',
+      page: 'settings'
+    })
+    // Not an id as Chrome forms them: no such state.
+    expect(parsePreviewSpec('extension-page=dark-reader/options.html')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('extension-page=')).toEqual({ kind: 'idle' })
+  })
+
   it('puts up messages and the load bar together', () => {
     expect(parsePreviewSpec('toast=Tab%20closed&action=Undo&banners=2&progress=0.6')).toEqual({
       kind: 'messages',
@@ -339,5 +398,44 @@ describe('parsePreviewSpec', () => {
       permission: 'camera'
     })
     expect(parsePreviewSpec('private=new&find=x')).toEqual({ kind: 'private', url: null })
+  })
+
+  it('reads the pill editor: its text, a new tab, the stand-in clipboard and its steps', () => {
+    // Search-ready over the page: nothing typed, the clipboard untouched.
+    expect(parsePreviewSpec('urlbar=')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: null
+    })
+    expect(parsePreviewSpec('urlbar=wiki&newtab')).toEqual({
+      kind: 'urlbar',
+      text: 'wiki',
+      newTab: true,
+      clip: null
+    })
+    // The clipboard row: the stand-in clipboard seeded (an empty `clip=` clears it), Show pressed.
+    expect(parsePreviewSpec('urlbar=&clip=https%3A%2F%2Fexample.com%2F&then=tap:Show')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: 'https://example.com/',
+      then: [{ kind: 'tap', text: 'Show' }]
+    })
+    expect(parsePreviewSpec('urlbar=&clip=')).toMatchObject({ clip: '' })
+    // A form filled in: `type:<id>=<text>` keeps every `=` after the first in the text.
+    expect(
+      parsePreviewSpec(
+        'page=settings&section=search&then=tap:Add search engine;type:search-engine-url=https://x.test/?q=%s;type:=x;type:name'
+      )
+    ).toMatchObject({
+      then: [
+        { kind: 'tap', text: 'Add search engine' },
+        { kind: 'type', id: 'search-engine-url', text: 'https://x.test/?q=%s' }
+      ]
+    })
+    // A download wins over the editor; no `urlbar` is idle.
+    expect(parsePreviewSpec('download=a.bin&urlbar=').kind).toBe('download')
+    expect(parsePreviewSpec('newtab')).toEqual({ kind: 'idle' })
   })
 })

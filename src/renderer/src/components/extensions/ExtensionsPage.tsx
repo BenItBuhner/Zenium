@@ -17,8 +17,9 @@ import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
 import { errorCounts, errorSummary } from '@renderer/lib/extensions/errorText'
 import { relativeTime } from '@renderer/lib/extensions/format'
+import { extensionRevealStore, takeExtensionReveal } from '@renderer/lib/extensions/manage'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
-import { closeOverlay } from '@renderer/lib/ui'
+import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
 import { ExtensionDetails } from './ExtensionDetails'
@@ -51,7 +52,20 @@ export function ExtensionsPage({
   /** Inside another page's column (Settings → Extensions): no page colour, no own scrolling. */
   embedded?: boolean
 }): JSX.Element {
-  const [detailsId, setDetailsId] = useState<string | null>(null)
+  // "Manage extension" from elsewhere (an extension page's site information) asks for one
+  // extension's details as the page comes up; asked while the page is up, the same.
+  const [detailsId, setDetailsId] = useState<string | null>(() =>
+    takeExtensionReveal(state.extensions.map((e) => e.id))
+  )
+  useEffect(
+    () =>
+      extensionRevealStore.subscribe(() => {
+        const listed = browserStore.get().state?.extensions ?? []
+        const id = takeExtensionReveal(listed.map((e) => e.id))
+        if (id) setDetailsId(id)
+      }),
+    []
+  )
   const [adding, setAdding] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dropping, setDropping] = useState(false)

@@ -21,7 +21,7 @@ const { NavRow, SidebarTop } = await import('../sidebar/SidebarTop')
 const { Toolbar } = await import('../Toolbar')
 const { PillContent } = await import('../phone/PhoneShell')
 const { PillChip } = await import('../urlbar/PillChip')
-const { openUrlbar, uiStore } = await import('@renderer/lib/ui')
+const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
@@ -188,6 +188,7 @@ afterEach(() => {
   host?.remove()
   root = null
   host = null
+  browserStore.set({ state: null })
 })
 
 describe('desktop pill (NavRow)', () => {
@@ -543,6 +544,58 @@ describe('phone pill (PillContent)', () => {
     const http = tab('http://example.com/')
     const el = render(<PillContent state={state(http)} tab={http} space={space} interactive />)
     expect(labels(focusable(el))).toEqual(['Address, example.com', 'Site information'])
+  })
+
+  it('names an extension’s page after the extension, its icon in the slot, no lock or translate chip (§10.1)', () => {
+    // Both forms the tab's URL takes: Chrome's scheme, and the origin the Android runtime
+    // serves the page from – which is never shown, not even as a host.
+    const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+    const icon = 'data:image/png;base64,icon'
+    const vimium = {
+      id,
+      name: 'Vimium',
+      icon,
+      enabled: true
+    } as unknown as UIState['extensions'][number]
+    for (const url of [
+      `chrome-extension://${id}/pages/options.html`,
+      `https://${id}.ext.zenium.invalid/pages/options.html`
+    ]) {
+      const page = tab(url, { title: 'Vimium Options' })
+      const s = { ...state(page), extensions: [vimium] }
+      // The translation engine offered the page: a website would show the translate chip.
+      s.translate = { available: true, tabs: { [page.id]: { status: 'offered' } } } as never
+      // The favicon slot reads the window's list (the same state, through the store; the store's
+      // other readers want the sidebar's collections too).
+      browserStore.set({ state: { ...s, folders: {}, essentialTabIds: [], glance: null } })
+      const el = render(<PillContent state={s} tab={page} space={space} interactive />)
+      expect(labels(focusable(el))).toEqual(['Address, Vimium', 'Site information'])
+      expect(el.textContent).toContain('Vimium')
+      expect(el.textContent).not.toContain(id)
+      expect(el.textContent).not.toContain('.ext.zenium.invalid')
+      expect(el.querySelector('[data-translate]')).toBeNull()
+      expect(el.querySelector('img')?.getAttribute('src')).toBe(icon)
+      act(() => root?.unmount())
+      host?.remove()
+    }
+    // The control: the same offer on a website shows the translate chip.
+    const site = tab('https://example.com/')
+    const s = state(site)
+    s.translate = { available: true, tabs: { [site.id]: { status: 'offered' } } } as never
+    const el = render(<PillContent state={s} tab={site} space={space} interactive />)
+    expect(el.querySelector('[data-translate]')).not.toBeNull()
+  })
+
+  it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
+    const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+    const page = tab(`https://${id}.ext.zenium.invalid/pages/options.html`)
+    const el = render(<PillContent state={state(page)} tab={page} space={space} interactive />)
+    expect(labels(focusable(el))).toEqual(['Address, Extension page', 'Site information'])
+    expect(el.textContent).toContain('Extension page')
+    expect(el.textContent).not.toContain(id)
+    expect(el.textContent).not.toContain('.ext.zenium.invalid')
+    // The puzzle glyph, not a letter of the id.
+    expect(el.querySelector('svg.zen-ext-icon-glyph')).not.toBeNull()
   })
 
   it('draws the ghost pill with nothing focusable or announced', () => {

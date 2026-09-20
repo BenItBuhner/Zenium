@@ -27,6 +27,8 @@ import type { QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
+import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
+import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -77,6 +79,20 @@ export interface HostCapabilities {
   sync: boolean
   /** Pages can be printed. */
   print: boolean
+  /**
+   * The host renders pages to PDF with the preview's options and lists the system's printers
+   * (`TabView.printToPDF`, `Platform.printing`), so Ctrl+P opens Zenium's print preview – the
+   * `zen://print` page (`shared/print.ts`, `core/print.ts`). Off, printing goes to the system
+   * dialog (`TabView.print`), as Android's print flow does.
+   */
+  printPreview: boolean
+  /**
+   * The host shows PDF documents inline in a tab through Zenium's own viewer, the `zen://pdf`
+   * page (Android, whose WebView cannot draw a PDF: a PDF the page navigates to is downloaded
+   * and opened there instead of the system chooser). Desktop hosts draw PDFs with Chromium's
+   * viewer and leave this off.
+   */
+  pdfViewer: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
@@ -1310,6 +1326,13 @@ export interface DownloadSettings {
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Where an engine came from: shipped with Zenium (`DEFAULT_SEARCH_ENGINES`), added by hand in
+ * Settings > Search ("Add search engine"), or discovered on a visited page through its
+ * OpenSearch description (Chrome's "Recently visited" engines).
+ */
+export type SearchEngineSource = 'default' | 'custom' | 'discovered'
+
 export interface SearchEngine {
   id: string
   name: string
@@ -1319,6 +1342,21 @@ export interface SearchEngine {
   keyword: string
   /** Simple glyph shown in the URL bar. */
   glyph: string
+  /** Absent on the shipped engines (read as `default`). */
+  source?: SearchEngineSource
+  /** The site's icon, for the engine picker's rows; null when the site offered none. */
+  favicon?: string | null
+  /** A discovered engine: when its site was last visited (orders "Recently visited"). */
+  visitedAt?: number
+}
+
+/** What the clipboard holds, read from its description only (never its content). */
+export type ClipboardPeekKind = 'url' | 'text' | 'image' | 'none'
+
+/** The clipboard's content, read on the user's reveal tap; `kind` says what the text is. */
+export interface ClipboardContent {
+  kind: 'url' | 'text' | 'none'
+  text: string
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,6 +1468,8 @@ export type ShortcutAction =
   | 'page.openFile'
   | 'page.emailLink'
   | 'page.print'
+  /** Zenium's print preview (`zen://print`); the system dialog on a host without one. */
+  | 'page.printPreview'
   | 'page.viewSource'
   | 'page.fullscreen'
   | 'page.readerMode'
@@ -1722,6 +1762,12 @@ export interface Settings {
    */
   mutedHosts: string[]
   searchEngineId: string
+  /**
+   * The engines the user added (Settings > Search) or that visited pages offered through
+   * OpenSearch (`source: 'discovered'`, ordered by `visitedAt`), on top of the shipped ones;
+   * synced with the settings. Absent in profiles from before it existed (read as none).
+   */
+  searchEngines?: SearchEngine[]
   searchSuggestions: boolean
   /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
@@ -2175,6 +2221,8 @@ export type OverlayKind =
   | 'live-folder'
   | 'sync'
   | 'passwords'
+  /** The print preview (`zen://print`) on a host without page tabs: a tab-modal dialog over the page. */
+  | 'print'
 
 export interface WindowState {
   id: string
@@ -2607,6 +2655,12 @@ export type SuggestionKind =
   | 'entity'
   /** A `chrome.omnibox` row: the input belongs to an extension whose keyword starts it. */
   | 'omnibox'
+  /**
+   * What the clipboard holds, offered on an empty field (Chrome's "Link you copied" / "Text
+   * you copied"): the row names the kind only, read from the clip's description; the content is
+   * read once, on the reveal or the pick (`clipboard.read`). `targetId` is the kind.
+   */
+  | 'clipboard'
 
 export interface Suggestion {
   id: string
@@ -3170,6 +3224,23 @@ export interface Commands {
     args: { text: string; sensitive?: boolean; confirmation?: string }
     result: void
   }
+  /**
+   * The URL bar's clipboard row (Chrome's "Link you copied"): `peek` names what the clipboard
+   * holds from its description alone and never reads the content; `read` reads it once, on the
+   * user's reveal or pick; `markUsed` says the user opened the clip through the row (the pick),
+   * so `peek` does not offer it again until the clipboard changes. Hosts without the bridge
+   * answer `none` / no text / offer it again.
+   */
+  'clipboard.peek': { args: void; result: ClipboardPeekKind }
+  'clipboard.read': { args: void; result: ClipboardContent }
+  'clipboard.markUsed': { args: void; result: void }
+  /**
+   * Settings > Search: add an engine by hand (`%s` in `url` stands for the query), forget one
+   * the user added or a page offered, or make one the default. The shipped engines cannot be
+   * removed; `search.remove` on the default falls back to the shipped default.
+   */
+  'search.addEngine': { args: { name: string; url: string }; result: string }
+  'search.removeEngine': { args: { id: string }; result: void }
 
   /**
    * Ctrl+T, the sidebar's New Tab button, double-click on the sidebar: a tab at `zen://newtab`
@@ -3369,7 +3440,49 @@ export interface Commands {
    * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
+  /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
+  /**
+   * Open Zenium's print preview for the tab (`zen://print`; `capabilities.printPreview`): the
+   * page's overlay on the desktop. A host without the preview gets the system dialog instead.
+   */
+  'page.printPreview': { args: { tabId: string }; result: void }
+  // ---- Print preview (`core/print.ts`, `shared/print.ts`) -------------------------------------
+  /**
+   * The preview's session for a tab: the page's title and address, the system's printers and
+   * the settings the preview opens with (Chrome's sticky settings over the defaults). Null for a
+   * tab that cannot be printed (no page, a chrome page) or a host without the preview.
+   */
+  'print.session': { args: { tabId: string }; result: PrintSessionInfo | null }
+  /**
+   * Render the preview with `settings`: the page as a PDF, base64. `pageCount` is what the
+   * chrome learned from an earlier render (the pages picked need it); unknown, every page is
+   * rendered.
+   */
+  'print.preview': {
+    args: { tabId: string; settings: PrintSettings; pageCount?: number | null }
+    result: PrintPreviewResult
+  }
+  /**
+   * Print or save with `settings`, for a document of `pageCount` pages: a printer gets the job
+   * silently, Save as PDF asks where to save and lists the file in Downloads. The sticky part
+   * of the settings is remembered either way.
+   */
+  'print.run': {
+    args: { tabId: string; settings: PrintSettings; pageCount: number }
+    result: PrintRunResult
+  }
+  /** The preview closed without printing (Cancel, Escape, the tab going away). */
+  'print.close': { args: { tabId: string }; result: void }
+  // ---- PDF viewer (`zen://pdf`, `capabilities.pdfViewer`) -------------------------------------
+  /** Chrome's "Open with": the system chooser for the PDF the tab shows. */
+  'pdf.openWith': { args: { tabId: string }; result: void }
+  /** The system share sheet with the PDF file the tab shows. */
+  'pdf.share': { args: { tabId: string }; result: void }
+  /** What the viewer in the tab last reported (page, zoom, find, outline); null before it did. */
+  'pdf.state': { args: { tabId: string }; result: PdfViewerReport | null }
+  /** Drive the viewer in the tab (zoom, fit, go to a page, find, rotate); false when it has none. */
+  'pdf.command': { args: { tabId: string; command: PdfViewerCommand }; result: boolean }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
   /** Page context menu requested from the chrome side (touch long-press forwarded by the host). */
@@ -3478,6 +3591,21 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /**
+   * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
+   * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
+   * phone's long-press menu sheet, which shows them above the browser's rows as Chrome does
+   * (the desktop's native menu gets the same items through `extension.actionContextMenu`). Each
+   * item's `id` is a handle for `extension.actionMenuClick`; a fresh request retires the
+   * previous handles. Empty when the extension adds none.
+   */
+  'extension.actionMenuItems': { args: { id: string }; result: MenuItemDescriptor[] }
+  /**
+   * The user picked one of the items `extension.actionMenuItems` answered: the extension's
+   * `contextMenus.onClicked` fires with Chrome's `OnClickData` for the `action` context and the
+   * active tab, as a pick in the desktop's menu does.
+   */
+  'extension.actionMenuClick': { args: { id: string; itemId: string }; result: void }
   /** Empties the extension's error console (`ExtensionInfo.errors`). */
   'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------
@@ -3811,7 +3939,10 @@ export interface Events {
    * chrome shows it over the page, prefilled with `title` and `url`.
    */
   'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
-  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
+  /** `tabId`: the tab the overlay is about (the print preview prints it), else the active one. */
+  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string; tabId?: string }
+  /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
+  'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**
    * Show the find bar for a tab with `text` in its field (the tab's last query, else the
    * profile's, else the page's selection when it is short; empty for a first search), the text
@@ -3849,6 +3980,11 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /**
+   * The app menu's Extensions row on a phone: the chrome opens its sheet of the extensions'
+   * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
+   */
+  'extensions.open': void
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */
@@ -3936,8 +4072,12 @@ export interface Events {
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
-  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
-  'extension.popupClosed': { id: string }
+  /**
+   * Main closed the popup itself (blur, Escape inside it, a link opened a tab). `reason` is
+   * `'escape'` when the document trapped the key: focus then goes back to the anchor (§9.22),
+   * where every other close leaves it where the close put it.
+   */
+  'extension.popupClosed': { id: string; reason?: 'escape' }
   /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
   extensionInstallRequest: ExtensionPromptRequest
   /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */

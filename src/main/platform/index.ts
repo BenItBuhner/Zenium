@@ -73,6 +73,7 @@ import { SyncEngine } from '../sync/engine'
 import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
+import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
@@ -104,6 +105,11 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   resourceGovernor: true,
   sync: true,
   print: true,
+  // Pages render to PDF (`printToPDF`) and printers are listed (`getPrintersAsync`): Ctrl+P opens
+  // Zenium's preview; Chromium's own preview is not part of Electron.
+  printPreview: true,
+  // Chromium's PDF viewer draws PDFs in the page itself.
+  pdfViewer: false,
   agents: true,
   updates: true,
   share: false,
@@ -165,6 +171,8 @@ export class ElectronPlatform implements Platform {
   readonly translate: ElectronTranslateHost
   /** Chromium's per-session spellchecker, one setting for every session. */
   readonly spellcheck: ElectronSpellcheck
+  /** The print preview's printers and Save as PDF dialog. */
+  readonly printing = new ElectronPrintingHost(browserWindowOf)
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
   readonly newTabBackground: ElectronNewTabBackground
@@ -313,7 +321,15 @@ export class ElectronPlatform implements Platform {
           const value = res.headers.get(name)
           if (value) headers[name] = value
         }
-        return { ok: res.ok, status: res.status, text: res.ok ? await res.text() : '', headers }
+        if (!res.ok) return { ok: false, status: res.status, text: '', headers }
+        if (options.maxBytes !== undefined) {
+          // The cap bounds the download: the body is read in chunks and dropped, the connection
+          // with it, as soon as it runs past the cap (the same failure shape as Android's).
+          const text = await readCapped(res, options.maxBytes)
+          if (text === null) return { ok: false, status: 0, text: '', headers: {} }
+          return { ok: true, status: res.status, text, headers }
+        }
+        return { ok: true, status: res.status, text: await res.text(), headers }
       },
       resolveHost: async (host, options) => {
         if (options.signal?.aborted) return false
@@ -629,6 +645,34 @@ function redirectedOrigin(url: string): { url: string; origin: string | null } {
   } catch {
     return { url, origin: null }
   }
+}
+
+/**
+ * A response body read no further than `maxBytes` (`NetHost.fetchText`'s cap): the stream is
+ * cancelled and null returned as soon as the bytes read run past it, so an oversized body is
+ * not downloaded whole and then thrown away. Decoded as UTF-8, as `Response.text()` would.
+ */
+async function readCapped(res: Response, maxBytes: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined)
+    return null
+  }
+  if (!res.body) return await res.text()
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let read = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    read += value.byteLength
+    if (read > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
 function browserWindowOf(win: ZenWindow | undefined): Electron.BrowserWindow | undefined {

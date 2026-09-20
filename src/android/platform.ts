@@ -141,6 +141,10 @@ export function androidCapabilities({
     resourceGovernor: false,
     sync: false,
     print: true,
+    // The system print flow (`PrintRelay.kt`) has its own preview; no PDF rendering in the WebView.
+    printPreview: false,
+    // The WebView cannot draw a PDF: one it navigates to is downloaded and shown in `zen://pdf`.
+    pdfViewer: true,
     agents: true,
     updates: true,
     share: true,
@@ -383,6 +387,14 @@ export interface HostEventPayloads {
     resumes?: string
     savePath?: string
     canResume?: boolean
+    /**
+     * The response the tab's own navigation produced (the WebView's `DownloadListener`, no
+     * `download` attribute behind it), as against a "Download link" or a retry: what decides
+     * whether a PDF opens in the viewer (`core/pdf.ts`).
+     */
+    navigation?: boolean
+    /** The response's Content-Disposition type, when it named one. */
+    disposition?: 'inline' | 'attachment' | null
   }
   'download.progress': {
     token: string
@@ -925,7 +937,16 @@ export class AndroidPlatform implements Platform {
       writeText: (text, sensitive) =>
         bridge.send('clipboard.writeText', { text, sensitive: sensitive === true }),
       writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url }),
-      clearText: (expected) => bridge.call('clipboard.clearText', { expected })
+      clearText: (expected) => bridge.call('clipboard.clearText', { expected }),
+      // The URL bar's clipboard row: `peek` reads the clip's description alone (no Android 12+
+      // toast), `read` its text once on the user's reveal or pick, `markUsed` remembers the clip
+      // the user opened so it is not offered again until the clipboard changes (ClipboardPeek.kt).
+      peek: async () => {
+        const kind = await bridge.call<string>('clipboard.peek', {})
+        return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
+      },
+      read: () => bridge.call<string>('clipboard.read', {}),
+      markUsed: () => bridge.send('clipboard.markUsed')
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
@@ -950,7 +971,13 @@ export class AndroidPlatform implements Platform {
           headers?: Record<string, string>
           /** The spilled body, when there is one; `text` is empty then. */
           body?: SpilledBody
-        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
+        }>('net.fetch', {
+          url,
+          headers: options.headers ?? {},
+          timeoutMs: options.timeoutMs ?? 0,
+          // Kotlin stops reading there and fails the fetch (`readBody`'s cap); 0 is its own limit.
+          maxBytes: options.maxBytes ?? 0
+        })
         let text = result.text
         if (result.body) {
           const release = (token: string): void => bridge.send('net.release', { token })
@@ -1006,6 +1033,21 @@ export class AndroidPlatform implements Platform {
           id: item.id,
           savePath: item.savePath,
           mimeType: item.mimeType
+        }),
+      // The PDF viewer's "Open with" (the system chooser, every app that takes the file) and
+      // its share sheet, with the file itself.
+      openWith: (item) =>
+        bridge.call('download.openWith', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType
+        }),
+      share: (item) =>
+        bridge.call('download.share', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType,
+          name: item.finalName || item.filename
         }),
       showInFolder: () => bridge.send('download.showAll'),
       chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
@@ -1084,6 +1126,7 @@ export class AndroidPlatform implements Platform {
     this.browser = browser
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
+    this.views.pages.pdf = (id) => browser.pdf.document(id)
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
@@ -1258,7 +1301,10 @@ export class AndroidPlatform implements Platform {
           canResume: p.canResume,
           containerId,
           private: containerId === PRIVATE_CONTAINER_ID,
-          resumes: p.resumes
+          resumes: p.resumes,
+          navigation: p.navigation === true,
+          disposition:
+            p.disposition === 'inline' || p.disposition === 'attachment' ? p.disposition : null
         })
         this.downloadTokens.set(p.token, record.id)
         // Where the file goes: the system save dialog, the folder from Settings, or the default.

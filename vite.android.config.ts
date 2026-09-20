@@ -1,4 +1,6 @@
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import { transformSync } from 'esbuild'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -49,6 +51,83 @@ function previewPages(): Plugin {
   }
 }
 
+/** Where the PDF viewer's files go (`shared/pdfPage.ts` names them; `PdfViewer.kt` serves them). */
+const PDF_ASSETS_DIR = resolve('android/app/src/main/assets/pdf')
+
+/**
+ * The parts of pdf.js the viewer needs beside its own script: the worker, and the data the
+ * worker asks for as documents need it (CJK character maps, the fourteen standard fonts,
+ * the JPEG 2000 / JBIG2 / colour-management decoders as WebAssembly, the default ICC profile).
+ * Copied from the package once the viewer bundle is written. The worker runs on a global of
+ * its own, so it gets the viewer's polyfills (`pdfViewerPolyfills.ts`) written ahead of it.
+ */
+function pdfViewerFiles(): Plugin {
+  const dist = resolve('node_modules/pdfjs-dist')
+  return {
+    name: 'zen-pdf-viewer-files',
+    apply: 'build',
+    closeBundle() {
+      mkdirSync(PDF_ASSETS_DIR, { recursive: true })
+      const polyfills = transformSync(
+        readFileSync(resolve('src/android/pdfViewerPolyfills.ts'), 'utf8'),
+        { loader: 'ts', target: 'es2020', minify: true }
+      ).code
+      const worker = readFileSync(resolve(dist, 'legacy/build/pdf.worker.min.mjs'), 'utf8')
+      writeFileSync(resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs'), `${polyfills}\n${worker}`)
+      for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs'])
+        cpSync(resolve(dist, dir), resolve(PDF_ASSETS_DIR, dir), { recursive: true })
+    }
+  }
+}
+
+/** Where the preview host's `net.fetch` goes out through the dev server (see `src/android/preview.ts`). */
+const PREVIEW_FETCH_ROUTE = '/__zen/fetch'
+/** A body longer than this is cut off, as the host's inline reply is bounded too. */
+const PREVIEW_FETCH_LIMIT = 4 * 1024 * 1024
+const PREVIEW_FETCH_TIMEOUT_MS = 10_000
+
+/**
+ * `GET /__zen/fetch?url=<http(s) URL>` fetches that URL from the dev server and answers with its
+ * status and body text, the way the Kotlin host's `net.fetch` reaches a site for the chrome: the
+ * engines' suggest endpoints and OpenSearch descriptions send no CORS headers, so the chrome's
+ * own `fetch` to them is refused by the browser and the preview would never list a query
+ * suggestion. Only what the preview asks for the chrome (`accept` is passed on); dev server only.
+ */
+function previewFetch(): Plugin {
+  return {
+    name: 'zen-preview-fetch',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use(PREVIEW_FETCH_ROUTE, (req, res, next) => {
+        if (req.method !== 'GET') return next()
+        const target = new URL(req.url ?? '', 'http://localhost').searchParams.get('url') ?? ''
+        if (!/^https?:\/\//i.test(target)) {
+          res.statusCode = 400
+          res.end()
+          return
+        }
+        const accept = req.headers.accept
+        void fetch(target, {
+          headers: accept ? { accept } : {},
+          redirect: 'follow',
+          signal: AbortSignal.timeout(PREVIEW_FETCH_TIMEOUT_MS)
+        })
+          .then(async (upstream) => {
+            const text = (await upstream.text()).slice(0, PREVIEW_FETCH_LIMIT)
+            res.statusCode = upstream.status
+            res.setHeader('content-type', 'text/plain; charset=utf-8')
+            res.setHeader('cache-control', 'no-store')
+            res.end(text)
+          })
+          .catch(() => {
+            res.statusCode = 502
+            res.end()
+          })
+      })
+    }
+  }
+}
+
 /**
  * Builds the Android chrome: the React renderer plus the browser core, bundled for the chrome
  * WebView. Output lands in the Android app's assets so Gradle can package it.
@@ -56,6 +135,7 @@ function previewPages(): Plugin {
  *   vite build  -c vite.android.config.ts                 → android/app/src/main/assets/www
  *   vite build  -c vite.android.config.ts --mode page     → android/app/src/main/assets/page.js
  *   vite build  -c vite.android.config.ts --mode ext      → android/app/src/main/assets/ext.js
+ *   vite build  -c vite.android.config.ts --mode pdf      → android/app/src/main/assets/pdf/
  *   vite        -c vite.android.config.ts                 → dev server with the iframe preview host
  */
 const aliases = {
@@ -89,6 +169,27 @@ export default defineConfig(({ mode }) => {
       }
     }
   }
+  if (mode === 'pdf') {
+    // The PDF viewer document's script (`src/android/pdfViewer.ts`), an ES module the shell
+    // loads from the viewer's origin, with pdf.js bundled in; the worker and data ride along.
+    return {
+      resolve: { alias: aliases },
+      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      plugins: [pdfViewerFiles()],
+      build: {
+        outDir: PDF_ASSETS_DIR,
+        emptyOutDir: true,
+        minify: true,
+        target: 'es2020',
+        lib: {
+          entry: resolve('src/android/pdfViewer.ts'),
+          formats: ['es'],
+          fileName: () => 'viewer.mjs'
+        },
+        rollupOptions: { output: { inlineDynamicImports: true } }
+      }
+    }
+  }
   if (mode === 'page') {
     return {
       resolve: { alias: aliases },
@@ -110,7 +211,7 @@ export default defineConfig(({ mode }) => {
     root: resolve('src/android'),
     base: './',
     resolve: { alias: aliases },
-    plugins: [react(), tailwindcss(), previewPages()],
+    plugins: [react(), tailwindcss(), previewPages(), previewFetch()],
     build: {
       outDir: resolve('android/app/src/main/assets/www'),
       emptyOutDir: true,

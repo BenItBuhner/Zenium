@@ -348,6 +348,22 @@
 .zen-v2-row.zen-phone-row[data-danger] {
   color: var(--v2-danger);
 }
+/*
+ * A row that takes no tap (an extension's action turned off for this tab): the one disabled
+ * number on the whole row (9.30) – glyph, text and badge together, laid out at full size – and
+ * no press or hover fill; it is `aria-disabled` on its accessible row, so a hold still reaches it.
+ */
+.zen-v2-row.zen-phone-row[data-disabled] {
+  opacity: 0.4;
+}
+.zen-v2-row.zen-phone-row[data-disabled]:active {
+  background: transparent;
+}
+@media (hover: hover) {
+  .zen-v2-row.zen-phone-row[data-disabled]:hover {
+    background: transparent;
+  }
+}
 .zen-swipe[data-moving='true'] .zen-v2-row.zen-phone-row:active {
   background: transparent;
 }

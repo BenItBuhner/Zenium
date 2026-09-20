@@ -57,6 +57,8 @@ import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
+import { PrintService } from './print'
+import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
 import { SpellcheckService } from './spellcheck'
 import { FindMemory } from './find'
@@ -89,14 +91,22 @@ import {
   sectionIndexOf,
   tabVisibleIn
 } from './model'
-import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
+import {
+  BLANK_URL,
+  extensionPageOf,
+  getDomain,
+  inputToUrl,
+  isEmptyTabUrl,
+  isWebPageUrl,
+  presentedUrl
+} from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
-import { internalPageAliasUrl } from '../shared/internalPages'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
-import { buildSearchUrl, matchKeyword } from '../shared/search'
+import { buildSearchUrl, matchKeyword, sanitizeSearchEngines } from '../shared/search'
+import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -146,6 +156,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'overlay.open',
   'find.open',
   'zoom.open',
+  'extensions.open',
   'theme.open',
   'space.new',
   'space.edit',
@@ -234,6 +245,10 @@ export class Browser {
   readonly protection: ProtectionService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
+  /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
+  readonly print: PrintService
+  /** The inline PDF viewer (`zen://pdf`) on hosts whose engine cannot draw a PDF. */
+  readonly pdf: PdfViewerService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
   readonly spellcheck: SpellcheckService
@@ -247,6 +262,8 @@ export class Browser {
   readonly mediaSession: MediaSessionService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
+  /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
+  readonly searchEngines: SearchEngineService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -295,7 +312,8 @@ export class Browser {
         os: platform.info.os,
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
-        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private)
+        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -348,10 +366,13 @@ export class Browser {
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
     this.spellcheck = new SpellcheckService(this)
+    this.print = new PrintService(this)
+    this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
     this.webNotifications = new WebNotificationService(this)
+    this.searchEngines = new SearchEngineService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -743,6 +764,10 @@ export class Browser {
    */
   onDownloadStarted(sourceTabId: string | null): void {
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
+    // A PDF the tab navigated to opens in the tab's own viewer once it is down
+    // (`PdfViewerService`): as in Chrome Android the tab stays for it, and no Downloads surface
+    // comes over the page – the sheet would take the fingers meant for the viewer.
+    if (sourceTabId && this.pdf.expects(sourceTabId)) return
     // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
     // from `download.changed` instead (Chrome-style button, or the bubble when
     // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the
@@ -1482,18 +1507,19 @@ export class Browser {
   /**
    * Share a tab's page: its title and address, with its favicon as the preview. An internal
    * page shares its user-facing `zenium://` address – the deep link another app or device opens
-   * it by; `zen://` never leaves `tab.url`.
+   * it by; `zen://` never leaves `tab.url`. An extension's page shares its `chrome-extension://`
+   * address, whichever form the tab carries (`presentedUrl`).
    */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || !(/^https?:/i.test(tab.url) || this.pages.isPageTab(tab))) {
+    if (!tab || !(isWebPageUrl(tab.url) || extensionPageOf(tab.url) || this.pages.isPageTab(tab))) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }
     void this.share(
       {
         title: tab.customTitle ?? tab.title,
-        url: internalPageAliasUrl(tab.url),
+        url: presentedUrl(tab.url),
         tabId,
         favicon: tab.favicon ?? undefined
       },
@@ -1591,6 +1617,7 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.print.flushSync()
     this.webApps.flushSync()
   }
 
@@ -1899,6 +1926,15 @@ export class Browser {
         this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
       return
     }
+    if (message.type === 'opensearch') {
+      if (typeof message.url === 'string')
+        void this.searchEngines.discover(
+          tabId,
+          message.url,
+          typeof message.title === 'string' ? message.title : ''
+        )
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -1913,6 +1949,10 @@ export class Browser {
     }
     if (message.type === 'focus') {
       this.revealTab(tabId)
+      return
+    }
+    if (message.type === 'pdf') {
+      if (message.pdf && typeof message.pdf === 'object') this.pdf.onReport(tabId, message.pdf)
       return
     }
     if (message.type === 'forms') {
@@ -2327,6 +2367,11 @@ export class Browser {
         else if (confirmation) this.copyText(text, confirmation, win)
         else platform.clipboard.writeText(text)
       },
+      'clipboard.peek': () => this.searchEngines.peekClipboard(),
+      'clipboard.read': () => this.searchEngines.readClipboard(),
+      'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
+      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 
       'newtab.open': (_a, win) => this.openNewTab(win),
       'newtab.addShortcut': ({ title, url }) => this.newTab.addShortcut(title, url) ?? '',
@@ -2456,6 +2501,18 @@ export class Browser {
           win
         }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
+      'page.printPreview': ({ tabId }, win) =>
+        this.actions.run('page.printPreview', { sourceTabId: tabId, win }),
+      'print.session': ({ tabId }) => this.print.session(tabId),
+      'print.preview': ({ tabId, settings, pageCount }) =>
+        this.print.preview(tabId, settings, pageCount ?? null),
+      'print.run': ({ tabId, settings, pageCount }, win) =>
+        this.print.run(tabId, settings, pageCount, win),
+      'print.close': ({ tabId }) => this.print.close(tabId),
+      'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
+      'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.state': ({ tabId }) => this.pdf.report(tabId),
+      'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),
       'page.viewSource': ({ tabId }, win) =>
@@ -2556,6 +2613,9 @@ export class Browser {
           win,
           x !== undefined && y !== undefined ? { x, y } : undefined
         ),
+      'extension.actionMenuItems': ({ id }, win) => this.menus.extensionActionMenuItems(id, win),
+      'extension.actionMenuClick': ({ id, itemId }) =>
+        this.menus.runExtensionActionMenuItem(id, itemId),
       'extension.confirmInstall': ({ requestId, accept }) =>
         this.extensions.respondPrompt(requestId, accept),
       'extension.respondPermissionRequest': ({ requestId, accept }) =>
@@ -2758,6 +2818,11 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'searchEngines') {
+        // The user's engines whole (a Settings row sends the edited list); the default is kept.
+        const keep =
+          typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
+        s.searchEngines = sanitizeSearchEngines(value, keep)
       } else if (key === 'privacy' && value && typeof value === 'object') {
         s.privacy = sanitizePrivacySettings({
           ...s.privacy,
@@ -2795,6 +2860,10 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
+    // A default the profile no longer has an engine for (removed, or named by a peer's build that
+    // knows more engines) falls back to the shipped default; suggestions keep working.
+    if (!this.state.searchEngines.some((e) => e.id === s.searchEngineId))
+      s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||

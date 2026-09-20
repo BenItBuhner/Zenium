@@ -11,7 +11,7 @@ vi.mock('../../portals', async (importOriginal) => {
   return { ...actual, openPopover: vi.fn(() => vi.fn()) }
 })
 
-import { cmd } from '../../api'
+import { cmd, run } from '../../api'
 import { browserStore, holdFloatingChrome, uiStore } from '../../ui'
 import { closeExtensionPopup, openExtensionPopup } from '../popup'
 
@@ -112,5 +112,35 @@ describe('openExtensionPopup and the page capture', () => {
     closeExtensionPopup()
     expect(uiStore.get().extensionPopup).toBeNull()
     expect(uiStore.get().snapshot).toBeNull()
+  })
+
+  it('Escape inside the document returns focus to the button; any other close hands it to the page (§9.22)', async () => {
+    const button = document.createElement('button')
+    document.body.append(button)
+    const focusRuns = (): string[] =>
+      vi
+        .mocked(run)
+        .mock.calls.map(([name]) => name)
+        .filter((n) => String(n).startsWith('focus.'))
+    try {
+      // The document trapped Escape: main closed the view and says so; the anchor takes the focus.
+      openExtensionPopup('ext', { ...PUZZLE, element: button }, true)
+      await vi.waitFor(() => expect(uiStore.get().extensionPopup?.id).toBe('ext'))
+      vi.mocked(run).mockClear()
+      closeExtensionPopup(false, 'anchor')
+      expect(uiStore.get().extensionPopup).toBeNull()
+      expect(document.activeElement).toBe(button)
+      expect(focusRuns()).toEqual(['focus.chrome'])
+      // A blur or an outside press: nothing moves to the button; the page gets the keyboard back.
+      button.blur()
+      openExtensionPopup('ext', { ...PUZZLE, element: button }, true)
+      await vi.waitFor(() => expect(uiStore.get().extensionPopup?.id).toBe('ext'))
+      vi.mocked(run).mockClear()
+      closeExtensionPopup(false)
+      expect(document.activeElement).not.toBe(button)
+      expect(focusRuns()).toEqual(['focus.content'])
+    } finally {
+      button.remove()
+    }
   })
 })

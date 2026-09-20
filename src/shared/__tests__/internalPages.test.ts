@@ -24,7 +24,7 @@ const ALL = new Proxy({} as HostCapabilities, { get: () => true })
 
 describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
-    expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings'])
+    expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings', 'print', 'pdf'])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
@@ -61,6 +61,24 @@ describe('the page registry', () => {
     const ids = SETTINGS_SECTIONS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9-]*$/)
+  })
+
+  it('gates the print preview and the PDF viewer on the host that can show them', () => {
+    // Print is Chrome's tab-modal preview: a chrome-drawn singleton over the page, never split.
+    expect(INTERNAL_PAGES.print).toMatchObject({
+      render: 'chrome',
+      singleton: true,
+      overlay: 'print',
+      splittable: false,
+      requires: 'printPreview'
+    })
+    // The PDF viewer is a document of its own per file, for the host whose engine draws no PDF.
+    expect(INTERNAL_PAGES.pdf).toMatchObject({
+      render: 'document',
+      singleton: false,
+      splittable: true,
+      requires: 'pdfViewer'
+    })
   })
 })
 

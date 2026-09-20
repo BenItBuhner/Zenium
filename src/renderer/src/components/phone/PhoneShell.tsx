@@ -4,8 +4,9 @@ import { Globe, Languages, Lock, Search } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { BLANK_URL, displayHost } from '@shared/url'
+import { BLANK_URL, displayHost, isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
+import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import {
   contentShift,
   cssPx,
@@ -422,17 +423,22 @@ export function PillContent({
   })
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const shown = (underFinger && state.tabs[underFinger]) || tab
+  // A page of an extension: the extension's name stands where the host would (as "Settings"
+  // does for the internal page), its icon in the favicon slot, and no lock, shield or
+  // translation chip – it is neither a secure site nor an insecure one, whatever origin the
+  // Android runtime serves it from (§10.1 applied to extension pages, `extensionPageChrome`).
+  const extension = shown ? extensionPageChrome(shown.url, state.extensions) : null
   // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
-  const url = shown ? displayHost(shown.url) : ''
+  const url = shown ? (extension ? extension.name : displayHost(shown.url)) : ''
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
-  const secure = shown?.url.startsWith('https://') && !shown.certificateError
+  const secure = shown?.url.startsWith('https://') && !shown.certificateError && !extension
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
   // Translation: the glyph is there once the page has been offered or translated (in the accent
   // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
-  const translation = shown && /^https?:/.test(shown.url) ? translateStateOf(state, shown.id) : null
+  const translation = shown && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
   const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
@@ -474,7 +480,7 @@ export function PillContent({
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
-      {shown && !page && state.capabilities.requestBlocking && (
+      {shown && !page && !extension && state.capabilities.requestBlocking && (
         <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
       )}
       {url && secure && !page && (

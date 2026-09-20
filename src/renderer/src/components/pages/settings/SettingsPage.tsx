@@ -14,6 +14,7 @@ import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { SettingsBody } from '../../overlays/SettingsPanel'
@@ -127,6 +128,18 @@ function PhoneSettings({
   const sectionId = current?.id ?? null
   const { closeAll } = sheets
   useEffect(() => closeAll(), [sectionId, closeAll])
+  // "Manage extension" from elsewhere (an extension page's site information, the Extensions
+  // sheet's long-press menu): Settings › Extensions opens the extension's details sheet as the
+  // section comes up, once its row is in the list.
+  const reveal = extensionRevealStore.use((s) => s.id)
+  const { ctx: sheetCtx } = sheets
+  useEffect(() => {
+    if (!reveal || sectionId !== 'extensions') return
+    const rowId = `extension:${reveal}`
+    if (!groups.some((g) => g.rows.some((r) => r.id === rowId))) return
+    extensionRevealStore.set({ id: null })
+    sheetCtx.open({ kind: 'item', rowId })
+  }, [reveal, sectionId, groups, sheetCtx])
 
   return (
     <div className="zen-settings-page" data-section={sectionId ?? 'landing'}>

@@ -27,6 +27,8 @@ interface PendingPopup {
 let pending: PendingPopup | null = null
 /** Takes the popup out of the chrome layer's popover registry once it is closed. */
 let releasePopover: (() => void) | null = null
+/** The button the popup hangs from while it is up: where Escape returns the focus (§9.22). */
+let anchorElement: Element | null = null
 /** The frame's root while `PopupFrame` has it mounted: what a press inside the popup lands on. */
 let frame: HTMLElement | null = null
 
@@ -72,6 +74,7 @@ export function openExtensionPopup(
   // is main's view above the chrome and keeps its own input. The button itself is the
   // registry's alone; the store holds the anchor's box and bar, plain data like the rest of it.
   const { element, ...placed } = anchor
+  anchorElement = element ?? null
   releasePopover = openPopover({
     element: () => frame,
     anchor: () => element ?? null,
@@ -116,12 +119,23 @@ export function openExtensionPopup(
   else void captureActiveTab(tabId).then(show)
 }
 
-/** Close the open popup; `notifyMain` is false when main already closed the view itself. */
-export function closeExtensionPopup(notifyMain = true): void {
+/**
+ * Close the open popup; `notifyMain` is false when main already closed the view itself.
+ *
+ * `focus` is where the keyboard goes next (§9.22). The document has it while the popup is up
+ * (main focuses the view as it shows it), so the renderer decides on the way out: `'anchor'`
+ * for the Escape the document trapped – the key returns focus to the button that opened the
+ * popup, as the chassis does for every popover – and `'page'` otherwise: a press outside left
+ * it where the press went, a blur means something else took it, and the page gets it back only
+ * when no other chrome needs it.
+ */
+export function closeExtensionPopup(notifyMain = true, focus: 'page' | 'anchor' = 'page'): void {
   const wasPending = pending !== null
   pending = null
   releasePopover?.()
   releasePopover = null
+  const anchor = anchorElement
+  anchorElement = null
   if (!uiStore.get().extensionPopup) {
     if (wasPending && notifyMain) run('extension.closePopup', undefined)
     return
@@ -129,6 +143,12 @@ export function closeExtensionPopup(notifyMain = true): void {
   uiStore.set({ extensionPopup: null })
   if (notifyMain) run('extension.closePopup', undefined)
   invalidateSnapshot()
+  if (focus === 'anchor' && anchor instanceof HTMLElement && anchor.isConnected) {
+    // The chrome document takes the keyboard back from the popup's view, then the button has it.
+    run('focus.chrome', undefined)
+    anchor.focus({ preventScroll: true })
+    return
+  }
   returnFocusToPage()
 }
 
