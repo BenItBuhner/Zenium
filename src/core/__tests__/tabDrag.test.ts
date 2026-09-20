@@ -816,6 +816,7 @@ function panelFixture(): PanelFixture {
         },
         loaded: (id: string) => (id === PANEL_EXT ? ext : undefined),
         grants: () => ({ permissions: ['sidePanel'], origins: [] }),
+        dispatch: () => undefined,
         commitUi: () => browser.state.commitVolatile()
       }
       const viewHost: PanelViewHost = {

@@ -47,6 +47,9 @@ const OWN_SCRIM_CONSUMERS = [
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
   'components/phone/PhoneSheet.tsx',
+  // Reader View's text preferences sheet (CT-20): the hosted `BottomSheet` with the size stepper,
+  // the font, the colour theme and the column width.
+  'components/reader/ReaderPreferencesPanel.tsx',
   // The blocked pop-ups sheet (#62); its sign-in and certificate sheet registers `ownScrim: phone`
   // (`security/SecurityPromptDialog.tsx`, one component for the dialog and the sheet), which the
   // literal-`true` match above does not see – it returns the hosted `BottomSheet` to the slot too.

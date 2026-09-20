@@ -125,18 +125,15 @@ export class PageService {
 
   /**
    * The window a page opens in when asked from `win`: `win` itself with the full chrome; from a
-   * toolbar-only popup (a page's sized `window.open`) the popup's opener – the full window it
-   * came from, else the full window used last. A popup has no sidebar or strip to hold a
-   * second tab, and Chrome opens chrome://settings from a popup in its opener as well. The
-   * popup itself only when no full window is alive. A private window is a host like any other
-   * here – a page's overlay stays over the private window that asked – and only a page *tab*
-   * leaves it ({@link tabWindowFor}).
+   * toolbar-only popup (a page's sized `window.open`) or an app window the browser window behind
+   * it – the full window it came from, else the full window used last, else a new one
+   * (`Browser.browserWindowFor`). Neither has a sidebar or strip to hold a second tab, and
+   * Chrome opens chrome://settings from a popup in its opener as well. A private window is a
+   * host like any other here – a page's overlay stays over the private window that asked – and
+   * only a page *tab* leaves it ({@link tabWindowFor}).
    */
   hostWindowFor(win: ZenWindow): ZenWindow {
-    if (win.chrome !== 'popup') return win
-    for (let w = win.opener; w; w = w.opener) if (w.alive && w.chrome !== 'popup') return w
-    const full = this.browser.allWindows().filter((w) => w.chrome !== 'popup')
-    return full.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? win
+    return this.browser.browserWindowFor(win)
   }
 
   /**
@@ -152,7 +149,8 @@ export class PageService {
   tabWindowFor(win: ZenWindow): ZenWindow | null {
     const host = this.hostWindowFor(win)
     if (!host.isPrivate) return host
-    const regular = this.browser.allWindows().filter((w) => !w.isPrivate && w.chrome !== 'popup')
+    // A regular window with the full chrome: a popup or an app window has no strip for the tab.
+    const regular = this.browser.allWindows().filter((w) => !w.isPrivate && w.chrome === 'full')
     return regular.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? null
   }
 

@@ -18,6 +18,7 @@ import type {
   MenuItemTemplate,
   MenuPopupOptions,
   Platform,
+  ShortcutHost,
   SpellcheckHost,
   StoreIO,
   TabView,
@@ -79,6 +80,8 @@ const DESKTOP: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
   selectionToolbar: false,
   popupSurface: true,
   qrScan: false
@@ -127,6 +130,8 @@ const ANDROID: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
   selectionToolbar: true,
   popupSurface: false,
   qrScan: false
@@ -185,6 +190,8 @@ interface HarnessOptions {
    * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
    */
   spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
+  /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
+  shortcuts?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -291,7 +298,8 @@ function harness(
           })
         }
       : {}),
-    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {})
+    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
+    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {})
   }
   const browser = new Browser(platform)
   browser.start()
@@ -420,6 +428,27 @@ describe('the app menu', () => {
     expect(tablet.sent).not.toContain('overlay.open')
   })
 
+  it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
+    for (const [caps, formFactor] of [
+      [DESKTOP, undefined],
+      [ANDROID, 'phone']
+    ] as const) {
+      const h = pageHarness(caps, formFactor ? { formFactor } : {})
+      // A web page: Reader View is the toggle, the preferences item waits for an article.
+      expect(appMenu(h)).not.toContain('Text Preferences…')
+      h.browser.tabs.navigate(
+        h.tabId,
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.org%2Fstory'
+      )
+      const menu = appMenu(h)
+      expect(menu.indexOf('Text Preferences…')).toBe(menu.indexOf('Reader View') + 1)
+      h.sent.length = 0
+      h.click('Text Preferences…')
+      // The chrome draws the surface: a popover under the pill on a mouse, a sheet on a phone.
+      expect(h.sent).toContain('reader.preferences')
+    }
+  })
+
   it('on a phone drops what only a desktop window can use', () => {
     const menu = appMenu(harness(ANDROID, 'phone'))
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
@@ -529,6 +558,21 @@ describe('the app menu', () => {
       .find((item) => item.label === 'Extensions')
       ?.click?.()
     expect(h.sent).toEqual(['extensions.open'])
+  })
+
+  it('offers the install item only to a window whose chrome has an install surface up', () => {
+    // A desktop host that writes launchers: the engine can install, but the desktop's install
+    // dialog is UI work to come, so until a chrome registers one (`ui.surface`) the menu offers
+    // no way into a prompt nothing would show.
+    const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
+    h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    expect(appMenu(h)).toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    // A window that never registered any surface has none.
+    expect(h.win.surfaces.size).toBe(0)
   })
 
   it('closes the page group with the page controls where the host has them', () => {

@@ -51,6 +51,7 @@ import {
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
+import { isWithinScope } from '../shared/webApp'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
@@ -260,8 +261,12 @@ export class TabManager {
       if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
         this.pendingTransition.set(tabId, 'restored')
         // The host's own serialisation of the stack rides along: the list is the one it describes.
+        // After a relaunch it is not in memory but in the tab's `navigation/` document, which
+        // hands it over for this very list only.
         const whole: NavigationSnapshot = { entries: snapshot.entries, index }
-        if (snapshot.hostState !== undefined) whole.hostState = snapshot.hostState
+        const hostState =
+          snapshot.hostState ?? this.browser.state.navigationState.hostStateFor(tabId, whole)
+        if (hostState !== undefined) whole.hostState = hostState
         void view.restoreNavigation(whole)
       } else {
         // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
@@ -307,6 +312,8 @@ export class TabManager {
     const snapshot: NavigationSnapshot | null = view.navigationEntries() ?? null
     if (!snapshot || snapshot.entries.length === 0) return
     this.browser.state.tabNavigation.set(tabId, snapshot)
+    // The stack's host-state blob has a document of its own; it is brought up to date on a timer.
+    this.browser.state.navigationState.touch(tabId)
   }
 
   /** The stacks of every loaded page, read once more before the pages go (a graceful quit). */
@@ -363,6 +370,8 @@ export class TabManager {
     // Hidden until the window's layout positions it, so it never flashes at stale bounds.
     view.setVisible(false)
     view.attachTo(win.host)
+    // Another window may mean another `display-mode` (an app window's page moving to a browser window).
+    view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
     win.relayout()
     return true
   }
@@ -462,6 +471,7 @@ export class TabManager {
         }
         if (v) this.onNavigated(tabId, v, url, inPage)
       },
+      onWillNavigate: (url) => this.onWillNavigate(tabId, url),
       onTitleUpdated: (title) =>
         update((t) => {
           t.title = title || this.titleFor(t.url)
@@ -577,12 +587,14 @@ export class TabManager {
         state.commitVolatile()
         win.relayout()
         this.browser.fullscreen.onHtmlFullscreen(tabId, true)
+        this.browser.pushDisplayMode(win)
       },
       onLeaveHtmlFullscreen: () => {
         for (const w of this.browser.allWindows()) {
           if (w.htmlFullscreenTabId === tabId) {
             w.htmlFullscreenTabId = null
             w.relayout()
+            this.browser.pushDisplayMode(w)
           }
         }
         state.commitVolatile()
@@ -629,6 +641,9 @@ export class TabManager {
         // Sized window.open → toolbar-only chrome at that size; Shift+click / unsized
         // new-window → a full Zenium window; everything else a tab next to the opener.
         const opensWindow = plan.action === 'window' && this.browser.state.capabilities.windows
+        // An app window holds the app's one page: a tab it opens goes to the browser window
+        // behind it (Chrome opens an installed app's `target=_blank` links in the browser).
+        const fromApp = owner.chrome === 'app'
         return {
           action: opensWindow ? 'window' : 'tab',
           url,
@@ -641,12 +656,24 @@ export class TabManager {
                   bounds: plan.bounds,
                   empty: true
                 })
-              : owner
-            return this.adoptView(
+              : fromApp
+                ? this.browser.browserWindowFor(owner)
+                : owner
+            const adopted = this.adoptView(
               view,
-              { tabId: newId('tab'), parentTabId: tabId, active: opensWindow || plan.active },
+              {
+                tabId: newId('tab'),
+                // The opener's tab is not in the browser window: no opener to sit next to.
+                parentTabId: fromApp && !opensWindow ? null : tabId,
+                active: opensWindow || fromApp || plan.active
+              },
               win
             )
+            if (fromApp && !opensWindow) {
+              win.host.show()
+              win.host.focus()
+            }
+            return adopted
           }
         }
       },
@@ -698,6 +725,26 @@ export class TabManager {
       if (name) return name
     }
     return titleForUrl(url)
+  }
+
+  /**
+   * A page is navigating itself to `url` (`TabViewEvents.onWillNavigate`). In an app window the
+   * page is the app's: a navigation out of the app's scope opens in a tab of the browser window
+   * behind the app instead, and the app window keeps its page (MW-23; Chrome's app windows keep
+   * to their app). Returns true when the host must cancel the navigation.
+   */
+  onWillNavigate(tabId: string, url: string): boolean {
+    const tab = this.tab(tabId)
+    if (!tab) return false
+    const win = this.ownerOf(tabId)
+    const app = win?.app
+    if (!win || !app || win.chrome !== 'app') return false
+    if (isWithinScope(url, app.scope) || !/^https?:\/\//i.test(url)) return false
+    const target = this.browser.browserWindowFor(win)
+    this.createTab({ url, active: true }, target)
+    target.host.show()
+    target.host.focus()
+    return true
   }
 
   private onNavigated(tabId: string, view: TabView, url: string, inPage = false): void {
@@ -934,6 +981,9 @@ export class TabManager {
     this.browser.pageDialogs.cancelForTab(tabId)
     this.browser.autofill.onTabGone(tabId)
     this.browser.fullscreen.onTabGone(tabId)
+    this.browser.screenCapture.cancelForTab(tabId)
+    this.browser.shares.cancelForTab(tabId)
+    this.browser.geolocation.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {
@@ -1458,6 +1508,8 @@ export class TabManager {
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
     this.browser.state.tabNavigation.delete(tabId)
+    // Its host-state document stays only while a "Recently closed" entry holds the id.
+    this.browser.state.navigationState.touch(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.pages.onTabRemoved(tabId)
@@ -1471,9 +1523,10 @@ export class TabManager {
     for (const { w, s, next } of reselect) {
       w.select(s, next)
       if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
-      // A toolbar-only popup has no sidebar to open another tab from: like Chrome's, it closes
-      // with its last tab (deferred – the close may be arriving from the page going away).
-      else if (!next && w.chrome === 'popup') {
+      // A toolbar-only popup or an app window has no sidebar to open another tab from: like
+      // Chrome's, it closes with its last tab (deferred – the close may be arriving from the
+      // page going away).
+      else if (!next && w.chrome !== 'full') {
         defer(() => {
           if (w.alive) w.host.close()
         })
@@ -2104,10 +2157,11 @@ export class TabManager {
 
   /**
    * Whether a tab may move into `target` from `source`: another full window of the same privacy
-   * (Chrome keeps regular and Incognito tabs apart; a toolbar-only popup has no tab strip).
+   * (Chrome keeps regular and Incognito tabs apart; a toolbar-only popup and an app window have
+   * no tab strip).
    */
   canMoveToWindow(tab: Tab, target: ZenWindow, source?: ZenWindow): boolean {
-    if (!target.alive || target.isClosing || target === source || target.chrome === 'popup')
+    if (!target.alive || target.isClosing || target === source || target.chrome !== 'full')
       return false
     return this.isPrivate(tab) === target.isPrivate
   }
@@ -2838,6 +2892,7 @@ export class TabManager {
         this.owners.set(tabId, others[0])
         view.attachTo(others[0].host)
         others[0].relayout()
+        view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
       } else {
         if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)

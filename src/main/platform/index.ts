@@ -22,6 +22,8 @@ import type {
 } from '../../shared/types'
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
+import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
+import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   type NotificationPermissionStatus
@@ -77,18 +79,24 @@ import { ElectronPrintingHost } from './printing'
 import { ElectronUpdateHost } from './updates'
 import { applyAppIcon, iconPngPath } from './appIcon'
 import { ElectronDefaultBrowser } from './defaultBrowser'
+import { ElectronShortcuts } from './shortcuts'
 import { ensureWindowsAppIdRegistered, notificationPermissionStatus } from './notifications'
 import { createPasswordsHost } from './passwords'
 import { attachWebAuthnHandlers, configurePlatformAuthenticators } from './webauthn'
 import {
   attachSecurityHandlers,
   permissionCheckDetails,
+  permissionName,
   permissionRequestDetails
 } from './security'
 import { ElectronBlocking, ElectronBundledLists, bundledListsDirectory } from './blocking'
 import { supportsWindowMaterial } from './appShell'
 import { ElectronPrivacy } from './privacy'
 import { ElectronSpellcheck } from './spellcheck'
+import { ElectronScreenCapture } from './screenCapture'
+import { ElectronShareSheet } from './shareSheet'
+import { ElectronGeolocation } from './geolocation'
+import { ElectronMpris } from './mpris'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -131,10 +139,14 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   newTabPage: true,
   // Settings stays an overlay on the desktop until its program adopts the page-tab model.
   pageTabs: false,
-  pinShortcuts: false,
+  // Installed web apps get a launcher (Start menu / applications menu / ~/Applications) that
+  // opens them in a window of their own (platform/shortcuts.ts, MW-22 / MW-23).
+  pinShortcuts: true,
   translate: true,
   // No speech recogniser on the desktop hosts; the mic buttons stay away.
   voiceSearch: false,
+  screenCapture: true,
+  shareSheet: true,
   // Selected text gets the page context menu on the desktop; the floating toolbar is Android's.
   selectionToolbar: false,
   // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
@@ -175,6 +187,16 @@ export class ElectronPlatform implements Platform {
   readonly printing = new ElectronPrintingHost(browserWindowOf)
   /** Default-browser status and registration on Windows, macOS and Linux. */
   readonly defaultBrowser = new ElectronDefaultBrowser()
+  /** Installed web apps' launchers and icons (MW-22). */
+  readonly shortcuts: ElectronShortcuts
+  /** `getDisplayMedia`: the sources behind the core's picker and the grant to the engine (MW-19). */
+  readonly screenCapture: ElectronScreenCapture
+  /** Shared files to the downloads folder; macOS's own share sheet (MW-21). */
+  readonly shareSheet: ElectronShareSheet
+  /** The Wi-Fi scan behind the network location provider; Linux and Windows have a scanner (MW-04). */
+  readonly geolocation = new ElectronGeolocation()
+  /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
+  readonly mediaSession?: ElectronMpris
   readonly newTabBackground: ElectronNewTabBackground
   /** Taskbar progress, dock badge and completion notifications for downloads. */
   downloadsShell: ElectronDownloadsShell | null = null
@@ -187,6 +209,11 @@ export class ElectronPlatform implements Platform {
     this.io = new FileStoreIO(this.profileDir)
     this.blocking = new ElectronBundledLists(bundledListsDirectory(), this.profileDir)
     this.newTabBackground = new ElectronNewTabBackground(join(this.profileDir, 'newtab'))
+    // The launcher confirms to the core once its files are written (the browser exists by then:
+    // pins are asked for from a page).
+    this.shortcuts = new ElectronShortcuts(join(this.profileDir, 'webapps'), (id, details) =>
+      this.browser.webApps.onPinned(id, details)
+    )
     this.windows = new ElectronWindowFactory()
     this.translate = new ElectronTranslateHost(userDataDir, () =>
       focusedChromeWebContents((id) => this.windows.windowForWebContents(id) !== undefined)
@@ -202,6 +229,13 @@ export class ElectronPlatform implements Platform {
     )
     // The views hand "Save … As…" downloads to the downloads host, which then asks where to save.
     this.views = new ElectronTabViewHost(this.sessions, this.downloads)
+    this.screenCapture = new ElectronScreenCapture(this.views, () => this.browser.screenCapture)
+    this.shareSheet = new ElectronShareSheet(
+      () =>
+        resolveDownloadSettings(this.browser.state.settings).directory ?? app.getPath('downloads'),
+      (win) => browserWindowOf(win)
+    )
+    if (process.platform === 'linux') this.mediaSession = new ElectronMpris(() => this.browser)
     // The core's Safe Browsing service exists once the browser does (`start`); no request runs before.
     this.privacy = new ElectronPrivacy(this.views, {
       lookup: (url) => (this.browser ? this.browser.protection.safeBrowsing.lookup(url) : null)
@@ -310,6 +344,8 @@ export class ElectronPlatform implements Platform {
         const live = signals.filter((s): s is AbortSignal => Boolean(s))
         const target = redirectedOrigin(url)
         const res = await net.fetch(target.url, {
+          method: options.method ?? 'GET',
+          body: options.method === 'POST' ? (options.body ?? '') : undefined,
           signal: live.length > 0 ? AbortSignal.any(live) : undefined,
           headers: target.origin
             ? { ...options.headers, 'x-zen-origin': target.origin }
@@ -414,8 +450,11 @@ export class ElectronPlatform implements Platform {
     return new ElectronUpdateHost()
   }
 
-  /** Build the browser, wire IPC and sessions, and restore the windows. */
-  start(): Browser {
+  /**
+   * Build the browser, wire IPC and sessions, and restore the windows (`windows: false` holds
+   * the browser windows back for a run that begins on an app window alone, `Browser.start`).
+   */
+  start(options: { windows?: boolean } = {}): Browser {
     const browser = new Browser(this)
     this.browser = browser
     this.windows.bind(browser)
@@ -497,6 +536,8 @@ export class ElectronPlatform implements Platform {
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
       this.attachPermissions(ses)
+      // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
+      this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
       this.downloads.attach(ses, containerId, (sourceTabId) =>
         browser.onDownloadStarted(sourceTabId)
@@ -509,9 +550,9 @@ export class ElectronPlatform implements Platform {
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
-    attachSecurityHandlers(browser, this.views)
+    attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
-    browser.start()
+    browser.start(options)
     // The engine has its persisted rule sets now: the ones of extensions removed or disabled
     // while Zenium was closed go before the enabled ones load (`extensions.start`, above).
     extensionApi.declarativeNetRequest.reconcile()
@@ -524,10 +565,24 @@ export class ElectronPlatform implements Platform {
 
   private attachPermissions(ses: Session): void {
     const { permissions, external } = this.browser
-    ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
       const request = permissionRequestDetails(webContents, details, tabId)
+      // A `getDisplayMedia` call arrives as `media` without devices: the screen-sharing row,
+      // whose Allow puts the picker up right here – the picker is the consent, and only a
+      // refusal at this stage reads as Chrome's `NotAllowedError` to the page. Its answer waits
+      // for the engine's display-media request (`screenCapture.attach`).
+      const permission = permissionName(rawPermission, details)
+      if (permission === 'display-capture' && tabId && webContents) {
+        void permissions
+          .decide(permission, url, request)
+          .then((allowed) =>
+            allowed ? this.screenCapture.permission(webContents, tabId, url) : false
+          )
+          .then(callback)
+        return
+      }
       // Chromium does not tell us whether a page's launch of another application had a
       // gesture, so the core's own activation tracking decides: without one the launch is
       // listed with the tab's blocked pop-ups instead of prompting.
@@ -591,6 +646,21 @@ export class ElectronPlatform implements Platform {
       if (!tabId || !action || typeof action.type !== 'string') return
       if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
       browser.newTab.handleAction(tabId, action)
+    })
+    // A page's `display-mode` (MW-23), asked synchronously at document start by every frame of a
+    // tab's page; anything else that asks (the chrome, an extension page) is a browser page.
+    ipcMain.on(DISPLAY_MODE_CHANNEL, (event) => {
+      const tabId = this.views.tabIdForWebContents(event.sender)
+      event.returnValue = tabId ? browser.displayModeFor(tabId) : 'browser'
+    })
+    // A page's `getDisplayMedia` call, announced synchronously by its main-world shim right
+    // before the engine sees it (MW-19): whether it asked for audio, which the permission
+    // request that follows does not say. Only a tab's page is heard; the answer is immediate,
+    // as the page's call waits on it.
+    ipcMain.on(SCREEN_CAPTURE_INTENT_CHANNEL, (event, audio: unknown) => {
+      if (this.views.viewForWebContents(event.sender))
+        this.screenCapture.intent(event.sender, audio === true)
+      event.returnValue = true
     })
     this.attachNotificationStatus(browser)
   }

@@ -216,18 +216,7 @@ export class PrivacyApi {
 
   /** Chrome's precedence: installed most recently first, among the loaded extensions. */
   private ranker(): PrivacyRank {
-    const order = this.host.browser.extensions
-      .list()
-      .filter((info) => this.host.loaded(info.id) !== undefined)
-      .sort((a, b) => b.installedAt - a.installedAt)
-      .map((info) => info.id)
-    const ranks = new Map(order.map((id, index) => [id, index]))
-    return (extensionId, incognito) => {
-      const rank = ranks.get(extensionId)
-      if (rank === undefined) return undefined
-      if (incognito && !this.allowedInPrivate(extensionId)) return undefined
-      return rank
-    }
+    return installOrderRank(this.host, (id) => this.allowedInPrivate(id))
   }
 
   private browserValue(spec: PrivacySettingSpec): PrivacyValue {
@@ -388,6 +377,29 @@ export class PrivacyApi {
 
 function effectiveKey(key: string, incognito: boolean): string {
   return incognito ? `${key}:private` : key
+}
+
+/**
+ * Chrome's precedence between extensions' values for one browser setting (`ExtensionPrefValueMap`):
+ * the most recently installed loaded extension ranks first; for private windows only the ones
+ * the user allowed there count. Shared by `chrome.privacy` and `chrome.proxy`.
+ */
+export function installOrderRank(
+  host: ApiHost,
+  allowedInPrivate: (extensionId: string) => boolean
+): PrivacyRank {
+  const order = host.browser.extensions
+    .list()
+    .filter((info) => host.loaded(info.id) !== undefined)
+    .sort((a, b) => b.installedAt - a.installedAt)
+    .map((info) => info.id)
+  const ranks = new Map(order.map((id, index) => [id, index]))
+  return (extensionId, incognito) => {
+    const rank = ranks.get(extensionId)
+    if (rank === undefined) return undefined
+    if (incognito && !allowedInPrivate(extensionId)) return undefined
+    return rank
+  }
 }
 
 function applyWebRtc(page: PrivacyPage, policy: WebRtcIpHandlingPolicy): void {

@@ -6,14 +6,92 @@ import { join } from 'node:path'
 import type { Browser } from '../../../core/browser'
 import type { PermissionRequestDetails } from '../../../core/permissions'
 import {
+  answerAuthChallenge,
   describeCertificate,
   hostOf,
   isFreshlyEmptied,
   permissionCheckDetails,
-  permissionRequestDetails
+  permissionName,
+  permissionRequestDetails,
+  type AuthChallengeProvider
 } from '../security'
 
 vi.mock('electron', () => ({ app: { on: vi.fn() } }))
+
+describe('answerAuthChallenge', () => {
+  const authInfo = {
+    isProxy: true,
+    scheme: 'basic',
+    host: 'proxy.vpn.example',
+    port: 8080,
+    realm: 'VPN'
+  } as Electron.AuthInfo
+  const details = { url: 'https://page.example/' }
+
+  function browserWith(dialog: { username: string; password: string } | null): {
+    browser: Pick<Browser, 'security'>
+    httpAuth: ReturnType<typeof vi.fn>
+  } {
+    const httpAuth = vi.fn().mockResolvedValue(dialog)
+    return { browser: { security: { httpAuth } } as unknown as Pick<Browser, 'security'>, httpAuth }
+  }
+
+  it("sends an extension's credentials without asking the user", async () => {
+    const { browser, httpAuth } = browserWith({ username: 'user', password: 'typed' })
+    const extensions: AuthChallengeProvider = {
+      authRequired: vi.fn().mockResolvedValue({ credentials: { username: 'vpn', password: 'k' } })
+    }
+    await expect(
+      answerAuthChallenge(browser, extensions, details, authInfo, 'tab-1')
+    ).resolves.toEqual({ username: 'vpn', password: 'k' })
+    expect(extensions.authRequired).toHaveBeenCalledWith({
+      url: 'https://page.example/',
+      isProxy: true,
+      scheme: 'basic',
+      realm: 'VPN',
+      host: 'proxy.vpn.example',
+      port: 8080,
+      tabId: 'tab-1'
+    })
+    expect(httpAuth).not.toHaveBeenCalled()
+  })
+
+  it("gives the challenge up on an extension's cancel, without a dialog", async () => {
+    const { browser, httpAuth } = browserWith({ username: 'user', password: 'typed' })
+    const extensions: AuthChallengeProvider = {
+      authRequired: vi.fn().mockResolvedValue({ cancel: true })
+    }
+    await expect(
+      answerAuthChallenge(browser, extensions, details, authInfo, null)
+    ).resolves.toBeNull()
+    expect(httpAuth).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the browser’s dialog when no extension answers, or none is wired', async () => {
+    const { browser, httpAuth } = browserWith({ username: 'user', password: 'typed' })
+    const silent: AuthChallengeProvider = { authRequired: vi.fn().mockResolvedValue(undefined) }
+    await expect(answerAuthChallenge(browser, silent, details, authInfo, 'tab-1')).resolves.toEqual(
+      {
+        username: 'user',
+        password: 'typed'
+      }
+    )
+    expect(httpAuth).toHaveBeenCalledWith(
+      {
+        host: 'proxy.vpn.example',
+        port: 8080,
+        realm: 'VPN',
+        scheme: 'basic',
+        isProxy: true,
+        secure: false
+      },
+      'tab-1'
+    )
+    const server = { ...authInfo, isProxy: false, host: 'page.example', port: 443 }
+    await answerAuthChallenge(browser, null, details, server, null)
+    expect(httpAuth).toHaveBeenLastCalledWith(expect.objectContaining({ secure: true }), null)
+  })
+})
 
 describe('hostOf', () => {
   it("takes Electron's host:port as it is, and the host of a full URL", () => {
@@ -65,7 +143,7 @@ describe('permissionRequestDetails', () => {
         't1'
       )
     ).toEqual({ tabId: 't1', mediaTypes: ['video'] })
-    // An empty device list says nothing: the core asks about both.
+    // An empty device list is not a device request (see permissionName): no rows named.
     expect(
       permissionRequestDetails(page, {
         isMainFrame: true,
@@ -73,6 +151,26 @@ describe('permissionRequestDetails', () => {
         mediaTypes: []
       })
     ).toEqual({})
+  })
+})
+
+describe('permissionName', () => {
+  const at = (mediaTypes?: Array<'video' | 'audio'>): Electron.MediaAccessPermissionRequest => ({
+    isMainFrame: true,
+    requestingUrl: 'https://meet.example',
+    ...(mediaTypes ? { mediaTypes } : {})
+  })
+
+  it("decides Electron's device-less media request (getDisplayMedia) as the screen-sharing row", () => {
+    expect(permissionName('media', at([]))).toBe('display-capture')
+  })
+
+  it('leaves camera / microphone requests and every other permission alone', () => {
+    expect(permissionName('media', at(['video']))).toBe('media')
+    expect(permissionName('media', at(['audio', 'video']))).toBe('media')
+    expect(permissionName('media', at())).toBe('media')
+    expect(permissionName('notifications', at())).toBe('notifications')
+    expect(permissionName('geolocation', at([]))).toBe('geolocation')
   })
 })
 

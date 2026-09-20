@@ -331,6 +331,12 @@ describe('isMatchPattern', () => {
       'http://127.0.0.1/*',
       'https://example.com:8080/path*',
       'file:///foo*',
+      // Chromium ignores the host of a file pattern: Adobe Acrobat's and MetaMask's content
+      // scripts declare `file://*/*`, and `file://localhost/x` / `file://*` are valid too.
+      'file://*/*',
+      'file://*/*.user.js',
+      'file://localhost/etc/*',
+      'file://*',
       'chrome-extension://abcdefghijklmnopabcdefghijklmnop/*',
       'https://[::1]/*'
     ]) {
@@ -343,10 +349,24 @@ describe('isMatchPattern', () => {
       'http:/bar',
       'foo://*',
       'https:///path',
-      '*.example.com/*'
+      '*.example.com/*',
+      'file://'
     ]) {
       expect(isMatchPattern(bad), bad).toBe(false)
     }
+  })
+
+  it('accepts the Adobe Acrobat and MetaMask manifests, whose content scripts match file://*/*', () => {
+    const manifest = {
+      manifest_version: 3,
+      name: 'Acrobat',
+      version: '26.9.2.0',
+      content_scripts: [{ matches: ['file://*/*', 'https://*/*'], js: ['viewer.js'] }],
+      host_permissions: ['file://*/*']
+    }
+    const result = validateManifest(manifest)
+    expect(result.errors).toEqual([])
+    expect(result.warnings.filter((w) => /match pattern/.test(w.message))).toEqual([])
   })
 })
 

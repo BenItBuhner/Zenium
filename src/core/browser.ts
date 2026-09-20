@@ -1,4 +1,5 @@
 import type {
+  AppWindowInfo,
   BookmarkImportResult,
   BookmarkNode,
   CommandArgs,
@@ -43,7 +44,7 @@ import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
 import { TabManager, isTabSection } from './tabs'
 import { TabDragController, parseDropKey } from './tabDrag'
-import { ZenWindow } from './window'
+import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
@@ -66,6 +67,9 @@ import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
 import { WebNotificationService } from './webNotifications'
+import { ScreenCaptureService } from './screenCapture'
+import { ShareService } from './share'
+import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
@@ -93,6 +97,7 @@ import {
 } from './model'
 import {
   BLANK_URL,
+  displayHost,
   extensionPageOf,
   getDomain,
   inputToUrl,
@@ -125,6 +130,7 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
@@ -157,6 +163,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'find.open',
   'zoom.open',
   'extensions.open',
+  'reader.preferences',
   'theme.open',
   'space.new',
   'space.edit',
@@ -264,6 +271,12 @@ export class Browser {
   readonly webNotifications: WebNotificationService
   /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
   readonly searchEngines: SearchEngineService
+  /** The screen-capture picker (MW-19). */
+  readonly screenCapture: ScreenCaptureService
+  /** The chrome's share sheet (MW-21). */
+  readonly shares: ShareService
+  /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
+  readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -277,6 +290,11 @@ export class Browser {
   private readonly urlbarOnReady = new Set<string>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
   private syncedShortcuts: Shortcut[] | null = null
+  /**
+   * The session's browser windows are still to open: the run began on an app window alone
+   * (`start({ windows: false })`), and they come up the first time a browser window is needed.
+   */
+  private startupWindowsPending = false
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -373,6 +391,9 @@ export class Browser {
     this.mediaSession = new MediaSessionService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
+    this.screenCapture = new ScreenCaptureService(this)
+    this.shares = new ShareService(this)
+    this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -394,6 +415,8 @@ export class Browser {
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
+      screenCaptureRequests: this.screenCapture.list(),
+      shareRequests: this.shares.listFor(win),
       crashRestore: this.session.crashRestoreOffer(),
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
@@ -418,7 +441,19 @@ export class Browser {
     const focused = alive.find((w) => w.host.isFocused())
     if (focused) return focused
     const recent = [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
-    return recent ?? this.createWindow({ kind: 'synced' })
+    return recent ?? this.openBrowserWindow()
+  }
+
+  /**
+   * A browser window when none is alive: the session's windows when a run that began on an app
+   * window alone (`--app=`) has not opened them yet, else a new synced window.
+   */
+  private openBrowserWindow(): ZenWindow {
+    if (this.startupWindowsPending) {
+      const opened = this.openStartupWindows()
+      if (opened[0]) return opened[0]
+    }
+    return this.createWindow({ kind: 'synced' })
   }
 
   /** User-facing "new window" (capability gated – Android has exactly one window). */
@@ -441,6 +476,89 @@ export class Browser {
     this.tabs.createTab({ url, active: true }, win)
   }
 
+  /**
+   * A web app in a standalone window of its own – `zenium --app=<url>`, what an installed app's
+   * launcher runs (MW-23, Chrome's app window): no browser chrome, the app's name and icon on the
+   * frame, one page that stays inside the app's scope (a navigation out of it opens in a browser
+   * tab, `TabManager.onWillNavigate`). The installed app whose scope holds `url` lends its name,
+   * icon and remembered bounds; a URL no app claims opens under its host's name with its origin
+   * as the scope. Hosts with one window open the URL as a tab instead. Returns the window, or
+   * null when the URL cannot be a page.
+   */
+  openAppWindow(url: string, opts: { from?: ZenWindow } = {}): ZenWindow | null {
+    if (!/^https?:\/\//i.test(url)) return null
+    if (!this.state.capabilities.windows) {
+      this.openExternalUrl(url)
+      return null
+    }
+    const record = this.webApps.pinnedFor(url)
+    const app: AppWindowInfo = record
+      ? {
+          name: record.name,
+          icon: record.icon ?? null,
+          scope: record.scope,
+          appId: record.id,
+          startUrl: record.startUrl
+        }
+      : {
+          name: displayHost(url) || url,
+          icon: null,
+          scope: new URL(url).origin + '/',
+          appId: null,
+          startUrl: url
+        }
+    const win = this.createWindow({
+      kind: 'unsynced',
+      from: opts.from,
+      chrome: 'app',
+      app,
+      bounds: record?.bounds ?? null,
+      empty: true
+    })
+    this.tabs.createTab({ url, active: true }, win)
+    return win
+  }
+
+  /**
+   * The `display-mode` a page reports (`shared/displayMode`): Chrome's answer for the window
+   * holding its live page – `fullscreen` while that window is, `standalone` in an app window,
+   * `browser` elsewhere. `browser` for a tab with no page or window yet.
+   */
+  displayModeFor(tabId: string): DisplayMode {
+    const win = this.tabs.ownerOf(tabId) ?? this.tabs.windowsShowing(tabId)[0]
+    if (!win?.alive) return 'browser'
+    return displayModeFor(win.windowState(), tabId)
+  }
+
+  /**
+   * A window's pages may answer a different `display-mode` now (it went fullscreen or came back,
+   * a page entered or left element fullscreen, a page arrived from another window): tell them,
+   * so a page's `matchMedia('(display-mode: …)')` listeners hear the change as they would in Chrome.
+   */
+  pushDisplayMode(win: ZenWindow): void {
+    for (const [tabId, view] of this.tabs.viewsOwnedBy(win))
+      view.postToPage?.({ type: 'display-mode', mode: this.displayModeFor(tabId) })
+  }
+
+  /**
+   * The browser window a page asked for from `win` opens in: `win` itself with the full chrome;
+   * from a toolbar-only popup or an app window (one page, no tab strip) the browser window it was
+   * opened from, else the browser window used last, else a new one. Chrome opens a popup's
+   * chrome://settings and an app window's out-of-scope links in the browser the same way.
+   */
+  browserWindowFor(win: ZenWindow): ZenWindow {
+    if (win.chrome === 'full') return win
+    for (let w = win.opener; w; w = w.opener) if (w.alive && w.chrome === 'full') return w
+    const full = this.allWindows().filter((w) => w.chrome === 'full' && !w.isClosing)
+    const recent = full.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
+    if (recent) return recent
+    if (!this.state.capabilities.windows) return win
+    // A private popup keeps its pages private; anything else goes to the browser proper – the
+    // session's windows when an app launched on its own (`--app=`) has not opened them yet.
+    if (win.isPrivate) return this.createWindow({ kind: 'private', from: win, empty: true })
+    return this.openBrowserWindow()
+  }
+
   createWindow(opts: {
     kind: WindowKind
     from?: ZenWindow
@@ -457,6 +575,8 @@ export class Browser {
      * adopts a page right away).
      */
     empty?: boolean
+    /** The web app of a standalone window (`chrome` `app`): name, icon and scope. */
+    app?: AppWindowInfo | null
   }): ZenWindow {
     const m = this.state.model
     const id = opts.persisted?.id ?? newId('window')
@@ -482,6 +602,7 @@ export class Browser {
       activeSpaceId = localSpace.id
     }
     const chrome = opts.chrome ?? 'full'
+    const app = chrome === 'app' ? (opts.app ?? null) : null
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
@@ -494,15 +615,17 @@ export class Browser {
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
+      // Toolbar-only popups and app windows have no sidebar or toolbar to hide.
       compact:
-        chrome === 'popup'
+        chrome !== 'full'
           ? false
           : (opts.persisted?.compact ??
             from?.compactEnabled ??
             this.state.settings.compactMode.enabled),
       localSpace,
       cascadeFrom: opts.bounds ? undefined : from,
-      opener: from
+      opener: from,
+      app
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -511,11 +634,12 @@ export class Browser {
       displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
+      title: app ? app.name : win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
       chrome,
       material: win.material,
       backgroundColor: rgbToHex(theme.averageColor),
-      captionColors: captionColors(theme)
+      captionColors: captionColors(theme),
+      app
     })
     this.governor.watchWindow(win)
     if (localSpace && !opts.empty) {
@@ -758,6 +882,15 @@ export class Browser {
   }
 
   /**
+   * A browser window for a page from outside (the command line, another app's link): the
+   * focused one, or the browser window behind a focused popup or app window – never the app
+   * window itself, whose one page is the app's.
+   */
+  ensureBrowserWindow(): ZenWindow {
+    return this.browserWindowFor(this.ensureWindow())
+  }
+
+  /**
    * A navigation that turned into a download leaves its tab without a committed document (and
    * without a renderer to route shortcuts through). Like Chrome, close such a tab when it was
    * opened only for the download; otherwise just make sure the keyboard keeps working.
@@ -787,7 +920,12 @@ export class Browser {
     }
   }
 
-  start(): void {
+  /**
+   * Bring the browser up. `windows: false` leaves the session's browser windows unopened – a run
+   * that begins with `--app=<url>` shows the app's window alone, as Chrome does, and opens the
+   * browser proper the first time something asks for a browser window.
+   */
+  start(options: { windows?: boolean } = {}): void {
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
@@ -812,24 +950,11 @@ export class Browser {
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
-    // Zen restores every synced window (and the space each one was in). With "restore previous
-    // session" off, the last session's tabs are forgotten and one window starts fresh.
-    const { restoreSession } = this.state.settings
-    if (!restoreSession) this.state.forgetSession()
-    const restore =
-      restoreSession && this.state.capabilities.windows
-        ? this.state.restoredWindows
-        : this.state.restoredWindows.slice(0, 1)
-    if (restore.length === 0) this.createWindow({ kind: 'synced' })
-    for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
-    if (!restoreSession) {
-      const win = this.allWindows()[0]
-      if (win) this.openFreshTab(win)
-    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
-      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
-      // most runs by killing the process – that is its normal exit, and the pages just come back.
-      this.session.onUncleanStart()
-    }
+    // With "restore previous session" off, the last session's tabs are forgotten at once, whether
+    // or not a window opens now.
+    if (!this.state.settings.restoreSession) this.state.forgetSession()
+    if (options.windows === false) this.startupWindowsPending = true
+    else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
@@ -847,6 +972,30 @@ export class Browser {
     this.syncShortcuts()
     this.pageControls.push()
     this.state.commit()
+  }
+
+  /**
+   * The session's browser windows: Zen restores every synced window (and the space each one was
+   * in). With "restore previous session" off one window starts fresh. Returns the windows opened.
+   */
+  private openStartupWindows(): ZenWindow[] {
+    this.startupWindowsPending = false
+    const { restoreSession } = this.state.settings
+    const restore =
+      restoreSession && this.state.capabilities.windows
+        ? this.state.restoredWindows
+        : this.state.restoredWindows.slice(0, 1)
+    const opened: ZenWindow[] = []
+    if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced' }))
+    for (const persisted of restore) opened.push(this.createWindow({ kind: 'synced', persisted }))
+    if (!restoreSession) {
+      this.openFreshTab(opened[0])
+    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
+      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
+      // most runs by killing the process – that is its normal exit, and the pages just come back.
+      this.session.onUncleanStart()
+    }
+    return opened
   }
 
   // ---------------------------------------------------------------------------
@@ -922,6 +1071,11 @@ export class Browser {
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)
+    this.geolocation.onNavigated(tabId, inPage)
+    if (!inPage) {
+      this.screenCapture.cancelForTab(tabId)
+      this.shares.cancelForTab(tabId)
+    }
   }
 
   /**
@@ -1500,6 +1654,14 @@ export class Browser {
       }
       return
     }
+    // A desktop has no share target of the OS's own: the chrome's sheet (copy, QR, email, the
+    // system sheet on macOS) stands in for it – once the window's chrome has one up. Until then
+    // "share" means what it always did on a desktop without a target: the link goes to the
+    // clipboard, and the chrome says so.
+    if (this.state.capabilities.shareSheet && surfaceMounted(win, 'share')) {
+      this.shares.open(payload, win)
+      return
+    }
     const text = payload.url ?? payload.imageUrl ?? payload.text
     if (text) this.copyText(text, 'Link copied', win)
   }
@@ -1935,6 +2097,14 @@ export class Browser {
         )
       return
     }
+    if (message.type === 'share') {
+      this.shares.handleMessage(tabId, message.share)
+      return
+    }
+    if (message.type === 'geolocation') {
+      this.geolocation.handleMessage(tabId, message.geolocation)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -1975,8 +2145,12 @@ export class Browser {
     }
     if (message.type === 'media') {
       if (!this.tabs.view(tabId)) return
-      tab.audible = Boolean(message.playing)
-      this.governor.onMedia(tabId, Boolean(message.playing))
+      // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
+      // the Media Session report alone; `playing` is the page script's word where it tracks it.
+      if (message.playing !== undefined) {
+        tab.audible = Boolean(message.playing)
+        this.governor.onMedia(tabId, Boolean(message.playing))
+      }
       if (message.media) this.mediaSession.onReport(tabId, message.media)
       this.state.commitVolatile()
       this.updateMedia()
@@ -2248,8 +2422,19 @@ export class Browser {
           )
           .catch(() => undefined)
       },
-      'media.action': ({ tabId, action, seekTime }) =>
-        this.mediaSession.act(tabId, action, { seekTime }),
+      'screenCapture.respond': ({ id, sourceId, audio }) =>
+        this.screenCapture.respond(id, sourceId, Boolean(audio)),
+      'share.respond': ({ id, answer }) => this.shares.respond(id, answer),
+      'share.open': ({ tabId, payload }, win) => {
+        if (payload) void this.share(payload, win)
+        else if (tabId) this.shareTab(tabId, win)
+        else {
+          const active = tabs.activeTabFor(win)
+          if (active) this.shareTab(active.id, win)
+        }
+      },
+      'media.action': ({ tabId, action, seekTime, seekOffset }) =>
+        this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
       'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
@@ -2499,6 +2684,10 @@ export class Browser {
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
       },
+      'ui.surface': ({ surface, mounted }, win) => {
+        if (mounted) win.surfaces.add(surface)
+        else win.surfaces.delete(surface)
+      },
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
@@ -2723,6 +2912,8 @@ export class Browser {
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
+      'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
+      'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
         if (state.searchEngines.some((e) => e.id === searchEngineId))

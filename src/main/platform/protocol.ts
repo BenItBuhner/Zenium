@@ -1,22 +1,35 @@
-import { protocol, type Session } from 'electron'
+import { protocol, type CustomScheme, type Session } from 'electron'
 import { ZEN_SCHEME, zenPageHtml, type ReaderPageLookup } from '../../shared/zenPages'
 import { EXTENSION_RESOURCE_SCHEME_PRIVILEGES } from './extensionApi/resourceOrigin'
 import { NEW_TAB_BACKGROUND_HOST } from './newTabBackground'
 
 export { ZEN_SCHEME, describeNetError } from '../../shared/zenPages'
 
+/** Chrome's scheme of extension pages and resources. */
+export const CHROME_EXTENSION_SCHEME = 'chrome-extension'
+
 /**
- * Must run before `app.ready` (and only once): lets `zen://` behave like a normal secure origin,
- * and `zen-extension://` (extensions' `use_dynamic_url` resources) like one pages may fetch from.
+ * The schemes Zenium registers as privileged: `zen://` as a normal secure origin,
+ * `zen-extension://` (extensions' `use_dynamic_url` resources) as one pages may fetch from, and
+ * `chrome-extension://` as standard once more. The engine registers that one itself, but grants
+ * the sandboxed file system (`webkitRequestFileSystem`, which Chrome gives every extension page;
+ * GoFullPage keeps its captures there) only to http, https and the standard schemes named in
+ * this call, so naming it here is what lets extension pages open one.
  */
-export function registerZenScheme(): void {
-  protocol.registerSchemesAsPrivileged([
+export function privilegedSchemes(): CustomScheme[] {
+  return [
     {
       scheme: ZEN_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false }
     },
-    EXTENSION_RESOURCE_SCHEME_PRIVILEGES
-  ])
+    EXTENSION_RESOURCE_SCHEME_PRIVILEGES,
+    { scheme: CHROME_EXTENSION_SCHEME, privileges: { standard: true } }
+  ]
+}
+
+/** Must run before `app.ready`, and only once. */
+export function registerZenScheme(): void {
+  protocol.registerSchemesAsPrivileged(privilegedSchemes())
 }
 
 /** Bytes of `zen://newtab-background` (the new tab page's custom image), or a 404 response. */

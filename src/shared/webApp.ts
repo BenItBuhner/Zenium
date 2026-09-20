@@ -6,6 +6,7 @@
  * the page script, the core and the chrome can share it.
  */
 import { cssColorToHex, hexToRgb, isDarkColor } from './theme'
+import type { Rect } from './types'
 
 export type WebAppIconPurpose = 'any' | 'maskable' | 'monochrome'
 
@@ -65,13 +66,23 @@ export interface RawWebAppManifest {
   screenshots?: unknown
 }
 
-/** A shortcut the user put on the Home screen (the registry behind "Open <app>"). */
+/**
+ * An installed app: a shortcut the user put on the Home screen or, on desktop, a launcher that
+ * opens the app in a window of its own (the registry behind "Open <app>" and `--app=`).
+ */
 export interface PinnedWebApp {
   id: string
   name: string
   startUrl: string
   scope: string
   pinnedAt: number
+  /**
+   * The app's icon as the host kept it (a `file:` or data URL), for the app window's frame and
+   * the installed-apps list; hosts whose launcher owns the tile (Android) leave it out.
+   */
+  icon?: string | null
+  /** Where the app's window last stood (desktop); the next launch opens it there. */
+  bounds?: Rect | null
 }
 
 /** How often and when a user came back to an app – the input to the ambient prompt. */
@@ -455,9 +466,59 @@ export function markDismissed(record: EngagementRecord, now: number): Engagement
   return { ...record, dismissedAt: now, promptedAt: now }
 }
 
-/** The name the launcher shows: the short name when there is one (tiles truncate long names). */
-export function launcherName(info: Pick<WebAppInfo, 'name' | 'shortName'>): string {
+/**
+ * The name the launcher shows. A Home screen tile takes the short name when there is one (tiles
+ * truncate long names, Chrome's Android rule); a desktop launcher, the Start menu and the app
+ * window's title take the full name first, as desktop Chrome's installed apps do.
+ */
+export function launcherName(
+  info: Pick<WebAppInfo, 'name' | 'shortName'>,
+  surface: InstallSurface = 'homeScreen'
+): string {
+  if (surface === 'desktop') return info.name || (info.shortName ?? info.name)
   return info.shortName ?? info.name
+}
+
+/**
+ * Where an installed app lands: a tile on the phone's Home screen (`homeScreen`), or – on hosts
+ * with windows – a launcher on the desktop / in the Start menu / Applications that opens the app
+ * in a window of its own (`desktop`, Chrome's installed apps). The copy below follows it, so the
+ * phone keeps saying "Home screen" and the desktop speaks of installing, as Chrome does.
+ */
+export type InstallSurface = 'homeScreen' | 'desktop'
+
+/** The app menu item that installs: Chrome's "Install <app>…" / "Create shortcut…" on desktop. */
+export function installMenuLabel(surface: InstallSurface, info: WebAppInfo | null): string {
+  if (surface === 'homeScreen') return 'Add to Home Screen'
+  return info && isInstallable(info)
+    ? `Install ${launcherName(info, surface)}…`
+    : 'Create shortcut…'
+}
+
+/** The app menu item inside an installed app's scope ("Open in <app>" launches its window). */
+export function openAppMenuLabel(surface: InstallSurface, name: string): string {
+  return surface === 'desktop' ? `Open in ${name}` : `Open ${name}`
+}
+
+/** The install sheet's title and primary button. */
+export function installSheetCopy(
+  surface: InstallSurface,
+  info: WebAppInfo | null
+): { title: string; action: string } {
+  if (surface === 'homeScreen') return { title: 'Add to Home screen', action: 'Add' }
+  return info && isInstallable(info)
+    ? { title: 'Install app', action: 'Install' }
+    : { title: 'Create shortcut', action: 'Create' }
+}
+
+/** The confirmation after the launcher took the app ("Added <app> to Home screen"). */
+export function installedMessage(surface: InstallSurface, name: string): string {
+  return surface === 'desktop' ? `Installed ${name}` : `Added ${name} to Home screen`
+}
+
+/** The error when the host could not create the launcher. */
+export function installFailedMessage(surface: InstallSurface): string {
+  return surface === 'desktop' ? "Couldn't install the app" : "Couldn't add to Home screen"
 }
 
 /** Title for a shortcut to a page without a manifest: the page title, else its host. */

@@ -87,6 +87,21 @@ export function deriveStartupProfile(settings: ResourceSettings): StartupProfile
 export const BASELINE_DISABLED_FEATURES: readonly string[] = ['FedCm']
 
 /**
+ * Chromium's own MPRIS player on Linux (`org.mpris.MediaPlayer2.chromium`, registered under
+ * `HardwareMediaKeyHandling`) shows every tab's media as an anonymous "Chromium" and would sit
+ * beside Zenium's own player (`main/platform/mpris.ts`), which carries the Media Session data;
+ * the desktop's media keys reach Zenium's player instead.
+ */
+export const LINUX_DISABLED_FEATURES: readonly string[] = ['HardwareMediaKeyHandling']
+
+/** The baseline for an OS: the desktop's features plus the ones only Linux switches off. */
+export function baselineDisabledFeatures(os: string): string[] {
+  return os === 'linux'
+    ? [...BASELINE_DISABLED_FEATURES, ...LINUX_DISABLED_FEATURES]
+    : [...BASELINE_DISABLED_FEATURES]
+}
+
+/**
  * The switches to put on the command line for a profile: its own, with the baseline features
  * merged into its one `disable-features` (Chromium reads a single such switch; a second one
  * replaces the first).

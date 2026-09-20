@@ -315,6 +315,33 @@ describe('installExtensionApi', () => {
     }
   })
 
+  it('shows gcm as the shape of a profile with GCM off: registrations fail with GCM_DISABLED, the events never fire', async () => {
+    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0', permissions: ['gcm'] }
+    g.chrome.runtime.getManifest = () => manifest
+    installExtensionApi(host, API_SPEC)
+    expect(g.chrome.gcm.MAX_MESSAGE_SIZE).toBe(4096)
+    const listener = vi.fn()
+    g.chrome.gcm.onMessage.addListener(listener)
+    expect(g.chrome.gcm.onMessage.hasListener(listener)).toBe(true)
+    expect(g.chrome.gcm.onMessagesDeleted.addListener).toBeTypeOf('function')
+    expect(g.chrome.gcm.onSendError.addListener).toBeTypeOf('function')
+    await expect(g.chrome.gcm.register(['1234567890'])).rejects.toThrow('GCM_DISABLED')
+    await expect(
+      g.chrome.gcm.send({ destinationId: 'x', messageId: '1', data: {} })
+    ).rejects.toThrow('GCM_DISABLED')
+    let seen: unknown
+    await new Promise<void>((resolve) => {
+      g.chrome.gcm.unregister(() => {
+        seen = g.chrome.runtime.lastError
+        resolve()
+      })
+    })
+    expect(seen).toEqual({ message: 'GCM_DISABLED' })
+    // Nothing of this reached the host, and nothing arrived for the listener.
+    expect(host.calls).toEqual([])
+    expect(listener).not.toHaveBeenCalled()
+  })
+
   it('exposes browserAction instead of action for MV2', () => {
     installNativeGlobals(2)
     const diag = installExtensionApi(host, API_SPEC)

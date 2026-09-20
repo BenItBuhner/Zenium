@@ -29,6 +29,7 @@ import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
+import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -61,8 +62,8 @@ const TAB_ICONS = [
  * in the box it is placed in – the content frame on desktop, the shell on phones – over a scrim
  * that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop it portals
  * to the chrome layer, anchored under the star; on phones it is a sheet in the host. The zoom
- * bubble is a desktop popover too, under the pill's zoom chip, and so is the blocked pop-ups
- * list under its chip (a sheet on phones). This is the frame's host: a dialog whose state lives
+ * bubble is a desktop popover too, under the pill's zoom chip, and so are the blocked pop-ups
+ * list under its chip and Reader View's text preferences under theirs (sheets on phones). This is the frame's host: a dialog whose state lives
  * inside the frame (a phone panel's sheets, the new tab page's customise sheet) reaches it
  * through `FrameDialogPortal`.
  */
@@ -71,6 +72,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const star = uiStore.use((s) => s.starDialog)
   const zoom = uiStore.use((s) => s.zoomBubble)
+  const readerPrefs = uiStore.use((s) => s.readerPreferences)
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
@@ -110,7 +112,10 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <ExtensionPromptDialog />
       <ClearBrowsingDataDialog />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
-      <InstallLayer />
+      {readerPrefs && (
+        <ReaderPreferencesPanel key={readerPrefs.tabId} state={state} panel={readerPrefs} />
+      )}
+      <InstallLayer state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
       <PassphraseDialog />

@@ -25,6 +25,8 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  ScreenCaptureRequest,
+  ShareRequest,
   PasswordsStatus,
   PageEnvironment,
   PermissionPrompt,
@@ -109,6 +111,13 @@ import {
 } from '../shared/newTab'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
+import {
+  closedNavigationOf,
+  closedTabIds,
+  NavigationStateStore,
+  withoutClosedHostState,
+  withoutHostState
+} from './navigationState'
 import type { ZenWindow } from './window'
 
 const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
@@ -155,7 +164,8 @@ export interface Persisted {
   /**
    * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
    * and (through each entry's page state) its scroll position back. Refreshed on every commit
-   * of a navigation and once more, for the page on screen, at a graceful shutdown.
+   * of a navigation and once more, for the page on screen, at a graceful shutdown. Never with a
+   * stack's `hostState`: that blob lives in `navigation/<tabId>.json` (`NavigationStateStore`).
    */
   navigation?: Record<string, NavigationSnapshot>
   /**
@@ -206,6 +216,8 @@ export interface StateExtras {
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
+  screenCaptureRequests: ScreenCaptureRequest[]
+  shareRequests: ShareRequest[]
   crashRestore: CrashRestoreOffer | null
   autofill: AutofillUIState
   blocking: BlockingStatus
@@ -268,6 +280,8 @@ export class BrowserState {
   readonly migrationNotices: string[] = []
   /** Back/forward stacks of the open tabs, by tab id (`TabManager` keeps them current). */
   readonly tabNavigation = new Map<string, NavigationSnapshot>()
+  /** The stacks' host-state blobs, one document per tab, kept out of `state.json`. */
+  readonly navigationState: NavigationStateStore
   /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
   newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
   /**
@@ -336,6 +350,8 @@ export class BrowserState {
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],
+    screenCaptureRequests: [],
+    shareRequests: [],
     crashRestore: null,
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),
@@ -382,6 +398,7 @@ export class BrowserState {
   ) {
     this.version = version
     this.store = new JsonStore<Persisted>(io, 'state.json', { backup: true })
+    this.navigationState = new NavigationStateStore(io, (tabId) => this.navigationFor(tabId))
     this.model = emptyModel(structuredClone(DEFAULT_CONTAINERS))
   }
 
@@ -394,6 +411,24 @@ export class BrowserState {
       this.uncleanExit = data.cleanExit === false
     }
     this.ensureValid()
+    // The blobs' folder hears which ids the session refers to; the documents of the others go at
+    // the store's first fire (nothing is read here).
+    this.navigationState.load(
+      new Set([...this.tabNavigation.keys(), ...closedTabIds(this.recentlyClosed)])
+    )
+  }
+
+  /**
+   * What `navigation/<tabId>.json` is to hold: the open tab's stack (a private tab's never),
+   * else the stack a recently-closed entry keeps for the id, else nothing.
+   */
+  private navigationFor(tabId: string): NavigationSnapshot | null {
+    const tab = this.model.tabs[tabId]
+    if (tab) {
+      if (tab.containerId === PRIVATE_CONTAINER_ID) return null
+      return this.tabNavigation.get(tabId) ?? null
+    }
+    return closedNavigationOf(this.recentlyClosed, tabId)
   }
 
   /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
@@ -814,6 +849,7 @@ export class BrowserState {
   /** Stop persisting (called once the final state has been flushed on quit). */
   freeze(): void {
     this.frozen = true
+    this.navigationState.freeze()
   }
 
   /** Update only volatile UI state (no disk write). */
@@ -865,7 +901,8 @@ export class BrowserState {
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
-      recentlyClosed: this.recentlyClosed,
+      // The stacks travel without their host-state blobs, which `navigation/` holds.
+      recentlyClosed: withoutClosedHostState(this.recentlyClosed),
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice
@@ -879,9 +916,11 @@ export class BrowserState {
       const tab = tabs[tabId]
       if (!tab || tab.containerId === PRIVATE_CONTAINER_ID) {
         this.tabNavigation.delete(tabId)
+        // Its document follows: a closed entry holding the id keeps it, else it goes.
+        this.navigationState.touch(tabId)
         continue
       }
-      out[tabId] = snapshot
+      out[tabId] = withoutHostState(snapshot)
     }
     return out
   }
@@ -890,12 +929,14 @@ export class BrowserState {
     if (this.frozen) return
     this.store.write(this.toPersisted())
     await this.store.flush()
+    await this.navigationState.flush()
   }
 
   flushSync(): void {
     if (this.frozen) return
     this.store.write(this.toPersisted())
     this.store.flushSync()
+    this.navigationState.flushSync()
   }
 }
 

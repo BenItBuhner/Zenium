@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { announce, startAnnouncer, zoomAnnouncement } from '@renderer/lib/announce'
+import { installedMessage } from '@shared/webApp'
 import { onEvent, run } from '@renderer/lib/api'
 import { starredOnPhone } from '@renderer/lib/bookmarkEdit'
 import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
@@ -30,6 +31,7 @@ import {
   openNewTabShortcutDialog,
   openInstallSheet,
   openOverlay,
+  openReaderPreferences,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -84,8 +86,10 @@ export function useMainEvents(): void {
         }
         if (ui.overlay === 'onboarding') return
         const state = browserStore.get().state
-        // A popup's location bar is read-only (Chrome): Ctrl+L and Ctrl+K have nothing to open.
-        if (state?.window.chrome === 'popup' && mode !== 'new-tab') return
+        // A popup's location bar is read-only and an app window has none (Chrome): Ctrl+L and
+        // Ctrl+K have nothing to open.
+        const chrome = state?.window.chrome
+        if ((chrome === 'popup' || chrome === 'app') && mode !== 'new-tab') return
         // Phones always anchor the bar to the top: the keyboard owns the bottom half.
         const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
         void openUrlbar(mode, currentActiveTabId(), { text, attached })
@@ -174,6 +178,12 @@ export function useMainEvents(): void {
       onEvent('extensions.open', () => {
         closeUrlbar()
         openExtensionsSheet()
+      }),
+      onEvent('reader.preferences', ({ tabId }) => {
+        // The app menu's "Text Preferences…" (and the reader page's toolbar button on a phone):
+        // the popover hangs from the pill's chip when it is on screen, the sheet on a phone.
+        closeUrlbar()
+        void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
@@ -269,13 +279,19 @@ export function useMainEvents(): void {
       }),
       onEvent('webapp.banner', (banner) => presentInstallBanner(banner)),
       onEvent('webapp.bannerHide', ({ tabId }) => retireInstallBanner(tabId)),
-      // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL.
-      onEvent('webapp.pinned', ({ tabId, name, url }) =>
-        pushToast(`Added ${name} to Home screen`, 'info', {
+      // NOT-20, with Chrome's "Open" (v2 §9.33: one action): the tab goes to the shortcut's URL;
+      // on desktop an installed app opens in its own window instead (a plain shortcut's page
+      // came up in the app window already, so its toast has no action).
+      onEvent('webapp.pinned', ({ tabId, name, url, surface, appId }) =>
+        pushToast(installedMessage(surface, name), 'info', {
           action:
-            tabId && url
-              ? { label: 'Open', onPick: () => run('tab.navigate', { tabId, input: url }) }
-              : undefined
+            surface === 'desktop'
+              ? appId
+                ? { label: 'Open', onPick: () => run('webapp.launch', { appId }) }
+                : undefined
+              : tabId && url
+                ? { label: 'Open', onPick: () => run('tab.navigate', { tabId, input: url }) }
+                : undefined
         })
       ),
       onEvent('translate.selection', ({ tabId, text, x, y }) => {

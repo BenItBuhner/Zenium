@@ -255,11 +255,13 @@ export function isMatchPattern(pattern: string): boolean {
   const scheme = pattern.slice(0, separator)
   if (scheme !== '*' && !MATCH_SCHEMES.has(scheme)) return false
   const rest = pattern.slice(separator + 3)
+  // Chromium's file grammar: the host is optional and ignored (`file://*/*`, which Adobe
+  // Acrobat and MetaMask declare, and `file://localhost/x` both stand for `file:///...`), so
+  // anything after `file://` is a path glob; only a bare `file://` is refused.
+  if (scheme === 'file') return rest !== ''
   const slash = rest.indexOf('/')
   if (slash < 0) return false
   const host = rest.slice(0, slash)
-  const path = rest.slice(slash)
-  if (scheme === 'file') return host === '' && path.startsWith('/')
   if (host === '') return false
   if (
     host.includes(':') &&
@@ -271,7 +273,7 @@ export function isMatchPattern(pattern: string): boolean {
   const hostName = host.replace(/:(\d+|\*)$/, '')
   if (hostName !== '*' && hostName.includes('*') && !hostName.startsWith('*.')) return false
   if (hostName.slice(2).includes('*')) return false
-  return path.startsWith('/')
+  return true
 }
 
 // ---------------------------------------------------------------------------

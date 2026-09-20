@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useRef } from 'react'
-import { X } from 'lucide-react'
+import { Moon, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { tabTitle } from '@renderer/lib/selectors'
@@ -78,8 +78,9 @@ export function OverviewCard({
           targeted && 'zen-overview-card-target'
         )}
         data-active={active}
+        data-discarded={tab.discarded || undefined}
         style={style}
-        aria-label={tabTitle(tab)}
+        aria-label={tab.discarded ? `${tabTitle(tab)} – sleeping` : tabTitle(tab)}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
@@ -120,8 +121,22 @@ export function CardBody({
         className="flex shrink-0 items-center gap-2 pl-3 pr-1"
         style={{ height: CARD_HEADER }}
       >
-        <Favicon tab={tab} size={16} />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{tabTitle(tab)}</span>
+        <span className="zen-overview-card-favicon flex shrink-0">
+          <Favicon tab={tab} size={16} />
+        </span>
+        <span className="zen-overview-card-title min-w-0 flex-1 truncate text-[13px] font-medium">
+          {tabTitle(tab)}
+        </span>
+        {tab.discarded && (
+          // A sleeping page (CT-22): the moon the sidebar's row shows, at the deemphasised
+          // 69% with the title, 16 like the favicon and the close glyph beside it (§9.3); the
+          // card's own tap wakes the page, so the glyph is a mark.
+          <Moon
+            className="zen-overview-card-sleeping h-4 w-4 shrink-0"
+            aria-hidden
+            data-sleeping=""
+          />
+        )}
         {closable && (
           <button
             type="button"
@@ -136,7 +151,7 @@ export function CardBody({
           </button>
         )}
       </header>
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="zen-overview-card-preview relative min-h-0 flex-1 overflow-hidden">
         <TabPreview tab={tab} scale={0.8} visible={visible} />
       </div>
     </>

@@ -24,7 +24,8 @@ export interface ReaderArticle {
   dir: 'ltr' | 'rtl' | null
 }
 
-interface RawArticle {
+/** What Readability's `parse()` returns, before the service cleans and stores it. */
+export interface RawArticle {
   title?: string
   byline?: string | null
   siteName?: string | null
@@ -192,6 +193,17 @@ export class ReaderService {
       this.browser.toast('This page cannot be shown in Reader View.', 'info', win)
       return
     }
+    this.open(tabId, raw)
+  }
+
+  /**
+   * Show an article already extracted from the tab's page in Reader View: the page script's
+   * result here, or a host's own extraction (the preview host stands one in). The tab goes to
+   * `zen://reader?id=…&url=…`, which renders it with the saved text preferences.
+   */
+  open(tabId: string, raw: RawArticle): void {
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !raw.content) return
     const id = newId('article')
     const article: ReaderArticle = {
       id,

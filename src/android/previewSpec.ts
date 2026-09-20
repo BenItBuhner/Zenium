@@ -227,6 +227,11 @@ export type PreviewState =
       factor: number | null
     }
   | {
+      /** The active tab in Reader View on a stand-in article; `preferences` opens its text sheet. */
+      kind: 'reader'
+      preferences: boolean
+    }
+  | {
       kind: 'error'
       /** The Chromium `net::` code the load failed with (-105 for ERR_NAME_NOT_RESOLVED, …). */
       code: number
@@ -357,7 +362,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * (`pull=refresh` pulls past it and lets go), `barhide=<n>` for the phone bar held n percent
  * of the way off its edge by a scroll (`barhide=hidden` scrolls it off and lets go, so it rests
  * hidden), `zoom=<factor>` for the page zoom sheet with the
- * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
+ * active tab's site at that factor (`zoom=` opens it as it is), `reader=article` for the active
+ * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
+ * sheet over it), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, any of `toast=<text>` (with
  * `action=<label>`, `kind=error`), `banners=<n>` and `progress=<0…1>` together for the message
@@ -379,8 +386,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * given, `page` wins over `extension-page`, that over `group`, `group` over `overlay`, `overlay`
  * over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`, that over `private`,
  * `private` over `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `barhide`,
- * `barhide` over `zoom`, `zoom` over `error`, `error` over the messages, the messages over
- * `webapp`, `webapp` over `download`, `download` over `popups`, `popups` over the security
+ * `barhide` over `zoom`, `zoom` over `reader`, `reader` over `error`, `error` over the messages,
+ * the messages over `webapp`, `webapp` over `download`, `download` over `popups`, `popups` over the security
  * `prompt`, that over `voice`, `voice` over `overview`, and `overview` over `urlbar`. A leading
  * `#` (the URL hash as read) is ignored.
  */
@@ -483,6 +490,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const factor = parseFloat(zoom)
     return { kind: 'zoom', factor: Number.isFinite(factor) && factor > 0 ? factor : null }
   }
+  const reader = params.get('reader')
+  if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }

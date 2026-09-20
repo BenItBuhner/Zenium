@@ -28,6 +28,7 @@ import type {
   Tab
 } from '../../shared/types'
 import { refusedFromDocument } from '../../shared/internalPages'
+import { PAGE_HOST_CHANNEL } from '../../shared/pageScript'
 import type { SafeBrowsingHit } from '../../shared/privacy'
 import { isCertificateError, type SiteCertificate } from '../../shared/siteInfo'
 import { inPlaceErrorPageScript } from '../../shared/zenPages'
@@ -52,6 +53,7 @@ import type {
   KeyEventInput,
   NavigationIntent,
   PageFlags,
+  PageHostMessage,
   PageMessage,
   TabView,
   TabViewEvents,
@@ -321,7 +323,12 @@ export class ElectronTabView implements TabView {
     // a document's own navigation to zen:// or zenium:// is refused; loadURL (typed, a menu, a
     // deep link) does not raise this event and goes through. One rule with Android's WebView.
     wc.on('will-navigate', (event, url) => {
-      if (refusedFromDocument(wc.getURL(), url)) event.preventDefault()
+      if (refusedFromDocument(wc.getURL(), url)) {
+        event.preventDefault()
+        return
+      }
+      // An app window's page leaving its app: the core opens the address in a browser tab.
+      if (ev.onWillNavigate(url)) event.preventDefault()
     })
     wc.on('did-start-navigation', (details) => {
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
@@ -665,6 +672,11 @@ export class ElectronTabView implements TabView {
 
   sendFormsCommand(command: FormsCommand): void {
     if (!this.wc.isDestroyed()) this.wc.send('zen:forms', command)
+  }
+
+  /** To the top document's page script (`preload/page.ts` listens on `PAGE_HOST_CHANNEL`). */
+  postToPage(message: PageHostMessage): void {
+    if (!this.wc.isDestroyed()) this.wc.send(PAGE_HOST_CHANNEL, message)
   }
 
   setZapMode(on: boolean): void {

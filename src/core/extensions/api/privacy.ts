@@ -190,15 +190,24 @@ export function normalizeGetDetails(raw: unknown): GetDetails {
   return { incognito: incognito === true }
 }
 
-export function normalizeSetDetails(spec: PrivacySettingSpec, raw: unknown): SetDetails {
+/**
+ * The shape every `set` shares before the setting's own check of `value`: `value` is required,
+ * `scope` optional and one of `PRIVACY_SCOPES` (`regular` when absent).
+ */
+export function normalizeSetScope(raw: unknown): { value: unknown; scope: PrivacyScope } {
   const details = record(raw)
   if (!('value' in details)) throw new Error("Missing required property 'value'.")
-  if (!acceptsValue(spec, details.value)) {
+  return { value: details.value, scope: scopeOf(details) }
+}
+
+export function normalizeSetDetails(spec: PrivacySettingSpec, raw: unknown): SetDetails {
+  const { value, scope } = normalizeSetScope(raw)
+  if (!acceptsValue(spec, value)) {
     const expected =
       spec.kind.type === 'boolean' ? 'a boolean' : `one of ${spec.kind.values.join(', ')}`
     throw new Error(`Invalid value for '${spec.name}': expected ${expected}.`)
   }
-  return { value: details.value, scope: scopeOf(details) }
+  return { value, scope }
 }
 
 export function normalizeClearDetails(raw: unknown): ClearDetails {
