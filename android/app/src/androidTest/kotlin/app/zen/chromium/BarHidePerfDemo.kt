@@ -70,8 +70,8 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
             PORT,
             mapOf(
                 "/" to ("text/html; charset=utf-8" to readAsset("bar-hide-demo-page.html").toByteArray()),
-                GITHUB_PATH to ("text/html; charset=utf-8" to gunzipAsset("perf/github-repo.html.gz")),
-                ARTICLE_PATH to ("text/html; charset=utf-8" to gunzipAsset("perf/article.html.gz"))
+                GITHUB_PATH to ("text/html; charset=utf-8" to pageFixture("github-repo")),
+                ARTICLE_PATH to ("text/html; charset=utf-8" to pageFixture("article"))
             )
         ).also { it.start() }
         capture = PerfCapture(ui, app.packageName, tag)
@@ -485,8 +485,17 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         return json
     }
 
-    private fun gunzipAsset(name: String): ByteArray =
-        GZIPInputStream(instrumentation.context.assets.open(name)).use { it.readBytes() }
+    /**
+     * A page fixture kept gzipped in the tree (`perf/<name>.html.gz`). AAPT2 gunzips a `.gz`
+     * asset as it packages it and drops the suffix, so the APK carries `perf/<name>.html` plain;
+     * a packaging that left the file as it was is read through a gunzip instead.
+     */
+    private fun pageFixture(name: String): ByteArray {
+        val assets = instrumentation.context.assets
+        val plain = runCatching { assets.open("perf/$name.html") }.getOrNull()
+        if (plain != null) return plain.use { it.readBytes() }
+        return GZIPInputStream(assets.open("perf/$name.html.gz")).use { it.readBytes() }
+    }
 
     private fun finding(line: String) {
         Log.i(tag, line)
