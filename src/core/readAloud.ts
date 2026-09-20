@@ -36,6 +36,13 @@ import {
 /** How long the page script has to answer `readAloud.extract` before the start fails (`no-text`). */
 export const EXTRACT_TIMEOUT_MS = 8000
 
+/**
+ * How long a start waits for a host that has listed no voices yet before failing `no-voice`: an
+ * engine lists its voices a moment after it comes up (Chromium over speech-dispatcher lists
+ * thousands), and the first start of a session is often that moment.
+ */
+export const VOICES_GRACE_MS = 4000
+
 /** The read-aloud player's id in the media session (`registerSource`; one session per id). */
 export const READ_ALOUD_SOURCE_ID = 'read-aloud'
 
@@ -94,6 +101,8 @@ export class ReadAloudService {
   private utteranceSeq = 0
   private readonly pending = new Map<string, PendingExtraction>()
   private voiceList: ReadAloudVoice[] | null = null
+  /** Starts waiting on a host that has listed no voices yet (woken by `onVoicesChanged`). */
+  private voicesWaiters: Array<() => void> = []
   /** A reader ↔ page switch on the session's tab: read the new document from the top once it is ready. */
   private restartOnReady: string | null = null
   private readonly host: SpeechHost | undefined
@@ -106,6 +115,9 @@ export class ReadAloudService {
     this.host?.onEvent((utteranceId, event) => this.onHostEvent(utteranceId, event))
     this.host?.onVoicesChanged(() => {
       this.voiceList = null
+      const waiting = this.voicesWaiters
+      this.voicesWaiters = []
+      for (const wake of waiting) wake()
     })
   }
 
@@ -190,8 +202,15 @@ export class ReadAloudService {
     session.state.lang = text.lang
     session.state.sentenceCount = text.sentences.length
 
-    const voices = await this.voices()
+    let voices = await this.voices()
     if (this.session !== session) return
+    if (voices.length === 0) {
+      // The host may still be listing: give it a moment before calling it voiceless.
+      await this.voicesChangedWithin(VOICES_GRACE_MS)
+      if (this.session !== session) return
+      voices = await this.voices()
+      if (this.session !== session) return
+    }
     const resolved = resolveReadAloudVoice(
       voices,
       text.lang,
@@ -692,6 +711,21 @@ export class ReadAloudService {
     }
     this.voiceList = voices
     return voices
+  }
+
+  /** Resolves when the host says its voices changed, or after `ms`, whichever comes first. */
+  private voicesChangedWithin(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false
+      const finish = (): void => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(finish, ms)
+      this.voicesWaiters.push(finish)
+    })
   }
 
   /** The page's language as the translate engine detected it ('' when it has not). */

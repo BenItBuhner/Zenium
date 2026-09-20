@@ -4,6 +4,7 @@ import {
   READ_ALOUD_SOURCE_ACTIONS,
   READ_ALOUD_SOURCE_ID,
   ReadAloudService,
+  VOICES_GRACE_MS,
   wordEnd
 } from '../readAloud'
 import type { Browser } from '../browser'
@@ -411,12 +412,17 @@ describe('ReadAloudService', () => {
       expect(h.service.uiState()!.error).toBeUndefined()
     })
 
-    it('fails with no-voice when the host has none at all, and speaks once a voice is chosen', async () => {
+    it('fails with no-voice when the host has none at all (after a grace for a late list), and speaks once a voice is chosen', async () => {
+      vi.useFakeTimers()
       h.host.voiceList = []
       h.addTab('t1', PAGE)
       const started = h.service.start({ tabId: 't1' })
       await flush()
       h.answer('t1', [{ text: 'Hello.' }])
+      await flush()
+      // The text is in; the voice is still awaited.
+      expect(h.service.uiState()).toMatchObject({ status: 'loading', sentenceCount: 1 })
+      await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
       await started
       expect(h.service.uiState()).toMatchObject({
         status: 'error',
@@ -432,6 +438,21 @@ describe('ReadAloudService', () => {
         sentenceIndex: 0
       })
       expect(h.host.current.options.voiceId).toBe('Late')
+    })
+
+    it('waits for a host that is still listing its voices, and speaks as soon as they come', async () => {
+      vi.useFakeTimers()
+      h.host.voiceList = []
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Hello.' }])
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.service.uiState()).toMatchObject({ status: 'loading' })
+      h.host.changeVoices([{ id: 'Samantha', name: 'Samantha', lang: 'en-US', local: true }])
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'Samantha' })
+      expect(h.host.current.text).toBe('Hello.')
     })
 
     it('fails with no-text when the page has nothing to read or never answers', async () => {
