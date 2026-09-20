@@ -398,12 +398,29 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
     /**
      * A finger on the pill's media chip, then the media sheet up: the host's word (`back.update`
      * names the surface, `chromeSurfaceUp`), since the sheet's header and the chip under its
-     * scrim both read Now playing to the tree.
+     * scrim both read Now playing to the tree. The chip is taken by either of its names – the
+     * tree trails a relabel (a paused track's chip turning into a playing video's) by seconds on
+     * the software renderer – and, when the tree has no chip at all while the core has the
+     * session, the finger is placed from the chrome's document as the scrub's is ([chromeRect]);
+     * it is as real either way, and the assertion is the same.
      */
     private fun openSheet() {
-        val label = if (field("state") == "playing") CHIP_PLAYING else CHIP_PAUSED
-        if (!touchTapLabelExpecting(label, "the media sheet comes up", timeoutMs = 10_000) { chromeSurfaceUp() }) {
-            note("  the media sheet did not come up under a finger on '$label'")
+        val node = awaitNode(8_000) { it == CHIP_PLAYING || it == CHIP_PAUSED }
+        val landed = if (node != null) {
+            touchTap(node).also { took -> if (took) note("  finger on the '${label(node)}' chip") }
+        } else {
+            val rect = chromeRect(CHIP)
+            note("  the tree has no media chip (core media state: ${mediaState(TAB)}); the chrome's document ${if (rect != null) "has it at $rect" else "has none either"}")
+            if (rect != null) {
+                Finger().tap(rect.exactCenterX(), rect.exactCenterY())
+                true
+            } else {
+                false
+            }
+        }
+        if (!landed || !poll(10_000) { chromeSurfaceUp() }) {
+            touchFault("a finger on the media chip did not bring the media sheet up")
+            note("  the media sheet did not come up under a finger on the chip")
             return
         }
         SystemClock.sleep(1_500)
@@ -468,5 +485,7 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
         private const val CHIP_PAUSED = "Media paused"
         /** The sheet's position slider in the chrome's document (`SeekRow`, `data-testid`). */
         private const val SLIDER = "[data-testid=\"media-position\"]"
+        /** The pill's media chip in the chrome's document (`PhoneShell`, `data-testid`). */
+        private const val CHIP = "[data-testid=\"media-chip\"]"
     }
 }
