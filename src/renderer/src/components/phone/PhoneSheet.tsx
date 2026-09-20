@@ -36,6 +36,11 @@ interface Props {
    * (§9.23): the glyph on the title's start, the description 4 below.
    */
   prompt?: { icon?: ReactNode; description: string }
+  /**
+   * A control at the header's start (a Back chevron once a menu sheet has drilled into a
+   * submenu), on the 48 header only; `zen-sheet-header-control` with `data-side="leading"`.
+   */
+  leading?: ReactNode
   focus: SheetFocus
   /** The sheet has left the screen. */
   onClose(): void
@@ -59,6 +64,7 @@ function HostedSheet({
   name,
   title,
   prompt,
+  leading,
   focus,
   onClose,
   children,
@@ -93,9 +99,12 @@ function HostedSheet({
       labelledBy={titleId}
       header={
         prompt ? undefined : (
-          <h2 id={titleId} className="zen-sheet-title">
-            {title}
-          </h2>
+          <>
+            {leading}
+            <h2 id={titleId} className="zen-sheet-title">
+              {title}
+            </h2>
+          </>
         )
       }
     >

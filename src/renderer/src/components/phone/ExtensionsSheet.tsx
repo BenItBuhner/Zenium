@@ -1,18 +1,21 @@
 import type { JSX } from 'react'
-import { useRef, useState } from 'react'
-import { ChevronRight, Puzzle, Trash2 } from 'lucide-react'
-import type { ExtensionInfo, UIState } from '@shared/types'
-import { run } from '@renderer/lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { Check, ChevronLeft, ChevronRight, Puzzle, Trash2 } from 'lucide-react'
+import type { ExtensionInfo, MenuItemDescriptor, UIState } from '@shared/types'
+import { cmd, run } from '@renderer/lib/api'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import {
   actionMenuCommand,
-  actionMenuItems,
+  actionMenuGroups,
   actionSheetRows,
   actionTapCommand,
+  isOwnMenuItem,
+  ownMenuCommand,
   removeConfirm,
   type ActionMenuItemId,
   type ActionSheetRow
 } from '@renderer/lib/extensions/phoneActions'
+import { cn } from '@renderer/lib/utils'
 import { openSettings } from '@renderer/lib/pages'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeExtensionsSheet, uiStore } from '@renderer/lib/ui'
@@ -30,8 +33,9 @@ import { PhoneSheet } from './PhoneSheet'
  * buttons and the puzzle panel's rows). A tap is the action click through the one command path
  * the desktop button takes (`extension.openPopup`: the runtime opens the popup sheet, or fires
  * `action.onClicked` when the action has none) and the sheet closes as it goes out; a hold opens
- * Chrome's action context menu as a menu sheet over this one (§9.24: depth two, and its Remove
- * asks in a confirmation that takes the menu's place). The last group is the way to the
+ * Chrome's action context menu as a menu sheet over this one – the extension's own items first,
+ * then the browser's (§9.24: depth two, and its Remove asks in a confirmation that takes the
+ * menu's place). The last group is the way to the
  * management page, Settings › Extensions; with nothing to list the sheet says so (§9.17) and
  * offers the install step. The phone bar gets no puzzle button: this row is the entry.
  */
@@ -86,6 +90,14 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
         return
     }
   }
+  // One of the extension's own items: the pick goes to the core, which fires the extension's
+  // `contextMenus.onClicked` against the active tab – the page under this sheet, which leaves
+  // too so what the extension does to that page is in view (as Chrome's menu goes with a pick).
+  const ownPick = (item: MenuItemDescriptor, extensionId: string): void => {
+    const command = ownMenuCommand(extensionId, item)
+    if (!command) return
+    leaveTo(() => run(command.name, command.args))
+  }
 
   return (
     <>
@@ -137,6 +149,7 @@ function ExtensionsSheet({ state }: { state: UIState }): JSX.Element {
         <ActionMenuSheet
           ext={subject}
           onPick={(id) => menuPick(id, subject.id)}
+          onOwnPick={(item) => ownPick(item, subject.id)}
           onClose={() => setStacked((s) => (s?.kind === 'menu' ? null : s))}
         />
       )}
@@ -203,47 +216,133 @@ function ActionRow({
 }
 
 /**
+ * The extension's own action-context `contextMenus` items, asked of the core as the menu opens
+ * (`extension.actionMenuItems`); empty until they arrive and for an extension that adds none.
+ * The request is what keeps the handles the picks hand back alive, so it is made once per menu.
+ */
+function useOwnMenuItems(extensionId: string): MenuItemDescriptor[] {
+  const [items, setItems] = useState<MenuItemDescriptor[]>([])
+  useEffect(() => {
+    let live = true
+    cmd('extension.actionMenuItems', { id: extensionId })
+      .then((own) => {
+        if (live) setItems(own)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [extensionId])
+  return items
+}
+
+/**
  * Chrome's action context menu for the phone, as a §9.13 menu sheet over the list: the 48 header
- * carries the extension's name (the row's label), then 44 px items – Options when the manifest
- * names an options page, Remove from Zenium in the danger ink, Manage Extension. A pick closes
- * the menu first and runs once it has gone (§9.24: the lower sheet comes back, or leaves too).
+ * carries the extension's name (the row's label), then 44 px items in groups a hairline tells
+ * apart, in Chrome's order – the extension's own `contextMenus` items for its action first
+ * (check states drawn, a submenu drilled into as the menu sheet does), then Options when the
+ * manifest names an options page and Manage Extension, and Remove from Zenium last, alone under
+ * its hairline in the danger ink (§10.4). A pick closes the menu first and runs once it has
+ * gone (§9.24: the lower sheet comes back, or leaves too).
  */
 function ActionMenuSheet({
   ext,
   onPick,
+  onOwnPick,
   onClose
 }: {
   ext: ExtensionInfo
   onPick: (id: ActionMenuItemId) => void
+  onOwnPick: (item: MenuItemDescriptor) => void
   onClose: () => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
-  const items = actionMenuItems(ext)
+  const own = useOwnMenuItems(ext.id)
+  // The submenu path the menu has drilled into among the extension's items (`MenuSheet`'s
+  // pattern): the header names the submenu and a Back control leads out.
+  const [path, setPath] = useState<MenuItemDescriptor[]>([])
+  const inside = path.length ? path[path.length - 1] : null
+  const groups = inside
+    ? actionMenuGroups({ optionsPage: null }, inside.submenu ?? []).filter((g) => g.kind === 'own')
+    : actionMenuGroups(ext, own)
+  const name = ext.name || ext.id
   return (
     <PhoneSheet
       name="extensions-action-menu"
-      title={ext.name || ext.id}
+      title={inside ? inside.label : name}
       focus="first"
       onClose={onClose}
       sheetRef={sheet}
+      contentKey={`${own.length}:${path.map((item) => item.id).join('/')}`}
+      leading={
+        inside ? (
+          <button
+            type="button"
+            className="zen-sheet-header-control"
+            data-side="leading"
+            onClick={() => setPath((p) => p.slice(0, -1))}
+            aria-label="Back"
+          >
+            <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        ) : undefined
+      }
     >
-      <ul className="zen-ext-action-menu flex flex-col pb-1">
-        {items.map((item, index) => (
-          <li key={item.id}>
-            {index > 0 && items[index - 1].id === 'options' && (
-              <div className="zen-sheet-sep" aria-hidden />
+      <div className="zen-ext-action-menu flex flex-col pb-1">
+        {groups.map((group, index) => (
+          <ul key={index} className="flex flex-col">
+            {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
+            {group.items.map((item) =>
+              isOwnMenuItem(item) ? (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="zen-sheet-item"
+                    disabled={!item.enabled}
+                    aria-checked={
+                      item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
+                    }
+                    role={
+                      item.type === 'checkbox'
+                        ? 'menuitemcheckbox'
+                        : item.type === 'radio'
+                          ? 'menuitemradio'
+                          : undefined
+                    }
+                    onClick={() => {
+                      if (item.submenu) setPath((p) => [...p, item])
+                      else sheet.current?.dismiss(() => onOwnPick(item))
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+                    )}
+                    {item.submenu && (
+                      <ChevronRight
+                        className={cn('zen-sheet-item-secondary h-5 w-5 shrink-0')}
+                        strokeWidth={1.75}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                </li>
+              ) : (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="zen-sheet-item"
+                    data-danger={item.danger}
+                    onClick={() => sheet.current?.dismiss(() => onPick(item.id))}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  </button>
+                </li>
+              )
             )}
-            <button
-              type="button"
-              className="zen-sheet-item"
-              data-danger={item.danger}
-              onClick={() => sheet.current?.dismiss(() => onPick(item.id))}
-            >
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            </button>
-          </li>
+          </ul>
         ))}
-      </ul>
+      </div>
     </PhoneSheet>
   )
 }

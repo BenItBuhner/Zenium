@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { ExtensionAction, ExtensionInfo, Space, Tab, UIState } from '@shared/types'
+import type {
+  ExtensionAction,
+  ExtensionInfo,
+  MenuItemDescriptor,
+  Space,
+  Tab,
+  UIState
+} from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 /*
@@ -16,8 +23,14 @@ import { DEFAULT_SETTINGS } from '@shared/defaults'
 
 const SPACE = 'space'
 
-/** The core: every command is taken and recorded. */
-const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async () => null)
+/**
+ * The core: every command is taken and recorded; `extension.actionMenuItems` answers the
+ * extension's own action-context items (`ownItems`, per extension id), none by default.
+ */
+const ownItems = new Map<string, MenuItemDescriptor[]>()
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (name, args) =>
+  name === 'extension.actionMenuItems' ? (ownItems.get((args as { id: string }).id) ?? []) : null
+)
 Object.assign(window, {
   zen: {
     invoke,
@@ -220,6 +233,7 @@ beforeEach(() => {
   })
   frames.install()
   invoke.mockClear()
+  ownItems.clear()
   viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
   sizes = ['clientHeight', 'offsetHeight'].map((name) => [
     name,
@@ -258,7 +272,26 @@ afterEach(() => {
 
 // --- helpers -----------------------------------------------------------------------------------
 
-const CHASSIS = new Set(['overlay.snapshot', 'focus.content'])
+const CHASSIS = new Set(['overlay.snapshot', 'focus.content', 'extension.actionMenuItems'])
+const menuRequests = (): unknown[] =>
+  invoke.mock.calls.filter(([name]) => name === 'extension.actionMenuItems').map(([, args]) => args)
+const menuItems = (): HTMLElement[] => [
+  ...document.querySelectorAll<HTMLElement>('.zen-ext-action-menu .zen-sheet-item')
+]
+const menuGroups = (): string[][] =>
+  [...document.querySelectorAll<HTMLElement>('.zen-ext-action-menu ul')].map((ul) =>
+    [...ul.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((b) => b.textContent?.trim() ?? '')
+  )
+/** A descriptor as the core answers one. */
+const own = (over: Partial<MenuItemDescriptor> & { id: string }): MenuItemDescriptor => ({
+  type: 'normal',
+  label: over.id,
+  enabled: true,
+  checked: false,
+  icon: null,
+  submenu: null,
+  ...over
+})
 const commands = (): Array<[string, unknown]> =>
   invoke.mock.calls
     .filter(([name]) => !CHASSIS.has(name))
@@ -343,21 +376,20 @@ describe('the phone Extensions sheet', () => {
     expect(uiStore.get().extensionsSheetOpen).toBe(false)
   })
 
-  it('a hold opens Chrome’s action context menu as a menu sheet over the list, named after the extension', async () => {
+  it('a hold opens Chrome’s action context menu as a menu sheet over the list, named after the extension, Remove last under its hairline', async () => {
     await show(three())
     hold(rows()[0])
     await land()
     // Depth two (§9.24): the list stays under the menu.
     expect(titles()).toEqual(['Extensions', 'Vimium'])
-    const items = [
-      ...document.querySelectorAll<HTMLElement>('.zen-ext-action-menu .zen-sheet-item')
-    ]
-    expect(items.map((item) => item.textContent?.trim())).toEqual([
-      'Options',
-      'Remove from Zenium',
-      'Manage Extension'
-    ])
-    expect(items[1].hasAttribute('data-danger')).toBe(true)
+    // Options and Manage Extension, then the destructive row alone in the last group (§10.4).
+    expect(menuGroups()).toEqual([['Options', 'Manage Extension'], ['Remove from Zenium']])
+    const items = menuItems()
+    expect(items[2].hasAttribute('data-danger')).toBe(true)
+    expect(items[0].hasAttribute('data-danger')).toBe(false)
+    expect(document.querySelectorAll('.zen-ext-action-menu .zen-sheet-sep')).toHaveLength(1)
+    // The extension's own items were asked for as the menu opened; it has none.
+    expect(menuRequests()).toEqual([{ id: VIMIUM }])
     // Options: the menu leaves, then the list, then the options page opens as a tab.
     act(() => items[0].click())
     await land()
@@ -370,19 +402,93 @@ describe('the phone Extensions sheet', () => {
     await show(three())
     hold(rows()[1])
     await land()
-    const items = [
-      ...document.querySelectorAll<HTMLElement>('.zen-ext-action-menu .zen-sheet-item')
-    ]
-    expect(items.map((item) => item.textContent?.trim())).toEqual([
-      'Remove from Zenium',
-      'Manage Extension'
-    ])
-    act(() => items[1].click())
+    expect(menuGroups()).toEqual([['Manage Extension'], ['Remove from Zenium']])
+    act(() => menuItems()[0].click())
     await land()
     await land()
     // Settings › Extensions with the extension's details asked for (`extensionRevealStore`).
     expect(commands()).toEqual([['page.open', { id: 'settings', section: 'extensions' }]])
     expect(extensionRevealStore.get().id).toBe(UBLOCK)
+  })
+
+  it('puts the extension’s own action-context items first, above a hairline, and a pick runs them against the page', async () => {
+    ownItems.set(UBLOCK, [
+      own({ id: 'action_1_1', label: 'Open Dashboard' }),
+      own({ id: 'action_1_2', label: 'Block Element', enabled: false }),
+      own({ id: 'action_1_3', label: 'Night Mode', type: 'checkbox', checked: true })
+    ])
+    await show(three())
+    hold(rows()[1])
+    await land()
+    expect(titles()).toEqual(['Extensions', 'uBlock Origin'])
+    expect(menuGroups()).toEqual([
+      ['Open Dashboard', 'Block Element', 'Night Mode'],
+      ['Manage Extension'],
+      ['Remove from Zenium']
+    ])
+    expect(document.querySelectorAll('.zen-ext-action-menu .zen-sheet-sep')).toHaveLength(2)
+    const items = menuItems()
+    // An item the extension turned off takes no tap; a checked checkbox shows its check.
+    expect((items[1] as HTMLButtonElement).disabled).toBe(true)
+    expect(items[2].getAttribute('role')).toBe('menuitemcheckbox')
+    expect(items[2].getAttribute('aria-checked')).toBe('true')
+    expect(items[2].querySelector('.lucide-check')).not.toBeNull()
+    expect(items[0].querySelector('.lucide-check')).toBeNull()
+    // The pick: the menu leaves, the list leaves too (the page the item acts on is under them),
+    // and the core is told which handle was picked.
+    act(() => items[0].click())
+    await land()
+    await land()
+    expect(commands()).toEqual([
+      ['extension.actionMenuClick', { id: UBLOCK, itemId: 'action_1_1' }]
+    ])
+    expect(titles()).toEqual([])
+    expect(uiStore.get().extensionsSheetOpen).toBe(false)
+  })
+
+  it('drills into one of the extension’s submenus, with Back in the header, and picks inside it', async () => {
+    ownItems.set(VIMIUM, [
+      own({ id: 'action_2_1', label: 'Open Dashboard' }),
+      own({ id: 'sep', type: 'separator', label: '' }),
+      own({
+        id: 'action_2_2',
+        label: 'More',
+        submenu: [own({ id: 'action_2_3', label: 'Report an Issue' })]
+      })
+    ])
+    await show(three())
+    hold(rows()[0])
+    await land()
+    // The extension's separator breaks its items into groups; the submenu row carries the chevron.
+    expect(menuGroups()).toEqual([
+      ['Open Dashboard'],
+      ['More'],
+      ['Options', 'Manage Extension'],
+      ['Remove from Zenium']
+    ])
+    const more = menuItems()[1]
+    expect(more.querySelector('.lucide-chevron-right')).not.toBeNull()
+    act(() => more.click())
+    await settle()
+    // Inside: the header names the submenu, Back leads out, only the submenu's items show.
+    expect(titles()).toEqual(['Extensions', 'More'])
+    expect(menuGroups()).toEqual([['Report an Issue']])
+    const back = document.querySelector<HTMLElement>(
+      '.zen-frame-dialogs .zen-sheet-header-control[data-side="leading"]'
+    )!
+    expect(back.getAttribute('aria-label')).toBe('Back')
+    act(() => back.click())
+    await settle()
+    expect(titles()).toEqual(['Extensions', 'Vimium'])
+    act(() => menuItems()[1].click())
+    await settle()
+    act(() => menuItems()[0].click())
+    await land()
+    await land()
+    expect(commands()).toEqual([
+      ['extension.actionMenuClick', { id: VIMIUM, itemId: 'action_2_3' }]
+    ])
+    expect(titles()).toEqual([])
   })
 
   it('Remove from Zenium asks first, in the menu’s place, and removes once the answer has landed', async () => {

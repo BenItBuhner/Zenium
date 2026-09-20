@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { ExtensionAction, ExtensionInfo } from '@shared/types'
+import type { ExtensionAction, ExtensionInfo, MenuItemDescriptor } from '@shared/types'
 import {
   actionMenuCommand,
+  actionMenuGroups,
   actionMenuItems,
   actionSheetRows,
   actionTapCommand,
+  isOwnMenuItem,
+  ownMenuCommand,
   removeConfirm
 } from '../phoneActions'
 
@@ -146,22 +149,81 @@ describe('actionTapCommand', () => {
   })
 })
 
+/** A descriptor as `extension.actionMenuItems` answers one. */
+const own = (over: Partial<MenuItemDescriptor> & { id: string }): MenuItemDescriptor => ({
+  type: 'normal',
+  label: over.id,
+  enabled: true,
+  checked: false,
+  icon: null,
+  submenu: null,
+  ...over
+})
+
 describe('the hold’s menu', () => {
-  it('offers Options only when the manifest names an options page, then Remove and Manage', () => {
+  it('offers Options only when the manifest names an options page, then Manage, and Remove last', () => {
     expect(actionMenuItems({ optionsPage: 'options.html' }).map((item) => item.label)).toEqual([
       'Options',
-      'Remove from Zenium',
-      'Manage Extension'
+      'Manage Extension',
+      'Remove from Zenium'
     ])
     expect(actionMenuItems({ optionsPage: null }).map((item) => item.id)).toEqual([
-      'remove',
-      'manage'
+      'manage',
+      'remove'
     ])
+  })
+
+  it('puts the destructive row alone in the last group, under a hairline (§10.4)', () => {
+    const groups = actionMenuGroups({ optionsPage: 'o.html' })
+    expect(groups.map((g) => g.items.map((i) => i.id))).toEqual([['options', 'manage'], ['remove']])
+    expect(groups.every((g) => g.kind === 'browser')).toBe(true)
   })
 
   it('marks Remove as the destructive entry and no other', () => {
     const items = actionMenuItems({ optionsPage: 'o.html' })
     expect(items.filter((item) => item.danger).map((item) => item.id)).toEqual(['remove'])
+  })
+
+  it('puts the extension’s own action-context items first, in their own groups, above the browser’s', () => {
+    const items = [
+      own({ id: 'a1', label: 'Open Dashboard' }),
+      own({ id: 'a2', label: 'Dark Mode', type: 'checkbox', checked: true }),
+      own({ id: 'sep', type: 'separator', label: '' }),
+      own({ id: 'a3', label: 'More', submenu: [own({ id: 'a4', label: 'Report' })] })
+    ]
+    const groups = actionMenuGroups({ optionsPage: 'o.html' }, items)
+    expect(groups.map((g) => [g.kind, g.items.map((i) => i.id)])).toEqual([
+      ['own', ['a1', 'a2']],
+      ['own', ['a3']],
+      ['browser', ['options', 'manage']],
+      ['browser', ['remove']]
+    ])
+    // The extension's separators break its items into groups and are never rows themselves.
+    expect(
+      groups.flatMap((g) => g.items).some((i) => isOwnMenuItem(i) && i.type === 'separator')
+    ).toBe(false)
+    // Without items of its own the menu is the browser's alone.
+    expect(actionMenuGroups({ optionsPage: null }, []).map((g) => g.kind)).toEqual([
+      'browser',
+      'browser'
+    ])
+    expect(
+      actionMenuGroups({ optionsPage: null }, [own({ id: 'sep', type: 'separator' })])
+    ).toHaveLength(2)
+  })
+
+  it('tells the extension’s own items from the browser’s', () => {
+    expect(isOwnMenuItem(own({ id: 'x' }))).toBe(true)
+    expect(isOwnMenuItem({ id: 'remove', label: 'Remove from Zenium' })).toBe(false)
+  })
+
+  it('runs one of the extension’s items as extension.actionMenuClick with its handle, not a submenu or an off item', () => {
+    expect(ownMenuCommand('ext', own({ id: 'action_1_2' }))).toEqual({
+      name: 'extension.actionMenuClick',
+      args: { id: 'ext', itemId: 'action_1_2' }
+    })
+    expect(ownMenuCommand('ext', own({ id: 'p', submenu: [own({ id: 'c' })] }))).toBeNull()
+    expect(ownMenuCommand('ext', own({ id: 'off', enabled: false }))).toBeNull()
   })
 
   it('never offers Pin or Unpin: the phone has no toolbar', () => {

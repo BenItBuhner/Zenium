@@ -1,4 +1,10 @@
-import type { CommandArgs, CommandName, ExtensionInfo, Rect } from '@shared/types'
+import type {
+  CommandArgs,
+  CommandName,
+  ExtensionInfo,
+  MenuItemDescriptor,
+  Rect
+} from '@shared/types'
 import { badgeLabel, badgeStyle, type BadgeStyle } from './badge'
 import { actionEnabled, actionIcon, actionTitle } from './toolbar'
 
@@ -71,8 +77,8 @@ export function actionTapCommand(
   return { name: 'extension.openPopup', args: { id: row.id, anchor } }
 }
 
-/** The long-press menu's entries: Chrome's action context menu, less what a phone has no place for. */
-export type ActionMenuItemId = 'options' | 'remove' | 'manage'
+/** The browser's entries of the long-press menu: Chrome's action context menu, less what a phone has no place for. */
+export type ActionMenuItemId = 'options' | 'manage' | 'remove'
 
 export interface ActionMenuItem {
   id: ActionMenuItemId
@@ -83,17 +89,70 @@ export interface ActionMenuItem {
 }
 
 /**
- * Chrome's action context menu for a phone: Options when the manifest names an options page,
- * Remove from Zenium (with its confirmation) and Manage Extension. No Pin / Unpin: the phone
- * has no toolbar to pin to. The extension's own `contextMenus` items for its action are the
- * desktop menu's (`menus.ts`); a phone shows none until the core offers them as data.
+ * The long-press menu in Chrome's order, as groups a hairline tells apart: the extension's own
+ * `contextMenus` items for its action first (`extension.actionMenuItems`, in the layout the
+ * host answered: check states, submenus, its own separators as group breaks), then the
+ * browser's – Options when the manifest names an options page, Manage Extension – and last,
+ * under a hairline of its own, Remove from Zenium, the destructive row (§10.4). No Pin / Unpin:
+ * the phone has no toolbar to pin to.
  */
+export interface ActionMenuGroup {
+  /** The extension's items are `own` (a pick is `extension.actionMenuClick`); the rest the browser's. */
+  kind: 'own' | 'browser'
+  items: (MenuItemDescriptor | ActionMenuItem)[]
+}
+
+export function actionMenuGroups(
+  ext: Pick<ExtensionInfo, 'optionsPage'>,
+  own: readonly MenuItemDescriptor[] = []
+): ActionMenuGroup[] {
+  const groups: ActionMenuGroup[] = []
+  // The host's separators break the extension's items into groups, as the native menu draws them.
+  let group: MenuItemDescriptor[] = []
+  for (const item of own) {
+    if (item.type === 'separator') {
+      if (group.length) groups.push({ kind: 'own', items: group })
+      group = []
+    } else {
+      group.push(item)
+    }
+  }
+  if (group.length) groups.push({ kind: 'own', items: group })
+  const browser: ActionMenuItem[] = []
+  if (ext.optionsPage) browser.push({ id: 'options', label: 'Options' })
+  browser.push({ id: 'manage', label: 'Manage Extension' })
+  groups.push({ kind: 'browser', items: browser })
+  groups.push({
+    kind: 'browser',
+    items: [{ id: 'remove', label: 'Remove from Zenium', danger: true }]
+  })
+  return groups
+}
+
+/** The browser's entries alone, flat, in the menu's order (the groups above without the extension's). */
 export function actionMenuItems(ext: Pick<ExtensionInfo, 'optionsPage'>): ActionMenuItem[] {
-  const items: ActionMenuItem[] = []
-  if (ext.optionsPage) items.push({ id: 'options', label: 'Options' })
-  items.push({ id: 'remove', label: 'Remove from Zenium', danger: true })
-  items.push({ id: 'manage', label: 'Manage Extension' })
-  return items
+  return actionMenuGroups(ext).flatMap((group) => group.items as ActionMenuItem[])
+}
+
+/** Whether a row of the menu is one of the extension's own items (a descriptor) or the browser's. */
+export function isOwnMenuItem(
+  item: MenuItemDescriptor | ActionMenuItem
+): item is MenuItemDescriptor {
+  return 'type' in item
+}
+
+/**
+ * What a pick among the extension's own items runs: the item's handle back to the core
+ * (`extension.actionMenuClick`), which fires the extension's `contextMenus.onClicked` with
+ * Chrome's `OnClickData` for the `action` context and the active tab. Null for an item that
+ * only opens a submenu (the sheet drills in) or one the extension turned off.
+ */
+export function ownMenuCommand(
+  extensionId: string,
+  item: MenuItemDescriptor
+): SheetCommand<'extension.actionMenuClick'> | null {
+  if (item.submenu || !item.enabled) return null
+  return { name: 'extension.actionMenuClick', args: { id: extensionId, itemId: item.id } }
 }
 
 /** The confirmation the Remove entry opens (the wording of Settings › Extensions' Remove row). */
