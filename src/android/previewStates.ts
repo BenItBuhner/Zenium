@@ -600,8 +600,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'webapp' && tab) {
     seed()
     applyWebApp(target.surface, tab.id, spec)
-  } else if (target.kind === 'media' && tab) {
-    void applyMedia(tab.id, target.variant, target.sheet, spec)
+  } else if (target.kind === 'media' && state && tab) {
+    void applyMedia(state, tab, target.variant, target.sheet, spec)
   } else if (target.kind === 'qr') {
     // The stand-in camera takes the script, then the camera button is "tapped" for the active
     // tab: the scan sheet goes up and the script's events play into it. The state is reached at
@@ -1691,8 +1691,17 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
   }
 }
 
-/** The media a `media=<variant>` state seeded: the tab that reported it, and whether it was made for it. */
-let previewMedia: { tabId: string; made: boolean } | null = null
+/**
+ * The media a `media=<variant>` state seeded: the tab that reported it, whether it was made for
+ * it, the tab it stands on when that is not the one that was active (`from`, active again once
+ * the state goes), and that one when it was made for the state.
+ */
+let previewMedia: {
+  tabId: string
+  made: boolean
+  from: string | null
+  pageMade: string | null
+} | null = null
 
 /** The page the track of an `elsewhere` state plays in, opened behind the one on screen. */
 const PREVIEW_MEDIA_PAGE = 'https://en.wikipedia.org/wiki/Nocturne'
@@ -1748,27 +1757,51 @@ function postMedia(tabId: string, media: MediaReport): void {
 }
 
 /**
- * The active page (or, for `elsewhere`, a page opened behind it) reports its media: the core
+ * The web page a media state stands on – the pill's chips are a page's, so a state that follows
+ * a Settings state does not seed the Settings tab: the active tab while it is a page, else the
+ * space's first loose page (made active), else a page made for it. Returns the page and, when
+ * the active tab changed for it, which tab was active and whether the page was made.
+ */
+async function mediaPage(
+  state: UIState,
+  active: Tab
+): Promise<{ tabId: string; from: string | null; pageMade: string | null }> {
+  if (/^https?:/.test(active.url)) return { tabId: active.id, from: null, pageMade: null }
+  const page = regularOf(state, activeSpace(state)).find(
+    (t) => !t.folderId && /^https?:/.test(t.url)
+  )
+  const tabId =
+    page?.id ??
+    (await cmd('tab.create', { url: PREVIEW_MEDIA_PAGE, active: true, afterTabId: active.id }))
+  if (page) await cmd('tab.activate', { tabId })
+  await new Promise<void>((resolve) => untilState((s) => activeTab(s)?.id === tabId, resolve))
+  return { tabId, from: active.id, pageMade: page ? null : tabId }
+}
+
+/**
+ * The page on screen (or, for `elsewhere`, a page opened behind it) reports its media: the core
  * takes the session and the Now playing chip comes up in the pill; `sheet` then opens the
  * in-app player on it, the state reached once the store carries it.
  */
 async function applyMedia(
-  activeId: string,
+  state: UIState,
+  active: Tab,
   variant: PreviewMediaVariant,
   sheet: boolean,
   spec: string
 ): Promise<void> {
-  let tabId = activeId
+  const page = await mediaPage(state, active)
+  let tabId = page.tabId
   let made = false
   if (variant === 'elsewhere') {
     tabId = await cmd('tab.create', {
       url: PREVIEW_MEDIA_PAGE,
       active: false,
-      afterTabId: activeId
+      afterTabId: page.tabId
     })
     made = true
   }
-  previewMedia = { tabId, made }
+  previewMedia = { tabId, made, from: page.from, pageMade: page.pageMade }
   const report = mediaReport(variant)
   postMedia(tabId, report)
   await new Promise<void>((resolve) =>
@@ -1788,14 +1821,20 @@ async function applyMedia(
   }
 }
 
-/** The media the last state seeded goes: the sheet closes, the page reports none, a tab made for it closes. */
+/**
+ * The media the last state seeded goes: the sheet closes, the page reports none, the tabs made
+ * for the state close and the tab that was active before it is active again.
+ */
 function unseedMedia(): void {
   const seeded = previewMedia
   previewMedia = null
   closeMediaSheet()
   if (!seeded) return
+  const state = browserStore.get().state
   postMedia(seeded.tabId, EMPTY_MEDIA_REPORT)
+  if (seeded.from && state?.tabs[seeded.from]) void run('tab.activate', { tabId: seeded.from })
   if (seeded.made) void run('tab.close', { tabId: seeded.tabId, force: true })
+  if (seeded.pageMade) void run('tab.close', { tabId: seeded.pageMade, force: true })
 }
 
 /**
