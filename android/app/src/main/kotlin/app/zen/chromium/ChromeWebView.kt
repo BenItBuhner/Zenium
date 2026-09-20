@@ -40,6 +40,9 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     private val whenReady = ArrayList<() -> Unit>()
 
     init {
+        // Named in the view hierarchy (`R.id.zen_chrome`) so the accessibility tree tells the
+        // chrome's WebView from the tabs' (`viewIdResourceName`); nothing reads it otherwise.
+        id = R.id.zen_chrome
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -49,8 +52,10 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
-            // The chrome is designed in CSS pixels; system font scaling would break its layout.
-            textZoom = 100
+            // The chrome is designed in CSS px; only its text follows the system font size, and
+            // the chrome grows its line boxes to match (`ChromeTextScale`, re-applied on a
+            // configuration change by `MainActivity`).
+            textZoom = ChromeTextScale.textZoomPercent(resources)
             cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
             // The chrome places focus itself (the address field, a dialog's first field). With a
             // keyboard attached the device is out of touch mode, and requestFocus() would otherwise
@@ -131,6 +136,20 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     fun load() {
         val dev = BuildConfig.DEV_SERVER_URL
         loadUrl(if (dev.isNotEmpty()) dev else "$APP_ORIGIN/assets/www/index.html")
+    }
+
+    /**
+     * The system font size changed (`MainActivity.onConfigurationChanged`): the text takes the new
+     * zoom at once, and the chrome hears the factor through the `environment` event that follows.
+     * Answers the percent in force.
+     */
+    fun applyTextScale(): Int {
+        val percent = ChromeTextScale.textZoomPercent(resources)
+        if (settings.textZoom != percent) {
+            Log.d("ZenChrome", "text zoom ${settings.textZoom} -> $percent (font scale ${resources.configuration.fontScale})")
+            settings.textZoom = percent
+        }
+        return percent
     }
 
     /**

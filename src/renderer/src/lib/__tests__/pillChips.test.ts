@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   PILL_CHIP_FOLDS,
   foldPillChips,
-  foldedChipsSpoken,
   liveArrival,
   pillChipFold,
   type PillChipFoldSpec
@@ -166,19 +165,5 @@ describe('liveArrival: the states’ order of arrival', () => {
     expect(liveArrival(previous, live)).toEqual(liveArrival(previous, live))
     expect(previous).toEqual(['media'])
     expect(live).toEqual(['save-prompt', 'media'])
-  })
-})
-
-describe('foldedChipsSpoken: what TalkBack hears at the address', () => {
-  it('reads the folded states in the pill’s order', () => {
-    expect(foldedChipsSpoken(['5 requests blocked', 'Translation offered'])).toBe(
-      '5 requests blocked, Translation offered'
-    )
-  })
-
-  it('skips a chip with nothing to report, and is empty on a quiet page', () => {
-    expect(foldedChipsSpoken(['', 'Translation offered'])).toBe('Translation offered')
-    expect(foldedChipsSpoken([''])).toBe('')
-    expect(foldedChipsSpoken([])).toBe('')
   })
 })

@@ -114,16 +114,3 @@ export function foldPillChips<T extends PillChipFoldSpec>(
     yielded: chips.filter((c) => c.fold === 'glyph')
   }
 }
-
-/**
- * What TalkBack hears of the sheet's chips at the pill's one stop (#237's address label): their
- * states, in the pill's order, after the address – "Address, github.com, 5 requests blocked,
- * Translation offered". States rather than a count: "2 more in site information" would send the
- * user to the sheet to learn what a glance at the sheet's rows tells a sighted user; the states
- * say it here. A chip with nothing to report (nothing blocked yet) says nothing, so the label
- * on a quiet page is #237's alone. A live state waiting in the sheet is spoken here too ("Now
- * playing"); the one in the pill has its own stop.
- */
-export function foldedChipsSpoken(states: readonly string[]): string {
-  return states.filter((s) => s.length > 0).join(', ')
-}

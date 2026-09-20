@@ -180,8 +180,9 @@ function fadeOver(
  * horizontal scroller with fading edges, and the plus chip that opens a new tab in the group.
  * Chips are §9.22 buttons: in the tab order, each with its own label, the active one marked
  * `aria-current`. The tray's radius is the pill's (22) and the chips' 18 sit 4 inside it; a
- * chip's cell – its touch target – is the tray's 44 by the slot's 40 pitch, the 36 face inside
- * it what it shows (main.css).
+ * chip's cell – its touch target – is §9.3's 44 x 44 box laid over the slot's 40 pitch (the
+ * cells overlap by 4, the later one taking the shared strip), the 36 face inside it what it
+ * shows (main.css).
  *
  * Motion (v2 §11): the strip slides out of the bar's row and back behind it on `SPRING_SNAPPY`,
  * clipped to its own band; a chip that joins scales in at its slot while the chips after it

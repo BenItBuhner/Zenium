@@ -13,8 +13,9 @@ import type { BarItemContext } from './barItems'
  * The bar at real size, as the editor's live preview: the controls of `layout` either side of
  * the address pill, laid out by `phoneBarGeometry` rather than by flex so that every change is
  * a rect the elements can spring to. The controls are the bar's own `BarButton`s, so the
- * preview measures one and lays the rest out at that size (32 px under a coarse pointer today,
- * the 44 px target on a fine one) with the same 4 px gaps and 8 px padding as the bar. A
+ * preview measures one and lays the rest out at the room it takes (its margin box: on the phone
+ * the 44 box on the 32 it overlaps its neighbours from, v2 §9.3; the 44 target itself on a fine
+ * pointer) with the same 4 px gaps and 8 px padding as the bar. A
  * control that joins slides its neighbours apart and grows in; one that leaves shrinks away
  * while the rest close up; the pill's left edge and width follow on the same spring. The whole
  * catalogue stays mounted (controls out of the bar sit hidden at presence 0), so styles are
@@ -44,8 +45,7 @@ export function BarPreview({
       const button = sample?.firstElementChild
       const next = {
         width: el.clientWidth,
-        button:
-          button instanceof HTMLElement && button.offsetWidth > 0 ? button.offsetWidth : BAR_BUTTON
+        button: button instanceof HTMLElement ? buttonRoom(button) : BAR_BUTTON
       }
       setSize((prev) => (prev.width === next.width && prev.button === next.button ? prev : next))
     }
@@ -104,6 +104,21 @@ export function BarPreview({
         </span>
       </div>
     </div>
+  )
+}
+
+/**
+ * The room a control takes in the bar's row: its margin box. On the phone the 44 box sits on a
+ * 32 margin box (main.css, v2 §9.3: the boxes overlap on the 36 pitch so the pill keeps its
+ * room), so the preview lays the boxes out on the same pitch the bar's flex row does, the
+ * wrapper shrinking to the margin box and the button spilling over it as it does in the bar.
+ * Before the first layout the button has no size; the catalogue's box stands in.
+ */
+function buttonRoom(button: HTMLElement): number {
+  if (button.offsetWidth <= 0) return BAR_BUTTON
+  const style = getComputedStyle(button)
+  return (
+    button.offsetWidth + (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0)
   )
 }
 

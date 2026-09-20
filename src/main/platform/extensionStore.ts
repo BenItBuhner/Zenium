@@ -220,12 +220,18 @@ export const SHADOW_DIR = '.shadow'
 
 /**
  * The developer's folder is never written to. What the engine loads instead is a shadow under
- * `<root>/.shadow/<id>/`: every top-level entry of the folder linked in (copied when the
- * platform refuses symlinks), the prelude beside them, and the engine's manifest
- * (`engineManifest`: the prelude first in its content-script lists, the withheld permissions
- * out) with a synthetic `key` that hashes to the id Chrome gives the folder
- * (`idForUnpackedPath`), so the id survives the move. Rebuilt on every load, so a reload picks
- * up the folder's manifest changes as it did before; links keep the other files live.
+ * `<root>/.shadow/<id>/`: every top-level entry of the folder copied in, the prelude beside
+ * them, and the engine's manifest (`engineManifest`: the prelude first in its content-script
+ * lists, the withheld permissions out) with a synthetic `key` that hashes to the id Chrome
+ * gives the folder (`idForUnpackedPath`), so the id survives the move. Rebuilt on every load,
+ * so a reload picks up the folder's changes as Chrome's reload of an unpacked extension does.
+ *
+ * Copies, not links: Chromium reads a content script through `ExtensionResource::GetFilePath`
+ * with `SYMLINKS_MUST_RESOLVE_WITHIN_ROOT` whatever the extension's own symlink policy
+ * (`ExtensionUserScriptLoader`'s `LoadScriptContent`), so a script linked to the developer's
+ * folder resolves outside the shadow and is dropped with "Failed to get file path": the
+ * extension's pages ran and its content scripts never did. Symlinks inside the folder are
+ * followed while copying, as Chrome follows them for an unpacked extension.
  */
 export async function shadowUnpacked(root: string, id: string, path: string): Promise<string> {
   const dir = join(root, SHADOW_DIR, id)
@@ -240,13 +246,10 @@ export async function shadowUnpacked(root: string, id: string, path: string): Pr
       entry.name === DECLARED_MANIFEST_FILE
     )
       continue
-    const from = join(path, entry.name)
-    const to = join(staging, entry.name)
-    try {
-      await fs.symlink(from, to, entry.isDirectory() ? 'junction' : 'file')
-    } catch {
-      await fs.cp(from, to, { recursive: true, dereference: true })
-    }
+    await fs.cp(join(path, entry.name), join(staging, entry.name), {
+      recursive: true,
+      dereference: true
+    })
   }
   const raw = await fs.readFile(join(path, 'manifest.json'))
   const manifest = transformManifestBytes(raw, (parsed) => ({

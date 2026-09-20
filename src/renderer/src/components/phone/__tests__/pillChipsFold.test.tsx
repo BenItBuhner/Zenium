@@ -379,8 +379,9 @@ describe('PillContent at rest', () => {
       <PillContent state={offered(state(counted))} tab={counted} space={space} interactive />
     )
     expect(shown(el)).toEqual(['lock'])
+    // The address speaks #237's connection state first, then the sheet chips' states (A11Y-01).
     expect(labels(el)).toEqual([
-      'Address, github.com, 5 requests blocked, Translation offered',
+      'Address, github.com, Connection is secure, 5 requests blocked, Translation offered',
       'Site information',
       'Connection is secure'
     ])
@@ -392,7 +393,7 @@ describe('PillContent at rest', () => {
   it('keeps the address label #237’s alone on a quiet page', () => {
     const el = render(<PillContent state={state(page)} tab={page} space={space} interactive />)
     expect(shown(el)).toEqual(['lock'])
-    expect(addressLabel(el)).toBe('Address, github.com')
+    expect(addressLabel(el)).toBe('Address, github.com, Connection is secure')
   })
 
   it('a live Now playing chip takes the lock’s slot: the lock gives way, the chip is its own stop, the address says nothing of it', () => {
@@ -405,8 +406,9 @@ describe('PillContent at rest', () => {
       />
     )
     expect(shown(el)).toEqual(['media'])
+    // The lock gave way, but the address still speaks the connection's state (#237, A11Y-01).
     expect(labels(el)).toEqual([
-      'Address, github.com, 5 requests blocked, Translation offered',
+      'Address, github.com, Connection is secure, 5 requests blocked, Translation offered',
       'Site information',
       'Now playing'
     ])
@@ -423,7 +425,11 @@ describe('PillContent at rest', () => {
       root!.render(<PillContent state={state(page)} tab={page} space={space} interactive />)
     )
     expect(shown(el)).toEqual(['lock'])
-    expect(labels(el)).toEqual(['Address, github.com', 'Site information', 'Connection is secure'])
+    expect(labels(el)).toEqual([
+      'Address, github.com, Connection is secure',
+      'Site information',
+      'Connection is secure'
+    ])
   })
 
   it('has no chip run at all on an http page: the shield went to the sheet and there is no lock', () => {
@@ -431,7 +437,7 @@ describe('PillContent at rest', () => {
     const el = render(<PillContent state={state(plain)} tab={plain} space={space} interactive />)
     expect(shown(el)).toEqual([])
     expect(el.querySelector('[data-testid="pill-chips"]')).toBeNull()
-    expect(labels(el)).toEqual(['Address, example.com', 'Site information'])
+    expect(labels(el)).toEqual(['Address, example.com, Not secure', 'Site information'])
   })
 
   it('the carried pill draws the same run inert', () => {

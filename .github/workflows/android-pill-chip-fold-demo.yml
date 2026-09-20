@@ -5,8 +5,8 @@ name: Android pill chip fold demo
 # (PillChipFoldDemo): the resting pill carrying the favicon, the host and the lock alone in light
 # and dark with the bar docked at the top and at the bottom (the stills
 # `android-chip-fold-rest-github-{light,dark}-{top,bottom}`), the host box measured on Bennett's
-# five-button bar and on the default bar at the system font size, at 130 percent and with #237's
-# text zoom emulated, the site-information sheet's rows for the folded chips (the shield with its
+# five-button bar and on the default bar at the system font size and at 130 percent (the chrome's
+# text following it, #237), the site-information sheet's rows for the folded chips (the shield with its
 # count leading to Settings › Privacy and Security, the translate offer raising its bar), a playing
 # video taking the lock's slot with the Now playing chip on the §11.4 cross-fade (the chrome's
 # `animate` calls on record) and giving it back, and what TalkBack hears at the address stop. The

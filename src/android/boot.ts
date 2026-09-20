@@ -34,6 +34,7 @@ import {
   type PullEventPayload,
   type PullEventPhase
 } from '@renderer/lib/pull'
+import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments } from './handoff'
@@ -140,6 +141,9 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
+  // The chrome's text at the system font size (A11Y-05): the host drew it at `textZoom` already;
+  // the line boxes follow from here. Changes arrive with the `environment` event (platform.ts).
+  applyTextScale(boot.environment)
   browser.start()
   hostGlobal.flush()
 
@@ -344,10 +348,11 @@ function installHostGlobal(
           })
           return
         }
-        platform.hostEvent(
-          name as keyof HostEventPayloads,
-          parse<HostEventPayloads[keyof HostEventPayloads]>(json)
-        )
+        const payload = parse<HostEventPayloads[keyof HostEventPayloads]>(json)
+        platform.hostEvent(name as keyof HostEventPayloads, payload)
+        // A configuration change: the host has re-zoomed the chrome's text already, and the
+        // line boxes follow the factor it reports (`lib/textScale.ts`).
+        if (name === 'environment') applyTextScale(payload as HostEventPayloads['environment'])
       }),
     onKey: (tabId, json) =>
       queued === null

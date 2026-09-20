@@ -306,7 +306,15 @@ export function pillChipRows(
   )
 }
 
-/** What TalkBack hears of the sheet's chips at the address, in the pill's order (`foldedChipsSpoken`). */
+/**
+ * What TalkBack hears of the sheet's chips at the pill's one stop, in the pill's order: their
+ * states – "5 requests blocked", "Translation offered" – which `phoneAddressLabel` (#237's
+ * address label, `lib/pillLabel.ts`) speaks after the connection's state. States rather than a
+ * count: "2 more in site information" would send the user to the sheet to learn what a glance
+ * at its rows tells a sighted user; the states say it here. A chip with nothing to report
+ * (nothing blocked yet) says nothing, so the label on a quiet page is #237's alone. A live state
+ * waiting in the sheet is spoken here too ("Now playing"); the one in the pill has its own stop.
+ */
 export function pillChipsSpoken(chips: readonly PillChipModel[]): string[] {
   return foldPhonePillChips(chips).folded.map((chip) => chip.spoken)
 }

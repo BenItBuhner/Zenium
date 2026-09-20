@@ -569,7 +569,8 @@ describe('phone pill (PillContent)', () => {
     const el = render(<PillContent state={state(page)} tab={page} space={space} interactive />)
     const order = focusable(el)
     expect(order.length).toBe(3)
-    expect(order[0].getAttribute('aria-label')).toBe('Address, example.com')
+    // The address speaks the connection's state too (A11Y-01): the lock is drawn, and said.
+    expect(order[0].getAttribute('aria-label')).toBe('Address, example.com, Connection is secure')
     expectChip(order[1], 'Site information')
     expectChip(order[2], 'Connection is secure')
     expect(order[1].hasAttribute('data-site-info')).toBe(true)
@@ -591,7 +592,8 @@ describe('phone pill (PillContent)', () => {
   it('has no lock chip on a plain http page', () => {
     const http = tab('http://example.com/')
     const el = render(<PillContent state={state(http)} tab={http} space={space} interactive />)
-    expect(labels(focusable(el))).toEqual(['Address, example.com', 'Site information'])
+    // No chip draws the state, so the address says it (A11Y-01 on OMN-02).
+    expect(labels(focusable(el))).toEqual(['Address, example.com, Not secure', 'Site information'])
   })
 
   it('names an extension’s page after the extension, its icon in the slot, no lock or translate chip (§10.1)', () => {
@@ -617,7 +619,7 @@ describe('phone pill (PillContent)', () => {
       // other readers want the sidebar's collections too).
       browserStore.set({ state: { ...s, folders: {}, essentialTabIds: [], glance: null } })
       const el = render(<PillContent state={s} tab={page} space={space} interactive />)
-      expect(labels(focusable(el))).toEqual(['Address, Vimium', 'Site information'])
+      expect(labels(focusable(el))).toEqual(['Address, Vimium, Extension page', 'Site information'])
       expect(el.textContent).toContain('Vimium')
       expect(el.textContent).not.toContain(id)
       expect(el.textContent).not.toContain('.ext.zenium.invalid')
@@ -633,7 +635,9 @@ describe('phone pill (PillContent)', () => {
     s.translate = { available: true, tabs: { [site.id]: { status: 'offered' } } } as never
     const el = render(<PillContent state={s} tab={site} space={space} interactive />)
     expect(el.querySelector('[data-translate]')).toBeNull()
-    expect(labels(focusable(el))[0]).toBe('Address, example.com, Translation offered')
+    expect(labels(focusable(el))[0]).toBe(
+      'Address, example.com, Connection is secure, Translation offered'
+    )
   })
 
   it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
@@ -676,7 +680,7 @@ describe('phone pill (PillContent)', () => {
       )
       const order = focusable(el)
       expect(labels(order)).toEqual([
-        'Address, example.com',
+        'Address, example.com, Connection is secure',
         'Site information',
         'Connection is secure'
       ])
@@ -743,7 +747,7 @@ describe('phone pill (PillContent)', () => {
       )
       expect(el.querySelector('[data-media]')).toBeNull()
       expect(labels(focusable(el))).toEqual([
-        'Address, example.com',
+        'Address, example.com, Connection is secure',
         'Site information',
         'Connection is secure'
       ])
@@ -755,8 +759,12 @@ describe('phone pill (PillContent)', () => {
       )
       const order = focusable(el)
       // The lock gave way to the live state: the site icon ahead of the address still opens
-      // the site information.
-      expect(labels(order)).toEqual(['Address, example.com', 'Site information', 'Now playing'])
+      // the site information, and the address keeps speaking the connection's state (A11Y-01).
+      expect(labels(order)).toEqual([
+        'Address, example.com, Connection is secure',
+        'Site information',
+        'Now playing'
+      ])
       const chip = el.querySelector<HTMLElement>('[data-media]')!
       expectChip(chip, 'Now playing')
       expect(chip.hasAttribute('data-pill-chip')).toBe(true)

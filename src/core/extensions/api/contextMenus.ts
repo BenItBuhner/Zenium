@@ -406,9 +406,68 @@ export function substituteSelection(title: string, selectionText: string): strin
 }
 
 /**
- * The per-extension item store. Mutations validate against Chrome's rules; hosts persist nothing
- * (Chrome only keeps items across restarts for event pages, which recreate them on `onInstalled`
- * anyway; MV3 workers do the same).
+ * One item as a host persists it for an extension with a lazy background (Chrome's
+ * `MenuItem::ToValue`): the tree flattened depth-first, parents before their children, so a
+ * restore can add them in order. `contexts` is a list here (a `Set` does not serialise).
+ */
+export interface PersistedMenuItem {
+  id: MenuItemId
+  type: MenuItemType
+  title: string
+  checked: boolean
+  contexts: MenuContextType[]
+  visible: boolean
+  enabled: boolean
+  parentId: MenuItemId | null
+  documentUrlPatterns: string[]
+  targetUrlPatterns: string[]
+}
+
+/**
+ * Chrome's `BackgroundInfo::HasLazyContext`: an MV3 service worker or an MV2 event page. Only
+ * these extensions' menus are written to storage (`MenuManager::WriteToStorage`): a persistent
+ * background page recreates its items every start, a lazy one is not running to do so.
+ */
+export function hasLazyBackground(manifest: {
+  manifest_version?: unknown
+  background?: unknown
+}): boolean {
+  const background = manifest.background
+  if (background === null || typeof background !== 'object') return false
+  const record = background as Record<string, unknown>
+  if (manifest.manifest_version === 3) return typeof record.service_worker === 'string'
+  return record.persistent === false
+}
+
+function isPersistedMenuItem(value: unknown): value is PersistedMenuItem {
+  if (!isRecord(value)) return false
+  if (!isMenuItemId(value.id)) return false
+  if (
+    value.type !== 'normal' &&
+    value.type !== 'checkbox' &&
+    value.type !== 'radio' &&
+    value.type !== 'separator'
+  )
+    return false
+  if (typeof value.title !== 'string') return false
+  if (
+    !Array.isArray(value.contexts) ||
+    !value.contexts.every((c) => MENU_CONTEXT_TYPES.includes(c as MenuContextType))
+  )
+    return false
+  if (value.parentId !== null && !isMenuItemId(value.parentId)) return false
+  const strings = (raw: unknown): boolean =>
+    Array.isArray(raw) && raw.every((p) => typeof p === 'string')
+  return strings(value.documentUrlPatterns) && strings(value.targetUrlPatterns)
+}
+
+/**
+ * The per-extension item store. Mutations validate against Chrome's rules. Hosts persist the
+ * items of extensions with a lazy background (`toPersisted` after every change, `restore` when
+ * the extension loads), as Chrome's `MenuManager` does through the `StateStore`: the items an
+ * event page or worker created on `onInstalled` are there at the next start without it running,
+ * and a `create` with the same id then fails with Chrome's duplicate-id error until the
+ * extension removes them.
  */
 export class MenuRegistry {
   private readonly items = new Map<string, MenuItem>()
@@ -508,6 +567,64 @@ export class MenuRegistry {
   removeAll(): void {
     this.items.clear()
     this.topLevel.length = 0
+  }
+
+  /** The tree flattened depth-first, parents before children (Chrome's `GetFlattenedSubtree`). */
+  toPersisted(): PersistedMenuItem[] {
+    const out: PersistedMenuItem[] = []
+    const walk = (id: MenuItemId): void => {
+      const item = this.items.get(menuKey(id))
+      if (!item) return
+      out.push({
+        id: item.id,
+        type: item.type,
+        title: item.title,
+        checked: item.checked,
+        contexts: [...item.contexts],
+        visible: item.visible,
+        enabled: item.enabled,
+        parentId: item.parentId,
+        documentUrlPatterns: [...item.documentUrlPatterns],
+        targetUrlPatterns: [...item.targetUrlPatterns]
+      })
+      for (const childId of item.children) walk(childId)
+    }
+    for (const id of this.topLevel) walk(id)
+    return out
+  }
+
+  /**
+   * Add persisted items in order (Chrome's `MenuManager::ReadFromStorage`): an entry that is not
+   * an item, one whose id exists already (the extension recreated it first) or one whose parent
+   * is missing is skipped, the rest are added. Returns how many were added.
+   */
+  restore(persisted: unknown): number {
+    if (!Array.isArray(persisted)) return 0
+    let added = 0
+    for (const entry of persisted) {
+      if (!isPersistedMenuItem(entry)) continue
+      if (this.items.has(menuKey(entry.id))) continue
+      if (entry.parentId !== null && !this.items.has(menuKey(entry.parentId))) continue
+      if (this.items.size >= MAX_ITEMS_PER_EXTENSION) break
+      try {
+        this.create({
+          id: entry.id,
+          type: entry.type,
+          title: entry.title,
+          checked: entry.type === 'checkbox' || entry.type === 'radio' ? entry.checked : undefined,
+          contexts: entry.contexts.length > 0 ? entry.contexts : undefined,
+          visible: entry.visible,
+          enabled: entry.enabled,
+          parentId: entry.parentId ?? undefined,
+          documentUrlPatterns: entry.documentUrlPatterns,
+          targetUrlPatterns: entry.targetUrlPatterns
+        })
+        added += 1
+      } catch {
+        // Chrome logs "Unable to add menu item read from storage." and moves on.
+      }
+    }
+    return added
   }
 
   /**

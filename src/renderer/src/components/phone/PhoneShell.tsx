@@ -2,6 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
+import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
 import { chromeGutter } from '@renderer/hooks/useTheme'
@@ -20,7 +21,7 @@ import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
-import { foldedChipsSpoken } from '@renderer/lib/pillChips'
+import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -432,11 +433,13 @@ export function PhoneBar({
         {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
           buttons inside it, so TalkBack gets a node for each (a button's descendants would all
-          collapse into one). Taps are told apart in onTap by what was under the finger.
+          collapse into one). Taps are told apart in onTap by what was under the finger. The
+          surface itself carries no role and no name: a named container that takes clicks is a
+          TalkBack stop of its own ("Address") before the field inside it says the same and more
+          (#108's follow-up, A11Y-01), and nothing in it but its buttons may speak (the space
+          label is hidden from the tree, the address button says the space instead).
         */}
         <div
-          role="group"
-          aria-label={inert ? undefined : 'Address'}
           className={cn(
             'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
             pillLook === 'docked' &&
@@ -526,16 +529,18 @@ export function PillContent({
   })
   const drawn = pillChipsDrawn(chips)
   const spaceLabel = state.spaces.length > 1 ? space.icon || space.name : null
-  // What TalkBack hears at the address, the pill's one stop: the host, then the states of the
-  // chips the sheet carries, in the pill's order ("Address, github.com, 5 requests blocked,
-  // Translation offered") – the states themselves rather than a count, so the stop tells what
-  // the sheet would show; a quiet page (nothing blocked yet, no offer) adds nothing.
-  const spoken = foldedChipsSpoken(pillChipsSpoken(chips))
-  const addressLabel = url
-    ? spoken
-      ? `Address, ${url}, ${spoken}`
-      : `Address, ${url}`
-    : 'Search or enter address'
+  // What TalkBack hears at the address, the pill's one stop (`phoneAddressLabel`): the host,
+  // the connection's state as the core derives it (`securityIndicator`; spoken here even while
+  // the pill draws no lock, A11Y-01), then the states of the chips the sheet carries, in the
+  // pill's order ("Address, github.com, Connection is secure, 5 requests blocked, Translation
+  // offered") – the states themselves rather than a count, so the stop tells what the sheet
+  // would show; a quiet page (nothing blocked yet, no offer) adds nothing – then the space,
+  // when there is more than one.
+  const indicator = shown
+    ? securityIndicator(shown.url, shown.errorCode ?? null, shown.certificateError ?? null)
+    : null
+  const spaceName = state.spaces.length > 1 ? space.name : null
+  const addressLabel = phoneAddressLabel(url, indicator, spaceName, pillChipsSpoken(chips))
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   // The leading glyph, drawn ahead of the address with `order-first`. The chips are §9.3's
@@ -599,7 +604,10 @@ export function PillContent({
       */}
       <ChipRun chips={drawn} interactive={interactive} />
       {spaceLabel && (
-        <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">
+        <span
+          className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]"
+          aria-hidden="true"
+        >
           {spaceLabel}
         </span>
       )}

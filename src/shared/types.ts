@@ -2209,6 +2209,17 @@ export interface PageEnvironment {
   pointerAndKeyboard: boolean
   /** The system font scale (Android `Configuration.fontScale`); 1 on hosts without one. */
   fontScale: number
+  /**
+   * The factor the host draws the chrome's own text at (Android: the chrome WebView's `textZoom`,
+   * `ChromeTextScale.kt`: what the system does to 15 sp, non-linear on Android 14). The chrome
+   * grows its line boxes by it (`lib/textScale.ts`); absent (1) on hosts that scale no text.
+   */
+  textZoom?: number
+  /**
+   * The system's bold-text setting as a weight adjustment (Android 12+
+   * `Configuration.fontWeightAdjustment`: 300 when on); 0 or absent when off.
+   */
+  fontWeightAdjustment?: number
 }
 
 // ---------------------------------------------------------------------------

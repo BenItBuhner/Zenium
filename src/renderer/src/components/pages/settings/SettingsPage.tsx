@@ -218,7 +218,6 @@ function Landing({
             role="searchbox"
             className="zen-v2-field zen-settings-search-field"
             placeholder="Find in Settings"
-            aria-label="Find in Settings"
             inputMode="search"
             enterKeyHint="search"
             autoCapitalize="off"

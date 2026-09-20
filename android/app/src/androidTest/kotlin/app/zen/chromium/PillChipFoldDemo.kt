@@ -28,10 +28,9 @@ import kotlin.math.roundToInt
  *     spoken at the pill's address stop instead. Stills of the resting pill in light and dark,
  *     the bar docked at the top and at the bottom (`rest-github-{light,dark}-{top,bottom}`).
  *  2. The host's room: the host box measured in CSS px on Bennett's five-button bar and on the
- *     default bar, at the system font size (1.0), at 130 percent (the chrome's text does not
- *     follow it on this head: #237's, so `textZoom` stays 100 and the box holds), and with
- *     #237's mechanism emulated (`WebSettings.textZoom` 130, the text alone growing): the box
- *     and the host text's own width, and whether the text is cut.
+ *     default bar, at the system font size (1.0) and at 130 percent (the chrome's text follows
+ *     it, #237: `ChromeTextScale` on the chrome WebView's `textZoom`, the text alone growing):
+ *     the box and the host text's own width, and whether the text is cut.
  *  3. The site-information sheet's rows for the folded chips: the shield with the count as its
  *     value, the translate offer with its pair; a finger on the translate row raises the
  *     translate bar, a finger on the shield row leads to Settings › Privacy and Security.
@@ -191,8 +190,8 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
     /**
      * 2. The host's room (v2 §9.29: "412 − the bar's buttons − favicon − one chip leaves it about
      * 200 px, and no chip may take that below 150"): the host box in CSS px on Bennett's
-     * five-button bar and on the default bar, at the system font size, at 130 percent, and with
-     * #237's text zoom emulated.
+     * five-button bar and on the default bar, at the system font size and at 130 percent (the
+     * chrome's text following it, #237).
      */
     private fun hostRoomStep() {
         note("\n2. the host's room")
@@ -207,11 +206,12 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
                 .put("pillWidth", pill.optDouble("pillWidth"))
                 .put("fontSize", pill.optString("fontSize"))
                 .put("textZoom", chromeTextZoom())
-                .put("fontScale", coreState().optJSONObject("pageEnvironment")?.optDouble("fontScale") ?: 1.0)
+                .put("textZoomHeard", textZoomHeard())
+                .put("fontScale", fontScaleHeard())
                 .put("bar", pill.optJSONArray("bar"))
             room.put(name, entry)
             note("  $describe: host box ${fmt(entry.getDouble("hostBox"))} px, text ${fmt(entry.getDouble("textWidth"))} px (${pill.optString("hostText")}), " +
-                "${if (entry.getBoolean("truncated")) "CUT" else "not cut"}, pill ${fmt(entry.getDouble("pillWidth"))} px, font ${entry.getString("fontSize")}, textZoom ${entry.getInt("textZoom")}, fontScale ${entry.getDouble("fontScale")}")
+                "${if (entry.getBoolean("truncated")) "CUT" else "not cut"}, pill ${fmt(entry.getDouble("pillWidth"))} px, font ${entry.getString("fontSize")}, textZoom ${entry.getInt("textZoom")} (heard ${entry.getDouble("textZoomHeard")}), fontScale ${entry.getDouble("fontScale")}")
         }
         // (a) The system font size 1.0.
         measure("bennett-1.0", "Bennett's five-button bar, font scale 1.0")
@@ -219,38 +219,40 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         measure("default-1.0", "the default bar, font scale 1.0")
         setPhoneBar(BENNETT_BAR)
 
-        // (b) The system font size at 130 percent: the host tells the chrome (environment.fontScale);
-        //     the chrome's own text does not follow it on this head (ChromeWebView pins textZoom
-        //     at 100; #237 makes it follow), so the box and the text hold.
+        // (b) The system font size at 130 percent: the chrome's text follows it on its own
+        //     (#237: `MainActivity.onConfigurationChanged` puts `ChromeTextScale`'s percent on
+        //     the chrome WebView's `textZoom` and says so in `environment.textZoom`; the text
+        //     alone grows, the boxes and glyphs hold), so the host box is read as it is.
         shell("settings put system font_scale 1.3")
-        val followed = poll(12_000) { (coreState().optJSONObject("pageEnvironment")?.optDouble("fontScale") ?: 1.0) > 1.25 }
-        note("  system font size 130 percent: the chrome heard fontScale ${if (followed) "1.3" else "(not within 12 s)"}")
-        measure("bennett-1.3-system", "Bennett's bar, system font scale 1.3 (chrome text pinned at textZoom 100 on this head)")
-
-        // (c) #237's mechanism emulated: WebSettings.textZoom 130 on the chrome, the text alone growing.
-        setChromeTextZoom(130)
-        measure("bennett-1.3-textzoom", "Bennett's bar, textZoom 130 (#237 emulated)")
+        val followed = poll(15_000) { chromeTextZoom() >= 125 && textZoomHeard() > 1.2 }
+        note("  system font size 130 percent: textZoom ${chromeTextZoom()} on the chrome, the chrome heard textZoom ${textZoomHeard()} fontScale ${fontScaleHeard()}${if (followed) "" else " (not within 15 s)"}")
+        claim("the chrome's text follows the system font size (#237)", followed, "textZoom ${chromeTextZoom()}, heard ${textZoomHeard()}")
+        measure("bennett-1.3", "Bennett's bar, system font scale 1.3")
         shot("fontscale-130-$THEME-${barPosition()}")
         setPhoneBar(DEFAULT_BAR)
-        measure("default-1.3-textzoom", "the default bar, textZoom 130 (#237 emulated)")
+        measure("default-1.3", "the default bar, system font scale 1.3")
         setPhoneBar(BENNETT_BAR)
-        setChromeTextZoom(100)
         shell("settings put system font_scale 1.0")
-        poll(12_000) { (coreState().optJSONObject("pageEnvironment")?.optDouble("fontScale") ?: 1.0) < 1.05 }
+        poll(15_000) { chromeTextZoom() == 100 && textZoomHeard() < 1.05 }
         SystemClock.sleep(1_000)
         results.put("hostRoom", room)
 
         // The claims: the rule's 150 on the default bar at either size; the text never cut.
-        for (name in listOf("default-1.0", "default-1.3-textzoom")) {
+        for (name in listOf("default-1.0", "default-1.3")) {
             val entry = room.getJSONObject(name)
             claim("host box >= 150 px on the default bar ($name)", entry.getDouble("hostBox") >= 150, "${fmt(entry.getDouble("hostBox"))} px")
         }
-        for (name in listOf("bennett-1.0", "default-1.0", "bennett-1.3-system", "bennett-1.3-textzoom", "default-1.3-textzoom")) {
+        for (name in listOf("bennett-1.0", "default-1.0", "bennett-1.3", "default-1.3")) {
             val entry = room.getJSONObject(name)
             claim("the host text is not cut ($name)", !entry.getBoolean("truncated"), "text ${fmt(entry.getDouble("textWidth"))} px in a ${fmt(entry.getDouble("hostBox"))} px box")
         }
         beat()
     }
+
+    /** `environment.textZoom` as the chrome heard it (1 when the host said nothing). */
+    private fun textZoomHeard(): Double = coreState().optJSONObject("pageEnvironment")?.optDouble("textZoom", 1.0) ?: 1.0
+
+    private fun fontScaleHeard(): Double = coreState().optJSONObject("pageEnvironment")?.optDouble("fontScale", 1.0) ?: 1.0
 
     /** 3. The resting pill in the other scheme and at the other dock: the four stills for Bennett. */
     private fun stillsStep() {
@@ -438,18 +440,27 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
     private fun talkBackStep() {
         note("\n6. TalkBack: the address stop speaks the folded states")
         ensureForeground()
-        val group = findNode { it == PILL_LABEL }
+        // The pill is no stop of its own (#237 took the group's name off it): its subtree is the
+        // first ancestor of the address button that also holds the site icon.
+        val group = pillNode()
         val stops = group?.let { speakable(it).map { n -> label(n) } } ?: emptyList()
         val address = addressSpoken()
         note("  address stop: ${address ?: "(not in the tree)"}")
         note("  the pill's stops in TalkBack's order: $stops")
         claim("the pill has three stops: the address, the site icon, the lock", stops.size == 3 && stops[0].startsWith("Address,") && SITE_ICON_LABEL in stops && LOCK_LABEL in stops, "stops $stops")
         val blocked = tab(GITHUB_TAB)?.optInt("blockedCount") ?: 0
+        // #237's connection state first, then the sheet chips' states in the pill's order.
         val expected = buildList {
+            add(LOCK_LABEL)
             if (blocked > 0) add("$blocked request${if (blocked == 1) "" else "s"} blocked")
             if (translateState(GITHUB_TAB)?.optString("status") == "offered") add("Translation offered")
         }
         for (part in expected) claim("the address stop speaks '$part'", address?.contains(part) == true, "reads '$address'")
+        claim(
+            "the address stop's order: the host, the connection, then the sheet chips' states",
+            address != null && expected.map { address.indexOf(it) }.let { at -> at.all { it >= 0 } && at == at.sorted() },
+            "reads '$address'"
+        )
         results.put("talkBack", JSONObject().put("address", address).put("stops", JSONArray(stops)).put("expectedStates", JSONArray(expected)))
         File(out, "android-chip-fold-a11y.txt").writeText(
             buildString {
@@ -519,6 +530,28 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
     private fun addressSpoken(): String? =
         findNode { it.startsWith("Address,") }?.let { it.contentDescription ?: it.text }?.toString()
 
+    /**
+     * The pill's node in the tree: the nearest ancestor of the address button whose subtree also
+     * holds the site icon (the pill carries no role or name of its own since #237, so it is
+     * found by what it contains; the bar's own buttons are its siblings, not inside it).
+     */
+    private fun pillNode(): AccessibilityNodeInfo? {
+        var node = findNode { it.startsWith("Address,") } ?: return null
+        while (true) {
+            if (subtreeHas(node) { it == SITE_ICON_LABEL }) return node
+            node = node.parent ?: return null
+        }
+    }
+
+    private fun subtreeHas(root: AccessibilityNodeInfo, matches: (String) -> Boolean): Boolean {
+        if (matches(label(root))) return true
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            if (subtreeHas(child, matches)) return true
+        }
+        return false
+    }
+
     /** The accessible name the tree gives a sheet row named `label` in the chrome, or null. */
     private fun treeLabel(label: String): String? = findNode { it == label }?.let { label(it) }
 
@@ -579,12 +612,7 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         SystemClock.sleep(1_200)
     }
 
-    /** `WebSettings.textZoom` on the chrome: what #237 sets from the system font size; 100 on this head. */
-    private fun setChromeTextZoom(percent: Int) {
-        instrumentation.runOnMainSync { host.chrome.settings.textZoom = percent }
-        SystemClock.sleep(1_500)
-    }
-
+    /** `WebSettings.textZoom` on the chrome: what #237's `ChromeTextScale` set from the system font size. */
     private fun chromeTextZoom(): Int {
         var zoom = 0
         instrumentation.runOnMainSync { zoom = host.chrome.settings.textZoom }

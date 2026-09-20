@@ -356,7 +356,7 @@ function reachPdf(
       // The bar mounts on the next render; type into it the way a keyboard would, then wait for
       // the viewer's tally: it grows as the pages are read, and the state is the count settled.
       requestAnimationFrame(() => {
-        if (query) type('input[aria-label="Find in page"]', query)
+        if (query) type('input[data-testid="find-input"]', query)
         const counted = (): boolean => {
           const find = pdfViewerStore.get().reports[tab.id]?.find
           return !query || (find?.query === query && !find.searching)
@@ -748,7 +748,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.
     requestAnimationFrame(() => {
-      if (target.text) type('input[aria-label="Find in page"]', target.text)
+      if (target.text) type('input[data-testid="find-input"]', target.text)
       finish()
     })
   } else if (target.kind === 'pull' && tab) {
@@ -1483,7 +1483,7 @@ function applyUrlbar(
   })
 }
 
-const URLBAR_FIELD = 'input[aria-label="Search or enter address"]'
+const URLBAR_FIELD = 'input[data-testid="urlbar-input"]'
 
 /** Runs `fn` once the editor lists a row (or the hint that there is none), or after {@link SUGGESTIONS_MS}. */
 function whenSuggested(fn: () => void, deadline = performance.now() + SUGGESTIONS_MS): void {
@@ -1529,7 +1529,7 @@ function settlePage(
         setTimeout(() => {
           seed()
           // The landing keeps its query between states unless it is retyped: an empty one clears it.
-          type('input[aria-label="Find in Settings"]', target.search ?? '')
+          type('input[placeholder="Find in Settings"]', target.search ?? '')
           requestAnimationFrame(() => {
             // The page keeps where a previous state scrolled it; every state starts at the top.
             for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {

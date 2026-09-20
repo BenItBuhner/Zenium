@@ -1,0 +1,88 @@
+name: Android chrome accessibility and font scale demo
+
+# The device proof for the phone chrome's accessibility tree (A11Y-01) and the chrome's text at
+# the system font sizes (A11Y-05). The chrome is a WebView, so what a screen reader gets is the
+# React chrome's tree as Chromium maps it to AccessibilityNodeInfo; the driver (ChromeA11yDemo)
+# walks that tree through UiAutomation on every surface of the audit – the bar and the pill on an
+# https, an http, a loopback and an internal page, the group strip, the omnibox, the overview and
+# its header menu, a toast, the app menu, Settings with a section and a picker, History,
+# Bookmarks, the find bar, the docked zoom panel – and asserts every control's name, role, state,
+# traversal order and touch target against the audit table, then puts the system font scale at
+# 1.3 and 2.0 (and the bold-text setting on) with the chrome re-measured and photographed at each.
+# TalkBack is switched on for one scene when the system image carries it – its linear navigation
+# driven by swipes handed to the accessibility input filter (`UiAutomation`'s test API, which the
+# instrumentation reaches with `--no-hidden-api-checks`) along the bar, over a card and its Close
+# and past the app menu's last row; when it does not, the driver says so and the tree it read is
+# the proof. The audit (`a11y-chrome-audit.txt`), the findings, the trees and the stills land
+# next to the recording.
+#
+# A second job walks the one scene the first cannot: a private tab (#203's segment, the pill's
+# mask, the menu's private rows). Private tabs need WebViewFeature.MULTI_PROFILE, which the
+# API 34 images' WebView 113 has not, so – as the private tabs demo does – that job runs on an
+# AOSP image with a Chromium snapshot SystemWebView.apk swapped in, under swiftshader_indirect,
+# and the driver's `scenes=private` argument picks the scene. Dispatch-only, like the other
+# demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-a11y-chrome-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Chrome accessibility and font scale demo
+    # The `[a11y-run]` gate stays for a PR's temporary push trigger (the run budget is one run
+    # and one retry): under one, only a head commit that says so records.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[a11y-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ChromeA11yDemo
+        DEMO_DIR=a11y-chrome-demo
+        DEMO_OUT=artifacts/android-a11y-chrome-demo
+        DEMO_VIDEO=android-a11y-chrome-demo.mp4
+        DEMO_INSTRUMENT_FLAGS=--no-hidden-api-checks
+      artifact-name: android-a11y-chrome-demo
+      artifact-path: artifacts/android-a11y-chrome-demo/
+      # Fourteen scenes, three of them at a font scale each: the driver alone runs a good while.
+      timeout-minutes: 70
+
+  record-private:
+    name: Private tab scene (Chromium snapshot WebView on an AOSP image)
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[a11y-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ChromeA11yDemo
+        DEMO_DIR=a11y-chrome-demo
+        DEMO_OUT=artifacts/android-a11y-chrome-private
+        DEMO_VIDEO=android-a11y-chrome-private.mp4
+        DEMO_SCENES=private
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code (the private tabs demo's recipe).
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-a11y-chrome-private
+      artifact-path: artifacts/android-a11y-chrome-private/
+      timeout-minutes: 45
