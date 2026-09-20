@@ -35,7 +35,12 @@ import java.util.Calendar
  *     `.zen-list-checkbox` is gone.
  *
  * Each ring is checked for what §1 says: `outline: 2px solid --v2-ring` on the element that has
- * the focus (`:focus-visible`), at the control's offset. A claim that does not hold is a finding
+ * the focus (`:focus-visible`), at the control's offset. The width is read in device pixels:
+ * Blink paints an outline a whole number of device pixels thick, the largest that fits the
+ * declared width (CSS Backgrounds 3 §4.3 allows the snap; `border-width: 1.5px` is Chrome's
+ * well-known `1px`), and reports that in CSS pixels – on a 1.75-density device the 2 px ring is
+ * 3 device pixels and the computed style reads `1.71429px` – so the claim is `floor(2 × dpr)`
+ * device pixels (at least 1), not the string `2px`. A claim that does not hold is a finding
  * and a failure of the run; the recording goes on to the end. Profile `pwa-demo-state.json`
  * (two tabs, the app page with a manifest made the active one), the pages from a loopback
  * server inside the process ([DemoServer]), yesterday's history seeded by this driver.
@@ -320,7 +325,9 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
      * The focused control's ring in the light scheme and then the dark, each as a still and a
      * read of the computed style: `outline: 2px solid --v2-ring` on `:focus-visible`, at the
      * control's offset (`outside` 2, `inside` −2), and – for an accent fill – the fill's colour
-     * beside the ring's, the two never touching (the surface between them is the offset).
+     * beside the ring's, the two never touching (the surface between them is the offset). The
+     * width is judged in device pixels, `floor(2 × dpr)` of them (see the class note): 3 on this
+     * recipe's 1.75-density emulator, where the computed style reads `1.71429px`.
      */
     private fun ringStills(name: String, side: String, accentFill: Boolean) {
         for (scheme in listOf("light", "dark")) {
@@ -331,17 +338,23 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
             still("$name-$scheme")
             val offset = ring.optString("outlineOffset")
             val wantOffset = if (side == "inside") "-2px" else "2px"
+            val dpr = ring.optDouble("dpr", Double.NaN)
+            val widthDevicePx = ring.optDouble("widthDevicePx", Double.NaN)
+            val wantWidthDevicePx = if (dpr.isNaN()) Double.NaN else Math.max(1.0, Math.floor(2 * dpr))
+            val widthOk = !widthDevicePx.isNaN() && Math.abs(widthDevicePx - wantWidthDevicePx) < 0.02
+            val width = "${ring.optString("outlineWidth")} = ${"%.2f".format(widthDevicePx)} device px " +
+                "(2 px snapped to whole pixels at density $dpr: ${"%.0f".format(wantWidthDevicePx)})"
             val ok = ring.optBoolean("focusVisible") && ring.optString("outlineStyle") == "solid" &&
-                ring.optString("outlineWidth") == "2px" && offset == wantOffset &&
+                widthOk && offset == wantOffset &&
                 ring.optString("outlineColor") == ring.optString("ringToken")
             finding(
                 "  $scheme (theme '${themeAttribute()}'): ${ring.optString("desc")} :focus-visible ${ring.optBoolean("focusVisible")}; " +
-                    "outline ${ring.optString("outlineWidth")} ${ring.optString("outlineStyle")} ${ring.optString("outlineColor")} " +
+                    "outline $width ${ring.optString("outlineStyle")} ${ring.optString("outlineColor")} " +
                     "(--v2-ring ${ring.optString("ringToken")}) at offset $offset (wanted $wantOffset, ${side}); " +
                     "fill ${ring.optString("background")}${if (accentFill) " (accent fill; the ring never touches it: the ${wantOffset} of surface between)" else ""}; " +
                     "tree focus on '${focused}' ${verdict(ok)}"
             )
-            if (!ok) failures += "$name $scheme: ring ${ring.optString("outlineWidth")} ${ring.optString("outlineStyle")} ${ring.optString("outlineColor")} at $offset (wanted 2px solid ${ring.optString("ringToken")} at $wantOffset), :focus-visible ${ring.optBoolean("focusVisible")}"
+            if (!ok) failures += "$name $scheme: ring $width ${ring.optString("outlineStyle")} ${ring.optString("outlineColor")} at $offset (wanted 2px solid ${ring.optString("ringToken")} at $wantOffset), :focus-visible ${ring.optBoolean("focusVisible")}"
             if (accentFill && ring.optString("background") == ring.optString("outlineColor")) {
                 // Same ink: only the offset keeps them apart – said, not failed (§4's ruling is the offset).
                 finding("    (the ring and the fill are the one accent: the 2 px of surface at the offset is what tells them apart, §4)")
@@ -544,8 +557,9 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
         /**
          * The chrome's own account for the findings: the focused element described, the focus
          * path since the last reset (`focusin`), and the ring of an element as its computed
-         * style – the outline's four parts, `--v2-ring` as the same `rgb()` text (painted onto a
-         * swatch so the two compare), the background, and whether `:focus-visible` holds.
+         * style – the outline's four parts, the width again in device pixels beside the
+         * `devicePixelRatio` it was multiplied by, `--v2-ring` as the same `rgb()` text (painted
+         * onto a swatch so the two compare), the background, and whether `:focus-visible` holds.
          */
         private val PROBE_JS = """
             (function(){
@@ -565,6 +579,7 @@ class FocusRingDemo : DemoHarness("pwa-demo-state.json", "android-focus-ring", "
                 var cs=getComputedStyle(el);
                 return {desc:window.__zenDescribe(el),focusVisible:el.matches(':focus-visible'),
                   outlineStyle:cs.outlineStyle,outlineWidth:cs.outlineWidth,outlineOffset:cs.outlineOffset,outlineColor:cs.outlineColor,
+                  dpr:window.devicePixelRatio,widthDevicePx:parseFloat(cs.outlineWidth)*window.devicePixelRatio,
                   ringToken:window.swatch(cs.getPropertyValue('--v2-ring')),background:cs.backgroundColor}};
               window.__zenFocusPath=[];
               document.addEventListener('focusin',function(e){window.__zenFocusPath.push(window.__zenDescribe(e.target))},true);

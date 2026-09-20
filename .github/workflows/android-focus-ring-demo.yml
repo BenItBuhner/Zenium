@@ -6,7 +6,8 @@ name: Android focus ring demo
 # a hardware keyboard's, each ring read off the chrome's computed style beside its still, in the
 # light scheme and the dark – and the History list's multi-select checkbox on the span form under
 # a real long press and a real touch. The driver (FocusRingDemo) writes its findings next to the
-# recording; a ring that is not 2 px of --v2-ring at the control's offset fails the run.
+# recording; a ring that is not 2 px of --v2-ring at the control's offset fails the run (the width
+# judged in device pixels, since Blink paints the whole ones that fit: 3 at the emulator's 1.75).
 # Dispatch-only, like the other demos: it takes about ten minutes. The build, the emulator and the
 # Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
