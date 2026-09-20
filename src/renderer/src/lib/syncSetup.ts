@@ -51,8 +51,9 @@ export const SYNC_COPY = {
   mergeHint:
     'What the other devices synced is added to this device, and this device’s Spaces to theirs.',
   replace: 'Keep only this device’s data',
+  // Two lines at the phone's width (§10.4 clamps a row's description at two).
   replaceHint:
-    'The other devices’ Spaces, folders and settings are replaced with this device’s. Passwords are always merged.',
+    'Their Spaces, folders and settings are replaced with this device’s; passwords are always merged.',
   continue: 'Continue',
   devices: 'Other devices',
   noDevices: 'No other device has synced to this folder yet',

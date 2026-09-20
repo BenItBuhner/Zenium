@@ -1,11 +1,12 @@
 import type { JSX } from 'react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SyncScope } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { SYNC_COPY, SYNC_PASSPHRASE_MIN, syncSetupStore, turnOnSync } from '@renderer/lib/syncSetup'
 import { cn } from '@renderer/lib/utils'
 import { V2CheckRow } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
+import { useSheetRelayout } from './sheetContext'
 
 /**
  * The forms inside Settings › Sync's sheets (`sync.tsx` builds the rows that open them): the
@@ -39,6 +40,18 @@ export function SyncPassphraseForm({
   )
   const first = useRef<HTMLInputElement>(null)
   const second = useRef<HTMLInputElement>(null)
+  // A validation line under a field changes the body's height after the sheet took its detents:
+  // it is measured again (not on the first render, which the chassis measures itself), so the
+  // actions stay in reach rather than running past the bottom edge.
+  const relayout = useSheetRelayout()
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    relayout()
+  }, [error, relayout])
   const submit = (): void => {
     if (busy) return
     if (passphrase.length < SYNC_PASSPHRASE_MIN) {
