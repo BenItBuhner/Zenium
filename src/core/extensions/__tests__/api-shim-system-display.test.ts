@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installExtensionApi, type InvokeResult, type ShimHost } from '../api/shim'
+import {
+  installExtensionApi,
+  type EventDelivery,
+  type InvokeResult,
+  type ShimHost
+} from '../api/shim'
 import { API_SPEC } from '../api/spec'
 import { SYSTEM_DISPLAY_CROS_ONLY_METHODS } from '../api/systemDisplay'
 
@@ -16,7 +21,8 @@ interface FakeHost extends ShimHost {
 
 function fakeHost(): FakeHost {
   let onEvent:
-    ((namespace: string, event: string, args: unknown[], delivery: unknown) => void) | null = null
+    ((namespace: string, event: string, args: unknown[], delivery?: EventDelivery) => void) | null =
+    null
   const host: FakeHost = {
     kind: 'worker',
     calls: [],
