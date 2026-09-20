@@ -2016,6 +2016,17 @@
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
   /*
+   * A sleeping (discarded) page's card fades like Edge's sleeping tab and the sidebar's row:
+   * its title, favicon and picture at the deemphasised 69% (v2 draft §4), the moon glyph beside
+   * the title at the same; the card itself keeps its elevation, and a tap wakes the page.
+   */
+  .zen-overview-card[data-discarded='true'] .zen-overview-card-title,
+  .zen-overview-card[data-discarded='true'] .zen-overview-card-favicon,
+  .zen-overview-card[data-discarded='true'] .zen-overview-card-sleeping,
+  .zen-overview-card[data-discarded='true'] .zen-overview-card-preview {
+    opacity: 0.69;
+  }
+  /*
    * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
    * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
    * as the other cards' pressed states are.

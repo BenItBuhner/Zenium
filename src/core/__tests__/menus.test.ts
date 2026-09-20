@@ -428,6 +428,27 @@ describe('the app menu', () => {
     expect(tablet.sent).not.toContain('overlay.open')
   })
 
+  it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
+    for (const [caps, formFactor] of [
+      [DESKTOP, undefined],
+      [ANDROID, 'phone']
+    ] as const) {
+      const h = pageHarness(caps, formFactor ? { formFactor } : {})
+      // A web page: Reader View is the toggle, the preferences item waits for an article.
+      expect(appMenu(h)).not.toContain('Text Preferences…')
+      h.browser.tabs.navigate(
+        h.tabId,
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.org%2Fstory'
+      )
+      const menu = appMenu(h)
+      expect(menu.indexOf('Text Preferences…')).toBe(menu.indexOf('Reader View') + 1)
+      h.sent.length = 0
+      h.click('Text Preferences…')
+      // The chrome draws the surface: a popover under the pill on a mouse, a sheet on a phone.
+      expect(h.sent).toContain('reader.preferences')
+    }
+  })
+
   it('on a phone drops what only a desktop window can use', () => {
     const menu = appMenu(harness(ANDROID, 'phone'))
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)

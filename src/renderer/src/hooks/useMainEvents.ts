@@ -31,6 +31,7 @@ import {
   openNewTabShortcutDialog,
   openInstallSheet,
   openOverlay,
+  openReaderPreferences,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -177,6 +178,12 @@ export function useMainEvents(): void {
       onEvent('extensions.open', () => {
         closeUrlbar()
         openExtensionsSheet()
+      }),
+      onEvent('reader.preferences', ({ tabId }) => {
+        // The app menu's "Text Preferences…" (and the reader page's toolbar button on a phone):
+        // the popover hangs from the pill's chip when it is on screen, the sheet on a phone.
+        closeUrlbar()
+        void openReaderPreferences(tabId)
       }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),

@@ -1,6 +1,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
+  ALargeSmall,
   AppWindow,
   ArrowLeft,
   ArrowRight,
@@ -39,7 +40,13 @@ import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
-import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
+import {
+  closeReaderPreferences,
+  openOverlay,
+  openReaderPreferences,
+  openUrlbar,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { AutofillChip } from '../autofill/AutofillChip'
 import { StarChip } from '../bookmarks/StarChip'
@@ -132,6 +139,9 @@ export function NavRow({
   const boostsOpen = uiStore.use((s) => s.overlay === 'boosts')
   const blockedOpen = uiStore.use(
     (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
+  )
+  const readerPrefsOpen = uiStore.use(
+    (s) => s.readerPreferences !== null && s.readerPreferences.tabId === tab?.id
   )
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
   // its chips show where the page is, but nothing can be typed into it. An app window shows
@@ -356,6 +366,36 @@ export function NavRow({
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
                 <BookOpenText className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
+            {tab && isReader && (
+              // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
+              // View's while an article is open, whose popup is the preferences popover;
+              // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
+              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
+              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
+              // does not show itself, and the app menu's "Text Preferences…" and the reader
+              // page's own toolbar keep the surface reachable (the popover then hangs centred).
+              <PillChip
+                label="Text preferences"
+                title="Text preferences"
+                popup="dialog"
+                expanded={readerPrefsOpen}
+                data-reader-prefs-chip=""
+                className={cn(
+                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
+                  readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
+                )}
+                onActivate={(e) => {
+                  // The chip that put the popover away keeps the keyboard, as the anchor does
+                  // after Escape (§9.22); a pointer press while it is up never gets here (the
+                  // chrome layer consumes it), so this is the keyboard's toggle.
+                  if (readerPrefsOpen) closeReaderPreferences({ keepFocus: true })
+                  else void openReaderPreferences(tab.id, e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                <ALargeSmall className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && blocked.length > 0 && (
