@@ -144,8 +144,8 @@ describe('the hint for a page in fullscreen', () => {
     expect(page.hints).toEqual([])
     vi.advanceTimersByTime(1)
     expect(last(page.hints)).toMatchObject({
-      text: 'www.youtube.com is now full screen',
-      exit: { before: 'Press ', key: 'Esc', after: ' to exit' },
+      text: null,
+      exit: { before: 'Press ', key: 'Esc', after: ' to exit full screen' },
       duration: 3800,
       dark: false
     })
@@ -189,7 +189,9 @@ describe('the hint for a page in fullscreen', () => {
     const pageC = platform.pages.get(c.id)!
     pageC.events.onEnterHtmlFullscreen()
     vi.advanceTimersByTime(HINT_DELAY_MS)
-    expect(last(pageC.hints)).toMatchObject({ text: 'other.org is now full screen' })
+    expect(last(pageC.hints)).toMatchObject({
+      exit: { before: 'Press ', key: 'Esc', after: ' to exit full screen' }
+    })
     pageC.events.onLeaveHtmlFullscreen()
     // The snooze runs out.
     vi.advanceTimersByTime(HINT_SNOOZE_MS)
@@ -209,8 +211,8 @@ describe('the hint for a page in fullscreen', () => {
     page.events.onEnterHtmlFullscreen()
     vi.advanceTimersByTime(HINT_DELAY_MS)
     expect(last(page.hints)).toMatchObject({
-      text: 'remote.example.net is now full screen',
-      exit: { before: 'To exit full screen, press and hold ', key: 'Esc', after: '' }
+      text: null,
+      exit: { before: 'Press and hold ', key: 'Esc', after: ' to exit full screen' }
     })
     page.events.onLeaveHtmlFullscreen()
     expect(browser.fullscreen.isKeyboardLocked(tab.id)).toBe(true)
@@ -228,7 +230,7 @@ describe('the hint for a page in fullscreen', () => {
     page.events.onEnterHtmlFullscreen()
     vi.advanceTimersByTime(HINT_DELAY_MS)
     expect(last(page.hints)).toMatchObject({
-      exit: { before: 'Press ', key: 'Esc', after: ' to exit' }
+      exit: { before: 'Press ', key: 'Esc', after: ' to exit full screen' }
     })
     // The site is snoozed now; the lock still gets its hint, with the new way out.
     browser.fullscreen.keyboardLockRequested(tab.id)
@@ -236,8 +238,8 @@ describe('the hint for a page in fullscreen', () => {
     vi.advanceTimersByTime(HINT_DELAY_MS)
     expect(page.hints.filter(Boolean)).toHaveLength(2)
     expect(last(page.hints)).toMatchObject({
-      text: 'remote.example.net is now full screen',
-      exit: { before: 'To exit full screen, press and hold ', key: 'Esc', after: '' }
+      text: null,
+      exit: { before: 'Press and hold ', key: 'Esc', after: ' to exit full screen' }
     })
     // Asking again changes nothing; a lock taken outside fullscreen shows nothing.
     browser.fullscreen.keyboardLockRequested(tab.id)

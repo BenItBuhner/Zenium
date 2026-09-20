@@ -1555,6 +1555,21 @@
   .zen-animate-in {
     animation: zen-fade-in 160ms var(--zen-ease);
   }
+  /*
+   * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
+   * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
+   * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
+   * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
+   * it unmounts. Reduced motion collapses the travel to the global 0.01 ms.
+   */
+  .zen-toolbar-reveal {
+    transform: translateY(calc(-100% - 8px));
+    transition: transform 200ms var(--zen-ease);
+    will-change: transform;
+  }
+  .zen-toolbar-reveal[data-open] {
+    transform: none;
+  }
   .zen-animate-pop {
     animation: zen-pop 180ms var(--zen-ease);
   }
