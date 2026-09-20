@@ -1275,7 +1275,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     }
 
     /** Grammarly and LanguageTool attach their custom elements to a focused textarea. */
-    private fun editorAttach(tagPrefix: String, label: String): (Row, JSONObject) -> Grade = { row, _ ->
+    private fun editorAttach(tagPrefix: String, label: String, pattern: String? = null): (Row, JSONObject) -> Grade = { row, _ ->
         val tab = createTab("$BASE/editor.html?$tagPrefix")
         val view = waitForView(tab)
         poll(20_000, 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
@@ -1283,10 +1283,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#editor")))
         screenPoint(view, centre)?.let { tap(it.first, it.second) }
         SystemClock.sleep(600)
-        tabEval(view, "(function(){var e=document.getElementById('editor');e.focus();return 'ok'})()")
+        tabEval(view, "(function(){var e=document.getElementById('editor');e.focus();e.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()")
         awaitIme(true, 4_000)
-        val expr = "(function(){var els=Array.prototype.filter.call(document.querySelectorAll('*'),function(e){return /^$tagPrefix-/i.test(e.tagName)});" +
-            "return JSON.stringify({pass:els.length>0,tags:Array.from(new Set(els.map(function(e){return e.tagName.toLowerCase()}))).slice(0,6),focused:document.activeElement&&document.activeElement.id})})()"
+        // The extension's elements: custom elements under its tag prefix (Grammarly's, LanguageTool's), or
+        // anything whose tag, id or class carries `pattern` (QuillBot mounts <quillbot-extension-root>).
+        val test = pattern?.let { "/$it/i.test(e.tagName+' '+(e.id||'')+' '+String(e.className||''))" } ?: "/^$tagPrefix-/i.test(e.tagName)"
+        val expr = "(function(){var els=Array.prototype.filter.call(document.querySelectorAll('*'),function(e){return $test});" +
+            "return JSON.stringify({pass:els.length>0,tags:Array.from(new Set(els.map(function(e){return e.tagName.toLowerCase()+(e.id?'#'+e.id:'')}))).slice(0,6),focused:document.activeElement&&document.activeElement.id})})()"
         val found = pollExpr(view, expr, 25_000)
         val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
@@ -1428,19 +1431,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * (`injects`, Read&Write's `gw-toolbar`, which its content script shows on the worker's
      * `tabs.sendMessage`), or the row's own page (`page`, Claude's side panel document, which the
      * phone has no panel to host: opened as a tab) shows its sign-in. Each is the row's sign-in
-     * surface: `n/m`, the account being the gate. A row whose click does nothing and whose page
-     * shows nothing is `F`, with the bridge trace.
+     * surface: `n/m`, the account being the gate (`gate` names another gate: Avast's cloud
+     * verdict, IE Tab's Windows companion). A row whose click runs into the gate in its worker
+     * instead (`gateLog`: Save to Google Drive's `identity.getAuthToken`, refused as Zenium
+     * refuses it without a signed-in browser account) is `n/m` on that line. A row whose click
+     * does nothing and whose page shows nothing is `F`, with the bridge trace.
      */
-    private fun accountGate(label: String, opens: Regex, page: String? = null, injects: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun accountGate(label: String, opens: Regex, page: String? = null, injects: String? = null, gate: String = "an account", gateLog: Regex? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val popup = entry.optJSONObject("popup")?.optString("verdict")
         val opened = entry.optJSONArray("popupOpened")
         val extra = JSONObject()
         val factor = speedFactor(entry)
         when {
             popup == "P" || popup == "PARTIAL" ->
-                Grade("n/m", "$label: popup renders (\"${entry.optString("popupText").take(80)}\"); the core needs an account (not measurable here)")
+                Grade("n/m", "$label: popup renders (\"${entry.optString("popupText").take(80)}\"); the core needs $gate (not measurable here)")
             opened != null && opened.length() > 0 && opens.containsMatchIn(opened.optString(0)) ->
-                Grade("n/m", "$label: the action click opened ${opened.optString(0).take(100)} (its sign-in / setup page); the core needs an account (not measurable here)")
+                Grade("n/m", "$label: the action click opened ${opened.optString(0).take(100)} (its sign-in / setup page); the core needs $gate (not measurable here)")
             else -> {
                 val tab = createTab("$BASE/page-b.html?gate")
                 val view = waitForView(tab)
@@ -1485,6 +1491,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     snap("${entry.optString("slug")}-own-page")
                 }
                 since.record(extra, "atEnd")
+                // The gate met in the worker (its console line), when the click showed nothing.
+                val logged = if (landed == null && injected == null && gateLog != null) backgroundView(row.id)?.let { bg -> consoleOf(bg).lastOrNull { gateLog.containsMatchIn(it) } } else null
+                logged?.let { extra.put("gateLog", it.take(300)) }
                 val how = when {
                     landed == null || landed.key !in before -> "opened"
                     before[landed.key] != landed.value -> "navigated the tab to"
@@ -1492,15 +1501,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 when {
                     injected != null ->
-                        Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need an account (not measurable here)", extra)
+                        Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need $gate (not measurable here)", extra)
                     landed != null && opens.containsMatchIn(landed.value) ->
-                        Grade("n/m", "$label: the action click $how ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs an account (not measurable here)", extra)
+                        Grade("n/m", "$label: the action click $how ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs $gate (not measurable here)", extra)
                     landed != null ->
-                        Grade(if (LOGIN_WORDS.containsMatchIn(text) || text.isNotEmpty()) "n/m" else "F", "$label: the action click showed ${landed.value.take(100)} (\"${text.take(80)}\")${if (text.isEmpty()) ", which stayed blank" else "; the core needs an account (not measurable here)"}", extra)
+                        Grade(if (LOGIN_WORDS.containsMatchIn(text) || text.isNotEmpty()) "n/m" else "F", "$label: the action click showed ${landed.value.take(100)} (\"${text.take(80)}\")${if (text.isEmpty()) ", which stayed blank" else "; the core needs $gate (not measurable here)"}", extra)
                     ownPage?.optBoolean("pass") == true ->
-                        Grade("n/m", "$label: the action click showed nothing on the phone; its $page renders as a tab (\"${ownPage.optString("text").take(80)}\"); the core needs an account (not measurable here)", extra)
+                        Grade("n/m", "$label: the action click showed nothing on the phone; its $page renders as a tab (\"${ownPage.optString("text").take(80)}\"); the core needs $gate (not measurable here)", extra)
                     ownPage != null ->
                         Grade("F", "$label: the action click showed nothing within ${scaled(20_000, factor) / 1000} s and its $page stayed blank (${ownPage.toString().take(200)})", extra)
+                    logged != null ->
+                        Grade("n/m", "$label: the action click ran into $gate in its worker: \"${logged.take(160)}\" (not measurable here)", extra)
                     else -> Grade("F", "$label: the action click opened nothing within ${scaled(20_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
                 }
             }
@@ -1514,9 +1525,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * shape), the popup renders its connect control, and the egress address the fixture reads
      * before and after a tap on that control (through open shadow roots) is kept – a changed
      * address is `P`. A missing `chrome.proxy` (the worker's `TypeError`) or a "not implemented"
-     * rejection is `F`, ours.
+     * rejection is `F`, ours. A popup that opens on a consent screen (`consent`: Urban VPN's
+     * "Accept", 1clickVPN's) has it answered first, up to three rounds, and is opened again when
+     * the consent click handed the popup off to the vendor's website and closed it (1clickVPN);
+     * the connect control is the labelled one, a `connectSelector` (Urban VPN's unlabelled
+     * `.play-button`) or a `connectWords` label regex (1clickVPN's location rows) when given.
      */
-    private fun vpn(label: String, pac: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun vpn(label: String, pac: Boolean = false, consent: Boolean = false, connectSelector: String? = null, connectWords: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val extra = JSONObject()
         val factor = speedFactor(entry)
         val bg = backgroundView(row.id)
@@ -1531,12 +1546,37 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val before = pollExpr(egressView, EGRESS_REPORT, scaled(20_000, factor))
         extra.put("egressBefore", before)
         showTab(fixtureTab)
-        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        val openPopup = {
+            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        }
+        var popup = openPopup()
+        if (popup != null && consent) {
+            val consents = JSONArray()
+            SystemClock.sleep(scaled(3_000, factor))
+            for (round in 0 until 3) {
+                val live = popupView()?.takeIf { it.context == "popup" } ?: break
+                val answer = json(tabEval(live, CLICK_LABEL.replace("__RE__", CONSENT_WORDS)))
+                consents.put(answer.toString().take(120))
+                if (!answer.optBoolean("clicked")) break
+                SystemClock.sleep(scaled(2_500, factor))
+            }
+            extra.put("consent", consents)
+            // The consent click handed off to the vendor's website and closed the popup: opened again.
+            if (popupView()?.takeIf { it.context == "popup" && rendered(it) } == null) {
+                extra.put("tabsAfterConsent", JSONArray(tabUrls().values.toList()))
+                closeExtraTabs()
+                showTab(fixtureTab)
+                popup = openPopup()
+                extra.put("reopened", popup != null)
+                if (popup != null) SystemClock.sleep(scaled(3_000, factor))
+            }
+        }
+        val connectJs = VPN_CONNECT_CLICK.replace("__WANT__", connectWords ?: VPN_CONNECT_WORDS).replace("__SELECTOR__", connectSelector?.let { JSONObject.quote(it) } ?: "null")
         var click = JSONObject().put("clicked", false)
         if (popup != null) {
             SystemClock.sleep(scaled(3_000, factor))
-            click = json(tabEval(popup, VPN_CONNECT_CLICK))
+            click = json(tabEval(popup, connectJs))
             extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(300))
             if (click.optBoolean("clicked")) {
                 SystemClock.sleep(scaled(6_000, factor))
@@ -1834,6 +1874,374 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         }
     }
 
+    // --- the core checks of compat round 5 (ranks 61-90 by installs) ----------------------------
+
+    /**
+     * An effect read off a fixture page (the desktop's `domMarker`): the fixture opens, `prepare`
+     * runs once its document is complete, then `expr` (a `JSON.stringify` of `{pass, ...}`) is
+     * polled for `pass`. Phantom's `window.phantom.solana` on the wallet page is one.
+     */
+    private fun domMarker(label: String, fixture: String, expr: String, settleMs: Long = 25_000, prepare: ((WebView) -> Unit)? = null): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val tab = createTab("$BASE/$fixture")
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(1_500, factor))
+        prepare?.invoke(view)
+        val found = pollExpr(view, expr, scaled(settleMs, factor))
+        val extra = JSONObject().put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!found.optBoolean("pass")) extra.put("errors", targetErrors(view))
+        Grade(if (found.optBoolean("pass")) "P" else "F", "$label: ${found.toString().take(240)}", extra)
+    }
+
+    /** A fixture tab, its document complete; the view to read it through. */
+    private fun fixture(page: String, factor: Double, settleMs: Long = 1_500): Pair<String, TabWebView> {
+        val tab = createTab("$BASE/$page")
+        val view = waitForView(tab)
+        poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(settleMs, factor))
+        return tab to view
+    }
+
+    /** The row's popup opened over the tab on screen, rendered, or null. */
+    private fun openPopup(row: Row, factor: Double): ExtensionWebView? {
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        return poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+    }
+
+    /** A probe that lands its answer on `window.<slot>` with `done: true`, from an extension page, read within `timeoutMs`. */
+    private fun probe(view: WebView, script: String, slot: String, timeoutMs: Long): JSONObject {
+        tabEval(view, script)
+        return poll(timeoutMs, 250) { tabEval(view, "window.$slot && window.$slot.done ? JSON.stringify(window.$slot) : null").takeIf { it != "null" } }?.let(::json)
+            ?: JSONObject().put("error", "no answer within ${timeoutMs / 1000} s")
+    }
+
+    /**
+     * The `tabCapture` / `desktopCapture` namespaces as an extension page sees them, and
+     * `tabCapture.getMediaStreamId` asked for the active tab: Chrome's shape answers a stream id
+     * or an error; a missing function is ours.
+     */
+    private fun captureShape(view: WebView, factor: Double): JSONObject = probe(view, CAPTURE_PROBE, "__zenCapture", scaled(10_000, factor))
+
+    /**
+     * A `tabCapture` row (Volume Master's gain graph over the tab's audio, Shazam's
+     * fingerprinting of it): the WebView has no tab or display capture to source a stream from
+     * (`getDisplayMedia` is not there; `getUserMedia` reaches the microphone and camera only), so
+     * once the popup renders its control and the worker sees `chrome.tabCapture` in Chrome's
+     * shape with `getMediaStreamId` answering (an id or an error, not a missing function) the
+     * core is the WebView's limit, `n/a`, with that shape, the popup and the page's
+     * `navigator.mediaDevices` recorded as what the phone gives. A stream id answered is `P`; a
+     * missing namespace is `F`, ours.
+     */
+    private fun captureLimit(label: String, control: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("audio.html?capture", factor, 2_000)
+        val media = json(tabEval(view, "JSON.stringify({mediaDevices:typeof navigator.mediaDevices,getUserMedia:typeof (navigator.mediaDevices&&navigator.mediaDevices.getUserMedia),getDisplayMedia:typeof (navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia),tone:!!window.__tone})"))
+        extra.put("page", media)
+        val capture = backgroundView(row.id)?.let { captureShape(it, factor) } ?: JSONObject().put("error", "no background view")
+        extra.put("capture", capture)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            found = json(tabEval(popup, DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:$control.test(text)||document.querySelectorAll('input[type=range], [role=slider], button').length>0,controls:document.querySelectorAll('input[type=range], [role=slider], button').length,text:")))
+            extra.put("popupCapture", captureShape(popup, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-capture-popup")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val shape = capture.optString("tabCapture") == "object" && capture.optString("getMediaStreamId") == "function"
+        val note = "worker: ${capture.toString().take(200)}; popup ${if (popup == null) "absent" else "\"${found.optString("text").take(100)}\" (${found.optInt("controls")} controls)"}; page mediaDevices: ${media.toString().take(120)}"
+        when {
+            capture.optString("streamId").isNotEmpty() && capture.isNull("error") -> Grade("P", "$label: tabCapture.getMediaStreamId answered a stream id for the tab: $note", extra)
+            !shape -> Grade("F", "$label: chrome.tabCapture is not Chrome's shape in the worker: $note", extra)
+            popup == null -> Grade("F", "$label: popup did not render in the core check: $note", extra)
+            else -> Grade("n/a", "$label: the API is Chrome's shape and the popup renders its controls, but the WebView has no tab or display capture to source the stream from (getDisplayMedia ${media.optString("getDisplayMedia")}; getUserMedia reaches the microphone and camera only): WebView limit. $note", extra)
+        }
+    }
+
+    /**
+     * Custom Cursor: a pack card picked in the popup (`.collection-cursors .cursor` with an
+     * image) writes `storage.local.selected`, and its content script on the fixture page
+     * injects `<style id="custom-cursor">` with `cursor: url(...)` on html / body: that computed
+     * style is the pass (the phone has no pointer to draw it with; the style is the effect).
+     */
+    private fun customCursor(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?cursor", factor)
+        val popup = openPopup(row, factor)
+        var pick = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(4_000, factor))
+            pick = poll(scaled(8_000, factor), 1_000) { json(tabEval(popup, CURSOR_PICK)).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, CURSOR_PICK))
+            // The click as a finger too: a React card may listen for pointer events, not click.
+            if (pick.optBoolean("clicked")) screenPoint(popup, pick)?.let { tap(it.first, it.second) }
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200)).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("pick", pick)
+        val found = pollExpr(view, CURSOR_STYLE, scaled(14_000, factor))
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-cursor-popup")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "Custom Cursor: popup ${if (popup == null) "did not render" else "picked ${pick.toString().take(110)}"}; fixture page cursor ${found.toString().take(200)}", extra)
+    }
+
+    /**
+     * Video DownloadHelper: `webRequest` sees the fixture's mp4 response (audio.html's clip), the
+     * action's badge counts it for the tab, and the action click (a popup set at run time, or its
+     * side panel document, which the phone opens as a tab) lists the media. Badge digits or a
+     * listed clip pass.
+     */
+    private fun videoDownloadHelper(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("audio.html?vdh", factor)
+        val bg = backgroundView(row.id)
+        var badge = JSONObject()
+        if (bg != null) {
+            poll(scaled(18_000, factor), 1_500) {
+                badge = probe(bg, BADGE_PROBE.replace("__MATCH__", "/audio\\.html/"), "__zenBadge", 5_000)
+                if (Regex("\\d").containsMatchIn(badge.optString("badge"))) true else null
+            }
+        } else extra.put("background", "no background view")
+        extra.put("badge", badge)
+        val before = tabUrls().keys
+        val popup = openPopup(row, factor)
+        val listing = DEEP_TEXT.replace("return JSON.stringify({text:", "return JSON.stringify({pass:/clip|mp4|video/i.test(text),text:")
+        var surface = JSONObject()
+        if (popup != null) {
+            surface = pollExpr(popup, listing, scaled(12_000, factor)).put("where", "popup")
+        } else {
+            val opened = poll(scaled(10_000, factor), 500) { tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) } }
+            if (opened != null) {
+                runCatching { waitForView(opened.key) }.getOrNull()?.let { surface = pollExpr(it, listing, scaled(15_000, factor)) }
+                surface.put("where", opened.value.take(100))
+            }
+        }
+        extra.put("surface", surface)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-media-list")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val counted = Regex("\\d").containsMatchIn(badge.optString("badge"))
+        return Grade(
+            if (counted || surface.optBoolean("pass")) "P" else "F",
+            "Video DownloadHelper: badge on the fixture tab ${badge.toString().take(120)}; the action showed ${surface.optString("where").ifEmpty { "nothing" }} (\"${surface.optString("text").take(100)}\")",
+            extra
+        )
+    }
+
+    /**
+     * Read Aloud: the popup opened over the fixture page reads it through `chrome.tts` and shows
+     * the sentence it is on (`#highlight`) with its pause / stop controls up; the worker's
+     * `tts.getVoices` and `tts.isSpeaking` are read beside it. The desktop's `F` is Electron's
+     * `activeTab` limit; the phone grants `activeTab` on the action click and speaks through
+     * TextToSpeech.
+     */
+    private fun readAloud(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?readaloud", factor)
+        val bg = backgroundView(row.id)
+        extra.put("voices", bg?.let { probe(it, TTS_VOICES_PROBE, "__zenTts", scaled(10_000, factor)) } ?: "no background view")
+        val popup = openPopup(row, factor)
+        var state = JSONObject()
+        if (popup != null) {
+            state = pollExpr(popup, READ_ALOUD_STATE, scaled(24_000, factor))
+            if (!state.optBoolean("pass") && state.optBoolean("play")) {
+                tabEval(popup, "(function(){var b=document.getElementById('btnPlay');if(b)b.click();return 'ok'})()")
+                state = pollExpr(popup, READ_ALOUD_STATE, scaled(15_000, factor)).put("clickedPlay", true)
+            }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(12)))
+        }
+        extra.put("popup", state)
+        val speaking = bg?.let { worker ->
+            tabEval(worker, "(function(){window.__zenSpeaking=null;try{chrome.tts.isSpeaking(function(s){window.__zenSpeaking=String(s)})}catch(e){window.__zenSpeaking='threw: '+String(e&&e.message||e)}return 'asked'})()")
+            poll(3_000, 200) { tabEval(worker, "window.__zenSpeaking||null").takeIf { r -> r != "null" } }
+        }
+        extra.put("speaking", speaking ?: JSONObject.NULL)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-read-aloud")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val pass = state.optBoolean("pass") && (state.optBoolean("pause") || state.optBoolean("stop") || speaking == "true")
+        return Grade(
+            if (pass) "P" else "F",
+            "Read Aloud: tts voices ${extra.opt("voices")?.toString()?.take(100)}; popup ${if (popup == null) "did not render" else "over the fixture page: ${state.toString().take(220)}"}; tts.isSpeaking $speaking",
+            extra
+        )
+    }
+
+    /**
+     * AnyDoc Translator: the popup's translate control sends the page through WPS's cloud and
+     * its content script rewrites the text with its markers; a popup that shows its sign-in
+     * instead is the account gate (`n/m`, as on the desktop).
+     */
+    private fun anyDoc(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("editor.html?anydoc", factor, 2_000)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        var popupText = ""
+        if (popup != null) {
+            SystemClock.sleep(scaled(5_000, factor))
+            popupText = json(tabEval(popup, DEEP_TEXT)).optString("text")
+            val clicker = CLICK_LABEL.replace("__RE__", "/translate (this )?(page|web ?page)|translate now|^translate$|start translat/i")
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clicker)).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, clicker))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("popupText", popupText.take(200)).put("click", click)
+        val found = pollExpr(view, ANYDOC_MARKS, scaled(24_000, factor))
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-translate")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return when {
+            found.optBoolean("pass") -> Grade("P", "AnyDoc Translator: the page carries its translation markers after the popup's translate control (${click.optString("label")}): ${found.toString().take(200)}", extra)
+            popup != null && LOGIN_WORDS.containsMatchIn(popupText) && !click.optBoolean("clicked") -> Grade("n/m", "AnyDoc Translator: popup shows its sign-in (\"${popupText.take(80)}\"); translation runs on WPS cloud with a WPS account (not measurable here)", extra)
+            popup == null -> Grade("F", "AnyDoc Translator: popup did not render within ${scaled(POPUP_TIMEOUT_MS, factor) / 1000} s", extra)
+            else -> Grade("F", "AnyDoc Translator: popup \"${popupText.take(80)}\"; translate control ${click.toString().take(100)}; page after: ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * Video Downloader Professional: `webRequest.onHeadersReceived` sees the fixture's mp4
+     * (audio.html's clip), the worker keeps it in `storage.local` and the popup over that tab
+     * lists it with a download button.
+     */
+    private fun videoDownloaderPro(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (tab, _) = fixture("audio.html?vdp", factor)
+        val bg = backgroundView(row.id)
+        var stored = JSONObject()
+        if (bg != null) {
+            poll(scaled(15_000, factor), 1_500) {
+                stored = probe(bg, STORAGE_HAS_CLIP, "__zenStored", 5_000)
+                if (stored.optBoolean("hasClip")) true else null
+            }
+        }
+        extra.put("storage", stored)
+        showTab(tab)
+        val popup = openPopup(row, factor)
+        var dom = JSONObject()
+        if (popup != null) {
+            dom = pollExpr(popup, "(function(){var text=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';return JSON.stringify({pass:/clip\\.mp4|clip|mp4/i.test(text)&&!/no video/i.test(text.slice(0,40)),text:text.slice(0,200),rows:document.querySelectorAll('.vdlButton, tr, li').length})})()", scaled(18_000, factor))
+            dom.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", dom)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-media-popup")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(if (dom.optBoolean("pass")) "P" else "F", "Video Downloader Professional: popup over the fixture tab ${if (popup == null) "did not render" else dom.toString().take(220)}; storage ${stored.toString().take(100)}", extra)
+    }
+
+    /**
+     * `chrome_settings_overrides.search_provider` (Norton Safe Search, Bing Homepage & Search):
+     * while the extension is enabled the core's default engine is the extension's (the
+     * `searchEngineControl` naming it, the engine listed with `source: extension`) and a URL-bar
+     * search (`tab.navigate` with plain words) lands on the engine's host.
+     */
+    private fun searchOverride(label: String, host: Regex, name: Regex): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val state = coreState()
+        val control = state.optJSONObject("searchEngineControl")
+        val engines = state.optJSONArray("searchEngines") ?: JSONArray()
+        val list = List(engines.length()) { engines.optJSONObject(it) ?: JSONObject() }
+        val own = list.firstOrNull { e -> e.optString("source") == "extension" && (name.containsMatchIn(e.optString("name")) || e.optString("id").contains(row.id)) }
+        extra.put("control", control ?: JSONObject.NULL).put("engines", JSONArray(list.map { "${it.optString("id")}:${it.optString("name")}${if (it.has("source")) " (${it.optString("source")})" else ""}" }))
+        val (tab, _) = fixture("page-b.html?search", factor, 500)
+        coreInvoke("tab.navigate", JSONObject().put("tabId", tab).put("input", "zenium sweep query").toString())
+        val landed = poll(scaled(20_000, factor), 500) { tabUrls()[tab]?.takeIf { host.containsMatchIn(it) } }
+        val urlNow = tabUrls()[tab] ?: ""
+        extra.put("landed", urlNow)
+        SystemClock.sleep(scaled(2_500, factor))
+        snap("${entry.optString("slug")}-search")
+        val holds = control != null && own != null && (control.optString("extensionId") == row.id || control.optString("engineId") == own.optString("id"))
+        when {
+            landed != null -> Grade("P", "$label: the URL-bar search landed on ${landed.take(120)}; default engine control ${control?.toString()?.take(120) ?: "none"}", extra)
+            own == null -> Grade("F", "$label: no engine of the extension's in the core's list (${list.size} engines: ${extra.optJSONArray("engines")?.toString()?.take(200)}); the search went to ${urlNow.take(100)}", extra)
+            !holds -> Grade("F", "$label: the engine is listed (${own.optString("name")}) but does not hold the default (control ${control?.toString()?.take(120) ?: "none"}); the search went to ${urlNow.take(100)}", extra)
+            else -> Grade("F", "$label: the engine holds the default (${control.toString().take(120)}) but the search went to ${urlNow.take(100)}", extra)
+        }
+    }
+
+    /**
+     * Awesome Screen Recorder & Screenshot: "Capture visible part" runs `tabs.captureVisibleTab`
+     * and opens `edit-react.html` with the image (a canvas or image over 200 px): the screenshot
+     * half of the row, the desktop's pass. The recorder half asks `tabCapture` / `desktopCapture`
+     * for a stream the WebView has no source for; the worker's shape of both is recorded beside.
+     */
+    private fun awesomeScreenshot(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?awesome", factor)
+        backgroundView(row.id)?.let { extra.put("capture", captureShape(it, factor)) }
+        val before = tabUrls().keys
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(4_000, factor))
+            // The popup opens on its Record tab; the screenshot actions live under the Screenshot tab.
+            extra.put("screenshotTab", tabEval(popup, "(function(){var el=Array.prototype.slice.call(document.querySelectorAll('.tab-header-item')).find(function(n){return /^screenshot$/i.test(n.textContent.trim())});if(el)el.click();return String(!!el)})()"))
+            SystemClock.sleep(scaled(1_500, factor))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, AWESOME_VISIBLE_CLICK)).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, AWESOME_VISIBLE_CLICK))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200)).put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        val result = poll(scaled(40_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && it.value.contains("edit-react.html") } }
+        var image = JSONObject()
+        if (result != null) {
+            val resultView = waitForView(result.key)
+            image = pollExpr(resultView, ANNOTATOR_IMAGE, scaled(30_000, factor))
+            extra.put("editor", image).put("editorConsole", JSONArray(consoleOf(resultView).takeLast(10)))
+            showTab(result.key)
+            SystemClock.sleep(800)
+        }
+        snap("${entry.optString("slug")}-annotator")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (image.optBoolean("pass")) "P" else "F",
+            "Awesome Screenshot: popup ${if (popup == null) "did not render" else "\"Capture visible part\" ${click.toString().take(90)}"}; edit page ${if (result == null) "never opened within ${scaled(40_000, factor) / 1000} s" else "opened: ${image.toString().take(200)}"}; worker capture APIs ${extra.opt("capture")?.toString()?.take(160) ?: "unread"}",
+            extra
+        )
+    }
+
+    /**
+     * Google Dictionary: a double-click on a word of the fixture page opens its definition
+     * bubble (`#gdx-bubble-host`, an open shadow root; the meaning fetched from Google). Two taps
+     * of the emulator's finger on the word first (the WebView reports a double tap as
+     * `dblclick`), then, when no bubble came, a synthesised `dblclick` over the selected word,
+     * which its content script reads the selection on.
+     */
+    private fun dictionary(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?dictionary", factor, 3_000)
+        val word = json(tabEval(view, DICTIONARY_WORD))
+        extra.put("word", word)
+        screenPoint(view, word)?.let { tap(it.first, it.second); SystemClock.sleep(90); tap(it.first, it.second) }
+        var found = pollExpr(view, DICTIONARY_BUBBLE, scaled(8_000, factor))
+        if (!found.optBoolean("pass")) {
+            extra.put("synthesised", tabEval(view, DICTIONARY_DBLCLICK))
+            found = pollExpr(view, DICTIONARY_BUBBLE, scaled(14_000, factor))
+        }
+        extra.put("bubble", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!found.optBoolean("pass")) extra.put("errors", targetErrors(view))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-bubble")
+        return Grade(if (found.optBoolean("pass")) "P" else "F", "Google Dictionary: double-click on \"${word.optString("word")}\" -> bubble ${found.toString().take(240)}", extra)
+    }
+
     // --- the table -------------------------------------------------------------------------------
 
     /** The desktop sweep's thirty, the twenty-seven the feasibility table calls feasible first, the three it does not last. */
@@ -1917,7 +2325,40 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("ekhagklcjbdpajgpjgmbionohlpdbjgc", "Zotero Connector", "zotero", core = ::zotero),
         Row("flliilndjeohchalpbbcdekjklbdgfkk", "Avira Browser Safety", "avira-browser-safety", core = siteVerdict("Avira Browser Safety")),
         Row("omghfjlpggmjjaagoclmmobgdodcjboh", "Browsec VPN", "browsec", core = vpn("Browsec", pac = true)),
-        Row("caljgklbbfbcjjanaijlacgncafpegll", "Avira Password Manager", "avira-password-manager", core = accountGate("Avira Password Manager", Regex("avira", RegexOption.IGNORE_CASE)))
+        Row("caljgklbbfbcjjanaijlacgncafpegll", "Avira Password Manager", "avira-password-manager", core = accountGate("Avira Password Manager", Regex("avira", RegexOption.IGNORE_CASE))),
+        // Compat round 5: the desktop's round-3 list (ranks 61-90 by installs).
+        Row("glcimepnljoholdmjchkloafkggfoijh", "360 Internet Protection", "360-internet-protection", core = serviceBacked("360 Internet Protection", "its site verdicts and action come from 360 Total Security's Windows host (com.google.chrome.wdwedpro) over native messaging; the action is disabled and titled for Windows only elsewhere, as Chrome on Linux shows it", native = true)),
+        Row("fcfhplploccackoneaefokcmbjfbkenj", "1clickVPN", "1clickvpn", core = vpn("1clickVPN", consent = true, connectWords = "/^(connect|start|turn on|enable|quick connect|united states|france|canada|germany|netherlands|united kingdom|singapore)/i")),
+        Row("eppiocemhmnlbhjplcgkofciiegomcon", "Urban VPN Proxy", "urban-vpn", core = vpn("Urban VPN", consent = true, connectSelector = ".play-button")),
+        Row("jghecgabfgfdldnmbfkhmffcabddioke", "Volume Master", "volume-master", core = captureLimit("Volume Master", "/\\\\d+ ?%|volume|boost/i")),
+        Row("lpcaedmchfhocbbapmcbpinfpgnhiddi", "Google Keep Chrome Extension", "google-keep", core = accountGate("Google Keep", Regex("keep\\.google|accounts\\.google", RegexOption.IGNORE_CASE), page = "index.html")),
+        Row("gmbmikajjgmnabiglmofipeabaddhgne", "Save to Google Drive", "save-to-google-drive", core = accountGate("Save to Google Drive", Regex("accounts\\.google|drive\\.google", RegexOption.IGNORE_CASE), gate = "a Google account signed into the browser (identity.getAuthToken)", gateLog = Regex("getAuthToken|signed-in browser account|launchWebAuthFlow", RegexOption.IGNORE_CASE))),
+        Row("fkepacicchenbjecpbpbclokcabebhah", "iCloud Bookmarks", "icloud-bookmarks", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
+        Row("pejdijmoenmkgeppbflobdenhhabjlaj", "iCloud Passwords", "icloud-passwords", feasible = false, core = notOnThePhone("nativeMessaging to iCloud for Windows: a Windows-only host (n/a on the phone, as on every other platform); the popup shows Apple's Windows notice")),
+        Row("kdpelmjpfafjppnhbloffcjpeomlnpah", "WPS PDF", "wps-pdf", core = pdfTool("WPS PDF", Regex("wps"), missing = "F")),
+        Row("ogdlpmhglpejoiomcodnpjnfgcpmgale", "Custom Cursor for Chrome", "custom-cursor", core = ::customCursor),
+        Row("lmjnegcaeklhafolokijcfjliaokphfk", "Video DownloadHelper", "video-downloadhelper", core = ::videoDownloadHelper),
+        Row("gpdjojdkbbmdfjfahjcgigfpmkopogic", "Save to Pinterest", "save-to-pinterest", core = accountGate("Save to Pinterest", Regex("pinterest", RegexOption.IGNORE_CASE), injects = "iframe[src*='gpdjojdkbbmdfjfahjcgigfpmkopogic']", gate = "a Pinterest account")),
+        Row("iidnbdjijdkbmajdffnidomddglmieko", "QuillBot", "quillbot", core = editorAttach("quillbot", "QuillBot mounts its root beside the textarea", pattern = "quillbot|qb-")),
+        Row("hdhinadidafjejdhmfkjgnolgimiaplp", "Read Aloud", "read-aloud", core = ::readAloud),
+        Row("aopddeflghjljihihabdclejbojaomaf", "AnyDoc Translator", "anydoc-translator", core = ::anyDoc),
+        Row("fjgncogppolhfdpijihbpfmeohpaadpc", "EndNote Click", "endnote-click", account = true, core = popupLogin("EndNote Click")),
+        Row("feepmdlmhplaojabeoecaobfmibooaid", "OrbitNote", "orbitnote", core = accountGate("OrbitNote", Regex("texthelp|orbitnote", RegexOption.IGNORE_CASE), gate = "a Google or Microsoft sign-in at texthelp")),
+        Row("elicpjhcidhpjomhibiffojpinpmmpil", "Video Downloader Professional", "video-downloader-professional", core = ::videoDownloaderPro),
+        Row("difoiogjjojoaoomphldepapgpbgkhkb", "Sider", "sider", core = accountGate("Sider", Regex("sider\\.ai|sidepanel", RegexOption.IGNORE_CASE), page = "sidepanel.html", gate = "a Sider account")),
+        Row("mmioliijnhnoblpgimnlajmefafdfilb", "Shazam", "shazam", core = captureLimit("Shazam", "/shazam|tap|listen|identify/i")),
+        Row("gomekmidlodglbbmalcneegieacbdmki", "Avast Online Security & Privacy", "avast-online-security", core = accountGate("Avast Online Security", Regex("avast", RegexOption.IGNORE_CASE), injects = "[class*='aosp'], [id*='aosp'], [class*='avast'], [id*='avast']", gate = "Avast's cloud verdict for the site")),
+        Row("admmjipmmciaobhojoghlmleefbicajg", "Norton Password Manager", "norton-password-manager", core = accountGate("Norton Password Manager", Regex("norton|onboard", RegexOption.IGNORE_CASE), gate = "a Norton account")),
+        Row("bfnaelmomeimhlpmgjnjophhpkkoljpa", "Phantom", "phantom", core = domMarker("Phantom providers injected into the page world", "wallet.html?phantom", "JSON.stringify({pass:!!((window.phantom&&window.phantom.solana&&window.phantom.solana.isPhantom)||(window.solana&&window.solana.isPhantom)),solana:!!window.solana,phantomSolana:!!(window.phantom&&window.phantom.solana),phantomEthereum:!!(window.phantom&&window.phantom.ethereum),announced:window.__wallet?window.__wallet.announced:null})", settleMs = 20_000)),
+        Row("hehggadaopoacecdllhhajmbjkdcmajg", "ChatGPT", "chatgpt", core = accountGate("ChatGPT", Regex("chatgpt|openai|codex-sidepanel", RegexOption.IGNORE_CASE), page = "codex-sidepanel/index.html", gate = "an OpenAI account")),
+        Row("mpnlkmlkncncpgnnkmkgoobfpnjmblnk", "Norton Safe Search", "norton-safe-search", core = searchOverride("Norton Safe Search", Regex("nortonsafesearch\\.com|searchsafe\\.norton\\.com|nortonsafe\\.search\\.ask\\.com", RegexOption.IGNORE_CASE), Regex("norton", RegexOption.IGNORE_CASE))),
+        Row("ddojnmkongaimkdddgmcccldlfhokcfb", "Microsoft Bing Homepage & Search", "bing-homepage-search", core = searchOverride("Bing Homepage & Search", Regex("\\bbing\\.com", RegexOption.IGNORE_CASE), Regex("bing", RegexOption.IGNORE_CASE))),
+        Row("gkojfkhlekighikafcpjkiklfbnlmeio", "Hola VPN", "hola-vpn", core = vpn("Hola VPN", pac = true, consent = true, connectWords = "/^(connect|start|turn on|enable|quick connect|protect me|unblock|get started|connect now)/i")),
+        Row("nlipoenfbbikpbjkfpfillcgkoblgpmj", "Awesome Screen Recorder & Screenshot", "awesome-screenshot", core = ::awesomeScreenshot),
+        Row("hehijbfgiekmjfkfjpbkbammjbdenadd", "IE Tab", "ie-tab", core = accountGate("IE Tab", Regex("ietab|nhc\\.htm", RegexOption.IGNORE_CASE), gate = "its Windows-only native host (ietabhelper)")),
+        Row("mgijmajocgfcbeboacabfgobmjgjcoja", "Google Dictionary (by Google)", "google-dictionary", core = ::dictionary)
+        // Round 5's rows 31 and 32, Read&Write and Kami, are round 4's rows above (one row per id:
+        // `only` selects by id), graded again on the runtime fixes.
     )
 
     // --- stages and evidence ---------------------------------------------------------------------
@@ -2755,13 +3196,30 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * connect / turn on / enable / start / protect / activate (through open shadow roots) that
          * is not a disconnect, a sign-in or an upgrade; a tap on it, and what the popup offered.
          */
+        private const val VPN_CONNECT_WORDS = "/\\b(connect|turn on|enable|start|protect|activate|power|switch on|quick connect)\\b/i"
         private const val VPN_CONNECT_CLICK =
-            "(function(){var want=/\\b(connect|turn on|enable|start|protect|activate|power|switch on|quick connect)\\b/i;var avoid=/\\b(disconnect|turn off|disable|log ?in|sign ?in|sign up|register|upgrade|premium|buy|trial)\\b/i;var cands=[];" +
+            "(function(){var want=__WANT__;var sel=__SELECTOR__;var avoid=/\\b(disconnect|turn off|disable|log ?in|sign ?in|sign up|register|upgrade|premium|buy|trial)\\b/i;var cands=[];" +
                 "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var shown=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};" +
-                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], [role=switch], input[type=checkbox], input[type=button], input[type=submit], label, div, span');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length<40&&l.length>0&&want.test(l)&&!avoid.test(l)&&shown(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
-                "if(document.body)walk(document.body);var switches=Array.prototype.slice.call(document.querySelectorAll('[role=switch], input[type=checkbox]')).filter(shown);var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||cands[0]||switches[0]||null;" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], [role=switch], input[type=checkbox], input[type=button], input[type=submit], label, div, span, li');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length<40&&l.length>0&&want.test(l)&&!avoid.test(l)&&shown(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "if(document.body)walk(document.body);var switches=Array.prototype.slice.call(document.querySelectorAll('[role=switch], input[type=checkbox]')).filter(shown);var bySel=sel?document.querySelector(sel):null;if(bySel&&!shown(bySel))bySel=null;" +
+                "var hit=bySel||cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||cands[0]||switches[0]||null;" +
                 "if(hit){try{hit.click()}catch(e){return JSON.stringify({clicked:false,error:String(e&&e.message||e)})}}" +
-                "return JSON.stringify({clicked:!!hit,label:hit?label(hit).slice(0,60):null,tag:hit?hit.tagName+(hit.getAttribute('role')?'[role='+hit.getAttribute('role')+']':''):null,candidates:cands.slice(0,6).map(function(e){return e.tagName+':'+label(e).slice(0,30)}),switches:switches.length})})()"
+                "return JSON.stringify({clicked:!!hit,bySelector:!!bySel,label:hit?label(hit).slice(0,60):null,tag:hit?hit.tagName+(hit.getAttribute('role')?'[role='+hit.getAttribute('role')+']':''):null,candidates:cands.slice(0,6).map(function(e){return e.tagName+':'+label(e).slice(0,30)}),switches:switches.length})})()"
+        /** A consent screen's accepting control, for [CLICK_LABEL]: the whole label is one of these. */
+        private const val CONSENT_WORDS = "/^(agree|accept|i agree|agree (and|&) continue|accept (and|&) continue|continue|get started|got it|start|skip|next|ok|okay|allow)[.!]?$/i"
+        /**
+         * A tap on the first drawn control whose whole label matches `__RE__` (buttons, links,
+         * role=button, labelled inputs, then the innermost text container; through open shadow
+         * roots): its label and centre, or the document's text when nothing matched.
+         */
+        private const val CLICK_LABEL =
+            "(function(){var re=__RE__;var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};" +
+                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var cands=[];" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], input[type=button], input[type=submit], label, div, span, li, p');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&l.length<60&&re.test(l)&&visible(e))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "if(document.body)walk(document.body);var leaves=cands.filter(function(e){return !cands.some(function(o){return o!==e&&e.contains(o)})});" +
+                "var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||e.getAttribute('role')==='button'})||leaves[0]||null;" +
+                "if(!hit)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}" +
+                "return JSON.stringify({clicked:true,label:label(hit).slice(0,40),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2})})()"
         /** A document's text through open shadow roots (`innerText` stops at a shadow host), scripts and styles left out. */
         private const val DEEP_TEXT =
             "(function(){var parts=[];var walk=function(root){var it=document.createNodeIterator(root,NodeFilter.SHOW_TEXT);var n;while((n=it.nextNode())){var par=n.parentNode;if(par&&/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(par.nodeName))continue;var t=n.textContent.replace(/\\s+/g,' ').trim();if(t)parts.push(t)}" +
@@ -2824,5 +3282,76 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FILESYSTEM_PROBE =
             "(function(){var err=document.getElementById('uh-oh');var shown=!!err&&err.getBoundingClientRect().height>0;" +
                 "return JSON.stringify({available:typeof window.webkitRequestFileSystem==='function'||typeof window.requestFileSystem==='function',failed:shown,text:shown?(err.innerText||'').replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
+
+        // --- compat round 5 ---
+
+        /**
+         * From an extension page: the shape of `chrome.tabCapture` and `chrome.desktopCapture`,
+         * and `tabCapture.getMediaStreamId` asked for the active tab (a stream id, or Chrome's
+         * error; a missing function is ours). Lands on `window.__zenCapture`.
+         */
+        private const val CAPTURE_PROBE =
+            "(function(){var tc=chrome.tabCapture,dc=chrome.desktopCapture;var p=window.__zenCapture={done:false,tabCapture:typeof tc,desktopCapture:typeof dc,getMediaStreamId:typeof (tc&&tc.getMediaStreamId),capture:typeof (tc&&tc.capture),getCapturedTabs:typeof (tc&&tc.getCapturedTabs),chooseDesktopMedia:typeof (dc&&dc.chooseDesktopMedia),streamId:null,error:null};" +
+                "var finish=function(){p.done=true};setTimeout(function(){if(!p.done){p.error=p.error||'no answer within 8 s';finish()}},8000);var took=function(id){p.streamId=id==null?null:(typeof id+' of '+String(id).length);finish()};" +
+                "if(typeof (tc&&tc.getMediaStreamId)!=='function'){p.error='getMediaStreamId is '+p.getMediaStreamId;finish();return 'asked'}" +
+                "try{chrome.tabs.query({active:true},function(tabs){var t=tabs&&tabs[0];if(!t){p.error='no active tab';finish();return}" +
+                "try{var r=tc.getMediaStreamId({targetTabId:t.id},function(id){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);took(id)});if(r&&typeof r.then==='function')r.then(took,function(e){p.error=String(e&&e.message||e);finish()})}catch(e){p.error='threw: '+String(e&&e.message||e);finish()}})}" +
+                "catch(e){p.error='threw: '+String(e&&e.message||e);finish()}return 'asked'})()"
+        /** From the worker: `action.getBadgeText` for the tab whose URL matches `__MATCH__`. Lands on `window.__zenBadge`. */
+        private const val BADGE_PROBE =
+            "(function(){var p=window.__zenBadge={done:false,badge:null,tab:null,error:null};try{chrome.tabs.query({},function(tabs){var t=(tabs||[]).filter(function(t){return __MATCH__.test(t.url||t.pendingUrl||'')})[0];" +
+                "if(!t){p.error='no fixture tab among '+(tabs||[]).length;p.done=true;return}p.tab=t.id;try{chrome.action.getBadgeText({tabId:t.id},function(b){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);p.badge=b==null?null:String(b);p.done=true})}catch(e){p.error=String(e&&e.message||e);p.done=true}})}" +
+                "catch(e){p.error=String(e&&e.message||e);p.done=true}return 'asked'})()"
+        /** From the worker: `chrome.storage.local` read whole, whether it names the fixture's clip. Lands on `window.__zenStored`. */
+        private const val STORAGE_HAS_CLIP =
+            "(function(){var p=window.__zenStored={done:false,keys:[],hasClip:false,error:null};try{chrome.storage.local.get(null,function(all){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);all=all||{};p.keys=Object.keys(all).slice(0,8);p.hasClip=/clip\\.mp4/.test(JSON.stringify(all));p.done=true})}" +
+                "catch(e){p.error=String(e&&e.message||e);p.done=true}return 'asked'})()"
+        /** From the worker: `chrome.tts.getVoices`, the count and the first voice's name. Lands on `window.__zenTts`. */
+        private const val TTS_VOICES_PROBE =
+            "(function(){var p=window.__zenTts={done:false,tts:typeof chrome.tts,voices:null,first:null,error:null};try{chrome.tts.getVoices(function(v){if(chrome.runtime.lastError)p.error=String(chrome.runtime.lastError.message);p.voices=(v||[]).length;p.first=v&&v[0]?v[0].voiceName:null;p.done=true})}" +
+                "catch(e){p.error='threw: '+String(e&&e.message||e);p.done=true}setTimeout(function(){if(!p.done){p.error='no answer within 8 s';p.done=true}},8000);return 'asked'})()"
+        /** Read Aloud's popup: the sentence it is on (`#highlight`), its status line and which controls are up. */
+        private const val READ_ALOUD_STATE =
+            "(function(){var vis=function(id){var e=document.getElementById(id);return !!e&&e.offsetParent!==null};var hl=document.getElementById('highlight');var h=((hl&&hl.innerText)||'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:h.length>10,highlight:h.slice(0,140),status:(((document.getElementById('status')||{}).innerText)||'').trim().slice(0,80),play:vis('btnPlay'),pause:vis('btnPause'),stop:vis('btnStop'),loading:vis('imgLoading'),text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
+        /** Custom Cursor's popup: a pack card (`.collection-cursors .cursor` with an image; a fallback on any drawn card with an image), clicked. */
+        private const val CURSOR_PICK =
+            "(function(){var visible=function(n){var r=n.getBoundingClientRect();return r.width>20&&r.height>20};var packs=Array.prototype.slice.call(document.querySelectorAll('.collection-cursors .cursor, .collection-cursors > div')).filter(function(n){return visible(n)&&n.querySelector('img')});" +
+                "var cards=packs.length?packs:Array.prototype.slice.call(document.querySelectorAll('[class*=\"cursor\"], [class*=\"Cursor\"], [class*=\"item\"], [class*=\"card\"], li')).filter(function(n){return visible(n)&&n.querySelector('img')&&!/logo|header|footer|nav|btn|setting/i.test(n.className)});" +
+                "var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return visible(i)&&/\\.(png|svg|cur|gif)/i.test(i.src)&&!/logo/i.test(i.src+i.alt+i.className)});var hit=cards[0]||imgs[1]||imgs[0];" +
+                "if(!hit)return JSON.stringify({clicked:false,imgs:imgs.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();hit.click();" +
+                "return JSON.stringify({clicked:true,tag:hit.tagName,cls:String(hit.className).slice(0,50),x:r.left+r.width/2,y:r.top+r.height/2,imgs:imgs.length})})()"
+        /** The fixture page's cursor: Custom Cursor's `<style id="custom-cursor">` and the computed `cursor` of html / body. */
+        private const val CURSOR_STYLE =
+            "(function(){var st=document.getElementById('custom-cursor');var body=getComputedStyle(document.body).cursor;var html=getComputedStyle(document.documentElement).cursor;" +
+                "return JSON.stringify({pass:!!st&&/url\\(/.test(html+body),style:!!st,css:(st?st.textContent:'').slice(0,80),body:body.slice(0,60),html:html.slice(0,60)})})()"
+        /** The fixture page after AnyDoc's translate: its markers (classes, data attributes, shadow hosts) and a text sample. */
+        private const val ANYDOC_MARKS =
+            "(function(){var marks=document.querySelectorAll('[class*=\"anydoc\"], [id*=\"anydoc\"], [data-wps-translate-resize-ignore], [class*=\"wps-translate\"], [data-anydoc-translated], font[class*=\"translat\"], [class*=\"translated\"]');" +
+                "var shadow=Array.prototype.filter.call(document.querySelectorAll('*'),function(e){return e.shadowRoot&&/anydoc|translat/i.test(e.tagName+e.id+e.className)});var text=document.body?document.body.innerText:'';" +
+                "return JSON.stringify({pass:marks.length>0||shadow.length>0,marks:marks.length,shadowHosts:shadow.length,sample:text.replace(/\\s+/g,' ').trim().slice(0,100)})})()"
+        /** Awesome Screenshot's popup, on its Screenshot tab: the "visible part" action, clicked. */
+        private const val AWESOME_VISIBLE_CLICK =
+            "(function(){var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};var el=Array.prototype.slice.call(document.querySelectorAll('.action-item.visible, .main-capture-action .visible, .visible')).find(visible);" +
+                "if(!el)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''});var r=el.getBoundingClientRect();el.click();" +
+                "return JSON.stringify({clicked:true,label:el.textContent.replace(/\\s+/g,' ').trim().slice(0,40),x:r.left+r.width/2,y:r.top+r.height/2})})()"
+        /** An annotator page: a canvas or image over 200 px is the captured picture. */
+        private const val ANNOTATOR_IMAGE =
+            "(function(){var cs=Array.prototype.slice.call(document.querySelectorAll('canvas')).map(function(c){return {w:c.width,h:c.height}});var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return i.naturalWidth>200&&i.naturalHeight>200}).map(function(i){return {w:i.naturalWidth,h:i.naturalHeight}});" +
+                "return JSON.stringify({pass:cs.some(function(c){return c.w>200&&c.h>200})||imgs.length>0,canvases:cs.slice(0,3),images:imgs.slice(0,2),title:document.title.slice(0,50),text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,80):''})})()"
+        /** A word of the fixture page's text to double-click: its range kept on `window.__zenWord`, its centre in css px. */
+        private const val DICTIONARY_WORD =
+            "(function(){var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);var node;while((node=walker.nextNode())){var m=/\\b(paragraph|example|fixture|page|content|browser|extension|simple|light|quick|brown|lazy)\\b/i.exec(node.nodeValue);" +
+                "if(m&&node.parentElement.offsetParent!==null){var r=document.createRange();r.setStart(node,m.index);r.setEnd(node,m.index+m[0].length);var b=r.getBoundingClientRect();if(b.width>0){window.__zenWord={range:r,x:b.left+b.width/2,y:b.top+b.height/2,word:m[0]};return JSON.stringify({word:m[0],x:b.left+b.width/2,y:b.top+b.height/2})}}}" +
+                "var h=document.querySelector('h1, p');var hb=h.getBoundingClientRect();return JSON.stringify({word:h.textContent.trim().split(/\\s+/)[0],x:hb.left+20,y:hb.top+hb.height/2})})()"
+        /** The word selected and a `dblclick` (then `mouseup`) dispatched over it, as a double-click of a mouse yields. */
+        private const val DICTIONARY_DBLCLICK =
+            "(function(){var w=window.__zenWord;if(!w)return 'no word';var sel=getSelection();sel.removeAllRanges();sel.addRange(w.range);var el=w.range.startContainer.parentElement;" +
+                "['mousedown','mouseup','click','mousedown','mouseup','click','dblclick'].forEach(function(type,i){el.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,clientX:w.x,clientY:w.y,detail:i<3?1:2,view:window,button:0}))});return 'dispatched over '+w.word})()"
+        /** Google Dictionary's bubble: `#gdx-bubble-host`'s open shadow root, shown, with the query or a meaning. */
+        private const val DICTIONARY_BUBBLE =
+            "(function(){var host=document.getElementById('gdx-bubble-host');var root=host&&host.shadowRoot;var main=root&&root.querySelector('#gdx-bubble-main');var meaning=(((root&&root.querySelector('#gdx-bubble-meaning'))||{}).textContent||'').replace(/\\s+/g,' ').trim();" +
+                "var query=(((root&&root.querySelector('#gdx-bubble-query'))||{}).textContent||'').trim();var shown=!!main&&getComputedStyle(main).display!=='none'&&host.getBoundingClientRect().width>0;" +
+                "return JSON.stringify({pass:shown&&(meaning.length>0||query.length>0),host:!!host,shown:shown,query:query.slice(0,30),meaning:meaning.slice(0,120),selection:String(getSelection()).trim().slice(0,30)})})()"
     }
 }
