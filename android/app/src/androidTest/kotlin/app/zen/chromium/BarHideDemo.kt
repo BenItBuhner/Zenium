@@ -47,20 +47,33 @@ import kotlin.math.roundToInt
  *     the value climbs without a reversal, and the last line is reached with the bar hidden;
  *     a short drag back up from the end brings the bar part of the way back under the finger
  *     and a release from under half way snaps it home (a fourth run read a bar snapped all the
- *     way back here at the top dock, with no finger's travel to account for it).
+ *     way back here at the top dock, with no finger's travel to account for it);
+ *  8. accessibility, from the bar hidden: accessibility focus on the pill (TalkBack's swipe)
+ *     brings the bar back; a click on the focused pill (the double-tap) puts the focus in the URL
+ *     field, which shuts the gate with the bar shown, and a long drag meanwhile moves no bar;
+ *     then the negative – the focus left on the pill, a long drag down the page takes the bar
+ *     off under the finger all the same (the host answers a focus event only while no finger is
+ *     on the page: a fourth run's return drag found the bar snapped home by Chromium re-raising
+ *     the event for the node it held);
+ *  9. the overview, from the bar's Tabs button: while it is up the gate is shut with the bar shown,
+ *     and back closes it;
+ * 10. a pinch zooms the page and moves no bar (the zoom scrolls the view under a changing scale;
+ *     a second finger takes the host's filter out of the gesture);
+ * 11. short pages, each a document of its own: a page shorter than its viewport and one a few px
+ *     over it (less than the bar's travel) keep their bar under a long drag, and the latter's
+ *     last line is on screen at its end.
  *
  * Each dock's sequence starts with the page at its top, put there by script (a script's scroll
  * moves no bar): the drags land on the page's own text, not on the box, and a drag from the top
- * has the whole page below it. A fling's outcome and the bar's return under accessibility focus
- * are read and written down, not judged: on the software-GPU emulator the fling's scroll arrives
- * in lumps, and what the WebView does with `ACTION_ACCESSIBILITY_FOCUS` is Chromium's call. A
- * bar found off its edge where it should be home, and every claim that did not hold, is written
- * down with both sides' state (the chrome's store, the host's gesture), so a bar stuck hidden can
- * be told from the emulator's jank; the host and the chrome each log every move of the bar that
- * was not the finger's, and the chrome its phases (`BarHide`, `ZenHost`, `ZenChrome` in the
- * logcat). The focus read leaves no focus behind: a node left focused is Chromium's to
- * re-announce as the bar moves under the drags that follow, and a fourth run's top-dock return
- * drag found the bar snapped home with no finger's travel to account for it.
+ * has the whole page below it. A fling's outcome is read and written down, not judged: on the
+ * software-GPU emulator the fling's scroll arrives in lumps. So is where the bar rests after the
+ * negative of step 8: a focus event Chromium re-raises once the finger has lifted is a service's
+ * and brings the bar back, by the rule. A bar found off its edge where it should be home, and
+ * every claim that did not hold, is written down with both sides' state (the chrome's store, the
+ * host's gesture), so a bar stuck hidden can be told from the emulator's jank; the host and the
+ * chrome each log every move of the bar that was not the finger's, and the chrome its phases
+ * (`BarHide`, `ZenHost`, `ZenChrome` in the logcat). Step 8 leaves no focus behind: a node left
+ * focused is Chromium's to re-announce as the bar moves under the drags that follow.
  *
  * `findings.txt` carries every number read; a claim that did not hold fails the run once the
  * recording is done (like [touchFault]). The `theme` instrumentation argument (`light`, the
@@ -81,7 +94,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     fun record() {
         server = DemoServer(
             PORT,
-            mapOf("/" to ("text/html; charset=utf-8" to readAsset("bar-hide-demo-page.html").toByteArray()))
+            mapOf(
+                "/" to ("text/html; charset=utf-8" to readAsset("bar-hide-demo-page.html").toByteArray()),
+                SHORT_PATH to ("text/html; charset=utf-8" to readAsset("bar-hide-demo-short.html").toByteArray())
+            )
         ).also { it.start() }
         try {
             runDemo()
@@ -123,20 +139,26 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         innerScrollerSequence("bottom")
         pageEndSequence("bottom")
         sheetSequence("bottom")
+        overviewSequence("bottom")
+        pinchSequence("bottom")
+        shortPageSequence("bottom")
         settingsSequence()
         dockSequence("top")
         innerScrollerSequence("top")
         pageEndSequence("top")
         sheetSequence("top")
+        overviewSequence("top")
+        pinchSequence("top")
+        shortPageSequence("top")
     }
 
     // --- the sequence at one dock ------------------------------------------------------------------
 
     /**
-     * Steps 1 to 3 against the bar at `edge`, plus the fling and the accessibility-focus reads.
-     * Starts with the bar shown and the page at its top (a fourth run began the top dock's half
-     * in the page's last third, where the re-hide after the focus read ran into the page's end);
-     * ends with the bar shown.
+     * Steps 1 to 3 against the bar at `edge`, with step 8 (accessibility) between 1 and 2 and the
+     * fling read at the end. Starts with the bar shown and the page at its top (a fourth run began
+     * the top dock's half in the page's last third, where the re-hide after the focus read ran
+     * into the page's end); ends with the bar shown.
      */
     private fun dockSequence(edge: String) {
         settleBar(0.0, "$edge start")
@@ -178,9 +200,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             "frame $shownFrame -> $hiddenFrame"
         )
 
-        // The bar's return under accessibility focus on the pill (TalkBack's swipe): read, not judged.
-        a11yFocusRead(edge)
-        if (hideNumber() < 0.5) {
+        // The bar's return under accessibility focus on the pill (TalkBack's swipe), the URL
+        // field's focus from there, and the negative (focus left on the pill, a re-hide): counted.
+        a11ySequence(edge)
+        if (hideNumber() < 0.995) {
             drag(-LONG * density, 600)
             awaitHide(SETTLE_MS) { it >= 0.995 }
         }
@@ -554,21 +577,213 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         return count
     }
 
-    /** Accessibility focus on the address pill with the bar hidden (what TalkBack's swipe does): the bar's answer, written down. */
-    private fun a11yFocusRead(edge: String) {
-        val pill = findNode { it == PILL_LABEL || it.startsWith("$PILL_LABEL,") }
-        if (pill == null) {
-            finding("[$edge] a11y focus: no pill node in the tree with the bar hidden")
-            return
+    /**
+     * Accessibility at `edge`, from the bar hidden. Accessibility focus on the address pill (what
+     * TalkBack's swipe does) brings the bar back – counted since the fifth run, read only before.
+     * A click on the focused pill (TalkBack's double-tap) puts the focus in the URL field: the gate
+     * shuts with the bar shown and a long drag on the screen meanwhile moves no bar (v2 draft 11.5:
+     * the band stays shown while the URL field has focus). Then the field is left, and the
+     * negative runs: the focus is put back on the pill and LEFT there, and a long drag down the
+     * page must take the bar off under the finger all the same – Chromium re-raises the focus
+     * event for the node it holds as the bar moves under the drag, and the host answers it only
+     * while no finger is on the page (a fourth run's return drag found the bar snapped home by
+     * that very event). Where the bar rests once the finger has lifted is read, not judged: an
+     * event re-raised then is a service's, and brings the bar back. Ends with the focus cleared.
+     */
+    private fun a11ySequence(edge: String) {
+        val pill = pillNode()
+        val focused = pill?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true
+        check(
+            "$edge: accessibility focus on the hidden pill brings the bar back",
+            awaitHide(3_000) { it <= 0.005 },
+            "pill ${if (pill == null) "not in the tree" else if (focused) "focused" else "refused the focus"}, hide ${hideValue()}"
+        )
+        SystemClock.sleep(800)
+        shot("$edge-03b-a11y-focus-bar-back")
+
+        // The URL field: a click on the focused pill (TalkBack's double-tap) opens the omnibox on
+        // it; a finger on the pill stands in when the tree's click is refused.
+        var clicked = pillNode()?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        var fieldOpen = awaitChrome(4_000) { urlbarOpen() }
+        if (!fieldOpen) {
+            clicked = touchTapLabel(PILL_LABEL, prefix = true)
+            fieldOpen = awaitChrome(6_000) { urlbarOpen() }
         }
-        val focused = pill.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
-        val back = awaitHide(3_000) { it <= 0.005 }
-        finding("[$edge] a11y focus on the pill: action ${if (focused) "taken" else "refused"}, bar back ${if (back) "yes" else "no"} (hide ${hideValue()})")
-        // The focus is taken off again: TalkBack's would move on with the next swipe, and a node
-        // left focused is Chromium's to re-announce as its bounds change under the drags that
-        // follow (the host brings the bar back for that event while no finger is on the page).
-        pill.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+        check(
+            "$edge: the URL field's focus shuts the gate with the bar shown",
+            fieldOpen && !barAllowed() && hideNumber() <= 0.005,
+            "click ${if (clicked) "taken" else "refused"}, URL field open $fieldOpen, gate open ${barAllowed()}, hide ${hideValue()}"
+        )
         SystemClock.sleep(600)
+        shot("$edge-03c-url-field-bar-shown")
+        val fieldLog = frameLog { drag(-LONG * density, 600) }
+        check(
+            "$edge: a ${LONG.roundToInt()} dp drag with the URL field focused moves no bar",
+            fieldLog.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${fieldLog.maxOrNull() ?: 0.0} over ${fieldLog.size} frames, now ${hideValue()}, URL field open ${urlbarOpen()}"
+        )
+        closeUrlbar()
+        awaitIme(false)
+        val fieldClosed = awaitChrome(6_000) { !urlbarOpen() }
+        finding("[$edge] the URL field ${if (fieldClosed) "closed" else "stayed open"} after back: gate open ${barAllowed()}, hide ${hideValue()}")
+        settleBar(0.0, "$edge after the URL field")
+        SystemClock.sleep(800)
+
+        // The negative: the focus left on the pill, and a drag that hides the bar under it.
+        val again = pillNode()
+        val left = again?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS) == true
+        SystemClock.sleep(800)
+        var held = 0.0
+        val hideLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, -LONG * density, 700)
+                hold(700)
+                held = hideNumber()
+                shot("$edge-03d-focus-left-re-hide")
+                up()
+            }
+        }
+        check(
+            "$edge: with accessibility focus left on the pill a ${LONG.roundToInt()} dp drag down the page takes the bar off under the finger all the same",
+            held >= 0.98,
+            "focus ${if (again == null) "found no pill" else if (left) "on the pill" else "refused"}, hide $held, frames ${hideLog.joinToString(" ") { "%.2f".format(it) }}"
+        )
+        val restHidden = awaitHide(SETTLE_MS) { it >= 0.995 }
+        finding("[$edge] after the re-hide with the focus left on the pill the bar ${if (restHidden) "rests hidden" else "rests at ${hideValue()} (a focus event re-raised once the finger had lifted brings it back: a service's)"}")
+        // The focus is taken off again: TalkBack's would move on with the next swipe, and a node
+        // left focused is Chromium's to re-announce as its bounds change under the drags that follow.
+        pillNode()?.performAction(AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS)
+        SystemClock.sleep(600)
+    }
+
+    /** The address pill's node in the tree (its label carries the address after a comma); null when it is not listed. */
+    private fun pillNode(): AccessibilityNodeInfo? = findNode { it == PILL_LABEL || it.startsWith("$PILL_LABEL,") }
+
+    /**
+     * The overview at `edge`: a finger on the bar's Tabs button opens it over the page, and while
+     * it is up the gate is shut with the bar shown (v2 draft 11.5: the band stays shown while the
+     * overview is open; the stage over the page is a cover, like a sheet). Back closes it and the
+     * gate opens again. Starts and ends with the bar shown – with the bar hidden its Tabs button
+     * is out of reach, as Chrome's is, so the overview is opened from the bar shown.
+     */
+    private fun overviewSequence(edge: String) {
+        settleBar(0.0, "$edge before the overview")
+        val tabs = findByLabelPrefix(TABS_LABEL)
+        var open = false
+        if (tabs != null) {
+            Finger().tap(tabs.exactCenterX(), tabs.exactCenterY())
+            open = waitFor(OVERVIEW_LABEL, 8_000) != null && awaitChrome(4_000) { overviewOpen() }
+            SystemClock.sleep(1_500)
+        }
+        check(
+            "$edge: the overview over the page (a finger on the bar's Tabs button) shuts the gate with the bar shown",
+            open && !barAllowed() && hideNumber() <= 0.005,
+            "Tabs button ${tabs ?: "not in the tree"}, overview open ${overviewOpen()}, gate open ${barAllowed()}, hide ${hideValue()}"
+        )
+        if (open) shot("$edge-17-overview-bar-shown")
+        if (!overviewOpen()) return
+        back()
+        val closed = awaitChrome(8_000) { !overviewOpen() }
+        SystemClock.sleep(1_500)
+        finding("[$edge] the overview ${if (closed) "closed" else "stayed open"} after back: gate open ${barAllowed()}, hide ${hideValue()}")
+        if (!closed) {
+            back()
+            awaitChrome(6_000) { !overviewOpen() }
+        }
+    }
+
+    /**
+     * A pinch at `edge`: two fingers moving apart zoom the page, which scrolls the view under a
+     * changing scale – `onScrollChanged` fires with two fingers down – and the bar must not move
+     * for it (Chrome's controls hold still through a pinch; a second finger takes the host's
+     * filter to NONE for the rest of the gesture, `BarHideScrollFilter.pointerDown`). The page is
+     * left zoomed; the sequence after this one loads another document, which puts the scale back.
+     */
+    private fun pinchSequence(edge: String) {
+        settleBar(0.0, "$edge before the pinch")
+        pageJs("window.scrollTo(0, 600)")
+        SystemClock.sleep(900)
+        val scaleBefore = pageScale()
+        finding("[$edge] before the pinch: scale $scaleBefore, page scrollTop ${pageScrollTop()}, hide ${hideValue()}")
+        val log = frameLog {
+            pinch(width * 0.5f, height * 0.4f, 80 * density, 320 * density, 700)
+            SystemClock.sleep(700)
+            shot("$edge-18-pinched")
+        }
+        SystemClock.sleep(800)
+        val scaleAfter = pageScale()
+        check("$edge: the pinch zoomed the page", scaleAfter >= scaleBefore * 1.2, "scale $scaleBefore -> $scaleAfter, page scrollTop ${pageScrollTop()}")
+        check(
+            "$edge: the pinch moved no bar",
+            log.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${log.maxOrNull() ?: 0.0} over ${log.size} frames, now ${hideValue()}"
+        )
+    }
+
+    /**
+     * Short pages at `edge` (v2 draft 11.5: the band stays shown on a page shorter than its
+     * viewport). A page shorter than its viewport scrolls not at all, and a long drag down it
+     * moves no bar; a page a few px over its viewport – less than the bar's travel – scrolls to
+     * its end under the same drag with the bar still in place, and its last line is on screen.
+     * Each is a document of its own, so the bar is shown as it comes up; ends back on the long
+     * page, at its top, with the bar shown.
+     */
+    private fun shortPageSequence(edge: String) {
+        settleBar(0.0, "$edge before the short pages")
+        loadPage("$ORIGIN$SHORT_PATH?over=-80")
+        finding("[$edge] a page shorter than its viewport: ${pageRemaining()} CSS px to scroll, hide ${hideValue()}")
+        val shortLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, -LONG * density, 700)
+                hold(500)
+                shot("$edge-19-short-page")
+                up()
+            }
+        }
+        SystemClock.sleep(800)
+        check(
+            "$edge: a ${LONG.roundToInt()} dp drag down a page shorter than its viewport moves no bar",
+            shortLog.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${shortLog.maxOrNull() ?: 0.0} over ${shortLog.size} frames, now ${hideValue()}, page scrollTop ${pageScrollTop()}"
+        )
+
+        loadPage("$ORIGIN$SHORT_PATH?over=$OVER_PX")
+        finding("[$edge] a page $OVER_PX px over its viewport: ${pageRemaining()} CSS px to scroll (travel ${barTravel()}), hide ${hideValue()}")
+        val overLog = frameLog {
+            Finger().apply {
+                down(pageX, pageY)
+                moveBy(0f, -LONG * density, 700)
+                hold(500)
+                shot("$edge-20-page-over-by-less-than-the-travel")
+                up()
+            }
+        }
+        SystemClock.sleep(800)
+        check(
+            "$edge: a ${LONG.roundToInt()} dp drag down a page $OVER_PX px over its viewport (less than the bar's travel) moves no bar",
+            overLog.all { it <= 0.005 } && hideNumber() <= 0.005,
+            "hide max ${overLog.maxOrNull() ?: 0.0} over ${overLog.size} frames, now ${hideValue()}"
+        )
+        val bottom = lastLineBottom()
+        check(
+            "$edge: the short page's end is reached with the bar shown, its last line on screen",
+            pageRemaining() == 0 && bottom > 0 && bottom <= pageInnerHeight(),
+            "remaining ${pageRemaining()} CSS px, last line's bottom $bottom in a page ${pageInnerHeight()} tall"
+        )
+
+        loadPage("$ORIGIN/")
+        pageJs("window.scrollTo(0, 0)")
+        SystemClock.sleep(800)
+        settleBar(0.0, "$edge back on the long page")
+    }
+
+    /** Navigate the tab's page to `url` by script (a new document: the bar shows for it) and wait for it to load. */
+    private fun loadPage(url: String) {
+        pageJs("location.href = ${JSONObject.quote(url)}")
+        awaitLoaded(url)
+        SystemClock.sleep(1_500)
     }
 
     /**
@@ -683,6 +898,28 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         return raw.toDoubleOrNull()?.takeIf { it > 0 } ?: 50.0
     }
 
+    /** The chrome's gate for the bar (`barHideStore.allowed`): false while something holds the bar shown. */
+    private fun barAllowed(): Boolean =
+        chromeJs("(((window.__zenStores||{})['bar-hide']||{get:function(){return {}}}).get()||{}).allowed===true") == "true"
+
+    /** The URL field is open in the chrome (`uiStore.urlbar.open`). */
+    private fun urlbarOpen(): Boolean =
+        chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
+
+    /** The tab overview is up in the chrome (`stageStore.overview.phase`, anything but closed). */
+    private fun overviewOpen(): Boolean =
+        chromeJs("((((window.__zenStores||{}).stage||{get:function(){return {}}}).get()||{}).overview||{}).phase!=='closed'") == "true"
+
+    /** Poll a read of the chrome until it holds or `timeoutMs` has passed; true when it did. */
+    private fun awaitChrome(timeoutMs: Long, holds: () -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (holds()) return true
+            SystemClock.sleep(150)
+        }
+        return holds()
+    }
+
     private fun hideSetting(): Boolean? =
         coreState().optJSONObject("settings")?.let { if (it.has("hideToolbarOnScroll")) it.getBoolean("hideToolbarOnScroll") else null }
 
@@ -713,6 +950,9 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     /** The page's own scroll position, CSS px (0 at its top). */
     private fun pageScrollTop(): Int = pageNumber("Math.round(document.scrollingElement.scrollTop)").toInt()
+
+    /** The page's pinch-zoom scale as its script sees it (`visualViewport.scale`, 1 at rest); -1 when it did not answer. */
+    private fun pageScale(): Double = pageNumber("window.visualViewport ? window.visualViewport.scale : 1")
 
     /** How much further the page can scroll, CSS px (0 at its end). */
     private fun pageRemaining(): Int =
@@ -824,7 +1064,14 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     companion object {
         private const val PORT = 18142
         private const val ORIGIN = "http://127.0.0.1:$PORT"
+        /** The short pages (`bar-hide-demo-short.html`): the body is the viewport plus the `over` query, CSS px. */
+        private const val SHORT_PATH = "/short"
+        /** How far over its viewport the second short page runs: under the bar's travel (50 CSS px) with room. */
+        private const val OVER_PX = 30
         private const val TAB_ID = "tab_long"
+        /** The bar's tab-count button (`Tabs (1)`), and the overview's header button that says it is up. */
+        private const val TABS_LABEL = "Tabs ("
+        private const val OVERVIEW_LABEL = "Spaces"
         private const val MUTE_ROW = "Mute Tab"
         private const val UNMUTE_ROW = "Unmute Tab"
         private const val HIDE_ROW = "Hide toolbar when scrolling"
