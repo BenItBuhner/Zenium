@@ -91,15 +91,33 @@ describe('engineApiSpec', () => {
     // VeePN, NordVPN and Browsec read `chrome.proxy.settings`, Claude `chrome.debugger.onEvent`
     // and Read&Write `chrome.gcm.onMessage` in their workers' first statements: Chrome has the
     // namespace once the permission is declared, and a missing one was a TypeError there.
-    for (const name of ['proxy', 'gcm', 'debugger', 'topSites', 'tts', 'contentSettings']) {
+    for (const name of [
+      'proxy',
+      'gcm',
+      'debugger',
+      'topSites',
+      'tts',
+      'contentSettings',
+      'printerProvider'
+    ]) {
       expect(namespaceGranted(name, [name], 3), name).toBe(true)
       expect(namespaceGranted(name, [], 3), name).toBe(false)
     }
     const spec = engineApiSpec({
-      permissions: ['proxy', 'gcm', 'debugger', 'privacy', 'contentSettings'],
+      permissions: ['proxy', 'gcm', 'debugger', 'privacy', 'contentSettings', 'printerProvider'],
       manifestVersion: 3,
       context: 'page'
     })
+    // Save to Google Drive's worker registers its printer listeners in its constructor: the
+    // namespace is Chrome's shape of a print destination nothing asks for yet, four events.
+    expect(spec.printerProvider.shape).toBe(true)
+    expect(spec.printerProvider.methods).toEqual({})
+    expect(Object.keys(spec.printerProvider.events)).toEqual([
+      'onGetPrintersRequested',
+      'onGetUsbPrinterInfoRequested',
+      'onGetCapabilityRequested',
+      'onPrintRequested'
+    ])
     // The ChromeSetting and ContentSetting shapes travel with a namespace the engine table
     // leaves alone (`proxy.settings`, `contentSettings.cookies`); `privacy`'s are the engine's
     // own (`engine.ts`), so the shim must not replace them; `gcm` stays the layer's inert shape.
@@ -159,7 +177,7 @@ describe('engineApiSpec', () => {
       manifest_version: 3,
       name: 'Probe',
       version: '1.0',
-      permissions: ['proxy', 'gcm', 'debugger']
+      permissions: ['proxy', 'gcm', 'debugger', 'printerProvider']
     }
     const nativeEvent = (): Any => ({
       addListener: vi.fn(),
@@ -208,6 +226,12 @@ describe('engineApiSpec', () => {
       chrome.debugger.onEvent.addListener(() => {})
       chrome.debugger.onDetach.addListener(() => {})
       expect(chrome.debugger.DetachReason.TARGET_CLOSED).toBe('target_closed')
+      // Save to Google Drive's three printer listeners, in its constructor's order.
+      const printers = vi.fn()
+      chrome.printerProvider.onGetPrintersRequested.addListener(printers)
+      chrome.printerProvider.onGetCapabilityRequested.addListener(() => {})
+      chrome.printerProvider.onPrintRequested.addListener(() => {})
+      expect(chrome.printerProvider.onGetPrintersRequested.hasListener(printers)).toBe(true)
       // Not declared: not there, as Chrome has it.
       expect(chrome.tts).toBeUndefined()
       expect(chrome.topSites).toBeUndefined()

@@ -442,6 +442,57 @@ describe('AndroidExtensionRuntime: webNavigation from the navigation listener', 
     expect(await callFrame(h, tabId, 5)).toBeNull()
     expect(await callFrames(h, 999)).toBeNull()
   })
+
+  it('reads a PDF viewer tab as the PDF’s URL, as Chrome’s PDF tab reads: tabs, getAllFrames and the inferred webNavigation', async () => {
+    const h = harness()
+    await withNavigation(h, [
+      'webNavigation.onBeforeNavigate',
+      'webNavigation.onCommitted',
+      'webNavigation.onCompleted',
+      'tabs.onUpdated'
+    ])
+    const viewer = 'zen://pdf?id=dl_7'
+    const pdf = 'https://files.example/report.pdf'
+    h.pdfDocuments.set(viewer, pdf)
+    h.tabs.t1 = makeTab('t1', viewer)
+    h.notifyState()
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    // The commit is reported under the viewer's address; the document's `stopLoading` under the
+    // origin the viewer's files come from, as WebView reports a loadDataWithBaseURL document.
+    h.runtime.onViewEvent('t1', 'navigated', {
+      url: viewer,
+      title: '',
+      inPage: false,
+      canGoBack: true,
+      canGoForward: false
+    })
+    h.runtime.onViewEvent('t1', 'stopLoading', {
+      url: 'https://pdf.zenium.invalid/',
+      title: 'report.pdf',
+      canGoBack: true,
+      canGoForward: false
+    })
+    for (const name of ['onBeforeNavigate', 'onCommitted', 'onCompleted']) {
+      const got = events(h, 'bg1', `webNavigation.${name}`)
+      expect(got).toHaveLength(1)
+      expect((got[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({ tabId, url: pdf })
+    }
+    const updated = events(h, 'bg1', 'tabs.onUpdated')
+    expect((updated[0].args as Array<Record<string, unknown>>)[1]).toEqual({
+      status: 'loading',
+      url: pdf
+    })
+    expect((updated[0].args as Array<Record<string, unknown>>)[2]).toMatchObject({ url: pdf })
+    expect(await callFrame(h, tabId, 0)).toMatchObject({ frameId: 0, url: pdf })
+    const tab = (await call(h, 'bg1', 'tabs', 'get', [tabId])).result as Record<string, unknown>
+    expect(tab.url).toBe(pdf)
+    const found = (await call(h, 'bg1', 'tabs', 'query', [{ url: '*://files.example/*.pdf' }]))
+      .result as Array<Record<string, unknown>>
+    expect(found.map((t) => t.id)).toEqual([tabId])
+    // A viewer address whose document is gone, or any other tab, reads as its own address.
+    h.pdfDocuments.delete(viewer)
+    expect(await callFrame(h, tabId, 0)).toMatchObject({ frameId: 0, url: viewer })
+  })
 })
 
 async function callFrames(h: Harness, tabId: number): Promise<unknown> {

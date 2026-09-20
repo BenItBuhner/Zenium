@@ -17,6 +17,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api'
 import {
   PDF_VIEWER_GLOBAL,
   PDF_VIEWER_MESSAGE_KEY,
+  PDF_VIEWER_TOKEN_KEY,
   steppedZoom,
   type PdfFitMode,
   type PdfOutlineItem,
@@ -55,6 +56,8 @@ import {
 interface ViewerConfig {
   id: string
   name: string
+  /** The document's token, posted beside every report (`PdfDocumentInfo.token`). */
+  token: string
   src: string
   workerSrc: string
 }
@@ -86,6 +89,35 @@ const pagesRoot = document.getElementById('pages') as HTMLDivElement
 const status = document.getElementById('status') as HTMLDivElement
 
 pdfjs.GlobalWorkerOptions.workerSrc = config?.workerSrc ?? ''
+
+/**
+ * pdf.js's worker for a document that runs under the PDF's own URL (`pdfViewerBaseUrl`), where
+ * the viewer's files are another origin's. A worker cannot be made from a cross-origin script
+ * URL; pdf.js would wrap one in a blob that `import()`s it from inside the worker – a request
+ * of the worker's, which the host cannot answer (its `useWorkerFetch: false` reason) – and fall
+ * back to running the worker's code on the main thread. So the document fetches the script
+ * itself (a request of its own, which the host answers with CORS) and the worker runs off a
+ * blob of it; `workerPort` hands it to pdf.js. The worker asks the host for nothing: pdf.js's
+ * data files reach it from here. A document on the viewer's own origin leaves pdf.js its
+ * same-origin worker; null then, and when the script cannot be fetched (pdf.js's fallback).
+ */
+async function crossOriginWorker(workerSrc: string): Promise<Worker | null> {
+  let src: URL
+  try {
+    src = new URL(workerSrc, location.href)
+  } catch {
+    return null
+  }
+  if (!workerSrc || src.origin === location.origin) return null
+  try {
+    const response = await fetch(src)
+    if (!response.ok) return null
+    const blob = new Blob([await response.text()], { type: 'text/javascript' })
+    return new Worker(URL.createObjectURL(blob), { type: 'module' })
+  } catch {
+    return null
+  }
+}
 
 class Viewer {
   private doc: PDFDocumentProxy | null = null
@@ -120,6 +152,8 @@ class Viewer {
 
   async open(): Promise<void> {
     this.showStatus('Loading…')
+    const worker = await crossOriginWorker(this.config.workerSrc)
+    if (worker) pdfjs.GlobalWorkerOptions.workerPort = worker
     const task = pdfjs.getDocument({
       url: this.config.src,
       // The host answers requests of the document, not of its worker: pdf.js's data files are
@@ -776,7 +810,10 @@ class Viewer {
     }
     const post = (): void => {
       this.reportTimer = null
-      window.postMessage({ [PDF_VIEWER_MESSAGE_KEY]: this.snapshot() }, location.origin)
+      window.postMessage(
+        { [PDF_VIEWER_MESSAGE_KEY]: this.snapshot(), [PDF_VIEWER_TOKEN_KEY]: config?.token ?? '' },
+        location.origin
+      )
     }
     if (now) post()
     else this.reportTimer = window.setTimeout(post, 40)

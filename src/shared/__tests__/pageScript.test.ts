@@ -157,6 +157,41 @@ describe('page script: OpenSearch discovery', () => {
   })
 })
 
+describe('page script: the PDF viewer relay', () => {
+  const report = {
+    state: 'ready',
+    pageCount: 3,
+    page: 1,
+    zoom: 1,
+    fit: 'width',
+    title: null,
+    find: null,
+    outline: []
+  }
+
+  function post(data: unknown): void {
+    window.dispatchEvent(new MessageEvent('message', { data, source: window }))
+  }
+
+  it('relays the viewer’s report with the document’s token, from whatever origin the document runs under', () => {
+    const messages = install(false)
+    post({ zeniumPdf: report, zeniumPdfToken: 'tok-1' })
+    expect(messages.filter((m) => m.type === 'pdf')).toEqual([
+      { type: 'pdf', pdf: report, token: 'tok-1' }
+    ])
+  })
+
+  it('relays nothing without a token, nothing that is no report, and nothing from another window', () => {
+    const messages = install(false)
+    post({ zeniumPdf: report })
+    post({ zeniumPdf: { ...report, state: 'odd' }, zeniumPdfToken: 'tok-1' })
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { zeniumPdf: report, zeniumPdfToken: 'tok-1' } })
+    )
+    expect(messages.filter((m) => m.type === 'pdf')).toEqual([])
+  })
+})
+
 describe('page script: the fullscreen video report (MED-01)', () => {
   /** A video with a natural size (happy-dom's has none): the properties the reporter reads. */
   function video(width: number, height: number): HTMLVideoElement {
