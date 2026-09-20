@@ -195,6 +195,37 @@ class NavigationStateTest {
         assertTrue(NavigationState.internalNamesOf(listOf(doc1, null), listOf(NavigationState.BLANK_URL, "zen://history")).isEmpty())
     }
 
+    /**
+     * The case the names are for: a reader page two entries back, its document longer than a
+     * `data:` URL is kept verbatim, in a fresh view that never showed it. Off the snapshot the
+     * view's first list names it `zen://reader…`; off nothing it would be `about:blank` until
+     * the user went back to it.
+     */
+    @Test
+    fun aNonCurrentInternalEntryIsNamedFromTheSnapshotNotBlank() {
+        val readerDoc = "data:text/html," + "<p>the article, read</p>".repeat(200)
+        assertTrue(readerDoc.length > NavigationState.DATA_URL_KEEP_MAX)
+        val reader = "zen://reader?id=a1&url=https%3A%2F%2Fa.example%2Farticle"
+        val items = listOf(readerDoc, "https://b.example/", "https://c.example/")
+        val entries = listOf(reader, "https://b.example/", "https://c.example/")
+        assertTrue(NavigationState.restoredMatches(items, 2, entries, 2))
+
+        val names = NavigationState.internalNamesOf(items, entries)
+        assertEquals(mapOf(NavigationState.dataUrlKey(readerDoc) to reader), names)
+        val listItems = items.map { NavigationState.Item(it, "", null) }
+        val named = NavigationState.snapshotJson(listItems, 2) { url -> NavigationState.publicUrl(url) { key -> names[key] } }
+        assertEquals(entries, urlsOf(named))
+        assertEquals(2, named.getInt("index"))
+        // Without the seed, the fresh view has no name for an entry it never showed.
+        val unnamed = NavigationState.snapshotJson(listItems, 2) { url -> NavigationState.publicUrl(url) { null } }
+        assertEquals(listOf(NavigationState.BLANK_URL, "https://b.example/", "https://c.example/"), urlsOf(unnamed))
+    }
+
+    private fun urlsOf(snapshot: JSONObject): List<String> {
+        val entries = snapshot.getJSONArray("entries")
+        return (0 until entries.length()).map { entries.getJSONObject(it).getString("url") }
+    }
+
     @Test
     fun theUrlsOfARestorePayload() {
         val entries = JSONArray()
