@@ -965,9 +965,9 @@ describe('the focus ring (§1, §4)', () => {
     // the light block and not per theme (the "nothing that is not a colour" test above holds
     // dark to colours), so a control moves its ring through the token at its own rule's weight.
     expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-ring-offset: 2px;$/m)
-    // Declared four times in all: the chrome's default, the field's −2, the picked card radio's
-    // −2 and the picked swatch's 2 back (each pinned below).
-    expect(css.match(/--v2-ring-offset:/g)).toHaveLength(4)
+    // Declared five times in all: the chrome's default, the field's −2, the picked card radio's
+    // −2, the picked swatch's 2 back and the Settings row's −2 (each pinned below).
+    expect(css.match(/--v2-ring-offset:/g)).toHaveLength(5)
     const ring = block(RING_RULE)
     expect(ring.match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
       '  outline: 2px solid var(--v2-ring);',
@@ -1010,6 +1010,15 @@ describe('the focus ring (§1, §4)', () => {
     // as `outline-offset` on the wrapper – the token would reach its clear button, a 2-outside one.
     expect(rule(panels, '.zen-phone-field:focus-within')).toMatch(/outline-offset: -2px;/)
     expect(panels).not.toMatch(/\.zen-phone-field[^{]*\{[^}]*--v2-ring-offset/)
+    // A row that runs edge to edge inside a clipping scroll body takes the inset ring for the
+    // field's reason – the Settings tab's page rows and its sheets' option rows through the
+    // token, the phone list's rows (phonePanels.css) as the −2 they state on the row.
+    expect(block('.zen-settings-row').match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+      '  --v2-ring-offset: -2px;'
+    ])
+    expect(rule(panels, '.zen-phone-row:has(> .zen-list-main:focus-visible)')).toMatch(
+      /outline-offset: -2px;/
+    )
   })
 
   it('leaves a popover row the room its ring now takes: --v2-ring-room is 4 (§9.20, the #251 chassis (b))', () => {

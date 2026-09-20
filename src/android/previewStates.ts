@@ -126,7 +126,8 @@ const QR_EVENT_MARGIN_MS = 250
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
- * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
+ * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up),
+ * `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
  * or long-presses it for its menu), `sheet=customise` (the new tab page's customise sheet, over
@@ -622,11 +623,17 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
+    // The steps, if any, once the overlay is up and settled: a row held for selection mode.
+    const then = target.then ?? []
+    const settled = (): void => {
+      if (then.length === 0) finish()
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    }
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
         if (target.show) requestAnimationFrame(() => show(target.show))
-        if (target.expand) expandSheet(finish)
-        else finish()
+        if (target.expand) expandSheet(settled)
+        else settled()
       }
     )
   } else if (target.kind === 'download') {

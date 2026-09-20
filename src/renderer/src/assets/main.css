@@ -7251,7 +7251,15 @@
  * button that is the target, an info row as the static form (`data-static`, §9.34) – so no rule
  * here states the row's geometry; `zen-settings-row` is the page's hook for what is its own:
  * label 15 on the first line, description 13/69 % under it, at most two lines.
+ *
+ * The row's ring sits inside its edge (§1, the reason the field's does): the page's rows and
+ * the sheets' option rows run edge to edge inside a clipping scroll body, so the shared 2
+ * outside would lose both sides and leave two bars – as the phone list's rows found
+ * (phonePanels.css). The row moves the shared ring through the offset token, as the field does.
  */
+.zen-settings-row {
+  --v2-ring-offset: -2px;
+}
 .zen-settings-row-text {
   display: flex;
   min-width: 0;
