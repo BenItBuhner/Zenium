@@ -2509,13 +2509,15 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
         }),
-        {
+        // The phone's save is the icon row's Download Page (TB-08, `phoneIconRow`), the one entry
+        // Chrome's menu has for it; the desktop keeps the text item.
+        ...desktop({
           label: 'Save Page As…',
           action: 'page.savePage',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
-        },
+        }),
         {
           label: 'Take Screenshot',
           action: 'page.screenshot',

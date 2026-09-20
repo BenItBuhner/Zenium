@@ -469,7 +469,8 @@ describe('the app menu', () => {
   })
 
   it('on a phone opens on the icon row and keeps the page and library items in their desktop order', () => {
-    // The star moved from the Bookmarks submenu into the row (TB-16): one bookmark entry.
+    // The star moved from the Bookmarks submenu into the row (TB-16): one bookmark entry; and
+    // the row's Download Page is the phone's one save entry, so no 'Save Page As…' row (TB-08).
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'Forward',
       'Bookmark This Page',
@@ -500,7 +501,6 @@ describe('the app menu', () => {
       'Reader View',
       'Share…',
       'Print…',
-      'Save Page As…',
       'Take Screenshot',
       'Capture Full Page',
       'Desktop Site',
@@ -724,7 +724,7 @@ describe("the phone menu's icon row", () => {
     expect(blank.row()[1]).toMatchObject({ label: 'Bookmark This Page', enabled: false })
   })
 
-  it('Download Page saves a web page through page.savePage and is off elsewhere', () => {
+  it('Download Page saves a web page through page.savePage and is off elsewhere; it is the phone menu’s one save entry', () => {
     const h = phone()
     expect(h.row()[2]).toMatchObject({ label: 'Download Page', glyph: 'download', enabled: true })
     const run = vi.spyOn(h.browser.actions, 'run').mockImplementation(() => undefined)
@@ -732,6 +732,13 @@ describe("the phone menu's icon row", () => {
     expect(run).toHaveBeenCalledWith('page.savePage', { sourceTabId: h.tabId, win: h.win })
     expect(phone('zen://settings').row()[2]).toMatchObject({ enabled: false })
     expect(phone('zen://blank').row()[2]).toMatchObject({ enabled: false })
+    // Chrome's phone menu saves through the icon alone: the text row is the desktop's, so the
+    // same command is not offered twice (once gated to the web, once not).
+    appMenu(h)
+    expect(allItems(h.shown()).filter((item) => item.action === 'page.savePage')).toHaveLength(1)
+    expect(appMenu(h)).not.toContain('Save Page As…')
+    expect(appMenu(harness(DESKTOP))).toContain('Save Page As…')
+    expect(appMenu(harness(ANDROID, 'tablet'))).toContain('Save Page As…')
   })
 
   it('Page Info asks the chrome for the site information sheet, and is off where there is no site', () => {
