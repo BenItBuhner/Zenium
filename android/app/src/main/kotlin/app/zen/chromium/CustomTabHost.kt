@@ -70,6 +70,10 @@ class CustomTabHost(
             "download.started" -> downloadStarted(args)
             "download.done" -> downloadDone(args)
             "download.action" -> downloadAction(args)
+            // A word the host has for the user (the file chooser's camera refused, OS-22): a
+            // custom tab has no message cards, so it is the system's toast, as its other words
+            // are; the card's Open settings action has no place on one and is left out.
+            "toast" -> args.strOrNull("message")?.takeIf { it.isNotEmpty() }?.let { Toast.makeText(activity, it, Toast.LENGTH_LONG).show() }
             // Download progress, crash reports and the like: the downloader's notification and
             // the page itself are the UI a custom tab has for them.
         }
