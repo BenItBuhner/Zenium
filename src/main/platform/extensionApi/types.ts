@@ -3,6 +3,7 @@ import type { Browser } from '../../../core/browser'
 import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
+import type { WithheldPermissions } from '../../../core/extensions/withheldPermissions'
 import type { SessionManager } from '../sessions'
 import type { ApiModel } from './model'
 import type { ContextRegistry, DispatchOptions } from './contexts'
@@ -24,6 +25,12 @@ export interface LoadedExtension {
   sessions: Session[]
   /** Developer-mode extensions escape Chrome's 30-second alarm floor. */
   unpacked: boolean
+  /**
+   * Permissions the manifest declared that the host kept out of `manifest` (the engine's copy;
+   * `core/extensions/withheldPermissions.ts`). The API layer treats them as declared: a required
+   * one is granted, an optional one is refused by `permissions.request`.
+   */
+  withheld: WithheldPermissions
 }
 
 /**

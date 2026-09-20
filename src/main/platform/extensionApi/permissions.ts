@@ -16,6 +16,10 @@ import {
   permissionWarnings,
   type PermissionWarningSource
 } from '../../../core/extensions/permissionMessages'
+import {
+  isWithheldPermission,
+  restoreWithheldPermissions
+} from '../../../core/extensions/withheldPermissions'
 import { warningPlatform } from '../extensions'
 import {
   ApiError,
@@ -50,16 +54,21 @@ export class PermissionsApi {
   /**
    * An extension loaded: its granted set is what was stored plus whatever the manifest requires,
    * less what Chrome refuses to its manifest version (a grant stored before that rule, or before
-   * an update changed the version, goes too).
+   * an update changed the version, goes too). The manifest counts as declared: a permission the
+   * host withheld from the engine's copy is required or optional here as the extension wrote it.
    */
   load(ext: LoadedExtension): void {
-    const sets = manifestPermissionSets(ext.manifest)
+    const sets = manifestPermissionSets(restoreWithheldPermissions(ext.manifest, ext.withheld))
     this.manifests.set(ext.id, sets)
     const stored = this.host.store.grants(ext.id)
     const merged = stored ? addPermissionSets(stored, sets.required) : { ...sets.required }
     const manifestVersion: 2 | 3 = ext.manifest.manifest_version === 2 ? 2 : 3
     const grants: PermissionSet = {
-      permissions: availablePermissions(merged.permissions, manifestVersion),
+      // A withheld optional permission granted before it was withheld goes too: `request`
+      // refuses it now, and the stored set should say the same.
+      permissions: availablePermissions(merged.permissions, manifestVersion).filter(
+        (p) => !isWithheldPermission(p) || sets.required.permissions.includes(p)
+      ),
       origins: merged.origins
     }
     this.granted.set(ext.id, grants)
@@ -113,6 +122,9 @@ export class PermissionsApi {
     const grants = this.grants(ctx.extensionId)
     const missing = missingPermissions(grants, wanted)
     if (missing.permissions.length === 0 && missing.origins.length === 0) return true
+    // A permission withheld from the engine cannot be granted: the answer is the user's "no",
+    // without a prompt (Chrome grants or refuses a request whole, so the rest waits too).
+    if (missing.permissions.some(isWithheldPermission)) return false
     const next = addPermissionSets(grants, missing)
     const warnings = addedWarnings(ctx.extension, grants, next)
     if (warnings.length > 0) {

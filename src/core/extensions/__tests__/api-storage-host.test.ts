@@ -49,7 +49,8 @@ function harness(manifestVersion: 2 | 3 = 3): {
     manifest: { manifest_version: manifestVersion, name: 'Probe', version: '1' },
     path: '/tmp/ext',
     sessions: [primary, other] as unknown as LoadedExtension['sessions'],
-    unpacked: false
+    unpacked: false,
+    withheld: { required: [], optional: [] }
   }
   const host = {
     store: {
