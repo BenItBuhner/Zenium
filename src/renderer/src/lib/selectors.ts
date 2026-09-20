@@ -1,4 +1,4 @@
-import type { Container, Space, SplitGroup, SplitLayout, Tab, UIState } from '@shared/types'
+import type { Container, Space, Tab, UIState } from '@shared/types'
 import { isBlankTabUrl } from '@shared/url'
 
 export function activeSpace(state: UIState): Space {
@@ -64,53 +64,6 @@ export function isEmptySplitPane(state: UIState, tabId: string | null | undefine
   if (!tab?.splitGroupId || !isBlankTabUrl(tab.url)) return false
   const group = state.splitGroups[tab.splitGroupId]
   return Boolean(group && group.tabIds.length > 1 && activeTab(state)?.splitGroupId === group.id)
-}
-
-/** What the split glyph draws for one pane: the group's layout, its pane count, the pane's own cell. */
-export interface SplitMark {
-  layout: SplitLayout
-  count: number
-  index: number
-}
-
-/**
- * The split glyph of a tab in a split of two or more panes (split-05): `null` for a tab out of
- * one, or in a group that has no other pane left.
- */
-export function splitMarkOf(group: SplitGroup | null | undefined, tabId: string): SplitMark | null {
-  if (!group || group.tabIds.length < 2) return null
-  const index = group.tabIds.indexOf(tabId)
-  return index < 0 ? null : { layout: group.layout, count: group.tabIds.length, index }
-}
-
-/** The tooltip of the pill's split chip: "In a split view – 2 panes". */
-export function splitChipLabel(count: number): string {
-  return `In a split view – ${count} panes`
-}
-
-/** The part of the split card's frame a row draws (`SpacePanel`, split-05). */
-export type SplitCardEdge = 'only' | 'first' | 'middle' | 'last'
-
-/**
- * Which rows of one list draw the split card's frame, and which part of it (split-05): each
- * run of neighbouring rows in one split group is a card, one frame around them. The model does
- * not keep a split's tabs next to each other in the strip, so a group whose rows lie apart gets
- * a frame per run, the glyph on every row naming the group.
- */
-export function splitCardEdges(state: UIState, tabs: Tab[]): Map<string, SplitCardEdge> {
-  const edges = new Map<string, SplitCardEdge>()
-  const groupOf = (t: Tab | undefined): string | null => {
-    const g = t?.splitGroupId ? state.splitGroups[t.splitGroupId] : undefined
-    return g && g.tabIds.length > 1 ? g.id : null
-  }
-  tabs.forEach((t, i) => {
-    const g = groupOf(t)
-    if (!g) return
-    const up = groupOf(tabs[i - 1]) === g
-    const down = groupOf(tabs[i + 1]) === g
-    edges.set(t.id, up && down ? 'middle' : up ? 'last' : down ? 'first' : 'only')
-  })
-  return edges
 }
 
 export function tabTitle(tab: Tab): string {

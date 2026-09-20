@@ -18,7 +18,27 @@ export function splitPaneRects(
   gap = SPLIT_GAP
 ): Array<{ tabId: string; rect: Rect; header: Rect }> {
   const n = group.tabIds.length
-  const cells = splitCells(area, group.layout, normalise(group.sizes, n), gap)
+  const sizes = normalise(group.sizes, n)
+  const cells: Rect[] = []
+  if (group.layout === 'vertical') {
+    let x = area.x
+    const usable = area.width - gap * (n - 1)
+    sizes.forEach((s) => {
+      const w = usable * s
+      cells.push({ x, y: area.y, width: w, height: area.height })
+      x += w + gap
+    })
+  } else if (group.layout === 'horizontal') {
+    let y = area.y
+    const usable = area.height - gap * (n - 1)
+    sizes.forEach((s) => {
+      const h = usable * s
+      cells.push({ x: area.x, y, width: area.width, height: h })
+      y += h + gap
+    })
+  } else {
+    cells.push(...gridCells(area, n, gap))
+  }
   return group.tabIds.map((tabId, i) => {
     const cell = cells[i]
     return {
@@ -32,36 +52,6 @@ export function splitPaneRects(
       }
     }
   })
-}
-
-/**
- * The cells of a split's layout inside `area`, one per share (the shares sum to 1), `gap`
- * between them: the panes' geometry, and the strip glyph's (`SplitGlyph`), which draws the
- * same layout in a 16 px box with equal shares and no gap.
- */
-export function splitCells(area: Rect, layout: SplitLayout, shares: number[], gap: number): Rect[] {
-  const n = shares.length
-  const cells: Rect[] = []
-  if (layout === 'vertical') {
-    let x = area.x
-    const usable = area.width - gap * (n - 1)
-    shares.forEach((s) => {
-      const w = usable * s
-      cells.push({ x, y: area.y, width: w, height: area.height })
-      x += w + gap
-    })
-  } else if (layout === 'horizontal') {
-    let y = area.y
-    const usable = area.height - gap * (n - 1)
-    shares.forEach((s) => {
-      const h = usable * s
-      cells.push({ x: area.x, y, width: area.width, height: h })
-      y += h + gap
-    })
-  } else {
-    cells.push(...gridCells(area, n, gap))
-  }
-  return cells
 }
 
 function gridCells(area: Rect, n: number, gap: number): Rect[] {

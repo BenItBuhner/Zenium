@@ -3423,11 +3423,6 @@ export interface Commands {
    * `paneTabId` shown there, which closes. False when nothing changed.
    */
   'split.pickTab': { args: { paneTabId: string; tabId: string }; result: boolean }
-  /**
-   * The pill's split chip (split-05): the "Split View" menu – the layouts, Unsplit View, New
-   * Empty Split View – at the chip; `keyboard` when a key pressed it, as `MenuAnchor` says.
-   */
-  'split.menu': { args: MenuAnchor | void; result: void }
 
   'glance.open': {
     args: { url: string; parentTabId: string; originX: number; originY: number }

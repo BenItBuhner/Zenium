@@ -36,7 +36,7 @@ import { chromeDropStore } from '@renderer/lib/dnd'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { isPrivateWindow, splitChipLabel, splitMarkOf } from '@renderer/lib/selectors'
+import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
@@ -56,7 +56,6 @@ import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
-import { SplitGlyph } from '../SplitGlyph'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
@@ -187,10 +186,6 @@ export function NavRow({
   // while the translation shows), and comes up on hover for every other web page.
   const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
   const translateBarUp = tab ? barStateOf(state, tab.id) !== null : false
-  // The tab is a pane of a split (split-05): the strip's glyph as the pill's trailing chip.
-  const splitMark = tab
-    ? splitMarkOf(tab.splitGroupId ? state.splitGroups[tab.splitGroupId] : null, tab.id)
-    : null
   return (
     <div
       ref={row}
@@ -508,31 +503,6 @@ export function NavRow({
                   'bookmark.add'
                 )}
               />
-            )}
-            {tab && splitMark && (
-              // The split chip (split-05, BUG-041): the strip row's glyph – the split's layout
-              // with this tab's pane filled – as the pill's trailing chip while the active tab
-              // is in a split, "In a split view – 2 panes" on hover; its popup is the "Split
-              // View" menu at the chip, so the chip is also where the split is changed or
-              // left. An extra in a narrow pill (§9.29): the panes on screen say the same.
-              <PillChip
-                label={splitChipLabel(splitMark.count)}
-                title={splitChipLabel(splitMark.count)}
-                popup="menu"
-                data-split-chip=""
-                className="zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100"
-                onActivate={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect()
-                  // A key's click (`detail` 0) opens the menu with its first item selected.
-                  run('split.menu', {
-                    x: Math.round(r.left),
-                    y: Math.round(r.bottom + 4),
-                    keyboard: e.detail === 0
-                  })
-                }}
-              >
-                <SplitGlyph {...splitMark} size={14} />
-              </PillChip>
             )}
           </span>
         </div>

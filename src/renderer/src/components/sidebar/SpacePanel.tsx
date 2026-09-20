@@ -9,7 +9,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { pinnedOf, regularOf, splitCardEdges, type SplitCardEdge } from '@renderer/lib/selectors'
+import { pinnedOf, regularOf } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
@@ -38,10 +38,6 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   const folders = Object.values(state.folders).filter((f) => f.spaceId === space.id)
   const activeTabId = space.activeTabId
   const showSeparator = state.settings.showTabSeparator && (pinned.length > 0 || regular.length > 0)
-  const loose = regular.filter((t) => !t.folderId || !state.folders[t.folderId])
-  // The split cards (split-05): each run of neighbouring rows in one split group, per list.
-  const pinnedCards = splitCardEdges(state, pinned)
-  const looseCards = splitCardEdges(state, loose)
   const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
 
   // The rows' motion (design-language §7): neighbours slide open for a lifted row, rows whose
@@ -116,7 +112,6 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                         active={tab.id === activeTabId}
                         compact={compact}
                         parent={pinnedHeaderKey}
-                        splitCard={pinnedCards.get(tab.id)}
                       />
                     ))}
                   </div>
@@ -163,21 +158,18 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   dragging={Boolean(drag)}
                   live={Boolean(state.liveFolders[folder.id])}
                   liveError={state.liveFolders[folder.id]?.lastError ?? null}
-                  splitCards={splitCardEdges(
-                    state,
-                    regular.filter((t) => t.folderId === folder.id)
-                  )}
                 />
               ))}
-              {loose.map((tab) => (
-                <TabItem
-                  key={tab.id}
-                  tab={tab}
-                  active={tab.id === activeTabId}
-                  compact={compact}
-                  splitCard={looseCards.get(tab.id)}
-                />
-              ))}
+              {regular
+                .filter((t) => !t.folderId || !state.folders[t.folderId])
+                .map((tab) => (
+                  <TabItem
+                    key={tab.id}
+                    tab={tab}
+                    active={tab.id === activeTabId}
+                    compact={compact}
+                  />
+                ))}
             </div>
           </div>
           <NewTabButton
@@ -325,8 +317,6 @@ interface FolderRowProps {
   /** Zen Live Folder: contents come from GitHub / RSS / a REST API. */
   live: boolean
   liveError: string | null
-  /** The split cards among the folder's rows (split-05). */
-  splitCards: Map<string, SplitCardEdge>
 }
 
 function FolderRow({
@@ -337,8 +327,7 @@ function FolderRow({
   dropKey,
   dragging,
   live,
-  liveError,
-  splitCards
+  liveError
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
@@ -434,7 +423,6 @@ function FolderRow({
             compact={compact}
             indent
             parent={key}
-            splitCard={splitCards.get(tab.id)}
           />
         ))}
     </div>

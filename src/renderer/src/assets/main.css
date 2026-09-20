@@ -1085,51 +1085,6 @@
   .zen-tab:hover .zen-tab-close {
     opacity: 1;
   }
-  /*
-   * The rows of one split view read as one (split-05, BUG-041): a hairline card – the window
-   * hairline at radius 8 (§2's card and tab radius; `--zen-border` is the strip's hairline, its
-   * pinned separator's, in the window family of §9.29) – around the run of rows in the group,
-   * drawn on the rows themselves so it moves with them (lib/drag.ts slides rows, not lists):
-   * the first row draws the top, the last the bottom, each bridges the 2 px list gap to the
-   * next. No indent: the frame sits on the rows' own edges; the active row keeps its fill
-   * inside it. The split glyph at the trailing edge names the layout and the row's own pane, in
-   * the deemphasised ink at rest and the full ink on the active row; at rest it stands in the
-   * close button's slot and gives way to the button while the pointer is on the row.
-   */
-  .zen-tab[data-split-card]::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    border: 1px solid var(--zen-border);
-    border-radius: 8px;
-  }
-  .zen-tab[data-split-card='first']::after {
-    bottom: -2px;
-    border-bottom: 0;
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
-  }
-  .zen-tab[data-split-card='middle']::after {
-    bottom: -2px;
-    border-top: 0;
-    border-bottom: 0;
-    border-radius: 0;
-  }
-  .zen-tab[data-split-card='last']::after {
-    border-top: 0;
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-  }
-  .zen-tab-split {
-    color: var(--zen-muted);
-  }
-  .zen-tab[data-active='true'] .zen-tab-split {
-    color: var(--zen-fg);
-  }
-  .zen-tab:hover .zen-tab-split-slot {
-    opacity: 0;
-  }
   /* Zen 1.19: page-load progress runs along the bottom edge of the tab. */
   .zen-tab-progress {
     position: absolute;

@@ -2471,7 +2471,6 @@ export class Browser {
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
       'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
-      'split.menu': (anchor, win) => this.menus.showSplitMenu(win, anchor ?? {}),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
         tabs.openGlance(url, parentTabId, originX, originY, win),
