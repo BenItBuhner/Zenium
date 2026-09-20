@@ -222,72 +222,99 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     /**
-     * DocumentsUI in tree mode: the folder's row (opening the roots drawer and the device's own
-     * storage first when the picker opened elsewhere), then the confirmation button and the
-     * permission dialog's Allow, each a finger where the node's bounds are. False when a step's
-     * control never came; the caller reports the fault.
+     * DocumentsUI in tree mode: the folder's row (through the roots drawer and the device's own
+     * storage first when the picker opened elsewhere; no row at all when it opened inside the
+     * folder, as it does the second time – DocumentsUI keeps the last place each app picked
+     * from), then the confirmation button, then the permission dialog's Allow, each a finger
+     * ([pickerPress]: the control found afresh right before the touch, up to three fingers for
+     * the effect claimed). Two things the first run taught about the bottom button: it is on
+     * screen from the start, greyed on the storage root (Android 11 grants no root), so the wait
+     * is for it ENABLED and not merely present; and on the emulator it runs under the navigation
+     * bar's window, so a finger at the middle of its bounds landed on SystemUI and nothing came
+     * of it – the finger now goes to the middle of the part inside [touchable], as the harness's
+     * own touches do ([touchPoint]). False when a step's control never came or never took; the
+     * caller reports the fault.
      */
     private fun pickTree(name: String): Boolean {
         if (!awaitPicker(10_000)) {
             note("  no document picker window came up")
             return false
         }
-        var row = waitForNode(name, 6_000)
-        if (row == null) {
-            note("  the picker did not open on the storage root; through the roots drawer")
-            val roots = findLabelled("Show roots") ?: findLabelled("Show roots", role = "android.widget.ImageButton") ?: run {
-                note("  no Show roots button")
-                return false
+        // A moment for the directory to load: the button reads enabled only once it has.
+        if (awaitSettled({ insideFolder(name) }, 4_000)) {
+            note("  the picker opened inside '$name' (where the app picked last)")
+        } else {
+            if (pickerNode(listOf(name), 6_000) == null) {
+                note("  the picker did not open on the storage root; through the roots drawer")
+                if (!pickerPress(listOf("Show roots"), "the roots drawer is open") { storageRoot() != null }) {
+                    note("  no roots drawer")
+                    dumpNames("the picker", PICKER_PACKAGES)
+                    return false
+                }
+                SystemClock.sleep(600)
+                snap("picker-roots")
+                val storage = storageRoot() ?: return false
+                val storageName = (storage.text ?: storage.contentDescription)?.toString()?.trim() ?: ""
+                if (!pickerPress(listOf(storageName), "the storage root is open") { pickerNode(listOf(name), 0) != null }) {
+                    note("  no '$name' folder in the storage root")
+                    dumpNames("the storage root", PICKER_PACKAGES)
+                    return false
+                }
             }
-            tapRect(roots)
-            SystemClock.sleep(1_200)
-            snap("picker-roots")
-            val storage = storageRoot() ?: run {
-                note("  no storage root in the drawer")
-                dumpNames("the roots drawer", PICKER_PACKAGES)
-                return false
-            }
-            tapRect(storage)
-            row = waitForNode(name, 8_000) ?: run {
-                note("  no '$name' folder in the storage root")
+            SystemClock.sleep(500)
+            if (!pickerPress(listOf(name), "the folder is open", timeoutMs = 8_000) { insideFolder(name) }) {
+                note("  the '$name' row did not open the folder")
                 dumpNames("the storage root", PICKER_PACKAGES)
                 return false
             }
         }
-        SystemClock.sleep(500)
-        tapRect(row)
-        // Inside the folder: the confirmation ("Use this folder" from Android 11; "Select" before).
-        val use = waitForAny(listOf("Use this folder", "Select"), 8_000, role = "android.widget.Button") ?: run {
-            note("  no Use this folder button")
+        // The confirmation ("Use this folder" from Android 11; "Select" before), enabled now that
+        // a folder below the root is open.
+        if (pickerNode(USE_LABELS, 8_000, role = BUTTON, enabled = true) == null) {
+            note("  no enabled Use this folder button inside '$name'")
             dumpNames("the folder", PICKER_PACKAGES)
             return false
         }
         SystemClock.sleep(600)
         snap("picker-folder")
-        tapRect(use)
-        val allow = waitForAny(listOf("Allow", "OK"), 8_000) ?: run {
-            note("  no Allow in the permission dialog")
+        if (!pickerPress(USE_LABELS, "the permission dialog is up", role = BUTTON, timeoutMs = 6_000) { permissionDialogShowing() }) {
+            note("  no permission dialog came up on Use this folder")
+            dumpNames("the folder", PICKER_PACKAGES)
+            return false
+        }
+        SystemClock.sleep(600)
+        snap("picker-allow")
+        if (!pickerPress(ALLOW_LABELS, "the picker is gone", role = BUTTON, timeoutMs = 10_000) { !documentPickerShowing() }) {
+            note("  the picker is still up after Allow")
             dumpNames("the permission dialog", PICKER_PACKAGES)
             return false
         }
-        snap("picker-allow")
-        tapRect(allow)
-        val gone = awaitPickerGone(10_000)
-        note("  the picker ${if (gone) "closed on Allow" else "is still up"}")
-        return gone
+        note("  the picker closed on Allow")
+        return true
     }
 
+    /** Whether the picker is inside `name`: its list's header reads "Files in <name>", or its toolbar's title does, and the bottom button is enabled. */
+    private fun insideFolder(name: String): Boolean {
+        if (pickerNode(USE_LABELS, 0, role = BUTTON, enabled = true) == null) return false
+        if (pickerNode(listOf("Files in $name"), 0) != null) return true
+        return pickerNodes { node -> node.className?.toString()?.endsWith("Toolbar") == true }
+            .any { bar -> (0 until bar.childCount).any { bar.getChild(it)?.text?.toString()?.trim() == name } }
+    }
+
+    /** The confirmation DocumentsUI raises on Use this folder (Android 11+): its Allow button, enabled. */
+    private fun permissionDialogShowing(): Boolean = pickerNode(ALLOW_LABELS, 0, role = BUTTON, enabled = true) != null
+
     /** The drawer's row for the device's own storage: by its names, else the row that is no known collection. */
-    private fun storageRoot(): Rect? {
+    private fun storageRoot(): AccessibilityNodeInfo? {
         val deviceName = runCatching { Settings.Global.getString(app.contentResolver, Settings.Global.DEVICE_NAME) }.getOrNull()
         for (label in listOfNotNull(deviceName, Build.MODEL, "Internal storage", "Internal shared storage")) {
-            findLabelled(label)?.let { return it }
+            pickerNode(listOf(label), 0)?.let { return it }
         }
         val known = setOf("recent", "images", "videos", "audio", "documents", "downloads", "drive", "bug reports", "show roots")
         return pickerNodes { node ->
             val text = node.text?.toString()?.trim() ?: return@pickerNodes false
             text.isNotEmpty() && text.lowercase() !in known && node.isVisibleToUser && clickableAncestor(node)
-        }.map { Rect().also(it::getBoundsInScreen) }.firstOrNull { it.width() > 0 && it.height() > 0 }
+        }.firstOrNull { node -> Rect().also(node::getBoundsInScreen).let { it.width() > 0 && it.height() > 0 } }
     }
 
     private fun clickableAncestor(node: AccessibilityNodeInfo): Boolean {
@@ -376,11 +403,24 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         error("$what never took the passphrase")
     }
 
-    /** A finger on the `index`th secret field; true once the chrome's focus is in it. */
+    /**
+     * A finger on the `index`th secret field; true once the chrome's focus is in it. The keyboard
+     * is a window of its own and takes a touch inside it: when the field sits under it (the
+     * second field, once the first brought the keyboard up), one back lowers the keyboard first –
+     * the IME consumes that back, the sheet stays (SettingsTouchDemo's rule for its Cancel).
+     */
     private fun focusSecret(index: Int): Boolean {
-        val field = secretFields().getOrNull(index) ?: run {
+        var field = secretFields().getOrNull(index) ?: run {
             dumpNames("the passphrase sheet")
             error("no secret field $index in the sheet")
+        }
+        val inset = imeInset()
+        if (inset > 0 && Rect().also(field::getBoundsInScreen).bottom > height - inset) {
+            back()
+            val down = awaitIme(shown = false, timeoutMs = 6_000)
+            note("  the keyboard was over secret field $index: lowered first ($down)")
+            SystemClock.sleep(700)
+            field = secretFields().getOrNull(index) ?: return false
         }
         if (!touchTap(field)) {
             Log.w(tag, "secret field $index has no bounds on screen to touch")
@@ -781,36 +821,77 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     private fun pickerNodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> =
         nodes { node -> node.packageName?.toString() in PICKER_PACKAGES && predicate(node) }
 
-    private fun tapRect(rect: Rect) {
-        Finger().tap(rect.exactCenterX(), rect.exactCenterY())
-        SystemClock.sleep(700)
+    /**
+     * A finger on the picker's control reading one of `labels` (of `role` when given, enabled),
+     * then up to `timeoutMs` for `took` – the claim of the step, named by `effect`. The control
+     * is found afresh right before each touch (a node held across a wait can be stale by the time
+     * it is touched), and the finger goes in up to three times when the effect never comes: the
+     * first run lost the tree to one finger at the seam of two windows. Each finger and where it
+     * landed go to the notes. False when nothing reads the labels in time or no finger took.
+     */
+    private fun pickerPress(labels: List<String>, effect: String, role: String? = null, timeoutMs: Long = 5_000, took: () -> Boolean): Boolean {
+        for (attempt in 1..3) {
+            val node = pickerNode(labels, if (attempt == 1) 8_000 else 3_000, role, enabled = true) ?: run {
+                note("  nothing in the picker reads ${labels.joinToString(" / ") { "'$it'" }} (attempt $attempt)")
+                return false
+            }
+            val label = (node.text ?: node.contentDescription ?: node.hintText)?.toString()?.trim()
+            val point = pickerTouch(node) ?: run {
+                note("  '$label' has no part inside the touchable window (attempt $attempt)")
+                return false
+            }
+            if (awaitSettled(took, timeoutMs)) {
+                note("  the finger at ${point.x.toInt()},${point.y.toInt()} on '$label' took: $effect (attempt $attempt)")
+                return true
+            }
+            note("  the finger at ${point.x.toInt()},${point.y.toInt()} on '$label' did not take: not $effect within $timeoutMs ms (attempt $attempt)")
+            SystemClock.sleep(500)
+        }
+        return false
     }
 
-    private fun waitForNode(label: String, timeoutMs: Long, role: String? = null): Rect? = waitForAny(listOf(label), timeoutMs, role)
+    /**
+     * A real touch on the picker's `node`: its bounds once they hold still ([steadyBounds]), the
+     * finger at the middle of their part inside [touchable] ([touchPoint]) – DocumentsUI draws
+     * under the navigation bar, and its bottom button's middle is in the bar's window on the
+     * emulator, where a touch reaches SystemUI and never the picker. Where the finger landed, or
+     * null when no part of the node is inside the touchable window.
+     */
+    private fun pickerTouch(node: AccessibilityNodeInfo): PointF? {
+        val bounds = steadyBounds(node) ?: return null
+        val point = touchPoint(bounds) ?: return null
+        Log.i(tag, "picker touch at ${point.x},${point.y} on '${node.text ?: node.contentDescription}' (bounds $bounds, touchable $touchable)")
+        Finger().tap(point.x, point.y)
+        SystemClock.sleep(400)
+        return point
+    }
 
-    private fun waitForAny(labels: List<String>, timeoutMs: Long, role: String? = null): Rect? {
+    /**
+     * The innermost visible node of the picker's windows whose text, description or hint is one
+     * of `labels` (case ignored: a Material button reports its displayed, all-caps text, "ALLOW"),
+     * of class `role` when given (the class or its simple name: a Material button reports
+     * `android.widget.Button`, an AOSP one is one), enabled when `enabled`; polled for up to
+     * `timeoutMs` (one look at 0). Null when none is on screen in time.
+     */
+    private fun pickerNode(labels: List<String>, timeoutMs: Long, role: String? = null, enabled: Boolean = false): AccessibilityNodeInfo? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (true) {
-            for (label in labels) findLabelled(label, role)?.let { return it }
+            val found = pickerNodes { node ->
+                if (role != null && node.className?.toString()?.let { it == role || it.endsWith(".$role") } != true) return@pickerNodes false
+                if (!node.isVisibleToUser || (enabled && !node.isEnabled)) return@pickerNodes false
+                listOf(node.text, node.contentDescription, node.hintText).any { value ->
+                    val text = value?.toString()?.trim() ?: return@any false
+                    labels.any { text.equals(it, ignoreCase = true) }
+                }
+            }
+                .map { node -> node to Rect().also(node::getBoundsInScreen) }
+                .filter { (_, bounds) -> bounds.width() > 0 && bounds.height() > 0 }
+                .minByOrNull { (_, bounds) -> bounds.width() * bounds.height() }
+            if (found != null) return found.first
             if (SystemClock.uptimeMillis() >= deadline) return null
             SystemClock.sleep(300)
         }
     }
-
-    /**
-     * Bounds of the innermost visible node whose text, description or hint is `label`. Case is
-     * ignored: a Material button reports its displayed, all-caps text ("ALLOW") to accessibility.
-     */
-    private fun findLabelled(label: String, role: String? = null): Rect? = nodes { node ->
-        if (role != null && node.className?.toString() != role) return@nodes false
-        if (!node.isVisibleToUser) return@nodes false
-        listOf(node.text, node.contentDescription, node.hintText).any {
-            it?.toString()?.trim().equals(label, ignoreCase = true)
-        }
-    }
-        .map { Rect().also(it::getBoundsInScreen) }
-        .filter { it.width() > 0 && it.height() > 0 }
-        .minByOrNull { it.width() * it.height() }
 
     /** Breadth-first search of every window on screen (the app, the picker, the dialogs). */
     private fun nodes(predicate: (AccessibilityNodeInfo) -> Boolean): List<AccessibilityNodeInfo> {
@@ -957,6 +1038,11 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         private const val REPLACE_LABEL = "Keep only this device\u2019s data"
         private const val CONTINUE_LABEL = "Continue"
         private val PICKER_PACKAGES = setOf("com.android.documentsui", "com.google.android.documentsui", "com.android.permissioncontroller")
+        // DocumentsUI's words and classes: the confirmation reads "Use this folder" from Android 11
+        // ("Select" before), greyed on the storage root; the dialog it raises has Allow.
+        private val USE_LABELS = listOf("Use this folder", "Select")
+        private val ALLOW_LABELS = listOf("Allow", "OK")
+        private const val BUTTON = "Button"
         private val PAGE = """
             <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>Sync demo</title><style>body{font:16px/1.5 system-ui,sans-serif;margin:24px;color:#222}h1{font-size:22px}</style></head>
