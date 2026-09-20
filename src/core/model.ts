@@ -186,6 +186,31 @@ export function regularTabs(model: Model, space: Space, windowId?: string): Tab[
     .filter((t): t is Tab => Boolean(t) && !t.pinned && tabVisibleIn(t, windowId))
 }
 
+/**
+ * The section-relative slot a tab opened by `openerId` should take (tabs-30): after the opener
+ * and any tabs the same opener (or their descendants) already put right after it, so consecutive
+ * background opens keep their order – an "opener group", as Chrome places a tab's children –
+ * rather than stacking in reverse. `null` when the opener is not in this tab's section (a
+ * different pin state, or another space), so the caller falls back to its default placement.
+ */
+export function openerGroupIndex(
+  model: Model,
+  space: Space,
+  tab: Tab,
+  openerId: string
+): number | null {
+  const list = tab.pinned ? pinnedTabs(model, space) : regularTabs(model, space)
+  const start = list.findIndex((t) => t.id === openerId)
+  if (start === -1) return null
+  const group = new Set([openerId])
+  let i = start + 1
+  while (i < list.length && group.has(list[i].openerTabId ?? '')) {
+    group.add(list[i].id)
+    i += 1
+  }
+  return i
+}
+
 /** All tabs the user can cycle through in a space, in sidebar order. */
 export function orderedTabsForSpace(
   model: Model,

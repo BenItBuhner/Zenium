@@ -2209,6 +2209,7 @@ export class Browser {
             url: message.url,
             active: !message.background,
             afterTabId: tab.essential ? undefined : tabId,
+            openerTabId: tab.essential ? undefined : tabId,
             containerId: tab.containerId,
             spaceId: routed ?? undefined
           },
@@ -2303,7 +2304,8 @@ export class Browser {
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
-      'tab.activate': ({ tabId, keepFocus }, win) => tabs.activateTab(tabId, win, { keepFocus }),
+      'tab.activate': ({ tabId, keepFocus }, win) =>
+        tabs.activateTab(tabId, win, { keepFocus, userSwitch: true }),
       'tab.close': ({ tabId, force, keepFocus }, win) =>
         void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),

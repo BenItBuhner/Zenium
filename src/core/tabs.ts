@@ -25,6 +25,7 @@ import {
   MAX_SPLIT_TABS,
   moveTab,
   nextTabAfterClose,
+  openerGroupIndex,
   orderedTabsForSpace,
   pinnedTabs,
   regularTabs,
@@ -87,6 +88,12 @@ export const KEEP_UNDER_PRESSURE = 3
 export interface TabFocusOptions {
   /** The keyboard stays in the chrome (the tab strip) instead of moving into the page. */
   keepFocus?: boolean
+  /**
+   * The user chose this tab themselves (a click, Ctrl+Tab, Ctrl+1–9): switching away from a tab
+   * this way ends its opener-return (tabs-30), so a later close of it no longer jumps to its
+   * opener. Internal activations (opening a tab, the pick after a close) leave the link standing.
+   */
+  userSwitch?: boolean
 }
 
 /**
@@ -118,6 +125,13 @@ export class TabManager {
   private readonly closeIntents = new Map<string, TabFocusOptions>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
+  /**
+   * Tabs whose close, while active, returns to the opener (tabs-30): a tab opened by another
+   * (`Tab.openerTabId`) joins this set, and leaves it the moment the user switches away from it,
+   * so closing it comes back to its opener only when they never left it – Chrome's rule. A
+   * session's own; not persisted.
+   */
+  private readonly openerReturn = new Set<string>()
   /**
    * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
    * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
@@ -1193,7 +1207,11 @@ export class TabManager {
       const after = this.tab(opts.afterTabId)
       const placed = index !== undefined
       if (!placed && after && after.spaceId === space.id && after.pinned === tab.pinned) {
-        index = sectionIndexOf(m, after) + 1
+        // A tab opened by `after` lands after `after`'s opener group, so consecutive background
+        // opens from one page keep their order (tabs-30); any other after-tab sits right after it.
+        const grouped =
+          tab.openerTabId === after.id ? openerGroupIndex(m, space, tab, after.id) : null
+        index = grouped ?? sectionIndexOf(m, after) + 1
         tab.folderId = tab.folderId ?? after.folderId
       } else if (!placed && this.settings.newTabPosition === 'after-current' && !tab.pinned) {
         const current = this.tab(win.selectedTabIn(space))
@@ -1203,6 +1221,9 @@ export class TabManager {
       insertTabIntoSpace(m, space, tab, index)
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
+    // Opened by another tab: closing it while active returns to the opener until the user
+    // switches away from it (tabs-30).
+    if (tab.openerTabId) this.openerReturn.add(tab.id)
     // Set before the load below so an active tab's single activation load (or a background load)
     // is eligible for the http fallback straight away.
     if (opts.upgradedFrom) this.httpsUpgraded.set(tab.id, `http://${opts.upgradedFrom}`)
@@ -1480,7 +1501,12 @@ export class TabManager {
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
-    if (previousActive && previousActive.id !== tab.id) previousActive.lastActiveAt = Date.now()
+    if (previousActive && previousActive.id !== tab.id) {
+      previousActive.lastActiveAt = Date.now()
+      // The user left the previous tab of their own accord: its close no longer returns to its
+      // opener (tabs-30). Its own activation may still return to it.
+      if (opts.userSwitch) this.openerReturn.delete(previousActive.id)
+    }
     if (win.glance && win.glance.parentTabId !== tab.id && win.glance.tabId !== tab.id) {
       this.closeGlance(win)
     }
@@ -1573,29 +1599,36 @@ export class TabManager {
     const index = sectionIndexOf(m, tab)
     // The back/forward stack has to be read while the page still exists.
     const closed = this.captureClosed(tab, index, Date.now())
+    // Closing the tab the user never switched away from since it opened returns to its opener
+    // (tabs-30) when it is alive and in the same window and space; else the neighbour rule stands.
+    const opener = this.openerReturn.has(tabId) ? this.tab(tab.openerTabId ?? undefined) : undefined
     // Every window that had this tab selected picks a neighbour (Firefox: next, else previous).
     const reselect: Array<{ w: ZenWindow; s: Space; next: string | null }> = []
     for (const w of this.browser.allWindows()) {
       const candidates = tab.essential ? (w.localSpace ? [] : m.spaces) : space ? [space] : []
       for (const s of candidates) {
         if (w.selectedTabIn(s) !== tabId) continue
-        reselect.push({
-          w,
+        const neighbour = nextTabAfterClose(
+          m,
           s,
-          next: nextTabAfterClose(
-            m,
-            s,
-            tabId,
-            this.settings.containerSpecificEssentials,
-            false,
-            w.id
+          tabId,
+          this.settings.containerSpecificEssentials,
+          false,
+          w.id
+        )
+        const toOpener =
+          opener &&
+          opener.id !== tabId &&
+          orderedTabsForSpace(m, s, this.settings.containerSpecificEssentials, w.id).some(
+            (t) => t.id === opener.id
           )
-        })
+        reselect.push({ w, s, next: toOpener ? opener.id : neighbour })
       }
     }
     removeTabFromSplit(m, tabId)
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
+    this.openerReturn.delete(tabId)
     this.browser.state.tabNavigation.delete(tabId)
     // Its host-state document stays only while a "Recently closed" entry holds the id.
     this.browser.state.navigationState.touch(tabId)
@@ -2594,7 +2627,7 @@ export class TabManager {
     const idx = active ? ordered.findIndex((t) => t.id === active.id) : -1
     const n = ordered.length
     const next = ordered[(((idx + delta) % n) + n) % n]
-    if (next) this.activateTab(next.id, win)
+    if (next) this.activateTab(next.id, win, { userSwitch: true })
   }
 
   selectTabByIndex(index: number, win: ZenWindow): void {
@@ -2606,7 +2639,7 @@ export class TabManager {
       win.id
     )
     const target = index === -1 ? ordered[ordered.length - 1] : ordered[index]
-    if (target) this.activateTab(target.id, win)
+    if (target) this.activateTab(target.id, win, { userSwitch: true })
   }
 
   // ---------------------------------------------------------------------------
