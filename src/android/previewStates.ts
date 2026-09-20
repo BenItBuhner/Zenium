@@ -161,10 +161,12 @@ const QR_EVENT_MARGIN_MS = 250
  * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
- * spec too (see `seedBlocking`), as may `translate=<status>` (the active page `offered` for
- * translation, `translated`, `translating` or `error`, or `idle` for none; the bar stays down,
- * the pill's chip carries it, unless `&bar`; see `seedTranslate`) and `siteinfo` (the site-information sheet
- * up on the active tab once the state is reached: the pill's folded chips are in it).
+ * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
+ * `translate=<status>` (the active page `offered` for translation, `translated`, `translating`
+ * or `error`, or `idle` for none; the bar stays down unless `&bar`; see `seedTranslate`),
+ * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page)
+ * and `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
+ * shield row with its count and the translate row are in it, OMN-02).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -196,6 +198,7 @@ function apply(browser: Browser, spec: string): void {
     unseedBlocking()
     unseedExtensions()
     unseedTranslate()
+    unseedFavicon()
     unseedMedia()
     dismissSiteInfo()
     closeOverlay()
@@ -561,12 +564,16 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   // shown or tapped, so a row the seeded state adds is there for `show` and the steps.
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const blocking = params.get('blocking')
+  const blocked = Number(params.get('blocked'))
   const extensions = params.get('extensions')
   const translate = params.get('translate')
+  const favicon = params.get('favicon')
   const seed = (): void => {
-    if (blocking) seedBlocking(blocking)
+    if (blocking)
+      seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
     if (translate) seedTranslate(translate, params.has('bar'))
+    if (favicon) seedFavicon(favicon)
   }
   const finish = (): void => {
     seed()
@@ -852,6 +859,9 @@ const heldFixtures = new Map<string, (state: UIState) => UIState>()
 let heldOutput: UIState | null = null
 let unholdFixtures: (() => void) | null = null
 
+/** The requests the seeded engine has blocked on the page, unless `blocked=<n>` says otherwise. */
+const BLOCKED_ON_PAGE = 12
+
 function holdFixture(name: string, fixture: ((state: UIState) => UIState) | null): void {
   if (fixture) heldFixtures.set(name, fixture)
   else heldFixtures.delete(name)
@@ -884,13 +894,31 @@ function holdFixture(name: string, fixture: ((state: UIState) => UIState) | null
  * error), `excepted` (the current site excepted), `updating`, `loading` and `bundled` (first run
  * on the snapshot built into the app).
  */
-function seedBlocking(variant: string): void {
-  holdFixture('blocking', (state) => blockingFixture(state, variant, Date.now()))
+function seedBlocking(variant: string, blocked: number = BLOCKED_ON_PAGE): void {
+  holdFixture('blocking', (state) => blockingFixture(state, variant, Date.now(), blocked))
 }
 
 /** Stop holding a seeded request state over the core's pushes. */
 function unseedBlocking(): void {
   holdFixture('blocking', null)
+}
+
+/**
+ * The active tab's favicon, in a state this stand-in host cannot reach on its own: its pages are
+ * cross-origin iframes, whose icons it cannot read (a device's WebView reports them). `favicon=`
+ * names the icon's URL – a site's own, so the pill shows what the device would. Held over the
+ * core's pushes like the request state, until the next spec.
+ */
+function seedFavicon(url: string): void {
+  holdFixture('favicon', (state) => {
+    const tab = activeTab(state)
+    if (!tab || tab.favicon === url) return state
+    return { ...state, tabs: { ...state.tabs, [tab.id]: { ...tab, favicon: url } } }
+  })
+}
+
+function unseedFavicon(): void {
+  holdFixture('favicon', null)
 }
 
 // ---------------------------------------------------------------------------
@@ -961,7 +989,12 @@ export function translateFixture(state: UIState, status: TranslateStatus, bar: b
   }
 }
 
-export function blockingFixture(state: UIState, variant: string, now: number): UIState {
+export function blockingFixture(
+  state: UIState,
+  variant: string,
+  now: number,
+  blocked: number = BLOCKED_ON_PAGE
+): UIState {
   const active = activeTab(state)
   // The page the state is about: the active tab, or – with the Settings tab up – the web page it
   // was opened from, whose site the "Sites without blocking" rows name (§10.5).
@@ -1040,7 +1073,7 @@ export function blockingFixture(state: UIState, variant: string, now: number): U
   }
   const blocks = enabled && level !== 'off' && !(origin !== null && siteExceptions.includes(origin))
   const tabs = { ...state.tabs }
-  if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? 12 : 0 }
+  if (tab) tabs[tab.id] = { ...tab, blockedCount: blocks ? blocked : 0 }
   return { ...state, settings, blocking, tabs }
 }
 
