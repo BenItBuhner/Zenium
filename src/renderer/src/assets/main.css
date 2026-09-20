@@ -7099,8 +7099,12 @@
 .zen-settings-radio-list > .zen-settings-label {
   margin-bottom: 4px;
 }
-/* Radio rows in a form or a sheet run edge to edge like the page's rows (§9.25). */
-.zen-settings-form .zen-settings-radio-row {
+/*
+ * Radio and checkbox rows in a form or a sheet run edge to edge like the page's rows (§9.25): the
+ * row's own 16 is the sheet's one gutter, so its box sits where the title block's text starts.
+ */
+.zen-settings-form .zen-settings-radio-row,
+.zen-settings-form .zen-v2-check-row {
   margin: 0 -16px;
   width: calc(100% + 32px);
 }

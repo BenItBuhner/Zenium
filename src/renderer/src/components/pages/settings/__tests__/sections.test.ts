@@ -3231,7 +3231,7 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(folder).toMatchObject({
       kind: 'action',
       label: 'Sync folder',
-      description: 'Choose a folder that your cloud drive keeps in sync'
+      description: 'Choose a folder that your cloud drive keeps in sync.'
     })
     const turnOn = row(model, 'sync-turn-on')
     if (turnOn.kind !== 'action') throw new Error('not an action')

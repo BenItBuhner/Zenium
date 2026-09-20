@@ -183,7 +183,7 @@ function Connected({ state }: { state: UIState }): JSX.Element {
               title={sync.folder ?? ''}
             >
               {error ? (
-                <span className="text-red-500">{error}</span>
+                <span className="text-[var(--v2-danger)]">{error}</span>
               ) : (
                 (sync.folderName ?? sync.folder)
               )}

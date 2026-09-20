@@ -164,6 +164,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/newtab/NewTabShortcutDialog.tsx',
   // Settings → Security on desktop (#62): the status ink of a remembered answer, the pane title.
   'components/overlays/SecuritySection.tsx',
+  // Settings → Sync on desktop (#261): the status card's error line in the danger ink.
+  'components/overlays/SyncSection.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The blocked pop-ups popover, sheet and phone bar, and the sign-in and certificate dialogs

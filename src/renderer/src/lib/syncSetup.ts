@@ -22,7 +22,7 @@ export const SYNC_COPY = {
   intro:
     'Keep your Spaces, folders, pinned tabs, bookmarks, passwords and settings the same on every device. Pick a folder that your cloud drive or Syncthing already keeps in sync and a passphrase: everything is encrypted on this device before it is written, so the folder only ever holds ciphertext.',
   folder: 'Sync folder',
-  folderUnset: 'Choose a folder that your cloud drive keeps in sync',
+  folderUnset: 'Choose a folder that your cloud drive keeps in sync.',
   device: 'This device',
   deviceHint: 'The name other devices show for this one.',
   turnOn: 'Turn on sync',
