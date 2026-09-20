@@ -223,12 +223,72 @@ export function createPreviewBridge(): NativeBridge {
   const viewEvent = (tabId: string, name: string, payload: unknown): void =>
     host().viewEvent(tabId, name, JSON.stringify(payload ?? null))
 
-  const navState = (frame: HTMLIFrameElement): Record<string, unknown> => ({
-    url: frame.dataset.url ?? '',
-    title: frame.dataset.title ?? '',
-    canGoBack: false,
-    canGoForward: false
-  })
+  /**
+   * Each page's back/forward list, the WebView's stood in for: a load commits an entry (the
+   * entries ahead of it go, as a WebView's do), `view.back` / `view.forward` step along it and
+   * show that entry's document again, and the chrome's Back and Forward read their state off
+   * it. A frame is cross-origin, so its own history is not readable; `src` is what the frame
+   * was pointed at for the entry (a `zen://` page's served copy), set once it is known.
+   */
+  interface NavEntry {
+    url: string
+    src: string | null
+  }
+  const navLists = new Map<string, { entries: NavEntry[]; index: number }>()
+  const navOf = (tabId: string): { entries: NavEntry[]; index: number } => {
+    let nav = navLists.get(tabId)
+    if (!nav) navLists.set(tabId, (nav = { entries: [], index: -1 }))
+    return nav
+  }
+  /** A load of `url` begins: it is the list's newest entry unless the page is already on it. */
+  const commitEntry = (tabId: string, url: string): NavEntry => {
+    const nav = navOf(tabId)
+    const current = nav.entries[nav.index]
+    if (current && current.url === url) return current
+    nav.entries.splice(nav.index + 1)
+    const entry: NavEntry = { url, src: null }
+    nav.entries.push(entry)
+    nav.index = nav.entries.length - 1
+    return entry
+  }
+  const currentEntry = (tabId: string): NavEntry | undefined => {
+    const nav = navLists.get(tabId)
+    return nav?.entries[nav.index]
+  }
+  /** The pending slow reload of each page (`view.reload`), for `view.stop` to call off. */
+  const reloads = new Map<string, number>()
+
+  const navState = (frame: HTMLIFrameElement): Record<string, unknown> => {
+    const nav = navLists.get(frame.dataset.tabId ?? '')
+    return {
+      url: frame.dataset.url ?? '',
+      title: frame.dataset.title ?? '',
+      canGoBack: nav !== undefined && nav.index > 0,
+      canGoForward: nav !== undefined && nav.index < nav.entries.length - 1
+    }
+  }
+
+  /** Back (`delta` -1) or Forward (+1) along the page's list: that entry's document shows again. */
+  const travel = (tabId: string, delta: -1 | 1): void => {
+    const frame = views.get(tabId)
+    const nav = navLists.get(tabId)
+    if (!frame || !nav) return
+    const entry = nav.entries[nav.index + delta]
+    if (!entry) return
+    nav.index += delta
+    frame.dataset.url = entry.url
+    frame.dataset.title = ''
+    frame.dataset.load = ''
+    cardTakenAt.delete(tabId)
+    const pendingReload = reloads.get(tabId)
+    if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+    reloads.delete(tabId)
+    viewEvent(tabId, 'startLoading', null)
+    viewEvent(tabId, 'navigated', { ...navState(frame), inPage: false })
+    // A document that never landed has nothing to show again: the entry is reported as loaded.
+    if (entry.src) frame.src = entry.src
+    else viewEvent(tabId, 'stopLoading', navState(frame))
+  }
 
   let pageSerial = 0
   /**
@@ -238,12 +298,17 @@ export function createPreviewBridge(): NativeBridge {
    * zen:// page runs (the error page's theme and Reload among them). A load that began after this
    * one owns the frame.
    */
-  const showDocument = async (frame: HTMLIFrameElement, html: string): Promise<void> => {
+  const showDocument = async (
+    frame: HTMLIFrameElement,
+    html: string,
+    entry: NavEntry | null = null
+  ): Promise<void> => {
     const id = String(++pageSerial)
     frame.dataset.load = id
     const stored = await fetch(PAGE_ROUTE + id, { method: 'PUT', body: html })
     if (!stored.ok || frame.dataset.load !== id) return
     frame.src = PAGE_ROUTE + id
+    if (entry) entry.src = frame.src
   }
 
   /**
@@ -493,6 +558,10 @@ export function createPreviewBridge(): NativeBridge {
       views.delete(String(tabId))
       reported.delete(String(tabId))
       clips.delete(String(tabId))
+      navLists.delete(String(tabId))
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
       viewEvent(String(tabId), 'destroyed', null)
     },
     'view.load': ({ tabId, url }) => {
@@ -505,6 +574,7 @@ export function createPreviewBridge(): NativeBridge {
       // however fresh the last (Kotlin's `Thumbnails.stale`, BH-14).
       cardTakenAt.delete(String(tabId))
       viewEvent(String(tabId), 'startLoading', null)
+      const entry = commitEntry(String(tabId), String(url))
       const extensionPage = extensionPageOf(String(url))
       if (extensionPage) {
         // What the runtime would serve; the frame reports the page loaded like any other.
@@ -513,11 +583,26 @@ export function createPreviewBridge(): NativeBridge {
           name: extensionPage.id,
           title: ''
         }
-        void showDocument(frame, extensionPageDocument(page))
+        void showDocument(frame, extensionPageDocument(page), entry)
       } else {
         frame.src = String(url)
+        entry.src = String(url)
       }
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
+    },
+    // Back and Forward step the stand-in list (`view.back` / `view.forward` on the host) and
+    // show that entry's document again; the chrome hears the load begin and the new state.
+    'view.back': ({ tabId }) => travel(String(tabId), -1),
+    'view.forward': ({ tabId }) => travel(String(tabId), 1),
+    // Stop calls off a slow reload still on its way and reports the page as loaded as it stands;
+    // a frame's own load in flight cannot be halted from outside and finishes on its own.
+    'view.stop': ({ tabId }) => {
+      const frame = views.get(String(tabId))
+      if (!frame) return
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      reloads.delete(String(tabId))
+      viewEvent(String(tabId), 'stopLoading', navState(frame))
     },
     'view.postMessage': () => undefined,
     // The launcher's dialog stands in for itself: a pin is accepted a moment later.
@@ -531,8 +616,17 @@ export function createPreviewBridge(): NativeBridge {
       viewEvent(String(tabId), 'startLoading', null)
       // Deliberately unhurried, like a reload over a slow connection: what the chrome shows while
       // a page is loading (the pull-to-refresh disc spinning) stays up long enough to be looked at.
-      const url = frame.dataset.url
-      if (url) window.setTimeout(() => (frame.src = url), RELOAD_DELAY_MS)
+      const src = currentEntry(String(tabId))?.src ?? frame.dataset.url
+      const pendingReload = reloads.get(String(tabId))
+      if (pendingReload !== undefined) window.clearTimeout(pendingReload)
+      if (src)
+        reloads.set(
+          String(tabId),
+          window.setTimeout(() => {
+            reloads.delete(String(tabId))
+            frame.src = src
+          }, RELOAD_DELAY_MS)
+        )
     },
     'view.loadHtml': ({ tabId, url, html, document }) => {
       const frame = views.get(String(tabId))
@@ -544,7 +638,7 @@ export function createPreviewBridge(): NativeBridge {
       const pdf = document as { path?: unknown } | undefined
       const shown =
         pdf && typeof pdf.path === 'string' ? pdfDocumentHtml(String(html), pdf.path) : String(html)
-      void showDocument(frame, shown)
+      void showDocument(frame, shown, commitEntry(String(tabId), String(url)))
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.setBounds': ({ tabId, rect }) => {

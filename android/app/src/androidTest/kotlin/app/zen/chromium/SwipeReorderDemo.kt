@@ -120,8 +120,8 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         // out of the tree: the sheet leaves first (a fall through to the scrim closes it too),
         // then the grid is back with its other cards, and only then does the card's absence
         // mean the group closed.
-        if (!touchTapLabel("Close group (2 tabs)")) error("no Close group row in the group sheet")
-        waitForGone("Close group (2 tabs)", 8_000)
+        if (!touchTapLabel("Close Group (2 Tabs)")) error("no Close Group row in the group sheet")
+        waitForGone("Close Group (2 Tabs)", 8_000)
         if (!gridBack(6_000)) {
             touchFault("the grid did not come back into the tree after the group sheet")
         } else if (waitForGone("Group Group", 6_000)) {
