@@ -234,6 +234,9 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     // Password manager re-authentication: the system biometric / device credential sheet.
     implementation("androidx.biometric:biometric:1.1.0")
+    // The pages' media on the OS controls: MediaSessionCompat behind the media-style notification,
+    // the lock screen and the headset buttons (MediaSessions.kt, MediaPlaybackService.kt).
+    implementation("androidx.media:media:1.7.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
     // vault key wrapping format. The extension and vault tests build org.json documents, which

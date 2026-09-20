@@ -444,6 +444,12 @@ export class Actions {
       this.browser.toast('Picture-in-Picture is not available on this device.', 'info', win)
       return
     }
+    // A host whose window itself goes into PiP (Android): the OS shows the page's video.
+    if (this.browser.platform.mediaSession?.enterPictureInPicture) {
+      if (!(await this.browser.mediaSession.enterPictureInPicture(tabId)))
+        this.browser.toast('No video available for Picture-in-Picture', 'info', win)
+      return
+    }
     try {
       await view.executeJavaScript(
         `(async () => {
