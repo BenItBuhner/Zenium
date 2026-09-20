@@ -384,6 +384,11 @@ export interface UiState {
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
   /**
+   * Phone layout: the bar has hidden on scroll and is at rest off its edge (`lib/barHide.ts`);
+   * the content column gives the page its band. False the moment the bar starts back.
+   */
+  barHidden: boolean
+  /**
    * Phone layout: the gesture stage (tab-switch cards, the tab overview) stands in for the live
    * page, which must be hidden underneath it.
    */
@@ -484,6 +489,7 @@ export const uiStore = createStore<UiState>(
     tabSearch: null,
     groupEditor: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    barHidden: false,
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
     extensionPopup: null,
@@ -1053,6 +1059,11 @@ export function closeBookmarkChrome(
 
 /** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
+  // The sheet is the Home-screen install's (the phone's chassis); a desktop install gets its own
+  // dialog, still to land – until it does, a desktop prompt is not shown here. (The core sends
+  // none to a window without an install surface up; this keeps the sheet off the desktop even
+  // should one arrive.)
+  if (prompt.surface === 'desktop') return
   await captureActiveTab(prompt.tabId)
   run('focus.chrome', undefined)
   uiStore.set({ install: prompt, drawerOpen: false })

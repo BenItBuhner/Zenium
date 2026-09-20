@@ -9,6 +9,7 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AppWindowInfo,
   CertificateDetails,
   ClipboardPeekKind,
   ColorScheme,
@@ -32,6 +33,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  ScreenCaptureSource,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
@@ -44,6 +46,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { DisplayMode } from '../shared/displayMode'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
@@ -71,6 +74,8 @@ import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
+import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
+import type { ShareFile } from '../shared/share'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -166,6 +171,10 @@ export interface PageMessage {
      * address, `title` the link's title if any. The core fetches and parses it (`shared/search`).
      */
     | 'opensearch'
+    /** The page called `navigator.share` (`shared/share`): a share sheet request. */
+    | 'share'
+    /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
+    | 'geolocation'
   url?: string
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
@@ -202,25 +211,53 @@ export interface PageMessage {
   reader?: unknown
   /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
   pdf?: PdfViewerReport
+  /** `share`: what the page asked to share (validated by the core). */
+  share?: unknown
+  /** `geolocation`: the shim's request (validated by the core). */
+  geolocation?: unknown
 }
 
-/** Browser → page for the web-app polyfill. */
+/** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
 export interface WebAppHostMessage {
   type: 'webapp'
-  /**
-   * `installable`: fire `beforeinstallprompt`; `result`: settle a pending `prompt()` with
-   * `outcome`; `installed`: fire `appinstalled`.
-   */
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
 
+/** How a `navigator.share` call ended: the page's promise resolves (`shared`) or rejects. */
+export interface ShareHostMessage {
+  type: 'share'
+  id: string
+  result: 'shared' | 'aborted'
+}
+
+/** A position, or an error, for one request of the page's geolocation shim. */
+export interface GeolocationHostMessage {
+  type: 'geolocation'
+  id: string
+  position?: GeoPosition
+  error?: { code: GeolocationErrorCode; message: string }
+}
+
+/** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
+export interface DisplayModeHostMessage {
+  type: 'display-mode'
+  mode: DisplayMode
+}
+
 /**
- * Messages the browser posts into a page for its page script: the web-app polyfill's events,
- * the media session's actions (the OS controls, the in-app player) and the notification
- * polyfill's answers and events.
+ * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
+ * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
+ * the notification polyfill's answers and events, a share call's outcome, a position, the
+ * page's display mode.
  */
-export type PageHostMessage = WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
+export type PageHostMessage =
+  | WebAppHostMessage
+  | MediaSessionHostMessage
+  | NotificationHostMessage
+  | ShareHostMessage
+  | GeolocationHostMessage
+  | DisplayModeHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -435,6 +472,14 @@ export interface TabViewEvents {
   onProgress(progress: number): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
+  /**
+   * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
+   * submission (not a load the browser asked for, and not a server redirect, which hosts report
+   * as part of the navigation it belongs to). Returns true when the browser takes the navigation
+   * over and the host must cancel it: an app window's page leaving the app's scope opens in a
+   * browser tab instead (MW-23). Hosts that cannot intercept navigations need not call it.
+   */
+  onWillNavigate(url: string): boolean
   onTitleUpdated(title: string): void
   onFaviconUpdated(favicons: string[]): void
   /**
@@ -818,6 +863,11 @@ export interface WindowCreateInit {
   backgroundColor: string
   /** Colours for native caption buttons drawn over the chrome. */
   captionColors: CaptionColors
+  /**
+   * The web app of a standalone window (`chrome` `app`): hosts show its icon on the frame and
+   * in the taskbar where they can; null for browser windows.
+   */
+  app: AppWindowInfo | null
 }
 
 export interface WindowHostFactory {
@@ -1107,6 +1157,9 @@ export interface NetHost {
        * bounds the transfer and not only what is kept of it. Unset: the host's own limit.
        */
       maxBytes?: number
+      /** `POST` with `body` (the network location query); GET without. */
+      method?: 'GET' | 'POST'
+      body?: string
     }
   ): Promise<{
     ok: boolean
@@ -1670,12 +1723,20 @@ export interface ShortcutRequest {
 }
 
 /**
- * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`). `pin` resolves once
- * the request reached the launcher; the launcher's confirmation arrives later through
- * `Browser.webApps.onPinned` because the system dialog has no cancel callback.
+ * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`; on desktop a
+ * launcher – Start menu / desktop `.lnk`, `.desktop` entry, `.app` bundle – that runs the app in
+ * a window of its own, `zenium --app=<url>`). `pin` resolves once the request reached the
+ * launcher; the launcher's confirmation arrives later through `Browser.webApps.onPinned` because
+ * Android's system dialog has no cancel callback (desktop hosts confirm as soon as the files are
+ * written, with the icon they kept).
  */
 export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>
+  /**
+   * Remove the launcher `pin` made for `id` (its files and icon). Hosts whose launcher owns its
+   * shortcuts (Android) leave it out; the core then only forgets the record.
+   */
+  unpin?(id: string): Promise<void>
 }
 
 /**
@@ -1757,11 +1818,13 @@ export interface PrintingHost {
 }
 
 /**
- * The OS media controls on a host whose engine feeds none of its own (the Android WebView; the
- * desktop's Chromium drives SMTC / Now Playing / MPRIS itself). The core resolves one session –
- * the page playing, or the last one that did – from the pages' reports and hands it over; the
- * host shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and
- * the headset buttons) and sends the controls' actions back through `Browser.mediaSession.act`.
+ * The OS media controls on a host whose engine feeds none of its own (the Android WebView), or
+ * whose own instance Zenium replaces (Linux MPRIS, so the desktop sees "Zenium" and one player;
+ * Windows' SMTC and macOS's Now Playing stay Chromium's). The core resolves one session – the
+ * page playing, or the last one that did – from the pages' reports and hands it over; the host
+ * shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and the
+ * headset buttons; a D-Bus player) and sends the controls' actions back through
+ * `Browser.mediaSession.act`.
  */
 export interface MediaSessionHost {
   /** Show `session` on the OS controls, or take them down with null. */
@@ -1829,6 +1892,52 @@ export interface PrivateSessionHost {
 
 export type { MediaSessionAction }
 
+// ---------------------------------------------------------------------------
+// Screen capture, share sheet, network location (desktop platform rows)
+// ---------------------------------------------------------------------------
+
+/**
+ * The host's side of screen capture (MW-19): it lists what can be shared and hands the picked
+ * source to the engine. The core owns the picker (`ScreenCaptureService`), one request at a time
+ * per tab.
+ */
+export interface ScreenCaptureHost {
+  /**
+   * The screens and windows the OS offers right now, with thumbnails. On Wayland the portal's
+   * own dialog is what the user sees; the list then holds the one source it granted.
+   */
+  sources(kinds: Array<'screen' | 'window'>): Promise<ScreenCaptureSource[]>
+  /** Whether a screen share may come with the system's audio (Windows' loopback). */
+  systemAudio(): boolean
+}
+
+/**
+ * Extras behind the chrome's share sheet (`capabilities.shareSheet`): the files a page shared
+ * go to the downloads folder, and an OS with a share sheet of its own (macOS) offers it too.
+ */
+export interface ShareSheetHost {
+  /** Write shared files to the downloads folder; resolves with where they landed. */
+  saveFiles(files: ShareFile[]): Promise<string[]>
+  /**
+   * The OS's share sheet for the payload, anchored to the window (macOS's `ShareMenu`);
+   * resolves once the sheet is up. Hosts without one leave it out and the chrome offers no
+   * "More…" row.
+   */
+  system?(
+    payload: { title: string; text: string; url: string; files: ShareFile[] },
+    win: ZenWindow
+  ): Promise<void>
+}
+
+/**
+ * What a network location provider needs from the host (MW-04, Linux): the Wi-Fi networks in
+ * range. Hosts whose engine locates on its own (Windows, macOS, Android) leave the whole host out.
+ */
+export interface GeolocationHost {
+  /** The access points in range (BSSID, signal, frequency); empty when there is no Wi-Fi or no scanner. */
+  scanWifi(): Promise<WifiAccessPoint[]>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1886,6 +1995,12 @@ export interface Platform {
   readonly spellcheck?: SpellcheckHost
   /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
   readonly printing?: PrintingHost
+  /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
+  readonly screenCapture?: ScreenCaptureHost
+  /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */
+  readonly shareSheet?: ShareSheetHost
+  /** A network location source's inputs (the Wi-Fi networks in range) for hosts whose engine has no location provider. */
+  readonly geolocation?: GeolocationHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

@@ -1,10 +1,11 @@
 import type { JSX } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { WebAppInstallPrompt } from '@shared/types'
-import { tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
+import type { UIState, WebAppInstallPrompt } from '@shared/types'
+import { installSheetCopy, tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { closeInstallSheet, uiStore } from '@renderer/lib/ui'
@@ -15,8 +16,15 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 const TITLE_ID = 'zen-install-title'
 const NAME_FIELD_ID = 'zen-install-name'
 
-/** "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. */
-export function InstallLayer(): JSX.Element | null {
+/**
+ * "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. The
+ * sheet is the install surface of a one-window host (`ChromeSurface`: the core sends an install
+ * prompt only to a window with one up); a desktop's installs get their own dialog, so on a host
+ * with windows this layer registers nothing and the core settles a site's `prompt()` as dismissed
+ * until that dialog lands.
+ */
+export function InstallLayer({ state }: { state: UIState }): JSX.Element | null {
+  useChromeSurface('install', !state.capabilities.windows)
   const prompt = uiStore.use((s) => s.install)
   return prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
 }
@@ -49,6 +57,9 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   })
 
   const name = title.trim() || prompt.title
+  // Desktop speaks of installing (Chrome's "Install app" / "Create shortcut"), the phone of the
+  // Home screen, until the desktop's own dialog lands.
+  const copy = installSheetCopy(prompt.surface, info)
   const add = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true
@@ -73,7 +84,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
       header={
         <h2 id={TITLE_ID} className="zen-sheet-title">
-          Add to Home screen
+          {copy.title}
         </h2>
       }
       footer={
@@ -85,11 +96,15 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
             type="button"
             className="zen-v2-button"
             data-primary
-            aria-label="Add"
+            aria-label={copy.action}
             aria-busy={busy || undefined}
             onClick={() => void add()}
           >
-            {busy ? <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden /> : 'Add'}
+            {busy ? (
+              <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden />
+            ) : (
+              copy.action
+            )}
           </button>
         </>
       }

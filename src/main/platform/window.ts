@@ -1,6 +1,16 @@
-import { BrowserWindow, WebContentsView, screen, shell, webContents } from 'electron'
+import {
+  BrowserWindow,
+  WebContentsView,
+  nativeImage,
+  screen,
+  shell,
+  webContents,
+  type NativeImage
+} from 'electron'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import type { Browser } from '../../core/browser'
@@ -24,6 +34,9 @@ const DEFAULT_HEIGHT = 820
 /** Popups are as small as the page asked for, within reason. */
 const POPUP_MIN_WIDTH = 320
 const POPUP_MIN_HEIGHT = 200
+/** An app window's first size (Chrome opens installed apps at about this); the app's own after. */
+const APP_DEFAULT_WIDTH = 1024
+const APP_DEFAULT_HEIGHT = 720
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
 /**
@@ -87,17 +100,19 @@ export class ElectronWindow implements WindowHost {
     const bounds = sanitizeBounds(initial, displayId, init.chrome)
     const isMac = process.platform === 'darwin'
     const mica = init.material === 'mica' && process.platform === 'win32'
+    // Popups and app windows are as small as the page (or the app) wants, within reason.
+    const compactChrome = init.chrome !== 'full'
     this.captionColors = init.captionColors
     this.win = new BrowserWindow({
       ...bounds,
-      minWidth: init.chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: init.chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
       frame: false,
       titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
       // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
-      // window's 40px toolbar row is centred at 20.
-      trafficLightPosition: isMac ? { x: 14, y: init.chrome === 'popup' ? 14 : 16 } : undefined,
+      // window's 40px toolbar row (and an app window's title row) is centred at 20.
+      trafficLightPosition: isMac ? { x: 14, y: compactChrome ? 14 : 16 } : undefined,
       titleBarOverlay: CAPTION_OVERLAY
         ? {
             color: init.captionColors.color,
@@ -113,10 +128,14 @@ export class ElectronWindow implements WindowHost {
         : { backgroundColor: init.backgroundColor }),
       autoHideMenuBar: true,
       title: init.title,
-      // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's).
+      // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's); an
+      // app window carries its app's icon into the taskbar and the window switcher.
       ...(process.platform === 'darwin'
         ? {}
-        : { icon: windowIcon(browser.state.settings.appIcon) }),
+        : {
+            icon:
+              appWindowIcon(init.app?.icon ?? null) ?? windowIcon(browser.state.settings.appIcon)
+          }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         sandbox: true,
@@ -130,6 +149,18 @@ export class ElectronWindow implements WindowHost {
     this.titles = new TitleThrottle((title) => {
       if (this.alive) win.setTitle(title)
     }, init.title)
+    // Windows groups taskbar buttons by AppUserModelID: an installed app's windows get their
+    // own group, icon and pin ("pin to taskbar" relaunches the app), as Chrome's app windows do.
+    if (process.platform === 'win32' && init.app?.appId) {
+      const icon = init.app.icon?.startsWith('file:') ? fileURLToPath(init.app.icon) : null
+      const ico = icon ? icon.replace(/\.png$/i, '.ico') : null
+      win.setAppDetails({
+        appId: ElectronShortcuts.appUserModelId(init.app.appId),
+        ...(ico ? { appIconPath: ico, appIconIndex: 0 } : {}),
+        relaunchCommand: ElectronShortcuts.relaunchCommand(init.app.startUrl),
+        relaunchDisplayName: init.app.name
+      })
+    }
     if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())
@@ -485,7 +516,7 @@ export class ElectronWindow implements WindowHost {
     const zen = this.zen
     const cm = state.settings.compactMode
     // The window's fullscreen hides the chrome like compact mode with both switches on.
-    const fullscreen = zen.chrome !== 'popup' && this.win.isFullScreen()
+    const fullscreen = zen.chrome === 'full' && this.win.isFullScreen()
     const sidebarHidden =
       fullscreen || (zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent)
     const toolbarHidden =
@@ -568,10 +599,31 @@ function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: Wi
     {
       saved,
       displayId,
-      minWidth: chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
-      defaultSize: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+      minWidth: chrome === 'full' ? MIN_WIDTH : POPUP_MIN_WIDTH,
+      minHeight: chrome === 'full' ? MIN_HEIGHT : POPUP_MIN_HEIGHT,
+      defaultSize:
+        chrome === 'app'
+          ? { width: APP_DEFAULT_WIDTH, height: APP_DEFAULT_HEIGHT }
+          : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     },
     displays
   )
+}
+
+/**
+ * An app window's icon for the frame and taskbar: the launcher icon the shortcut host kept (a
+ * `file:` URL under the profile) or a data URL; null when there is none or it cannot be read.
+ */
+function appWindowIcon(icon: string | null): NativeImage | null {
+  if (!icon) return null
+  try {
+    const image = icon.startsWith('data:')
+      ? nativeImage.createFromDataURL(icon)
+      : icon.startsWith('file:')
+        ? nativeImage.createFromPath(fileURLToPath(icon))
+        : null
+    return image && !image.isEmpty() ? image : null
+  } catch {
+    return null
+  }
 }

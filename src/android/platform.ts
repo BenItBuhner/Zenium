@@ -166,6 +166,8 @@ export function androidCapabilities({
     pinShortcuts: false,
     translate: true,
     voiceSearch: false,
+    screenCapture: false,
+    shareSheet: false,
     // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
     selectionToolbar: true,
     // One document: the picker is drawn in the chrome, above the keyboard.
@@ -327,6 +329,13 @@ export interface BootInfo {
   fullscreen: boolean
   /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
   environment?: PageEnvironment
+  /**
+   * An accessibility service explores the screen by touch (TalkBack;
+   * `AccessibilityManager.isTouchExplorationEnabled`): the bar that hides on scroll stays put
+   * (`lib/barHide.ts`). Changes come as `__zenHost.barTouchExploration`. Absent in old hosts
+   * and in the preview host.
+   */
+  touchExploration?: boolean
 }
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
@@ -976,7 +985,9 @@ export class AndroidPlatform implements Platform {
           headers: options.headers ?? {},
           timeoutMs: options.timeoutMs ?? 0,
           // Kotlin stops reading there and fails the fetch (`readBody`'s cap); 0 is its own limit.
-          maxBytes: options.maxBytes ?? 0
+          maxBytes: options.maxBytes ?? 0,
+          method: options.method ?? 'GET',
+          body: options.method === 'POST' ? (options.body ?? '') : null
         })
         let text = result.text
         if (result.body) {

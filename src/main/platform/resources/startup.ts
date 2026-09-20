@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { ResourceSettings } from '../../../shared/types'
 import { JsonStore } from '../../../core/store/JsonStore'
 import {
+  baselineDisabledFeatures,
   deriveStartupProfile,
   sanitizeResourceSettings,
   startupSwitches,
@@ -20,7 +21,7 @@ let applied: StartupProfile | null = null
 export function applyResourceSwitches(userDataDir: string): StartupProfile {
   const settings = readPersistedResourceSettings(userDataDir)
   const profile = deriveStartupProfile(settings)
-  for (const sw of startupSwitches(profile)) {
+  for (const sw of startupSwitches(profile, baselineDisabledFeatures(process.platform))) {
     if (sw.value === undefined) app.commandLine.appendSwitch(sw.name)
     else app.commandLine.appendSwitch(sw.name, sw.value)
   }

@@ -113,7 +113,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <ClearBrowsingDataDialog />
       <PrintPreviewDialog state={state} />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
-      <InstallLayer />
+      <InstallLayer state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
       <PassphraseDialog />

@@ -87,6 +87,9 @@ export class ForwardingEvents implements TabViewEvents {
   onNavigated(url: string, inPage: boolean): void {
     this.target?.onNavigated(url, inPage)
   }
+  onWillNavigate(url: string): boolean {
+    return this.target?.onWillNavigate(url) ?? false
+  }
   onTitleUpdated(title: string): void {
     this.target?.onTitleUpdated(title)
   }

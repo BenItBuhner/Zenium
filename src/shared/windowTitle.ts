@@ -4,14 +4,19 @@
  *
  * Format: `<active tab title> - Zenium`, with ` (Private)` appended for private windows. A window
  * with no active tab (or a blank/untitled one) shows the bare product name, still marked private.
+ * A web app's standalone window (`appName`) is titled as Chrome titles its app windows: the
+ * page's title alone, the app's name while the page has none – the window is the app's, not the
+ * browser's.
  */
 export const PRODUCT_NAME = 'Zenium'
 
 export function formatWindowTitle(
   activeTabTitle: string | null | undefined,
-  isPrivate: boolean
+  isPrivate: boolean,
+  appName?: string | null
 ): string {
   const title = activeTabTitle?.trim()
+  if (appName) return title || appName
   const base = title ? `${title} - ${PRODUCT_NAME}` : PRODUCT_NAME
   return isPrivate ? `${base} (Private)` : base
 }

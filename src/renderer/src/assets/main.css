@@ -5204,9 +5204,45 @@
  * does not fade: it stays at its opacity, inert (`holdChromeInert`) and dimmed by the scrim
  * like the page (ruled 23:50). The shell writes no rest opacity of its own over this; a pill
  * carry composes its share into the same product at the bottom edge (`barFade`, recede.ts).
+ * The hide on scroll below adds no fade of its own: the fade is the sheet's vocabulary.
  */
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
   opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
+}
+
+/*
+ * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity; design language v2 draft
+ * §11.5, chrome that hides on scroll): `--zen-bar-hide` on the root is 0 with the bar in place
+ * and 1 with it off its edge, written per frame as the page scrolls and by the spring that
+ * snaps it. The bar slides by the band the page gains (the whole bar
+ * band – the row and, while the active tab is grouped, the tab-group strip (`--zen-phone-band`,
+ * #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one to one with the page's
+ * edge, and is clipped at the line where the system inset begins (the clip grows with the
+ * travel, since it moves with the bar): the chrome is drawn edge to edge, so a bar that only slid
+ * would stay in view under a status bar or a gesture bar. Slide and clip, no fade: the band's
+ * outer gutter is the bar's own padding (the row's, or the strip's when there is one: the tray
+ * sits a gutter in from the band's edge), so at the full travel the near edge of the pill – or of
+ * the tray – lands on the inset line and only transparent padding is left in frame; a fade would
+ * remove nothing, would cost legibility at every frame between, and is §11.1's vocabulary for a
+ * sheet's arrival (the bottom bar's recede above). The strip rides the bar's transform, being
+ * inside the bar element. At the hidden rest the root carries `data-bar-hidden`: the bar takes no
+ * touches (the page has its band) but stays in the accessibility tree, where focus brings it
+ * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
+ */
+:root {
+  --zen-bar-hide-travel: calc(var(--zen-phone-band) - var(--zen-padding));
+  --zen-bar-hide-shift: calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel));
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
+  transform: translate3d(0, var(--zen-bar-hide-shift), 0);
+  clip-path: inset(0 0 calc(var(--zen-inset-bottom) + var(--zen-bar-hide-shift)) 0);
+}
+:root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
+  transform: translate3d(0, calc(-1 * var(--zen-bar-hide-shift)), 0);
+  clip-path: inset(calc(var(--zen-inset-top) + var(--zen-bar-hide-shift)) 0 0 0);
+}
+:root[data-bar-hidden] .zen-phone-bar {
+  pointer-events: none;
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */
