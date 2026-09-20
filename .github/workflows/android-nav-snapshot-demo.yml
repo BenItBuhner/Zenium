@@ -4,12 +4,17 @@ name: Android navigation snapshot demo
 # its back/forward stack): a three-page stack built with real touches on the pages' links, the
 # tab closed from the Tabs button's quick menu, Undo on the toast bringing it back with its list
 # rebuilt from the host's WebView state (restored: true, no load), Back touched twice on the bar
-# with pages two and one coming back from the WebView's cache without a request, and the design
-# gate on the Back button's hold (the bar editor; the phone has no long-press history list). The
+# with pages two and one coming back from the WebView's cache without a request, the design
+# gate on the Back button's hold (the bar editor; the phone has no long-press history list), and
+# a Reader View page (zen://reader, the chrome's own document) as the current entry closed and
+# brought back with Undo as one document, then Back to the article without a request. The
 # driver reads each outcome off the host's WebView, the core's state and its own page server
-# (findings text in the artifact; the run fails on a FAIL). Dispatch-only, like the tab close
-# demo: it takes a few minutes and says nothing about a change being correct. The build, the
-# emulator and the Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
+# (findings text in the artifact; the run fails on a FAIL). The same instrumentation run also
+# takes the hostState round trip on bare WebViews (NavigationStateWebViewTest: a list saved,
+# encoded and restored into a fresh WebView, an internal page on top of one, the refusals), so a
+# failure there fails the run too. Dispatch-only, like the tab close demo: it takes a few minutes
+# and says nothing about a change being correct. The build, the emulator and the Gradle cache
+# live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
 
@@ -28,7 +33,7 @@ jobs:
       script: .github/scripts/android-gesture-demo.sh
       # The shared driver chooses the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=app.zen.chromium.NavSnapshotDemo
+        DEMO_CLASS=app.zen.chromium.NavigationStateWebViewTest,app.zen.chromium.NavSnapshotDemo
         DEMO_DIR=nav-snapshot-demo
         DEMO_OUT=artifacts/android-nav-snapshot-demo
         DEMO_VIDEO=android-nav-snapshot-demo.mp4
@@ -47,7 +52,7 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.NavSnapshotDemo
+        DEMO_CLASS=app.zen.chromium.NavigationStateWebViewTest,app.zen.chromium.NavSnapshotDemo
         DEMO_DIR=nav-snapshot-demo
         DEMO_OUT=artifacts/android-nav-snapshot-demo
         DEMO_VIDEO=android-nav-snapshot-demo.mp4
