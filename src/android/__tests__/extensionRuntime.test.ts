@@ -1190,6 +1190,50 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
     const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
     expect(off.userScriptMessaging).toBe(false)
   })
+
+  it('execute runs the sources in order in the user-script world of the target frames and answers per frame', async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    )
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'userScripts', 'configureWorld', [{ messaging: true }])
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    h.kt.execAnswer = (args) => `${String(args.code ?? (args.files as string[])[0])}!`
+    const ran = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: 'first()' }, { file: 'lib.js' }, { code: 'last()' }] }
+    ])
+    expect(ran.error).toBeUndefined()
+    expect(ran.result).toEqual([{ frameId: 0, documentId: '', result: 'last()!' }])
+    const execs = h.kt.calledWith('ext.exec')
+    expect(execs).toHaveLength(3)
+    expect(execs.map((e) => e.code ?? (e.files as string[])[0])).toEqual([
+      'first()',
+      'lib.js',
+      'last()'
+    ])
+    // The user-script world, with the messaging switch the extension set, not the content world.
+    expect(execs.map((e) => e.payload)).toEqual(
+      Array<unknown>(3).fill({ world: 'USER_SCRIPT', messaging: true })
+    )
+    expect(execs.every((e) => e.tabId === 't1' && e.doc === null)).toBe(true)
+    // The main world on request; a bad injection is refused before anything runs.
+    const main = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: '1' }], world: 'MAIN' }
+    ])
+    expect(main.error).toBeUndefined()
+    expect(h.kt.calledWith('ext.exec').at(-1)?.payload).toEqual({
+      world: 'MAIN',
+      messaging: true
+    })
+    const bad = await call(h, 'bg1', 'userScripts', 'execute', [{ target: { tabId }, js: [] }])
+    expect(String(bad.error)).toContain('js')
+    expect(h.kt.calledWith('ext.exec')).toHaveLength(4)
+    const noTab = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId: 9999 }, js: [{ code: '1' }] }
+    ])
+    expect(String(noTab.error)).toContain('No tab with id')
+  })
 })
 
 describe('AndroidExtensionRuntime: chrome.offscreen', () => {

@@ -743,8 +743,15 @@ declare const __zenExtBoot: Boot
       code?: unknown
       remove?: unknown
       world?: unknown
+      messaging?: unknown
     }
-    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, contentUnit)
+    // `userScripts.execute` runs in the user-script world: the scope its registered scripts
+    // share, with the `chrome` that world was configured (`messaging`), not the content script's.
+    const unit: UnitContext =
+      options.world === 'USER_SCRIPT'
+        ? { world: 'user', messaging: options.messaging === true }
+        : contentUnit
+    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, unit)
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)

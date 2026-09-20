@@ -13,6 +13,7 @@ import {
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -1203,8 +1204,57 @@ export class ExtensionApi {
       case 'resetWorldConfiguration':
         await this.host.setUserScriptMessaging(id, false)
         return undefined
+      case 'execute':
+        return this.executeUserScript(ext, normalizeInjection(args[0]))
     }
     throw new Error(`chrome.userScripts.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * `userScripts.execute(injection)` (Chrome 135): the sources run in order in the target frames,
+   * in the extension's user-script world (the scope its registered scripts share, with that
+   * world's `chrome`: messaging only, and only once configured) or in the main world, through the
+   * `scripting.executeScript` path; one result per frame, the last source's value, in Chrome's
+   * `InjectionResult` shape. A document id names nothing here (the runtime reports none), so a
+   * `documentIds` target fails as an unknown document does in Chrome. `injectImmediately` makes
+   * no difference: an injection runs as soon as the frame can take it, as `executeScript` does.
+   */
+  private async executeUserScript(
+    ext: AttachedExtension,
+    injection: UserScriptInjection
+  ): Promise<unknown> {
+    const id = ext.record.id
+    const tab = this.tabs.tabFor(ext, injection.target.tabId)
+    if (injection.target.documentIds) {
+      const missing = injection.target.documentIds[0] ?? ''
+      throw new Error(`No document with id ${missing} in tab with id ${injection.target.tabId}`)
+    }
+    const frames = this.targetFrames(ext, tab, {
+      frameIds: injection.target.frameIds,
+      allFrames: injection.target.allFrames
+    })
+    const payload = {
+      world: injection.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT',
+      messaging: this.host.userScriptMessaging(id)
+    }
+    const results = await this.injectFrames(frames, async (frameId) => {
+      let value: unknown = undefined
+      for (const source of injection.js) {
+        value = await this.host.exec({
+          extensionId: id,
+          tabId: tab.id,
+          frameId,
+          kind: 'js',
+          payload,
+          code: 'code' in source ? source.code : null,
+          files: 'file' in source ? [source.file] : null,
+          funcSource: null,
+          args: null
+        })
+      }
+      return value
+    })
+    return results.map((r) => ({ frameId: r.frameId, documentId: '', result: r.value }))
   }
 
   private async register(
