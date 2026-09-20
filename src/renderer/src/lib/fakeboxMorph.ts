@@ -8,9 +8,10 @@
  * double from the pose handed to it here.
  *
  * Nothing here runs unless a new tab page has registered its field, and the desktop never does.
- * Under reduced motion (v2 §11.3) there is no morph and no scrub: the machine still runs, so the
- * omnibox is held for the stylesheet's 120 ms fade in place, but the double is never drawn and
- * the page's scroll leaves the field where it is.
+ * Under reduced motion (v2 §11.3) the spring's part is a cut: the machine still runs, so the
+ * omnibox is held for the stylesheet's 120 ms fade in place, but the double is not drawn for a
+ * tap or a dismissal and the page's own field fades with the page. The scroll scrub is the
+ * finger's own motion, like the bar's hide (#200, §11.5), and follows it one to one either way.
  */
 import type { Rect } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
@@ -24,6 +25,7 @@ import {
   poseOf,
   progressed,
   scrolled,
+  scrubTravel,
   segmentTravel,
   showsOmniboxField,
   showsPageField,
@@ -74,8 +76,7 @@ export interface FakeboxMorphState {
   /**
    * The pill's slot is the well (#27's, the slot a carried pill leaves): the field is the
    * address control, on the page or in flight, as Chrome's toolbar has no omnibox while the
-   * fakebox is on the page. False once the scroll has docked the field, and under reduced
-   * motion, where the pill stays and the field is the page's alone.
+   * fakebox is on the page. False once the scroll has docked the field in the slot.
    */
   away: boolean
 }
@@ -173,8 +174,7 @@ export function registerFakebox(
   const mine: Registration = { tabId, field, scroller }
   registration = mine
   measure()
-  if (scroller && !reducedMotion())
-    machine = scrolled(machine, scroller.scrollTop, geometry ?? measure())
+  if (scroller) machine = scrolled(machine, scroller.scrollTop, geometry ?? measure())
   publish()
   paint()
   watch()
@@ -185,9 +185,9 @@ export function registerFakebox(
   }
 }
 
-/** The page scrolled: the field is carried toward the pill's slot with it (not under reduced motion). */
+/** The page scrolled: the field is carried toward the pill's slot with it. */
 export function fakeboxScrolled(offset: number): void {
-  if (!registration || reducedMotion()) return
+  if (!registration) return
   const g = geometry ?? measure()
   setMachine(scrolled(machine, offset, g))
 }
@@ -195,6 +195,15 @@ export function fakeboxScrolled(offset: number): void {
 /** Whether the pill's slot is the well: the field is the address control elsewhere. */
 export function fakeboxAway(): boolean {
   return fakeboxMorphStore.get().away
+}
+
+/**
+ * The scroll offset at which the field has docked in the pill's slot (the page's field having
+ * left the frame), for a driver scrolling the page to a pose; null without a page.
+ */
+export function fakeboxScrubTravel(): number | null {
+  if (!registration) return null
+  return scrubTravel(geometry ?? measure())
 }
 
 /**
@@ -374,15 +383,19 @@ function lookOf(s: FakeboxState): FakeboxLook | null {
 
 function publish(): void {
   const registered = registration !== null
+  // Under reduced motion the spring's part is a fade in place: no double for a tap, a pull or a
+  // dismissal (the scrub's is the finger's and stays), and the page's own field, when the page
+  // had it, fades out with the page rather than yielding to a double.
+  const cut = reducedMotion() && machine.phase !== 'rest'
   const next: FakeboxMorphState = {
     phase: machine.phase,
     tabId: registration?.tabId ?? null,
     look: registered ? lookOf(machine) : null,
-    surface: registered && drawsSurface(machine),
-    pageField: !registered || showsPageField(machine),
+    surface: registered && !cut && drawsSurface(machine),
+    pageField: !registered || showsPageField(machine) || (cut && machine.scrub === 0),
     omniField: registered && showsOmniboxField(machine),
     pulled: registered && machine.phase === 'open' && machine.back > 0,
-    away: registered && !reducedMotion() && !(machine.phase === 'rest' && machine.scrub >= 1)
+    away: registered && !(machine.phase === 'rest' && machine.scrub >= 1)
   }
   const prev = fakeboxMorphStore.get()
   if (
@@ -437,9 +450,7 @@ function reset(): void {
   }
   machine = FAKEBOX_REST
   const scroller = registration?.scroller
-  if (scroller && geometry && !reducedMotion()) {
-    machine = scrolled(machine, scroller.scrollTop, geometry)
-  }
+  if (scroller && geometry) machine = scrolled(machine, scroller.scrollTop, geometry)
   if (!registration) {
     geometry = null
     unwatch()

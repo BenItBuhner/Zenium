@@ -8,6 +8,7 @@ import {
   FAKEBOX_PAGE_GONE_AT,
   FAKEBOX_REST,
   FAKEBOX_REST_RADIUS,
+  FAKEBOX_SHEET_FROM,
   landed,
   omniboxUp,
   openPose,
@@ -20,6 +21,7 @@ import {
   scrubOf,
   scrubTravel,
   segmentTravel,
+  sheetOpacity,
   showsOmniboxField,
   showsPageField,
   tapped,
@@ -91,6 +93,16 @@ describe('the poses', () => {
     expect(pageOpacity(FAKEBOX_PAGE_GONE_AT / 2)).toBe(0.5)
     expect(pageOpacity(FAKEBOX_PAGE_GONE_AT)).toBe(0)
     expect(pageOpacity(1)).toBe(0)
+  })
+
+  it('brings the sheet in from the sheet-from mark, whole at the landing, under a receding page', () => {
+    expect(sheetOpacity(0)).toBe(0)
+    expect(sheetOpacity(FAKEBOX_SHEET_FROM)).toBe(0)
+    expect(sheetOpacity((FAKEBOX_SHEET_FROM + 1) / 2)).toBe(0.5)
+    expect(sheetOpacity(1)).toBe(1)
+    // The page is on its way out before the sheet shows, so no frame has both whole.
+    expect(FAKEBOX_SHEET_FROM).toBeLessThan(FAKEBOX_PAGE_GONE_AT)
+    expect(pageOpacity(FAKEBOX_SHEET_FROM)).toBeLessThan(0.5)
   })
 })
 

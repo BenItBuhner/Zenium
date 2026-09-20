@@ -5862,9 +5862,9 @@
    * The field becoming the omnibox (NTP-02 / MOT-08, Chrome's fakebox; lib/motion/fakebox.ts is
    * the machine, lib/fakeboxMorph.ts drives it, FakeboxMorphLayer paints the field's double).
    * One value, `--zen-ntp-morph` on the root (0 the page's field, 1 the omnibox's), written per
-   * frame by the controller, moves everything besides the double's rectangle: the bar fades out
-   * by it, the omnibox's sheet fades in by it, the page is gone by six tenths of it, the double's
-   * words leave over its first half and the omnibox field's content arrives over its second. A
+   * frame by the controller, moves everything besides the double's rectangle: the bar and the
+   * double's words go over its first half, the page is gone by six tenths of it, the omnibox's
+   * sheet arrives from four tenths and the omnibox field's content over the second half. A
    * second value, `--zen-ntp-pill`, is the handover to the pill at the end of the scroll scrub:
    * the double fades out by it as the pill's slot – the well the field left, #27's – fills in
    * with the pill's own look and words under it. The root's `data-fakebox` names the phase
@@ -5932,16 +5932,18 @@
     pointer-events: none;
   }
   /*
-   * The omnibox under the morph: the sheet fades in on the value rather than its own 160 ms;
-   * its field's backdrop and content are the double's until the field lands, the content
-   * arriving over the second half of the way; and at the landing nothing replays – the pill-grow
-   * and the fades stay off while the morph owns the bar.
+   * The omnibox under the morph: the sheet fades in on the value rather than its own 160 ms,
+   * from four tenths of the way (FAKEBOX_SHEET_FROM: the page is nearly gone by then, so the
+   * suggestions rise in under the arriving field rather than over the tiles); its field's
+   * backdrop and content are the double's until the field lands, the content arriving over the
+   * second half of the way; and at the landing nothing replays – the pill-grow and the fades
+   * stay off while the morph owns the bar.
    */
   :root[data-fakebox='opening'] .zen-omnibox-sheet,
   :root[data-fakebox='closing'] .zen-omnibox-sheet,
   :root[data-fakebox='pulled'] .zen-omnibox-sheet {
     animation: none;
-    opacity: var(--zen-ntp-morph, 0);
+    opacity: clamp(0, (var(--zen-ntp-morph, 0) - 0.4) / 0.6, 1);
   }
   :root[data-fakebox='opening'] .zen-omnibox-field::before,
   :root[data-fakebox='closing'] .zen-omnibox-field::before,
@@ -6073,22 +6075,24 @@
 }
 /*
  * The new tab page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts): the
- * bar stays mounted under the arriving sheet and fades out by the morph's value – its buttons go
- * as the field widens over them, Chrome's focus animation – and back in as the field returns.
- * Inert meanwhile: the sheet's scrim is what a tap there reaches. Composed with the recede at
- * the bottom edge, where a sheet fades the bar too.
+ * bar stays mounted under the arriving sheet and fades out over the first half of the morph's
+ * value – its buttons go as the field widens toward them, Chrome's focus animation, and are gone
+ * before the omnibox field's own controls arrive over the second half, so the two never share a
+ * frame – and back in as the field returns. Inert meanwhile: the sheet's scrim is what a tap
+ * there reaches. Composed with the recede at the bottom edge, where a sheet fades the bar too.
  */
 :root[data-form-factor='phone'][data-fakebox='opening'] .zen-phone-bar,
 :root[data-form-factor='phone'][data-fakebox='closing'] .zen-phone-bar,
 :root[data-form-factor='phone'][data-fakebox='pulled'] .zen-phone-bar {
-  opacity: calc(1 - var(--zen-ntp-morph, 0));
+  opacity: clamp(0, 1 - 2 * var(--zen-ntp-morph, 0), 1);
   pointer-events: none;
 }
 :root[data-form-factor='phone'][data-fakebox='opening'] .zen-phone-bar[data-edge='bottom'],
 :root[data-form-factor='phone'][data-fakebox='closing'] .zen-phone-bar[data-edge='bottom'],
 :root[data-form-factor='phone'][data-fakebox='pulled'] .zen-phone-bar[data-edge='bottom'] {
   opacity: calc(
-    (1 - var(--zen-ntp-morph, 0)) * (1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))
+    clamp(0, 1 - 2 * var(--zen-ntp-morph, 0), 1) *
+      (1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))
   );
 }
 
@@ -10649,18 +10653,18 @@
     transition-duration: 120ms !important;
   }
   /*
-   * The new tab page's field and the omnibox (NTP-02, v2 §11.3): no morph and no scroll scrub –
-   * the double is never drawn, the page's field stays where it is and the pill keeps its slot
-   * (lib/fakeboxMorph.ts leaves the scrub at 0 and the slot whole) – and the omnibox appears and
-   * leaves on a 120 ms opacity fade in place: the sheet's and its field's own fades at that
-   * length, the bar's and the page's the same length on the value's jump. The controller holds
-   * the phase for those 120 ms.
+   * The new tab page's field and the omnibox (NTP-02, v2 §11.3): the spring's part of the morph
+   * is a cut – no double flies, the page's field fades with the page (lib/fakeboxMorph.ts keeps
+   * it painted) – and the omnibox appears and leaves on a 120 ms opacity fade in place: the
+   * sheet's and its field's own fades at that length, the bar's and the page's the same length
+   * on the value's jump. The controller holds the phase for those 120 ms. The scroll scrub is
+   * the finger's own motion and stays, as the bar's hide does (§11.5).
    */
-  :root[data-fakebox] .zen-fakebox-layer {
+  :root[data-fakebox='opening'] .zen-fakebox-layer,
+  :root[data-fakebox='open'] .zen-fakebox-layer,
+  :root[data-fakebox='pulled'] .zen-fakebox-layer,
+  :root[data-fakebox='closing'] .zen-fakebox-layer {
     display: none;
-  }
-  :root[data-form-factor='phone'] .zen-ntp-field[data-away] {
-    visibility: visible;
   }
   :root[data-fakebox='opening'] .zen-omnibox-sheet,
   :root[data-fakebox='opening'] .zen-omnibox-field::before,

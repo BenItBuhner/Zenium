@@ -32,6 +32,13 @@ export const FAKEBOX_PILL_LOOK_FROM = 0.7
  */
 export const FAKEBOX_PAGE_GONE_AT = 0.6
 
+/**
+ * Where the omnibox's sheet (its suggestions) starts to arrive: the page is nearly gone by then,
+ * so the first part of the way is the field alone over a receding page and the rest the
+ * suggestions rising in under it, complete at the landing. The same line runs back.
+ */
+export const FAKEBOX_SHEET_FROM = 0.4
+
 export interface FakeboxPose {
   rect: Rect
   radius: number
@@ -189,6 +196,12 @@ export function segmentTravel(from: FakeboxPose, to: FakeboxPose): number {
 /** The page's tiles and heading at `open`: gone by `FAKEBOX_PAGE_GONE_AT`, back on the same line. */
 export function pageOpacity(open: number): number {
   return Math.round(clamp01(1 - clamp01(open) / FAKEBOX_PAGE_GONE_AT) * 1000) / 1000
+}
+
+/** The omnibox's sheet at `open`: nothing until `FAKEBOX_SHEET_FROM`, whole at the landing. */
+export function sheetOpacity(open: number): number {
+  const k = (clamp01(open) - FAKEBOX_SHEET_FROM) / (1 - FAKEBOX_SHEET_FROM)
+  return Math.round(clamp01(k) * 1000) / 1000
 }
 
 // ---------------------------------------------------------------------------
