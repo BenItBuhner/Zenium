@@ -406,16 +406,26 @@ export function createPreviewBridge(): NativeBridge {
   // script (`?readAloud=<status>`, or a preview state's PREVIEW_READ_ALOUD_EVENT) bends the
   // engine towards a state a still needs: `loading` never lists its voices (the core waits on
   // them, the player's busy state), `error` lists none (the core's `no-voice`), `ended` ends
-  // every utterance at once (the core walks to the text's end).
+  // every utterance at once (the core walks to the text's end). A script change is a voices
+  // change to the core (`speech.voicesChanged`), so the list it cached from the last state is
+  // dropped and the next start asks the engine again.
   let readAloudScript = params.get('readAloud') ?? 'playing'
+  const voicesChanged = (): void => hostGlobal().hostEvent('speech.voicesChanged', 'null')
   window.addEventListener(PREVIEW_READ_ALOUD_EVENT, (e) => {
     readAloudScript = (e as CustomEvent<string>).detail
+    voicesChanged()
   })
   let speechRun = 0
   const speech = {
     voices: (): Promise<ReadAloudVoice[]> => {
       if (readAloudScript === 'loading') return new Promise<ReadAloudVoice[]>(() => undefined)
-      return Promise.resolve(readAloudScript === 'error' ? [] : PREVIEW_VOICES)
+      if (readAloudScript === 'error') {
+        // The core gives a voiceless host a grace period for its list to arrive (a real engine
+        // still binding); an engine that says its voices changed and lists none again ends it.
+        window.setTimeout(voicesChanged, 60)
+        return Promise.resolve([])
+      }
+      return Promise.resolve(PREVIEW_VOICES)
     },
     speak: (utteranceId: string, text: string, rate: number, queue: 'flush' | 'add'): void => {
       // No queue in the stand-in: the next utterance goes when it is asked for.

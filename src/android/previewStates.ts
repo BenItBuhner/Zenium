@@ -1658,6 +1658,12 @@ function applyPrivate(
  * word under way at the engine's pace), to the last for `ended` (the engine ends it at once).
  * `then` runs when the state reads `target.status`. The panel's controls then drive the service
  * as on a device: a pause keeps the place, play speaks through the stand-in engine.
+ *
+ * The steps hang off the start command's own promise, which settles once the first sentence
+ * speaks (or the session has failed): the store still shows the session a previous state left
+ * – the reset's `stop` reaches it a tick later – so a wait on "playing" would fire on that one
+ * and the seek would find no session. `loading` is the one status the start never settles on
+ * (the stand-in withholds its voices), so it is read off the store.
  */
 function scriptReadAloud(
   tab: Tab,
@@ -1669,43 +1675,38 @@ function scriptReadAloud(
   run('readAloud.setRate', { rate: target.rate })
   const at = (status: ReadAloudStatus, s: UIState): boolean =>
     s.readAloud?.tabId === tab.id && s.readAloud.status === status
-  void cmd('readAloud.start', { tabId: tab.id }).catch(() => undefined)
+  const started = cmd('readAloud.start', { tabId: tab.id }).catch(() => undefined)
   switch (target.status) {
     case 'loading':
+      untilState((s) => at('loading', s), then)
+      return
     case 'error':
-      untilState((s) => at(target.status, s), then)
+      void started.then(() => untilState((s) => at('error', s), then))
       return
     case 'ended':
-      untilState(
-        (s) => at('playing', s),
-        () => {
-          const count = browserStore.get().state?.readAloud?.sentenceCount ?? 1
-          run('readAloud.seek', { sentenceIndex: count - 1 })
-          untilState((s) => at('ended', s), then)
-        }
-      )
+      void started.then(() => {
+        // The service clamps a seek to the last sentence (the store may not show the count yet).
+        run('readAloud.seek', { sentenceIndex: Number.MAX_SAFE_INTEGER })
+        untilState((s) => at('ended', s), then)
+      })
       return
     case 'playing':
     case 'paused':
-      untilState(
-        (s) => at('playing', s),
-        () => {
-          run('readAloud.seek', { sentenceIndex: 3 })
-          // A word under way: the engine's first word event comes a pace after the start.
-          untilState(
-            (s) =>
-              at('playing', s) && s.readAloud?.sentenceIndex === 3 && s.readAloud.word !== null,
-            () => {
-              if (target.status === 'playing') {
-                then()
-                return
-              }
-              run('readAloud.pause', undefined)
-              untilState((s) => at('paused', s), then)
+      void started.then(() => {
+        run('readAloud.seek', { sentenceIndex: 3 })
+        // A word under way: the engine's first word event comes a pace after the start.
+        untilState(
+          (s) => at('playing', s) && s.readAloud?.sentenceIndex === 3 && s.readAloud.word !== null,
+          () => {
+            if (target.status === 'playing') {
+              then()
+              return
             }
-          )
-        }
-      )
+            run('readAloud.pause', undefined)
+            untilState((s) => at('paused', s), then)
+          }
+        )
+      })
       return
   }
 }
