@@ -6,17 +6,18 @@ import {
   FILE_SOURCE,
   browserSources,
   finishedImport,
+  lastImportLine,
   listNames,
-  resultCaption,
   resultHeadline,
-  sourceGroups,
-  summaryLine
+  runOutcome,
+  sourceGroups
 } from '@renderer/lib/importData'
 import { activeTab } from '@renderer/lib/selectors'
 import { openImportDialog } from '@renderer/lib/ui'
 import { V2Button } from '../v2/controls'
-import { Group, Pane, Rows, StatusGlyph } from '../siteControls/pane'
+import { Group, Pane, Rows } from '../siteControls/pane'
 import { ListRow } from '../siteControls/primitives'
+import { ResultGlyph } from '../import/ResultGlyph'
 
 /**
  * Settings > Import on a mouse (Chrome's `chrome://settings/importData`; design-language-v2-draft
@@ -24,8 +25,10 @@ import { ListRow } from '../siteControls/primitives'
  * a hugging button trailing its row; a second row leads to the same dialog on its file sources.
  * The dialog itself is `import/ImportDialog`, mounted by `TabDialogs` so it renders through the
  * frame dialog host over Settings. An import that finished while the dialog was away (or that
- * a phone's rows ran) shows as the last import's row until it is dismissed. The phone's category
- * is the Settings builder's (`pages/settings/sections.tsx`, `importSection`): files only.
+ * a phone's rows ran) shows as the last import's row until it is dismissed – its glyph and ink
+ * the dialog's (`ResultGlyph`: a failure in the danger ink on glyph and label alike, §9.33).
+ * The phone's category is the Settings builder's (`pages/settings/sections.tsx`,
+ * `importSection`): files only.
  */
 export function ImportSection({ state }: { state: UIState }): JSX.Element {
   const [sources, setSources] = useState<ImportSource[] | null>(null)
@@ -90,8 +93,9 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
           <Rows>
             <ListRow
               label={resultHeadline(last)}
-              description={`${resultCaption(last)} · ${summaryLine(last)}`}
-              leading={<StatusGlyph state={last.error ? 'warning' : 'safe'} />}
+              description={lastImportLine(last)}
+              leading={<ResultGlyph state={runOutcome(last)} />}
+              danger={Boolean(last.error)}
               control
               trailing={
                 <V2Button

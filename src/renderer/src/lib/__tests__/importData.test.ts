@@ -7,7 +7,9 @@ import {
   defaultGroup,
   finishedImport,
   importedAnything,
+  kindOutcome,
   kindRows,
+  lastImportLine,
   limitNotes,
   listNames,
   outcomeLines,
@@ -16,6 +18,7 @@ import {
   reportedKinds,
   resultCaption,
   resultHeadline,
+  runOutcome,
   runningNotice,
   sourceCaption,
   sourceGroups,
@@ -294,18 +297,41 @@ describe('the words for what an import did', () => {
     expect(resultCaption(progress({ source: HTML }))).toBe('From a bookmarks HTML file')
   })
 
-  it('the one-line summary is each kind’s count line, or the failure', () => {
+  it('the one-line summary is each kind’s count line a middle dot apart, or the failure', () => {
     expect(
       summaryLine(
         progress({
           results: { bookmarks: outcome({ imported: 3 }), history: outcome({ imported: 0 }) }
         })
       )
-    ).toBe('3 bookmarks imported. No new visits')
+    ).toBe('3 bookmarks imported · No new visits')
     expect(summaryLine(progress({ error: 'The profile could not be read.' }))).toBe(
       'The profile could not be read.'
     )
     expect(summaryLine(progress())).toBe('Nothing was imported')
+  })
+
+  it('the pane’s Last import line is the source, then the counts; a failure says the source alone', () => {
+    const ok = progress({
+      source: CHROME_1,
+      results: { bookmarks: outcome({ imported: 3 }), passwords: outcome({ imported: 1 }) }
+    })
+    expect(lastImportLine(ok)).toBe(
+      `${resultCaption(ok)} · 3 bookmarks imported · 1 password imported`
+    )
+    const failed = progress({ source: CHROME_1, error: 'The profile could not be read.' })
+    expect(lastImportLine(failed)).toBe(resultCaption(failed))
+    const empty = progress({ source: CHROME_1 })
+    expect(lastImportLine(empty)).toBe(resultCaption(empty))
+  })
+
+  it('reads a result’s state as its glyph tells it: ok, error, or nothing to tell', () => {
+    expect(runOutcome(progress({ results: { bookmarks: outcome({ imported: 3 }) } }))).toBe('ok')
+    expect(runOutcome(progress({ error: 'The profile could not be read.' }))).toBe('error')
+    expect(runOutcome(progress({ results: { bookmarks: outcome({ imported: 0 }) } }))).toBe('none')
+    expect(kindOutcome(outcome({ imported: 2 }))).toBe('ok')
+    expect(kindOutcome(outcome({ imported: 0, error: 'Locked' }))).toBe('error')
+    expect(kindOutcome(outcome({ imported: 0 }))).toBe('none')
   })
 
   it('lists names as a sentence does', () => {

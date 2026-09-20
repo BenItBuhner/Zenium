@@ -173,6 +173,26 @@ export function importedAnything(progress: ImportProgress): boolean {
 }
 
 /**
+ * What a result has to tell, as its glyph and ink say it (§1 status ink, §9.33): `ok` when
+ * something came in, `error` for a failure – the danger ink on glyph and text alike – and
+ * `none` where nothing came in and nothing failed. One reading for the dialog's result, the
+ * pane's Last import row and the phone's rows.
+ */
+export type OutcomeState = 'ok' | 'error' | 'none'
+
+/** The whole run's state: its own failure, else whether anything came in. */
+export function runOutcome(progress: ImportProgress): OutcomeState {
+  if (progress.error) return 'error'
+  return importedAnything(progress) ? 'ok' : 'none'
+}
+
+/** One kind's state. */
+export function kindOutcome(outcome: ImportKindOutcome): OutcomeState {
+  if (outcome.error) return 'error'
+  return outcome.imported > 0 ? 'ok' : 'none'
+}
+
+/**
  * The last import worth reporting: one that finished with something to say. A run still going
  * is not it, nor a file pick the user cancelled (stopped before any kind ran, nothing to show).
  */
@@ -212,14 +232,25 @@ export function resultCaption(progress: ImportProgress): string {
 }
 
 /**
- * One sentence for a row or toast: the first kind's count line, or the failure. The phone's
- * Import rows report with it.
+ * One line for a row or toast: each kind's count line, ` · ` apart (§10.3's aside form – one
+ * separator on the line, not a sentence's full stops beside a middle dot), or the failure.
  */
 export function summaryLine(progress: ImportProgress): string {
   if (progress.error) return progress.error
   const kinds = reportedKinds(progress)
   const parts = kinds.map((kind) => outcomeLines(kind, progress.results[kind]!)[0]!)
-  return parts.length ? parts.join('. ') : resultHeadline(progress)
+  return parts.length ? parts.join(' · ') : resultHeadline(progress)
+}
+
+/**
+ * The pane's Last import description: the source, then the counts on the same line. The row's
+ * label is the headline, so a failed run – whose headline is the failure – and a run with
+ * nothing to count say the source alone rather than the headline twice.
+ */
+export function lastImportLine(progress: ImportProgress): string {
+  const caption = resultCaption(progress)
+  if (progress.error || reportedKinds(progress).length === 0) return caption
+  return `${caption} · ${summaryLine(progress)}`
 }
 
 /** "Google Chrome, Firefox and Safari": the browsers found, as a sentence names them. */

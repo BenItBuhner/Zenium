@@ -6,6 +6,7 @@ import { run } from '@renderer/lib/api'
 import {
   IMPORT_TITLE,
   KIND_LABEL,
+  kindOutcome,
   kindRows,
   limitNotes,
   outcomeLines,
@@ -14,12 +15,12 @@ import {
   reportedKinds,
   resultCaption,
   resultHeadline,
+  runOutcome,
   runningNotice
 } from '@renderer/lib/importData'
 import { closeImportDialog, openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { V2_GLYPH, V2Button } from '../v2/controls'
-import { StatusGlyph } from '../siteControls/pane'
 import {
   BusyButton,
   Checkbox,
@@ -30,6 +31,7 @@ import {
   TitleBlock,
   type DialogApi
 } from '../siteControls/primitives'
+import { ResultGlyph } from './ResultGlyph'
 import { useImportForm, type ImportForm } from './useImportForm'
 
 /**
@@ -51,7 +53,17 @@ import { useImportForm, type ImportForm } from './useImportForm'
  * made). Mounted by `TabDialogs` while `importDialog` is set; opened from Settings > Import
  * and from Bookmarks > Import Bookmarks and Settings…. The phone has no dialog: its Settings
  * category imports from files through the builder's rows (`pages/settings/sections.tsx`).
+ *
+ * One text edge through the body (§10.3's principle on a dialog): the check rows put their
+ * label 10 after the 16 box, so every line with a 16 glyph before it – the running line, a limit
+ * note, the result's headline and rows – takes the same 10, and the glyph sits on its first
+ * line by §9.2's offset, (line − glyph) / 2 from the tokens and never a written 2.
  */
+
+/** §9.2's leading-glyph offset onto a body line: the same expression `ListRow` gives its slot. */
+const GLYPH_ON_LINE = 'mt-[calc((var(--v2-line-body)-var(--v2-icon))/2)]'
+/** The check row's 10 between its box and its label (`CONTROL_LABEL`, the primitives). */
+const GLYPH_GAP = 'gap-2.5'
 export function ImportDialog({ state }: { state: UIState }): JSX.Element | null {
   const open = uiStore.use((s) => s.importDialog)
   if (!open) return null
@@ -176,7 +188,7 @@ function canImport(form: ImportForm): boolean {
   return !(form.source.browser === 'firefox' && form.source.running)
 }
 
-const NOTE = 'flex items-start gap-2 px-4 text-[13px] leading-5'
+const NOTE = cn('flex items-start px-4 text-[13px] leading-5', GLYPH_GAP)
 // A line with the spinner on it clips: the glyph's rotation would otherwise count as scrollable
 // overflow at the body's bottom edge and put a scrollbar on the dialog for the run's length.
 const SPINNER_LINE = cn(NOTE, 'overflow-hidden text-[var(--v2-text-deemphasized)]')
@@ -251,13 +263,13 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
           role="status"
           data-testid="import-running"
         >
-          <CircleAlert className={cn(V2_GLYPH, 'mt-0.5')} aria-hidden />
+          <CircleAlert className={cn(V2_GLYPH, GLYPH_ON_LINE)} aria-hidden />
           <span>{notice}</span>
         </p>
       )}
       {busy && form.progress && (
         <p className={cn(SPINNER_LINE, 'pt-2')} role="status" data-testid="import-progress">
-          <Spinner className="mt-0.5" />
+          <Spinner className={GLYPH_ON_LINE} />
           <span>{progressLine(form.progress)}</span>
         </p>
       )}
@@ -309,7 +321,7 @@ function KindRow({
 function LimitNote({ kind, text }: { kind: ImportKind; text: string }): JSX.Element {
   return (
     <p className={cn(NOTE, 'pt-2 text-[var(--v2-text-deemphasized)]')} data-testid="import-limit">
-      <Info className={cn(V2_GLYPH, 'mt-0.5')} aria-hidden />
+      <Info className={cn(V2_GLYPH, GLYPH_ON_LINE)} aria-hidden />
       <span>
         <span className="text-[var(--v2-text)]">{KIND_LABEL[kind]}: </span>
         {text}
@@ -319,20 +331,11 @@ function LimitNote({ kind, text }: { kind: ImportKind; text: string }): JSX.Elem
 }
 
 /**
- * A result row's glyph on the label's line (§9.2, §1 status ink): ok for what came in, the
- * danger ink for a failure – the same ink its lines take – and the aside glyph where nothing
- * came in and nothing failed. `StatusGlyph`'s warning is the site-safety ink; a failed import
- * is an error and reads in `--v2-danger` like every other error message (§9.33).
- */
-function ResultGlyph({ state }: { state: 'ok' | 'error' | 'none' }): JSX.Element {
-  if (state === 'error')
-    return <CircleAlert className={cn(V2_GLYPH, 'mt-0.5 text-[var(--v2-danger)]')} aria-hidden />
-  return <StatusGlyph state={state === 'ok' ? 'safe' : 'info'} className="mt-0.5" />
-}
-
-/**
- * The result: the headline and the source, one row per kind with its lines, the limits as an
- * inline note, and Chrome's "Show bookmarks bar" box when bookmarks came in.
+ * The result: the headline as the sub-heading over the kind rows (§4, §9.27: 15/600, its
+ * description – the source – 15 at 69% 4 under it, the first row's box 8 below; a failure's
+ * headline in the danger ink, §9.33), its glyph on the heading's line in the status ink, one
+ * row per kind with its lines, the limits as an inline note, and Chrome's "Show bookmarks bar"
+ * box when bookmarks came in.
  */
 function Result({
   progress,
@@ -357,23 +360,23 @@ function Result({
   }, [])
   return (
     <div className="flex flex-col" data-testid="import-result" data-failed={failed || undefined}>
-      <div className="flex items-start gap-2 px-4 pb-2">
-        <ResultGlyph
-          state={
-            failed ? 'error' : kinds.some((k) => progress.results[k]?.imported) ? 'ok' : 'none'
-          }
-        />
+      <div className={cn('flex items-start px-4 pb-2', GLYPH_GAP)}>
+        <ResultGlyph state={runOutcome(progress)} className={GLYPH_ON_LINE} />
         <div className="min-w-0 flex-1">
           <p
             ref={heading}
             id={headingId}
             tabIndex={-1}
             role="status"
-            className="text-[15px] leading-5 text-[var(--v2-text)] outline-none"
+            className={cn(
+              'text-[15px] leading-5 font-semibold outline-none',
+              failed ? 'text-[var(--v2-danger)]' : 'text-[var(--v2-text)]'
+            )}
+            data-testid="import-result-headline"
           >
             {resultHeadline(progress)}
           </p>
-          <p className="text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
+          <p className="mt-1 text-[15px] leading-5 text-[var(--v2-text-deemphasized)]">
             {resultCaption(progress)}
           </p>
         </div>
@@ -386,12 +389,10 @@ function Result({
             return (
               <li
                 key={kind}
-                className="flex items-start gap-2.5 px-4 py-1.5"
+                className={cn('flex items-start px-4 py-1.5', GLYPH_GAP)}
                 data-import-kind={kind}
               >
-                <ResultGlyph
-                  state={outcome.error ? 'error' : outcome.imported > 0 ? 'ok' : 'none'}
-                />
+                <ResultGlyph state={kindOutcome(outcome)} className={GLYPH_ON_LINE} />
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] leading-5 text-[var(--v2-text)]">
                     {KIND_LABEL[kind]}

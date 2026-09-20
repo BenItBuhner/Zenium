@@ -6,10 +6,13 @@ import {
   FILE_SOURCE,
   KIND_LABEL,
   finishedImport,
+  kindOutcome,
   outcomeLines,
   reportedKinds,
   resultCaption,
-  resultHeadline
+  resultHeadline,
+  runOutcome,
+  type OutcomeState
 } from '@renderer/lib/importData'
 import { openOverlay } from '@renderer/lib/ui'
 import type { RowGroup, SettingsRow } from '../pages/settings/model'
@@ -28,9 +31,11 @@ import type { RowGroup, SettingsRow } from '../pages/settings/model'
  * Updates rows do ("Verified"): trailing rather than leading because the group's action rows
  * (Show imported bookmarks, Dismiss) have no leading slot, and §10.4 keeps one left edge for
  * the labels of a list – a leading glyph on some rows only would indent those labels alone.
- * A row with nothing to tell (nothing came in, nothing failed) carries no glyph.
+ * A row with nothing to tell (nothing came in, nothing failed) carries no glyph. The states are
+ * the desktop's (`runOutcome`, `kindOutcome`; the dialog's and pane's `ResultGlyph`), so a
+ * failure reads in one ink on both platforms.
  */
-function outcomeGlyph(state: 'ok' | 'error' | null): JSX.Element | undefined {
+function outcomeGlyph(state: OutcomeState): JSX.Element | undefined {
   if (state === 'ok')
     return <Check className="zen-settings-trailing-glyph zen-settings-ok" aria-label="Imported" />
   if (state === 'error')
@@ -101,9 +106,7 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
         label: resultHeadline(last),
         description: resultCaption(last),
         tone: failed ? 'danger' : undefined,
-        trailing: outcomeGlyph(
-          failed ? 'error' : kinds.some((k) => last.results[k]?.imported) ? 'ok' : null
-        ),
+        trailing: outcomeGlyph(runOutcome(last)),
         clamp: true
       },
       ...kinds.map((kind): SettingsRow => {
@@ -114,7 +117,7 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
           label: KIND_LABEL[kind],
           description: outcomeLines(kind, outcome).join('. '),
           tone: outcome.error ? 'danger' : undefined,
-          trailing: outcomeGlyph(outcome.error ? 'error' : outcome.imported > 0 ? 'ok' : null)
+          trailing: outcomeGlyph(kindOutcome(outcome))
         }
       })
     ]

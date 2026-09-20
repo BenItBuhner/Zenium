@@ -200,8 +200,10 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/pdf/PdfViewerBar.tsx',
   'components/pdf/PdfSheets.tsx',
   // Settings > Import's dialog (ID-23's UI): the choice and checkbox rows' heights, the running
-  // browser line in the warn / danger ink, the notes and the results in the deemphasised ink.
-  'components/import/ImportDialog.tsx'
+  // browser line in the warn / danger ink, the notes and the results in the deemphasised ink;
+  // a result's glyph (the dialog's and the pane's Last import row) in the danger ink on failure.
+  'components/import/ImportDialog.tsx',
+  'components/import/ResultGlyph.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
