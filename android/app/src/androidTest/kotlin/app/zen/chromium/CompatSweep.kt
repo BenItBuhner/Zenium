@@ -1421,13 +1421,17 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * An account-gated row without a popup (Claude, Capital One Shopping, Online Security, Avira
-     * Password Manager, Read&Write): the action click, on a settled fixture tab, opens or
-     * navigates to the vendor's sign-in / setup page (`opens`), or the row's own page (`page`,
-     * Claude's side panel document, which the phone has no panel to host: opened as a tab) shows
-     * its sign-in. Either is the row's sign-in surface: `n/m`, the account being the gate. A row
-     * whose click does nothing and whose page shows nothing is `F`, with the bridge trace.
+     * Password Manager, Read&Write, NordPass): the action click, on a settled fixture tab, opens
+     * or navigates to the vendor's sign-in / setup page (`opens`), switches to one it opened at
+     * install (Online Security's `tabs.update(id, {active: true})` on its setup tab), opens the
+     * row's own page as a tab (NordPass's app page, signed out), injects its UI into the page
+     * (`injects`, Read&Write's `gw-toolbar`, which its content script shows on the worker's
+     * `tabs.sendMessage`), or the row's own page (`page`, Claude's side panel document, which the
+     * phone has no panel to host: opened as a tab) shows its sign-in. Each is the row's sign-in
+     * surface: `n/m`, the account being the gate. A row whose click does nothing and whose page
+     * shows nothing is `F`, with the bridge trace.
      */
-    private fun accountGate(label: String, opens: Regex, page: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun accountGate(label: String, opens: Regex, page: String? = null, injects: String? = null): (Row, JSONObject) -> Grade = { row, entry ->
         val popup = entry.optJSONObject("popup")?.optString("verdict")
         val opened = entry.optJSONArray("popupOpened")
         val extra = JSONObject()
@@ -1443,12 +1447,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 poll(scaled(15_000, factor), 400) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null }
                 SystemClock.sleep(scaled(2_000, factor))
                 val before = tabUrls()
+                val activeBefore = activeCoreTab()?.optString("id")
                 val since = StepEvidence(row)
                 coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-                val landed = poll(scaled(20_000, factor), 500) {
+                val hit: Any? = poll(scaled(20_000, factor), 500) {
                     val now = tabUrls()
                     now.entries.firstOrNull { (it.key !in before || before[it.key] != it.value) && opens.containsMatchIn(it.value) }
                         ?: now.entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) }
+                        ?: activeCoreTab()?.optString("id")?.takeIf { it != activeBefore && it != tab }
+                            ?.let { id -> now.entries.firstOrNull { it.key == id && opens.containsMatchIn(it.value) } }
+                        ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
+                }
+                @Suppress("UNCHECKED_CAST")
+                val landed = hit as? Map.Entry<String, String>
+                val injected = hit as? JSONObject
+                if (injected != null) {
+                    SystemClock.sleep(scaled(2_000, factor))
+                    snap("${entry.optString("slug")}-injected")
+                    extra.put("injected", injected)
                 }
                 runCatching { coreInvoke("extension.closePopup", "null") }
                 extra.put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
@@ -1469,9 +1485,16 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     snap("${entry.optString("slug")}-own-page")
                 }
                 since.record(extra, "atEnd")
+                val how = when {
+                    landed == null || landed.key !in before -> "opened"
+                    before[landed.key] != landed.value -> "navigated the tab to"
+                    else -> "switched to its tab"
+                }
                 when {
+                    injected != null ->
+                        Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need an account (not measurable here)", extra)
                     landed != null && opens.containsMatchIn(landed.value) ->
-                        Grade("n/m", "$label: the action click ${if (landed.key in before) "navigated the tab to" else "opened"} ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs an account (not measurable here)", extra)
+                        Grade("n/m", "$label: the action click $how ${landed.value.take(100)} (\"${text.take(80)}\"); the core needs an account (not measurable here)", extra)
                     landed != null ->
                         Grade(if (LOGIN_WORDS.containsMatchIn(text) || text.isNotEmpty()) "n/m" else "F", "$label: the action click showed ${landed.value.take(100)} (\"${text.take(80)}\")${if (text.isEmpty()) ", which stayed blank" else "; the core needs an account (not measurable here)"}", extra)
                     ownPage?.optBoolean("pass") == true ->
@@ -1631,8 +1654,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             tabUrls().entries.firstOrNull { it.key !in before && (it.value.contains("capture.html") || it.value.contains("editor.html")) }
         }
         popup?.let { extra.put("popup", json(tabEval(it, DOM_REPORT))).put("popupConsole", JSONArray(consoleOf(it).takeLast(12))) }
+        // The popup keeps its captures in the FileSystem API (`window.requestFileSystem ||
+        // window.webkitRequestFileSystem`, bound at load; `filesystem:` URLs for the stitched
+        // image) and reports "Something went wrong" when the call is not there. The WebView has
+        // no FileSystem API: the row is a WebView limit, not the runtime's, once that is what the
+        // popup ran into.
+        val fileSystem = popup?.let { json(tabEval(it, FILESYSTEM_PROBE)) }
+        fileSystem?.let { extra.put("fileSystem", it) }
         snap("${entry.optString("slug")}-capture-popup")
         runCatching { coreInvoke("extension.closePopup", "null") }
+        if (result == null && fileSystem != null && !fileSystem.optBoolean("available") && fileSystem.optBoolean("failed")) {
+            since.record(extra, "atEnd")
+            return Grade(
+                "n/a",
+                "the popup's capture stores through the FileSystem API (webkitRequestFileSystem), which the WebView has not: it reports \"${fileSystem.optString("text").take(80)}\" (WebView limit)",
+                extra
+            )
+        }
         var image = JSONObject()
         if (result != null) {
             val resultView = waitForView(result.key)
@@ -1660,13 +1698,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun authenticator(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val bg = backgroundView(row.id) ?: return Grade("F", "no background view to save the account through")
-        tabEval(bg, AUTHENTICATOR_SEED)
-        val seeded = poll(10_000, 250) { tabEval(bg, "window.__zenSeed").takeIf { it != "null" } } ?: "no answer within 10 s"
-        extra.put("seed", seeded)
-        showTab(fixtureTab)
-        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val popup = poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        val openPopup = {
+            showTab(fixtureTab)
+            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            poll(scaled(POPUP_TIMEOUT_MS, factor), 400) { popupView()?.takeIf { it.context == "popup" && rendered(it) } }
+        }
+        // The worker seeds when it is up; on a slow job the stages before the core outlast its
+        // 30 s idle and it is gone, and the popup's own chrome.storage.sync is the same store.
+        val bg = backgroundView(row.id)
+        val seededThroughPopup = bg == null
+        val seeder: WebView = bg ?: openPopup() ?: return Grade("F", "no background view nor a rendered popup to save the account through")
+        tabEval(seeder, AUTHENTICATOR_SEED)
+        val seeded = poll(scaled(10_000, factor), 250) { tabEval(seeder, "window.__zenSeed").takeIf { it != "null" } } ?: "no answer within ${scaled(10_000, factor) / 1000} s"
+        extra.put("seed", seeded).put("seededThrough", if (seededThroughPopup) "popup" else "worker")
+        if (seededThroughPopup) {
+            // The popup lists the accounts it read at load: reopened, it reads the saved one.
+            runCatching { coreInvoke("extension.closePopup", "null") }
+            poll(scaled(5_000, factor), 200) { if (popupView() == null) true else null }
+        }
+        val popup = openPopup()
         var found = JSONObject()
         if (popup != null) {
             found = pollExpr(
@@ -1683,7 +1733,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         runCatching { coreInvoke("extension.closePopup", "null") }
         return Grade(
             if (found.optBoolean("pass")) "P" else "F",
-            "account saved (${seeded.take(60)}); popup ${if (popup == null) "did not render" else "lists ${found.optInt("entries")} entries: ${found.optJSONArray("rows")?.toString()?.take(160)}, code ${found.optString("code")}"}",
+            "account saved through the ${if (seededThroughPopup) "popup (the worker had idled out)" else "worker"} (${seeded.take(60)}); popup ${if (popup == null) "did not render" else "lists ${found.optInt("entries")} entries: ${found.optJSONArray("rows")?.toString()?.take(160)}, code ${found.optString("code")}"}",
             extra
         )
     }
@@ -1848,7 +1898,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("jlhmfgmfgeifomenelglieieghnjghma", "Cisco Webex Extension", "cisco-webex", core = serviceBacked("Cisco Webex Extension", "joining needs the Webex desktop app over native messaging", native = true)),
         Row("ecnphlgnajanjnkcmbpancdjoidceilk", "Kami", "kami", core = pdfTool("Kami", Regex("kami"), missing = "F")),
         Row("bgnkhhnnamicmpeenaelnjfhikgbkllg", "AdGuard AdBlocker", "adguard", core = ::adBlocker),
-        Row("inoeonmfapjbbkmdafoankkfajkcphgd", "Read&Write for Google Chrome", "read-and-write", core = accountGate("Read&Write", Regex("texthelp|readwrite|read&write", RegexOption.IGNORE_CASE))),
+        Row("inoeonmfapjbbkmdafoankkfajkcphgd", "Read&Write for Google Chrome", "read-and-write", core = accountGate("Read&Write", Regex("texthelp|readwrite|read&write", RegexOption.IGNORE_CASE), injects = "gw-toolbar")),
         Row("fcoeoabgfenejglbffodgkkbkcdhcgfn", "Claude", "claude", core = accountGate("Claude", Regex("claude\\.ai|anthropic", RegexOption.IGNORE_CASE), page = "sidepanel.html")),
         Row("majdfhpaihoncoakbjgbdhglocklcgno", "VeePN", "veepn", core = vpn("VeePN", pac = true)),
         Row("fjoaledfpmneenckfbpdfhkmimnjocfa", "NordVPN", "nordvpn", core = vpn("NordVPN", pac = true)),
@@ -1863,7 +1913,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("mmeijimgabbpbgpdklnllpncmdofkcpn", "Screencastify", "screencastify", feasible = false, core = notOnThePhone("tabCapture / desktopCapture: no screen or tab capture on the phone (WebView limit); recording itself needs an account")),
         Row("bhghoamapcdpbohphigoooaddinpkbai", "Authenticator", "authenticator", core = ::authenticator),
         Row("kgjfgplpablkjnlkjmjdecgdpfankdle", "Zoom Chrome Extension", "zoom", account = true, core = popupLogin("Zoom")),
-        Row("eiaeiblijfjekdanodkjadfinkhbfgcd", "NordPass", "nordpass", account = true, core = popupLogin("NordPass")),
+        Row("eiaeiblijfjekdanodkjadfinkhbfgcd", "NordPass", "nordpass", account = true, core = accountGate("NordPass", Regex("nordpass", RegexOption.IGNORE_CASE))),
         Row("ekhagklcjbdpajgpjgmbionohlpdbjgc", "Zotero Connector", "zotero", core = ::zotero),
         Row("flliilndjeohchalpbbcdekjklbdgfkk", "Avira Browser Safety", "avira-browser-safety", core = siteVerdict("Avira Browser Safety")),
         Row("omghfjlpggmjjaagoclmmobgdodcjboh", "Browsec VPN", "browsec", core = vpn("Browsec", pac = true)),
@@ -2756,5 +2806,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val ZOTERO_NOTICE_HOSTS =
             "(function(){var hosts=Array.prototype.slice.call(document.body?document.body.children:[]).filter(function(e){return e.tagName==='DIV'&&e.attributes.length===0&&e.childNodes.length===0});" +
                 "var last=hosts[hosts.length-1];var r=last?last.getBoundingClientRect():null;return JSON.stringify({hosts:hosts.length,last:r?{w:r.width,h:r.height}:null,innerW:innerWidth,innerH:innerHeight})})()"
+
+        /**
+         * The first element `__SELECTOR__` matches in the page, when it is drawn: its tag, size
+         * and text (its shadow root's when it has one). An extension's UI the click injected.
+         */
+        private const val INJECTED_UI =
+            "(function(){var el=document.querySelector(__SELECTOR__);if(!el)return JSON.stringify({pass:false});var r=el.getBoundingClientRect();var cs=getComputedStyle(el);" +
+                "var text=String((el.shadowRoot&&el.shadowRoot.textContent)||el.textContent||'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none',tag:el.tagName.toLowerCase(),w:Math.round(r.width),h:Math.round(r.height),text:text.slice(0,120)})})()"
+
+        /**
+         * In GoFullPage's popup: whether the FileSystem API it stores captures through is there
+         * (`webkitRequestFileSystem`, or the `requestFileSystem` it binds from it), and whether
+         * its "Something went wrong" error (`#uh-oh`) is what the popup shows.
+         */
+        private const val FILESYSTEM_PROBE =
+            "(function(){var err=document.getElementById('uh-oh');var shown=!!err&&err.getBoundingClientRect().height>0;" +
+                "return JSON.stringify({available:typeof window.webkitRequestFileSystem==='function'||typeof window.requestFileSystem==='function',failed:shown,text:shown?(err.innerText||'').replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
     }
 }
