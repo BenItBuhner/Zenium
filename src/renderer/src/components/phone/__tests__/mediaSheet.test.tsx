@@ -269,6 +269,58 @@ describe('the media sheet', () => {
     expect(thumb?.getAttribute('aria-valuenow')).toBe('30')
   })
 
+  it('a scrub seeks to where the finger let go, not where the thumb was last drawn', async () => {
+    await open(state([track({ playing: false })]))
+    const slider = q<HTMLElement>('[data-testid="media-position"]')!
+    // happy-dom lays nothing out: the slider is 120 px wide at the left edge, a pixel a second.
+    Object.defineProperty(slider, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 120, height: 20, right: 120, bottom: 20, x: 0, y: 0 })
+    })
+    // The finger on the track (Radix takes pointer capture there; happy-dom keeps it).
+    const trackEl = slider.firstElementChild as HTMLElement
+    const finger = (type: string, clientX: number): void => {
+      trackEl.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX, pointerId: 1 }))
+    }
+    act(() => finger('pointerdown', 10))
+    act(() => finger('pointermove', 30))
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('0:30')
+    // The last move and the lift in one go: the thumb at 0:30 is what React last drew when
+    // the finger lifts at 1:00, and Radix commits what it drew. The seek goes with the finger.
+    act(() => {
+      finger('pointermove', 60)
+      finger('pointerup', 60)
+    })
+    expect(commands().at(-1)).toEqual([
+      'media.action',
+      { tabId: 't1', action: 'seekto', seekTime: 60 }
+    ])
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('1:00')
+  })
+
+  it('a key on the thumb steps the position and commits it, and the display follows the page after', async () => {
+    await open(state([track({ playing: false })]))
+    const thumb = q<HTMLElement>('[data-testid="media-position"] [role="slider"]')!
+    act(() => {
+      thumb.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    expect(commands().at(-1)).toEqual([
+      'media.action',
+      { tabId: 't1', action: 'seekto', seekTime: expect.closeTo(10.1, 6) as number }
+    ])
+    // The step's own change (reported after its commit) is no scrub: the page's next report
+    // takes the display, which a finger still down would hold.
+    render(
+      state([
+        track({
+          playing: false,
+          position: { duration: 120, position: 45, playbackRate: 1 },
+          positionAt: Date.now() + 1
+        })
+      ])
+    )
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('0:45')
+  })
+
   it('has no seek row for a stream without a duration', async () => {
     await open(state([track({ position: { duration: 0, position: 30, playbackRate: 1 } })]))
     expect(q('[data-testid="media-seek"]')).toBeNull()

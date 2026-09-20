@@ -187,6 +187,15 @@ function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
   const [pending, setPending] = useState<{ at: number; positionAt: number | undefined } | null>(
     null
   )
+  /**
+   * Where the finger last put the thumb. Radix commits the value it last *rendered*, and a
+   * pointer move is a continuous update React may not have drawn when the finger lifts (a slow
+   * renderer holds a frame of moves back), so the seek goes where the finger last was, not
+   * where the thumb was last painted.
+   */
+  const slid = useRef<number | null>(null)
+  /** A key's step commits first and reports its change after; that change is no scrub. */
+  const committed = useRef<number | null>(null)
 
   // The clock ticks only while the media plays and no finger scrubs; the first tick comes a
   // quarter second after playback resumes, and until then a stale `now` shows the reported
@@ -236,11 +245,21 @@ function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
           value={[Math.min(duration, shown)]}
           data-testid="media-position"
           onValueChange={([at]) => {
-            if (at !== undefined) setScrub(at)
+            if (at === undefined) return
+            if (at === committed.current) {
+              committed.current = null
+              return
+            }
+            slid.current = at
+            setScrub(at)
           }}
           onValueCommit={([at]) => {
-            if (at !== undefined) seekTo(at)
+            const target = slid.current ?? at
+            slid.current = null
             setScrub(null)
+            if (target === undefined) return
+            committed.current = target
+            seekTo(target)
           }}
         />
         <button
