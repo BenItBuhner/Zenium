@@ -1,10 +1,12 @@
 /**
- * The new tab page's search field becoming the omnibox (NTP-02 / MOT-08, Chrome's fakebox): the
- * field's rectangle lerps from its resting place on the page to the bar – the pill's slot as the
- * page scrolls, the omnibox's field on a tap – and back again when the omnibox is dismissed.
- * This module is the pure part: the poses, the interpolation between them and the state machine
- * that decides which pose the field is in and what draws it. Nothing in here touches the DOM,
- * a spring or a store; `lib/fakeboxMorph.ts` drives it and `FakeboxMorphLayer` paints it.
+ * The new tab page's search field becoming the omnibox (NTP-02 / MOT-08, Chrome's fakebox; design
+ * language v2 §11.8): the field's rectangle lerps from its resting place on the page to the bar –
+ * the pill's slot as the page scrolls at a top dock (at a bottom dock it rides up with the page
+ * and hands over to the slot by a fade), the omnibox's field on a tap – and back again when the
+ * omnibox is dismissed. This module is the pure part: the poses, the interpolation between them
+ * and the state machine that decides which pose the field is in and what draws it. Nothing in
+ * here touches the DOM, a spring or a store; `lib/fakeboxMorph.ts` drives it and
+ * `FakeboxMorphLayer` paints it.
  *
  * The rectangle interpolation is the app's own: every edge on its own straight line, the corner
  * radius with them (`growFrame` in lib/newtab.ts for MOT-03's grow, `lerpRect` for the overview's
@@ -133,12 +135,33 @@ export function pillLook(scrub: number): number {
 }
 
 /**
- * The page's pose at `scrub`: the resting field carried toward the pill's slot with the page's
- * scroll, its corners rounding to the pill's, handing over to the pill over the last stretch.
- * At 0 it is the field itself; at 1 it is the pill.
+ * Whether the bar – and so the pill's slot the scroll hands the field to – is below the page
+ * (a bottom dock) rather than above it (a top dock): the slot's middle is under the frame's
+ * top edge.
+ */
+export function dockBelow(g: FakeboxGeometry): boolean {
+  return g.slot.y + g.slot.height / 2 > g.frameTop
+}
+
+/**
+ * The page's pose at `scrub` (v2 §11.8). At a top dock the resting field is carried toward the
+ * pill's slot with the page's scroll, its corners rounding to the pill's, and hands over to the
+ * pill over the last stretch: at 0 it is the field itself, at 1 the pill. At a bottom dock the
+ * field is content: it rides up with the page exactly as far as the finger, unchanged in size
+ * and corners, and fades out at the frame's top edge over the same last stretch as the well's
+ * contents fade in – it never travels against the hand; only the tap's spring goes toward the
+ * dock.
  */
 export function restPose(g: FakeboxGeometry, scrub: number): FakeboxPose {
   const s = clamp01(scrub)
+  if (dockBelow(g)) {
+    return {
+      rect: { ...g.rest, y: g.rest.y - s * scrubTravel(g) },
+      radius: FAKEBOX_REST_RADIUS,
+      pill: pillLook(s),
+      open: 0
+    }
+  }
   return {
     rect: lerpRect(g.rest, g.slot, s),
     radius: lerp(FAKEBOX_REST_RADIUS, FAKEBOX_DOCK_RADIUS, s),
@@ -211,17 +234,48 @@ export function fakeboxContentWidth(widest: number, glyphs: number): number {
   return Math.max(0, widest - FAKEBOX_CONTENT_LEFT - trailing)
 }
 
+/** The omnibox field's left padding (`pl-2`), its gap (`gap-2.5`) and its 44 px trailing controls, flush with its end. */
+const OMNIBOX_CONTENT_LEFT = 8
+const OMNIBOX_GAP = 10
+const OMNIBOX_GLYPH = 44
+
 /**
- * How far the surface travels between two poses (px), for the spring to run on so its pace is
- * the distance's: the centres' distance plus half the change of size, never under 120 so a
- * short hop still takes the spring's time to settle.
+ * The width the double lays the omnibox field's content out at – the engine's chip, then the
+ * words – so that the words truncate where the omnibox's own do once its `glyphs` trailing
+ * controls (each 44 wide after a gap) have taken their room; laid out once, at the widest pose,
+ * like the page field's.
  */
-export function segmentTravel(from: FakeboxPose, to: FakeboxPose): number {
+export function omniboxContentWidth(widest: number, glyphs: number): number {
+  return Math.max(0, widest - OMNIBOX_CONTENT_LEFT - glyphs * (OMNIBOX_GAP + OMNIBOX_GLYPH))
+}
+
+/**
+ * How far the surface would travel between two poses (px): the centres' distance plus half the
+ * change of size.
+ */
+export function segmentDistance(from: FakeboxPose, to: FakeboxPose): number {
   const dx = to.rect.x + to.rect.width / 2 - (from.rect.x + from.rect.width / 2)
   const dy = to.rect.y + to.rect.height / 2 - (from.rect.y + from.rect.height / 2)
   const size =
     Math.abs(to.rect.width - from.rect.width) / 2 + Math.abs(to.rect.height - from.rect.height) / 2
-  return Math.max(120, Math.hypot(dx, dy) + size)
+  return Math.hypot(dx, dy) + size
+}
+
+/**
+ * The distance the spring runs on for a segment, so its pace is the poses' distance's: never
+ * under 120 so a short hop still takes the spring's time to settle.
+ */
+export function segmentTravel(from: FakeboxPose, to: FakeboxPose): number {
+  return Math.max(120, segmentDistance(from, to))
+}
+
+/**
+ * Whether two poses are the same place to the eye (within a pixel): a segment between them has
+ * nothing to run and lands at once – the back gesture's commit after its pull has already put
+ * the field at the page's pose, and a dismissal before the bar has come up leaves it there.
+ */
+export function posesCoincide(a: FakeboxPose, b: FakeboxPose): boolean {
+  return segmentDistance(a, b) < 1 && Math.abs(a.open - b.open) < 0.01
 }
 
 /** The page's tiles and heading at `open`: gone by `FAKEBOX_PAGE_GONE_AT`, back on the same line. */
@@ -290,11 +344,22 @@ export function backPulled(state: FakeboxState, value: number): FakeboxState {
 }
 
 /**
+ * Whether the page's own field is what the scroll moves at `scrub`: with the page unscrolled
+ * anywhere, and at a bottom dock all the way until it has left the frame (there it is content,
+ * riding and fading in place, and the double has nothing to add). At a top dock the double
+ * carries it to the slot instead.
+ */
+export function pageFieldAtRest(scrub: number, g: FakeboxGeometry): boolean {
+  return scrub <= 0 || (dockBelow(g) && scrub < 1)
+}
+
+/**
  * Whether the morph paints its own surface (the field's double) rather than leaving the page's
  * field, the pill or the omnibox's field to draw: while a segment runs, while the finger holds
- * an open field pulled back, and while the scroll holds the field between its two rests.
+ * an open field pulled back, and while the scroll holds the field between its two rests at a
+ * top dock.
  */
-export function drawsSurface(state: FakeboxState): boolean {
+export function drawsSurface(state: FakeboxState, g: FakeboxGeometry): boolean {
   switch (state.phase) {
     case 'opening':
     case 'closing':
@@ -302,13 +367,35 @@ export function drawsSurface(state: FakeboxState): boolean {
     case 'open':
       return state.back > 0
     case 'rest':
-      return state.scrub > 0 && state.scrub < 1
+      return state.scrub > 0 && state.scrub < 1 && !pageFieldAtRest(state.scrub, g)
   }
 }
 
-/** Whether the page's own field is painted: only at rest with the page unscrolled. */
-export function showsPageField(state: FakeboxState): boolean {
-  return state.phase === 'rest' && state.scrub === 0
+/** Whether the page's own field is painted: at rest, where the scroll leaves it the page's. */
+export function showsPageField(state: FakeboxState, g: FakeboxGeometry): boolean {
+  return state.phase === 'rest' && pageFieldAtRest(state.scrub, g)
+}
+
+/**
+ * Under reduced motion (v2 §11.3) the spring's part is a 120 ms fade in place, and the double is
+ * drawn only where it is what fades: a segment setting out from, or returning to, a field the
+ * scroll holds between its rests (a top dock, part way). At the other ends the page's own field
+ * or the omnibox's fades itself.
+ */
+export function drawsSurfaceReduced(state: FakeboxState, g: FakeboxGeometry): boolean {
+  if (state.phase !== 'opening' && state.phase !== 'closing') return false
+  return state.scrub > 0 && state.scrub < 1 && !pageFieldAtRest(state.scrub, g)
+}
+
+/**
+ * The pose the double holds while it fades under reduced motion: the scrubbed field's, where the
+ * segment set out from (opening) or is heading back to (closing) – never a pose mid-way, since
+ * nothing travels.
+ */
+export function reducedPose(state: FakeboxState, g: FakeboxGeometry): FakeboxPose {
+  return state.phase === 'opening' || state.phase === 'closing'
+    ? restPose(g, state.scrub)
+    : poseOf(state, g)
 }
 
 /** Whether the omnibox's own field is painted: only once the surface has landed in it, unpulled. */

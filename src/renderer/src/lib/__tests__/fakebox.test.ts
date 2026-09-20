@@ -3,7 +3,9 @@ import type { Rect } from '@shared/types'
 import {
   backPulled,
   dismissed,
+  dockBelow,
   drawsSurface,
+  drawsSurfaceReduced,
   FAKEBOX_DOCK_RADIUS,
   FAKEBOX_PAGE_GONE_AT,
   FAKEBOX_REST,
@@ -11,16 +13,21 @@ import {
   FAKEBOX_SHEET_FROM,
   fakeboxContentWidth,
   landed,
+  omniboxContentWidth,
   omniboxUp,
   openPose,
+  pageFieldAtRest,
   pageOpacity,
   pillLook,
   poseOf,
+  posesCoincide,
   progressed,
+  reducedPose,
   restPose,
   scrolled,
   scrubOf,
   scrubTravel,
+  segmentDistance,
   segmentTravel,
   sheetOpacity,
   showsOmniboxField,
@@ -50,15 +57,15 @@ const top: FakeboxGeometry = {
 const near = (a: number, b: number): void => expect(Math.abs(a - b)).toBeLessThan(1e-9)
 
 describe('the poses', () => {
-  it('rests as the field itself and, scrubbed all the way, as the pill', () => {
-    expect(restPose(bottom, 0)).toEqual({
-      rect: rest,
+  it('rests as the field itself and, scrubbed all the way at a top dock, as the pill', () => {
+    expect(restPose(top, 0)).toEqual({
+      rect: top.rest,
       radius: FAKEBOX_REST_RADIUS,
       pill: 0,
       open: 0
     })
-    expect(restPose(bottom, 1)).toEqual({
-      rect: slot,
+    expect(restPose(top, 1)).toEqual({
+      rect: top.slot,
       radius: FAKEBOX_DOCK_RADIUS,
       pill: 1,
       open: 0
@@ -71,12 +78,12 @@ describe('the poses', () => {
     })
   })
 
-  it('moves every edge and the radius on a straight line between the two rests', () => {
-    const mid = restPose(bottom, 0.5)
-    near(mid.rect.x, (rest.x + slot.x) / 2)
-    near(mid.rect.y, (rest.y + slot.y) / 2)
-    near(mid.rect.width, (rest.width + slot.width) / 2)
-    near(mid.rect.height, (rest.height + slot.height) / 2)
+  it('moves every edge and the radius on a straight line between the two rests at a top dock', () => {
+    const mid = restPose(top, 0.5)
+    near(mid.rect.x, (top.rest.x + top.slot.x) / 2)
+    near(mid.rect.y, (top.rest.y + top.slot.y) / 2)
+    near(mid.rect.width, (top.rest.width + top.slot.width) / 2)
+    near(mid.rect.height, (top.rest.height + top.slot.height) / 2)
     near(mid.radius, (FAKEBOX_REST_RADIUS + FAKEBOX_DOCK_RADIUS) / 2)
     // The surface keeps the field's look until the last stretch, then takes the pill's.
     expect(mid.pill).toBe(0)
@@ -85,9 +92,34 @@ describe('the poses', () => {
     expect(pillLook(1)).toBe(1)
   })
 
+  it('knows which side of the page the bar is on', () => {
+    expect(dockBelow(bottom)).toBe(true)
+    expect(dockBelow(top)).toBe(false)
+  })
+
+  it('at a bottom dock rides up with the page as content, never against the finger (v2 §11.8)', () => {
+    // Exactly as far as the page has scrolled, the same size and corners …
+    const travel = scrubTravel(bottom)
+    const part = restPose(bottom, 0.5)
+    expect(part.rect).toEqual({ ...rest, y: rest.y - travel / 2 })
+    expect(part.radius).toBe(FAKEBOX_REST_RADIUS)
+    expect(part.pill).toBe(0)
+    // … until its bottom edge has cleared the frame's top, when the scrub is done and the pill
+    // whole: the handover is the fade over the last three tenths, the same as the well's.
+    const gone = restPose(bottom, 1)
+    near(gone.rect.y + gone.rect.height, bottom.frameTop)
+    expect(gone.pill).toBe(1)
+    near(restPose(bottom, 0.85).pill, 0.5)
+    // Only the tap's spring travels toward the dock: from the ridden pose down to the band.
+    const s = tapped(scrolled(FAKEBOX_REST, travel / 2, bottom), bottom)
+    expect(s.from).toEqual(part)
+    expect(targetPose(s, bottom).rect.y).toBe(omnibox.y)
+  })
+
   it('clamps a spring overshoot: the surface never passes either rest', () => {
+    expect(restPose(top, 1.3)).toEqual(restPose(top, 1))
+    expect(restPose(top, -0.2)).toEqual(restPose(top, 0))
     expect(restPose(bottom, 1.3)).toEqual(restPose(bottom, 1))
-    expect(restPose(bottom, -0.2)).toEqual(restPose(bottom, 0))
   })
 
   it('fades the page out by the gone-at mark and back on the same line', () => {
@@ -118,6 +150,12 @@ describe('the poses', () => {
     // … or the field's own pr-4 with neither.
     expect(fakeboxContentWidth(396, 0)).toBe(396 - 16 - 16)
     expect(fakeboxContentWidth(10, 2)).toBe(0)
+    // The omnibox field's content the same way: pl-2, then a gap-2.5 and 44 for each control
+    // (flush with the end, no padding after).
+    expect(omniboxContentWidth(396, 2)).toBe(396 - 8 - 2 * (10 + 44))
+    expect(omniboxContentWidth(396, 1)).toBe(396 - 8 - (10 + 44))
+    expect(omniboxContentWidth(396, 0)).toBe(396 - 8)
+    expect(omniboxContentWidth(4, 2)).toBe(0)
   })
 })
 
@@ -142,21 +180,58 @@ describe('the scrub: the page carries the field to the pill slot', () => {
     expect(scrubOf(0.5, odd)).toBe(0.5)
   })
 
-  it('draws its own surface only between the two rests', () => {
+  it('draws its own surface only between the two rests at a top dock', () => {
     const still = scrolled(FAKEBOX_REST, 0, top)
     expect(still).toBe(FAKEBOX_REST)
-    expect(drawsSurface(still)).toBe(false)
-    expect(showsPageField(still)).toBe(true)
+    expect(drawsSurface(still, top)).toBe(false)
+    expect(showsPageField(still, top)).toBe(true)
     const part = scrolled(FAKEBOX_REST, 100, top)
     expect(part.phase).toBe('rest')
-    expect(drawsSurface(part)).toBe(true)
-    expect(showsPageField(part)).toBe(false)
+    expect(drawsSurface(part, top)).toBe(true)
+    expect(showsPageField(part, top)).toBe(false)
     const docked = scrolled(FAKEBOX_REST, 10_000, top)
     expect(docked.scrub).toBe(1)
-    expect(drawsSurface(docked)).toBe(false)
-    expect(showsPageField(docked)).toBe(false)
+    expect(drawsSurface(docked, top)).toBe(false)
+    expect(showsPageField(docked, top)).toBe(false)
     expect(showsOmniboxField(docked)).toBe(false)
     expect(omniboxUp(docked)).toBe(false)
+  })
+
+  it('at a bottom dock leaves the page its own field until it has left the frame', () => {
+    // Content rides and fades where it is: nothing for a double to add.
+    const part = scrolled(FAKEBOX_REST, 100, bottom)
+    expect(drawsSurface(part, bottom)).toBe(false)
+    expect(showsPageField(part, bottom)).toBe(true)
+    expect(pageFieldAtRest(0.99, bottom)).toBe(true)
+    const docked = scrolled(FAKEBOX_REST, 10_000, bottom)
+    expect(drawsSurface(docked, bottom)).toBe(false)
+    expect(showsPageField(docked, bottom)).toBe(false)
+    // The tap's spring draws the double either way.
+    expect(drawsSurface(tapped(part, bottom), bottom)).toBe(true)
+    expect(showsPageField(tapped(part, bottom), bottom)).toBe(false)
+  })
+})
+
+describe('reduced motion: the spring is a fade in place, the double only where it is what fades', () => {
+  it('draws the double for a segment leaving or returning to a scrubbed field at a top dock', () => {
+    const part = scrolled(FAKEBOX_REST, scrubTravel(top) / 2, top)
+    const up = tapped(part, top)
+    expect(drawsSurfaceReduced(up, top)).toBe(true)
+    // Where it was, not where the machine (which jumped) says.
+    expect(reducedPose(progressed(up, 1), top)).toEqual(restPose(top, 0.5))
+    const back = dismissed(landed(progressed(up, 1)), top)
+    expect(drawsSurfaceReduced(back, top)).toBe(true)
+    expect(reducedPose(back, top)).toEqual(restPose(top, 0.5))
+  })
+
+  it('draws nothing where the page field or the omnibox field fades itself', () => {
+    expect(drawsSurfaceReduced(tapped(FAKEBOX_REST, top), top)).toBe(false)
+    const part = scrolled(FAKEBOX_REST, 100, bottom)
+    expect(drawsSurfaceReduced(tapped(part, bottom), bottom)).toBe(false)
+    const open = landed(progressed(tapped(FAKEBOX_REST, top), 1))
+    expect(drawsSurfaceReduced(open, top)).toBe(false)
+    expect(drawsSurfaceReduced(part, bottom)).toBe(false)
+    expect(reducedPose(open, top)).toEqual(openPose(top))
   })
 })
 
@@ -169,8 +244,8 @@ describe('a tap: one spring to the omnibox from wherever the field is', () => {
     expect(poseOf(s, bottom)).toEqual(restPose(bottom, 0))
     expect(targetPose(s, bottom)).toEqual(openPose(bottom))
     expect(omniboxUp(s)).toBe(true)
-    expect(drawsSurface(s)).toBe(true)
-    expect(showsPageField(s)).toBe(false)
+    expect(drawsSurface(s, bottom)).toBe(true)
+    expect(showsPageField(s, bottom)).toBe(false)
     expect(showsOmniboxField(s)).toBe(false)
   })
 
@@ -192,7 +267,7 @@ describe('a tap: one spring to the omnibox from wherever the field is', () => {
     expect(s.phase).toBe('open')
     expect(s.from).toBeNull()
     expect(poseOf(s, bottom)).toEqual(openPose(bottom))
-    expect(drawsSurface(s)).toBe(false)
+    expect(drawsSurface(s, bottom)).toBe(false)
     expect(showsOmniboxField(s)).toBe(true)
     expect(omniboxUp(s)).toBe(true)
   })
@@ -208,6 +283,19 @@ describe('a tap: one spring to the omnibox from wherever the field is', () => {
     const travel = segmentTravel(restPose(bottom, 0), openPose(bottom))
     expect(travel).toBeGreaterThan(500)
     expect(segmentTravel(openPose(bottom), openPose(bottom))).toBe(120)
+    expect(segmentDistance(openPose(bottom), openPose(bottom))).toBe(0)
+  })
+
+  it('knows when two poses are the same place, so a segment between them lands at once', () => {
+    const home = restPose(bottom, 0)
+    expect(posesCoincide(home, home)).toBe(true)
+    expect(posesCoincide(home, { ...home, rect: { ...home.rect, y: home.rect.y + 0.4 } })).toBe(
+      true
+    )
+    expect(posesCoincide(home, { ...home, rect: { ...home.rect, y: home.rect.y + 2 } })).toBe(false)
+    // The same rectangle as another pose is not the same pose while the fades differ.
+    expect(posesCoincide(home, { ...home, open: 1 })).toBe(false)
+    expect(posesCoincide(restPose(top, 1), openPose(top))).toBe(false)
   })
 })
 
@@ -227,7 +315,7 @@ describe('a dismissal: the same value runs back into the field', () => {
     const home = landed(progressed(back, 1))
     expect(home.phase).toBe('rest')
     expect(home).toEqual(FAKEBOX_REST)
-    expect(showsPageField(home)).toBe(true)
+    expect(showsPageField(home, bottom)).toBe(true)
   })
 
   it('returns to the scrubbed pose when the page was scrolled, not to the top', () => {
@@ -238,7 +326,7 @@ describe('a dismissal: the same value runs back into the field', () => {
     const home = landed(progressed(back, 1))
     expect(home.phase).toBe('rest')
     expect(home.scrub).toBe(0.5)
-    expect(drawsSurface(home)).toBe(true)
+    expect(drawsSurface(home, top)).toBe(true)
   })
 
   it('is caught by a tap and goes up again from where it is', () => {
@@ -265,7 +353,7 @@ describe('the predictive back gesture', () => {
     const pulled = backPulled(open, 0.4)
     expect(pulled.phase).toBe('open')
     expect(pulled.back).toBe(0.4)
-    expect(drawsSurface(pulled)).toBe(true)
+    expect(drawsSurface(pulled, bottom)).toBe(true)
     expect(showsOmniboxField(pulled)).toBe(false)
     const pose = poseOf(pulled, bottom)
     near(pose.open, 0.6)
@@ -274,7 +362,7 @@ describe('the predictive back gesture', () => {
     const released = backPulled(pulled, 0)
     expect(released.back).toBe(0)
     expect(showsOmniboxField(released)).toBe(true)
-    expect(drawsSurface(released)).toBe(false)
+    expect(drawsSurface(released, bottom)).toBe(false)
   })
 
   it('commits into a closing run from the pulled pose', () => {
@@ -284,6 +372,18 @@ describe('the predictive back gesture', () => {
     expect(closing.phase).toBe('closing')
     expect(closing.from).toEqual(there)
     expect(closing.back).toBe(0)
+  })
+
+  it('a commit after the gesture has pulled the field all the way home has nothing left to run', () => {
+    // The gesture's own driver takes its value to 1 before it commits: the field is at the
+    // page's pose already, and the closing segment is the same place to the same place.
+    const home = backPulled(open, 1)
+    expect(poseOf(home, bottom)).toEqual(restPose(bottom, 0))
+    const closing = dismissed(home, bottom)
+    expect(posesCoincide(poseOf(closing, bottom), targetPose(closing, bottom))).toBe(true)
+    // Whereas a commit mid-pull has the rest of the way to go.
+    const midway = dismissed(backPulled(open, 0.4), bottom)
+    expect(posesCoincide(poseOf(midway, bottom), targetPose(midway, bottom))).toBe(false)
   })
 
   it('leaves a field still on its spring alone', () => {

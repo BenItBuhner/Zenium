@@ -9,9 +9,11 @@
  *
  * Nothing here runs unless a new tab page has registered its field, and the desktop never does.
  * Under reduced motion (v2 §11.3) the spring's part is a cut: the machine still runs, so the
- * omnibox is held for the stylesheet's 120 ms fade in place, but the double is not drawn for a
- * tap or a dismissal and the page's own field fades with the page. The scroll scrub is the
- * finger's own motion, like the bar's hide (#200, §11.5), and follows it one to one either way.
+ * omnibox is held for the stylesheet's 120 ms fade in place; the double is drawn only where it
+ * is what fades (a field the scroll holds part way, at its place) and otherwise the page's own
+ * field fades with the page and the omnibox's own field fades itself; the back gesture's pull is
+ * the omnibox's own, as without the morph. The scroll scrub is the finger's own motion, like the
+ * bar's hide (#200, §11.5), and follows it one to one either way.
  */
 import type { Rect } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
@@ -19,11 +21,15 @@ import {
   backPulled,
   dismissed,
   drawsSurface,
+  drawsSurfaceReduced,
   FAKEBOX_REST,
   landed,
   omniboxUp,
+  pageFieldAtRest,
   poseOf,
+  posesCoincide,
   progressed,
+  reducedPose,
   scrolled,
   scrubTravel,
   segmentTravel,
@@ -114,8 +120,10 @@ export const FAKEBOX_VAR = '--zen-ntp-morph'
 export const FAKEBOX_PILL_VAR = '--zen-ntp-pill'
 
 /**
- * What the layer paints the double from, handed over on every write: the pose, the machine, the
- * geometry it was posed in (the widest pose is the width the words are laid out at, v2 §11.8),
+ * What the layer paints the double from, handed over on every write: the pose (under reduced
+ * motion the one the double holds while it fades, not the machine's, which has jumped), the
+ * machine, the geometry it was posed in (the widest pose is the width the words are laid out at,
+ * v2 §11.8; the frame's top edge clips the double at a bottom dock, where the field is content),
  * and whether the double is moving – the spring, the scroll or the back gesture wrote a new pose
  * this frame or the one before – for `will-change` to be on only while it is (v1 §7 rule 4).
  */
@@ -168,7 +176,12 @@ const spring = new SpringAnimation(
 /** The layer's paint callback: called with the frame once per write while it is registered. */
 export function setFakeboxPainter(fn: ((frame: FakeboxFrame) => void) | null): void {
   painter = fn
-  if (fn && geometry) fn({ pose: poseOf(machine, geometry), state: machine, geometry, moving })
+  if (fn && geometry) fn({ pose: paintedPose(geometry), state: machine, geometry, moving })
+}
+
+/** The pose the double is painted at: the machine's, or the one it holds while a cut's fade runs. */
+function paintedPose(g: FakeboxGeometry): FakeboxPose {
+  return reducedMotion() ? reducedPose(machine, g) : poseOf(machine, g)
 }
 
 /** Whether the double is moving (a pose written this frame or the last): `will-change` is on. */
@@ -287,10 +300,11 @@ export function holdFakeboxMorph(t: number): void {
 /**
  * The predictive back gesture on the open omnibox: the field follows the finger back toward the
  * page. Only while the morph owns the bar; returns whether it did (the omnibox paints its own
- * pull otherwise).
+ * pull otherwise – under reduced motion too, where no double flies and the gesture's commit
+ * runs the cut's fade like any dismissal).
  */
 export function fakeboxBackPulled(value: number): boolean {
-  if (!registration || !geometry || !omniboxUp(machine)) return false
+  if (!registration || !geometry || !omniboxUp(machine) || reducedMotion()) return false
   setMachine(backPulled(machine, value))
   return true
 }
@@ -331,7 +345,15 @@ interceptUrlbarClose((opts) => {
   }
   const caught = spring.stop()
   const wasFlying = machine.phase === 'opening'
-  setMachine(dismissed(machine, geometry))
+  const back = dismissed(machine, geometry)
+  if (posesCoincide(poseOf(back, geometry), targetPose(back, geometry))) {
+    // Nothing to run back: the field is at the page's pose already – the back gesture's commit
+    // after its pull, or a dismissal before the bar came up – so the bar closes now rather than
+    // holding its scrim over a page at rest for the spring's settling time.
+    reset()
+    return false
+  }
+  setMachine(back)
   heldClose = opts
   startSegment(wasFlying ? -caught.v : 0)
   // The keyboard goes as the field sets off, not when it has landed (Chrome's unfocus).
@@ -403,16 +425,18 @@ function lookOf(s: FakeboxState): FakeboxLook | null {
 
 function publish(): void {
   const registered = registration !== null
-  // Under reduced motion the spring's part is a fade in place: no double for a tap, a pull or a
-  // dismissal (the scrub's is the finger's and stays), and the page's own field, when the page
-  // had it, fades out with the page rather than yielding to a double.
+  const g = geometry ?? measure()
+  // Under reduced motion the spring's part is a fade in place: the double only where a scrubbed
+  // field is what fades (the scrub's motion is the finger's and stays), and the page's own
+  // field, when the page had it, fades out with the page rather than yielding to a double.
   const cut = reducedMotion() && machine.phase !== 'rest'
   const next: FakeboxMorphState = {
     phase: machine.phase,
     tabId: registration?.tabId ?? null,
     look: registered ? lookOf(machine) : null,
-    surface: registered && !cut && drawsSurface(machine),
-    pageField: !registered || showsPageField(machine) || (cut && machine.scrub === 0),
+    surface: registered && (cut ? drawsSurfaceReduced(machine, g) : drawsSurface(machine, g)),
+    pageField:
+      !registered || showsPageField(machine, g) || (cut && pageFieldAtRest(machine.scrub, g)),
     omniField: registered && showsOmniboxField(machine),
     pulled: registered && machine.phase === 'open' && machine.back > 0,
     away: registered && !(machine.phase === 'rest' && machine.scrub >= 1)
@@ -449,7 +473,7 @@ function paint(): void {
   root.setProperty(FAKEBOX_PILL_VAR, pose.pill.toFixed(4))
   if (lastPose && !samePose(lastPose, pose)) wrote()
   lastPose = pose
-  painter?.({ pose, state: machine, geometry, moving })
+  painter?.({ pose: paintedPose(geometry), state: machine, geometry, moving })
 }
 
 const samePose = (a: FakeboxPose, b: FakeboxPose): boolean =>
@@ -559,14 +583,23 @@ function measure(): FakeboxGeometry {
 /**
  * The layout may have moved under the morph – the keyboard's inset, a rotation, the frame – so
  * the geometry is read again and the pose repainted toward the new target; the tab leaving or
- * navigating puts the morph back.
+ * navigating puts the morph back. The re-read waits for the next frame: a store notifies before
+ * what follows it in the same turn has been written (the insets event sets `--zen-inset-bottom`,
+ * which places the bottom band, after the store), so a read at once would see the band one
+ * keyboard step behind, and the many events of the keyboard's rise coalesce into one read each
+ * frame.
  */
 function watch(): void {
   if (stopWatching) return
+  let frame = 0
   const remeasure = (): void => {
-    if (!registration) return
-    measure()
-    paint()
+    if (frame) return
+    frame = requestAnimationFrame(() => {
+      frame = 0
+      if (!registration) return
+      measure()
+      paint()
+    })
   }
   const unsubs = [
     // The insets: the bottom band rides the keyboard's; the bar comes and goes with the omnibox.
@@ -582,6 +615,8 @@ function watch(): void {
   stopWatching = () => {
     for (const u of unsubs) u()
     window.removeEventListener('resize', remeasure)
+    if (frame) cancelAnimationFrame(frame)
+    frame = 0
   }
 }
 
