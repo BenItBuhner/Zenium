@@ -39,8 +39,12 @@ export type PreviewStep =
   | { kind: 'overview' }
   | { kind: 'urlbar' }
 
-/** The chrome's own sheets a preview state may open by name (`sheet=<name>`). */
-export const PREVIEW_SHEETS = ['extensions'] as const
+/**
+ * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
+ * sheet, and the new tab page's customise sheet (`customise`), which mounts above whichever
+ * page is up.
+ */
+export const PREVIEW_SHEETS = ['extensions', 'customise'] as const
 export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
 
 /** An extension id as Chrome forms them: 32 letters a–p. */

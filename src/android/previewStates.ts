@@ -24,6 +24,7 @@ import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
+import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
@@ -128,7 +129,8 @@ const QR_EVENT_MARGIN_MS = 250
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
- * or long-presses it for its menu), `extension-page=<id>/<path>` (an extension's page open as a
+ * or long-presses it for its menu), `sheet=customise` (the new tab page's customise sheet, over
+ * the active page), `extension-page=<id>/<path>` (an extension's page open as a
  * tab, the way its options page opens: `chrome-extension://<id>/<path>`, which the stand-in
  * host serves a page for; with `extensions=installed` the chrome knows the extension, so the
  * pill shows its name), `prompt=<permission>` (the active page asks for that permission: the
@@ -211,12 +213,14 @@ function apply(browser: Browser, spec: string): void {
     closeUrlbar()
     dismissOverview()
     closeReaderPreferences({ keepFocus: true })
+    closeCustomize()
     uiStore.set({
       findOpen: false,
       findTabId: null,
       zoomTabId: null,
       install: null,
-      extensionsSheetOpen: false
+      extensionsSheetOpen: false,
+      barEditorOpen: false
     })
     abortPull()
     cancelVoiceSearch()
@@ -666,9 +670,11 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     run('app.menu', {})
   } else if (target.kind === 'sheet') {
     // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
-    // sheet mounts on the next render and slides in, and the steps wait for it to settle.
+    // sheet mounts on the next render and slides in, and the steps wait for it to settle. The
+    // customise sheet is the new tab page's gear, opened by name over whichever page is up.
     seed()
-    openExtensionsSheet()
+    if (target.sheet === 'customise') openCustomize()
+    else openExtensionsSheet()
     const then = target.then ?? []
     if (then.length === 0) requestAnimationFrame(() => requestAnimationFrame(finish))
     else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
