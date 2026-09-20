@@ -9,7 +9,7 @@ import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
-import { setPdfReport } from '@renderer/lib/pdfViewer'
+import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -174,6 +174,12 @@ export function useMainEvents(): void {
       // The PDF viewer document in a tab reported where it stands: the docked bar and the find
       // bar draw from the report (lib/pdfViewer.ts).
       onEvent('pdf.changed', ({ tabId, report }) => setPdfReport(tabId, report)),
+      // ...and a viewer tab that moved on (a page, another document) has no report until the
+      // new document's comes.
+      browserStore.subscribe(() => {
+        const state: UIState | null = browserStore.get().state
+        if (state) dropStalePdfReports(state)
+      }),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),

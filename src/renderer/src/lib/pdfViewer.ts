@@ -10,32 +10,55 @@ import {
 } from '@shared/pdfViewerProtocol'
 import { cmd, run } from './api'
 import { createStore } from './store'
+import { browserStore } from './ui'
 
 /**
  * What the chrome knows of each PDF viewer tab (`zen://pdf`, `core/pdf.ts`): the viewer
  * document's last report, kept per tab as `pdf.changed` brings it (`useMainEvents`), and asked
  * for once when a viewer tab comes on screen before any report arrived (`pdf.state`, then the
  * `report` command for a document that was up before this chrome attached). The docked bar
- * (`components/pdf/PdfViewerBar.tsx`) and the find bar draw from here.
+ * (`components/pdf/PdfViewerBar.tsx`) and the find bar draw from here. Each report is kept
+ * with the address the tab showed when it came: a tab that moved on – to a page, or to another
+ * document for the same viewer – has none until the new document reports
+ * (`dropStalePdfReports`).
  */
-export const pdfViewerStore = createStore<{ reports: Readonly<Record<string, PdfViewerReport>> }>(
-  { reports: {} },
-  'pdf-viewer'
-)
+export const pdfViewerStore = createStore<{
+  reports: Readonly<Record<string, PdfViewerReport>>
+  /** The address of the tab as each report came, by tab. */
+  urls: Readonly<Record<string, string>>
+}>({ reports: {}, urls: {} }, 'pdf-viewer')
 
 /** The viewer document reported (`pdf.changed`). */
 export function setPdfReport(tabId: string, report: PdfViewerReport): void {
-  pdfViewerStore.set((s) => ({ reports: { ...s.reports, [tabId]: report } }))
+  const url = browserStore.get().state?.tabs[tabId]?.url ?? ''
+  pdfViewerStore.set((s) => ({
+    reports: { ...s.reports, [tabId]: report },
+    urls: { ...s.urls, [tabId]: url }
+  }))
 }
 
 /** The tab is gone, or shows another document: its report is stale. */
 export function clearPdfReport(tabId: string): void {
   pdfViewerStore.set((s) => {
-    if (!(tabId in s.reports)) return {}
+    if (!(tabId in s.reports) && !(tabId in s.urls)) return {}
     const reports = { ...s.reports }
+    const urls = { ...s.urls }
     delete reports[tabId]
-    return { reports }
+    delete urls[tabId]
+    return { reports, urls }
   })
+}
+
+/**
+ * The browser state moved: a report whose tab is gone, or shows another address than the one
+ * it came under, goes with it (the viewer of the new document reports afresh once it is up).
+ */
+export function dropStalePdfReports(state: UIState): void {
+  const { urls } = pdfViewerStore.get()
+  for (const tabId of Object.keys(urls)) {
+    const tab = state.tabs[tabId]
+    if (!tab || tab.url !== urls[tabId]) clearPdfReport(tabId)
+  }
 }
 
 /** Whether the tab shows the inline PDF viewer page. */
@@ -108,6 +131,23 @@ export function flattenOutline(
     if (item.children.length > 0) out.push(...flattenOutline(item.children, depth + 1, key))
   })
   return out
+}
+
+/**
+ * The entry the reader is at: the first that leads to the page on screen (the page's own
+ * heading, where it has several), else the last that leads to a page before it (a page without
+ * a heading of its own belongs to the section that began before it); null before the document
+ * is open or when nothing leads that far.
+ */
+export function currentOutlineKey(rows: readonly FlatOutlineItem[], page: number): string | null {
+  if (page < 1) return null
+  let before: string | null = null
+  for (const row of rows) {
+    if (row.item.page === null) continue
+    if (row.item.page === page) return row.key
+    if (row.item.page < page) before = row.key
+  }
+  return before
 }
 
 /**

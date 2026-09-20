@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { ExternalLink, Lock, RotateCw, Share2 } from 'lucide-react'
 import type { PdfFitMode, PdfOutlineItem } from '@shared/pdfViewerProtocol'
 import {
+  currentOutlineKey,
   flattenOutline,
   formatPdfZoom,
   parsePageNumber,
@@ -109,9 +110,7 @@ export function PdfOutlineSheet({
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const rows = flattenOutline(outline)
-  // The entry in view: the last one whose page is at or before the page on screen.
-  let currentKey: string | null = null
-  for (const row of rows) if (row.item.page !== null && row.item.page <= page) currentKey = row.key
+  const currentKey = currentOutlineKey(rows, page)
   return (
     <PhoneSheet
       name="pdf-outline"
@@ -350,6 +349,8 @@ export function PdfPasswordSheet({
       onClose={onClose}
       sheetRef={sheet}
       handleLabel="Dismiss"
+      // The error line makes the form taller: the sheet measures itself again for it.
+      contentKey={showError ? 'wrong' : 'asking'}
     >
       <form
         className="zen-phone-form"

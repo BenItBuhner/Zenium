@@ -446,6 +446,8 @@ export class TabManager {
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
+          // Whatever the PDF viewer reported was about the document before this one.
+          this.browser.pdf.onNavigated(tabId)
         }
         if (v) this.onNavigated(tabId, v, url, inPage)
       },

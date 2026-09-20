@@ -71,8 +71,11 @@ import {
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
 
-/** The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`, …). */
-const SHEET_SURFACE = /^settings-(options|field|confirm|form|item|detail):/
+/**
+ * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
+ * …) and the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …).
+ */
+const SHEET_SURFACE = /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -182,7 +185,7 @@ function apply(browser: Browser, spec: string): void {
 // ---------------------------------------------------------------------------
 
 /** How long the viewer document gets to report before the state is reported reached anyway. */
-const PDF_REPORT_TIMEOUT_MS = 8000
+const PDF_REPORT_TIMEOUT_MS = 6000
 /** The page the tab a `pdf=<variant>` state turned to the viewer was on, put back before the next state. */
 let previewPdfReturn: { tabId: string; url: string } | null = null
 
@@ -220,18 +223,27 @@ function reachPdf(
     navigation: true
   }
   window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: download }))
+  // The viewer says nothing while it loads: the `slow` document's state is the bar up loading.
   const reported = (): boolean => {
+    if (target.variant === 'slow') return true
     const report = pdfViewerStore.get().reports[tab.id]
-    if (!report) return false
-    return target.variant === 'slow' || report.state !== 'loading'
+    return report !== undefined && report.state !== 'loading'
   }
   const then = (): void => {
-    if (target.find !== undefined) {
+    const query = target.find
+    if (query !== undefined) {
       uiStore.set({ findOpen: true, findTabId: tab.id })
-      // The bar mounts on the next render; type into it the way a keyboard would.
+      // The bar mounts on the next render; type into it the way a keyboard would, then wait for
+      // the viewer's tally: it grows as the pages are read, and the state is the count settled.
       requestAnimationFrame(() => {
-        if (target.find) type('input[aria-label="Find in page"]', target.find)
-        steps(target.then ?? [], finish)
+        if (query) type('input[aria-label="Find in page"]', query)
+        const counted = (): boolean => {
+          const find = pdfViewerStore.get().reports[tab.id]?.find
+          return !query || (find?.query === query && !find.searching)
+        }
+        whenPdf(tab.id, counted, 'the viewer did not finish its search', () =>
+          afterFrames(2, () => steps(target.then ?? [], finish))
+        )
       })
       return
     }
@@ -239,8 +251,23 @@ function reachPdf(
     if (list.length === 0) finish()
     else setTimeout(() => steps(list, finish), STEP_SETTLE_MS)
   }
-  if (reported()) {
-    afterFrames(2, then)
+  // The tab turns to the viewer page once the transfer is done and the core has it (the bar
+  // mounts with it); the document reports from inside the page after that.
+  whenState(
+    (s) => isPdfViewerTab(s, tab.id),
+    () =>
+      whenPdf(tab.id, reported, 'the viewer document did not report', () => afterFrames(2, then))
+  )
+}
+
+/**
+ * `fn` once the viewer store satisfies `test` – now, or as the viewer's reports come – or after
+ * `PDF_REPORT_TIMEOUT_MS` anyway (with `why` in the console), so a document that never says
+ * cannot hold the captures up.
+ */
+function whenPdf(tabId: string, test: () => boolean, why: string, fn: () => void): void {
+  if (test()) {
+    fn()
     return
   }
   let settled = false
@@ -249,15 +276,13 @@ function reachPdf(
     settled = true
     unsubscribe()
     window.clearTimeout(timer)
-    afterFrames(2, then)
+    fn()
   }
   const unsubscribe = pdfViewerStore.subscribe(() => {
-    if (reported()) settle()
+    if (test()) settle()
   })
   const timer = window.setTimeout(() => {
-    console.warn(
-      '[zen preview] the viewer document did not report; reporting the spec reached anyway'
-    )
+    console.warn(`[zen preview] ${why} (tab ${tabId}); reporting the spec reached anyway`)
     settle()
   }, PDF_REPORT_TIMEOUT_MS)
 }
