@@ -233,8 +233,10 @@ class ContainerRuleDemo : DemoHarness("settings-tab-demo-state.json", "android-c
                 return@step
             }
             ensureActive(privId)
-            if (!openMenuItem("Settings")) {
-                finding("  the menu had no Settings item")
+            val picked = pickMenuRow("Settings")
+            finding("  Settings row: $picked")
+            if (!picked.startsWith("a finger")) {
+                still("03x-menu-without-settings")
                 closeSurfaces()
                 expect("the app menu offers Settings", false)
                 return@step
@@ -294,8 +296,10 @@ class ContainerRuleDemo : DemoHarness("settings-tab-demo-state.json", "android-c
                 return@step
             }
             ensureActive(privId)
-            if (!openMenuItem("Settings")) {
-                finding("  the menu had no Settings item")
+            val picked = pickMenuRow("Settings")
+            finding("  Settings row: $picked")
+            if (!picked.startsWith("a finger")) {
+                still("05x-menu-without-settings")
                 closeSurfaces()
                 expect("the app menu offers Settings (again)", false)
                 return@step
@@ -814,6 +818,75 @@ class ContainerRuleDemo : DemoHarness("settings-tab-demo-state.json", "android-c
         SystemClock.sleep(800)
     }
 
+    // --- the app menu ----------------------------------------------------------------------------
+
+    /**
+     * A finger on the app menu's row `label`, wherever the sheet holds it. The menu is opened from
+     * the bar's button and pulled to its full height as the harness's `openMenuItem` does; the
+     * row is then looked for with bounds on screen, and while it has none a finger scrolls the
+     * sheet's list (`.zen-sheet-scroll`) upwards – the phone menu runs to some twenty rows, and
+     * with a private tab open it gains Close Private Tabs, so Settings sits below the fold; the
+     * tree's `ACTION_SHOW_ON_SCREEN` (`reveal`) left it there in the first run while the private
+     * page's ticker kept the window's tree churning. As the last resort the row is located in the
+     * chrome's DOM, scrolled into view there, and the finger lands on its box: the pick is a real
+     * touch either way. How it went, for the findings ("a finger …" on success).
+     */
+    private fun pickMenuRow(label: String): String {
+        tapMenuButton()
+        if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) return "the menu never opened"
+        SystemClock.sleep(1_200)
+        findByLabel(MENU_HANDLE_LABEL)?.let { handle ->
+            Finger().apply {
+                down(handle.exactCenterX(), handle.exactCenterY())
+                moveBy(0f, -0.4f * height, 130)
+                up()
+            }
+            SystemClock.sleep(2_000)
+        }
+        var swipes = 0
+        repeat(4) { attempt ->
+            val node = awaitNode(if (attempt == 0) 3_000 else 2_000) { it == label }
+            if (node != null) {
+                val bounds = Rect().also { node.getBoundsInScreen(it) }
+                if (touchTap(node)) return "a finger on the '$label' row at $bounds after $swipes scroll(s) of the list"
+                Log.w(tag, "the '$label' row at $bounds could not be touched; scrolling on")
+            }
+            val list = rectFromChrome(
+                "(function(){var e=document.querySelector('.zen-sheet-scroll');if(!e)return '';" +
+                    "var r=e.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
+            ) ?: return "the sheet's list is not in the chrome's DOM (menu closed?)"
+            val top = maxOf(list.top, touchable.top) + 24f
+            val bottom = minOf(list.bottom, touchable.bottom) - 24f
+            if (bottom - top < 120f) return "the sheet's list ($list) leaves no room to scroll"
+            val from = top + (bottom - top) * 0.85f
+            val to = top + (bottom - top) * 0.15f
+            Log.i(tag, "finger scroll of the menu's list from ${list.exactCenterX()},$from to $to")
+            Finger().apply {
+                down(list.exactCenterX(), from)
+                moveBy(0f, to - from, 260)
+                up()
+            }
+            swipes++
+            SystemClock.sleep(1_600)
+        }
+        // The DOM knows where the row is even while the tree lags: scroll it into view there and
+        // put the finger on its box.
+        val box = rectFromChrome(
+            "(function(){var q=" + JSONObject.quote(label) + ";var b=Array.prototype.slice.call(document.querySelectorAll('.zen-sheet-item'))" +
+                ".filter(function(e){return (e.textContent||'').trim()===q})[0];if(!b)return '';" +
+                "b.scrollIntoView({block:'center'});var r=b.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
+        ) ?: return "no '$label' row in the sheet's DOM after $swipes scroll(s)"
+        SystemClock.sleep(1_200)
+        val again = rectFromChrome(
+            "(function(){var q=" + JSONObject.quote(label) + ";var b=Array.prototype.slice.call(document.querySelectorAll('.zen-sheet-item'))" +
+                ".filter(function(e){return (e.textContent||'').trim()===q})[0];if(!b)return '';" +
+                "var r=b.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
+        ) ?: box
+        if (again.centerY() !in touchable.top until touchable.bottom) return "the '$label' row's box $again is outside the touchable window"
+        Finger().tap(again.exactCenterX(), again.exactCenterY())
+        return "a finger on the '$label' row at $again, located through the chrome's DOM after $swipes scroll(s) of the list"
+    }
+
     // --- the system's back, the overview, the quick menu ------------------------------------------
 
     /**
@@ -929,11 +1002,17 @@ class ContainerRuleDemo : DemoHarness("settings-tab-demo-state.json", "android-c
     }
 
     /** The on-screen box of the first chrome element `selector` matches (device px); null when none does. */
-    private fun chromeRect(selector: String): Rect? {
-        val raw = chromeValue(
-            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';" +
-                "var r=e.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
-        )
+    private fun chromeRect(selector: String): Rect? = rectFromChrome(
+        "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';" +
+            "var r=e.getBoundingClientRect();return JSON.stringify([r.left,r.top,r.right,r.bottom])})()"
+    )
+
+    /**
+     * The on-screen box (device px) of the CSS-px `[left, top, right, bottom]` the chrome
+     * expression `code` returns as JSON (or '' for none); null when it returns none.
+     */
+    private fun rectFromChrome(code: String): Rect? {
+        val raw = chromeValue(code)
         val box = runCatching { JSONArray(raw) }.getOrNull()?.takeIf { it.length() == 4 } ?: return null
         val origin = onMain { IntArray(2).also(host.chrome::getLocationOnScreen) }
         return Rect(
