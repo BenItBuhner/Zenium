@@ -473,6 +473,9 @@ export function installExtensionApi(
   ): (...raw: unknown[]) => unknown {
     return function (...raw: unknown[]): unknown {
       const callback = takeCallback(raw)
+      if (inert.error !== undefined) {
+        return settle(qualified, Promise.reject(new Error(inert.error)), callback)
+      }
       let value = inert.value
       if (inert.id) {
         const first: unknown = raw[0]

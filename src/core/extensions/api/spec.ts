@@ -30,10 +30,11 @@ export interface MethodSpec {
    * browser without per-site cookie partitions), so an extension that touches it runs on.
    * `value` goes to the callback or promise; `id` answers with the caller's own id (a string
    * first argument or `createProperties.id`) or a generated one of that type; `sync` also returns
-   * the id synchronously. Turning one into a routed call is deleting the flag and adding the
-   * host handler.
+   * the id synchronously; `error` fails the call instead (`runtime.lastError` for a callback, a
+   * rejection for a promise), the way Chrome reports a service that is off. Turning one into a
+   * routed call is deleting the flag and adding the host handler.
    */
-  inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean }
+  inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean; error?: string }
 }
 
 export interface EventSpec {
@@ -731,6 +732,25 @@ export const API_SPEC: ApiSpec = {
       AccountStatus: { SYNC: 'SYNC', ANY: 'ANY' }
     },
     permissions: ['identity']
+  },
+  // Firebase Cloud Messaging through Chrome's own device channel (Chrome's GCM client registers
+  // the browser with Google under Chrome's credentials), which no other browser has: the
+  // namespace is the shape Chrome shows a profile with GCM off. `register`, `unregister` and
+  // `send` fail with Chrome's `GCM_DISABLED`; the events exist and never fire (Read&Write
+  // registers `onMessage` at start-up and runs on).
+  gcm: {
+    methods: {
+      register: {
+        params: [{ name: 'senderIds', type: 'array' }],
+        inert: { error: 'GCM_DISABLED' }
+      },
+      unregister: { params: [], inert: { error: 'GCM_DISABLED' } },
+      send: { params: [object('message')], inert: { error: 'GCM_DISABLED' } }
+    },
+    events: { onMessage: {}, onMessagesDeleted: {}, onSendError: {} },
+    constants: { MAX_MESSAGE_SIZE: 4096 },
+    shape: true,
+    permissions: ['gcm']
   },
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
   // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
