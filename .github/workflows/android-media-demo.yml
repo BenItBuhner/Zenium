@@ -12,9 +12,23 @@ name: Android media demo
 # takes about fifteen minutes and says nothing about a change being correct. Same caveats as the
 # gesture demo about frame rate and the software GPU (the renderer is the shared workflow's
 # default). The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
-# file only picks the driver.
+# file only picks the driver: `driver=engine` (MediaDemo, the default) or `driver=ui` (MediaUiDemo:
+# the Now playing chip and the media sheet with every control under a finger, the Picture in
+# picture and Switch to tab rows, Settings > Notifications; stills `services-android-media-android-ui-*`).
 on:
   workflow_dispatch:
+    inputs:
+      driver:
+        description: Which driver runs – the engine (MediaDemo) or the in-app controls (MediaUiDemo, `services-android-media-android-ui-*`)
+        required: true
+        type: choice
+        options:
+          - engine
+          - ui
+        default: engine
+  # TEMPORARY: the UI PR's one run; removed before the PR leaves draft.
+  push:
+    branches: [cursor/services-android-media-ui-24d1]
 
 permissions:
   contents: read
@@ -42,10 +56,10 @@ jobs:
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       # The shared driver picks the demo from its environment (see the script's header).
       script-env: |
-        DEMO_CLASS=app.zen.chromium.MediaDemo
+        DEMO_CLASS=${{ (inputs.driver || 'ui') == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=services-android-media-android-run.mp4
+        DEMO_VIDEO=${{ (inputs.driver || 'ui') == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
       # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
@@ -77,10 +91,10 @@ jobs:
       emulator-gpu: swiftshader_indirect
       emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
-        DEMO_CLASS=app.zen.chromium.MediaDemo
+        DEMO_CLASS=${{ (inputs.driver || 'ui') == 'ui' && 'app.zen.chromium.MediaUiDemo' || 'app.zen.chromium.MediaDemo' }}
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
-        DEMO_VIDEO=services-android-media-android-run.mp4
+        DEMO_VIDEO=${{ (inputs.driver || 'ui') == 'ui' && 'services-android-media-android-ui-run.mp4' || 'services-android-media-android-run.mp4' }}
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
