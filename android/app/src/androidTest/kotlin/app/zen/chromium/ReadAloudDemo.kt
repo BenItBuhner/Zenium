@@ -69,8 +69,9 @@ import java.util.concurrent.TimeUnit
  *     item (behind the overflow on a phone) under a finger starts a session that reads the
  *     selection (`source: selection`; the mode's finish collapses the page's selection first,
  *     the page script stands the cleared one in, `selectionMemory.ts`, and the document is left
- *     collapsed); then the system back with the player up closes it like a page (predictive
- *     back, MOT-35);
+ *     collapsed), the engine handed the word itself (the host's log), the session playing or
+ *     ended once the word is through; then the system back with the player up closes it like a
+ *     page (predictive back, MOT-35);
  * 11. the player in dark, for the design record;
  * 12. no engine (interface 3.2): the app started again with the host saying the device has no
  *     speech engine, `capabilities.readAloud` off, neither Listen to This Page in the menu nor
@@ -97,6 +98,8 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     private var engineReport = ""
     /** The voices the probe found, by the engine's names: `Voice.getName()` -> locale tag. */
     private val probedVoices = LinkedHashMap<String, String>()
+    /** The menu step's first session sample past `loading`, when the engine bound under its poll. */
+    private var firstSpoken: JSONObject? = null
 
     @Test
     fun record() {
@@ -298,15 +301,27 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
         finding("  real touch on '$MENU_ITEM': session ${session?.let { "up: status=${it.optString("status")} source=${it.optString("source")} title=\"${it.optString("title").take(60)}…\"" } ?: "MISSING"}")
         if (!came) touchFault("a touch on '$MENU_ITEM' started no read-aloud session")
         // The busy state (§9.30) while the engine binds on first use: the play box's spinner, at
-        // the phone's glyph size (20 px, not the primitive's 16). Caught while the bind lasts.
+        // the phone's glyph size (20 px, not the primitive's 16). Caught while the bind lasts:
+        // the poll ends the moment the status leaves loading, and that first sample past the
+        // bind is kept as where the walk started (run 5's driver sat out the full three seconds
+        // after a fast bind, and the two-second heading had been spoken by the time the start
+        // of the walk was asserted: a driver fault, not the model's).
         var size = 0.0
-        val spinner = poll(3_000) { size = spinnerSize(); size > 0 }
-        if (spinner) {
+        var past: JSONObject? = null
+        firstSpoken = null
+        poll(3_000) {
+            size = spinnerSize()
+            if (size > 0) return@poll true
+            past = readAloud()?.takeIf { it.optString("status") != "loading" }
+            past != null
+        }
+        if (size > 0) {
             shot("00b-busy")
             finding("  busy while the engine binds: the play box's spinner is $size CSS px (status ${status()})")
             check("the busy spinner is 20 px on the phone (§9.30: the row glyph size)", Math.abs(size - 20.0) < 0.6)
         } else {
-            finding("  NOTE the engine bound before the busy state could be measured (status ${status()}); the design still busy-light.png stands for it")
+            firstSpoken = past
+            finding("  NOTE the engine bound before the busy state could be measured (status ${past?.optString("status") ?: status()}, index ${past?.optInt("sentenceIndex", -1) ?: -1}); the design still busy-light.png stands for it")
         }
         check("a real touch on Listen to This Page starts a session on the article's tab", came && session?.optString("tabId") == TAB)
         check("the session's source is the page (from: top), not the reader document", session?.optString("source") == "page")
@@ -322,18 +337,24 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     private fun playingState() {
         finding("\nA11Y-06 the engine speaks the article sentence by sentence (services' model)")
         val t0 = SystemClock.uptimeMillis()
-        val playing = awaitStatus("playing", 30_000)
+        // The first sample that reads playing: the menu step's, when the bind ended under its
+        // poll, else the first one here. Where the walk starts is read off that sample, not off
+        // a later one (the first sentence is the two-second heading).
+        val first = firstSpoken?.takeIf { it.optString("status") == "playing" }
+            ?: awaitSample(30_000) { it.optString("status") == "playing" }
+        val playing = first != null
         val took = SystemClock.uptimeMillis() - t0
-        finding("  status -> playing: $playing after $took ms (the engine binds on first use); session=${readAloud()}")
+        finding("  status -> playing: $playing after $took ms${if (firstSpoken != null) " (seen at the menu step, as the bind ended)" else " (the engine binds on first use)"}; session=${readAloud()}")
         check("speech.event start arrives and the player reads playing", playing)
-        if (!playing) {
+        if (first == null) {
             finding("  the player reads '${progressText()}' (status ${status()})")
             return
         }
-        val count = readAloud()?.optInt("sentenceCount") ?: 0
+        val count = first.optInt("sentenceCount")
+        val startIndex = first.optInt("sentenceIndex", -1)
         val painted = poll(6_000) { pageHighlight().optBoolean("sentence") }
-        finding("  the page's highlight (CSS Custom Highlight API, the core's page script): ${pageHighlight()}")
-        check("the article splits into sentences and the walk starts at the first ($count sentences)", count > 1 && readAloud()?.optInt("sentenceIndex") == 0)
+        finding("  the first playing sample: sentence index $startIndex of $count; the page's highlight (CSS Custom Highlight API, the core's page script): ${pageHighlight()}")
+        check("the article splits into sentences and the walk starts at the first ($count sentences)", count > 1 && startIndex == 0)
         check("the current sentence is highlighted in the page behind the player", painted)
         shot("01-playing")
         val word = poll(6_000) { readAloud()?.optJSONObject("word") != null }
@@ -678,22 +699,34 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             return
         }
         val inBar = items.find { it.label == "Read Aloud" }
+        val logBefore = hostLog().size
         val point = inBar?.let { touchTapPoint(it.node) } ?: touchInOverflow(items, "Read Aloud")
         finding("  real touch on Read Aloud ${point?.let { "at ${it.x.toInt()},${it.y.toInt()}${if (inBar == null) " (behind the overflow)" else ""}" } ?: "NOT POSSIBLE (item missing)"}")
-        val came = point != null && poll(10_000) { readAloud()?.optString("source") == "selection" }
-        finding("  session: ${readAloud()}")
+        val first = if (point == null) null else awaitSample(10_000) { it.optString("source") == "selection" }
+        val came = first != null
+        finding("  session: $first")
         if (point != null && !came) touchFault("a touch on the toolbar's Read Aloud started no session from the selection")
         check("Read Aloud is on the toolbar and a touch on it starts a session from the selection", came)
-        if (came) {
+        if (first != null) {
             val up = poll(8_000) { panelUp() }
             // The mode's finish collapsed the page's selection before the core's extraction
             // reached the document; the page script stands the cleared selection in for it
-            // (`selectionMemory.ts`: run 4 read `no-text` here). The text is the selection alone.
-            val spoke = engineless || awaitStatus("playing", 20_000)
-            val session = readAloud()
-            finding("  player up=$up; status after a moment: ${status()}; sentences ${session?.optInt("sentenceCount")}; error ${session?.optString("error")}")
-            check("the selection's text is what the session reads (playing, no 'no-text')", engineless || (spoke && (session?.optInt("sentenceCount") ?: 0) >= 1))
-            check("the session's source is the selection", session?.optString("source") == "selection")
+            // (`selectionMemory.ts`: run 4 read `no-text` here). The text is the selection alone:
+            // one word, through in well under a second, so by the time it is looked at the
+            // session reads `ended` as readily as `playing` (run 5's driver asked for playing
+            // alone, seconds late, and failed on a word that had been spoken: a driver fault).
+            // Spoken means: the first sample playing, or one playing or ended without an error,
+            // with the one sentence, and the engine handed the word itself (the host's log).
+            val spoke = engineless || first.optString("status") == "playing" ||
+                awaitSample(20_000) { it.optString("status") == "playing" || it.optString("status") == "ended" } != null
+            val session = readAloud() ?: first
+            val error = session.optString("error")
+            val handed = hostLog().drop(logBefore).filter { ": FLUSH at " in it || ": ADD at " in it }
+                .map { it.substringAfter(" \"").substringBeforeLast('"').trim() }
+            finding("  player up=$up; status after a moment: ${status()}; sentences ${session.optInt("sentenceCount")}; error '$error'; the engine was handed: ${handed.joinToString(" | ") { "\"$it\"" }}")
+            check("the selection's text is what the session reads (spoken: playing, or ended once the word is through; one sentence; no 'no-text')", engineless || (spoke && error.isEmpty() && session.optInt("sentenceCount") >= 1))
+            check("the engine is handed the selection's text itself ('$selected')", engineless || handed.any { it == selected.trim() })
+            check("the session's source is the selection", session.optString("source") == "selection")
             // The mode's finish collapsed the selection and the page script put it back only for
             // the extraction's duration: the document is left with a collapsed selection, no
             // handles, the highlight on the sentence read.
@@ -767,6 +800,16 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     private fun rate(): Double = readAloud()?.optDouble("rate", Double.NaN) ?: Double.NaN
 
     private fun awaitStatus(status: String, timeoutMs: Long): Boolean = poll(timeoutMs) { status() == status }
+
+    /** The first session sample meeting [condition] within [timeoutMs] (that very sample), or null. */
+    private fun awaitSample(timeoutMs: Long, condition: (JSONObject) -> Boolean): JSONObject? {
+        var hit: JSONObject? = null
+        poll(timeoutMs) {
+            hit = readAloud()?.takeIf(condition)
+            hit != null
+        }
+        return hit
+    }
 
     /** Playing before a step that needs it: a touch on Play when paused or ended (its own assertion). */
     private fun ensurePlaying(): Boolean {
