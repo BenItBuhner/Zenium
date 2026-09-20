@@ -574,6 +574,13 @@ class ChromeA11yDemo : DemoHarness(
             "menu",
             listOf(
                 Want(MENU_HANDLE_LABEL, "Button"),
+                // #236's icon row, the sheet's first group: five §9.3 icon buttons named by their
+                // labels, ahead of the rows of text (Page Info only where the page has one).
+                Want("Forward", "Button"),
+                Want("Bookmark", "Button"),
+                Want("Download Page", "Button"),
+                Want("Page Info", "Button", optional = true),
+                Want("Reload", "Button"),
                 Want("New Tab", "Button"),
                 Want("New Private Tab", "Button", optional = true),
                 Want("Bookmarks", "Button"),
@@ -1066,7 +1073,7 @@ class ChromeA11yDemo : DemoHarness(
             return
         }
         reveal(last.label)
-        val landed = linearWalk("menu", from = { it == last.label }, moves = 2, report)
+        val landed = linearWalk("menu", from = { it == last.label }, moves = 2, report, stallIsAnswer = true)
         finding("  [talkback menu] from the menu's last row '${last.label}' the focus went to: ${landed.drop(1)}")
         val outside = landed.drop(1).filter { it.isNotBlank() && rows.none { row -> row.label == it } }
         val where = when {
@@ -1086,9 +1093,12 @@ class ChromeA11yDemo : DemoHarness(
      * The focus put on the `from` node, then `moves` moves forward (a swipe right through the
      * input filter, or the next control in the tree given the focus when the filter is out of
      * reach), the label of the node TalkBack's focus rests on after each written down. An empty
-     * label is a move after which nothing in the window held the accessibility focus.
+     * label is a move after which nothing in the window held the accessibility focus. A swipe
+     * that moves the focus nowhere on a walk whose next stop is certain (`stallIsAnswer` false:
+     * the bar from Back, a card) means the gesture did not reach TalkBack, and the walk goes on
+     * node by node from there, the report saying so; on the modality probe a stall is the answer.
      */
-    private fun linearWalk(scene: String, from: (String) -> Boolean, moves: Int, report: StringBuilder): List<String> {
+    private fun linearWalk(scene: String, from: (String) -> Boolean, moves: Int, report: StringBuilder, stallIsAnswer: Boolean = false): List<String> {
         val landed = ArrayList<String>()
         val start = findNode(from) ?: run {
             fail("[talkback $scene] the starting node is not in the tree")
@@ -1100,20 +1110,34 @@ class ChromeA11yDemo : DemoHarness(
         report.appendLine()
         report.appendLine("## $scene: from '${landed[0]}'")
         for (i in 1..moves) {
-            if (filterInjector != null) {
+            var label = ""
+            var how = "by swipe"
+            if (filterInjector != null && !swipeStalled) {
                 filterSwipe(right = true)
-            } else {
+                SystemClock.sleep(1_600)
+                label = focusedLabel()
+                if (label == landed.last() && !stallIsAnswer) {
+                    swipeStalled = true
+                    note("[talkback $scene] the injected swipe moved the focus nowhere (from '${landed.last()}'): the walk goes on node by node with ACTION_ACCESSIBILITY_FOCUS")
+                    report.appendLine("- move $i by swipe → the focus stayed on '${landed.last()}'; node by node from here")
+                }
+            }
+            if (filterInjector == null || swipeStalled) {
+                how = "node by node"
                 val controls = walk().filter { it.control }
                 val at = controls.indexOfFirst { it.label == landed.last() }
                 controls.getOrNull(at + 1)?.node?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
+                SystemClock.sleep(1_600)
+                label = focusedLabel()
             }
-            SystemClock.sleep(1_600)
-            val label = focusedLabel()
             landed += label
-            report.appendLine("- move $i → '${label.ifBlank { "(no accessibility focus in the window)" }}'")
+            report.appendLine("- move $i $how → '${label.ifBlank { "(no accessibility focus in the window)" }}'")
         }
         return landed
     }
+
+    /** Set once an injected swipe has moved TalkBack's focus nowhere: the walks go on node by node. */
+    private var swipeStalled = false
 
     /** The label of the node holding the accessibility focus in the active window, or "". */
     private fun focusedLabel(): String =
