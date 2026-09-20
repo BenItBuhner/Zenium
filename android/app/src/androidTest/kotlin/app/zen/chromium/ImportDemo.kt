@@ -132,7 +132,7 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", "services-import-a
 
         // The result's rows are on screen: a finger on Show imported bookmarks must open the
         // bookmarks overlay on the Imported folder.
-        if (folderId != null && revealRow(SHOW_ROW) != null) {
+        if (folderId != null && awaitRow(SHOW_ROW, 8_000) != null) {
             SystemClock.sleep(600)
             val shown = touchTapLabelExpecting(SHOW_ROW, "the bookmarks overlay is up on the imported folder", timeoutMs = 10_000) {
                 chromeSurfaceUp() && overlay() == "bookmarks" && overlayFolderId() == folderId
@@ -148,7 +148,7 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", "services-import-a
         }
 
         // Dismiss under a finger: the Last import group goes and the core forgets the result.
-        if (revealRow(DISMISS_ROW) == null && openSettings("Import")) revealRow(DISMISS_ROW)
+        if (awaitRow(DISMISS_ROW, 5_000) == null && openSettings("Import")) revealRow(DISMISS_ROW)
         SystemClock.sleep(600)
         val dismissed = touchTapLabelExpecting(DISMISS_ROW, "the last import is dismissed", timeoutMs = 8_000) {
             coreState().isNull("import")
@@ -260,6 +260,22 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", "services-import-a
         }
         Log.w(tag, "the import did not finish within $timeoutMs ms: $progress")
         return progress
+    }
+
+    /**
+     * Poll the app's tree for the Settings row starting with `label`, then scroll it into view
+     * ([revealRow]); null when none appears within `timeoutMs`. One read is not a verdict here:
+     * after the system's document picker has gone, the accessibility service's active window
+     * trails the app by a moment (the first recording read the result's rows 30 ms after the
+     * picker and found nothing that its still shows).
+     */
+    private fun awaitRow(label: String, timeoutMs: Long): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            if (findNode { it.startsWith(label) } != null) return revealRow(label)
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(300)
+        }
     }
 
     /** Whether the core's bookmark tree (`UIState.bookmarks`, every node) holds a bookmark titled `title`. */
