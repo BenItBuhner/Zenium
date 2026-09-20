@@ -211,6 +211,10 @@ class MainActivity : BrowserActivity() {
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
             // A tap or a button on an extension's notification card (chrome.notifications).
             ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
+            // A tap on the media notification (or the system's media player): the session's tab.
+            MediaSessions.ACTION_OPEN -> host.media.onOpenIntent(intent)
+            // A tap on a page's notification: its tab comes forward (WebNotifications.kt).
+            WebNotifications.ACTION_OPENED -> host.webNotifications.onOpenIntent(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null
@@ -257,6 +261,19 @@ class MainActivity : BrowserActivity() {
         // host and the core restores the session from disk.
         host.destroy()
         super.onDestroy()
+    }
+
+    // --- picture-in-picture (MediaSessions.kt) ---------------------------------------------------
+
+    /** Home or Recents pressed: on Android 8-11 a video playing fullscreen goes into the small window from here. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        host.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        host.onPictureInPictureModeChanged(isInPictureInPictureMode)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

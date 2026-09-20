@@ -362,11 +362,18 @@ abstract class DemoHarness(
     /**
      * The first labelled node in any window on screen, not just the active one: a popup such as
      * the text selection's floating toolbar (Copy, Share, Select all) is a window of its own.
+     * With `packageName`, only that package's windows are walked: every node read is a binder
+     * round trip, and the app's own WebView tree runs to thousands, so a look for something of
+     * the system's (the picture-in-picture menu, which hides itself after a few seconds) must
+     * not walk the app's tree first.
      */
-    protected fun findInWindows(matches: (String) -> Boolean): AccessibilityNodeInfo? {
+    protected fun findInWindows(matches: (String) -> Boolean): AccessibilityNodeInfo? = findInWindows(null, matches)
+
+    protected fun findInWindows(packageName: String?, matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val accept = labelled(matches)
         for (window in ui.windows) {
             val root = window.root ?: continue
+            if (packageName != null && root.packageName?.toString() != packageName) continue
             findNodesWhere(root, firstOnly = true, accept).firstOrNull()?.let { return it }
         }
         return null

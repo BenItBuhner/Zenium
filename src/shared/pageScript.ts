@@ -8,6 +8,9 @@ import {
   type InterstitialMessage
 } from './interstitial'
 import { MANIFEST_FIELDS, type RawWebAppManifest } from './webApp'
+import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
+import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
+import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
 import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
 
@@ -42,6 +45,7 @@ export interface PageScriptMessage {
     | 'interstitial'
     | 'focus'
     | 'webapp'
+    | 'notification'
     | 'reader'
     | 'pdf'
   url?: string
@@ -49,6 +53,8 @@ export interface PageScriptMessage {
   y?: number
   background?: boolean
   playing?: boolean
+  /** `media`: the full report on hosts that track media through the script (`trackMedia`). */
+  media?: MediaReport
   /** `zap`: CSS selector of the element the user picked. */
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (`zen://error`). */
@@ -57,6 +63,8 @@ export interface PageScriptMessage {
   webapp?: 'manifest' | 'deferred' | 'prompt'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /** `notification`: the `Notification` polyfill's request (see `shared/notifications`). */
+  notification?: NotificationPageRequest
   /** `reader`: the text preferences a `zen://reader` page's toolbar changed (a partial). */
   reader?: unknown
   /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
@@ -64,11 +72,18 @@ export interface PageScriptMessage {
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
-export interface PageScriptHostMessage {
+export interface WebAppHostMessage {
   type: 'webapp'
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
+
+/**
+ * Browser → page messages the script answers: the web-app polyfill, the media session's
+ * actions and the notification polyfill's answers (mirrors `PageHostMessage` in the core).
+ */
+export type PageScriptHostMessage =
+  WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
 
 export interface PageScriptTransport {
   send(message: PageScriptMessage): void
@@ -91,7 +106,13 @@ export interface PageScriptTransport {
    * Hosts that pin pages to the Home screen: the script posts the page's manifest and turns the
    * host's `installable` / `result` / `installed` messages into the standard install events.
    */
-  onWebApp?(listener: (message: PageScriptHostMessage) => void): void
+  onWebApp?(listener: (message: WebAppHostMessage) => void): void
+  /**
+   * Hosts that carry the media session to the OS controls (with `trackMedia`): the script
+   * polyfills `navigator.mediaSession` when the engine lacks it and runs the host's actions –
+   * the page's handlers where it registered any, the playing element otherwise.
+   */
+  onMediaSession?(listener: (message: MediaSessionHostMessage) => void): void
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -200,26 +221,7 @@ export function installPageScript(transport: PageScriptTransport): void {
     true
   )
 
-  if (transport.trackMedia) {
-    let lastPlaying: boolean | null = null
-    const report = (): void => {
-      const playing = [...document.querySelectorAll('video,audio')].some(
-        (m) => !(m as HTMLMediaElement).paused && !(m as HTMLMediaElement).muted
-      )
-      if (playing !== lastPlaying) {
-        lastPlaying = playing
-        transport.send({ type: 'media', playing })
-      }
-    }
-    for (const type of ['play', 'playing', 'pause', 'ended', 'volumechange', 'emptied'])
-      document.addEventListener(type, report, true)
-    window.addEventListener('pagehide', () => {
-      if (lastPlaying) {
-        lastPlaying = false
-        transport.send({ type: 'media', playing: false })
-      }
-    })
-  }
+  if (transport.trackMedia) installMediaTracking(transport)
 }
 
 // ---------------------------------------------------------------------------

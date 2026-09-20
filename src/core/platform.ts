@@ -59,6 +59,13 @@ import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
 import type { PdfRenderOptions, PrinterDescription, PrintJobOptions } from '../shared/print'
 import type { PdfViewerReport } from '../shared/pdfViewerProtocol'
+import type {
+  MediaReport,
+  MediaSessionAction,
+  MediaSessionHostMessage,
+  MediaSessionInfo
+} from '../shared/mediaSession'
+import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
@@ -146,6 +153,8 @@ export interface PageMessage {
     | 'forms'
     /** The page script posted the web app manifest, or the site's `beforeinstallprompt` moves. */
     | 'webapp'
+    /** The `Notification` polyfill asks or shows (hosts whose engine hides the API). */
+    | 'notification'
     /** A `zen://reader` page's toolbar changed the text preferences (`reader`). */
     | 'reader'
     /** The PDF viewer document (`zen://pdf`) reports where it stands (`shared/pdfPage.ts`). */
@@ -156,6 +165,14 @@ export interface PageMessage {
   background?: boolean
   /** `media`: whether any media element is currently playing. */
   playing?: boolean
+  /**
+   * `media`: the page's media in full – the element playing, its position, the page's
+   * `navigator.mediaSession` metadata and handlers – from hosts whose page script tracks it
+   * (Android); the OS media controls are fed from it.
+   */
+  media?: MediaReport
+  /** `notification`: what the `Notification` polyfill asks (see `shared/notifications`). */
+  notification?: NotificationPageRequest
   /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
@@ -178,8 +195,8 @@ export interface PageMessage {
   pdf?: PdfViewerReport
 }
 
-/** Messages the browser posts into a page for its page script (the web-app polyfill). */
-export interface PageHostMessage {
+/** Browser → page for the web-app polyfill. */
+export interface WebAppHostMessage {
   type: 'webapp'
   /**
    * `installable`: fire `beforeinstallprompt`; `result`: settle a pending `prompt()` with
@@ -188,6 +205,13 @@ export interface PageHostMessage {
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
+
+/**
+ * Messages the browser posts into a page for its page script: the web-app polyfill's events,
+ * the media session's actions (the OS controls, the in-app player) and the notification
+ * polyfill's answers and events.
+ */
+export type PageHostMessage = WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -1667,6 +1691,79 @@ export interface PrintingHost {
   ): Promise<string | null>
 }
 
+/**
+ * The OS media controls on a host whose engine feeds none of its own (the Android WebView; the
+ * desktop's Chromium drives SMTC / Now Playing / MPRIS itself). The core resolves one session –
+ * the page playing, or the last one that did – from the pages' reports and hands it over; the
+ * host shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and
+ * the headset buttons) and sends the controls' actions back through `Browser.mediaSession.act`.
+ */
+export interface MediaSessionHost {
+  /** Show `session` on the OS controls, or take them down with null. */
+  update(session: MediaSessionInfo | null): void
+  /**
+   * Put the window into the OS's picture-in-picture for the video of `session`'s tab
+   * (`enterPictureInPictureMode` on Android). Resolves false when the OS refused (no video, PiP
+   * off for the app, another app's window on top); hosts without it leave it out.
+   */
+  enterPictureInPicture?(session: MediaSessionInfo): Promise<boolean>
+}
+
+/** One notification a page shows, as the host posts it under the site's channel. */
+export interface WebNotificationRequest {
+  /** Browser-wide id (the tab's id and the page's own), what the host's events name. */
+  id: string
+  /** The origin of the page (the channel's identity and the notification's sub text). */
+  origin: string
+  tabId: string
+  /** The page's URL: what a tap opens when the tab (or the core) is gone by then. */
+  url: string
+  title: string
+  body: string
+  /** Absolute URL of the icon, '' for none; the host fetches and decodes it. */
+  icon: string
+  /** The page's tag: a notification with the same one under the same origin replaces it. */
+  tag: string
+  silent: boolean
+  requireInteraction: boolean
+  /** With a tag: alert again on the replace (else the replace is quiet). */
+  renotify: boolean
+  /** Epoch ms shown as the notification's time. */
+  timestamp: number
+}
+
+/**
+ * Web Notifications on a host whose engine has no `Notification` for pages (the Android
+ * WebView): the page script polyfills the API and the core routes it here – one notification
+ * channel per site (Chrome Android's), the shade's tap and swipe reported back through
+ * `Browser.webNotifications.onHostEvent`. Desktop hosts leave it out: Chromium shows theirs.
+ */
+export interface WebNotificationHost {
+  /** Post (or replace, by origin and tag) a notification; resolves false when the OS refused. */
+  show(request: WebNotificationRequest): Promise<boolean>
+  /** Take a notification down without an event (the page's `close()`). */
+  close(id: string): void
+  /** The site's permission was withdrawn: its notifications and its channel go. */
+  forgetOrigin(origin: string): void
+  /**
+   * The app itself may post notifications (Android 13+'s runtime permission): ask once the
+   * site was allowed, so the first notification is not lost to a prompt. Resolves the grant.
+   */
+  ensureAllowed(): Promise<boolean>
+}
+
+/**
+ * The private session as a host shows it outside the chrome (Android: Chrome's "Close all
+ * Incognito tabs" notification while private tabs are open, gone with the last of them). Hosts
+ * with private windows leave it out; the window is the session's presence there.
+ */
+export interface PrivateSessionHost {
+  /** How many private tabs are open now (0: the session ended, the wipe is on its way). */
+  setOpenTabs(count: number): void
+}
+
+export type { MediaSessionAction }
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -1710,6 +1807,12 @@ export interface Platform {
   readonly thumbnails?: ThumbnailHost
   /** QR scanning through the device's back camera; omit when `capabilities.qrScan` is off. */
   readonly qrScan?: QrScanHost
+  /** OS media controls fed by the core (Android); hosts whose engine feeds them itself leave it out. */
+  readonly mediaSession?: MediaSessionHost
+  /** Web Notifications for pages of a host whose engine lacks the API (Android). */
+  readonly webNotifications?: WebNotificationHost
+  /** The private session's presence outside the chrome (Android's notification); optional. */
+  readonly privateSession?: PrivateSessionHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */
