@@ -3,6 +3,8 @@ package app.zen.chromium
 import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
@@ -13,11 +15,15 @@ import android.os.Build
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.service.notification.StatusBarNotification
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.CookieManager
 import android.webkit.WebView
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.webkit.ProfileStore
@@ -51,14 +57,19 @@ import java.util.concurrent.TimeUnit
  * core's status, the setting and the engine's flags read back; back at the shortcut tab's root
  * returns to the launcher with the tab closed on the way out (#117's caller rule), and Zenium
  * resumes the tab it left; a sheet over a private page with the guard up for real stands on a
- * cover of the page, not black.
+ * cover of the page, not black; the private session's notification ([PrivateSession], #223)
+ * beside the guard: the card is posted with the first private tab and counts the second, a
+ * finger on it in the shade closes every private tab with the overview on its Private pane – the
+ * card goes, the guard comes off, the chrome blends back, the overview returns to the Tabs pane,
+ * the profile is wiped once and nothing of the private pages is in Recently Closed or the
+ * history – and a card standing while no host is up is taken down as the next host starts.
  *
  * Driven by the `android-private-demo` workflow. See [DemoHarness] for the plumbing. Every sheet
  * flow puts a finger on a control and asserts what it did (the rule in DemoHarness): the menu's
  * New Private Tab and Close Private Tabs, the quick menu's New Private Tab; the pages' Bake
- * button, the overview's segment, the card's close and the cookie switch are fingers too.
- * Findings land in `private-findings.txt` next to the screenshots; a check that fails there
- * fails the run.
+ * button, the overview's segment, the card's close, the cookie switch and the session's card in
+ * the shade are fingers too. Findings land in `private-findings.txt` next to the screenshots; a
+ * check that fails there fails the run.
  *
  * The recorder sees the private surface only because `PrivateBrowsing.captureForRecording` is on
  * for the run (a debug-build override): FLAG_SECURE would black the recording out, as it does
@@ -131,7 +142,11 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
                 "show();setInterval(show,500);" +
                 "</script></body></html>"
             ).toByteArray()),
-        "/notes.html" to DemoServer.page("Notes", "<p>A second regular tab, so the Tabs pane has two cards.</p>")
+        "/notes.html" to DemoServer.page("Notes", "<p>A second regular tab, so the Tabs pane has two cards.</p>"),
+        "/secret.html" to DemoServer.page(
+            "Secret",
+            "<p>A page only a private tab visits: nothing of it may reach the history or Recently Closed.</p>"
+        )
     )
 
     // --- sequence --------------------------------------------------------------------------------
@@ -565,6 +580,164 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         coreInvoke("tab.closePrivate")
         expect("the session ends", awaitNoPrivateTabs())
         settle()
+
+        // 16. The private session's notification (#223's PrivateSession) beside the guard. From a
+        //     regular tab, the menu's New Private Tab: the card is posted with the tab (the
+        //     `zenium.private` channel, "Close all private tabs", ongoing, off the lock screen)
+        //     while FLAG_SECURE is on the window; a second private tab from the quick menu, and
+        //     the card counts two; the overview on its Private pane keeps the guard up. Then the
+        //     shade, and a real finger on the card (its press is the card's one action: the
+        //     content intent reaches PrivateSessionReceiver, which asks the core for
+        //     `private.closeAll`): every private tab closes, the card comes down with the count,
+        //     the guard comes off, the chrome blends back, the overview returns to the Tabs pane
+        //     (as in step 7), the private profile is wiped once – one `profile.clear` leaves the
+        //     chrome, counted at the bridge – and neither Recently Closed nor the history has
+        //     anything of the private pages. The next private tab finds the jar empty and the
+        //     card back for it.
+        hookProfileClears()
+        val cardBefore = privateCard()
+        expect("no private card while no private tab is open", cardBefore == null)
+        finding(
+            "\nprivate session card (#223) before: ${describeCard(cardBefore)}; notifications enabled for the app: " +
+                "${notifications.areNotificationsEnabled()}; profile.clear calls counted from here"
+        )
+        val regularBeforeCard = activeCoreTab()?.optString("id").orEmpty()
+        expect("set-up: a regular tab is in view", !privateActive() && regularBeforeCard.isNotEmpty())
+        val wentToMenu = openMenuItem(MENU_NEW_PRIVATE)
+        val wentPrivate = wentToMenu && awaitPrivateActive(10_000)
+        if (wentToMenu && !wentPrivate) touchFault("a touch on '$MENU_NEW_PRIVATE' did not take: no private tab is active")
+        expect("the menu's New Private Tab opens a private tab from a regular one", wentPrivate)
+        val g1 = activeCoreTab()?.optString("id").orEmpty()
+        settle()
+        val card1 = awaitCard(8_000)
+        expect(
+            "the session's card is posted with the first private tab, on the zenium.private channel",
+            card1 != null && card1.notification.channelId == PrivateSession.CHANNEL_ID
+        )
+        expect(
+            "the card reads Close all private tabs, ongoing, with a press to act on and no buttons",
+            card1 != null && cardTitle(card1) == PrivateSession.TITLE && cardOngoing(card1) &&
+                card1.notification.contentIntent != null && card1.notification.actions.isNullOrEmpty()
+        )
+        expect("the card counts one private tab", cardText(card1) == "1 private tab is open")
+        expect("the card stays off the lock screen (VISIBILITY_SECRET)", card1?.notification?.visibility == Notification.VISIBILITY_SECRET)
+        val guardWithCard = guardNow()
+        expect("FLAG_SECURE is on the window with the private tab in view, beside the card", guardWithCard && host.privateSurface)
+        shot("26-private-tab-card-up")
+        finding("card with the first private tab $g1: ${describeCard(card1)}; FLAG_SECURE ${verdict(guardWithCard)}, private surface ${host.privateSurface}")
+        navigateByTyping(g1, "$ORIGIN/")
+        SystemClock.sleep(1_200)
+        tapPage(g1, "#bake")
+        val cookieForTheWipe = awaitCookie(g1) { it.isNotEmpty() }
+        expect("a finger on Bake sets a cookie in the private jar for the card's close to wipe", cookieForTheWipe.isNotEmpty())
+        holdTabsButton()
+        expect("a hold on Tabs opens its quick menu", waitFor(MENU_NEW_PRIVATE, 5_000) != null)
+        touchTapLabelExpecting(MENU_NEW_PRIVATE, "a second private tab is active", timeoutMs = 10_000) {
+            privateActive() && activeCoreTab()?.optString("id") != g1
+        }
+        val g2 = activeCoreTab()?.optString("id").orEmpty()
+        expect("the quick menu's New Private Tab opens a second private tab", g2.isNotEmpty() && g2 != g1 && privateTabIds() == listOf(g1, g2).sorted())
+        settle()
+        navigateByTyping(g2, "$ORIGIN/secret.html")
+        SystemClock.sleep(1_000)
+        val card2 = awaitCard(8_000) { cardText(it) == "2 private tabs are open" }
+        expect("the card counts two private tabs", card2 != null)
+        finding("card with the second private tab $g2 (on ${activeCoreTab()?.optString("url")}): ${describeCard(card2 ?: privateCard())}")
+        expect("the overview opens", openOverview())
+        SystemClock.sleep(1_500)
+        expect("the overview opens on the Private pane with both private cards", awaitPane("private") && cards().toSet() == setOf(g1, g2))
+        val guardOnPane = guardNow()
+        expect("FLAG_SECURE stays on with the overview on the Private pane", guardOnPane && host.privateSurface)
+        shot("27-overview-private-two-cards")
+        val clearsBefore = profileClears().size
+        finding("overview on '${pane()}', cards ${cards()}; FLAG_SECURE ${verdict(guardOnPane)}; profile.clear calls so far $clearsBefore")
+
+        val cardNode = openShade { it == PrivateSession.TITLE }
+        expect("the shade shows the Close all private tabs card", cardNode != null)
+        var pressed = false
+        if (cardNode != null) {
+            SystemClock.sleep(1_500)
+            shot("28-shade-private-card")
+            val bounds = steadyBounds(cardNode) ?: Rect().also { cardNode.getBoundsInScreen(it) }
+            Finger().tap(bounds.exactCenterX(), bounds.exactCenterY())
+            finding("finger on the card at ${bounds.centerX()},${bounds.centerY()} (bounds $bounds)")
+            pressed = awaitNoPrivateTabs(12_000)
+            if (!pressed) touchFault("a touch on the private session's card did not take: private tabs remain")
+        }
+        expect("a finger on the card closes every private tab", pressed)
+        val cardGone = awaitCardGone(8_000)
+        expect("the card comes down with the last private tab", cardGone)
+        if (frontPackage() != app.packageName) closeShade()
+        ensureForeground()
+        expect("the overview returns to the Tabs pane once the private tabs are gone", awaitPane("tabs") && overviewOpen())
+        val guardAfterCard = guardNow()
+        expect("FLAG_SECURE comes off with the session", !guardAfterCard && !host.privateSurface)
+        settle()
+        expect("the chrome blends back to the space theme", !host.themeDark && chromeScheme() != "dark")
+        shot("29-overview-tabs-after-card")
+        expect("the private profile is wiped when the card ends the session (INC-04)", awaitPrivateWiped())
+        val clears = profileClears()
+        expect(
+            "the session ends once: one profile.clear for the private container left the chrome",
+            clears.size - clearsBefore == 1 && clears.last() == Profiles.PRIVATE_CONTAINER
+        )
+        val recentlyClosed = coreInvoke("session.recentlyClosed")
+        val historyOfSecret = coreInvoke("history.search", json("query" to "secret", "limit" to 20).toString())
+        expect(
+            "Recently Closed keeps nothing of the private tabs",
+            !recentlyClosed.contains("secret.html") && !recentlyClosed.contains(g1) && !recentlyClosed.contains(g2)
+        )
+        expect("the history has nothing of the private page", runCatching { JSONArray(historyOfSecret).length() }.getOrDefault(-1) == 0)
+        finding(
+            "after the card: private tabs ${anyPrivateTab()}, card ${describeCard(privateCard())}, FLAG_SECURE ${verdict(guardAfterCard)}, " +
+                "private surface ${host.privateSurface}, pane '${pane()}', cards ${cards()}, chrome dark ${host.themeDark}, " +
+                "private profile ${privateProfileState()}, profile.clear calls $clears, recently closed $recentlyClosed, " +
+                "history for 'secret' $historyOfSecret"
+        )
+        chromeRect(card(regularBeforeCard))?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
+        expect("picking the regular card closes the overview on the tab in view before the session", awaitActiveTab(regularBeforeCard) && awaitOverviewGone())
+        SystemClock.sleep(1_000)
+        holdTabsButton()
+        expect("a hold on Tabs opens its quick menu again", waitFor(MENU_NEW_PRIVATE, 5_000) != null)
+        touchTapLabelExpecting(MENU_NEW_PRIVATE, "a private tab is active", timeoutMs = 10_000) { privateActive() }
+        val g3 = activeCoreTab()?.optString("id").orEmpty()
+        expect("the quick menu's New Private Tab opens the next private tab", g3.isNotEmpty() && privateActive())
+        settle()
+        navigateByTyping(g3, "$ORIGIN/")
+        SystemClock.sleep(1_500)
+        val afterTheCard = cookieOf(g3)
+        expect("the next private tab finds no cookie: the card's close wiped the jar", afterTheCard.isEmpty())
+        expect("the card is back for the next private tab", awaitCard(8_000) { cardText(it) == "1 private tab is open" } != null)
+        shot("30-next-private-after-card")
+        finding("next private tab $g3: document.cookie '$afterTheCard', private jar '${privateJar()}', card ${describeCard(privateCard())}")
+        coreInvoke("tab.closePrivate")
+        expect("the session ends, and the card with it", awaitNoPrivateTabs() && awaitCardGone(8_000))
+        settle()
+
+        // 17. A card standing while no host is up is taken down as the next host starts (#223's
+        //     rule for the card a process that died with private tabs open leaves behind; the
+        //     core never restores them). The card here is a stand-in with the session's identity
+        //     (the id and the channel), posted after the activity's destroy and before the
+        //     launch: this driver runs in the app's process, so a force-stop would take it too.
+        val hostBeforeStale = host
+        onMain { activity.finishAndRemoveTask() }
+        awaitDestroyed()
+        postStandInCard()
+        val standIn = awaitCard(4_000)
+        expect("set-up: a card with the session's identity stands while no host is up", standIn != null)
+        finding("\nthe browser's task removed; a stand-in for a stale card posted: ${describeCard(standIn)}; launching again")
+        SystemClock.sleep(1_000)
+        launch()
+        ensureForeground()
+        refindPill()
+        expect("the next host takes the stale card down as it starts", awaitCardGone(10_000))
+        val guardAfterStart = guardNow()
+        expect("a new host, no private tab restored, no guard left on", host !== hostBeforeStale && !anyPrivateTab() && !guardAfterStart && !host.privateSurface)
+        shot("31-relaunched-stale-card-gone")
+        finding(
+            "after the start: new host ${host !== hostBeforeStale}, card ${describeCard(privateCard())}, private tabs ${anyPrivateTab()}, " +
+                "FLAG_SECURE ${verdict(guardAfterStart)}, private surface ${host.privateSurface}, private profile ${privateProfileState()}"
+        )
         finding("\nchecks failed: ${failures.size}${if (failures.isEmpty()) "" else " – " + failures.joinToString("; ")}")
     }
 
@@ -1021,6 +1194,153 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         File(out, "private-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    // --- the private session's card (#223), the shade, the guard as a release build has it ---------
+
+    private val notifications: NotificationManager by lazy { app.getSystemService(NotificationManager::class.java) }
+
+    /** The session's card as the system holds it (the app's own notifications), null when none is posted. */
+    private fun privateCard(): StatusBarNotification? =
+        runCatching { notifications.activeNotifications.firstOrNull { it.id == PrivateSession.NOTIFICATION_ID } }.getOrNull()
+
+    /** Poll up to `timeoutMs` for the card, one `accept`s; null when none came. */
+    private fun awaitCard(timeoutMs: Long, accept: (StatusBarNotification) -> Boolean = { true }): StatusBarNotification? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            privateCard()?.takeIf(accept)?.let { return it }
+            SystemClock.sleep(250)
+        }
+        return privateCard()?.takeIf(accept)
+    }
+
+    private fun awaitCardGone(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (privateCard() == null) return true
+            SystemClock.sleep(250)
+        }
+        return privateCard() == null
+    }
+
+    private fun cardTitle(sbn: StatusBarNotification?): String? =
+        sbn?.notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()
+
+    private fun cardText(sbn: StatusBarNotification?): String? =
+        sbn?.notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()
+
+    private fun cardOngoing(sbn: StatusBarNotification?): Boolean =
+        sbn != null && sbn.notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+
+    private fun describeCard(sbn: StatusBarNotification?): String {
+        if (sbn == null) return "none"
+        val n = sbn.notification
+        val actions = n.actions?.map { it.title?.toString() ?: "?" } ?: emptyList()
+        return "id=${sbn.id} channel=${n.channelId} title=\"${cardTitle(sbn)}\" text=\"${cardText(sbn)}\" ongoing=${cardOngoing(sbn)} " +
+            "press=${n.contentIntent != null} buttons=$actions visibility=${n.visibility} " +
+            "(secret ${n.visibility == Notification.VISIBILITY_SECRET}) localOnly=${n.flags and Notification.FLAG_LOCAL_ONLY != 0}"
+    }
+
+    /**
+     * A card with the session's identity – the id and the channel – posted by the driver while
+     * no host is up: the stand-in for the card a process that died with private tabs open leaves
+     * behind. What the next host does with it (`PrivateSession` cancels it as it starts) is the
+     * rule under test; the card's own looks are not, so its glyph is the platform's.
+     */
+    private fun postStandInCard() {
+        PrivateSession.ensureChannel(app)
+        val card = NotificationCompat.Builder(app, PrivateSession.CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle(PrivateSession.TITLE)
+            .setContentText("1 private tab is open")
+            .setOngoing(true)
+            .setSilent(true)
+            .setLocalOnly(true)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .build()
+        runCatching { NotificationManagerCompat.from(app).notify(PrivateSession.NOTIFICATION_ID, card) }
+            .onFailure { finding("posting the stand-in card failed: $it") }
+    }
+
+    /**
+     * Whether FLAG_SECURE is on the window for the surface in view, read as a release build has
+     * it: the recording override is dropped for the look and put back after (the recording goes
+     * black for the second it takes, as Recents would).
+     */
+    private fun guardNow(): Boolean {
+        PrivateBrowsing.captureForRecording = false
+        onMain { host.setPrivateSurface(host.privateSurface) }
+        SystemClock.sleep(600)
+        val guarded = onMain { PrivateBrowsing.guarded(activity.window) }
+        PrivateBrowsing.captureForRecording = true
+        onMain { host.setPrivateSurface(host.privateSurface) }
+        SystemClock.sleep(600)
+        return guarded
+    }
+
+    /**
+     * Count the `profile.clear` calls the chrome sends the host from here on. The bridge encodes
+     * every call with `JSON.stringify` (`Bridge.call`), so the driver wraps it in the chrome and
+     * notes the container of each `profile.clear` – the core's `sessions.clearPrivate`, which
+     * `endPrivateSessionIfOver` makes once the last private tab is gone. Nothing of the product
+     * is touched for it; the hook goes with the chrome's document (a relaunch drops it).
+     */
+    private fun hookProfileClears() {
+        chromeJs(
+            "(function(){if(window.__zenClears)return;window.__zenClears=[];var s=JSON.stringify;" +
+                "JSON.stringify=function(v){if(v&&typeof v==='object'&&v.method==='profile.clear')" +
+                "window.__zenClears.push((v.args&&v.args.containerId)||'');return s.apply(this,arguments)}})()"
+        )
+    }
+
+    /** The containers of the `profile.clear` calls counted since [hookProfileClears], in order. */
+    private fun profileClears(): List<String> {
+        val raw = jsString("JSON.stringify(window.__zenClears||[])")
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+        return (0 until array.length()).map { array.getString(it) }
+    }
+
+    /** Pull the shade down and wait for a node of the system UI whose label `matches`; the windows go to the findings when none does. */
+    private fun openShade(timeoutMs: Long = 10_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findInWindows(SYSTEM_UI, matches)?.let { return it }
+            SystemClock.sleep(250)
+        }
+        finding("the shade showed nothing that was looked for within $timeoutMs ms")
+        dumpWindows("shade")
+        return null
+    }
+
+    private fun closeShade() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+        } else {
+            back()
+        }
+        SystemClock.sleep(1_500)
+    }
+
+    /** The labels on screen, window by window, into the findings (what the tree really says when a label is not found). */
+    private fun dumpWindows(why: String) {
+        val lines = ArrayList<String>()
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            val labels = ArrayList<String>()
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 1_500 && labels.size < 40) {
+                val node = queue.removeFirst()
+                visited++
+                val text = (node.contentDescription ?: node.text)?.toString()?.trim()
+                if (!text.isNullOrEmpty()) labels += text.take(60)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+            lines += "    window type=${window.type} pkg=${root.packageName} labels=$labels"
+        }
+        finding("  windows ($why):\n${lines.joinToString("\n")}")
+    }
+
     // --- the pages: cookies and a finger on Bake -------------------------------------------------
 
     private fun cookieOf(tabId: String): String {
@@ -1351,6 +1671,8 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         private const val EMPTY_PILL_LABEL = "Search or enter address"
         /** The private new tab page's Block third-party cookies row: the whole row is the switch (NTP-31). */
         private const val COOKIES_ROW = "[data-testid=\"private-ntp-cookies\"]"
+        /** The shade's package: the session's card is looked for in its windows alone (the app's tree runs to thousands of nodes). */
+        private const val SYSTEM_UI = "com.android.systemui"
         /** An activity record in `dumpsys activity activities`: `ActivityRecord{<hash> u<user> <package>/<class> t<task>}`. */
         private val ACTIVITY_RECORD = Regex("ActivityRecord\\{([0-9a-f]+) u\\d+ ([^ }]+)")
         /**

@@ -12,8 +12,13 @@ name: Android private tabs demo
 # (one MainActivity, the core booted, one private tab on the private new tab page) and warm (the
 # running activity takes it through onNewIntent); Close Private Tabs ends the session; the private
 # new tab page's cookie switch under a finger, on and off; back at the shortcut tab's root returns
-# to the launcher; a sheet over a private page with FLAG_SECURE up stands on a cover of the page.
-# A check that fails in the driver fails the run (private-findings.txt in the artifact).
+# to the launcher; a sheet over a private page with FLAG_SECURE up stands on a cover of the page;
+# the private session's notification (#223) beside the guard: posted with the first private tab,
+# counting the second, and a real finger on it in the shade closes every private tab (the card
+# gone, FLAG_SECURE off, the chrome blended back, the overview on its Tabs pane, the profile wiped
+# once, nothing of the private pages in Recently Closed or the history), and a stale card is taken
+# down as the next host starts. A check that fails in the driver fails the run
+# (private-findings.txt in the artifact).
 #
 # The engine. Private tabs run on a WebView profile of their own (Profiles.kt), which needs
 # WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not have it (measured by
