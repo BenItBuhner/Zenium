@@ -87,3 +87,69 @@ describe('usePopover', () => {
     expect(document.activeElement).toBe(el.querySelector('[data-field]'))
   })
 })
+
+/**
+ * An opener in the window chrome, which the frame dialog host keeps inert through the popover's
+ * way out (lib/portals.tsx), and the popover it opened; `open` false unmounts the popover.
+ */
+function Chrome({ open }: { open: boolean }): JSX.Element {
+  return (
+    <>
+      <div data-surface="window" data-chrome>
+        <button type="button" data-opener>
+          Make default
+        </button>
+      </div>
+      {open && <Popover active version={0} />}
+    </>
+  )
+}
+
+/** The mutation observers' callbacks run as microtasks; let them. */
+const tick = (): Promise<void> => act(async () => undefined)
+
+describe('the return of focus on unmount', () => {
+  it('waits for an inert opener until the chrome is back', async () => {
+    const el = render(<Chrome open={false} />)
+    const chrome = el.querySelector<HTMLElement>('[data-chrome]')!
+    const opener = el.querySelector<HTMLElement>('[data-opener]')!
+    act(() => opener.focus())
+    act(() => root!.render(<Chrome open />))
+    expect(document.activeElement).toBe(el.querySelector('[data-field]'))
+    // The host's hold: the opener refuses the focus as the popover goes, and it falls to `body`.
+    chrome.setAttribute('inert', '')
+    act(() => root!.render(<Chrome open={false} />))
+    expect(document.activeElement).toBe(document.body)
+    // The hold lifts: the opener takes it.
+    chrome.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('leaves the focus where something else put it meanwhile', async () => {
+    const el = render(<Chrome open={false} />)
+    const chrome = el.querySelector<HTMLElement>('[data-chrome]')!
+    const opener = el.querySelector<HTMLElement>('[data-opener]')!
+    act(() => opener.focus())
+    act(() => root!.render(<Chrome open />))
+    chrome.setAttribute('inert', '')
+    act(() => root!.render(<Chrome open={false} />))
+    // Another surface took the keyboard (a dialog opened over the way out).
+    const other = document.createElement('button')
+    document.body.appendChild(other)
+    act(() => other.focus())
+    chrome.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(other)
+    other.remove()
+  })
+
+  it('returns at once to an opener that can take it', () => {
+    const el = render(<Chrome open={false} />)
+    const opener = el.querySelector<HTMLElement>('[data-opener]')!
+    act(() => opener.focus())
+    act(() => root!.render(<Chrome open />))
+    act(() => root!.render(<Chrome open={false} />))
+    expect(document.activeElement).toBe(opener)
+  })
+})
