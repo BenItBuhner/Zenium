@@ -8556,6 +8556,106 @@
   opacity: 0.4;
 }
 
+/*
+ * Read aloud's player (`components/content/ReadAloudPanel.tsx`; A11Y-06 / EDGE-11 / MOT-35), the
+ * third docked panel in §9.32's slot after the find bar and the zoom sheet – the same panel
+ * chrome as the zoom sheet above (the --v2-panel surface, a hairline on top, the sheet radius on
+ * the top corners), so the two read as one kind of thing under the live page. A page surface
+ * (§9.29, `data-surface="page"`), every value a --v2-* token, unlayered like the zoom sheet's.
+ *
+ * Rows (§9.16, §9.23, §9.32): the header is a bar header at 48 on a phone, the text's title
+ * start-aligned at the 16 gutter at 15/600 on a 20 px line, the sentence progress trailing it in
+ * tabular numerals in the deemphasised ink (the error line takes the danger ink); the transport
+ * is a 52 row, the 44 px icon buttons at 2 so their glyph boxes fall on the gutter's line, the
+ * speed chip a hugging secondary button at the control height (§6, as the zoom sheet's Reset)
+ * 8 before the 44 px voice and close buttons that end the row.
+ *
+ * Play / pause is one control (§11.4: a change in place is a 120 ms fade, nothing that moves
+ * across): both glyphs sit in the same box and cross-fade on `data-playing`, a touch of scale
+ * so the arriving glyph settles; busy (§9.30) hides both under the 16 px spinner. Reduced
+ * motion keeps the 120 ms (the closing block below). `will-change` only while the panel moves
+ * (`data-moving`, §9.33); the reduced-motion fade is written per frame by the component.
+ */
+.zen-read-aloud {
+  background: var(--v2-panel);
+  color: var(--v2-text);
+  border-top: 1px solid var(--v2-border);
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  font-weight: var(--v2-weight-body);
+}
+.zen-read-aloud[data-moving] {
+  will-change: transform, opacity;
+}
+.zen-read-aloud .zen-v2-icon-button .lucide {
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-read-aloud-header {
+  min-height: calc(var(--v2-icon-button) + 4px);
+}
+/* A docked panel's title (§9.32): start-aligned, 15/600 – a bar's label, not a sheet's 17/600 title. */
+.zen-read-aloud-title {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+/* The live progress (§4, §9.32): tabular numerals, so 9 / 42 → 10 / 42 moves nothing beside it. */
+.zen-read-aloud-progress {
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+.zen-read-aloud-progress[data-tone='danger'] {
+  color: var(--v2-danger);
+}
+.zen-read-aloud-controls {
+  min-height: var(--v2-row);
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+/* Busy (§9.30) on an icon button: the 16 px spinner where the glyph was, the glyph unpainted. */
+.zen-read-aloud-toggle,
+.zen-read-aloud-voice {
+  position: relative;
+}
+.zen-read-aloud-toggle > .zen-v2-spinner,
+.zen-read-aloud-voice > .zen-v2-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+.zen-read-aloud-toggle[aria-busy='true'] > svg,
+.zen-read-aloud-voice[aria-busy='true'] > svg {
+  opacity: 0;
+}
+.zen-read-aloud-toggle > svg {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  transition:
+    opacity 120ms var(--zen-ease),
+    transform 120ms var(--zen-ease);
+}
+.zen-read-aloud-toggle > .zen-read-aloud-glyph-pause,
+.zen-read-aloud-toggle[data-playing] > .zen-read-aloud-glyph-play {
+  opacity: 0;
+  transform: scale(0.8);
+}
+.zen-read-aloud-toggle[data-playing] > .zen-read-aloud-glyph-pause {
+  opacity: 1;
+  transform: none;
+}
+.zen-read-aloud-toggle[aria-busy='true'] > svg {
+  opacity: 0;
+}
+/* Secondary button (§6) hugging its label: the control height, radius 6 under a finger, press .98. */
+.zen-v2-button.zen-read-aloud-chip {
+  min-width: 56px;
+  padding: 0 12px;
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;
@@ -8608,6 +8708,10 @@
   }
   .zen-v2-segment > [role='tab'],
   .zen-v2-segment > [role='tab']::after {
+    transition-duration: 120ms !important;
+  }
+  /* Read aloud's play / pause glyph swap is a change in place (§11.4): its 120 ms fade stays. */
+  .zen-read-aloud-toggle > svg {
     transition-duration: 120ms !important;
   }
 }

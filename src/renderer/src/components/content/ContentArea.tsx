@@ -13,7 +13,14 @@ import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { barStateOf } from '@renderer/lib/translate'
-import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
+import {
+  captureActiveTab,
+  closeFindBar,
+  closeZoom,
+  panelAloneOverContent,
+  uiStore,
+  type UiState
+} from '@renderer/lib/ui'
 import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
@@ -32,6 +39,7 @@ import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
+import { ReadAloudPanel } from './ReadAloudPanel'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
 import { ZoomSheet } from './ZoomSheet'
@@ -129,6 +137,29 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !ui.findOpen &&
     !ui.zoomTabId &&
     isPdfViewerTab(state, tab.id)
+
+  // Read aloud's player is the fourth docked panel (§9.32: one in the slot at a time). A session
+  // starting takes the slot – the find bar and the zoom sheet give it up, as they do for each
+  // other – and a find or zoom opened while it reads takes the slot back for its stay: the
+  // panel hides, the session goes on (the OS controls still carry it), and it returns when they
+  // close. The PDF viewer's bar keeps the slot on its tab (a document there is the viewer's,
+  // not an article). The panel is the session's tab's: another tab in front shows no player.
+  const readAloud = state.readAloud
+  const readAloudTabId = readAloud?.tabId ?? null
+  useEffect(() => {
+    if (!readAloudTabId) return
+    const current = uiStore.get()
+    if (current.findOpen) closeFindBar()
+    if (current.zoomTabId) closeZoom()
+  }, [readAloudTabId])
+  const readAloudDocked =
+    readAloud !== null &&
+    tab !== null &&
+    readAloud.tabId === tab.id &&
+    !foreign &&
+    !ui.findOpen &&
+    ui.zoomTabId === null &&
+    !pdfBar
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -238,6 +269,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
           <ZoomSheet state={state} tabId={ui.zoomTabId} />
         )}
         {pdfBar && tab && <PdfViewerBar key={tab.id} state={state} tabId={tab.id} />}
+        {readAloudDocked && <ReadAloudPanel session={readAloud} />}
         {/* The autofill picker of a host without a popup surface docks here, above the keyboard. */}
         <PickerStrip state={state} />
       </div>
