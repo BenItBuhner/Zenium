@@ -1097,6 +1097,18 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
     const fromPopup = toBg().at(-1)?.sender as Record<string, unknown>
     expect(fromPopup.tab).toBeUndefined()
     expect(fromPopup.frameId).toBeUndefined()
+    // runtime.getContexts spells the pages the same way, the served origin as their origin.
+    const contexts = (await call(h, 'bg1', 'runtime', 'getContexts', [{}])).result as Array<
+      Record<string, unknown>
+    >
+    expect(contexts.find((c) => c.contextId === 'docP.1')).toMatchObject({
+      contextType: 'TAB',
+      documentUrl: `chrome-extension://${ID}/pages/options.html`,
+      documentOrigin: origin
+    })
+    expect(contexts.find((c) => c.contextId === 'pop1')?.documentUrl).toBe(
+      `chrome-extension://${ID}/popup.html`
+    )
     // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
     const tabId = h.runtime.api.tabs.chromeIdFor('t1')
     message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })

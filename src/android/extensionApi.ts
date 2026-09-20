@@ -14,7 +14,7 @@ import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import type { ExtensionRecord } from '@core/extensions/registry'
-import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
+import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import {
   extensionOrigin,
@@ -1266,12 +1266,17 @@ export class ExtensionApi {
         await this.host.reload(id)
         return undefined
       case 'getContexts':
+        // An extension page's URL as Chrome spells it (`extensionUrls.ts`); its origin stays the
+        // served one, what `location.origin` answers inside the page, as for a message sender.
         return this.host.router.of(id).map((e) => ({
           contextId: e.id,
           contextType: contextTypeOf(e.context),
           documentId: e.id,
           documentOrigin: e.url ? safeOrigin(e.url) : '',
-          documentUrl: e.url,
+          documentUrl:
+            e.url && e.context !== 'content' && e.context !== 'userScript'
+              ? presentExtensionUrl(e.url)
+              : e.url,
           frameId: e.frameId,
           incognito: false,
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
