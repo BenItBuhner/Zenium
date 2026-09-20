@@ -124,7 +124,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 webView: WebView,
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams
-            ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
+            ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
         }
     }
 

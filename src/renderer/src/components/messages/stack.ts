@@ -1,7 +1,8 @@
+import { TOAST_CARD } from '@shared/toastCard'
 import type { ContentCover } from '@shared/types'
 
-/** Space between a card and the frame's edge (`--zen-message-inset`). */
-export const MESSAGE_INSET = 8
+/** Space between a card and the frame's edge (`--zen-message-inset`; one number with the page-drawn twin, `@shared/toastCard`). */
+export const MESSAGE_INSET: number = TOAST_CARD.insetPx
 
 /**
  * Stacked banners touch (v2 §9.21: a list of rows has no gap, the room around a control is the

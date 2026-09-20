@@ -96,6 +96,17 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!--
+          The camera apps behind the file chooser's Camera and Camcorder entries (OS-22,
+          BrowserActivity.showFileChooser): without these, Android 11+ hides them from
+          resolveActivity and the chooser would offer the files alone.
+        -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
     </queries>
 
     <!--
