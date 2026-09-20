@@ -541,7 +541,9 @@ export class ElectronPlatform implements Platform {
       extensionResources.install(ses)
       // The one webRequest listener set of the session; every request hook goes through it.
       this.requestBlocking.attach(ses, containerId)
-      this.attachPermissions(ses)
+      this.attachPermissions(ses, (target, origin) =>
+        extensionApi.tabCapture.allowsMediaRequest(target, origin)
+      )
       // `getDisplayMedia` goes to the core's picker instead of Electron's flat refusal.
       this.screenCapture.attach(ses)
       attachWebAuthnHandlers(browser, this.views, ses)
@@ -569,7 +571,14 @@ export class ElectronPlatform implements Platform {
     return browser
   }
 
-  private attachPermissions(ses: Session): void {
+  /**
+   * `tabCaptureAllows`: whether an extension's `chrome.tabCapture` request stands behind a media
+   * request the engine makes on a tab for a consuming document of `securityOrigin`.
+   */
+  private attachPermissions(
+    ses: Session,
+    tabCaptureAllows: (target: WebContents, securityOrigin: string | undefined) => boolean
+  ): void {
     const { permissions, external } = this.browser
     ses.setPermissionRequestHandler((webContents, rawPermission, callback, details) => {
       const url = details.requestingUrl || webContents?.getURL() || ''
@@ -580,6 +589,21 @@ export class ElectronPlatform implements Platform {
       // refusal at this stage reads as Chrome's `NotAllowedError` to the page. Its answer waits
       // for the engine's display-media request (`screenCapture.attach`).
       const permission = permissionName(rawPermission, details)
+      // An extension's tab capture arrives the same way, on the captured tab, from the
+      // consuming document's origin: the user's gesture on the extension was the consent
+      // (Chrome's `tabCaptureForTab`), and the engine's stream registry already tied the id to
+      // that one document and moment.
+      if (
+        permission === 'display-capture' &&
+        webContents &&
+        tabCaptureAllows(
+          webContents,
+          'securityOrigin' in details ? details.securityOrigin : undefined
+        )
+      ) {
+        callback(true)
+        return
+      }
       if (permission === 'display-capture' && tabId && webContents) {
         void permissions
           .decide(permission, url, request)

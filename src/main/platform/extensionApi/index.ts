@@ -36,6 +36,7 @@ import {
   PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
   STORAGE_METHODS,
+  TAB_CAPTURE_INTERNAL_METHODS,
   USER_SCRIPTS_INTERNAL_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
@@ -99,6 +100,8 @@ import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
 import { SystemStorageApi } from './systemStorage'
+import { TabCaptureApi } from './tabCapture'
+import { electronStreamRegistrar } from './tabCaptureBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
@@ -212,6 +215,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
   readonly offscreen: OffscreenApi
+  /** `chrome.tabCapture` and `chrome.desktopCapture`; the platform's media permission gate. */
+  readonly tabCapture: TabCaptureApi
   readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
@@ -276,6 +281,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
     this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
+    this.tabCapture = new TabCaptureApi(this, this.activeTab, electronStreamRegistrar())
     this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
@@ -339,6 +345,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
       offscreen: this.offscreen.handlers,
+      tabCapture: this.tabCapture.handlers,
+      desktopCapture: this.tabCapture.desktopHandlers,
       debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
@@ -634,6 +642,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
     this.offscreen.unload(ext.id)
+    this.tabCapture.unload(ext.id)
     this.debugger.unload(ext.id)
     this.systemDisplay.unload()
     this.identity.unload(ext.id)
@@ -739,7 +748,10 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
                   : routed === 'userScripts' &&
                       (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
                     ? true
-                    : isSpecMethod(API_SPEC, namespace, method)
+                    : routed === 'tabCapture' &&
+                        (TAB_CAPTURE_INTERNAL_METHODS as readonly string[]).includes(method)
+                      ? true
+                      : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -1054,6 +1066,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       if (next.tabs.has(zenId)) continue
       this.action.tabRemoved(before.chrome.id)
       this.activeTab.tabRemoved(before.chrome.id)
+      this.tabCapture.tabRemoved(before.chrome.id)
       this.declarativeNetRequest.tabRemoved(before.chrome.id)
       this.sidePanel.tabRemoved(before.chrome.id)
     }
