@@ -249,7 +249,9 @@ export function NavRow({
             'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
-          title={tab ? presentedUrl(tab.url) : 'Search or enter address'}
+          // The tooltip is the address the pill shows: an error or Reader View page's is the
+          // page it stands in for, never the `zen://` document (§10.1).
+          title={tab ? fullUrl(tab.url) || presentedUrl(tab.url) : 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}

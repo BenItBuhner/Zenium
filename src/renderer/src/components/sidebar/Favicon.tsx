@@ -1,9 +1,10 @@
 import { useState, type JSX } from 'react'
-import { Globe, VenetianMask } from 'lucide-react'
+import { Frown, Globe, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
+import { CRASH_ERROR_CODE } from '@shared/zenPages'
 import { useExtensionPage } from '@renderer/lib/extensions/pages'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { cn } from '@renderer/lib/utils'
@@ -15,7 +16,9 @@ import { ExtensionIcon } from '../extensions/ExtensionIcon'
  * a globe for blank tabs, and an internal page's registered glyph (the gear for Settings) for a
  * page tab, which never fetches an icon (v2 §10.1); a page with no glyph falls through. A page
  * of an extension that supplies no favicon of its own shows the extension's icon (the puzzle
- * glyph while it has none), never a letter of its id (§10.1 applied to extension pages).
+ * glyph while it has none), never a letter of its id (§10.1 applied to extension pages). A tab
+ * whose renderer crashed in front of the user (`errorCode` is the crash code, tabs-44) shows
+ * Chrome's crashed favicon, a sad face in the muted ink, until its next load.
  */
 /** What the favicon is drawn from: a tab, or a row that carries the same fields (tab search). */
 export type FaviconSource = Pick<
@@ -28,7 +31,8 @@ export type FaviconSource = Pick<
   | 'loading'
   | 'discarded'
   | 'containerId'
->
+> &
+  Partial<Pick<Tab, 'errorCode'>>
 
 export function Favicon({
   tab,
@@ -77,6 +81,20 @@ export function Favicon({
         )}
         style={{ width: size, height: size }}
         aria-label="Loading"
+      />
+    )
+  }
+  if (tab.errorCode === CRASH_ERROR_CODE && !tab.discarded) {
+    return (
+      <Frown
+        className={cn(
+          'zen-tab-favicon zen-tab-favicon-crashed shrink-0 text-[var(--zen-muted)]',
+          className
+        )}
+        style={{ width: size, height: size }}
+        strokeWidth={size >= 20 ? 1.75 : 2}
+        aria-label="Crashed"
+        role="img"
       />
     )
   }

@@ -106,8 +106,8 @@ export class ForwardingEvents implements TabViewEvents {
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void {
     this.target?.onUnsafeNavigation(url, hit)
   }
-  onCrashed(reason: CrashReason): void {
-    if (this.target) this.target.onCrashed(reason)
+  onCrashed(reason: CrashReason, exitCode?: number): void {
+    if (this.target) this.target.onCrashed(reason, exitCode)
     else if (reason !== 'clean-exit') this.gone()
   }
   onAudioStateChanged(audible: boolean): void {

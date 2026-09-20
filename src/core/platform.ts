@@ -506,7 +506,11 @@ export interface TabViewEvents {
    * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
    */
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
-  onCrashed(reason: CrashReason): void
+  /**
+   * The page's renderer went away; `exitCode` is the process's where the host has it (Electron's
+   * `render-process-gone` details), for the sad tab's code line.
+   */
+  onCrashed(reason: CrashReason, exitCode?: number): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
   /** The host's own request engine blocked `count` more requests of this page (Android). */

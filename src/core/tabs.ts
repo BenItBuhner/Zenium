@@ -54,7 +54,13 @@ import {
 import { isWithinScope } from '../shared/webApp'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
-import { describeNetError, HTTP_FALLBACK_CODES, overlayForUrl } from '../shared/zenPages'
+import {
+  CRASH_ERROR_CODE,
+  crashCodeName,
+  describeNetError,
+  HTTP_FALLBACK_CODES,
+  overlayForUrl
+} from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
 import { closedTabEntry, closedWindowEntry } from './session'
@@ -476,6 +482,8 @@ export class TabManager {
       onWillNavigate: (url) => this.onWillNavigate(tabId, url),
       onTitleUpdated: (title) =>
         update((t) => {
+          // The sad tab keeps the crashed page's title beside its favicon, as Chrome's does.
+          if (this.isSadTab(t)) return
           t.title = title || this.titleFor(t.url)
           if (!this.isPrivate(t)) this.browser.history.updateTitle(t.url, t.title)
         }),
@@ -546,7 +554,7 @@ export class TabManager {
       onUpgraded: (from, to) => this.noteUpgrade(tabId, from, to),
       onUnsafeNavigation: (url, hit) =>
         this.browser.protection.safeBrowsing.notePendingBlock(tabId, url, hit),
-      onCrashed: (reason) => {
+      onCrashed: (reason, exitCode) => {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
@@ -569,8 +577,19 @@ export class TabManager {
           )
           return
         }
-        this.browser.toast(`"${title}" crashed (${reason}).`, 'error', ownerWindow())
-        view()?.loadURL(errorPageUrl(-1, `The page crashed (${reason})`, tab.url))
+        // A crash in front of the user is the sad tab (tabs-44): the crash page, for the page
+        // the tab was showing, says what happened (no toast doubles it), and `errorCode` marks
+        // the row – the crashed favicon – until the next navigation clears it. The address stays
+        // the page's own: the error page shows the URL it stands in for.
+        const target = this.errorPageTarget(tabId) ?? tab.url
+        const code = crashCodeName(reason, exitCode, this.browser.platform.info.os)
+        update((t) => {
+          t.errorCode = CRASH_ERROR_CODE
+          t.certificateError = null
+          t.loading = false
+          t.progress = 1
+        })
+        view()?.loadURL(errorPageUrl(CRASH_ERROR_CODE, code, target))
       },
       onAudioStateChanged: (audible) => {
         update((t) => (t.audible = audible), true)
@@ -759,7 +778,9 @@ export class TabManager {
     tab.certificateError = this.certificateErrorOf(tab, url)
     this.followSiteMute(tab, view, tab.url, url)
     tab.url = url
-    tab.title = view.getTitle() || this.titleFor(url)
+    // The crash page's own title is the site; the sad tab keeps the crashed page's (Chrome's
+    // strip does), so the row reads as the page it was until the next load.
+    if (!this.isSadTab(tab)) tab.title = view.getTitle() || this.titleFor(url)
     tab.canGoBack = view.canGoBack()
     tab.canGoForward = view.canGoForward()
     tab.bookmarked = this.browser.bookmarks.has(url)
@@ -786,6 +807,15 @@ export class TabManager {
   noteUpgrade(tabId: string, from: string, to: string): void {
     if (!this.tab(tabId) || !/^http:\/\//i.test(from) || !/^https:\/\//i.test(to)) return
     this.httpsUpgraded.set(tabId, from)
+  }
+
+  /**
+   * The tab shows the crash page for a page whose renderer went away in front of the user
+   * (tabs-44): `errorCode` is the crash code and the address the `zen://error` document. The
+   * row wears the crashed favicon and keeps the page's title until the next load clears both.
+   */
+  isSadTab(tab: Tab): boolean {
+    return tab.errorCode === CRASH_ERROR_CODE && tab.url.startsWith(ERROR_URL_PREFIX)
   }
 
   /**
