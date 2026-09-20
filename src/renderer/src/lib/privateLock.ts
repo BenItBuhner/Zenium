@@ -1,6 +1,6 @@
-import type { UIState } from '@shared/types'
+import type { Tab, UIState } from '@shared/types'
 import { run } from './api'
-import { activeTabIsPrivate } from './privateTabs'
+import { activeTabIsPrivate, isPrivateTab } from './privateTabs'
 import { createStore } from './store'
 import { browserStore } from './ui'
 
@@ -150,6 +150,22 @@ export function usePrivateCoverUp(state: UIState): boolean {
   const locked = privateLockStore.use((s) => s.locked)
   const lifting = privateLockStore.use((s) => s.lifting)
   return privateCoverUp(state, { locked, lifting })
+}
+
+/** What a masked private tab's card reads in place of its title (§9.19; the pill's word). */
+export const PRIVATE_TAB_PLACEHOLDER = 'Private tab'
+
+/**
+ * This tab's card shows nothing of its page: it is private and the private tabs are locked (or
+ * the lock is lifting, the cover still over the page). Wherever a card is drawn – the overview's
+ * Private pane and its hero, the swipe track's neighbours, a card leaving or in the hand – the
+ * picture is masked (`TabPreview`), and the title row reads the placeholder behind the mask in
+ * place of the favicon and the title (§9.19: nothing of the page's identity leaks before the
+ * unlock). For a rendering component.
+ */
+export function useTabMasked(tab: Tab): boolean {
+  const masked = privateLockStore.use((s) => s.locked || s.lifting)
+  return masked && isPrivateTab(tab)
 }
 
 /**

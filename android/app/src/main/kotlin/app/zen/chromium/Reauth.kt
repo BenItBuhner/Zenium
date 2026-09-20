@@ -14,6 +14,14 @@ import androidx.fragment.app.FragmentActivity
 class Reauth(private val activity: FragmentActivity) {
     private val executor = ContextCompat.getMainExecutor(activity)
 
+    /**
+     * A prompt of ours is up. The device-credential fallback is an activity of its own, so the
+     * app's window stops under it as it would under another app: what reads the lifecycle as a
+     * departure ([Host.onStop], the private lock) checks here first.
+     */
+    var prompting = false
+        private set
+
     /** Something on this device can verify the user right now. */
     fun available(): Boolean = canAuthenticate(WEAK_OR_CREDENTIAL)
 
@@ -34,9 +42,11 @@ class Reauth(private val activity: FragmentActivity) {
         val once = { ok: Boolean ->
             if (!answered) {
                 answered = true
+                prompting = false
                 callback(ok)
             }
         }
+        prompting = true
         val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = once(true)
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = once(false)

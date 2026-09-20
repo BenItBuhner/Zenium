@@ -139,7 +139,11 @@ export function useLayoutReporter(
     let deadline: ReturnType<typeof setTimeout> | null = null
     const evaluate = (): void => {
       let hidden = contentHidden
-      if (followsCover) {
+      // The lock cover never waits for its picture: a locked private page is hidden the moment
+      // the cover is asked for, a frame of the cover's base ahead of the blurred picture being
+      // the trade (the picture is decoration on the lock; the live page over the cover would be
+      // the leak, INC-05). Every other cover waits for its paint as before.
+      if (followsCover && !lockCover) {
         const cover = coverStatus(coverStore.get(), activeTab(state)?.id)
         const waitedOut =
           waitingSince.current !== null && Date.now() - waitingSince.current >= COVER_WAIT_MS
@@ -158,6 +162,8 @@ export function useLayoutReporter(
         } else {
           waitingSince.current = null
         }
+      } else {
+        waitingSince.current = null
       }
       reportedHidden.current = hidden
       send(hidden)
@@ -240,6 +246,7 @@ export function useLayoutReporter(
     ui.glanceReady,
     glanceActive,
     contentHidden,
+    lockCover,
     gap,
     band,
     followsCover,

@@ -1482,6 +1482,85 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
   })
 
+  /*
+   * The lock cover over the Private pane (INC-05, v2 §9.19): nothing of a locked private tab's
+   * identity shows or reads before the unlock – the cards' title rows read "Private tab" behind
+   * the mask, their names say the same, the grid is inert and hidden from readers under the
+   * opaque cover, and the hero of a morph from a locked private tab reads the placeholder too.
+   * The Tabs pane beside it is untouched.
+   */
+  it('under the lock the Private pane is covered whole: an opaque cover, an inert grid, "Private tab" on every card and the hero, the Tabs pane as before', async () => {
+    const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+    const state = mixed()
+    state.spaces[0].activeTabId = 'p1'
+    try {
+      act(() => applyPrivateLock({ locked: true, screenLock: true }))
+      render(state)
+      expect(selected('private')).toBe(true)
+      const cover = host!.querySelector<HTMLElement>('[data-testid="private-lock-cover"]')!
+      expect(cover).not.toBeNull()
+      // The cover stands on its own base: no `data-backdrop` variant leaning on a blur of what
+      // lies under it (the composited overview never gave it one).
+      expect(cover.hasAttribute('data-backdrop')).toBe(false)
+      expect(cover.querySelector('.zen-private-lock-block h2')!.textContent).toBe(
+        'Your private tabs are locked'
+      )
+      // The grid is out of reach – inert, hidden from readers – and its cards read the word.
+      expect(grid().hasAttribute('inert')).toBe(true)
+      expect(grid().getAttribute('aria-hidden')).toBe('true')
+      for (const id of ['p1', 'p2']) {
+        const card = cellOf(id).querySelector<HTMLElement>('.zen-overview-card')!
+        expect(card.getAttribute('aria-label')).toBe('Private tab')
+        expect(card.hasAttribute('data-masked')).toBe(true)
+        expect(card.querySelector('.zen-overview-card-title')!.textContent).toBe('Private tab')
+        expect(
+          card.querySelector('.zen-overview-card-favicon svg.lucide-venetian-mask')
+        ).not.toBeNull()
+        expect(card.querySelector('.zen-overview-card-favicon img')).toBeNull()
+      }
+      expect(host!.textContent).not.toContain('one.example')
+      expect(host!.textContent).not.toContain('two.example')
+      // The hero of the morph from the locked tab: the placeholder, never the title.
+      act(() =>
+        root!.render(
+          createElement(
+            StrictMode,
+            null,
+            createElement(TabOverview, {
+              state,
+              overview: { phase: 'settling', progress: 0.5, heroTabId: 'p1', target: 1 },
+              area: AREA,
+              edge: 'bottom'
+            })
+          )
+        )
+      )
+      const hero = host!.querySelector<HTMLElement>('.zen-overview-hero')!
+      expect(hero).not.toBeNull()
+      expect(hero.textContent).toBe('Private tab')
+      expect(hero.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+      // The Tabs pane beside it is not locked: its cards keep their names, the grid is reachable.
+      render(state)
+      act(() => segment('tabs').click())
+      expect(grid().hasAttribute('inert')).toBe(false)
+      expect(grid().hasAttribute('aria-hidden')).toBe(false)
+      expect(
+        cellOf('a').querySelector<HTMLElement>('.zen-overview-card')!.getAttribute('aria-label')
+      ).toBe('a')
+      expect(host!.querySelector('[data-testid="private-lock-cover"]')).toBeNull()
+      // The lock off: the cards read their titles again.
+      act(() => segment('private').click())
+      act(() => applyPrivateLock({ locked: false }))
+      render(state)
+      expect(grid().hasAttribute('inert')).toBe(false)
+      expect(cellOf('p1').querySelector<HTMLElement>('.zen-overview-card-title')!.textContent).toBe(
+        'p1'
+      )
+    } finally {
+      act(() => resetPrivateLock())
+    }
+  })
+
   it('with no private tab the private pane is the explainer, whose button asks for a private tab', () => {
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     act(() => segment('private').click())

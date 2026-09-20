@@ -168,24 +168,37 @@ describe('the lock cover', () => {
     // under it turns into the opaque cover), then the veil over it.
     expect(el.querySelector('[data-testid="tab-preview-masked"]')).not.toBeNull()
     expect(el.querySelector('.zen-private-lock-veil')).not.toBeNull()
-    expect(el.hasAttribute('data-backdrop')).toBe(false)
-    expect(el.querySelector('.zen-private-lock-block h2')?.textContent).toBe(
-      'Your private tabs are locked'
-    )
+    const title = el.querySelector<HTMLElement>('.zen-private-lock-block h2')!
+    expect(title.textContent).toBe('Your private tabs are locked')
+    // §9.17's cover form: the 20 px glyph naming the state, the title 17/600 on the heading line
+    // (`.zen-private-lock-title` reads `--v2-font-heading` / `--v2-line-heading`), the one
+    // primary 8 below (`mt-2`); no description.
+    const mask = el.querySelector<SVGElement>('.zen-private-lock-block > svg.lucide-venetian-mask')!
+    expect(mask.classList.contains('h-5')).toBe(true)
+    expect(mask.classList.contains('w-5')).toBe(true)
+    expect(title.classList.contains('zen-private-lock-title')).toBe(true)
+    expect(el.querySelectorAll('.zen-private-lock-block p')).toHaveLength(0)
     const unlock = el.querySelector<HTMLButtonElement>('[data-testid="private-lock-unlock"]')!
     expect(unlock.textContent).toBe('Unlock')
     expect(unlock.classList.contains('zen-v2-button')).toBe(true)
     expect(unlock.hasAttribute('data-primary')).toBe(true)
-    // The fingerprint glyph on the button, the mask above the title: Lucide, hidden from readers.
-    expect(unlock.querySelector('svg.lucide-fingerprint')?.getAttribute('aria-hidden')).toBe('true')
-    expect(el.querySelector('svg.lucide-venetian-mask')?.getAttribute('aria-hidden')).toBe('true')
+    expect(unlock.classList.contains('mt-2')).toBe(true)
+    // The fingerprint glyph on the button (20 px, 8 before the label: §9.11's leading glyph that
+    // names the means), the mask above the title: Lucide, hidden from readers.
+    const finger = unlock.querySelector<SVGElement>('svg.lucide-fingerprint')!
+    expect(finger.getAttribute('aria-hidden')).toBe('true')
+    expect(finger.classList.contains('h-5')).toBe(true)
+    expect(unlock.classList.contains('gap-2')).toBe(true)
+    expect(mask.getAttribute('aria-hidden')).toBe('true')
   })
 
-  it('over the Private pane (no tab) it has no picture and no base: the veil blurs what lies under it', () => {
+  it('over the Private pane (no tab) it has no picture: the veil lies on the opaque panel base, nothing under the cover shows through', () => {
     applyPrivateLock({ locked: true, screenLock: true })
     render({ shown: true, tab: null })
     const el = cover()!
-    expect(el.hasAttribute('data-backdrop')).toBe(true)
+    // One cover, one base: no variant leaning on a backdrop blur (the composited overview
+    // defeats one, and the pane's cards would read through the tint).
+    expect(el.hasAttribute('data-backdrop')).toBe(false)
     expect(el.querySelector('[data-testid="tab-preview-masked"]')).toBeNull()
     expect(el.querySelector('.zen-private-lock-veil')).not.toBeNull()
   })
@@ -231,9 +244,34 @@ describe('the lock cover', () => {
     expect(p).toBeLessThan(1)
     // Still lifting: the page stays hidden under the cover.
     expect(privateLockStore.get().lifting).toBe(true)
-    frames.run(60)
+    // The lift lands: the value runs to 0 in its own time – the spring rests at the unit's scale
+    // (`SPRING_LIFT`), not at the shared spring's px thresholds, which would call it settled
+    // around the half and cut the cover away with the veil at half and the picture still
+    // blurred. Every frame is read while the lift runs.
+    const trace: number[] = [p]
+    // The landing frame's write is read as it is made: the effect's cleanup clears the property
+    // once the lift is done.
+    const setProperty = el.style.setProperty.bind(el.style)
+    vi.spyOn(el.style, 'setProperty').mockImplementation((name, value) => {
+      if (name === '--zen-lock-p' && value !== null) trace.push(Number.parseFloat(value))
+      setProperty(name, value)
+    })
+    let lifting = true
+    for (let i = 0; i < 60 && lifting; i++) {
+      frames.run(1)
+      lifting = privateLockStore.get().lifting
+    }
+    expect(lifting).toBe(false)
+    // At rest by 370 ms (22 frames at 60 Hz, + the 2 above), not in five, and at 0 when it lands.
+    expect(trace.length).toBeGreaterThan(12)
+    expect(trace.length).toBeLessThan(30)
+    expect(trace.at(-1)).toBe(0)
+    // Monotone, no frame stepping more than .13.
+    for (let i = 1; i < trace.length; i++) {
+      expect(trace[i]).toBeLessThanOrEqual(trace[i - 1])
+      expect(trace[i - 1] - trace[i]).toBeLessThan(0.13)
+    }
     // Landed: the lift is over, the store says so, and the cover goes once the frame stops asking.
-    expect(privateLockStore.get().lifting).toBe(false)
     render({ shown: false, tab: X1 })
     expect(cover()).toBeNull()
   })
@@ -285,7 +323,7 @@ describe('the lock cover', () => {
     expect(privateLockStore.get()).toMatchObject({ locked: true, lifting: false })
   })
 
-  it('main.css draws the cover from the lift progress: the blur, the veil and the block ride `--zen-lock-p`, the panel base under a picture, none under a backdrop', () => {
+  it('main.css draws the cover from the lift progress: the blur, the veil and the block ride `--zen-lock-p` on the one opaque panel base; nothing slides, nothing blurs its backdrop', () => {
     const rule = (selector: string): string => {
       const at = css.indexOf(`${selector} {`)
       expect(at, selector).toBeGreaterThan(-1)
@@ -293,13 +331,24 @@ describe('the lock cover', () => {
     }
     expect(rule('.zen-private-lock')).toMatch(/--zen-lock-p: 1;/)
     expect(rule('.zen-private-lock')).toMatch(/background: var\(--v2-panel\);/)
-    expect(rule('.zen-private-lock[data-backdrop]')).toMatch(/background: transparent;/)
+    // One base for every form of the cover (§9.19's opaque `--v2-panel` where there is no
+    // picture): no transparent variant.
+    expect(css).not.toContain('.zen-private-lock[data-backdrop]')
     expect(rule('.zen-private-lock-picture')).toMatch(
       /filter: blur\(calc\(var\(--zen-lock-blur\) \* var\(--zen-lock-p\)\)\);/
     )
-    expect(rule('.zen-private-lock-veil')).toMatch(/backdrop-filter: blur\(calc\(/)
+    // The veil tints and fades; it does not blur what lies under it (a backdrop blur reads
+    // nothing through a composited layer, and over a picture it would blur the blur).
+    expect(rule('.zen-private-lock-veil')).not.toMatch(/backdrop-filter/)
     expect(rule('.zen-private-lock-veil')).toMatch(/opacity: var\(--zen-lock-p\);/)
     expect(rule('.zen-private-lock-block')).toMatch(/opacity: var\(--zen-lock-p\);/)
+    // §11.6: nothing on the cover slides – the block's transform is its centring alone.
+    expect(rule('.zen-private-lock-block')).toMatch(/transform: translateY\(-50%\);/)
+    expect(rule('.zen-private-lock-block')).not.toMatch(/8px/)
+    // The title at §9.17's 17/600 on the heading line.
+    expect(rule('.zen-private-lock-title')).toMatch(/font-size: var\(--v2-font-heading\);/)
+    expect(rule('.zen-private-lock-title')).toMatch(/line-height: var\(--v2-line-heading\);/)
+    expect(rule('.zen-private-lock-title')).toMatch(/font-weight: 600;/)
     // A locked private tab's picture is masked wherever a card shows it.
     expect(rule('.zen-tab-preview-masked')).toMatch(/filter: blur\(/)
   })

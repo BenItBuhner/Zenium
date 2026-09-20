@@ -3,7 +3,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Fingerprint, VenetianMask } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { fadeOpacity } from '@renderer/lib/motion/fade'
-import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
+import {
+  SPRING_SNAPPY,
+  SpringAnimation,
+  reducedMotion,
+  type SpringConfig
+} from '@renderer/lib/motion/spring'
 import { liftLanded, privateLockStore, unlockPrivateTabs } from '@renderer/lib/privateLock'
 import { cn } from '@renderer/lib/utils'
 import { V2Button } from '../extensions/v2'
@@ -28,6 +33,16 @@ interface Props {
 /** The picture's blur under the veil, at rest (CSS px; `--zen-lock-blur` in main.css). */
 export const LOCK_BLUR_PX = 18
 
+/**
+ * `SPRING_SNAPPY` for the lift's 1 → 0 value. The shared spring rests in px and px/s
+ * (`restDelta` .4, `restSpeed` 8): on a unit value it would call the lift settled around the
+ * half and snap the cover away with the veil at half and the picture still blurred – a pop, not
+ * a lift. A hundredth of each lets the value run to 0 as a position does (`MenuSheet`'s fill
+ * and `BarPreview`'s presence take the same numbers): 22 frames at 60 Hz, no frame stepping
+ * more than .13, at rest by 370 ms.
+ */
+const SPRING_LIFT: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
+
 /** What the last render had of the lock and the ask, and whether the cover is on its lift. */
 interface Phase {
   locked: boolean
@@ -38,17 +53,20 @@ interface Phase {
 /**
  * The lock cover of "Lock private tabs when you leave Zenium" (INC-05; Chrome's locked Incognito
  * view): over a locked private tab in the content frame, and over the overview's Private pane.
- * The private content stays under it, blurred to colour – the tab's last picture (`TabPreview`,
- * masked), the pane's cards under the veil's backdrop blur – behind a veil in the panel tone; a
- * tab with no picture (never captured) has the bare placeholder under the veil, which then
- * reads as the opaque panel-toned cover. On it, §9.17's empty-state
- * block: the mask, "Your private tabs are locked" and one primary button, Unlock with the
- * fingerprint glyph, in the window family – which the private theme paints, the tab in view
- * being private (§9.19). Unlock asks the host for the system's prompt (`unlockPrivateTabs`); a
- * pass lifts the cover on the spring – the veil fading and the blur dissolving into the page's
- * picture, the page view coming back under it as the lift lands (`lifting`, `liftLanded`) – and a
- * cancel or a failure leaves it, the prompt having carried its own message. The regular tabs,
- * Settings and the bar are not covered: only private content is.
+ * An opaque cover in the panel tone (§9.19: nothing of the page's identity shows before the
+ * unlock, so it never relies on what lies under it): over a private tab the tab's last picture
+ * lies on it blurred to colour (`TabPreview`, masked) under a veil in the window's tone; with no
+ * picture – the Private pane, whose cards it hides whole, the private new tab page, a tab never
+ * captured – the veil lies on the panel base alone. On it, §9.17's cover form of the page
+ * block: the 20 px mask naming the state, "Your private tabs are locked" at 17/600, one primary
+ * button 8 below – Unlock with the fingerprint glyph (§9.11: the glyph names the means, the
+ * label the outcome) – and no description, centred at 45% of the height, in the window family
+ * the private theme paints (§9.29, §9.19). Unlock asks the host for the system's prompt
+ * (`unlockPrivateTabs`); a pass lifts the cover on the spring (§11.6: one value, the veil and the
+ * block fading, the blur dissolving into the page's picture, nothing sliding), the page view
+ * coming back under it as the lift lands (`lifting`, `liftLanded`); a cancel or a failure leaves
+ * it, the prompt having carried its own message. The regular tabs, Settings and the bar are not
+ * covered: only private content is.
  */
 export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.Element | null {
   const prompting = privateLockStore.use((s) => s.prompting)
@@ -84,12 +102,13 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
       setPhase((p) => (p.leaving ? { ...p, leaving: false } : p))
       liftLanded()
     }
-    // Under reduced motion the departure is the 120 ms fade in place (§11.3).
+    // Under reduced motion the departure is §11.3's 120 ms fade in place (the program's reading
+    // of §11.6's "a cut": the departure rule every surface takes).
     const stop = reducedMotion()
       ? fadeOpacity(el, 0, done)
       : (() => {
           const spring = new SpringAnimation(
-            SPRING_SNAPPY,
+            SPRING_LIFT,
             (x) => el.style.setProperty('--zen-lock-p', Math.max(0, Math.min(1, x)).toFixed(4)),
             done
           )
@@ -110,9 +129,6 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
       className={cn('zen-private-lock absolute inset-0', className)}
       data-testid="private-lock-cover"
       data-leaving={leaving || undefined}
-      // No picture of its own (the Private pane, the private new tab page): the veil's backdrop
-      // blur covers what lies under it, on no base.
-      data-backdrop={tab ? undefined : ''}
       // The window family: the private theme's ink (§9.29).
       data-surface="window"
       // A leaving cover takes no press: its Unlock is done.
@@ -126,14 +142,12 @@ export function PrivateLockCover({ shown, tab = null, className }: Props): JSX.E
         className="zen-private-lock-block absolute inset-x-0 flex flex-col items-center px-8 text-center"
         style={{ top: '45%' }}
       >
-        <VenetianMask className="h-12 w-12" strokeWidth={1.5} aria-hidden />
-        <h2 className="mt-4 text-[22px] font-semibold leading-7 tracking-[-0.012em]">
-          Your private tabs are locked
-        </h2>
+        <VenetianMask className="h-5 w-5" strokeWidth={1.75} aria-hidden />
+        <h2 className="zen-private-lock-title mt-3">Your private tabs are locked</h2>
         <V2Button
           variant="primary"
           busy={prompting}
-          className="mt-5 gap-2"
+          className="mt-2 gap-2"
           data-testid="private-lock-unlock"
           onClick={() => void unlockPrivateTabs()}
         >

@@ -2409,19 +2409,23 @@
   /*
    * The lock cover of "Lock private tabs when you leave Zenium" (INC-05 / SET-17,
    * `PrivateLockCover`; Chrome's locked Incognito view): over a locked private tab in the
-   * content frame, and over the overview's Private pane. The private content is behind it,
-   * blurred to colour – the tab's last picture (`.zen-private-lock-picture`, the masked
-   * `TabPreview`) on an opaque panel-toned base, or the pane's cards under the veil's backdrop
-   * blur – and a veil in the window's solid tone over that; a tab never pictured has the base
-   * alone under the veil, the opaque cover. The blur is the chrome's, drawn over the tab's
-   * picture rather than the live view: the page view is hidden under the lock, so there is
-   * nothing live to blur and nothing to leak, and every API level gets the same cover. On it,
-   * the page block of §9.17 – the mask, the title 22/600, one primary button – with its middle
-   * at 45% of the height, in the window family (`data-surface="window"`), which the private
-   * theme paints as the tab in view is private (§9.19); the button keeps the primitive's
-   * `--v2-accent` mix, as the private new tab page's switch does. The lift after a pass runs on
-   * `--zen-lock-p` (1 → 0, the spring): the veil and the block fade, the blur and the picture's
-   * overscale dissolve to the sharp picture, which is what the page comes back in place of.
+   * content frame, and over the overview's Private pane. An opaque cover in the panel tone
+   * (§9.19: "an opaque `--v2-panel` where there is no picture"; it never relies on blurring what
+   * lies under it – a `backdrop-filter` reads nothing through a composited layer such as the
+   * overview's `will-change`, and the pane's card titles read through a tint): over a private
+   * tab the tab's last picture (`.zen-private-lock-picture`, the masked `TabPreview`) lies on
+   * the base blurred to colour, and a veil in the window's solid tone over it; the Private
+   * pane, the private new tab page and a tab never pictured have the base alone under the
+   * veil. The blur is the chrome's, drawn over the tab's picture rather than the live view: the
+   * page view is hidden under the lock, so there is nothing live to blur and nothing to leak,
+   * and every API level gets the same cover. On it, §9.17's cover form of the page block – the
+   * 20 px mask, the title 17/600 on `--v2-line-heading`, one primary button 8 below, no
+   * description – with its middle at 45% of the height, in the window family
+   * (`data-surface="window"`), which the private theme paints as the tab in view is private
+   * (§9.19); the button keeps the primitive's `--v2-accent` mix, as the private new tab page's
+   * switch does. The lift after a pass runs on `--zen-lock-p` (1 → 0, `SPRING_LIFT`, §11.6): the
+   * veil and the block fade, the blur and the picture's overscale dissolve to the sharp
+   * picture, which is what the page comes back in place of; nothing on the cover slides.
    */
   .zen-private-lock {
     --zen-lock-p: 1;
@@ -2432,23 +2436,22 @@
     background: var(--v2-panel);
     corner-shape: var(--zen-corner);
   }
-  /* No picture (the Private pane, the private new tab page): no base, the backdrop blurs. */
-  .zen-private-lock[data-backdrop] {
-    background: transparent;
-  }
   .zen-private-lock-picture {
     filter: blur(calc(var(--zen-lock-blur) * var(--zen-lock-p)));
     transform: scale(calc(1 + 0.08 * var(--zen-lock-p)));
   }
   .zen-private-lock-veil {
     background: color-mix(in srgb, var(--zen-bg-solid) 62%, transparent);
-    -webkit-backdrop-filter: blur(calc(var(--zen-lock-blur) * var(--zen-lock-p)));
-    backdrop-filter: blur(calc(var(--zen-lock-blur) * var(--zen-lock-p)));
     opacity: var(--zen-lock-p);
   }
   .zen-private-lock-block {
     opacity: var(--zen-lock-p);
-    transform: translateY(calc(-50% + 8px * (1 - var(--zen-lock-p))));
+    transform: translateY(-50%);
+  }
+  .zen-private-lock-title {
+    font-size: var(--v2-font-heading);
+    line-height: var(--v2-line-heading);
+    font-weight: 600;
   }
   .zen-private-lock[data-leaving] {
     pointer-events: none;

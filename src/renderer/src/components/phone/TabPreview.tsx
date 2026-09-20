@@ -2,8 +2,7 @@ import type { CSSProperties, JSX } from 'react'
 import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { getHost, isEmptyTabUrl } from '@shared/url'
-import { privateLockStore } from '@renderer/lib/privateLock'
-import { isPrivateTab } from '@renderer/lib/privateTabs'
+import { useTabMasked } from '@renderer/lib/privateLock'
 import { tabTitle } from '@renderer/lib/selectors'
 import { useThumbnail } from '@renderer/lib/thumbnails'
 import { cn } from '@renderer/lib/utils'
@@ -43,8 +42,8 @@ interface Props {
  * A private tab's card while the private tabs are locked (INC-05, `lib/privateLock.ts`) shows
  * none of it: its picture blurred to colour (`.zen-tab-preview-masked`), or a bare placeholder
  * with no title, host or favicon – wherever the card is drawn: the hero of the overview morph,
- * the swipe track's neighbours, a card leaving; the lock cover over the pane or the page carries
- * the mask and the word.
+ * the swipe track's neighbours, a card leaving (its title row reads the placeholder the same
+ * way, `CardBody`); the lock cover over the pane or the page carries the mask and the word.
  */
 export function TabPreview({
   tab,
@@ -56,7 +55,7 @@ export function TabPreview({
   style
 }: Props): JSX.Element {
   const thumbnail = useThumbnail(tab.id, { cover, sharp, visible })
-  const masked = privateLockStore.use((s) => s.locked || s.lifting) && isPrivateTab(tab)
+  const masked = useTabMasked(tab)
   // A chrome page is never captured: its card shows the page drawn small (v2 §10.1).
   if (isChromePageUrl(tab.url)) {
     return (

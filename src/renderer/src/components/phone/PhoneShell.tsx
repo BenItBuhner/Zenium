@@ -578,6 +578,16 @@ export function PillContent({
         >
           <Favicon tab={shown} size={16} />
         </span>
+      ) : shown && locked ? (
+        // Under the lock the slot is the mask alone – no site-information control announced for
+        // a page nothing may be read of; the pill's tap asks for the screen lock (INC-05).
+        <span
+          className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+          data-private-mark=""
+          aria-hidden="true"
+        >
+          <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+        </span>
       ) : shown ? (
         <PillChip
           inert={!interactive}
