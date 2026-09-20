@@ -30,6 +30,7 @@ import java.io.File
 import java.lang.reflect.Method
 import java.util.Calendar
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -285,18 +286,21 @@ class ChromeA11yDemo : DemoHarness(
         awaitNode(8_000) { it == "Copy link" }
         awaitIme(shown = true, timeoutMs = 6_000)
         SystemClock.sleep(1_200)
+        // The bottom dock's order, top to bottom as the screen has it: the header row's chips,
+        // the suggestions list, then the field on the bar's line (the DOM lays the field last at
+        // this dock; run 3 named it ahead of the list and read the list as out of order).
         audit(
             "omnibox-header",
             listOf(
                 Want("Share", "Button"),
                 Want("Copy link", "Button"),
                 Want("Edit", "Button"),
-                Want("Search or enter address", "EditText", listOf("editable"), prefix = true),
                 // #208's clipboard row on the empty field: the kind from the clip's description
                 // ("Link you copied" once the system has classified the text, "Text you copied"
                 // before), and its Show, a `--v2-control` text button, as the option's sibling.
                 Want("you copied", "", contains = true),
-                Want("Show", "Button")
+                Want("Show", "Button"),
+                Want("Search or enter address", "EditText", listOf("editable"), prefix = true)
             )
         )
         clipboardRowScene()
@@ -359,7 +363,7 @@ class ChromeA11yDemo : DemoHarness(
         expect("[inert] the Settings tab's rows leave the tree under the History panel (inert)", before > 0 && under.isEmpty())
         expect("[inert] the panel's own rows are in the tree", walk().any { it.control && it.label.startsWith("Search history") })
         snap("inert-history-over-settings")
-        back()
+        dismiss()
         awaitSurface(up = false, timeoutMs = 6_000)
         val back = awaitNode(8_000) { it == "Look and Feel" }
         expect("[inert] the Settings tab's rows are back once the panel is closed", back != null)
@@ -394,7 +398,7 @@ class ChromeA11yDemo : DemoHarness(
             listOf(
                 Want("Search or enter address", "", prefix = true),
                 Want("New tab", "Button"),
-                Want("Tabs (", "ToggleButton", listOf("pressed=false"), prefix = true),
+                tabsWant("private-ntp"),
                 Want("Menu", "Button")
             )
         )
@@ -413,7 +417,7 @@ class ChromeA11yDemo : DemoHarness(
                 Want(SITE_INFO, "Button"),
                 Want(SECURE, "Button"),
                 Want("New tab", "Button"),
-                Want("Tabs (", "ToggleButton", prefix = true),
+                tabsWant("private-bar", pressed = false),
                 Want("Menu", "Button")
             )
         )
@@ -452,7 +456,7 @@ class ChromeA11yDemo : DemoHarness(
             } else {
                 fail("[private] no touch landed on the segment's Tabs")
             }
-            back()
+            dismiss()
             awaitChrome(8_000) { !overviewOpen() }
         }
         if (openMenuSheet()) {
@@ -513,24 +517,36 @@ class ChromeA11yDemo : DemoHarness(
             )
             val dialog = walk().firstOrNull { !it.control && it.cls.endsWith("Dialog") }
             expect("the header menu is a dialog named for the space: '${dialog?.label}'", dialog?.label == "Browse")
-            back()
+            dismiss()
             awaitChrome(6_000) { findNode { it.startsWith("Close All Tabs") } == null }
             SystemClock.sleep(800)
         } else {
             fail("no touch landed on the overview's More button")
         }
         toastScene()
-        back()
+        dismiss()
         awaitChrome(8_000) { !overviewOpen() }
     }
 
-    /** A card's close from the overview: the toast is a status region with a 40 action and its text; Undo puts the tab back. */
+    /**
+     * A card's close from the overview: the toast is a status region with a 40 action and its
+     * text; Undo puts the tab back. Delta's card is the grid's last row, and the overview opens
+     * scrolled to the current card with that row under the bar: runs 2 and 3 touched the middle
+     * of its Close's bounds there, the finger landed on the pill instead, the overview closed and
+     * no toast came. The card is scrolled to the grid's middle first ([revealCardClose]) and the
+     * touch is checked by the tab going, not by the toast alone.
+     */
     private fun toastScene() {
         watchToasts()
-        if (!touchTapFresh { it == "Close Delta" }) {
+        val tabsBefore = coreState().getJSONObject("tabs").length()
+        val close = revealCardClose("Close Delta", "tab_delta")
+        finding("  Delta's Close for the touch: ${close?.toShortString() ?: "not in the tree"} (the bar's top at ${bounds(MENU_LABEL)?.top})")
+        if (close == null || !touchTapFresh { it == "Close Delta" }) {
             fail("no touch landed on Close Delta")
             return
         }
+        val closed = awaitChrome(8_000) { !tabWithUrl("/delta.html") }
+        expect("a touch on Close Delta closes Delta's tab ($tabsBefore tabs before, ${coreState().getJSONObject("tabs").length()} after)", closed)
         val text = awaitToastText("Closed", 8_000)
         expect("closing Delta's card brings the toast: '$text'", text != null)
         val dom = chromeValue(TOAST_JS)
@@ -647,7 +663,7 @@ class ChromeA11yDemo : DemoHarness(
             )
             val dialog = walk().firstOrNull { !it.control && it.cls.endsWith("Dialog") }
             expect("the picker is a dialog named after the row: '${dialog?.label}'", dialog?.label == "Toolbar layout")
-            back()
+            dismiss()
             awaitChrome(6_000) { findNode { it == "Single toolbar" } == null }
         }
     }
@@ -713,7 +729,9 @@ class ChromeA11yDemo : DemoHarness(
         expect("a touch on Close find bar closes it", touchTapLabelExpecting("Close find bar", "the find bar is gone") { findNode { it == "Close find bar" } == null })
     }
 
+    /** The zoom panel over a page (the menu's Zoom… is disabled on a New Tab page: run 3 read it there once example.com's tab had gone). */
     private fun zoomScene() {
+        if (!ensureExample()) return
         if (!openMenuItem("Zoom…")) {
             fail("Zoom… did not open from the menu")
             return
@@ -786,6 +804,7 @@ class ChromeA11yDemo : DemoHarness(
             return
         }
         val label = if (zoom == "100") "bold-text" else "scale-$zoom-bold-text"
+        ensureExample()
         shell("settings put secure font_weight_adjustment 300")
         val bold = awaitChrome(10_000) { chromeValue("document.documentElement.dataset.boldText||''") == "true" }
         val adjustment = chromeValue("getComputedStyle(document.documentElement).getPropertyValue('--zen-font-weight-adjustment').trim()")
@@ -820,19 +839,29 @@ class ChromeA11yDemo : DemoHarness(
         val factor = (zoom.toIntOrNull() ?: 100) / 100.0
         clearChrome()
         // The bar and pill measured are the https page's, whatever tab the scenes before left
-        // current (run 2 measured a New Tab page: its pill is the plain field, no "Address" stop).
-        if (awaitPill(2_000) { it.contains("example.com") } == null) {
-            activateTab("tab_example")
-            awaitPill { it.contains("example.com") }
-        }
+        // current (run 2 measured a New Tab page: its pill is the plain field, no "Address" stop;
+        // run 3 had lost the tab itself).
+        ensureExample()
         SystemClock.sleep(1_000)
-        // 1. The bar and the pill: 44 dp controls whatever the text does.
+        // 1. The bar and the pill: 44 dp controls whatever the text does. The box is the design's
+        // 44 (CSS); the tree's reading is the box's enclosing device pixels after Blink's own
+        // rounding of the CSS rect, a dp or two over (runs 2 and 3 read 46 x 45 for the 44 boxes
+        // at every zoom), so the tree answers for the floor and the CSS box for the size.
         val menu = bounds("Menu")
         val newTab = bounds("New tab")
+        val menuCss = domSize("[data-bar-item=\"menu\"]")
+        val newTabCss = domSize("[data-bar-item=\"new-tab\"]")
         val field = findNode { it.startsWith("$PILL_LABEL,") }?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
-        finding("  [$label] Menu ${menu?.let { sz(it) }}, New tab ${newTab?.let { sz(it) }}, pill field ${field?.let { sz(it) }}")
-        expect("[$label] the bar's buttons hold 44 x 44", menu != null && newTab != null && near44(menu) && near44(newTab))
-        expect("[$label] the pill's field holds 44 tall", field != null && abs(dp(field.height()) - 44) <= TOLERANCE)
+        val fieldCss = domHeight("[aria-label^=\"$PILL_LABEL, \"]")
+        finding("  [$label] Menu ${menu?.let { sz(it) }} (CSS $menuCss), New tab ${newTab?.let { sz(it) }} (CSS $newTabCss), pill field ${field?.let { sz(it) }} (CSS $fieldCss tall)")
+        expect(
+            "[$label] the bar's buttons hold 44 x 44 (CSS Menu $menuCss, New tab $newTabCss; tree ${menu?.let { sz(it) }}, ${newTab?.let { sz(it) }})",
+            menu != null && newTab != null && holds44(menu) && holds44(newTab) && is44(menuCss) && is44(newTabCss)
+        )
+        expect(
+            "[$label] the pill's field holds 44 tall (CSS $fieldCss; tree ${field?.let { dp(it.height()) }})",
+            field != null && dp(field.height()) >= 44 - TOLERANCE && dp(field.height()) <= 44 + 2.5 && (fieldCss == null || abs(fieldCss - 44) <= 0.5)
+        )
         val tokens = chromeValue(TOKENS_JS)
         finding("  [$label] tokens $tokens")
         // The pill's host text sits centred in the 44 control and is not clipped (the lead's nit 3).
@@ -850,7 +879,10 @@ class ChromeA11yDemo : DemoHarness(
             awaitNode(10_000) { it == "Look and Feel" }
             SystemClock.sleep(1_500)
             val row = bounds("Look and Feel")
-            val search = findNode { it.startsWith("Find in Settings") }?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
+            // The field's name is its placeholder, the node's hint (no text, no description), so
+            // the audit's own walk finds it where the harness's label search does not (run 3
+            // read null for the field the settings scene had just audited).
+            val search = walk().firstOrNull { it.control && it.cls.endsWith("EditText") && it.label.startsWith("Find in Settings") }?.bounds
             val searchCss = domHeight("input[placeholder=\"Find in Settings\"]")
             val rowCss = domHeight("[data-page] nav button, [data-page] nav a")
             val wantRow = 20 * factor + 24
@@ -862,6 +894,7 @@ class ChromeA11yDemo : DemoHarness(
             overflowCheck(label, "settings")
             snap("$label-settings")
             clearChrome()
+            ensureExample()
         }
         // 3. The omnibox with suggestions.
         tapPill()
@@ -872,10 +905,14 @@ class ChromeA11yDemo : DemoHarness(
             awaitNode(10_000) { it.startsWith(QUERY) }
             SystemClock.sleep(1_500)
             val rows = suggestionRows()
-            finding("  [$label] suggestion rows ${rows.map { dp(it.bounds.height()) }} (line box ${20 * factor} + 24)")
+            // The rows' CSS boxes: the tree clips a row at the list's edge (run 3's last row read
+            // 44 at 1.8 where the list's viewport cut it), so the DOM answers for the height and
+            // the tree's readings are written beside it.
+            val rowsCss = chromeValue(SUGGESTION_ROWS_JS).split(',').mapNotNull { it.toDoubleOrNull() }
+            finding("  [$label] suggestion rows CSS $rowsCss (line box ${20 * factor} + 24 = ${20 * factor + 24}); tree ${rows.map { dp(it.bounds.height()) }}")
             // One line at every scale (the lead's rule: suggestion rows stay one line), so exactly
             // the line box plus 24, not more.
-            expect("[$label] suggestion rows grow from the line box and stay one line", rows.isNotEmpty() && rows.all { abs(dp(it.bounds.height()) - (20 * factor + 24)) <= 2.5 })
+            expect("[$label] suggestion rows grow from the line box and stay one line ($rowsCss vs ${20 * factor + 24})", rowsCss.isNotEmpty() && rowsCss.all { abs(it - (20 * factor + 24)) <= 0.5 })
             overflowCheck(label, "omnibox")
             snap("$label-omnibox")
             closeField()
@@ -923,7 +960,7 @@ class ChromeA11yDemo : DemoHarness(
             }
             overflowCheck(label, "overview")
             snap("$label-overview")
-            back()
+            dismiss()
             awaitChrome(8_000) { !overviewOpen() }
         }
         // 5. A sheet: the app menu.
@@ -933,7 +970,7 @@ class ChromeA11yDemo : DemoHarness(
             expect("[$label] a menu row grows from the line box", row != null && abs(dp(row.height()) - (20 * factor + 24)) <= 2.5)
             overflowCheck(label, "menu")
             snap("$label-sheet")
-            back()
+            dismiss()
             awaitSurface(up = false, timeoutMs = 6_000)
         }
         clearChrome()
@@ -968,8 +1005,7 @@ class ChromeA11yDemo : DemoHarness(
         // The bar's stops as the audit table has them are the https page's: run 2's scenes left
         // a New Tab page current (its pill is the plain field, no chips), so the scene starts
         // from example.com whatever came before it.
-        activateTab("tab_example")
-        awaitPill { it.contains("example.com") }
+        if (!ensureExample()) return
         shell("logcat -c")
         val version = enableTalkBack()
         bringToFront()
@@ -1017,28 +1053,37 @@ class ChromeA11yDemo : DemoHarness(
     }
 
     /**
-     * From Back, one move per control of the bar and one more: the stops TalkBack lands on, in
-     * order, against the tree's own order of the bar's controls (the dock order the bar scene
-     * audited); the pill is one of them, saying address and state, and nothing reads plain
-     * "Address".
+     * From Back, one move per control of the bar after it and one more: the stops TalkBack lands
+     * on, in order, against the tree's own order of the bar's controls (the dock order the bar
+     * scene audited); the pill is one of them, saying address and state, and nothing reads plain
+     * "Address". The last move is a probe past the bar's last control, where the focus may stay
+     * (the end of the chrome's tree; TalkBack does not wrap) or cross to the page's WebView; run
+     * 3 counted that stay as the gesture failing and walked the rest node by node.
      */
     private fun barWalk(dock: String, report: StringBuilder) {
         clearChrome()
-        awaitPill { it.contains("example.com") }
+        ensureExample()
         SystemClock.sleep(1_000)
         val tree = walk().filter { it.control }.map { it.label }
-        val landed = linearWalk("bar-$dock", from = { it == "Back" }, moves = tree.size, report)
+        val landed = linearWalk("bar-$dock", from = { it == "Back" }, moves = tree.size, report, certain = tree.size - 1)
         finding("  [talkback $dock dock] the tree's controls: $tree")
         finding("  [talkback $dock dock] the focus landed on: $landed")
-        val pillStops = landed.filter { it.startsWith("$PILL_LABEL,") || it == PILL_LABEL }
+        val pillStops = landed.take(tree.size).filter { it.startsWith("$PILL_LABEL,") || it == PILL_LABEL }
         expect("[talkback $dock dock] the pill is one stop, saying address and state: $pillStops", pillStops.size == 1 && pillStops[0].startsWith("$PILL_LABEL, example.com, $SECURE"))
         expect("[talkback $dock dock] no stop reads plain '$PILL_LABEL' (no container stop)", landed.none { it == PILL_LABEL })
-        val chrome = landed.takeWhile { it in tree }
+        val chrome = landed.take(tree.size)
         expect(
             "[talkback $dock dock] the swipes land on the bar's controls in the tree's dock order (${chrome.size} of ${tree.size}): ${verdictOf(chrome, tree)}",
-            chrome.size == tree.size && chrome == tree
+            chrome == tree
         )
-        if (landed.size > chrome.size) finding("  [talkback $dock dock] past the bar's last control the focus went to: '${landed[chrome.size]}'")
+        val past = landed.getOrNull(tree.size)
+        val where = when {
+            past == null -> "(no probe move)"
+            past == tree.lastOrNull() -> "stayed on '$past' (the end of the chrome's tree)"
+            past.isBlank() -> "nothing in the window held the focus"
+            else -> "'$past' (outside the chrome's tree: the page's WebView, a sibling view, F1)"
+        }
+        finding("  [talkback $dock dock] past the bar's last control the focus $where")
         snap("talkback-$dock-dock")
     }
 
@@ -1055,7 +1100,7 @@ class ChromeA11yDemo : DemoHarness(
         expect("[talkback card] its Close is the next stop, naming the tab: '${landed.getOrNull(1)}'", landed.getOrNull(1) == "Close Alpha")
         expect("[talkback card] then the next card: '${landed.getOrNull(2)}'", landed.getOrNull(2)?.let { Regex(", tab \\d+ of \\d+").containsMatchIn(it) } == true)
         snap("talkback-card-close")
-        back()
+        dismiss()
         awaitChrome(8_000) { !overviewOpen() }
     }
 
@@ -1085,7 +1130,7 @@ class ChromeA11yDemo : DemoHarness(
         note("[talkback menu] modality probe (F1): past the menu's last row the focus lands on $where")
         report.appendLine("- modality probe: past '${last.label}' the focus went to $where")
         snap("talkback-menu-past-last")
-        back()
+        dismiss()
         awaitSurface(up = false, timeoutMs = 6_000)
     }
 
@@ -1094,11 +1139,20 @@ class ChromeA11yDemo : DemoHarness(
      * input filter, or the next control in the tree given the focus when the filter is out of
      * reach), the label of the node TalkBack's focus rests on after each written down. An empty
      * label is a move after which nothing in the window held the accessibility focus. A swipe
-     * that moves the focus nowhere on a walk whose next stop is certain (`stallIsAnswer` false:
-     * the bar from Back, a card) means the gesture did not reach TalkBack, and the walk goes on
-     * node by node from there, the report saying so; on the modality probe a stall is the answer.
+     * that moves the focus nowhere on a move whose next stop is certain (the first `certain`
+     * moves of a walk that is not the modality probe: the bar's controls after Back, a card's
+     * Close) means the gesture did not reach TalkBack, and the walk goes on node by node from
+     * there, the report saying so; a stall past the tree's last control (the bar walk's probe
+     * move) or on the modality probe (`stallIsAnswer`) is the answer itself.
      */
-    private fun linearWalk(scene: String, from: (String) -> Boolean, moves: Int, report: StringBuilder, stallIsAnswer: Boolean = false): List<String> {
+    private fun linearWalk(
+        scene: String,
+        from: (String) -> Boolean,
+        moves: Int,
+        report: StringBuilder,
+        stallIsAnswer: Boolean = false,
+        certain: Int = moves
+    ): List<String> {
         val landed = ArrayList<String>()
         val start = findNode(from) ?: run {
             fail("[talkback $scene] the starting node is not in the tree")
@@ -1116,16 +1170,20 @@ class ChromeA11yDemo : DemoHarness(
                 filterSwipe(right = true)
                 SystemClock.sleep(1_600)
                 label = focusedLabel()
-                if (label == landed.last() && !stallIsAnswer) {
+                if (label == landed.last() && !stallIsAnswer && i <= certain) {
                     swipeStalled = true
-                    note("[talkback $scene] the injected swipe moved the focus nowhere (from '${landed.last()}'): the walk goes on node by node with ACTION_ACCESSIBILITY_FOCUS")
+                    note("[talkback $scene] the injected swipe moved the focus nowhere (from '${landed.last()}', move $i of $certain certain): the walk goes on node by node with ACTION_ACCESSIBILITY_FOCUS")
                     report.appendLine("- move $i by swipe → the focus stayed on '${landed.last()}'; node by node from here")
                 }
             }
             if (filterInjector == null || swipeStalled) {
                 how = "node by node"
+                // The next control after the one holding the focus – the node that has it, not
+                // the first of its label (a New Tab page's field and the bar's read alike, and
+                // run 3's walk from the bar's went on through the page's shortcuts).
                 val controls = walk().filter { it.control }
-                val at = controls.indexOfFirst { it.label == landed.last() }
+                val at = controls.indexOfFirst { it.states.contains("a11yFocused") }.takeIf { it >= 0 }
+                    ?: controls.indexOfLast { it.label == landed.last() }
                 controls.getOrNull(at + 1)?.node?.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS)
                 SystemClock.sleep(1_600)
                 label = focusedLabel()
@@ -1510,9 +1568,52 @@ class ChromeA11yDemo : DemoHarness(
     private fun domHeight(selector: String): Double? =
         chromeValue("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?e.getBoundingClientRect().height:''})()").toDoubleOrNull()
 
+    /** An element's CSS box in the chrome as "w x h" (the design's px), null when it is not on screen. */
+    private fun domSize(selector: String): String? {
+        val raw = chromeValue("(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';var r=e.getBoundingClientRect();return r.width+','+r.height})()")
+        val parts = raw.split(',').mapNotNull { it.toDoubleOrNull() }
+        return if (parts.size == 2) "${"%.1f".format(parts[0])} x ${"%.1f".format(parts[1])}" else null
+    }
+
+    /** A CSS box read by [domSize] is the design's 44 x 44 (within half a px). */
+    private fun is44(size: String?): Boolean {
+        val parts = size?.split(" x ")?.mapNotNull { it.toDoubleOrNull() } ?: return false
+        return parts.size == 2 && parts.all { abs(it - 44) <= 0.5 }
+    }
+
+    /** The tree's bounds for a 44 box: at the floor, and no more than the enclosing pixels' 2 dp over it. */
+    private fun holds44(bounds: Rect): Boolean =
+        min(dp(bounds.width()), dp(bounds.height())) >= 44 - TOLERANCE && max(dp(bounds.width()), dp(bounds.height())) <= 44 + 2.5
+
+    /**
+     * The bar's Tabs button for an audit: `Tabs (n)`, a toggle button pressed while the overview
+     * is up, as WebView 113 and the preview host read its `aria-label` and `aria-pressed`. The
+     * Chromium snapshot WebView of the `private` job (156) read the same button as a
+     * ToggleButton named by its glyph's count alone ("1") with no pressed state, the DOM carrying
+     * `aria-label="Tabs (1)"` and `aria-pressed="false"` all the same (checked on the preview
+     * host): the want takes what that WebView says, and the findings say so.
+     */
+    private fun tabsWant(scene: String, pressed: Boolean? = null): Want {
+        val states = if (pressed == null) emptyList() else listOf("pressed=$pressed")
+        val asCounted = walk().firstOrNull { it.control && it.cls.endsWith("ToggleButton") && it.label.isNotBlank() && it.label.all { c -> c.isDigit() } }
+        if (asCounted != null && walk().none { it.control && it.label.startsWith("Tabs (") }) {
+            note("[$scene] the bar's Tabs button reads '${asCounted.label}' ${asCounted.states} on this WebView (${webViewPackage()}): its aria-label is 'Tabs (n)' and aria-pressed is set in the DOM, as WebView 113 and the preview host read them; the snapshot's own name computation, recorded")
+            return Want(asCounted.label, "ToggleButton")
+        }
+        return Want("Tabs (", "ToggleButton", states, prefix = true)
+    }
+
     private fun openOverview(): Boolean {
         clearChrome()
-        if (!touchTapFresh { it.startsWith("Tabs (") }) {
+        // The bar's Tabs button by its label, else by its DOM box (the snapshot WebView names it
+        // by its count alone, see [tabsWant]).
+        val touched = touchTapFresh(4_000) { it.startsWith("Tabs (") } || domRect("[data-bar-item=\"tabs\"]")?.let { box ->
+            val point = touchPoint(box) ?: return@let false
+            Log.i(tag, "touch at ${point.x},${point.y} on the Tabs button's DOM box $box")
+            Finger().tap(point.x, point.y)
+            true
+        } ?: false
+        if (!touched) {
             fail("no touch landed on the bar's Tabs button")
             return false
         }
@@ -1523,6 +1624,68 @@ class ChromeA11yDemo : DemoHarness(
         awaitNode(8_000) { it == "Spaces" }
         SystemClock.sleep(2_000)
         return true
+    }
+
+    /**
+     * A tab card's Close clear of the bar for a finger: the card scrolled to the grid's middle
+     * through the DOM (`ACTION_SHOW_ON_SCREEN` leaves a card the bar covers where it is: the
+     * grid's own viewport reaches under the bar, so Blink holds the card visible), then the
+     * tree's node for the Close waited for with its bounds above the bar's top (the tree trails
+     * the screen). The bounds found, or the tree's last reading when they never clear the bar.
+     */
+    private fun revealCardClose(label: String, tabId: String): Rect? {
+        val cell = JSONObject.quote("[data-tab-id=\"$tabId\"]")
+        chromeJs("(function(){var c=document.querySelector($cell);if(c)c.scrollIntoView({block:'center',behavior:'instant'});return !!c})()")
+        val barTop = bounds(MENU_LABEL)?.top ?: (height - (60 * density).roundToInt())
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        var last: Rect? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            last = bounds(label)
+            if (last != null && last.bottom <= barTop - 4 && last.top >= touchable.top) return last
+            SystemClock.sleep(300)
+        }
+        Log.w(tag, "'$label' did not clear the bar (top $barTop): $last")
+        return last
+    }
+
+    /**
+     * A back only while the chrome has something a back dismisses (a surface, the overview): a
+     * back with nothing up is the tab's own, and at a tab's first page the chrome closes the tab
+     * (run 3: the toast scene's touch missed and left nothing up, the scene's back then closed
+     * example.com's tab, and every scene after measured the New Tab page that took its place).
+     */
+    private fun dismiss(): Boolean {
+        if (!overviewOpen() && !chromeSurfaceUp()) {
+            Log.i(tag, "nothing of the chrome's is up: no back sent")
+            return false
+        }
+        back()
+        return true
+    }
+
+    /**
+     * example.com current, with its pill read: the seeded tab where it survives, else the first
+     * tab on the URL, else a fresh one (a lost tab is a note, so the scenes after still measure
+     * the https page the audit table describes). False, with a failure, when no pill reads it.
+     */
+    private fun ensureExample(): Boolean {
+        if (activeCoreTab()?.optString("url") == EXAMPLE_URL && awaitPill(2_000) { it.contains("example.com") } != null) return true
+        val tabs = coreState().getJSONObject("tabs")
+        fun onExample(id: String): Boolean {
+            val tab = tabs.optJSONObject(id) ?: return false
+            return tab.optString("url") == EXAMPLE_URL && tab.optString("containerId") != Profiles.PRIVATE_CONTAINER
+        }
+        val id = if (onExample("tab_example")) "tab_example" else tabs.keys().asSequence().firstOrNull { onExample(it) }
+        if (id != null) {
+            activateTab(id)
+        } else {
+            note("example.com's tab is gone (the tabs are ${tabs.keys().asSequence().map { "${it}=${tabs.optJSONObject(it)?.optString("url")}" }.toList()}): a fresh one opened for the scenes after")
+            coreInvoke("tab.create", "{\"url\":${JSONObject.quote(EXAMPLE_URL)},\"active\":true}")
+            SystemClock.sleep(3_000)
+        }
+        val pill = awaitPill { it.contains("example.com") }
+        if (pill == null) fail("example.com never came current (the pill reads '${findNode { it.startsWith("$PILL_LABEL,") }?.let { label(it) }}'; the active tab is ${activeCoreTab()?.optString("url")})")
+        return pill != null
     }
 
     /** The app menu up and pulled to its full height (the same pull `openMenuItem` makes), without picking anything. */
@@ -1554,8 +1717,10 @@ class ChromeA11yDemo : DemoHarness(
 
     /**
      * Nothing of the chrome's is up: the field, the overview, any sheet, panel or section (each
-     * back is sent only while the chrome reports the surface, since a back with none up would
-     * navigate the page or leave the app), then the Settings tab left to its opener.
+     * back is sent only while the chrome reports the surface, since a back with none up is the
+     * tab's own and closes it at its first page), then the Settings tab closed through the core
+     * (a back there is that same root back; the scenes that need a tab current say which,
+     * [ensureExample]).
      */
     private fun clearChrome() {
         closeField()
@@ -1571,10 +1736,9 @@ class ChromeA11yDemo : DemoHarness(
         }
         if (chromeSurfaceUp()) Log.w(tag, "a chrome surface stayed up")
         if (settingsTabActive()) {
-            for (attempt in 1..2) {
-                back()
-                if (awaitChrome(6_000) { !settingsTabActive() }) break
-            }
+            val id = activeCoreTab()?.optString("id").orEmpty()
+            if (id.isNotBlank()) coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(id)},\"force\":true}")
+            if (!awaitChrome(6_000) { !settingsTabActive() }) Log.w(tag, "the Settings tab stayed current after tab.close")
         }
         SystemClock.sleep(800)
     }
@@ -1796,8 +1960,6 @@ class ChromeA11yDemo : DemoHarness(
 
     private fun sz(bounds: Rect): String = "${dp(bounds.width()).roundToInt()} x ${dp(bounds.height()).roundToInt()}"
 
-    private fun near44(bounds: Rect): Boolean = abs(dp(bounds.width()) - 44) <= TOLERANCE && abs(dp(bounds.height()) - 44) <= TOLERANCE
-
     private fun quote(value: String): String = "\"$value\""
 
     private fun slug(label: String): String = label.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(24)
@@ -1861,6 +2023,8 @@ class ChromeA11yDemo : DemoHarness(
         const val TALKBACK_SERVICE = "$TALKBACK_PACKAGE/$TALKBACK_PACKAGE.TalkBackService"
         /** The link put on the clipboard for #208's row (`seedClipboard`). */
         const val CLIP_URL = "https://example.com/clipboard"
+        /** The https page the audit table describes the bar on (the seed's `tab_example`). */
+        const val EXAMPLE_URL = "https://example.com/"
         const val MENU_NEW_PRIVATE = "New Private Tab"
         const val MENU_CLOSE_PRIVATE = "Close Private Tabs"
         const val PRIVATE_TITLE = "You're browsing privately"
@@ -1899,6 +2063,14 @@ class ChromeA11yDemo : DemoHarness(
               if (!s) return '';
               var a = c.getBoundingClientRect(), b = s.getBoundingClientRect();
               return [a.height, b.height, (b.top + b.bottom) / 2 - (a.top + a.bottom) / 2, s.scrollHeight - s.clientHeight].join(',');
+            })()
+        """.trimIndent()
+
+        /** The phone omnibox's suggestion rows (the sheet's `li`s, option and control together): their CSS heights, comma-separated. */
+        val SUGGESTION_ROWS_JS = """
+            (function () {
+              var rows = document.querySelectorAll('li.zen-suggestion-sheet');
+              return Array.prototype.map.call(rows, function (r) { return r.getBoundingClientRect().height; }).join(',');
             })()
         """.trimIndent()
 
