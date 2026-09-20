@@ -1713,12 +1713,18 @@ function hold(text: string): void {
   )
 }
 
+/**
+ * What a finger could press: a button, or a checkbox row's label (`.zen-v2-check-row`, §9.30),
+ * whose whole face toggles its box.
+ */
+const PRESSABLE = 'button, [role="button"], label:has(> input[type="checkbox"])'
+
 /** The first button a finger could press whose accessible label or own text reads `text`. */
 function pressable(text: string): HTMLElement | null {
   const wanted = text.trim()
   const reachable = (el: Element | null | undefined): el is HTMLElement =>
     el instanceof HTMLElement && !el.closest('[inert]') && el.getAttribute('aria-hidden') !== 'true'
-  for (const el of document.querySelectorAll<HTMLElement>('button, [role="button"]')) {
+  for (const el of document.querySelectorAll<HTMLElement>(PRESSABLE)) {
     if (!reachable(el)) continue
     if (el.getAttribute('aria-label')?.trim() === wanted || el.textContent?.trim() === wanted)
       return el
@@ -1728,7 +1734,7 @@ function pressable(text: string): HTMLElement | null {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node.textContent?.trim() !== wanted) continue
-    const button = node.parentElement?.closest('button, [role="button"]')
+    const button = node.parentElement?.closest(PRESSABLE)
     if (reachable(button)) return button
   }
   return null
