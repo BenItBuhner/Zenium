@@ -1,31 +1,15 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
-import { CloudOff, FolderOpen, RefreshCw } from 'lucide-react'
-import type { SyncScope, UIState } from '@shared/types'
+import { CloudOff, FolderOpen, FolderX, RefreshCw } from 'lucide-react'
+import type { UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
+import { SYNC_COPY, SYNC_SCOPES } from '@renderer/lib/syncSetup'
 import { relativeTime } from '@renderer/lib/utils'
+import { V2Button, V2Row } from '../extensions/v2'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Switch } from '../ui/switch'
-
-const SCOPE_LABELS: Array<{ key: keyof SyncScope; label: string; hint?: string }> = [
-  { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order' },
-  { key: 'folders', label: 'Folders' },
-  { key: 'pinnedTabs', label: 'Pinned tabs' },
-  { key: 'essentials', label: 'Essentials' },
-  { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices' },
-  { key: 'containers', label: 'Containers' },
-  { key: 'bookmarks', label: 'Bookmarks' },
-  {
-    key: 'passwords',
-    label: 'Passwords',
-    hint: 'Saved passwords and passkey records, encrypted with your sync passphrase'
-  },
-  { key: 'settings', label: 'Settings' },
-  { key: 'shortcuts', label: 'Keyboard shortcuts' },
-  { key: 'boosts', label: 'Boosts' }
-]
 
 /**
  * Zen 1.22: "Sync your Spaces across devices". A Mozilla account is not available to a Chromium
@@ -136,8 +120,33 @@ function Setup({ state }: { state: UIState }): JSX.Element {
 function Connected({ state }: { state: UIState }): JSX.Element {
   const sync = state.sync
   const [deviceName, setDeviceName] = useState(sync.deviceName)
+  const chooseFolder = (): void =>
+    void cmd('sync.chooseFolder', undefined).then(
+      (folder) => folder && run('sync.setFolder', { folder })
+    )
+  // The engine keeps the folder-lost sentence as its error while the folder is lost; the notice
+  // row says it, so the status card shows the folder's name as it does at rest.
+  const error = sync.folderLost ? null : sync.lastError
   return (
     <>
+      {sync.folderLost && (
+        // The folder went away (an unmounted drive, a revoked tree): the §9.17 / §9.33 message row
+        // on the shared static row – the state's glyph in the danger ink on the label's line, the
+        // way out as the description in the same ink, one trailing secondary action that chooses
+        // the folder again – no card, no hue of its own; the phone draws the same row.
+        <div className="zen-v2" data-testid="sync-folder-lost">
+          <V2Row
+            lead={FolderX}
+            tone="danger"
+            label={SYNC_COPY.folderLost}
+            description={SYNC_COPY.folderLostHint}
+          >
+            <V2Button disabled={sync.syncing} onClick={chooseFolder}>
+              {SYNC_COPY.chooseAgain}
+            </V2Button>
+          </V2Row>
+        </div>
+      )}
       {sync.pendingMerge && (
         <div className="zen-squircle flex flex-col gap-3 rounded-xl border border-[var(--zen-accent)]/50 bg-[var(--zen-accent)]/10 p-4">
           <div className="text-[13.5px] font-medium">This folder already contains synced data</div>
@@ -173,39 +182,23 @@ function Connected({ state }: { state: UIState }): JSX.Element {
               className="truncate text-[11.5px] text-[var(--zen-muted)]"
               title={sync.folder ?? ''}
             >
-              {sync.lastError ? (
-                <span className="text-red-500">{sync.lastError}</span>
+              {error ? (
+                <span className="text-red-500">{error}</span>
               ) : (
                 (sync.folderName ?? sync.folder)
               )}
             </div>
           </div>
-          {sync.folderLost ? (
-            // The folder went away (unmounted drive, revoked tree): the error line above says so and
-            // the initial-choice button takes the user to a folder again; nothing to sync until then.
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={sync.syncing}
-              onClick={() =>
-                void cmd('sync.chooseFolder', undefined).then(
-                  (folder) => folder && run('sync.setFolder', { folder })
-                )
-              }
-            >
-              <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Choose…
-            </Button>
-          ) : (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={sync.syncing || sync.pendingMerge}
-              onClick={() => run('sync.now', undefined)}
-            >
-              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
-              now
-            </Button>
-          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            // Nothing to sync to while the folder is lost or the first sync waits on the merge.
+            disabled={sync.syncing || sync.pendingMerge || sync.folderLost}
+            onClick={() => run('sync.now', undefined)}
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
+            now
+          </Button>
         </div>
         <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
           <Label htmlFor="sync-device-name" className="w-28 shrink-0">
@@ -250,7 +243,7 @@ function Connected({ state }: { state: UIState }): JSX.Element {
           What to sync
         </h4>
         <div className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
-          {SCOPE_LABELS.map((item) => (
+          {SYNC_SCOPES.map((item) => (
             <div
               key={item.key}
               className="flex min-h-11 items-center gap-4 border-b border-[var(--zen-border)] px-4 py-2 last:border-b-0"

@@ -263,7 +263,8 @@ export function V2TitleBlock({
  * `V2CheckRow` and the menulist's sheet – never this with its fill hidden. Inside, the extension
  * surfaces' anatomy (§9.2, §9.18): the leading glyph and the text travel together and sit on the
  * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails the
- * text centres on the row's height.
+ * text centres on the row's height. A `tone` makes it a message row (§9.33's anatomy in §1's
+ * ink only): the lead glyph and the description take the status ink, the label stays in the text's.
  */
 export function V2Row({
   label,
@@ -285,6 +286,7 @@ export function V2Row({
       className={cn('zen-v2-row', className)}
       data-static=""
       data-lines={description ? '2' : undefined}
+      data-tone={tone}
     >
       <span className="zen-v2-row-body">
         {Lead && <Lead className="zen-v2-row-lead" />}
