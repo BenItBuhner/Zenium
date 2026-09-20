@@ -83,6 +83,7 @@ import { ProxyApi } from './proxy'
 import { RuntimeApi } from './runtime'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
+import { DebuggerApi } from './debugger'
 import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
@@ -196,6 +197,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly topSites: TopSitesApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
   readonly browsingData: BrowsingDataApi
@@ -258,6 +260,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
     this.cookies = new CookiesApi(this)
@@ -313,6 +316,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       topSites: this.topSites.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
+      debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
       browsingData: this.browsingData.handlers,
@@ -600,6 +604,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.debugger.unload(ext.id)
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
     this.tts.unload(ext.id)

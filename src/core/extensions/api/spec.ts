@@ -733,6 +733,31 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['identity']
   },
+  // A DevTools protocol session on a tab over the engine's per-page debugger: Chrome's rules on
+  // who may attach to what, one extension per tab, `onEvent` for the protocol's notifications
+  // (with the `sessionId` of a flattened child target), `onDetach` when the tab goes or the
+  // session is taken away. Chrome's "is debugging this browser" bar has no counterpart yet.
+  debugger: {
+    methods: {
+      attach: { params: [object('target'), string('requiredVersion')] },
+      detach: { params: [object('target')] },
+      sendCommand: {
+        params: [object('target'), string('method'), object('commandParams', true)]
+      },
+      getTargets: { params: [] }
+    },
+    events: { onEvent: {}, onDetach: {} },
+    constants: {
+      DetachReason: { TARGET_CLOSED: 'target_closed', CANCELED_BY_USER: 'canceled_by_user' },
+      TargetInfoType: {
+        PAGE: 'page',
+        BACKGROUND_PAGE: 'background_page',
+        WORKER: 'worker',
+        OTHER: 'other'
+      }
+    },
+    permissions: ['debugger']
+  },
   // Firebase Cloud Messaging through Chrome's own device channel (Chrome's GCM client registers
   // the browser with Google under Chrome's credentials), which no other browser has: the
   // namespace is the shape Chrome shows a profile with GCM off. `register`, `unregister` and
