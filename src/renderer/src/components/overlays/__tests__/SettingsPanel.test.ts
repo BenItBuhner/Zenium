@@ -4,6 +4,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { HostCapabilities, UIState } from '@shared/types'
 import { DEFAULT_SETTINGS, emptyPasswordsStatus, emptyResourceSnapshot } from '@shared/defaults'
+import {
+  UNAVAILABLE_SPELLCHECK,
+  type SpellcheckDictionaryStatus,
+  type SpellcheckStatus
+} from '@shared/spellcheck'
+import type { TranslateUIState } from '@shared/translate'
 import { uiStore } from '@renderer/lib/ui'
 import { SettingsPanel } from '../SettingsPanel'
 
@@ -112,8 +118,45 @@ function state(capabilities: HostCapabilities, platform: UIState['platform']): U
     mods: [],
     agents: [],
     passwords: emptyPasswordsStatus(),
-    pageEnvironment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
+    pageEnvironment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 },
+    translate: TRANSLATE,
+    spellcheck: UNAVAILABLE_SPELLCHECK
   } as unknown as UIState
+}
+
+/** Translation with a couple of languages, so the Languages pane renders around Spell check. */
+const TRANSLATE: TranslateUIState = {
+  available: true,
+  preferences: {
+    preferred: ['en'],
+    alwaysTranslate: [],
+    neverTranslate: [],
+    neverTranslateSites: [],
+    autoOffer: true
+  },
+  languages: ['de', 'en', 'fr'],
+  installed: [],
+  downloading: [],
+  registryDate: '2026-09-01',
+  modelLicense: 'MPL-2.0',
+  tabs: {}
+}
+
+/** Electron's checker with dictionaries for a few languages, `enabled` ones checked in. */
+function checker(
+  languages: Array<[code: string, name: string, enabled: boolean, status?: SpellcheckDictionaryStatus]>,
+  systemLanguages = false
+): SpellcheckStatus {
+  return {
+    available: true,
+    systemLanguages,
+    languages: languages.map(([code, name, enabled, status]) => ({
+      code,
+      name,
+      enabled,
+      status: status ?? (enabled ? 'ready' : 'unknown')
+    }))
+  }
 }
 
 /** The labels of the section list, in order. */
@@ -191,5 +234,119 @@ describe('the Page zoom menulist', () => {
     const idx = choices.findIndex((c) => c.value === zoomKey(1.15))
     expect(choices[idx - 1]?.label).toBe('110%')
     expect(choices[idx + 1]?.label).toBe('125%')
+  })
+})
+
+describe('Settings › Languages › Spell check on the desktop', () => {
+  beforeEach(() => uiStore.set({ overlaySection: 'languages' }))
+
+  it('shows the switch, the languages checked in with what their dictionary is doing, and Add', () => {
+    const s = state(DESKTOP, 'linux')
+    s.spellcheck = checker([
+      ['en-US', 'English (United States)', true],
+      ['de', 'German', true, 'downloading'],
+      ['fr', 'French', true, 'failed'],
+      ['es', 'Spanish', false]
+    ])
+    const markup = render(s)
+    expect(markup).toContain('Check the spelling of text fields')
+    expect(markup).toContain('English (United States)')
+    expect(markup).toContain('Downloading dictionary…')
+    expect(markup).toContain('Dictionary download failed')
+    expect(markup).toContain('Stop checking in German')
+    // The languages not checked in wait in the Add menulist, not in the list.
+    expect(markup).not.toContain('Stop checking in Spanish')
+    expect(markup).toContain('Add a language to check in')
+    expect(markup).toContain('checked in up to 5 languages at a time')
+    expect(markup).toContain('Custom dictionary')
+    expect(markup).not.toContain('Open keyboard settings')
+  })
+
+  it("replaces Add with Chrome's limit caption once five languages are checked in", () => {
+    const s = state(DESKTOP, 'linux')
+    s.spellcheck = checker([
+      ['en-US', 'English (United States)', true],
+      ['de', 'German', true],
+      ['fr', 'French', true],
+      ['es', 'Spanish', true],
+      ['it', 'Italian', true],
+      ['pt', 'Portuguese', false]
+    ])
+    const markup = render(s)
+    expect(markup).toContain('Up to 5 languages can be checked at a time. Remove one to add another.')
+    expect(markup).not.toContain('Add a language to check in')
+  })
+
+  it("reads the list at .4 with the switch off, the switch alone live (§9.30)", () => {
+    const s = state(DESKTOP, 'linux')
+    s.settings = { ...DEFAULT_SETTINGS, spellcheck: { ...DEFAULT_SETTINGS.spellcheck, enabled: false } }
+    s.spellcheck = checker([['en-US', 'English (United States)', true]])
+    const markup = render(s)
+    const row = markup.match(/<div[^>]*data-language="en-US"[^>]*>/)?.[0] ?? ''
+    expect(row).toContain('aria-disabled="true"')
+    expect(markup).toContain('Check the spelling of text fields')
+    // The whole languages list and the dictionary form follow the switch.
+    expect(markup.match(/aria-disabled="true"/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+  })
+
+  it("names System Settings where the OS's checker chooses the languages (macOS)", () => {
+    const s = state(DESKTOP, 'darwin')
+    s.spellcheck = checker([['en-US', 'English (United States)', true]], true)
+    const markup = render(s)
+    expect(markup).toContain('System Settings › Keyboard')
+    expect(markup).not.toContain('Add a language to check in')
+    expect(markup).not.toContain('Stop checking in')
+    expect(markup).toContain('Custom dictionary')
+  })
+
+  it("states the keyboard's checker and leads to its settings where the host has none of its own", () => {
+    const markup = render(state(ANDROID, 'android'))
+    expect(markup).toContain('Spell check')
+    expect(markup).toContain('spell checker of the keyboard in use')
+    expect(markup).toContain('Open keyboard settings')
+    expect(markup).not.toContain('Check the spelling of text fields')
+    expect(markup).not.toContain('Custom dictionary')
+  })
+})
+
+describe('Look and Feel › Sites behind the darkening capability', () => {
+  beforeEach(() => uiStore.set({ overlaySection: 'look' }))
+
+  it('has the dark theme switch and the exceptions on a desktop that darkens pages without the rest of the page controls', () => {
+    const s = state({ ...DESKTOP, darkenSites: true }, 'linux')
+    let markup = render(s)
+    expect(markup).toContain('Apply dark theme to sites')
+    // With no exception yet the group says which menu item makes one: the darkening item alone.
+    expect(markup).toContain(
+      'No exceptions yet. Dark Theme for This Site in the menu remembers a site’s choice here.'
+    )
+    // The Android sheet's Desktop site row stays off the desktop.
+    expect(markup).not.toContain('Desktop site')
+
+    s.settings = {
+      ...DEFAULT_SETTINGS,
+      pageControls: {
+        ...DEFAULT_SETTINGS.pageControls,
+        darkenSiteExceptions: { 'sepia.example': false }
+      }
+    }
+    markup = render(s)
+    expect(markup).toContain('sepia.example')
+    expect(markup).toContain('Dark theme off')
+    expect(markup).toContain('Remove exception: sepia.example')
+    expect(markup).not.toContain('No exceptions yet')
+  })
+
+  it('shows no Sites group at all on a host that neither darkens nor has page controls', () => {
+    const markup = render(state(DESKTOP, 'linux'))
+    expect(markup).not.toContain('Apply dark theme to sites')
+    expect(markup).not.toContain('Site exceptions')
+  })
+
+  it('has both rows and names both menu items on a host with page controls', () => {
+    const markup = render(state(ANDROID, 'android'))
+    expect(markup).toContain('Desktop site')
+    expect(markup).toContain('Apply dark theme to sites')
+    expect(markup).toContain('Desktop Site and Dark Theme for This Site in the menu remember')
   })
 })
