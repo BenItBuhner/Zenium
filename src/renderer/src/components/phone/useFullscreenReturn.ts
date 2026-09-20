@@ -38,9 +38,7 @@ export function returnChrome(el: HTMLElement, tabId: string): () => void {
   let deadline: ReturnType<typeof setTimeout> | null = null
   const due = (): boolean => {
     const state = landingStore.get()
-    return (
-      !landingReported(state) || hasLanded(state, tabId) || landingLost(state, tabId, since)
-    )
+    return !landingReported(state) || hasLanded(state, tabId) || landingLost(state, tabId, since)
   }
   const fade = (): void => {
     unsubscribe?.()

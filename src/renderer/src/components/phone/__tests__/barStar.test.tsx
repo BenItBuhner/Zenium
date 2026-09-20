@@ -129,7 +129,13 @@ let mount: HTMLElement | null = null
 const pillHandlers = {} as PillGestureHandlers
 
 const bar = (state: UIState): ReactElement => (
-  <PhoneBar state={state} edge="bottom" pill={pillHandlers} overviewOpen={false} pillLook="docked" />
+  <PhoneBar
+    state={state}
+    edge="bottom"
+    pill={pillHandlers}
+    overviewOpen={false}
+    pillLook="docked"
+  />
 )
 
 function render(el: ReactElement): void {
@@ -157,7 +163,8 @@ const click = (el: Element): void => {
 const frame = (): void => {
   act(() => frames.run(1))
 }
-const commands = (): unknown[][] => invoke.mock.calls.filter(([name]) => name.startsWith('bookmark.'))
+const commands = (): unknown[][] =>
+  invoke.mock.calls.filter(([name]) => name.startsWith('bookmark.'))
 
 beforeEach(() => {
   frames.install()
