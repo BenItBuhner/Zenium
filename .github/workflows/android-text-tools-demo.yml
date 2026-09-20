@@ -12,9 +12,6 @@ name: Android text tools demo
 # file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/services-text-tools-ui-24d1
 
 permissions:
   contents: read
