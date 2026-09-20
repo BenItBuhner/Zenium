@@ -226,6 +226,11 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         onReady { js("window.__zenHost&&__zenHost.openUrl(${JSONObject.quote(url)})") }
     }
 
+    /** The launcher's "New private tab" shortcut: a private tab in the current space, once the core is up. */
+    fun newPrivateTab() {
+        onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
+    }
+
     private fun js(code: String) {
         if (ready) evaluateJavascript(code, null) else whenReady.add { evaluateJavascript(code, null) }
     }

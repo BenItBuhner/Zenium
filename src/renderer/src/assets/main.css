@@ -362,16 +362,19 @@
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
 /*
- * On the window (the first run, `data-surface="window"`) the secondary reads the window family
- * through the control roles (§9.29): a fill of the window's ink, not the page's – beside the rule
- * and unlayered like it, since a layered override would lose to it. The primary keeps the rule's
- * `--v2-accent`, the clamped mix, for its contrast on a gradient of the accent's own hue.
+ * On the window (the first run and the tab overview's backdrop, `data-surface="window"`) the
+ * secondary reads the window family through the control roles (§9.29): a fill of the window's
+ * ink, not the page's – beside the rule and unlayered like it, since a layered override would
+ * lose to it. The primary keeps the rule's `--v2-accent`, the clamped mix, for its contrast on a
+ * gradient of the accent's own hue.
  */
-.zen-firstrun .zen-v2-button:not([data-primary]) {
+.zen-firstrun .zen-v2-button:not([data-primary]),
+.zen-overview .zen-v2-button:not([data-primary]) {
   background: var(--v2-control-fill);
   color: var(--v2-control-text);
 }
-.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled) {
+.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled),
+.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled) {
   background: var(--v2-control-fill-hover);
 }
 /*
@@ -734,6 +737,15 @@
   .zen-window {
     background: var(--zen-bg);
     transition: background 600ms var(--zen-ease);
+  }
+  /*
+   * On a phone the window family changes colour by the one blend of the resolved tokens over
+   * 240 ms (design language v2 §11.5, `useTheme`): the window reads the tokens as the blend
+   * writes them, and nothing tweens per element – no transition of its own, which would trail
+   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   */
+  :root[data-form-factor='phone'] .zen-window {
+    transition: none;
   }
   .zen-window ::selection {
     background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
@@ -1693,11 +1705,14 @@
   .zen-phone-bar-lifted .zen-group-strip {
     pointer-events: none;
   }
-  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  /*
+   * The slot an address pill left behind while it is being carried: a shallow well. Its tint
+   * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
+   * (v2 §11.5, nothing tweens per element on the phone), and the target tint is a cut.
+   */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);
     box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
-    transition: background 160ms var(--zen-ease);
   }
   .zen-pill-well-target {
     background: rgb(var(--zen-fg-rgb) / 0.09);
@@ -1946,10 +1961,14 @@
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
+  /*
+   * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
+   * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
+   * as the other cards' pressed states are.
+   */
   .zen-overview-new {
     border-radius: var(--zen-card-radius);
     background: rgb(var(--zen-fg-rgb) / 0.06);
-    transition: background 140ms var(--zen-ease);
   }
   .zen-overview-new:active {
     background: rgb(var(--zen-fg-rgb) / 0.12);
@@ -2244,6 +2263,19 @@
   }
   .zen-overview-strip::-webkit-scrollbar {
     display: none;
+  }
+  /*
+   * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
+   * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
+   * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
+   * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
+   * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
+   * while the window surfaces blend to the pane's theme (§11.5). The Tabs | Private segment above
+   * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
+   * of the sheet), in the window family through the overview's `data-surface="window"`.
+   */
+  .zen-overview-pane {
+    animation: zen-fade 120ms var(--zen-ease);
   }
 
   /*
@@ -5567,6 +5599,57 @@
   }
 }
 
+/*
+ * The shared v2 segment (§9.34; the first to land it is the tab overview's Tabs | Private,
+ * TAB-02): two or three text tabs switching the views of one surface – never a setting's choice,
+ * which is a radio or a value row. A `role="tablist"` row of `role="tab"` buttons, a row tall
+ * (`--v2-row`: 44 on a phone) at the 16 gutter, each label 15/600 in its family's ink through the
+ * §9.29 control roles: the current one (`aria-selected`) in the text role over a 2 px accent line
+ * at the label's width, the others in the deemphasised role (the theme ink at 69% on a window
+ * surface, as the overview is); no pill and no fill – §9.14 has no segmented pill. The switch is
+ * the ink and the line's opacity over 120 ms, nothing that moves (§11.4), and reduced motion
+ * keeps those 120 ms (the closing block at the end of the sheet). One unlayered rule, tokens
+ * only, like the primitives above; a surface adds a modifier beside it, never a copy.
+ */
+.zen-v2-segment {
+  display: flex;
+  min-height: var(--v2-row);
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 8px;
+}
+.zen-v2-segment > [role='tab'] {
+  position: relative;
+  display: flex;
+  min-width: var(--v2-row);
+  align-items: center;
+  padding: 0 8px;
+  color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+  transition: color 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true'] {
+  color: var(--v2-control-text, var(--v2-text));
+}
+.zen-v2-segment > [role='tab']::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--v2-control-accent, var(--v2-accent));
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true']::after {
+  opacity: 1;
+}
+
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
@@ -5657,6 +5740,38 @@
 [aria-checked='true'] .zen-v2-switch::after {
   background: var(--v2-on-accent);
   transform: translateX(16px);
+}
+/*
+ * The switch row on a window surface – the private new tab page's Block third-party cookies row
+ * (NTP-31) – is the row and switch primitives with one modifier beside them, as §9.34 asks of a
+ * variant: no second row or switch. The row draws the window ink and fills through the control
+ * roles (§9.29), and its off switch is the window's: the track the theme ink at 25 %, the thumb
+ * the theme's solid colour, as the page switch's thumb is the page's. On, the switch keeps the
+ * primitive's `--v2-accent` and `--v2-on-accent`, the clamped mix, for the reason the window's
+ * primary button does: contrast on a gradient of the accent's own hue. A locked row (the setting
+ * blocks everywhere, so this switch cannot turn it off) stays laid out at .4 and takes no press,
+ * as a dependent settings row does (§9.30, §10.4). Unlayered like the primitives, since a layered
+ * override would lose to them.
+ */
+.zen-v2-row.zen-ntp-row {
+  color: var(--v2-control-text);
+}
+.zen-v2-row.zen-ntp-row:active:not([aria-disabled='true']) {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-v2-row.zen-ntp-row:hover:not([aria-disabled='true']) {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-v2-row.zen-ntp-row[aria-disabled='true'] {
+  opacity: 0.4;
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch {
+  background: rgb(var(--zen-fg-rgb) / 0.25);
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch::after {
+  background: var(--zen-bg-solid);
 }
 
 /*
@@ -7747,6 +7862,19 @@
     transition-duration: 1ms, 120ms !important;
   }
   .zen-group::before {
+    transition-duration: 120ms !important;
+  }
+  /*
+   * The overview's panes and the segment primitive (TAB-02, TAB-03; §9.34): content changing in
+   * place on a window strip fades the same under reduced motion (v2 §11.4) – a pane coming up
+   * keeps its 120 ms fade (the still of the one leaving its 120 ms out, in `PaneSlot`), a
+   * segment's ink and its line their 120 ms; neither moves in full motion either.
+   */
+  .zen-overview-pane {
+    animation-duration: 120ms !important;
+  }
+  .zen-v2-segment > [role='tab'],
+  .zen-v2-segment > [role='tab']::after {
     transition-duration: 120ms !important;
   }
 }

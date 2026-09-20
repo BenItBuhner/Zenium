@@ -1,4 +1,5 @@
 import type { NewTabMode, NewTabShortcut, Rect } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { BLANK_URL, getHost } from '@shared/url'
 import { cmd } from './api'
 import { closeOverview, overviewIsOpen, setStageLayerShown } from './gestures/stage'
@@ -166,11 +167,12 @@ export function prepareNewTabGrow(): void {
  * page fades in. Without an origin (a shortcut, the empty state), or when the overview is up,
  * motion is reduced or the current tab is itself a new tab page, the page simply appears – out
  * of its card when the overview was open. `afterTabId` files the tab after that one – in its
- * group, when it has one (the group strip's plus chip).
+ * group, when it has one (the group strip's plus chip). With the private container the tab is a
+ * private one (`tab.newPrivate`; INC-01) and the page that comes up is the private new tab page.
  */
 export async function openNewTabPage(
   origin: Rect | null,
-  { afterTabId }: { afterTabId?: string } = {}
+  options: { containerId?: string; afterTabId?: string } = {}
 ): Promise<void> {
   closeUrlbar()
   const state = browserStore.get().state
@@ -197,9 +199,16 @@ export async function openNewTabPage(
     newTabGrowStore.set({ ...GROW_IDLE, phase: 'growing', origin, fromTabId: from.id })
     setStageLayerShown(GROW_LAYER, true)
   }
-  const tabId = await cmd('tab.create', { url: BLANK_URL, active: true, afterTabId }).catch(
-    () => null
-  )
+  const tabId = await (
+    options.containerId === PRIVATE_CONTAINER_ID
+      ? cmd('tab.newPrivate', {})
+      : cmd('tab.create', {
+          url: BLANK_URL,
+          active: true,
+          containerId: options.containerId,
+          afterTabId: options.afterTabId
+        })
+  ).catch(() => null)
   // From the overview the page morphs out of the new tab's card, as any picked tab does.
   if (overview) closeOverview(tabId ?? undefined)
   if (!animate) return

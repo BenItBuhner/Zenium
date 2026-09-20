@@ -1,10 +1,9 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Globe, Languages, Lock, Search } from 'lucide-react'
+import { Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { PRIVATE_CONTAINER_ID } from '@shared/types'
-import { BLANK_URL, displayHost, isWebPageUrl } from '@shared/url'
+import { displayHost, isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import {
@@ -17,6 +16,8 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { barFade } from '@renderer/lib/motion/recede'
+import { usePrivateSurface } from '@renderer/lib/privateSurface'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
@@ -80,6 +81,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   const activeTabId = tab?.id ?? null
   const dock = dockStore.use()
   const overviewOpen = stageStore.use((s) => s.overview.phase !== 'closed')
+  // The window surfaces are on the private theme (blending to it): a private tab is in view, or
+  // the overview shows the private pane (§9.29; MOT-14).
+  const privateSurface = usePrivateSurface(state)
 
   // Picking a tab (or opening chrome UI) in the drawer closes it.
   const lastActive = useRef(activeTabId)
@@ -181,6 +185,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     <div
       className="zen-window relative flex h-full w-full flex-col overflow-hidden"
       data-dark={isDark}
+      data-private={privateSurface || undefined}
       style={{
         paddingTop: 0,
         paddingBottom: 0,
@@ -440,6 +445,9 @@ export function PillContent({
   // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
   const translation = shown && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
   const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
+  // The private marker: the mask glyph in the pill's leading slot on every private tab, page or
+  // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
+  const privateMark = shown ? isPrivateTab(shown) : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -473,13 +481,27 @@ export function PillContent({
           popup="dialog"
           expanded={siteInfoOpen}
           data-site-info
+          data-private-mark={privateMark || undefined}
           className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
         >
-          <Favicon tab={shown} size={16} />
+          {privateMark ? (
+            <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+          ) : (
+            <Favicon tab={shown} size={16} />
+          )}
         </PillChip>
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
+      {/*
+        The private marker (v2 §9.19): on a private tab the mask glyph takes the pill's leading
+        slot in place of the favicon, page or none, the way Chrome's incognito toolbar carries its
+        glyph; the slot stays the site-information chip, so site information opens from the mask
+        as it does from a favicon. The pill carries no "Private" badge – the private theme on the
+        whole window, the mask here, in the overview header and on the tab card say it, and a
+        badge would cost the host its room on a phone; badges are for lists that mix private and
+        normal items.
+      */}
       {shown && !page && !extension && state.capabilities.requestBlocking && (
         <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
       )}
@@ -513,20 +535,6 @@ export function PillContent({
         >
           <Languages className="h-3.5 w-3.5" />
         </Control>
-      )}
-      {/*
-        The private profile indicator (design language v2 §9.19): a private tab with a page shows
-        its favicon like any other, so the pill says "Private" in a neutral badge – the window
-        family, 20 tall, 13/600 – after the address; while the tab has no page the mask glyph in
-        the favicon slot is the marker, never glyph and badge together.
-      */}
-      {shown && shown.containerId === PRIVATE_CONTAINER_ID && shown.url !== BLANK_URL && (
-        <span
-          className="zen-private-badge inline-flex h-5 shrink-0 items-center rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)]"
-          data-testid="private-badge"
-        >
-          Private
-        </span>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">

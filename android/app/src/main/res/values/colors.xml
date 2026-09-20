@@ -2,6 +2,8 @@
 <resources>
     <color name="zen_background">#F2F1F5</color>
     <color name="zen_background_dark">#16161B</color>
+    <!-- The private theme's purple (PRIVATE_THEME's second stop), behind the launcher shortcut's mask glyph. -->
+    <color name="shortcut_private_background">#3F2C7A</color>
 
     <!--
       The v2 design draft's measured colours (design-language-v2-draft.md §1), for what the app

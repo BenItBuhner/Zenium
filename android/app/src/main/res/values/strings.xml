@@ -7,6 +7,10 @@
     <string name="leave">Leave</string>
     <string name="stay">Stay</string>
 
+    <!-- The launcher's long-press shortcut (res/xml/shortcuts.xml). -->
+    <string name="shortcut_private_short">New private tab</string>
+    <string name="shortcut_private_long">New private tab in Zenium</string>
+
     <!-- Custom tabs (another app's link rendered by Zenium). Menu items are Title Case (v2 §9.1). -->
     <string name="cct_close">Close</string>
     <string name="cct_menu">Menu</string>

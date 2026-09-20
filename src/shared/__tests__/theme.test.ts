@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   CAPTION_HEIGHT,
+  PRIVATE_THEME,
   THEME_PRESETS,
+  blendResolvedThemes,
   captionColors,
   colorToWheel,
   cssColorToHex,
@@ -86,8 +88,17 @@ describe('resolveTheme', () => {
   it('produces a linear gradient for multi-colour themes and a solid for one colour', () => {
     const multi = resolveTheme(THEME_PRESETS[0].theme, false)
     expect(multi.background.startsWith('linear-gradient(135deg')).toBe(true)
+    expect(multi.stops).toHaveLength(THEME_PRESETS[0].theme.colors.length)
+    expect(multi.rotation).toBe(135)
     const single = resolveTheme(makeTheme('#ff0000'), false)
     expect(single.background).toMatch(/^#[0-9a-f]{6}$/)
+    expect(single.stops).toEqual([hexToRgb(single.background)])
+    expect(resolveTheme(null, true).stops).toEqual([resolveTheme(null, true).averageColor])
+  })
+
+  it('the private theme resolves dark whatever the scheme, as Zen paints private windows', () => {
+    expect(resolveTheme(PRIVATE_THEME, true).isDark).toBe(true)
+    expect(resolveTheme(PRIVATE_THEME, false).isDark).toBe(true)
   })
 
   it('the wallpaper is the gradient at full strength, or the base colour without a theme', () => {
@@ -144,5 +155,48 @@ describe('captionColors', () => {
 
   it('matches the chrome header row', () => {
     expect(CAPTION_HEIGHT).toBe(38)
+  })
+})
+
+describe('blendResolvedThemes', () => {
+  const space = resolveTheme(THEME_PRESETS[1].theme, false)
+  const priv = resolveTheme(PRIVATE_THEME, true)
+
+  it('is the endpoints at 0 and 1 and every colour half-way at .5', () => {
+    expect(blendResolvedThemes(space, priv, 0)).toBe(space)
+    expect(blendResolvedThemes(space, priv, 1)).toBe(priv)
+    expect(blendResolvedThemes(space, priv, -1)).toBe(space)
+    expect(blendResolvedThemes(space, priv, 2)).toBe(priv)
+    const mid = blendResolvedThemes(space, priv, 0.5)
+    expect(mid.averageColor).toEqual(mix(space.averageColor, priv.averageColor, 0.5))
+    expect(mid.accent).toEqual(mix(space.accent, priv.accent, 0.5))
+    expect(mid.rotation).toBe(space.rotation + (priv.rotation - space.rotation) / 2)
+  })
+
+  it('re-samples the gradient to the longer of the two so a solid blends into a gradient', () => {
+    const solid = resolveTheme(null, false)
+    const quarter = blendResolvedThemes(solid, priv, 0.25)
+    expect(quarter.stops).toHaveLength(priv.stops.length)
+    for (const [i, stop] of quarter.stops.entries())
+      expect(stop).toEqual(mix(solid.averageColor, priv.stops[i], 0.25))
+    expect(quarter.background.startsWith('linear-gradient(')).toBe(true)
+    // Two stops against three: the middle of the short side is the mean of its ends.
+    const two = resolveTheme(makeTheme('#000000', ['#ffffff']), false)
+    const blend = blendResolvedThemes(two, priv, 0.5)
+    expect(blend.stops).toHaveLength(3)
+    expect(blend.stops[1]).toEqual(mix(mix(two.stops[0], two.stops[1], 0.5), priv.stops[1], 0.5))
+  })
+
+  it('flips the dark flag at the midpoint, so the ink follows the side the surface is closer to', () => {
+    expect(blendResolvedThemes(space, priv, 0.49).isDark).toBe(false)
+    expect(blendResolvedThemes(space, priv, 0.5).isDark).toBe(true)
+    expect(blendResolvedThemes(priv, space, 0.49).isDark).toBe(true)
+    expect(blendResolvedThemes(priv, space, 0.51).isDark).toBe(false)
+  })
+
+  it('writes CSS variables the chrome can take per frame', () => {
+    const vars = themeCssVariables(blendResolvedThemes(space, priv, 0.3))
+    expect(vars['--zen-bg']).toMatch(/^linear-gradient\(\d+deg, (#[0-9a-f]{6} \d+%(, )?)+\)$/)
+    expect(vars['--zen-bg-solid']).toMatch(/^#[0-9a-f]{6}$/)
   })
 })

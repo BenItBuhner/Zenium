@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Ellipsis, PanelLeft, PanelRight, Plus } from 'lucide-react'
+import { Ellipsis, PanelLeft, PanelRight, Plus, VenetianMask } from 'lucide-react'
 import type {
   Folder,
   FolderColor,
@@ -10,6 +10,7 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
@@ -27,6 +28,14 @@ import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAd
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import {
+  overviewPane,
+  pickOverviewPane,
+  privateTabsOf,
+  privateTabsStore,
+  tabsOnPane,
+  type OverviewPane
+} from '@renderer/lib/privateTabs'
 import {
   activeSpace,
   activeTab,
@@ -46,6 +55,7 @@ import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
 import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
+import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
@@ -103,6 +113,8 @@ interface HeldGroup {
 }
 
 interface ShownGroups {
+  /** The pane the grid showed: its groups are that pane's, and the other pane has none. */
+  pane: OverviewPane
   /** The groups holding cards after the last render, by folder id. */
   held: ReadonlyMap<string, HeldGroup>
   /**
@@ -119,16 +131,51 @@ interface ShownGroups {
  * fades in while the page shrinks into the slot of its own card (and grows back out of the card
  * that is picked when leaving), so a half-finished drag always shows exactly where things are
  * going. Cards can be held and dragged onto each other to make groups (see `useCardLift`).
+ *
+ * On a host with private tabs the overview has two panes under a segment (TAB-02, TAB-03): the
+ * space's tabs, and the private ones – the private session is one across the spaces, so that
+ * pane lists every private tab, as loose cards on the private theme's backdrop (the window
+ * surfaces blend to it while the pane is up, §9.29), with an explainer when there are none. A
+ * private card never shows in the regular pane, nor a regular one in the private pane
+ * (`tabsOnPane`); the overview opens on the pane of the tab in view.
  */
 export function TabOverview({ state, overview, area, edge }: Props): JSX.Element {
   const { progress, phase, heroTabId } = overview
   const space = activeSpace(state)
   const active = activeTab(state)
-  const essentials = essentialsFor(state, space)
-  const pinned = pinnedOf(state, space)
-  const regular = regularOf(state, space)
-  const groups = groupsOf(state, space.id)
+  const picked = privateTabsStore.use((s) => s.pane)
+  const hasPrivate = state.capabilities.privateTabs
+  const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
+  const privatePane = pane === 'private'
+  // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
+  // here – a drag rearranges them and nothing more (`hoverAt`, `dropCard`), as Chrome's incognito
+  // grid lets it; the regular pane keeps its structure.
+  const essentials = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
+  const pinned = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
+  const regular = privatePane ? privateTabsOf(state) : tabsOnPane(regularOf(state, space), 'tabs')
+  const groups = privatePane ? [] : groupsOf(state, space.id)
   const count = essentials.length + pinned.length + regular.length
+
+  // The last private tab closing ends the session, and the overview returns to the Tabs pane
+  // whether the Private pane was picked or followed (Chrome's switcher does the same); the
+  // empty explainer stays a pick away, for whoever picks Private with none open.
+  const privateCount = hasPrivate ? privateTabsOf(state).length : 0
+  const privateCountBefore = useRef(privateCount)
+  useEffect(() => {
+    const before = privateCountBefore.current
+    privateCountBefore.current = privateCount
+    if (before > 0 && privateCount === 0 && picked === 'private') pickOverviewPane('tabs')
+  }, [privateCount, picked])
+
+  // A pane switch is a cross-fade (v2 §11.4): the pane that leaves is kept in view as a still
+  // fading out over its slot while the next fades in – `PaneSlot` takes the still as the pane
+  // goes, `PaneStills` draws it until its 120 ms are up.
+  const [stills, setStills] = useState<PaneStill[]>([])
+  const leavePane = useCallback((still: PaneStill) => setStills((s) => [...s, still]), [])
+  const stillDone = useCallback(
+    (key: number) => setStills((s) => s.filter((still) => still.key !== key)),
+    []
+  )
 
   // While a card is dragged its stand-in sits in the slot under the finger, not where the tab
   // is: the grid shows the order the drop would make, and glides into it as the slot moves.
@@ -144,7 +191,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   }
   const membersOf = (folderId: string): Tab[] => regular.filter((t) => t.folderId === folderId)
   const loose = shown(
-    regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
+    privatePane ? regular : regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
     null
   )
   const members = new Map(groups.map((f) => [f.id, shown(membersOf(f.id), f.id)] as const))
@@ -328,6 +375,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   // has lost its last card since the last render must be on the grid in this very render, so it
   // is found here, from the last render's groups, not in an effect after it.
   const [shownGroups, setShownGroups] = useState<ShownGroups>(() => ({
+    pane,
     held: new Map(),
     lingering: new Map()
   }))
@@ -336,28 +384,31 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const count = members.get(folder.id)?.length ?? 0
     if (count) held.set(folder.id, { folder, count })
   }
-  const lost = [...shownGroups.held].filter(([id]) => !held.has(id))
+  // The other pane's grid is a fresh one: its groups did not dissolve, they are simply not here.
+  const samePane = shownGroups.pane === pane
+  const lost = samePane ? [...shownGroups.held].filter(([id]) => !held.has(id)) : []
   const back = [...shownGroups.lingering.keys()].filter((id) => held.has(id))
-  let lingering = shownGroups.lingering
+  let lingering = samePane ? shownGroups.lingering : new Map<string, HeldGroup>()
   if (lost.length || back.length) {
-    const next = new Map(shownGroups.lingering)
+    const next = new Map(lingering)
     for (const [id, was] of lost) next.set(id, was)
     for (const id of back) next.delete(id)
     lingering = next
   }
   if (
+    !samePane ||
     lingering !== shownGroups.lingering ||
     held.size !== shownGroups.held.size ||
     [...held].some(([id, h]) => shownGroups.held.get(id)?.count !== h.count)
   ) {
-    setShownGroups({ held, lingering })
+    setShownGroups({ pane, held, lingering })
   }
   const dissolvedGroup = (folder: Folder): void =>
     setShownGroups((shown) => {
       if (!shown.lingering.has(folder.id)) return shown
       const next = new Map(shown.lingering)
       next.delete(folder.id)
-      return { held: shown.held, lingering: next }
+      return { ...shown, lingering: next }
     })
   // The group cards, one keyed list: a group that has just lost its last card (or whose folder
   // is gone with it) keeps its element – the same key in the same list – so its card's height
@@ -396,9 +447,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   /** The group a tab is shown in (a folder of this space), or null for a loose tab. */
   const groupIdOf = (tab: Tab, s: UIState = state): string | null =>
     tab.folderId && s.folders[tab.folderId]?.spaceId === space.id ? tab.folderId : null
-  /** The regular tabs shown in a group (or loose, for null), in the browser's order. */
+  /**
+   * The pane's tabs shown in a group (or loose, for null), in the browser's order: the regular
+   * pane's are the space's regular tabs of that group, the private ones aside; the private pane's
+   * list is the session's, across the spaces (it makes no groups).
+   */
   const listIn = (s: UIState, folderId: string | null): Tab[] =>
-    regularOf(s, activeSpace(s)).filter((t) => groupIdOf(t, s) === folderId)
+    privatePane
+      ? privateTabsOf(s)
+      : tabsOnPane(regularOf(s, activeSpace(s)), 'tabs').filter((t) => groupIdOf(t, s) === folderId)
 
   /**
    * What the finger is over, from the slots of the last layout (the glide in flight ignored, so
@@ -413,7 +470,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return null
     const inside = (r: DOMRect | null): r is DOMRect =>
       r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-    // Member cards of an expanded group and the loose cards, as shown right now.
+    // Member cards of an expanded group and the loose cards, as shown right now (the private
+    // pane's cards are all loose: it makes no groups, a session being no workspace, so a drag
+    // there only rearranges, as Chrome's incognito grid lets it).
     const cards: Array<{ tab: Tab; list: Tab[]; folderId: string | null }> = []
     for (const folder of groups) {
       if (folder.collapsed) continue
@@ -427,7 +486,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       if (!inside(r)) continue
       const ix = r.width * MERGE_INSET_X
       const iy = r.height * MERGE_INSET_Y
-      if (x > r.left + ix && x < r.right - ix && y > r.top + iy && y < r.bottom - iy)
+      if (
+        !privatePane &&
+        x > r.left + ix &&
+        x < r.right - ix &&
+        y > r.top + iy &&
+        y < r.bottom - iy
+      )
         return { target: `card:${other.id}`, slot: current.slot }
       const cx = r.left + r.width / 2
       const cy = r.top + r.height / 2
@@ -465,19 +530,26 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       }
     }
     const unchanged = (): void => expect(() => true)
-    const regularWithout = regular.filter((t) => t.id !== tab.id)
-    /** Move the tab right before `before` (or to the end of the regular tabs), into `folderId`. */
+    /**
+     * Move the tab right before `before` (or right after `after`, or to the end of the regular
+     * tabs), into `folderId`. The browser's index counts a space's whole regular section – both
+     * modes' tabs, since a space's track holds its private tabs too – so the neighbour's place is
+     * looked up there, not in the pane's list; a private neighbour filed in another space takes
+     * the tab into that space (the private session is one across the spaces).
+     */
     const moveTo = (folderId: string | null, before: Tab | undefined, after?: Tab): void => {
-      const index = before
-        ? regularWithout.indexOf(before)
-        : after
-          ? regularWithout.indexOf(after) + 1
-          : regularWithout.length
-      run('tab.move', { tabId: tab.id, spaceId: space.id, section: 'regular', index })
-      if (groupIdOf(tab) !== folderId) run('tab.moveToFolder', { tabId: tab.id, folderId })
+      const anchor = before ?? after
+      const into = state.spaces.find((s) => s.id === anchor?.spaceId) ?? space
+      const track = regularOf(state, into).filter((t) => t.id !== tab.id)
+      const index = before ? track.indexOf(before) : after ? track.indexOf(after) + 1 : track.length
+      run('tab.move', { tabId: tab.id, spaceId: into.id, section: 'regular', index })
+      if (!privatePane && groupIdOf(tab) !== folderId)
+        run('tab.moveToFolder', { tabId: tab.id, folderId })
     }
     const target = outcome.kind === 'target' ? outcome.target : null
     const slot = outcome.kind === 'slot' ? outcome.slot : null
+    // The private pane never targets a card or a group (`hoverAt`): only its slots move anything.
+    if (privatePane && target) return unchanged()
     if (target?.startsWith('group:')) {
       const folderId = target.slice('group:'.length)
       if (!state.folders[folderId] || groupIdOf(tab) === folderId) return unchanged()
@@ -500,7 +572,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         tabId: tab.id,
         spaceId: space.id,
         section: 'regular',
-        index: regularWithout.indexOf(other) + 1
+        index:
+          regularOf(state, space)
+            .filter((t) => t.id !== tab.id)
+            .indexOf(other) + 1
       })
       void makeGroup([other.id, tab.id], false)
       return expect((s) => {
@@ -547,25 +622,51 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       for (const tab of tabs) run('tab.close', { tabId: tab.id })
     })
   }
+  // "Close other tabs" closes the other cards of this pane – the core's `tab.closeOthers` takes
+  // the whole space, private tabs included, and would end the private session from the regular
+  // pane (or take the space's regular tabs with it from the private one) – then keeps `tab` in
+  // view, as the core's does.
   const closeOthers = (tab: Tab): void => {
     const others = regular.filter((t) => t.id !== tab.id)
     departAll(others)
-    undoable(others, () => run('tab.closeOthers', { tabId: tab.id }))
+    undoable(others, () => {
+      for (const t of others) run('tab.close', { tabId: t.id })
+      run('tab.activate', { tabId: tab.id })
+    })
   }
-  /** "Close All Tabs": every unpinned tab of the space goes (Zen's Clear tabs); pinned ones stay. */
+  /**
+   * "Close All Tabs": every unpinned card of the pane goes (Zen's Clear tabs); pinned ones stay.
+   * On a host with private tabs the space holds both modes and the core's `space.closeUnpinned`
+   * would take them all – from the regular pane it would end the private session, from the
+   * private one take the space's tabs with it – so there the regular pane closes its own cards
+   * one by one, as "Close other tabs" does, and the private pane's row is the app menu's Close
+   * Private Tabs (`tab.closePrivate`: the session ends and its profile is wiped, INC-04; a
+   * private tab is never filed, so no toast follows).
+   */
   const closeAll = (): void => {
     departAll(regular)
-    undoable(regular, () => run('space.closeUnpinned', { spaceId: space.id }))
+    if (privatePane) {
+      run('tab.closePrivate', undefined)
+      return
+    }
+    undoable(regular, () => {
+      if (hasPrivate) for (const t of regular) run('tab.close', { tabId: t.id })
+      else run('space.closeUnpinned', { spaceId: space.id })
+    })
   }
   const closeAllAsked = (): void => {
     if (regular.length === 0) return
     if (state.settings.confirmCloseAll) setSheet({ kind: 'close-all' })
     else closeAll()
   }
-  /** The header's menu: it reads the recently closed list first, so its row can say how many. */
+  /**
+   * The header's menu: it reads the recently closed list first, so its row can say how many. The
+   * private pane's menu has no such row – a private tab is never filed (the core's
+   * `captureClosed`), and the list would be the regular tabs' – so it reads nothing.
+   */
   const openMenu = async (): Promise<void> => {
     noteSheetOpener()
-    const closed = await historyAdapter.recentlyClosed().catch(() => [])
+    const closed = privatePane ? [] : await historyAdapter.recentlyClosed().catch(() => [])
     setSheet({ kind: 'menu', closed: closed.filter((entry) => entry.kind === 'tab') })
   }
   /**
@@ -656,9 +757,18 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           }}
         >
           <header className="flex h-14 shrink-0 items-center gap-2.5 px-3" {...handle}>
-            <SpaceGlyph icon={space.icon} size={20} />
-            <span className="zen-title min-w-0 truncate">{space.name}</span>
-            <span className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]">
+            {privatePane ? (
+              <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <SpaceGlyph icon={space.icon} size={20} />
+            )}
+            <span className="zen-title min-w-0 truncate">
+              {privatePane ? 'Private' : space.name}
+            </span>
+            <span
+              className="shrink-0 text-[13px] tabular-nums text-[var(--zen-muted)]"
+              data-testid="overview-count"
+            >
               {count} tab{count === 1 ? '' : 's'}
             </span>
             <span className="flex-1" />
@@ -685,58 +795,81 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               <Ellipsis className="h-[18px] w-[18px]" />
             </button>
           </header>
-          {state.spaces.length > 1 && <SpaceStrip spaces={state.spaces} activeId={space.id} />}
-          <div
-            ref={(el) => {
-              scrollRef.current = el
-              return fadeGrid(el)
-            }}
-            className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
-            // The card the page morphs into is scrolled into view: keep it clear of the fades.
-            style={{ touchAction: 'pan-y', overscrollBehavior: 'contain', scrollPaddingBlock: 16 }}
-            onScroll={measure}
+          {hasPrivate && <PaneSegment pane={pane} onPick={pickOverviewPane} />}
+          <PaneSlot
+            // Each pane is a slot's worth of its own – the space strip, the grid or the empty
+            // explainer – coming up fresh on a 120 ms fade in while the still of the pane before
+            // fades out over the same slot (v2 §11.4); the cells start fresh with it.
+            pane={pane}
+            root={rootRef}
+            onLeave={leavePane}
+            className="zen-overview-pane relative flex min-h-0 flex-1 flex-col"
           >
-            {essentials.length > 0 && (
-              <div className="mb-3 flex flex-wrap gap-2">
-                {essentials.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    className="zen-essential h-12 w-12"
-                    data-active={tab.id === active?.id}
-                    data-discarded={tab.discarded}
-                    aria-label={tabTitle(tab)}
-                    onClick={() => pick(tab)}
-                  >
-                    <Favicon tab={tab} size={22} />
-                  </button>
-                ))}
+            {!privatePane && state.spaces.length > 1 && (
+              <SpaceStrip spaces={state.spaces} activeId={space.id} />
+            )}
+            {privatePane && count === 0 ? (
+              <PrivateEmpty />
+            ) : (
+              <div
+                ref={(el) => {
+                  scrollRef.current = el
+                  return fadeGrid(el)
+                }}
+                className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
+                data-pane={pane}
+                // The card the page morphs into is scrolled into view: keep it clear of the fades.
+                style={{
+                  touchAction: 'pan-y',
+                  overscrollBehavior: 'contain',
+                  scrollPaddingBlock: 16
+                }}
+                onScroll={measure}
+              >
+                {essentials.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {essentials.map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        className="zen-essential h-12 w-12"
+                        data-active={tab.id === active?.id}
+                        data-discarded={tab.discarded}
+                        aria-label={tabTitle(tab)}
+                        onClick={() => pick(tab)}
+                      >
+                        <Favicon tab={tab} size={22} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                >
+                  {pinned.map(card)}
+                  {groupCards.map(({ folder, tabs, gone }) => (
+                    <GroupCard
+                      key={folder.id}
+                      folder={folder}
+                      tabs={tabs}
+                      card={card}
+                      columns={columns}
+                      onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
+                      forming={tabs.length > 0 && forming(folder, tabs)}
+                      dissolving={tabs.length === 0}
+                      held={gone?.count}
+                      onDissolved={dissolvedGroup}
+                      onRelease={subscribeRelease}
+                    />
+                  ))}
+                  {loose.map(card)}
+                  <NewTabCard pane={pane} />
+                </div>
               </div>
             )}
-            <div
-              className="grid gap-3"
-              style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
-            >
-              {pinned.map(card)}
-              {groupCards.map(({ folder, tabs, gone }) => (
-                <GroupCard
-                  key={folder.id}
-                  folder={folder}
-                  tabs={tabs}
-                  card={card}
-                  columns={columns}
-                  onMenu={(f) => setSheet({ kind: 'group', folderId: f.id })}
-                  forming={tabs.length > 0 && forming(folder, tabs)}
-                  dissolving={tabs.length === 0}
-                  held={gone?.count}
-                  onDissolved={dissolvedGroup}
-                  onRelease={subscribeRelease}
-                />
-              ))}
-              {loose.map(card)}
-              <NewTabCard />
-            </div>
-          </div>
+          </PaneSlot>
+          <PaneStills stills={stills} onDone={stillDone} />
         </div>
         <Departures state={state} activeTabId={active?.id ?? null} />
         <LiftGhost state={state} activeTabId={active?.id ?? null} />
@@ -779,6 +912,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
           state={state}
           tab={state.tabs[sheet.tabId]}
           groups={groups}
+          groupable={!privatePane}
           others={regular.length - 1}
           onClose={() => setSheet(null)}
           onNewGroup={(tab) => void makeGroup([tab.id], true)}
@@ -796,7 +930,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       )}
       {interactive && sheet?.kind === 'menu' && (
         <OverviewMenuSheet
-          title={space.name}
+          title={privatePane ? 'Private' : space.name}
+          privateTabs={privatePane}
           open={regular.length}
           closed={sheet.closed.length}
           onClose={() => leaveSheet('menu')}
@@ -808,6 +943,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         <CloseAllSheet
           count={regular.length}
           spaceName={space.name}
+          privateTabs={privatePane}
           onClose={() => leaveSheet('close-all')}
           onConfirm={(askAgain) => {
             if (!askAgain) run('settings.update', { confirmCloseAll: false })
@@ -830,10 +966,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
  * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06);
  * "Close other tabs" stays on a card's own menu, where it names the card it keeps. The rows are
  * menu items, so Title Case (v2 §9.1; the card menus' rows from #94/#147 take the rule in a
- * follow-up); a row with nothing to act on keeps no count and is disabled, never hidden (§9.17).
+ * follow-up); a row with nothing to act on keeps its count, at zero ("Recently Closed (0)"), and
+ * is disabled at .4, never hidden (§9.17).
+ * The private pane's menu is the one row "Close Private Tabs", named as the app menu names it:
+ * no recently closed list applies there (Chrome's Incognito switcher has no Recent tabs either),
+ * so the row is not there, not greyed – §9.17's rule is for a count of zero.
  */
 function OverviewMenuSheet({
   title,
+  privateTabs,
   open,
   closed,
   onClose,
@@ -841,6 +982,8 @@ function OverviewMenuSheet({
   onCloseAll
 }: {
   title: string
+  /** Whether this is the private pane's menu. */
+  privateTabs: boolean
   /** How many tabs "Close All Tabs" would close (the unpinned ones). */
   open: number
   /** How many tabs the recently closed list holds. */
@@ -849,21 +992,32 @@ function OverviewMenuSheet({
   onRecentlyClosed: () => void
   onCloseAll: () => void
 }): JSX.Element {
-  const actions: SheetAction[] = [
-    {
-      id: 'recently-closed',
-      label: closed > 0 ? `Recently Closed (${closed})` : 'Recently Closed',
-      disabled: closed === 0,
-      onPick: onRecentlyClosed
-    },
-    {
-      id: 'close-all',
-      label: open > 0 ? `Close All Tabs (${open})` : 'Close All Tabs',
-      destructive: true,
-      disabled: open === 0,
-      onPick: onCloseAll
-    }
-  ]
+  const counted = (label: string, n: number): string => `${label} (${n})`
+  const actions: SheetAction[] = privateTabs
+    ? [
+        {
+          id: 'close-all',
+          label: counted('Close Private Tabs', open),
+          destructive: true,
+          disabled: open === 0,
+          onPick: onCloseAll
+        }
+      ]
+    : [
+        {
+          id: 'recently-closed',
+          label: counted('Recently Closed', closed),
+          disabled: closed === 0,
+          onPick: onRecentlyClosed
+        },
+        {
+          id: 'close-all',
+          label: counted('Close All Tabs', open),
+          destructive: true,
+          disabled: open === 0,
+          onPick: onCloseAll
+        }
+      ]
   return <OverviewSheet title={title} actions={actions} onClose={onClose} />
 }
 
@@ -901,6 +1055,7 @@ function TabSheet({
   state,
   tab,
   groups,
+  groupable,
   others,
   onClose,
   onNewGroup,
@@ -910,6 +1065,8 @@ function TabSheet({
   state: UIState
   tab: Tab
   groups: Folder[]
+  /** Whether the pane groups its cards (the private pane does not). */
+  groupable: boolean
   /** How many other tabs "Close other tabs" would close. */
   others: number
   onClose: () => void
@@ -919,7 +1076,7 @@ function TabSheet({
 }): JSX.Element {
   const current = tab.folderId && state.folders[tab.folderId] ? tab.folderId : null
   const actions: SheetAction[] = []
-  if (!tab.pinned && !tab.essential) {
+  if (groupable && !tab.pinned && !tab.essential) {
     actions.push({ id: 'new-group', label: 'New group', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
       if (g.id === current) continue
@@ -1035,20 +1192,110 @@ function GroupDot({ color }: { color: FolderColor | null | undefined }): JSX.Ele
 
 /**
  * The last card of the grid, a cell like the others (`data-cell`): when cards are rearranged,
- * closed or grouped it glides to its new place on the same spring as they do.
+ * closed or grouped it glides to its new place on the same spring as they do. On the private
+ * pane it opens a private tab (INC-01).
  */
-function NewTabCard(): JSX.Element {
+function NewTabCard({ pane }: { pane: OverviewPane }): JSX.Element {
+  const isPrivate = pane === 'private'
   return (
     <button
       type="button"
       className="zen-overview-new flex flex-col items-center justify-center gap-2 text-[var(--zen-muted)] active:text-[var(--zen-fg)]"
       style={{ aspectRatio: '3 / 4' }}
       data-cell={NEW_TAB_CELL}
-      onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
+      data-testid={isPrivate ? 'overview-new-private-tab' : 'overview-new-tab'}
+      onClick={() => newTabOn(pane)}
     >
-      <Plus className="h-6 w-6" />
-      <span className="text-[13px] font-medium">New Tab</span>
+      {isPrivate ? (
+        <VenetianMask className="h-6 w-6" strokeWidth={1.75} />
+      ) : (
+        <Plus className="h-6 w-6" />
+      )}
+      <span className="text-[13px] font-medium">{isPrivate ? 'New Private Tab' : 'New Tab'}</span>
     </button>
+  )
+}
+
+/** Ask for a new tab of the pane's mode: the phone's new tab page comes up over the overview. */
+function newTabOn(pane: OverviewPane): void {
+  window.dispatchEvent(
+    new CustomEvent('zen-new-tab', {
+      detail: pane === 'private' ? { containerId: PRIVATE_CONTAINER_ID } : {}
+    })
+  )
+}
+
+/**
+ * The overview's two panes as a tab bar above the grid (TAB-02): "Tabs" and "Private" on the
+ * shared `.zen-v2-segment` primitive (design language v2 §9.34, this PR's to land): text tabs in
+ * the window family – the picked one in the window ink with the 2 px accent line under it, the
+ * other at 69% – switching on a tap with a 120 ms state change (§11.4); not a segmented pill
+ * (§9.14 has none). The class is the truth for its geometry and inks (a row tall at the 16
+ * gutter, each label a 44 target); the markup carries the roles.
+ */
+function PaneSegment({
+  pane,
+  onPick
+}: {
+  pane: OverviewPane
+  onPick: (pane: OverviewPane) => void
+}): JSX.Element {
+  const panes: Array<{ id: OverviewPane; label: string }> = [
+    { id: 'tabs', label: 'Tabs' },
+    { id: 'private', label: 'Private' }
+  ]
+  return (
+    <div role="tablist" aria-label="Tabs and private tabs" className="zen-v2-segment">
+      {panes.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={pane === id}
+          data-pane={id}
+          data-testid={`overview-pane-${id}`}
+          onClick={() => {
+            if (pane !== id) onPick(id)
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The private pane with nothing in it (TAB-03): a page's empty state (v2 §9.17 – title 22/600,
+ * one 15 description at 69%, one button, the block centred with its middle at 45% of the
+ * pane), in the window family on the private theme's backdrop.
+ */
+function PrivateEmpty(): JSX.Element {
+  return (
+    <div
+      className="relative min-h-0 flex-1"
+      data-pane="private"
+      data-testid="overview-private-empty"
+    >
+      <div
+        className="absolute inset-x-0 flex -translate-y-1/2 flex-col items-center px-8 text-center"
+        style={{ top: '45%' }}
+      >
+        <h2 className="text-[22px] font-semibold leading-7 tracking-[-0.012em]">No private tabs</h2>
+        <p className="mt-2 max-w-[360px] text-[15px] leading-5 text-[rgb(var(--zen-fg-rgb)/0.69)]">
+          Pages you open here leave no history, cookies or site data once the last private tab
+          closes
+        </p>
+        <button
+          type="button"
+          className="zen-v2-button mt-4"
+          data-testid="overview-private-empty-new"
+          onClick={() => newTabOn('private')}
+        >
+          New private tab
+        </button>
+      </div>
+    </div>
   )
 }
 
