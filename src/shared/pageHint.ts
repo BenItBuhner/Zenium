@@ -7,6 +7,7 @@ import {
   type SpringConfig,
   type SpringState
 } from './spring'
+import { REDUCED_FADE_MS, TOAST_CARD } from './toastCard'
 
 /*
  * The fullscreen hint as the page script draws it: a v2 toast (radius 8, a 1px border, the
@@ -16,22 +17,22 @@ import {
  * the CSSOM so a page's content security policy has nothing to refuse.
  *
  * The `toast` kind is the phone chrome's message card instead (v2 §9.33, `ToastCard`'s
- * `.zen-message` metrics: a 44 px row 8 px inside the edges, 15/20 text at the body weight,
- * the panel, the hairline, the card radius and shadow) along the bottom edge, moving as the
- * chrome's toasts move (`useMessageMotion`): in across the edge on `SPRING_GENTLE`, out on
- * `SPRING_SNAPPY` thinning with its travel, a 120 ms fade in place under reduced motion
- * (§11.3). The springs are the shared ones, stepped per frame here, since the page's CSS
- * transitions could not carry them.
+ * `.zen-message` metrics, one source with it in `toastCard.ts`: a 44 px row 8 px inside the
+ * edges, 15/20 text at the body weight, the panel, the hairline, the card radius and shadow)
+ * along the bottom edge, moving as the chrome's toasts move (`useMessageMotion`): in across the
+ * edge on `SPRING_GENTLE`, out on `SPRING_SNAPPY` thinning with its travel, a 120 ms fade in
+ * place under reduced motion (§11.3). The springs are the shared ones, stepped per frame here,
+ * since the page's CSS transitions could not carry them.
  */
 
 const HOST_TAG = 'zenium-fullscreen-hint'
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif'
 
-/** The toast's inset from the frame's edges (§9.33) and its row height. */
-export const TOAST_INSET_PX = 8
-export const TOAST_ROW_PX = 44
-/** The fade an appearance or departure becomes under reduced motion (§11.3). */
-export const TOAST_REDUCED_FADE_MS = 120
+/** The toast's inset from the frame's edges (§9.33) and its row height: the chrome's card's. */
+export const TOAST_INSET_PX = TOAST_CARD.insetPx
+export const TOAST_ROW_PX = TOAST_CARD.rowPx
+/** The fade an appearance or departure becomes under reduced motion (§11.3): the chrome's. */
+export const TOAST_REDUCED_FADE_MS = REDUCED_FADE_MS
 
 /** Where hints go: the document element, so a page that replaces its body leaves them alone. */
 function mount(): Element {
@@ -85,16 +86,18 @@ export function renderHint(hint: PageHint): HTMLElement {
     display: 'flex',
     flexDirection: toast ? 'row' : 'column',
     alignItems: 'center',
-    gap: toast ? '8px' : '4px',
+    gap: toast ? `${TOAST_CARD.gapPx}px` : '4px',
     boxSizing: 'border-box',
     minHeight: toast ? `${TOAST_ROW_PX}px` : 'auto',
-    padding: toast ? '3px 14px' : '10px 16px',
-    borderRadius: '8px',
+    padding: toast ? `${TOAST_CARD.padPx}px ${TOAST_CARD.gutterPx}px` : '10px 16px',
+    borderRadius: `${TOAST_CARD.radiusPx}px`,
     border: `1px solid ${palette.border}`,
     background: palette.panel,
     color: palette.text,
-    boxShadow: '0 2px 6px rgb(0 0 0 / 0.2)',
-    font: toast ? `400 15px/20px ${FONT}` : `15px/1.4 ${FONT}`,
+    boxShadow: TOAST_CARD.shadow,
+    font: toast
+      ? `${TOAST_CARD.weight} ${TOAST_CARD.fontPx}px/${TOAST_CARD.linePx}px ${FONT}`
+      : `15px/1.4 ${FONT}`,
     textAlign: toast ? 'left' : 'center',
     whiteSpace: toast ? 'normal' : 'nowrap',
     overflowWrap: 'anywhere'

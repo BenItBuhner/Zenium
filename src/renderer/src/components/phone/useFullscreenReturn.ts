@@ -1,7 +1,8 @@
 import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { REDUCED_FADE_MS } from '@shared/toastCard'
 
-/** The chrome's return from a page's fullscreen: an opacity fade over this long (v2 §11.3). */
-export const FULLSCREEN_RETURN_MS = 120
+/** The chrome's return from a page's fullscreen (v2 §11.5): an opacity fade as long as §11.3's, one number with it. */
+export const FULLSCREEN_RETURN_MS: number = REDUCED_FADE_MS
 
 /** Fade `el` in over the return's time; null where the Web Animations API is missing (tests). */
 export function fadeInChrome(el: HTMLElement): Animation | null {

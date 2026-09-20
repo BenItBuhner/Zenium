@@ -1,3 +1,5 @@
+import { TOAST_SHOW_MS } from './toastCard'
+
 /*
  * The fullscreen hints (Chrome's exclusive-access bubble): "Press F11 to exit full screen" when
  * the window goes fullscreen, "<host> is now full screen" with the way out when a page puts an
@@ -31,12 +33,12 @@ export interface PageHint {
 }
 
 /**
- * The phone's first-time hint for a video in fullscreen (GN-20): how to leave, in Chrome for
+ * The phone's first-time hint for a page in fullscreen (GN-20): how to leave, in Chrome for
  * Android's words. A toast without an action, shown once (`settings.fullscreenHintDone`).
  */
 export const FULLSCREEN_EXIT_HINT = 'Swipe down or press back to exit full screen'
-/** How long a toast without an action stands (§9.33's 2.8 s, the chrome's `TOAST_DURATION`). */
-export const TOAST_SHOW_MS = 2800
+/** How long a toast without an action stands (§9.33's 2.8 s, the chrome's `TOAST_DURATION`: one number, `toastCard.ts`). */
+export { TOAST_SHOW_MS }
 
 /** The hint for a video in fullscreen on the phone: the chrome's toast, drawn in the page. */
 export function fullscreenExitHint(dark: boolean): PageHint {

@@ -11,6 +11,7 @@ import type {
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
+import { TOAST_SHOW_MS } from '@shared/toastCard'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
@@ -521,8 +522,8 @@ export const uiStore = createStore<UiState>(
 // Messages: toasts at the bottom, banners at the top
 // ---------------------------------------------------------------------------
 
-/** A plain toast is read in a glance; one with an action needs time to be acted on. */
-export const TOAST_DURATION = 2800
+/** A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin: `@shared/toastCard`); one with an action needs time to be acted on. */
+export const TOAST_DURATION = TOAST_SHOW_MS
 export const TOAST_ACTION_DURATION = 5000
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
