@@ -77,6 +77,10 @@
 //                      `aria-setsize`, its border box in CSS px and whether it meets the 44 x 44
 //                      target; headings, dialogs and live regions are listed as context. Written
 //                      as `<prefix><label>.json` per state plus one `<prefix>audit.md` table.
+//   --probe <file>     a JavaScript file evaluated in the page after each state has settled (first
+//                      scheme only), its value written as `<prefix><label>.probe.json` beside the
+//                      still and echoed to the log: how a surface is measured on the preview host
+//                      (a row's height, a text's box against its control) for a PR body's numbers.
 //
 // Needs Xvfb (or --display) and nothing beyond electron. Exit code 1 when any capture failed.
 import { spawn } from 'node:child_process'
@@ -105,7 +109,8 @@ function parseArgs(argv) {
     height: 915,
     dpr: 2.6,
     settle: 1200,
-    audit: ''
+    audit: '',
+    probe: ''
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -801,6 +806,17 @@ async function inner(opts) {
   }
 
   let failures = 0
+  // `--probe`: the file's script, evaluated in the page once the state has settled; its value
+  // (JSON) lands beside the still, so a measurement is taken on the same frame the still shows.
+  const probeScript = opts.probe ? fs.readFileSync(opts.probe, 'utf8') : ''
+  const probe = async (label) => {
+    if (!probeScript) return
+    const value = await js(probeScript)
+    const file = path.join(opts.out, `${opts.prefix}${label}.probe.json`)
+    fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n')
+    console.log(`probe ${label}: ${JSON.stringify(value)}`)
+  }
+
   for (const scheme of schemes) {
     nativeTheme.themeSource = scheme
     await waitFor(
@@ -827,6 +843,7 @@ async function inner(opts) {
         fs.writeFileSync(file, png)
         console.log(`shot ${file} (${png.readUInt32BE(16)}x${png.readUInt32BE(20)})`)
         if (scheme === schemes[0]) await audit(label, state)
+        if (scheme === schemes[0]) await probe(label)
       } catch (e) {
         failures++
         console.error(`failed ${label} ${scheme}: ${e.message}`)
