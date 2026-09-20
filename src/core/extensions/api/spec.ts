@@ -754,7 +754,8 @@ export const API_SPEC: ApiSpec = {
   // listeners over the same hook (`main/platform/webRequest.ts`): registrations go to the host
   // through the internal `addListener` / `removeListener` calls, deliveries come back addressed
   // to the listener, and a blocking listener's return value travels back as the answer.
-  // `onAuthRequired` exists for extensions that probe it; nothing fires it (no session hook).
+  // `onAuthRequired` runs off the engine's `login` event instead (a challenge is not a hook of
+  // the session pipeline); its blocking answer carries `authCredentials` or `cancel`.
   webRequest: {
     methods: {
       handlerBehaviorChanged: { params: [], inert: {} }

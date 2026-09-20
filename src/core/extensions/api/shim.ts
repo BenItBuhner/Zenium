@@ -804,6 +804,11 @@ export function installExtensionApi(
     const out: Record<string, unknown> = {}
     if (raw.cancel === true) out.cancel = true
     if (typeof raw.redirectUrl === 'string') out.redirectUrl = raw.redirectUrl
+    if (isObject(raw.authCredentials)) {
+      const { username, password } = raw.authCredentials
+      if (typeof username === 'string' && typeof password === 'string')
+        out.authCredentials = { username, password }
+    }
     for (const key of ['requestHeaders', 'responseHeaders']) {
       const list = raw[key]
       if (!Array.isArray(list)) continue

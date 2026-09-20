@@ -3,7 +3,17 @@ import { statSync } from 'node:fs'
 import type { Browser } from '../../core/browser'
 import type { PermissionRequestDetails } from '../../core/permissions'
 import type { CertificateDetails, ClientCertificateInfo } from '../../shared/types'
+import type { AuthChallengeAnswer, HostAuthChallenge } from './extensionApi/webRequest'
 import type { ElectronTabViewHost } from './views'
+
+/**
+ * Who hears an HTTP authentication challenge before the user does: the extensions'
+ * `webRequest.onAuthRequired` (a VPN's proxy credentials, a password manager's site login).
+ * Undefined leaves the challenge to the browser's own dialog.
+ */
+export interface AuthChallengeProvider {
+  authRequired(challenge: HostAuthChallenge): Promise<AuthChallengeAnswer | undefined>
+}
 
 type RequestDetails = Parameters<
   NonNullable<Parameters<Electron.Session['setPermissionRequestHandler']>[0]>
@@ -116,11 +126,54 @@ export function describeServerCertificate(cert: Certificate): CertificateDetails
 }
 
 /**
+ * What an HTTP authentication challenge becomes for the user's dialog and for the extensions,
+ * and what the request gets back: an extension's credentials, an extension's cancel (the
+ * response is shown as it came, as Chrome does), or the user's answer to the dialog.
+ */
+export async function answerAuthChallenge(
+  browser: Pick<Browser, 'security'>,
+  extensions: AuthChallengeProvider | null,
+  details: { url: string },
+  authInfo: Electron.AuthInfo,
+  tabId: string | null
+): Promise<{ username: string; password: string } | null> {
+  if (extensions) {
+    const answer = await extensions.authRequired({
+      url: details.url,
+      isProxy: authInfo.isProxy,
+      scheme: authInfo.scheme,
+      realm: authInfo.realm,
+      host: authInfo.host,
+      port: authInfo.port,
+      tabId
+    })
+    if (answer && 'cancel' in answer) return null
+    if (answer) return answer.credentials
+  }
+  return await browser.security.httpAuth(
+    {
+      host: authInfo.host,
+      port: authInfo.port,
+      realm: authInfo.realm,
+      scheme: authInfo.scheme,
+      isProxy: authInfo.isProxy,
+      secure: authInfo.isProxy ? false : details.url.startsWith('https:')
+    },
+    tabId
+  )
+}
+
+/**
  * HTTP authentication, client-certificate selection and server-certificate errors: Chromium asks
  * through `app`, the core's prompt service asks the user through the chrome, and the answer goes
- * back into the request.
+ * back into the request. An authentication challenge goes to the extensions' `onAuthRequired`
+ * listeners first, as in Chrome.
  */
-export function attachSecurityHandlers(browser: Browser, views: ElectronTabViewHost): void {
+export function attachSecurityHandlers(
+  browser: Browser,
+  views: ElectronTabViewHost,
+  extensions: AuthChallengeProvider | null = null
+): void {
   // Chromium keeps no decision of its own here: every TLS handshake with a certificate that fails
   // verification asks. The answer is the core's session exception for the tab's container, site
   // and certificate (the interstitial's Proceed); everything else is denied, as Chrome does, and
@@ -140,22 +193,10 @@ export function attachSecurityHandlers(browser: Browser, views: ElectronTabViewH
   app.on('login', (event, webContents, details, authInfo, callback) => {
     event.preventDefault()
     const tabId = webContents ? (views.tabIdForWebContents(webContents) ?? null) : null
-    void browser.security
-      .httpAuth(
-        {
-          host: authInfo.host,
-          port: authInfo.port,
-          realm: authInfo.realm,
-          scheme: authInfo.scheme,
-          isProxy: authInfo.isProxy,
-          secure: authInfo.isProxy ? false : details.url.startsWith('https:')
-        },
-        tabId
-      )
-      .then((credentials) => {
-        if (credentials) callback(credentials.username, credentials.password)
-        else callback()
-      })
+    void answerAuthChallenge(browser, extensions, details, authInfo, tabId).then((credentials) => {
+      if (credentials) callback(credentials.username, credentials.password)
+      else callback()
+    })
   })
 
   app.on('select-client-certificate', (event, webContents, url, certificates, callback) => {
