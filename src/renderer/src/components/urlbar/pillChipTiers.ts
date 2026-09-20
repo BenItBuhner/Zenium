@@ -1,0 +1,102 @@
+/**
+ * Which of the address pill's chips fit, and which hide when the pill cannot hold them all
+ * (design language v2 §9.29's tier; Chrome's LocationBarView lays its decorations out the same
+ * way). The chips have a priority: the site icon always; then the chips that report a state the
+ * user cannot otherwise see (blocked pop-ups, the blocking shield, a save prompt's key) – never
+ * hidden; then the star; then the zoom chip; the informational chips (translate, Reader View)
+ * lowest. The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do the chips
+ * hide, from the lowest priority up; once one does not fit, none below it shows. A hidden chip's
+ * action stays reachable from the app menu and the tab's menu (Bookmark, Zoom, Translate Page,
+ * Reader View) and from the site information.
+ *
+ * Pure, so the rule is unit-tested without a DOM; the pill measures itself and asks.
+ */
+
+export type ChipTier = 'site' | 'state' | 'star' | 'zoom' | 'info'
+
+/** Highest priority first: what hides when the pill runs out of room hides from the end. */
+export const CHIP_PRIORITY: readonly ChipTier[] = ['site', 'state', 'star', 'zoom', 'info']
+
+/** The tiers no width ever hides: the address's own icon and the state the page cannot show. */
+const NEVER_HIDDEN: ReadonlySet<ChipTier> = new Set<ChipTier>(['site', 'state'])
+
+/**
+ * What the address keeps before a chip is let in: a host's first letters and the ellipsis.
+ * With the site icon and the star alone this puts the star's return at a 130 px pill (a 270 px
+ * sidebar), §9.29's threshold.
+ */
+export const MIN_ADDRESS_WIDTH = 56
+
+/** The pill's gap between its items (`gap-1.5`). */
+export const CHIP_GAP = 6
+
+/** The pill's horizontal padding, both sides together (`px-2.5`). */
+export const PILL_PADDING = 20
+
+/**
+ * Nominal boxes, the chips' negative margins folded in (§9.3): the site icon's 24 less its 4 px
+ * lead-in, the star's 28 less its 8 px trail, the 20 px chips (zoom, translate, Reader View),
+ * the 28 px icon buttons (blocked pop-ups, the shield, the autofill key) and what a count badge
+ * adds to one of them (the 4 px gap and a 20 px two-digit pill).
+ */
+export const CHIP_WIDTH = {
+  site: 20,
+  star: 20,
+  small: 20,
+  iconButton: 28,
+  badge: 28
+} as const
+
+export interface PillChipSpec {
+  /** What the pill calls the chip (`star`, `zoom`, `translate`…). */
+  id: string
+  tier: ChipTier
+  /** The chip's box, its own margins folded in, without the gap before it. */
+  width: number
+}
+
+/**
+ * The ids of the chips that fit inside a pill whose content box is `innerWidth` wide (the pill's
+ * width less `PILL_PADDING`). Unmeasured (0) shows everything: nothing hides before the pill has
+ * a width. The never-hidden tiers are laid out first; the rest take their turn in priority
+ * order, each let in only while the address would keep `MIN_ADDRESS_WIDTH`, and the first that
+ * does not fit closes the door for those below it – a lower chip never shows over a hidden
+ * higher one.
+ */
+export function fittingChips(
+  innerWidth: number,
+  chips: readonly PillChipSpec[]
+): ReadonlySet<string> {
+  const visible = new Set<string>()
+  if (innerWidth <= 0) {
+    for (const c of chips) visible.add(c.id)
+    return visible
+  }
+  let used = 0
+  for (const c of chips) {
+    if (!NEVER_HIDDEN.has(c.tier)) continue
+    visible.add(c.id)
+    used += c.width + CHIP_GAP
+  }
+  const byPriority = CHIP_PRIORITY.filter((t) => !NEVER_HIDDEN.has(t))
+  for (const tier of byPriority) {
+    for (const c of chips) {
+      if (c.tier !== tier) continue
+      if (innerWidth - used - (c.width + CHIP_GAP) < MIN_ADDRESS_WIDTH) return visible
+      visible.add(c.id)
+      used += c.width + CHIP_GAP
+    }
+  }
+  return visible
+}
+
+/** The address's width once the visible chips have taken theirs; what the text truncates into. */
+export function addressWidth(
+  innerWidth: number,
+  chips: readonly PillChipSpec[],
+  visible: ReadonlySet<string>
+): number {
+  let used = 0
+  for (const c of chips) if (visible.has(c.id)) used += c.width + CHIP_GAP
+  return Math.max(0, innerWidth - used)
+}
