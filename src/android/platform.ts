@@ -877,7 +877,13 @@ export class AndroidPlatform implements Platform {
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
   readonly voice: VoiceHost
-  readonly speech: SpeechHost
+  /**
+   * The speech engine (`ReadAloud.kt`), on devices that have one: boot's `readAloud` says
+   * whether a text-to-speech service is installed (the package manager's answer, no binding),
+   * and without one the host is left out, so `capabilities.readAloud` is false, the core's
+   * `readAloud.available` is false and the entry points stay hidden (interface 3.2).
+   */
+  readonly speech?: SpeechHost
   private speechListeners: Array<(utteranceId: string, event: SpeechHostEvent) => void> = []
   private voicesListeners: Array<() => void> = []
   /**
@@ -1123,18 +1129,22 @@ export class AndroidPlatform implements Platform {
     // `speak` (the engine's queue flushed) or `prepare` (queued behind the current one), its
     // `onStart` / `onRangeStart` / `onDone` / `onError` back as `speech.event`s. No `pause`: the
     // core stops and restarts the sentence. `speech.voices` initialises the engine on first use.
-    this.speech = {
-      voices: () => bridge.call<ReadAloudVoice[]>('speech.voices'),
-      onVoicesChanged: (listener) => {
-        this.voicesListeners.push(listener)
-      },
-      speak: (utteranceId, text, options) =>
-        bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'flush' }),
-      prepare: (utteranceId, text, options) =>
-        bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'add' }),
-      stop: () => bridge.send('speech.stop'),
-      onEvent: (listener) => {
-        this.speechListeners.push(listener)
+    // Built only where boot found an engine: the core reads the host's presence as read aloud's
+    // availability, and a device without one (a build without Google's engine) shows no entry.
+    if (this.capabilities.readAloud) {
+      this.speech = {
+        voices: () => bridge.call<ReadAloudVoice[]>('speech.voices'),
+        onVoicesChanged: (listener) => {
+          this.voicesListeners.push(listener)
+        },
+        speak: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'flush' }),
+        prepare: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'add' }),
+        stop: () => bridge.send('speech.stop'),
+        onEvent: (listener) => {
+          this.speechListeners.push(listener)
+        }
       }
     }
     this.thumbnails = {
