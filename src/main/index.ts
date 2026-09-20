@@ -78,7 +78,9 @@ function main(): void {
    * a second instance, a file association or a protocol launch. URLs open as tabs in the window
    * the flags ask for (Zen Browser ships the same `--blank-window` flag); a bare flag just opens
    * the window. `--app=<url>` (an installed app's launcher) opens the page in a standalone app
-   * window instead – an open window of that app comes forward.
+   * window instead – a new one on every launch, as Chrome's `--app=` does and as its installed
+   * apps do by default on desktop (the Launch Handler's `navigate-new`; a manifest's
+   * `launch_handler.client_mode` is not read yet).
    */
   const openLaunch = (launch: LaunchArgs): void => {
     const b = browser
@@ -89,9 +91,7 @@ function main(): void {
     // `--make-default-browser` is the ReinstallCommand Windows runs from its Default apps page.
     if (launch.makeDefault) void b.defaultBrowser.request('settings')
     if (launch.app) {
-      const app = b.webApps.pinnedFor(launch.app)
-      const open = app ? b.allWindows().find((w) => w.app?.appId === app.id && !w.isClosing) : null
-      const win = open ?? b.openAppWindow(launch.app)
+      const win = b.openAppWindow(launch.app)
       if (win) {
         win.host.show()
         win.host.focus()
