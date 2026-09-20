@@ -153,6 +153,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val voice = Voice(this)
     /** QR scanning: the back camera behind the chrome's camera buttons, its preview laid over the scan sheet (OMN-22). */
     val qrScan = QrScan(this, root)
+    /** Read aloud: the device's speech engine behind the core's `SpeechHost`, and the speech stream's audio focus (A11Y-06). */
+    val readAloud = ReadAloud(this)
     override var fullscreenTab: TabWebView? = null
         private set
     /** The page's fullscreen element as the WebView renders it (the view in the fullscreen layer), while there is one. */
@@ -260,6 +262,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "voiceSearch" to voice.available,
                 // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
                 "qrScan" to qrScan.available,
+                // A speech engine on the device: Listen to this page and Read aloud show (A11Y-06).
+                "readAloud" to readAloud.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
                 "touchExploration" to touchExploration,
                 // What sync calls this device until the user renames it (Chrome names a phone by its model).
@@ -494,7 +498,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
-            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
+            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions"), if (args.has("maxBytes")) args.num("maxBytes") else null) { files -> reply(files) }
             "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
 
             // --- passwords: vault key protection and re-authentication ---------------------------
@@ -595,6 +599,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "qr.layout" -> { qrScan.layout(args); reply(null) }
             "qr.setTorch" -> { qrScan.setTorch(args.bool("on")); reply(null) }
             "qr.openSettings" -> { qrScan.openSettings(); reply(null) }
+
+            // --- read aloud (ReadAloud.kt; the contract is `SpeechHost` in src/core/platform.ts) -------
+            "speech.voices" -> readAloud.voices(reply)
+            "speech.speak" -> { readAloud.speak(args); reply(null) }
+            "speech.stop" -> { readAloud.stop(); reply(null) }
             // --- the OS media controls, the pages' notifications, the private session -------------
             "media.update" -> { media.update(args.optJSONObject("session")); reply(null) }
             "media.pip" -> media.enterPictureInPicture(args.obj("session"), reply)
@@ -1322,6 +1331,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         privateSession.destroy()
         voice.destroy()
         qrScan.destroy()
+        readAloud.destroy()
         shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()

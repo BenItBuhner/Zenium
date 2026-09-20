@@ -8,6 +8,7 @@ import type {
   BookmarkTreeData,
   Boost,
   ClosedEntry,
+  ImportProgress,
   NavigationSnapshot,
   Container,
   CrashRestoreOffer,
@@ -233,6 +234,7 @@ export interface StateExtras {
   translate: TranslateUIState
   spellcheck: SpellcheckStatus
   readAloud: ReadAloudState | null
+  import: ImportProgress | null
 }
 
 /** Translation state of a host without an engine (and before the service exists). */
@@ -358,7 +360,8 @@ export class BrowserState {
     privacy: emptyPrivacyStatus(),
     translate: emptyTranslateState(),
     spellcheck: UNAVAILABLE_SPELLCHECK,
-    readAloud: null
+    readAloud: null,
+    import: null
   })
   /**
    * The shipped engines plus the installed extensions' (`chrome_settings_overrides`) plus the

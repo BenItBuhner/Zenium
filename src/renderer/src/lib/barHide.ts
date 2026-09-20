@@ -588,12 +588,17 @@ export function currentGate(): BarHideGate {
   const ui: UiState = uiStore.get()
   const tab = state ? activeTab(state) : null
   const url = tab?.url ?? ''
+  // The read-aloud player docks for its session's tab (ContentArea's rule) and holds the bar too.
+  const readAloud = state?.readAloud ?? null
   return {
     enabled: Boolean(state?.settings.hideToolbarOnScroll) && context.present && tab !== null,
     internalPage: isEmptyTabUrl(url) || isInternalUrl(url),
     editing: ui.urlbar.open,
     covered: pageHidden(ui),
-    panelDocked: ui.findOpen || ui.zoomTabId !== null,
+    panelDocked:
+      ui.findOpen ||
+      ui.zoomTabId !== null ||
+      (readAloud !== null && tab !== null && readAloud.tabId === tab.id),
     keyboardUp: ui.insets.bottom >= KEYBOARD_INSET_MIN,
     pulling: pullStore.get().phase !== 'idle',
     carrying: dockStore.get().phase !== 'idle',

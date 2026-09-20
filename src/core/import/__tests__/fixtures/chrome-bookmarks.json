@@ -1,0 +1,113 @@
+{
+  "checksum": "5f0d2a8a1b3c4d5e6f708192a3b4c5d6",
+  "roots": {
+    "bookmark_bar": {
+      "children": [
+        {
+          "date_added": "13350000000000000",
+          "date_last_used": "0",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000001",
+          "id": "5",
+          "name": "Zenium",
+          "type": "url",
+          "url": "https://zenium.app/"
+        },
+        {
+          "children": [
+            {
+              "date_added": "13350000100000000",
+              "date_last_used": "0",
+              "guid": "0a1b2c3d-0000-4000-8000-000000000003",
+              "id": "7",
+              "name": "Chromium",
+              "type": "url",
+              "url": "https://www.chromium.org/"
+            },
+            {
+              "date_added": "13350000200000000",
+              "date_last_used": "0",
+              "guid": "0a1b2c3d-0000-4000-8000-000000000004",
+              "id": "8",
+              "name": "",
+              "type": "url",
+              "url": "https://developer.chrome.com/"
+            }
+          ],
+          "date_added": "13350000050000000",
+          "date_last_used": "0",
+          "date_modified": "13350000200000000",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000002",
+          "id": "6",
+          "name": "Work",
+          "type": "folder"
+        },
+        {
+          "date_added": "13350000300000000",
+          "date_last_used": "0",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000005",
+          "id": "9",
+          "name": "Settings",
+          "type": "url",
+          "url": "chrome://settings/"
+        }
+      ],
+      "date_added": "13349999000000000",
+      "date_last_used": "0",
+      "date_modified": "13350000300000000",
+      "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+      "id": "1",
+      "name": "Bookmarks bar",
+      "type": "folder"
+    },
+    "other": {
+      "children": [
+        {
+          "date_added": "13350000400000000",
+          "date_last_used": "0",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000006",
+          "id": "10",
+          "name": "Zenium (again)",
+          "type": "url",
+          "url": "https://zenium.app/"
+        },
+        {
+          "date_added": "0",
+          "date_last_used": "0",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000007",
+          "id": "11",
+          "name": "Undated",
+          "type": "url",
+          "url": "https://example.org/undated"
+        }
+      ],
+      "date_added": "13349999000000000",
+      "date_last_used": "0",
+      "date_modified": "13350000400000000",
+      "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+      "id": "2",
+      "name": "Other bookmarks",
+      "type": "folder"
+    },
+    "synced": {
+      "children": [
+        {
+          "date_added": "13350000500000000",
+          "date_last_used": "0",
+          "guid": "0a1b2c3d-0000-4000-8000-000000000008",
+          "id": "12",
+          "name": "Phone page",
+          "type": "url",
+          "url": "https://m.example.org/"
+        }
+      ],
+      "date_added": "13349999000000000",
+      "date_last_used": "0",
+      "date_modified": "13350000500000000",
+      "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+      "id": "3",
+      "name": "Mobile bookmarks",
+      "type": "folder"
+    }
+  },
+  "version": 1
+}

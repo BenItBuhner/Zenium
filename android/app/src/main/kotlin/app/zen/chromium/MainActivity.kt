@@ -39,6 +39,8 @@ class MainActivity : BrowserActivity() {
     /** The keyboard is animating for the chrome; its frames are streamed as insets. */
     private var imeAnimating = false
     private var textFilesCallback: ((JSONArray) -> Unit)? = null
+    /** The byte cap of the text-file pick in flight (`TextFiles.capFor`). */
+    private var textFilesCap: Long = TextFiles.DEFAULT_CAP_BYTES
     private var saveTextCallback: ((Boolean) -> Unit)? = null
     private var saveTextContent: String = ""
 
@@ -60,12 +62,14 @@ class MainActivity : BrowserActivity() {
     private val textFilePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val callback = textFilesCallback ?: return@registerForActivityResult
         textFilesCallback = null
+        val cap = textFilesCap
+        textFilesCap = TextFiles.DEFAULT_CAP_BYTES
         val files = JSONArray()
         for (uri in uris) {
+            // A document over the cap is left out (the read stops at the cap, nothing is held whole).
             val text = runCatching {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                contentResolver.openInputStream(uri)?.use { TextFiles.readCapped(it, cap) }
             }.getOrNull() ?: continue
-            if (text.length > 512 * 1024) continue
             files.put(json("name" to displayNameOf(uri), "text" to text))
         }
         callback(files)
@@ -312,25 +316,21 @@ class MainActivity : BrowserActivity() {
 
     // --- helpers for the core ---------------------------------------------------------------------
 
-    /** Let the user pick text files (CSS mods); answers with `[{ name, text }]`. */
-    fun pickTextFiles(extensions: JSONArray, callback: (JSONArray) -> Unit) {
+    /**
+     * Let the user pick text files (CSS mods, a bookmarks HTML, a passwords CSV) through
+     * `ACTION_OPEN_DOCUMENT`; answers with `[{ name, text }]`. `maxBytes` lifts the size cap for
+     * one request (`TextFiles.capFor`).
+     */
+    fun pickTextFiles(extensions: JSONArray, maxBytes: Double?, callback: (JSONArray) -> Unit) {
         textFilesCallback?.invoke(JSONArray())
         textFilesCallback = callback
-        val mimes = (0 until extensions.length()).flatMap { i ->
-            when (extensions.optString(i)) {
-                "css" -> listOf("text/css")
-                "json" -> listOf("application/json")
-                "txt" -> listOf("text/plain")
-                "html", "htm" -> listOf("text/html")
-                // Password exports: providers label CSV either way.
-                "csv" -> listOf("text/csv", "text/comma-separated-values")
-                else -> emptyList()
-            }
-        }.ifEmpty { listOf("*/*") }
+        textFilesCap = TextFiles.capFor(maxBytes)
+        val mimes = TextFiles.mimeTypesFor((0 until extensions.length()).map { extensions.optString(it) })
         try {
-            textFilePicker.launch(mimes.toTypedArray())
+            textFilePicker.launch(mimes)
         } catch (e: Exception) {
             textFilesCallback = null
+            textFilesCap = TextFiles.DEFAULT_CAP_BYTES
             callback(JSONArray())
         }
     }

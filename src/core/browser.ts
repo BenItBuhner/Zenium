@@ -78,6 +78,7 @@ import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
+import { ImportService } from './import/service'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
@@ -254,6 +255,8 @@ export class Browser {
   readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
+  readonly imports: ImportService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
@@ -390,6 +393,7 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
@@ -434,7 +438,8 @@ export class Browser {
       privacy: this.protection.status(),
       translate: this.translate.uiState(),
       spellcheck: this.spellcheck.uiState(),
-      readAloud: this.readAloud.uiState()
+      readAloud: this.readAloud.uiState(),
+      import: this.imports.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -2622,6 +2627,11 @@ export class Browser {
       'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
+
+      'import.sources': () => this.imports.sources(),
+      'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
+      'import.cancel': () => this.imports.cancel(),
+      'import.dismiss': () => this.imports.dismiss(),
 
       'download.pause': ({ id }) => this.downloads.pause(id),
       'download.resume': ({ id }) => this.downloads.resume(id),

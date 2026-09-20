@@ -15,6 +15,7 @@ import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
+import type { ReadAloudVoice } from '@shared/readAloud'
 import {
   isDebugApplicationId,
   type UpdateAsset,
@@ -57,6 +58,8 @@ import type {
   SessionHost,
   ShellHost,
   ShortcutHost,
+  SpeechHostEvent,
+  SpeechHost,
   VoiceHost,
   SystemAutofillStatus,
   ThumbnailHost,
@@ -175,7 +178,7 @@ export function androidCapabilities({
     // One document: the picker is drawn in the chrome, above the keyboard.
     popupSurface: false,
     qrScan: false,
-    // No speech host yet: the Android program adds `Platform.speech` over `TextToSpeech` (W3-7).
+    // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
     readAloud: false
   }
 }
@@ -310,6 +313,8 @@ export interface BootInfo {
   voiceSearch?: boolean
   /** The device has a back camera to scan QR codes with (`QrScan.kt`). */
   qrScan?: boolean
+  /** The device has a text-to-speech engine (`ReadAloud.kt`: an installed TTS service); `Platform.speech` speaks through it. */
+  readAloud?: boolean
   /** `Build.MODEL`: what sync calls this device until the user renames it (absent in old hosts). */
   deviceModel?: string
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
@@ -487,6 +492,10 @@ export interface HostEventPayloads {
   'voice.event': VoiceEvent
   /** The camera reports while a QR scan runs (`QrScan.kt`; `shared/qrScan.ts`). */
   'qr.event': QrEvent
+  /** The text-to-speech engine reports on an utterance (`ReadAloud.kt`; `SpeechHost.onEvent`). */
+  'speech.event': { utteranceId: string } & SpeechHostEvent
+  /** The engine's voices changed (the engine was swapped or a voice installed): `SpeechHost.onVoicesChanged`. */
+  'speech.voicesChanged': null
   /**
    * The OS media controls acted (`MediaSessions.kt`: the notification, the lock screen, a
    * headset button, the PiP window's buttons): the Media Session action for the tab the
@@ -869,6 +878,15 @@ export class AndroidPlatform implements Platform {
   readonly shortcuts: ShortcutHost
   readonly voice: VoiceHost
   /**
+   * The speech engine (`ReadAloud.kt`), on devices that have one: boot's `readAloud` says
+   * whether a text-to-speech service is installed (the package manager's answer, no binding),
+   * and without one the host is left out, so `capabilities.readAloud` is false, the core's
+   * `readAloud.available` is false and the entry points stay hidden (interface 3.2).
+   */
+  readonly speech?: SpeechHost
+  private speechListeners: Array<(utteranceId: string, event: SpeechHostEvent) => void> = []
+  private voicesListeners: Array<() => void> = []
+  /**
    * Tab card pictures, Kotlin's (`Thumbnails.kt`, `cacheDir/zen-thumbs/<tabId>.jpg`): it takes
    * them and raises `thumbnail.captured`; the chrome reads one when it shows the card.
    */
@@ -917,7 +935,8 @@ export class AndroidPlatform implements Platform {
       }),
       pinShortcuts: boot.pinShortcuts === true,
       voiceSearch: boot.voiceSearch === true,
-      qrScan: boot.qrScan === true
+      qrScan: boot.qrScan === true,
+      readAloud: boot.readAloud === true
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
@@ -1105,6 +1124,28 @@ export class AndroidPlatform implements Platform {
       start: () => bridge.call<VoiceStartOutcome>('voice.start'),
       cancel: () => bridge.send('voice.cancel'),
       openSettings: () => bridge.send('voice.openSettings')
+    }
+    // Kotlin's text-to-speech (`ReadAloud.kt`) is the core's `SpeechHost`: one utterance per
+    // `speak` (the engine's queue flushed) or `prepare` (queued behind the current one), its
+    // `onStart` / `onRangeStart` / `onDone` / `onError` back as `speech.event`s. No `pause`: the
+    // core stops and restarts the sentence. `speech.voices` initialises the engine on first use.
+    // Built only where boot found an engine: the core reads the host's presence as read aloud's
+    // availability, and a device without one (a build without Google's engine) shows no entry.
+    if (this.capabilities.readAloud) {
+      this.speech = {
+        voices: () => bridge.call<ReadAloudVoice[]>('speech.voices'),
+        onVoicesChanged: (listener) => {
+          this.voicesListeners.push(listener)
+        },
+        speak: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'flush' }),
+        prepare: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'add' }),
+        stop: () => bridge.send('speech.stop'),
+        onEvent: (listener) => {
+          this.speechListeners.push(listener)
+        }
+      }
     }
     this.thumbnails = {
       configure: (width) => bridge.send('thumbnail.configure', { width }),
@@ -1465,6 +1506,15 @@ export class AndroidPlatform implements Platform {
         return
       case 'qr.event':
         browser.emit('qr.event', payload as HostEventPayloads['qr.event'], this.window)
+        return
+      case 'speech.event': {
+        const { utteranceId, ...event } = payload as HostEventPayloads['speech.event']
+        if (typeof utteranceId !== 'string') return
+        for (const listener of this.speechListeners) listener(utteranceId, event)
+        return
+      }
+      case 'speech.voicesChanged':
+        for (const listener of this.voicesListeners) listener()
         return
       case 'media.action': {
         const p = payload as Partial<HostEventPayloads['media.action']>

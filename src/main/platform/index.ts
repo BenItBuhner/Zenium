@@ -11,7 +11,7 @@ import {
   type Session,
   type WebContents
 } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, statSync, writeFileSync } from 'node:fs'
 import { release } from 'node:os'
 import { basename, join } from 'node:path'
 import type {
@@ -96,6 +96,7 @@ import { ElectronSpellcheck } from './spellcheck'
 import { ElectronScreenCapture } from './screenCapture'
 import { ElectronShareSheet } from './shareSheet'
 import { ElectronGeolocation } from './geolocation'
+import { ElectronImportHost } from './importHost'
 import { ElectronMpris } from './mpris'
 import { ElectronSpeechHost } from './speech'
 import { sharedSpeechEngine } from './extensionApi/ttsBridge'
@@ -201,6 +202,8 @@ export class ElectronPlatform implements Platform {
   readonly geolocation = new ElectronGeolocation()
   /** Cross-device sync: the system folder dialog, the hostname, a node:fs folder transport (ID-08). */
   readonly sync = new ElectronSyncHost()
+  /** Other browsers' profiles on this machine for Settings > Import (ID-23). */
+  readonly importHost = new ElectronImportHost()
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
@@ -281,8 +284,10 @@ export class ElectronPlatform implements Platform {
           : await dialog.showOpenDialog(dialogOptions)
         if (result.canceled) return []
         const files: PickedTextFile[] = []
-        for (const path of result.filePaths)
+        for (const path of result.filePaths) {
+          if (options.maxBytes !== undefined && statSync(path).size > options.maxBytes) continue
           files.push({ name: basename(path), text: readFileSync(path, 'utf8') })
+        }
         return files
       },
       pickFiles: async (options, win?: ZenWindow) => {

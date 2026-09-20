@@ -5,13 +5,10 @@ import type { UIState } from '@shared/types'
 import { formatZoom, siteZoom, zoomSiteKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
-import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeZoom, uiStore } from '@renderer/lib/ui'
 import { ZoomStepper } from '../ZoomStepper'
-
-/** v2 §11.3: with motion reduced, the sheet's appearance and departure are a fade this long. */
-const REDUCED_FADE_MS = 120
+import { DockedPanelMotion } from './dockedMotion'
 
 /**
  * Chrome's page zoom sheet, docked under the page the way the find bar is (v2 §9.32): the page
@@ -33,7 +30,7 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
   const remembered = site !== null && pc.siteZooms[site] !== undefined
   const scale = pc.zoomIncludesOsFontSize ? state.pageEnvironment.fontScale || 1 : 1
   const ref = useRef<HTMLDivElement>(null)
-  const motion = useRef<SheetMotion | null>(null)
+  const motion = useRef<DockedPanelMotion | null>(null)
 
   // The sheet belongs to one page: it goes when that tab closes or another one comes forward.
   const present = tab !== undefined
@@ -47,7 +44,7 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    const m = new SheetMotion(el)
+    const m = new DockedPanelMotion(el)
     motion.current = m
     m.enter()
     return () => {
@@ -132,84 +129,4 @@ export function ZoomSheet({ state, tabId }: { state: UIState; tabId: string }): 
       </div>
     </div>
   )
-}
-
-/**
- * The sheet's own entrance and exit: `translateY` on `SPRING_SNAPPY` from and to its height
- * (v1 §7, `transform` only), or – with motion reduced – an opacity fade written per frame,
- * since the reduced-motion stylesheet cuts every CSS transition to nothing (§11.3).
- * `data-moving` is on the element only while something moves (§9.33's `will-change` rule).
- */
-class SheetMotion {
-  private readonly spring: SpringAnimation
-  private frame: number | null = null
-  private onRest: (() => void) | null = null
-
-  constructor(private readonly el: HTMLElement) {
-    this.spring = new SpringAnimation(
-      SPRING_SNAPPY,
-      (y) => {
-        el.style.transform = `translateY(${y}px)`
-      },
-      (y) => {
-        el.style.transform = y === 0 ? '' : `translateY(${y}px)`
-        delete el.dataset.moving
-        const done = this.onRest
-        this.onRest = null
-        done?.()
-      }
-    )
-  }
-
-  enter(): void {
-    if (reducedMotion()) {
-      this.fade(0, 1, null)
-      return
-    }
-    this.el.dataset.moving = ''
-    this.spring.start(this.el.offsetHeight, 0, 0)
-  }
-
-  /** Slide (or fade) out, then `done` – which unmounts the sheet. A second call is ignored. */
-  leave(done: () => void): void {
-    if (this.onRest) return
-    this.onRest = done
-    if (reducedMotion()) {
-      this.fade(Number.parseFloat(this.el.style.opacity) || 1, 0, done)
-      return
-    }
-    // From wherever the entrance has got to, carrying its velocity: every motion is interruptible.
-    const { x, v } = this.spring.current
-    this.el.dataset.moving = ''
-    this.spring.start(x, v, this.el.offsetHeight)
-  }
-
-  dispose(): void {
-    this.spring.stop()
-    if (this.frame !== null) cancelAnimationFrame(this.frame)
-    this.frame = null
-    this.onRest = null
-  }
-
-  private fade(from: number, to: number, done: (() => void) | null): void {
-    if (this.frame !== null) cancelAnimationFrame(this.frame)
-    const el = this.el
-    const startedAt = performance.now()
-    el.dataset.moving = ''
-    el.style.opacity = from.toFixed(3)
-    const step = (now: number): void => {
-      const t = Math.min(1, (now - startedAt) / REDUCED_FADE_MS)
-      el.style.opacity = (from + (to - from) * t).toFixed(3)
-      if (t < 1) {
-        this.frame = requestAnimationFrame(step)
-        return
-      }
-      this.frame = null
-      if (to === 1) el.style.opacity = ''
-      delete el.dataset.moving
-      this.onRest = null
-      done?.()
-    }
-    this.frame = requestAnimationFrame(step)
-  }
 }
