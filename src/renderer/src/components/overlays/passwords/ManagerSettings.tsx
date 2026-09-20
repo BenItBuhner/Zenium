@@ -104,6 +104,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
             description={`${protection}. ${verifies}`}
             clamp={false}
             stack={passphraseOpen}
+            control={!passphraseOpen}
           >
             {passphraseOpen ? (
               <PassphraseEditor
@@ -129,6 +130,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
           <SettingRow
             label={PASSWORDS_COPY.lock.label}
             description={PASSWORDS_COPY.lock.description}
+            control
           >
             <Btn onClick={() => run('passwords.lock', undefined)}>
               <Lock /> Lock now
@@ -148,6 +150,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
           <SettingRow
             label={PASSWORDS_COPY.importCsv.label}
             description={PASSWORDS_COPY.importCsv.description}
+            control
           >
             <Btn onClick={() => void cmd('passwords.import', { conflict })}>
               <Upload /> Choose file
@@ -175,6 +178,7 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
               exportArmed ? PASSWORDS_COPY.exportCsv.armed : PASSWORDS_COPY.exportCsv.description
             }
             clamp={false}
+            control
           >
             {exportArmed ? (
               <>

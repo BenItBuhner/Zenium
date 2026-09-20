@@ -240,7 +240,9 @@ function CheckRow({
  * A row whose control is a menulist (§9.13, §9.21): the 220 px menulist trails the text, centred
  * on the row – on the label's line once the description wraps to a third text line (§9.18,
  * `data-wrapped`), which the row learns by measuring its text block. The menulist is the
- * target, so the row is static.
+ * target, so the row is static. The row's height is the primitive's (§9.34): a two-line row
+ * holds the menulist inside its lines on the row pad (52); a one-line one carries `data-control`
+ * and grows to the control plus 8 (40).
  */
 function MenulistRow({
   label,
@@ -250,7 +252,7 @@ function MenulistRow({
   onChange
 }: {
   label: string
-  description: string
+  description?: string
   value: string
   options: MenuOption<string>[]
   onChange: (value: string) => void
@@ -261,6 +263,7 @@ function MenulistRow({
     <div
       className="zen-v2-row zen-v2-af-pane-row"
       data-static=""
+      data-control={description ? undefined : ''}
       data-wrapped={wrapped || undefined}
     >
       <RowText ref={text} label={label} description={description} htmlFor={id} />
@@ -272,7 +275,9 @@ function MenulistRow({
 /**
  * A manager's row (§9.2, §9.18): the entry's glyph on the first text line, the title and its
  * description, the icon buttons trailing – centred on the row until the description wraps, then
- * on the label's line (`data-wrapped`). The buttons are the targets, so the row is static.
+ * on the label's line (`data-wrapped`). The buttons are the targets, so the row is static. Its
+ * height is the primitive's (§9.34): two lines hold the 28 icon buttons on the row pad (52); a
+ * one-line row carries `data-control` and grows to the icon button plus 8 (36).
  */
 function EntryRow({
   icon: Icon,
@@ -282,7 +287,7 @@ function EntryRow({
 }: {
   icon: LucideIcon
   title: string
-  description: string
+  description?: string
   children: ReactNode
 }): JSX.Element {
   const [text, wrapped] = useWrapped<HTMLSpanElement>()
@@ -290,6 +295,7 @@ function EntryRow({
     <div
       className="zen-v2-row zen-v2-af-pane-row"
       data-static=""
+      data-control={description ? undefined : ''}
       data-wrapped={wrapped || undefined}
     >
       <span className="zen-v2-af-row-icon">

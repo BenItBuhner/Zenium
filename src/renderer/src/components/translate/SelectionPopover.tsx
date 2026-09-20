@@ -141,9 +141,9 @@ function useCopy(text: string | null): { copied: boolean; copy: () => void } {
 
 /**
  * The languages row (§9.21: 40 tall around its 32 px menulist on the desktop, 48 around 40 on a
- * phone): which language the text is in, and the menulist for the one it goes into. Not a target
- * itself – the menulist is – so it is the shared row's static form (§9.34), at the surface's
- * gutter (`.zen-translate-control-row`).
+ * phone, the primitive's `data-control`): which language the text is in, and the menulist for
+ * the one it goes into. Not a target itself – the menulist is – so it is the shared row's
+ * static form (§9.34), at the surface's gutter.
  */
 function LanguagesRow({
   state,
@@ -157,7 +157,7 @@ function LanguagesRow({
 }): JSX.Element {
   const source = translation.result?.source ?? null
   return (
-    <div className="zen-v2-row zen-translate-control-row" data-static="">
+    <div className="zen-v2-row" data-static="" data-control="">
       {glyph && <Languages className="zen-translate-glyph" aria-hidden />}
       <span className="min-w-0 flex-1 truncate">
         {source ? `${languageName(source)} to` : 'Translate to'}

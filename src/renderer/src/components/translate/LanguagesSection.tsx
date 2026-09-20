@@ -156,7 +156,7 @@ export function SpellcheckGroups({ state }: { state: UIState }): JSX.Element {
         title="Spell check"
         description="Text fields are checked by the spell checker of the keyboard in use. Its languages, and whether it marks or corrects words as you type, are chosen with the keyboard in the system settings."
       >
-        <div className="zen-v2-row zen-translate-control-row" data-static="">
+        <div className="zen-v2-row" data-static="" data-control="">
           <V2Button onClick={() => run('spellcheck.openKeyboardSettings', undefined)}>
             Open keyboard settings
           </V2Button>
@@ -235,8 +235,9 @@ function SpellcheckLanguageRow({
   const detail = dictionaryDetail(language.status)
   return (
     <div
-      className="zen-v2-row zen-translate-control-row"
+      className="zen-v2-row"
       data-static=""
+      data-control=""
       data-language={language.code}
       aria-disabled={disabled || undefined}
     >
@@ -317,8 +318,9 @@ function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element
       {(words ?? []).map((word) => (
         <div
           key={word}
-          className="zen-v2-row zen-translate-control-row"
+          className="zen-v2-row"
           data-static=""
+          data-control=""
           data-word={word}
           aria-disabled={disabled || undefined}
         >
@@ -332,8 +334,9 @@ function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element
         </div>
       ))}
       <form
-        className="zen-v2-row zen-translate-control-row zen-translate-add"
+        className="zen-v2-row zen-translate-add"
         data-static=""
+        data-control=""
         aria-disabled={disabled || undefined}
         onSubmit={submit}
       >
@@ -411,8 +414,8 @@ function Group({
 
 /**
  * A list entry: the shared row's static form (§9.34) – the row is not a target, the icon buttons
- * trailing it are – grown around them (§9.21: 36 around a 28 icon button) when it has any, else
- * at the base 32.
+ * trailing it are – grown around them (§9.21: 36 around a 28 icon button, the primitive's
+ * `data-control`) when it has any, else at the base 32.
  */
 function Row({
   label,
@@ -426,7 +429,7 @@ function Row({
 }): JSX.Element {
   const controls = Children.toArray(children).length > 0
   return (
-    <div className={cn('zen-v2-row', controls && 'zen-translate-control-row')} data-static="">
+    <div className="zen-v2-row" data-static="" data-control={controls ? '' : undefined}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {detail && <span className="zen-translate-caption shrink-0">{detail}</span>}
       {children}
@@ -462,7 +465,7 @@ function Empty({ children }: { children: ReactNode }): JSX.Element {
 
 /**
  * The control that adds to a list: the shared menulist in a static row of its own (§9.21: 40
- * around its 32; the row is not the target, the menulist is).
+ * around its 32, the primitive's `data-control`; the row is not the target, the menulist is).
  */
 function AddRow({
   label,
@@ -480,8 +483,9 @@ function AddRow({
 }): JSX.Element {
   return (
     <div
-      className="zen-v2-row zen-translate-control-row zen-translate-add"
+      className="zen-v2-row zen-translate-add"
       data-static=""
+      data-control=""
       aria-disabled={disabled || undefined}
     >
       <Menulist
