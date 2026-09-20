@@ -75,6 +75,15 @@ export interface ShimOptions {
    * proxied writes. Absent: none of that, and the reserved keys are still kept out of sight.
    */
   storagePrelude?: string
+  /**
+   * API permissions the manifest declared that the host kept out of the manifest the engine
+   * loaded (`core/extensions/withheldPermissions.ts`: the engine's own implementation would crash
+   * the browser), by the list they were declared in. They count as declared here, so the
+   * namespaces the browser layer answers in their place exist for this extension, and
+   * `runtime.getManifest()` lists them again where the extension wrote them. Absent: nothing was
+   * withheld (an emulated engine loads the manifest as declared).
+   */
+  withheld?: { required: string[]; optional: string[] }
 }
 
 /**
@@ -162,7 +171,32 @@ export function installExtensionApi(
     }
   }
 
-  const manifest: ManifestShape = safely(() => chrome.runtime.getManifest()) ?? {}
+  /** What the host withheld from the engine's manifest; empty lists when nothing was. */
+  const withheld: { required: string[]; optional: string[] } = {
+    required: Array.isArray(options?.withheld?.required)
+      ? options.withheld.required.filter((p): p is string => typeof p === 'string')
+      : [],
+    optional: Array.isArray(options?.withheld?.optional)
+      ? options.withheld.optional.filter((p): p is string => typeof p === 'string')
+      : []
+  }
+  /** The engine's manifest with the withheld entries back in their lists: as declared. */
+  function withDeclaredPermissions(engineManifest: unknown): unknown {
+    if (withheld.required.length === 0 && withheld.optional.length === 0) return engineManifest
+    if (!isObject(engineManifest)) return engineManifest
+    const restored: Record<string, unknown> = { ...engineManifest }
+    const restore = (key: string, entries: string[]): void => {
+      if (entries.length === 0) return
+      const current = Array.isArray(restored[key]) ? (restored[key] as unknown[]) : []
+      restored[key] = current.concat(entries.filter((entry) => !current.includes(entry)))
+    }
+    restore('permissions', withheld.required)
+    restore('optional_permissions', withheld.optional)
+    return restored
+  }
+  const manifest: ManifestShape =
+    (withDeclaredPermissions(safely(() => chrome.runtime.getManifest())) as
+      ManifestShape | undefined) ?? {}
   const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
   const background = isObject(manifest.background) ? manifest.background : null
   /**
@@ -2297,6 +2331,15 @@ export function installExtensionApi(
   for (const root of roots) {
     const extension = namespaceOn(root, 'extension')
     const runtime = namespaceOn(root, 'runtime')
+    // The manifest the extension reads is the one it wrote, withheld permissions included.
+    if (withheld.required.length > 0 || withheld.optional.length > 0) {
+      const nativeGetManifest = safely(() => runtime.getManifest)
+      if (isFunction(nativeGetManifest)) {
+        define(runtime, 'getManifest', (): unknown =>
+          withDeclaredPermissions(nativeGetManifest.call(runtime))
+        )
+      }
+    }
     if (typeof safely(() => extension.getURL) !== 'function') {
       define(extension, 'getURL', (path: string) => runtime.getURL(path))
     }

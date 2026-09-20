@@ -4,6 +4,7 @@ import type {
   ExtensionErrorSource
 } from '../../shared/types'
 import type { ManifestIssue } from './manifest'
+import { withheldPermissionLine } from './withheldPermissions'
 
 /**
  * An extension's error console (`ExtensionInfo.errors`): what Chrome's extensions page shows
@@ -171,6 +172,24 @@ export function manifestIssueReport(
     level,
     source: 'load',
     message: issue.path ? `${issue.path}: ${issue.message}` : issue.message,
+    url: `chrome-extension://${extensionId}/manifest.json`,
+    line: null,
+    context: null
+  }
+}
+
+/**
+ * A permission the host withheld from the engine (`withheldPermissions.ts`) as a console line:
+ * one warning per withheld permission, reported when the extension loads, never a toast.
+ */
+export function withheldPermissionReport(
+  extensionId: string,
+  permission: string
+): ExtensionErrorReport {
+  return {
+    level: 'warning',
+    source: 'load',
+    message: withheldPermissionLine(permission),
     url: `chrome-extension://${extensionId}/manifest.json`,
     line: null,
     context: null

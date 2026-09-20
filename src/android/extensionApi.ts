@@ -13,6 +13,7 @@ import {
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import { answerSystemStorage } from '@core/extensions/api/systemStorage'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -567,6 +568,10 @@ export class ExtensionApi {
       case 'idle':
         if (method === 'queryState') return 'active'
         break
+      case 'system.storage':
+        // No storage devices to show, as on the desktop (there the engine's own namespace is
+        // withheld because it crashes; here there is none to begin with): Chrome's shape.
+        return answerSystemStorage(method, args)
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true

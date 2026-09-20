@@ -584,12 +584,29 @@ export interface ExtensionInfo {
   /** Why some commands stayed unbound (a Zenium shortcut or another extension holds the key). */
   commandConflicts?: string[]
   /**
+   * API permissions the manifest declares that the host keeps out of the manifest the engine
+   * loads, because the engine's own implementation would crash the browser rather than answer
+   * (`core/extensions/withheldPermissions.ts`); the browser layer answers those APIs instead.
+   * Absent on hosts that withhold nothing.
+   */
+  withheld?: WithheldPermissions
+  /**
    * The extension's error console (Chrome's "Errors" on the details page): the last hundred
    * load failures, uncaught exceptions, unhandled rejections and `console.error` / `console.warn`
    * lines from its worker, its pages and its content scripts, oldest first, repeats collapsed
    * (`count`). `extension.clearErrors` empties it.
    */
   errors: ExtensionErrorEntry[]
+}
+
+/**
+ * The withheld entries of a manifest's permission lists, by the list they were declared in: a
+ * required one counts as granted (Chrome grants required permissions at install), an optional one
+ * is never granted (`permissions.request` answers false for it).
+ */
+export interface WithheldPermissions {
+  required: string[]
+  optional: string[]
 }
 
 export type ExtensionErrorLevel = 'warning' | 'error'
