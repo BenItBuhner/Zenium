@@ -24,6 +24,9 @@ on:
         type: choice
         options: [ui, engine]
         default: ui
+  # Temporary: one run of the UI driver for the UI PR; removed once it has run.
+  push:
+    branches: [cursor/services-print-pdf-ui-24d1]
 
 permissions:
   contents: read
