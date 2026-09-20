@@ -51,14 +51,11 @@
   margin: 0 calc(-1 * var(--v2-card-padding));
 }
 /*
- * A row holding a control (§9.21): the larger of the base row and the control plus 8, the 4
- * above and below being the row's padding – 40 around a 32 menulist on the desktop, 48 around a
- * 40 one on a phone, 36 / 52 around an icon button – the control centred (§9.18). Rows touch.
+ * A row holding a control (§9.21) – the menulist, the icon buttons, the add form's field – is
+ * the shared row with its `data-control` mark (main.css: the larger of the base row and the
+ * control plus 8, 40 around a 32 menulist on the desktop, 48 around a 40 one on a phone, 36 / 52
+ * around an icon button), the control centred (§9.18). Rows touch. Nothing here restates it.
  */
-.zen-v2-row.zen-translate-control-row {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
 /*
  * An empty list (§9.17): one plain deemphasised row, one sentence, no full stop, at the gutter.
  * A count that is a row (the models' total) is the same deemphasised static row.

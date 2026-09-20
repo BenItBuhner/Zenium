@@ -673,6 +673,51 @@ describe('the v2 primitives (§9.34)', () => {
     expect(listRow).toMatch(/data-control=\{controlRow\}/)
   })
 
+  it('has the translate, autofill and passwords control rows read the mark, their parallel §9.21 rules gone (#247 follow-up)', () => {
+    // Each owner's stylesheet restated control + 8 (a padding of 4 / 4 and a `min-height` of the
+    // control plus 8) on its own row class; the primitive supersedes them at 0 px, so the rows
+    // carry `data-control` and the local rules go. What stays in passwords.css is the one case
+    // the primitive does not cover – a 44 icon button in a phone two-line row – scoped away
+    // from marked rows.
+    const read = (path: string): string =>
+      readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8')
+    const rules = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '')
+    const translate = rules(read('assets/translate.css'))
+    expect(translate).not.toMatch(/zen-translate-control-row/)
+    expect(translate).not.toMatch(/padding-(top|bottom|block): 4px/)
+    const autofill = rules(read('assets/autofill.css'))
+    expect(autofill).not.toMatch(
+      /\.zen-v2-af-pane-row:has\(> \.zen-v2-(af-pane-actions|menulist)\)/
+    )
+    expect(autofill).not.toMatch(/padding-block: 4px/)
+    expect(autofill).not.toMatch(/min-height: max\(var\(--v2-row\)/)
+    const passwords = rules(read('assets/passwords.css'))
+    expect(passwords).not.toMatch(/min-height: max\(var\(--v2-row\)/)
+    const remainders = passwords.match(/margin-block: calc\(4px - var\(--v2-row-pad\)\)/g) ?? []
+    expect(remainders).toHaveLength(1)
+    expect(passwords).toMatch(
+      /\.zen-v2-pw-row:not\(\[data-control\], \[data-stack\]\) > \.zen-v2-pw-row-control > \.zen-v2-icon-button,\n\.zen-v2-pw-list-row:not\(\[data-control\]\) > \.zen-v2-icon-button \{\n {2}margin-block: calc\(4px - var\(--v2-row-pad\)\);\n\}/
+    )
+    // The rows write the mark: the translate rows on the surface (they have no wrapper), the
+    // autofill and passwords wrappers only for a one-line row (a two-line row takes no mark).
+    for (const file of [
+      'components/translate/LanguagesSection.tsx',
+      'components/translate/SelectionPopover.tsx'
+    ]) {
+      const text = read(file)
+      expect(text, file).not.toMatch(/zen-translate-control-row/)
+      expect(text, file).toMatch(/data-control=(""|\{controls \? '' : undefined\})/)
+    }
+    const autofillRows = read('components/overlays/AutofillSection.tsx')
+    expect(autofillRows.match(/data-control=\{description \? undefined : ''\}/g)).toHaveLength(2)
+    const shared = read('components/overlays/passwords/shared.tsx')
+    expect(shared).toMatch(/data-control=\{control && !description && !stack \? '' : undefined\}/)
+    expect(shared).toMatch(/const mark = control \? '' : undefined/)
+    expect(read('components/overlays/passwords/LoginList.tsx')).toMatch(
+      /<ListRow key=\{domain\} control>/
+    )
+  })
+
   it('draw the radio’s checked dot at §9.14’s 6 px: the inset ring is (box − 2 − 6) / 2 inside the 1 px border', () => {
     // (box − 6) / 2 measured a 4 px dot (the #235 ruling): the inset shadow starts inside the
     // border, so the border's 2 comes off the box before the dot does.

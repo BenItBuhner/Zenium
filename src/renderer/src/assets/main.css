@@ -4420,12 +4420,16 @@
     stroke-width: var(--v2-icon-stroke);
   }
   /*
-   * A radio row (§9.2, §9.14, §9.21): the 20 px circle then the label 15/400 on the row's 44,
-   * growing with the label, never clamping; the vertical padding is (row − line) / 2, so one line
-   * sits on the base height and the circle can take the first text line rather than the row's
-   * centre – `align-self: flex-start` and (line − box) / 2 below the line's top, 0 for the phone's
-   * 20 on a 20 line. The whole row is the target; its press fill bleeds to the edge (§9.25); rows
-   * touch (no list gap).
+   * A radio row (§9.2, §9.14, §9.34): the shared radio row – `.zen-v2-row` holding `.zen-v2-radio`
+   * – drawn in the window family, since the first run sits on the window surface and the two
+   * primitives read the page's tokens (§9.29). The geometry is theirs, value for value: the row
+   * 44 on `--v2-row`, growing with its label, the row pad (row − line) / 2 above and below, the
+   * 12 gap, the 16 gutter; the whole row is the target (`role="radio"` and `aria-checked` on the
+   * row) and its press fill bleeds to the edge (§9.25); rows touch (no list gap). The mark is the
+   * radio's box – 20 on `--v2-checkbox`, a 1 px hairline at 45 %, on the first text line
+   * (`align-self: flex-start`, (line − box) / 2 below its top, 0 for the phone's 20 on a 20 line).
+   * Only the inks differ: the surface's control roles (`--v2-control-fill`, `--v2-control-accent`)
+   * and the window's foreground where the primitives take `--v2-fill`, `--v2-accent`, `--v2-text`.
    */
   .zen-firstrun-radio {
     display: flex;
@@ -4458,9 +4462,11 @@
       box-shadow 120ms var(--zen-ease);
   }
   /*
-   * Checked (§9.14): the accent fills the circle around a 6 px dot – the fill is an inset ring of
-   * (box − 6) / 2 over the dot's colour, 7 on the phone's 20 – in the ink that reads on the
-   * accent, since the window has no page colour to lend the dot.
+   * Checked (§9.14): `.zen-v2-radio`'s accent ring round a 6 px dot – the ring an inset shadow
+   * drawn inside the 1 px border, its spread what is left of the box inside the border and
+   * around the dot, halved: (box − 6) / 2 − 1 = (box − 2 − 6) / 2, the primitive's own spread,
+   * 6 on the phone's 20, so the dot measures 6 (the #235 ruling) – in the window's accent, the
+   * dot in the ink that reads on the accent, since the window has no page colour to lend it.
    */
   .zen-firstrun-radio[aria-checked='true'] .zen-firstrun-radio-mark {
     border-color: var(--v2-control-accent);

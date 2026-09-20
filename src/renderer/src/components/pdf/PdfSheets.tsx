@@ -28,7 +28,11 @@ import { PhoneSheet } from '../phone/PhoneSheet'
 
 export type ZoomPick = { kind: 'fit'; mode: PdfFitMode } | { kind: 'zoom'; factor: number }
 
-/** Chrome's zoom menu: the two fits, then its round presets; the one in force is checked. */
+/**
+ * Chrome's zoom menu: the two fits, then its round presets; the one in force is checked, and
+ * the sheet opens on it (§9.13, §9.22: a picker's `focus="checked"` lands on the current option,
+ * else the first row).
+ */
 export function PdfZoomSheet({
   zoom,
   fit,
@@ -47,7 +51,7 @@ export function PdfZoomSheet({
     <PhoneSheet
       name="pdf-zoom"
       title={{ pose: 'header', text: 'Zoom' }}
-      focus="dialog"
+      focus="checked"
       onClose={onClose}
       sheetRef={sheet}
     >
