@@ -164,7 +164,12 @@ const V2_FILES: ReadonlyArray<string> = [
   // The print preview (#225's UI): the option column's headings and validation lines in the
   // deemphasised and danger inks, the preview pane's notice and paging pill in the panel family.
   'components/print/PrintPreviewDialog.tsx',
-  'components/print/PreviewPane.tsx'
+  'components/print/PreviewPane.tsx',
+  // The phone PDF viewer's docked bar and its sheets (#225's UI): the bar's chassis and its
+  // notices in the panel family and the deemphasised ink, the outline rows' page numbers and
+  // selected fill, the password sheet's error line in the danger ink.
+  'components/pdf/PdfViewerBar.tsx',
+  'components/pdf/PdfSheets.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */

@@ -9,6 +9,7 @@ import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, viewportStore } from '@renderer/lib/formFactor'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
+import { setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { openSettings } from '@renderer/lib/pages'
 import {
@@ -170,6 +171,9 @@ export function useMainEvents(): void {
         closeUrlbar()
         openZoom(tabId)
       }),
+      // The PDF viewer document in a tab reported where it stands: the docked bar and the find
+      // bar draw from the report (lib/pdfViewer.ts).
+      onEvent('pdf.changed', ({ tabId, report }) => setPdfReport(tabId, report)),
       onEvent('toast', ({ message, kind }) => pushToast(message, kind)),
       onEvent('status', ({ text }) => uiStore.set({ statusText: text })),
       onEvent('sidebar.toggle', () => window.dispatchEvent(new CustomEvent('zen-sidebar-toggle'))),
