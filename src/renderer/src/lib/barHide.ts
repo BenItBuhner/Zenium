@@ -1,6 +1,7 @@
 import type { PhoneBarPosition, Rect } from '@shared/types'
 import { isEmptyTabUrl, isInternalUrl } from '@shared/url'
 import { dockStore } from './gestures/dock'
+import { settleTarget, SWIPE_THRESHOLDS } from './gestures/swipe'
 import { SPRING_SNAPPY, SpringAnimation } from './motion/spring'
 import { VelocityTracker } from './motion/velocity'
 import { pullStore } from './pull'
@@ -9,17 +10,19 @@ import { createStore } from './store'
 import { browserStore, contentAreaStore, pageHidden, uiStore, type UiState } from './ui'
 
 /**
- * The phone bar hiding on scroll (Chrome / Edge parity; design language v2 draft §11).
+ * The phone bar hiding on scroll (Chrome / Edge parity; design language v2 draft §11.5, chrome
+ * that hides on scroll).
  *
  * The host owns the page WebView and its touches; it streams the page's scroll here as `start`
  * (a finger down), `move` (how far the page scrolled since the last report, CSS px, positive
  * when the page moves up under a finger going down the page) and `end` (the finger lifted),
  * batched per frame (see `BarHideGesture.kt`). This module turns that stream into one value –
  * how far the bar has gone off its edge, 0 … {@link travel} – clamped and one to one with the
- * scroll while a finger or a fling drives it, and snapped fully in or out on a spring when the
- * scroll ends. The value is published three ways every frame: `--zen-bar-hide` (0 shown … 1
- * hidden) on the document root for the bar and anything that slides with it, the host command
- * that moves the page's edge to follow (the page gets the bar's band as the bar leaves it), and
+ * scroll while a finger or a fling drives it, and snapped fully in or out on `SPRING_SNAPPY`
+ * when the scroll ends, by the app's one set of swipe thresholds (`SWIPE_THRESHOLDS`, §11.5).
+ * The value is published three ways every frame: `--zen-bar-hide` (0 shown … 1 hidden) on the
+ * document root for the bar and anything that slides with it, the host command that moves the
+ * page's edge to follow (the page gets the bar's band as the bar leaves it), and
  * `uiStore.barHidden`, a boolean that flips only at rest, so the content column re-lays itself
  * out at the two ends of the motion and never in between.
  *
@@ -41,9 +44,12 @@ export interface BarScrollPayload {
   time?: number
 }
 
-/** A release scrolling faster than this (px/s) snaps in its direction, wherever the bar is. */
-export const BAR_HIDE_FLING_VELOCITY = 400
-/** A release slower than this settles at once; faster ones wait for the fling's scroll to end. */
+/**
+ * A lift while the page scrolls slower than this (px/s) is the end of the scroll: the bar snaps
+ * at once. A faster one leaves the page flinging, and the bar rides the fling and snaps when it
+ * ends. Not a snap threshold – those are `SWIPE_THRESHOLDS` – but whether there is a fling to
+ * wait for.
+ */
 export const BAR_HIDE_SETTLE_VELOCITY = 200
 /**
  * A fling has ended when the page has not scrolled for this long. Longer than the host's own
@@ -67,12 +73,27 @@ export function stepOffset(offset: number, delta: number, travel: number): numbe
 
 /**
  * Where a release with the bar at `offset` and the page scrolling at `velocity` px/s (positive
- * down the page) snaps to: the direction of a fling, else the nearer end.
+ * down the page) snaps to, on the app's one set of swipe thresholds (`SWIPE_THRESHOLDS`: the tab
+ * and overview swipes and the row dismissals release on the same, §11.5): a scroll faster than
+ * the fling velocity decides by its direction wherever the bar is; a slower one commits to the
+ * far end once the bar, with the scroll projected `projectionSeconds` ahead, is `commitFraction`
+ * of its travel away from the end the gesture set out from (`origin`, 0 or `travel`), and
+ * returns there otherwise. The bar is a two-page track: page 0 shown, page 1 hidden.
  */
-export function snapTarget(offset: number, velocity: number, travel: number): number {
-  if (velocity >= BAR_HIDE_FLING_VELOCITY) return travel
-  if (velocity <= -BAR_HIDE_FLING_VELOCITY) return 0
-  return offset >= travel / 2 ? travel : 0
+export function snapTarget(offset: number, velocity: number, travel: number, origin = 0): number {
+  if (!(travel > 0)) return 0
+  const page = settleTarget(
+    {
+      position: offset / travel,
+      origin: origin >= travel / 2 ? 1 : 0,
+      velocity,
+      extent: travel,
+      min: 0,
+      max: 1
+    },
+    SWIPE_THRESHOLDS
+  )
+  return page * travel
 }
 
 /** Everything that keeps the bar in place. */
@@ -135,6 +156,8 @@ export class BarHideMachine {
   private offset = 0
   private phase: BarHidePhase = 'rest'
   private allowed = true
+  /** The end the current drag or fling set out from (0 or the travel): what a slow release is measured from. */
+  private origin = 0
   /** Cumulative scroll of the current drag or fling, what the velocity is read from. */
   private scrolled = 0
   private readonly tracker = new VelocityTracker()
@@ -235,8 +258,7 @@ export class BarHideMachine {
     // A finger landing on a spring in flight takes over from where the bar is.
     this.spring.stop()
     this.clearGap()
-    this.scrolled = 0
-    this.tracker.reset()
+    this.begin()
     this.setPhase('dragging')
   }
 
@@ -245,8 +267,7 @@ export class BarHideMachine {
     if (this.phase === 'rest' || this.phase === 'settling') {
       // The page scrolls with no finger on it (a fling, an in-page scroll): the bar rides along.
       this.spring.stop()
-      this.scrolled = 0
-      this.tracker.reset()
+      this.begin()
       this.setPhase('flinging')
     }
     this.scrolled += delta
@@ -255,11 +276,18 @@ export class BarHideMachine {
     if (this.phase === 'flinging') this.armGap()
   }
 
+  /** A drag or a fling sets out: from the nearer end (a finger landing mid-spring sets out from the end it was nearer to). */
+  private begin(): void {
+    this.scrolled = 0
+    this.tracker.reset()
+    this.origin = this.offset >= this.travelPx / 2 ? this.travelPx : 0
+  }
+
   private end(time?: number): void {
     if (this.phase !== 'dragging') return
     const v = this.tracker.velocity(time).vy
     if (Math.abs(v) < BAR_HIDE_SETTLE_VELOCITY) {
-      this.snapTo(snapTarget(this.offset, v, this.travelPx), v)
+      this.snapTo(snapTarget(this.offset, v, this.travelPx, this.origin), v)
       return
     }
     // A fling: the page keeps scrolling and the bar with it; it settles when the scroll ends.
@@ -267,12 +295,16 @@ export class BarHideMachine {
     this.armGap()
   }
 
-  /** The fling's scroll stopped: settle where the last of it was heading. */
+  /**
+   * The fling's scroll stopped: the bar settles by where the fling left it (Chrome's controls
+   * do the same at a scroll's end). No velocity is projected – the page has not moved for the
+   * gap, whatever its last frames measured, and a fling cut short by the page's end must not be
+   * read as still heading somewhere.
+   */
   private gapClosed(): void {
     this.cancelGap = null
     if (this.phase !== 'flinging') return
-    const v = this.tracker.velocity().vy
-    this.snapTo(snapTarget(this.offset, v, this.travelPx), v)
+    this.snapTo(snapTarget(this.offset, 0, this.travelPx, this.origin))
   }
 
   private armGap(): void {

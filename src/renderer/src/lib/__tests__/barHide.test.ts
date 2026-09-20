@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BAR_HIDE_FLING_GAP_MS,
-  BAR_HIDE_FLING_VELOCITY,
   BAR_HIDE_SETTLE_VELOCITY,
   barMayHide,
   BarHideMachine,
@@ -10,15 +9,18 @@ import {
   type BarHideGate,
   type BarHidePhase
 } from '../barHide'
+import { SWIPE_THRESHOLDS } from '../gestures/swipe'
 
 /*
  * The offset machine behind the phone bar that hides on scroll (Chrome / Edge parity, design
- * language v2 draft §11): the host streams the page's scroll and the machine turns it into how
+ * language v2 draft §11.5): the host streams the page's scroll and the machine turns it into how
  * far the bar is off its edge, one to one and clamped while a finger or a fling drives it, and
- * snapped fully in or out on a spring when the scroll ends. The gate is what keeps the bar put.
+ * snapped fully in or out on a spring when the scroll ends, by the app's one set of swipe
+ * thresholds (§11.5). The gate is what keeps the bar put.
  */
 
 const TRAVEL = 48
+const FLING = SWIPE_THRESHOLDS.flingVelocity
 
 describe('stepOffset: deltas to offset', () => {
   it('follows the scroll one to one and clamps at both ends of the travel', () => {
@@ -37,20 +39,48 @@ describe('stepOffset: deltas to offset', () => {
   })
 })
 
-describe('snapTarget: the release decision', () => {
-  it('snaps to the nearer end when the release is slow', () => {
-    expect(snapTarget(TRAVEL * 0.49, 0, TRAVEL)).toBe(0)
-    expect(snapTarget(TRAVEL * 0.5, 0, TRAVEL)).toBe(TRAVEL)
-    expect(snapTarget(TRAVEL * 0.9, 0, TRAVEL)).toBe(TRAVEL)
-    expect(snapTarget(3, 0, TRAVEL)).toBe(0)
+describe('snapTarget: the release decision, on the shared swipe thresholds', () => {
+  it('a slow release commits once the bar is the commit fraction of its travel from where it set out, else returns', () => {
+    // From shown (the origin at 0): from 45 % of the travel the bar goes on out (the line is at
+    // 21.6 px of 48; either side of it is read, not the line, which floating point puts a hair off).
+    expect(snapTarget(TRAVEL * 0.44, 0, TRAVEL, 0)).toBe(0)
+    expect(snapTarget(TRAVEL * 0.46, 0, TRAVEL, 0)).toBe(TRAVEL)
+    expect(snapTarget(TRAVEL * 0.9, 0, TRAVEL, 0)).toBe(TRAVEL)
+    expect(snapTarget(3, 0, TRAVEL, 0)).toBe(0)
+    // From hidden (the origin at the travel): the same 45 % of the way back before it commits to shown.
+    expect(snapTarget(TRAVEL * 0.56, 0, TRAVEL, TRAVEL)).toBe(TRAVEL)
+    expect(snapTarget(TRAVEL * 0.54, 0, TRAVEL, TRAVEL)).toBe(0)
+    expect(snapTarget(TRAVEL - 3, 0, TRAVEL, TRAVEL)).toBe(TRAVEL)
+    // At either end with nothing moving it away, the bar stays.
+    expect(snapTarget(0, 0, TRAVEL, 0)).toBe(0)
+    expect(snapTarget(TRAVEL, 0, TRAVEL, TRAVEL)).toBe(TRAVEL)
+  })
+
+  it('a slow release is read with the scroll projected ahead', () => {
+    // 40 % out, drifting out at 100 px/s: 0.12 s ahead is 12 px more – 65 % – past the commit line.
+    expect(snapTarget(TRAVEL * 0.4, 100, TRAVEL, 0)).toBe(TRAVEL)
+    // 40 % out, drifting back at 100 px/s: it returns.
+    expect(snapTarget(TRAVEL * 0.4, -100, TRAVEL, 0)).toBe(0)
   })
 
   it('a fling snaps in its direction wherever the bar is', () => {
-    expect(snapTarget(2, BAR_HIDE_FLING_VELOCITY, TRAVEL)).toBe(TRAVEL)
-    expect(snapTarget(TRAVEL - 2, -BAR_HIDE_FLING_VELOCITY, TRAVEL)).toBe(0)
-    // Slower than a fling: the position decides.
-    expect(snapTarget(2, BAR_HIDE_FLING_VELOCITY - 1, TRAVEL)).toBe(0)
-    expect(snapTarget(TRAVEL - 2, -(BAR_HIDE_FLING_VELOCITY - 1), TRAVEL)).toBe(TRAVEL)
+    expect(snapTarget(2, FLING, TRAVEL, 0)).toBe(TRAVEL)
+    expect(snapTarget(TRAVEL - 2, -FLING, TRAVEL, TRAVEL)).toBe(0)
+    expect(snapTarget(TRAVEL - 2, -FLING, TRAVEL, 0)).toBe(0)
+    // Slower than a fling: the position with the projection decides – just under the fling
+    // velocity from 2 px out the projection (449 px/s over 0.12 s is 54 px) still carries the
+    // bar over the line, while a slow drift from the edge returns.
+    expect(snapTarget(2, FLING - 1, TRAVEL, 0)).toBe(TRAVEL)
+    expect(snapTarget(1, 100, TRAVEL, 0)).toBe(0)
+    expect(snapTarget(TRAVEL - 1, -100, TRAVEL, TRAVEL)).toBe(TRAVEL)
+  })
+
+  it("the thresholds are the app's one set: the tab and overview swipes release on the same", () => {
+    expect(SWIPE_THRESHOLDS).toEqual({
+      flingVelocity: 450,
+      commitFraction: 0.45,
+      projectionSeconds: 0.12
+    })
   })
 })
 
@@ -189,8 +219,9 @@ describe('BarHideMachine', () => {
     expect(h.machine.hidden).toBe(false)
   })
 
-  it('a slow release past half way snaps hidden on the spring; before half way it snaps shown', () => {
+  it('a slow release past the commit line snaps hidden on the spring; short of it, it snaps shown', () => {
     const h = harness()
+    // 30 of 48 at 50 px/s: 62 % out, 75 % with the projection – well over the 45 % line.
     drag(h, 30, 6, 100)
     now += 16
     h.machine.dispatch('end', { time: now })
@@ -206,7 +237,8 @@ describe('BarHideMachine', () => {
     }
 
     const back = harness()
-    drag(back, 20, 6, 100)
+    // 12 of 48 at 20 px/s: 25 %, 30 % projected – short of the line, back to shown.
+    drag(back, 12, 6, 100)
     now += 16
     back.machine.dispatch('end', { time: now })
     settle()
@@ -215,7 +247,29 @@ describe('BarHideMachine', () => {
     expect(back.phases).toEqual(['dragging', 'settling', 'rest'])
   })
 
-  it('a fast release keeps riding the fling and settles where the last of it was heading', () => {
+  it('a slow release is measured from the end the drag set out from: a hidden bar needs the same way back', () => {
+    const h = harness()
+    drag(h, 60, 6, 100)
+    now += 16
+    h.machine.dispatch('end', { time: now })
+    settle()
+    expect(h.machine.hidden).toBe(true)
+    // 12 px back from hidden (25 % of the way, 30 % projected): short of the 45 % line, it returns to hidden.
+    drag(h, -12, 6, 100)
+    now += 16
+    h.machine.dispatch('end', { time: now })
+    settle()
+    expect(h.machine.current).toBe(TRAVEL)
+    // 24 px back (50 %) commits to shown.
+    drag(h, -24, 6, 100)
+    now += 16
+    h.machine.dispatch('end', { time: now })
+    settle()
+    expect(h.machine.current).toBe(0)
+    expect(h.machine.hidden).toBe(false)
+  })
+
+  it('a fast release keeps riding the fling and settles by where the fling left it', () => {
     const h = harness()
     // 90 px in 96 ms: well past the settle velocity, so the page will fling on.
     drag(h, 20, 6, 16)
@@ -339,7 +393,7 @@ describe('BarHideMachine', () => {
   })
 
   it('the settle velocity tells a lift after a pause from a release into a fling', () => {
-    expect(BAR_HIDE_SETTLE_VELOCITY).toBeLessThan(BAR_HIDE_FLING_VELOCITY)
+    expect(BAR_HIDE_SETTLE_VELOCITY).toBeLessThan(FLING)
     const h = harness()
     drag(h, 20, 6, 16)
     // The finger holds still, then lifts: no fling, the bar settles at once.

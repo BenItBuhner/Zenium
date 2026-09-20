@@ -5211,9 +5211,10 @@
 }
 
 /*
- * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity): `--zen-bar-hide` on the root
- * is 0 with the bar in place and 1 with it off its edge, written per frame as the page scrolls
- * and by the spring that snaps it. The bar slides by the band the page gains (the whole bar
+ * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity; design language v2 draft
+ * §11.5, chrome that hides on scroll): `--zen-bar-hide` on the root is 0 with the bar in place
+ * and 1 with it off its edge, written per frame as the page scrolls and by the spring that
+ * snaps it. The bar slides by the band the page gains (the whole bar
  * band – the row and, while the active tab is grouped, the tab-group strip (`--zen-phone-band`,
  * #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one to one with the page's
  * edge, and is clipped at the line where the system inset begins (the clip grows with the

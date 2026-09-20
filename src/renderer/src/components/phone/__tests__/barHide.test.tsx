@@ -19,7 +19,7 @@ import {
 import { browserStore, contentAreaStore, uiStore } from '@renderer/lib/ui'
 
 /*
- * What the bar that hides on scroll publishes for every other surface (v2 draft §11; the tab
+ * What the bar that hides on scroll publishes for every other surface (v2 draft §11.5; the tab
  * group strip rides it): `--zen-bar-hide` on the document root, 0 shown … 1 hidden per frame,
  * `data-bar-hidden` on the root and `uiStore.barHidden` at rest, and `barHideStore` for the
  * chrome's own code. They are written from one value in `lib/barHide.ts`; this pins down that
