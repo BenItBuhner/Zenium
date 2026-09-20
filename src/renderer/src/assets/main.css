@@ -7964,14 +7964,33 @@
  * components' fills yield to it; a focus ring still wins over a selection outline.
  */
 @media (forced-colors: active) {
-  /* Selected: the active tab row, folder or Essential, the active space, the picked segment, the current Settings section. */
+  /*
+   * Selected: the active tab row, folder or Essential, the active space, the picked segment, the
+   * current Settings section, the checked app icon. Chromium paints a Canvas plate behind the text
+   * of every element it adjusts (invisible where the fill is Canvas too, a white box over a
+   * Highlight fill with the HighlightText lost on it), so these opt out of adjustment: they carry
+   * only the palette's own keywords, and their text – and a favicon's letter tile – inherits the
+   * opt-out. Opting out also leaves the ring's colour alone, so it is said here: HighlightText,
+   * inside the Highlight fill, the pair the palette made to contrast.
+   */
   .zen-tab[data-active='true'],
   .zen-essential[data-active='true'],
   [data-space-target][aria-current='true'],
   .zen-segment[data-active='true'],
-  nav > button[aria-current='page'] {
+  nav > button[aria-current='page'],
+  .zen-app-icon[aria-checked='true'] {
     background-color: Highlight;
     color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .zen-tab[data-active='true']:focus-visible,
+  .zen-essential[data-active='true']:focus-visible,
+  [data-space-target][aria-current='true']:focus-visible,
+  .zen-segment[data-active='true']:focus-visible,
+  nav > button[aria-current='page']:focus-visible,
+  .zen-app-icon[aria-checked='true']:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -2px;
   }
   /* Multi-selected tabs: the accent outline becomes Highlight; the keyboard's ring takes over when focused. */
   .zen-tab[data-selected]:not(:focus-visible),
@@ -8004,6 +8023,21 @@
   }
   .zen-v2-switch[aria-checked='true']::after,
   [aria-checked='true'] .zen-v2-switch::after {
+    background-color: HighlightText;
+  }
+  /* The Radix switch (ui/switch.tsx: the button is the track, its only child the thumb): the same. */
+  button[role='switch']:not(:has(.zen-v2-switch)) {
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+  }
+  button[role='switch']:not(:has(.zen-v2-switch)) > span {
+    background-color: CanvasText;
+  }
+  button[role='switch'][aria-checked='true']:not(:has(.zen-v2-switch)) {
+    border-color: Highlight;
+    background-color: Highlight;
+  }
+  button[role='switch'][aria-checked='true']:not(:has(.zen-v2-switch)) > span {
     background-color: HighlightText;
   }
   /* Checked radios, checkboxes, image cards and app icons: filled Highlight (the radio's inset shadow and the card's ring are gone). */
