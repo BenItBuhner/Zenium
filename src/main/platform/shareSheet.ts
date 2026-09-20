@@ -59,8 +59,15 @@ export async function writeShared(files: ShareFile[], dir: string): Promise<stri
 
 /** A safe file name for a shared file: the page's name, a plain one when it gave none. */
 export function sharedFileName(file: Pick<ShareFile, 'name' | 'type'>): string {
+  // A `File.name` is a leaf name, but the page's world is not trusted: the last path segment
+  // (either separator) with the characters no file system takes replaced.
+  const leaf =
+    file.name
+      .split(/[\\/]/)
+      .filter((part) => part !== '')
+      .pop() ?? ''
   // eslint-disable-next-line no-control-regex
-  let name = basename(file.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')).trim()
+  let name = basename(leaf.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')).trim()
   if (name === '' || name === '.' || name === '..') name = `shared${extensionFor(file.type)}`
   return name
 }

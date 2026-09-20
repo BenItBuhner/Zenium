@@ -39,6 +39,10 @@ export function installInstallPromptShim(events: InstallPromptShimEvents): void 
   let pendingPrompt: ZenBeforeInstallPromptEvent | null = null
   let lastEvent: ZenBeforeInstallPromptEvent | null = null
   let fired = false
+  /** The event whose `prompt()` is waiting for the sheet's outcome. */
+  const awaitOutcome = (event: ZenBeforeInstallPromptEvent): void => {
+    pendingPrompt = event
+  }
 
   // Constructor-assigned members only: the function is serialised into the page's world, where
   // no compiler helper for class fields exists.
@@ -73,7 +77,7 @@ export function installInstallPromptShim(events: InstallPromptShimEvents): void 
         )
       }
       this.prompted = true
-      pendingPrompt = this
+      awaitOutcome(this)
       post('prompt')
       return this.userChoice
     }

@@ -34,10 +34,9 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
   ) {}
 
   attach(ses: Session): void {
-    ses.setDisplayMediaRequestHandler(
-      (request, callback) => void this.handle(request, callback),
-      { useSystemPicker: false }
-    )
+    ses.setDisplayMediaRequestHandler((request, callback) => void this.handle(request, callback), {
+      useSystemPicker: false
+    })
   }
 
   systemAudio(): boolean {
@@ -61,15 +60,19 @@ export class ElectronScreenCapture implements ScreenCaptureHost {
         thumbnail: source.thumbnail.isEmpty()
           ? null
           : `data:image/jpeg;base64,${source.thumbnail.toJPEG(THUMBNAIL_JPEG_QUALITY).toString('base64')}`,
-        icon: kind === 'window' && source.appIcon && !source.appIcon.isEmpty()
-          ? source.appIcon.toDataURL()
-          : null
+        icon:
+          kind === 'window' && source.appIcon && !source.appIcon.isEmpty()
+            ? source.appIcon.toDataURL()
+            : null
       })
     }
     return out
   }
 
-  private async handle(request: DisplayMediaRequest, callback: DisplayMediaCallback): Promise<void> {
+  private async handle(
+    request: DisplayMediaRequest,
+    callback: DisplayMediaCallback
+  ): Promise<void> {
     const frame = request.frame
     const wc = frame ? webContents.fromFrame(frame) : undefined
     const tabId = wc ? this.views.tabIdForWebContents(wc) : undefined

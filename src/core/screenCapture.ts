@@ -29,7 +29,11 @@ interface Pending {
 }
 
 /** How a tab shows in the picker's "Zenium tab" section: this tab, as Chrome offers the caller. */
-export function tabSource(tab: { id: string; title: string; favicon?: string | null }): ScreenCaptureSource {
+export function tabSource(tab: {
+  id: string
+  title: string
+  favicon?: string | null
+}): ScreenCaptureSource {
   return {
     id: `tab:${tab.id}`,
     name: tab.title || 'This tab',
@@ -146,7 +150,9 @@ export class ScreenCaptureService {
     const source = sourceId ? entry.request.sources.find((s) => s.id === sourceId) : undefined
     const picked = source ? source.id : null
     // System audio comes with a screen only, and only where the OS offers it.
-    const withAudio = Boolean(picked && audio && entry.request.systemAudio && source?.kind === 'screen')
+    const withAudio = Boolean(
+      picked && audio && entry.request.systemAudio && source?.kind === 'screen'
+    )
     entry.resolve({ sourceId: picked, audio: withAudio })
     this.browser.state.commitVolatile()
   }

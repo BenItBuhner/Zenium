@@ -192,7 +192,9 @@ export function installShareShim(events: ShareShimEvents): void {
     const url = resolveUrl(d.url)
     if (url === null) return Promise.reject(new TypeError(`${prefix}Invalid URL`))
     if (d.files !== undefined && !isFileList(d.files))
-      return Promise.reject(new TypeError(`${prefix}The provided value is not a sequence of files.`))
+      return Promise.reject(
+        new TypeError(`${prefix}The provided value is not a sequence of files.`)
+      )
     const activation = (win.navigator as Navigator & { userActivation?: { isActive: boolean } })
       .userActivation
     if (activation && !activation.isActive)
@@ -272,7 +274,11 @@ export function installShareBridge(
       }
     }
     if (isShareCall(value)) transport.send(value)
-    else if (value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string')
+    else if (
+      value &&
+      typeof value === 'object' &&
+      typeof (value as { id?: unknown }).id === 'string'
+    )
       // A call the checks refuse ends for the page as a cancelled share.
       document.dispatchEvent(
         new CustomEvent(events.result, {

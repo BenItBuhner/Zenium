@@ -268,55 +268,63 @@ export function installGeolocationShim(
       `Failed to execute '${name}' on 'Geolocation': The callback provided as parameter 1 is not a function.`
     )
 
-  define(proto, 'getCurrentPosition', function (
-    this: Geolocation,
-    success: Success,
-    failure?: Failure,
-    options?: PositionOptions
-  ): void {
-    if (typeof success !== 'function') throw badCallback('getCurrentPosition')
-    if (mode === 'replace') {
-      ask('get', success, failure, options)
-      return
+  define(
+    proto,
+    'getCurrentPosition',
+    function (
+      this: Geolocation,
+      success: Success,
+      failure?: Failure,
+      options?: PositionOptions
+    ): void {
+      if (typeof success !== 'function') throw badCallback('getCurrentPosition')
+      if (mode === 'replace') {
+        ask('get', success, failure, options)
+        return
+      }
+      nativeGet.call(
+        this,
+        success,
+        (error) => {
+          // POSITION_UNAVAILABLE from the engine's provider: try the network.
+          if (error.code === 2) ask('get', success, failure, options)
+          else if (typeof failure === 'function') failure(error)
+        },
+        options
+      )
     }
-    nativeGet.call(
-      this,
-      success,
-      (error) => {
-        // POSITION_UNAVAILABLE from the engine's provider: try the network.
-        if (error.code === 2) ask('get', success, failure, options)
-        else if (typeof failure === 'function') failure(error)
-      },
-      options
-    )
-  })
-  define(proto, 'watchPosition', function (
-    this: Geolocation,
-    success: Success,
-    failure?: Failure,
-    options?: PositionOptions
-  ): number {
-    if (typeof success !== 'function') throw badCallback('watchPosition')
-    if (mode === 'replace') {
-      const id = ask('watch', success, failure, options)
-      const handle = ++counter
-      watchIds.set(handle, id)
+  )
+  define(
+    proto,
+    'watchPosition',
+    function (
+      this: Geolocation,
+      success: Success,
+      failure?: Failure,
+      options?: PositionOptions
+    ): number {
+      if (typeof success !== 'function') throw badCallback('watchPosition')
+      if (mode === 'replace') {
+        const id = ask('watch', success, failure, options)
+        const handle = ++counter
+        watchIds.set(handle, id)
+        return handle
+      }
+      let handle = 0
+      handle = nativeWatch.call(
+        this,
+        success,
+        (error) => {
+          if (error.code === 2 && !watchIds.has(handle)) {
+            nativeClear.call(this, handle)
+            watchIds.set(handle, ask('watch', success, failure, options))
+          } else if (typeof failure === 'function') failure(error)
+        },
+        options
+      )
       return handle
     }
-    let handle = 0
-    handle = nativeWatch.call(
-      this,
-      success,
-      (error) => {
-        if (error.code === 2 && !watchIds.has(handle)) {
-          nativeClear.call(this, handle)
-          watchIds.set(handle, ask('watch', success, failure, options))
-        } else if (typeof failure === 'function') failure(error)
-      },
-      options
-    )
-    return handle
-  })
+  )
   define(proto, 'clearWatch', function (this: Geolocation, handle: number): void {
     const id = watchIds.get(handle)
     if (id !== undefined) {

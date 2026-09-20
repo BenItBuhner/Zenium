@@ -122,7 +122,8 @@ export class ShareService {
     this.browser.state.commitVolatile()
     const { request } = entry
     const win =
-      this.browser.allWindows().find((w) => w.id === request.windowId) ?? this.browser.focusedWindow()
+      this.browser.allWindows().find((w) => w.id === request.windowId) ??
+      this.browser.focusedWindow()
     let outcome: ShareOutcome = 'shared'
     try {
       switch (answer) {
@@ -139,7 +140,11 @@ export class ShareService {
           break
         case 'system': {
           const system = this.browser.platform.shareSheet?.system
-          if (system) await system({ title: request.title, text: request.text, url: request.url, files: entry.files }, win)
+          if (system)
+            await system(
+              { title: request.title, text: request.text, url: request.url, files: entry.files },
+              win
+            )
           else outcome = 'aborted'
           break
         }
@@ -162,7 +167,11 @@ export class ShareService {
       const paths = await host.saveFiles(entry.files)
       const n = paths.length
       if (n > 0)
-        this.browser.toast(n === 1 ? 'File saved to Downloads' : `${n} files saved to Downloads`, 'info', win)
+        this.browser.toast(
+          n === 1 ? 'File saved to Downloads' : `${n} files saved to Downloads`,
+          'info',
+          win
+        )
       return
     }
     if (request.imageUrl && request.tabId) {
