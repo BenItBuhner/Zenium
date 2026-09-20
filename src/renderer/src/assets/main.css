@@ -708,6 +708,25 @@
   }
 }
 
+/*
+ * The chrome's focus ring (v2 §1, a11y-10). Left to the UA, a control the keyboard lands on draws
+ * `outline: auto 1px` in the platform's focus colour – the GTK theme's on Linux, blue elsewhere –
+ * which is neither the token nor sure to read against the window's gradient. Every control of the
+ * chrome document takes the §1 ring instead: 2 px solid `--v2-ring`, 2 px inside its own edge
+ * (Firefox's `--focus-outline-inset`), so a scroller (the tab strip, a Settings nav), the
+ * bookmarks strip's clip or a bar the control fills to the edge cannot cut it, and a control
+ * scrolled flush to a scroller's edge keeps the whole ring. The base layer is the floor: a
+ * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
+ * its pill or face carries – and so does `outline-none` on a container that focuses itself by
+ * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
+  }
+}
+
 @layer components {
   .zen-drag {
     -webkit-app-region: drag;
@@ -798,6 +817,10 @@
   }
   .zen-toolbar-button:hover:not(:disabled) {
     background: var(--zen-element-bg);
+    opacity: 1;
+  }
+  /* The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10). */
+  .zen-toolbar-button:focus-visible {
     opacity: 1;
   }
   .zen-toolbar-button:active:not(:disabled) {
@@ -1833,14 +1856,15 @@
   .zen-app-icon:active svg {
     transform: scale(0.98);
   }
-  .zen-app-icon[aria-checked='true'] svg,
-  .zen-app-icon:focus-visible svg {
+  .zen-app-icon[aria-checked='true'] svg {
     outline: 2px solid var(--zen-accent);
     outline-offset: 2px;
   }
-  .zen-app-icon:focus-visible {
-    outline: none;
-  }
+  /*
+   * The keyboard's ring is the chrome's, round the whole card (artwork and name): drawn round the
+   * artwork it was the picked card's own outline again, so the keyboard on the picked card showed
+   * nothing (a11y-10).
+   */
   .zen-app-icon[aria-checked='true'] {
     color: var(--zen-fg);
   }
@@ -2947,9 +2971,14 @@
   .zen-bm-chip[data-open='true'] {
     background: var(--v2-window-fill-hover);
   }
+  /*
+   * The keyboard's ring (§1) sits inside the chip: the strip is the chip's height and clips
+   * anything outside it, and so would cut a ring drawn round the chip at the top, the bottom and
+   * the strip's end (a11y-10).
+   */
   .zen-bm-chip:focus-visible {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
+    outline: 2px solid var(--v2-ring);
+    outline-offset: -2px;
   }
   /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
@@ -5664,6 +5693,14 @@
   box-shadow: 0 0 0 2px var(--v2-accent);
 }
 /*
+ * The picked card already wears the accent 2 px outside its edge; the shared ring at offset 0
+ * lands on the same pixels, so the keyboard on the picked card showed nothing. Its ring goes
+ * inside the edge instead (as it does in dark), leaving both visible (a11y-10).
+ */
+.zen-v2-card-radio[aria-checked='true']:focus-visible {
+  outline-offset: -2px;
+}
+/*
  * The group editor's colour swatches (components/sidebar/GroupEditorBubble.tsx; §9.14's swatch
  * form of the image radio, tabs-13): the card radio made round – a 28 px target with the colour
  * as a 20 px disc inside – the picked one's 2 px accent outline moved to the disc, 2 px outside
@@ -5693,6 +5730,14 @@
   box-shadow:
     0 0 0 2px var(--v2-panel),
     0 0 0 4px var(--v2-accent);
+}
+/*
+ * The picked swatch's accent ring fills the target's outer 2 px, where the shared ring lands in
+ * dark (and the card radio's inset rule above would put it); the keyboard's ring on the picked
+ * swatch goes 2 px outside the target instead – a second ring with the panel between (a11y-10).
+ */
+.zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']:focus-visible {
+  outline-offset: 2px;
 }
 @media (hover: hover) {
   .zen-v2-card-radio.zen-group-editor-swatch:hover {

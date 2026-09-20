@@ -190,7 +190,7 @@ function SpaceIcon({
         'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-[10px] px-1 text-[17px] leading-none transition-all',
         active
           ? 'bg-[var(--zen-element-bg-active)] opacity-100'
-          : 'opacity-45 hover:opacity-90 hover:bg-[var(--zen-element-bg)]',
+          : 'opacity-45 hover:opacity-90 focus-visible:opacity-100 hover:bg-[var(--zen-element-bg)]',
         isDrop && 'opacity-100'
       )}
       data-drop-into={isDrop || undefined}
