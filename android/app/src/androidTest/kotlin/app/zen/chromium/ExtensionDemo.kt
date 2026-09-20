@@ -25,6 +25,7 @@ import app.zen.chromium.blocking.ResourceType
 import app.zen.chromium.blocking.RuleSetInfo
 import app.zen.chromium.ext.ExtensionFiles
 import app.zen.chromium.ext.ExtensionNotifications
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import app.zen.chromium.ext.NavigationReports
 import org.json.JSONArray
@@ -1996,7 +1997,9 @@ class ExtensionDemo {
         for (tabId in tabs.keys()) {
             val tab = tabs.optJSONObject(tabId) ?: continue
             val url = tab.optString("url")
-            if (!url.contains(".ext.zenium.invalid/")) continue
+            // The tab model spells an extension page as Chrome does; a run on an older
+            // runtime still shows the served origin. Either is the page.
+            if (!ExtensionUrls.isExtensionUrl(url)) continue
             var view: TabWebView? = null
             instrumentation.runOnMainSync { view = host.tabs.get(tabId) }
             val v = view
