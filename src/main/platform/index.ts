@@ -71,7 +71,7 @@ import { ExtensionFavicons, faviconRequestHandler } from './extensionApi/favicon
 import { ExtensionResourceOrigin } from './extensionApi/resourceOrigin'
 import { edgeStoreUserAgent, navigationClientHints, webstoreClientHints } from './requestHeaders'
 import { ResourceGovernor } from './resources/governor'
-import { SyncEngine } from '../sync/engine'
+import { ElectronSyncHost } from '../sync/host'
 import { ElectronAgentTransport } from '../agent/server'
 import { ElectronSiteData } from './siteData'
 import { ElectronTranslateHost, focusedChromeWebContents } from './translate'
@@ -199,6 +199,8 @@ export class ElectronPlatform implements Platform {
   readonly shareSheet: ElectronShareSheet
   /** The Wi-Fi scan behind the network location provider; Linux and Windows have a scanner (MW-04). */
   readonly geolocation = new ElectronGeolocation()
+  /** Cross-device sync: the system folder dialog, the hostname, a node:fs folder transport (ID-08). */
+  readonly sync = new ElectronSyncHost()
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
   /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
@@ -442,10 +444,6 @@ export class ElectronPlatform implements Platform {
 
   createExtensions(browser: Browser): ExtensionService {
     return new ExtensionService(browser, this.sessions, this.userDataDir)
-  }
-
-  createSync(browser: Browser): SyncEngine {
-    return new SyncEngine(browser)
   }
 
   createAgentTransport(): ElectronAgentTransport {

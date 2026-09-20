@@ -1,36 +1,24 @@
 import { promises as fs, existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
-import type { EncryptedEnvelope } from './crypto'
-import { isEnvelope } from './crypto'
+import type { SyncTransport } from '../../core/platform'
+import {
+  LEGACY_SYNC_DIR_NAME,
+  SYNC_DIR_NAME,
+  SyncFolderLostError
+} from '../../core/sync/transport'
 import { moveLegacyDirectory } from '../platform/legacyPaths'
 
-export const SYNC_DIR_NAME = 'zenium-sync'
-/** The folder's name while the browser was called Zen (up to v0.2.0); taken over on first use. */
-export const LEGACY_SYNC_DIR_NAME = 'zen-sync'
-const FILE_EXT = '.zensync'
-
-export interface DeviceFile {
-  deviceId: string
-  deviceName: string
-  updatedAt: number
-  envelope: EncryptedEnvelope
-}
-
-const README = `Zenium sync data.
-
-Each file in this folder belongs to one of your devices and is end-to-end encrypted with your
-sync passphrase (AES-256-GCM). The folder can live in any synced location – Dropbox, iCloud
-Drive, Google Drive, OneDrive, Nextcloud, Syncthing… Nothing here is readable without the
-passphrase, and deleting the folder only removes the shared copy, never your local data.
-`
+export { SYNC_DIR_NAME, LEGACY_SYNC_DIR_NAME }
 
 /**
- * "Bring your own storage" transport: every device writes exactly one file, so cloud-drive sync
- * never has to merge concurrent edits. Reading = every other device's file.
+ * The desktop's sync folder: `<root>/zenium-sync` on the local file system, kept in sync by
+ * whatever cloud drive or Syncthing share `root` lives in. Writes go through a temp file and a
+ * rename so a peer's drive client never uploads half a file; a watcher on the directory reports
+ * other devices' files as they land.
  */
-export class FolderTransport {
+export class FolderTransport implements SyncTransport {
   private watcher: FSWatcher | null = null
-  private watchTimer: NodeJS.Timeout | null = null
+  private watchTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(readonly root: string) {
     // A folder that still holds a zen-sync directory from before the rename keeps its data: the
@@ -48,64 +36,58 @@ export class FolderTransport {
     return join(this.root, SYNC_DIR_NAME)
   }
 
-  async ensure(): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true })
-    const readme = join(this.dir, 'README.txt')
-    if (!existsSync(readme)) await fs.writeFile(readme, README, 'utf8').catch(() => undefined)
+  private path(name: string): string {
+    if (name.includes('/') || name.includes('\\') || name === '.' || name === '..')
+      throw new Error(`invalid sync document name: ${name}`)
+    return join(this.dir, name)
   }
 
-  async list(): Promise<DeviceFile[]> {
-    let names: string[]
+  /** The chosen folder itself is gone (an unmounted drive, a deleted directory). */
+  private checkRoot(): void {
+    if (!existsSync(this.root)) throw new SyncFolderLostError()
+  }
+
+  async list(): Promise<string[]> {
+    this.checkRoot()
     try {
-      names = await fs.readdir(this.dir)
-    } catch {
-      return []
+      return await fs.readdir(this.dir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      throw error
     }
-    const files: DeviceFile[] = []
-    for (const name of names) {
-      if (!name.endsWith(FILE_EXT)) continue
-      try {
-        const raw = JSON.parse(
-          await fs.readFile(join(this.dir, name), 'utf8')
-        ) as Partial<DeviceFile>
-        if (
-          raw &&
-          typeof raw.deviceId === 'string' &&
-          typeof raw.updatedAt === 'number' &&
-          isEnvelope(raw.envelope)
-        ) {
-          files.push({
-            deviceId: raw.deviceId,
-            deviceName: typeof raw.deviceName === 'string' ? raw.deviceName : raw.deviceId,
-            updatedAt: raw.updatedAt,
-            envelope: raw.envelope
-          })
-        }
-      } catch {
-        // Partially synced or corrupt file – skip it, the owning device will rewrite it.
-      }
-    }
-    return files
   }
 
-  async write(file: DeviceFile): Promise<void> {
-    await this.ensure()
-    const target = join(this.dir, `${safeName(file.deviceId)}${FILE_EXT}`)
+  async read(name: string): Promise<string | null> {
+    this.checkRoot()
+    try {
+      return await fs.readFile(this.path(name), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  async write(name: string, text: string): Promise<void> {
+    this.checkRoot()
+    await fs.mkdir(this.dir, { recursive: true })
+    const target = this.path(name)
     const tmp = `${target}.tmp-${process.pid}`
-    await fs.writeFile(tmp, JSON.stringify(file), 'utf8')
+    await fs.writeFile(tmp, text, 'utf8')
     await fs.rename(tmp, target)
   }
 
-  async remove(deviceId: string): Promise<void> {
-    await fs.rm(join(this.dir, `${safeName(deviceId)}${FILE_EXT}`), { force: true })
+  async remove(name: string): Promise<void> {
+    this.checkRoot()
+    await fs.rm(this.path(name), { force: true })
   }
 
   async removeAll(): Promise<void> {
+    this.checkRoot()
     await fs.rm(this.dir, { recursive: true, force: true })
   }
 
   /** Fire `onChange` (debounced) whenever another device's file lands in the folder. */
-  watch(onChange: () => void): void {
+  watch(onChange: () => void): () => void {
     this.unwatch()
     try {
       this.watcher = watch(this.dir, { persistent: false }, () => {
@@ -116,6 +98,7 @@ export class FolderTransport {
     } catch {
       this.watcher = null
     }
+    return () => this.unwatch()
   }
 
   unwatch(): void {
@@ -124,8 +107,4 @@ export class FolderTransport {
     if (this.watchTimer) clearTimeout(this.watchTimer)
     this.watchTimer = null
   }
-}
-
-function safeName(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_-]/g, '_')
 }

@@ -19,6 +19,7 @@ import {
   SHORTCUTS_RECORD_ID,
   applyOrder,
   readBookmarkData,
+  readCredentialData,
   type ContainerData,
   type FolderData,
   type OrderData,
@@ -38,7 +39,8 @@ const ORDER: Record<SyncRecord['type'], number> = {
   settings: 5,
   shortcuts: 6,
   boost: 7,
-  order: 8
+  credential: 8,
+  order: 9
 }
 
 /**
@@ -248,6 +250,26 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         const domain = r.id.replace(/^boost:/, '')
         if (r.deleted) browser.boosts.remove(domain)
         else browser.boosts.put({ ...(r.data as Boost), domain })
+        break
+      }
+      case 'credential': {
+        // The engine hands credential records over only while the vault is open (a locked one
+        // holds them for the next sync); the store keeps the other device's id and timestamps.
+        if (r.deleted) {
+          browser.passwords.removeSynced(r.id)
+          break
+        }
+        const data = readCredentialData(r.data)
+        if (!data) break
+        if (data.kind === 'login') {
+          const { kind: _kind, ...login } = data
+          void _kind
+          browser.passwords.applySyncedLogin({ id: r.id, ...login })
+        } else {
+          const { kind: _kind, ...passkey } = data
+          void _kind
+          browser.passwords.applySyncedPasskey({ id: r.id, ...passkey })
+        }
         break
       }
       case 'order': {

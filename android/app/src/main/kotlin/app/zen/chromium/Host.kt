@@ -41,6 +41,7 @@ import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -260,7 +261,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
                 "qrScan" to qrScan.available,
                 // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
-                "touchExploration" to touchExploration
+                "touchExploration" to touchExploration,
+                // What sync calls this device until the user renames it (Chrome names a phone by its model).
+                "deviceModel" to Build.MODEL
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -568,6 +571,19 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "shortcut.pin" -> shortcuts.pin(args, reply)
 
+            // --- cross-device sync's folder (SyncFolder.kt; the contract is `SyncTransport` in
+            //     src/core/platform.ts, the caller `AndroidSyncTransport` in src/android/sync.ts) --------
+            "sync.chooseFolder" -> activity.pickFolder { uri ->
+                if (uri != null) SafTree.persist(activity, uri)
+                reply(uri?.toString())
+            }
+            "sync.folderName" -> syncOp(args, reply) { it.folderName() }
+            "sync.list" -> syncOp(args, reply) { JSONArray(it.list()) }
+            "sync.read" -> syncOp(args, reply) { it.read(args.str("name")) }
+            "sync.write" -> syncOp(args, reply) { it.write(args.str("name"), args.str("text")); null }
+            "sync.remove" -> syncOp(args, reply) { it.remove(args.str("name")); null }
+            "sync.removeAll" -> syncOp(args, reply) { it.removeAll(); null }
+
             // --- voice search (Voice.kt; the contract is `VoiceHost` in src/core/platform.ts) ----------
             "voice.start" -> voice.start(reply)
             "voice.cancel" -> { voice.cancel(); reply(null) }
@@ -622,6 +638,26 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // The extension runtime's methods (ext/Extensions.kt; the contract is src/android/extensionRuntime.ts).
             else -> if (method.startsWith("ext.")) extensions.handle(method, args, reply) else throw IllegalArgumentException("Unknown method: $method")
+        }
+    }
+
+    /**
+     * One operation on the sync folder, off the main thread (SAF round-trips are slow). A tree
+     * whose permission is gone rejects with `folder-lost:`, which the chrome turns into
+     * `SyncStatus.folderLost`; any other failure rejects with its message.
+     */
+    private fun syncOp(args: JSONObject, reply: (Any?) -> Unit, op: (SyncFolder) -> Any?) {
+        val folder = args.str("folder")
+        io.execute {
+            val result = try {
+                op(SyncFolder(SafTree(activity, Uri.parse(folder))))
+            } catch (e: SyncFolder.FolderLostException) {
+                Rejection("${SyncFolder.LOST_PREFIX} ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "sync folder operation failed", e)
+                Rejection(e.message ?: e.javaClass.simpleName)
+            }
+            main.post { reply(result) }
         }
     }
 

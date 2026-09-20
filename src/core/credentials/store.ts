@@ -422,6 +422,70 @@ export class CredentialStore {
     this.changed([id])
   }
 
+  // ---------------------------------------------------------------------------
+  // Sync (ID-09): another device's entries land under their own ids
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Put a login another device published in place of this device's copy (or add it). The
+   * record's id, values and timestamps are kept as they came (the other device normalised them
+   * when it saved the login), so both devices hold the same entry and the sync engine's hashes
+   * agree; the field bounds this device applies to its own entries hold here too.
+   */
+  applySynced(login: Credential): void {
+    this.requireKey()
+    this.credentials.set(login.id, {
+      id: login.id,
+      origin: login.origin,
+      url: login.url,
+      username: clip(login.username, MAX_FIELD),
+      password: clip(login.password, MAX_FIELD),
+      realm: login.realm,
+      notes: clip(login.notes, MAX_NOTES),
+      createdAt: login.createdAt,
+      updatedAt: login.updatedAt,
+      lastUsedAt: login.lastUsedAt
+    })
+    this.changed([login.id])
+  }
+
+  /** Delete a login another device deleted (no undo: the deletion was confirmed there). */
+  removeSynced(id: string): boolean {
+    this.requireKey()
+    if (!this.credentials.delete(id)) return false
+    this.sealed.delete(id)
+    this.changed([])
+    return true
+  }
+
+  /**
+   * A passkey's public record from another device: it lists there like the device's own, but
+   * signing in needs the private key, which stays in that device's authenticator.
+   */
+  applySyncedPasskey(passkey: PasskeyEntry): void {
+    this.requireKey()
+    this.passkeys.set(passkey.id, {
+      id: passkey.id,
+      rpId: clip(passkey.rpId, MAX_FIELD),
+      rpName: clip(passkey.rpName, MAX_FIELD),
+      userName: clip(passkey.userName, MAX_FIELD),
+      userDisplayName: clip(passkey.userDisplayName, MAX_FIELD),
+      credentialId: clip(passkey.credentialId, MAX_FIELD),
+      origin: clip(passkey.origin, MAX_FIELD),
+      createdAt: passkey.createdAt,
+      lastUsedAt: passkey.lastUsedAt
+    })
+    this.changed([passkey.id])
+  }
+
+  removeSyncedPasskey(id: string): boolean {
+    this.requireKey()
+    if (!this.passkeys.delete(id)) return false
+    this.sealed.delete(id)
+    this.changed([])
+    return true
+  }
+
   neverSaveAdd(domainOrUrl: string): void {
     this.requireKey()
     const domain = normalizeDomain(domainOrUrl)

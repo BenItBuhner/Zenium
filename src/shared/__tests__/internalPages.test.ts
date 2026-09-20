@@ -234,7 +234,7 @@ describe('the landing list', () => {
   const page = INTERNAL_PAGES.settings
 
   it('separates Zen features from Sync and Updates, and those from About (v2 §10.2)', () => {
-    const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
+    const runs = landingRuns(page, availableSections(page, ALL, 'tablet')).map((run) =>
       run.map((s) => s.id)
     )
     expect(runs).toHaveLength(3)
@@ -243,6 +243,15 @@ describe('the landing list', () => {
     expect(runs[0]).not.toContain('accessibility')
     expect(runs[1]).toEqual(['sync', 'accessibility', 'updates'])
     expect(runs[2]).toEqual(['about'])
+  })
+
+  it('holds the Sync category off the phone landing until its builder lands (ID-08 UI PR)', () => {
+    const phone = availableSections(page, ALL, 'phone').map((s) => s.id)
+    expect(phone).not.toContain('sync')
+    const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
+      run.map((s) => s.id)
+    )
+    expect(runs[1]).toEqual(['accessibility', 'updates'])
   })
 
   it('keeps a break when the section it precedes is missing and drops a run left empty', () => {

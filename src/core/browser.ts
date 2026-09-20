@@ -56,6 +56,7 @@ import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
+import { SyncEngine } from './sync/engine'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
 import { PrintService } from './print'
@@ -373,7 +374,7 @@ export class Browser {
     this.liveFolders = new LiveFolderService(this)
     this.extensions = platform.createExtensions?.(this) ?? new NoExtensions(this)
     this.mods = new ModService(this)
-    this.sync = platform.createSync?.(this) ?? new NoSync(this)
+    this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
     this.updates = new UpdateService(
       this,
@@ -2851,6 +2852,7 @@ export class Browser {
       'sync.setup': (opts, win) => this.sync.setup(opts, win),
       'sync.setScope': (patch) => this.sync.setScope(patch),
       'sync.setDeviceName': ({ name }) => this.sync.setDeviceName(name),
+      'sync.setFolder': ({ folder }, win) => this.sync.setFolder(folder, win),
       'sync.now': () => this.sync.syncNow(),
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
