@@ -18,6 +18,7 @@ import type {
   MenuItemTemplate,
   MenuPopupOptions,
   Platform,
+  ShortcutHost,
   SpellcheckHost,
   StoreIO,
   TabView,
@@ -189,6 +190,8 @@ interface HarnessOptions {
    * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
    */
   spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
+  /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
+  shortcuts?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -295,7 +298,8 @@ function harness(
           })
         }
       : {}),
-    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {})
+    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
+    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {})
   }
   const browser = new Browser(platform)
   browser.start()
@@ -533,6 +537,21 @@ describe('the app menu', () => {
       .find((item) => item.label === 'Extensions')
       ?.click?.()
     expect(h.sent).toEqual(['extensions.open'])
+  })
+
+  it('offers the install item only to a window whose chrome has an install surface up', () => {
+    // A desktop host that writes launchers: the engine can install, but the desktop's install
+    // dialog is UI work to come, so until a chrome registers one (`ui.surface`) the menu offers
+    // no way into a prompt nothing would show.
+    const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
+    h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    expect(appMenu(h)).toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    // A window that never registered any surface has none.
+    expect(h.win.surfaces.size).toBe(0)
   })
 
   it('closes the page group with the page controls where the host has them', () => {

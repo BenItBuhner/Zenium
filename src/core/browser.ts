@@ -44,7 +44,7 @@ import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
 import { TabManager, isTabSection } from './tabs'
 import { TabDragController, parseDropKey } from './tabDrag'
-import { ZenWindow } from './window'
+import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
@@ -1654,8 +1654,10 @@ export class Browser {
       return
     }
     // A desktop has no share target of the OS's own: the chrome's sheet (copy, QR, email, the
-    // system sheet on macOS) stands in for it.
-    if (this.state.capabilities.shareSheet) {
+    // system sheet on macOS) stands in for it – once the window's chrome has one up. Until then
+    // "share" means what it always did on a desktop without a target: the link goes to the
+    // clipboard, and the chrome says so.
+    if (this.state.capabilities.shareSheet && surfaceMounted(win, 'share')) {
       this.shares.open(payload, win)
       return
     }
@@ -2680,6 +2682,10 @@ export class Browser {
       'window.fullscreenInset': ({ bottom }, win) => win.setFullscreenInset(bottom),
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
+      },
+      'ui.surface': ({ surface, mounted }, win) => {
+        if (mounted) win.surfaces.add(surface)
+        else win.surfaces.delete(surface)
       },
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),

@@ -1,5 +1,5 @@
 import type { Browser } from './browser'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 import type {
   ChromeContextParams,
   MenuItemTemplate,
@@ -2231,7 +2231,9 @@ export class Menus {
   /**
    * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
    * Inside the scope of an app that is already on the Home screen the item reads
-   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   * "Open <app>" and goes to the app's start URL instead (PWA-11). The install item is offered
+   * only where the window's chrome has an install surface up to take it (`ChromeSurface`: the
+   * phone's sheet; the desktop's dialog is UI work to come, and its menu item comes with it).
    */
   private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
@@ -2248,6 +2250,7 @@ export class Menus {
         }
       ]
     }
+    if (!surfaceMounted(win, 'install')) return []
     return [
       {
         label: installMenuLabel(surface, active.webApp),

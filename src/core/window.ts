@@ -1,5 +1,6 @@
 import type {
   AppWindowInfo,
+  ChromeSurface,
   ContentCover,
   EventName,
   Events,
@@ -27,6 +28,17 @@ import {
   type TabView,
   type WindowHost
 } from './platform'
+
+/**
+ * Whether `win`'s chrome has `surface` up to answer a page's request (`ZenWindow.surfaces`); a
+ * window that is gone – or a host object that never registered any – has none.
+ */
+export function surfaceMounted(
+  win: Pick<ZenWindow, 'surfaces'> | null | undefined,
+  surface: ChromeSurface
+): boolean {
+  return Boolean(win?.surfaces?.has(surface))
+}
 
 export interface WindowInit {
   id: string
@@ -86,6 +98,12 @@ export class ZenWindow {
    * until the chrome says otherwise. The app menu and the command list are built for it.
    */
   formFactor: FormFactor = 'desktop'
+  /**
+   * The surfaces this window's chrome has mounted (`ui.surface`): the install prompt, the screen
+   * picker, the share sheet. A page's request for one that is absent is answered at once as a
+   * cancel (`surfaceMounted`) rather than held for a chrome that is not there.
+   */
+  readonly surfaces = new Set<ChromeSurface>()
   /**
    * The Settings recorder in this window's chrome is listening for a chord: key presses from the
    * chrome are its to capture, and no shortcut runs off them until it stops.

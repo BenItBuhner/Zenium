@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../api', () => ({ cmd: vi.fn(), run: vi.fn(), onEvent: vi.fn(() => () => undefined) }))
+vi.mock('../api', () => ({
+  cmd: vi.fn(async () => null),
+  run: vi.fn(),
+  onEvent: vi.fn(() => () => undefined)
+}))
 
+import type { WebAppInstallPrompt } from '@shared/types'
 import { run } from '../api'
 import {
   chromeNeedsKeyboard,
   closeClearBrowsingData,
   openClearBrowsingData,
+  openInstallSheet,
   overlayCoversContent,
   panelAloneOverContent,
   uiStore,
@@ -24,9 +30,34 @@ afterEach(() => {
     barMenuOpen: false,
     starDialog: null,
     snapshot: null,
-    snapshotTabId: null
+    snapshotTabId: null,
+    install: null
   })
   vi.mocked(run).mockClear()
+})
+
+const INSTALL_PROMPT: WebAppInstallPrompt = {
+  tabId: 't1',
+  title: 'Sketch',
+  url: 'https://sketch.example/',
+  origin: 'sketch.example',
+  icon: null,
+  info: null,
+  tint: null,
+  surface: 'homeScreen'
+}
+
+describe('the install sheet', () => {
+  it('opens for a Home-screen prompt and not for a desktop one, whose dialog is still to land', async () => {
+    // A desktop prompt (a chrome that registered the install surface on a host with windows would
+    // be one) shows nothing here: the phone's sheet is not the desktop's dialog.
+    await openInstallSheet({ ...INSTALL_PROMPT, surface: 'desktop' })
+    expect(idle().install).toBeNull()
+    expect(run).not.toHaveBeenCalled()
+    await openInstallSheet(INSTALL_PROMPT)
+    expect(idle().install?.tabId).toBe('t1')
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+  })
 })
 
 describe('chrome surfaces over the content', () => {

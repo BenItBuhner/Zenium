@@ -3,7 +3,7 @@ import { isShareCall, shareFileInfo, type ShareFile, type ShareOutcome } from '.
 import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 
 export interface ShareServiceOptions {
   now?: () => number
@@ -56,14 +56,23 @@ export class ShareService {
     return this.pending.filter((p) => p.request.windowId === win.id).map((p) => p.request)
   }
 
-  /** A page called `navigator.share`. */
+  /**
+   * A page called `navigator.share`. A window whose chrome has no share sheet up
+   * (`ChromeSurface`) answers at once as a dismissed sheet would – the page's promise rejects
+   * with Chrome's `AbortError` – rather than holding the call for a sheet that is not there.
+   */
   handleMessage(tabId: string, call: unknown): void {
     if (!isShareCall(call)) return
     const tab = this.browser.tabs.tab(tabId)
-    if (!tab || !this.browser.tabs.view(tabId)) return
+    const view = this.browser.tabs.view(tabId)
+    if (!tab || !view) return
     // One share at a time per page (the shim refuses a second call; a stale one gives way).
     this.cancelForTab(tabId)
     const win = this.browser.tabs.windowFor(tabId)
+    if (!surfaceMounted(win, 'share')) {
+      view.postToPage?.({ type: 'share', id: call.id, result: 'aborted' })
+      return
+    }
     this.add(
       {
         tabId,

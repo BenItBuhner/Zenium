@@ -44,6 +44,17 @@ export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 export type FormFactor = 'phone' | 'tablet' | 'desktop'
 
 /**
+ * A surface of the chrome that answers a page's request the core would otherwise hold open for
+ * it: the install prompt (`webapp.install`), the screen picker (`screenCaptureRequests`), the
+ * share sheet (`shareRequests`). The renderer registers each as its component mounts
+ * (`ui.surface`) and takes it back as it unmounts; while a window has none, the core answers the
+ * page at once the way a cancel would (Chrome's picker refused, its share cancelled, its install
+ * dialog dismissed) instead of waiting on a chrome that is not there – no call hangs behind a
+ * surface that has yet to land.
+ */
+export type ChromeSurface = 'install' | 'screenCapture' | 'share'
+
+/**
  * What the host can do for the chrome. The renderer adapts its UI to these rather than to the
  * platform name (e.g. a DeX desktop session is still `android`, but has a mouse and keyboard).
  */
@@ -3567,6 +3578,11 @@ export interface Commands {
   'window.fullscreenInset': { args: { bottom: number }; result: void }
   /** Renderer → main: the layout the chrome settled on (sent on start and whenever it changes). */
   'window.formFactor': { args: { formFactor: FormFactor }; result: void }
+  /**
+   * Renderer → main: a surface of this window's chrome mounted (or unmounted) – see
+   * `ChromeSurface`. The core holds a page's request open only for a window whose surface is up.
+   */
+  'ui.surface': { args: { surface: ChromeSurface; mounted: boolean }; result: void }
   /** Zen: a new synced window starts at the current space showing the same tabs. */
   'window.new': { args: void; result: void }
   /** Zen's "New blank window" (Ctrl+Shift+N): an independent, temporary tab list. */

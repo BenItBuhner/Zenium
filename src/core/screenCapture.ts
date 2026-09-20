@@ -2,6 +2,7 @@ import type { ScreenCaptureRequest, ScreenCaptureSource, Tab } from '../shared/t
 import { newId } from '../shared/ids'
 import { displayHost } from '../shared/url'
 import type { Browser } from './browser'
+import { surfaceMounted } from './window'
 
 /** What the host hands the engine once the picker answered. */
 export interface ScreenCaptureAnswer {
@@ -75,12 +76,16 @@ export class ScreenCaptureService {
 
   /**
    * A page asked to capture. Resolves with the picker's answer; a second call from the same tab
-   * while its picker is up cancels the first (Chrome shows one picker per tab).
+   * while its picker is up cancels the first (Chrome shows one picker per tab). A window whose
+   * chrome has no picker up (`ChromeSurface`) answers at once as a cancelled picker would – the
+   * page hears Chrome's refusal – rather than holding the call for a picker that is not there.
    */
   request(init: ScreenCaptureRequestInit): Promise<ScreenCaptureAnswer> {
     const tab = this.browser.tabs.tab(init.tabId)
     if (!tab) return Promise.resolve({ sourceId: null, audio: false })
     this.cancelForTab(init.tabId)
+    if (!surfaceMounted(this.browser.tabs.ownerOf(init.tabId), 'screenCapture'))
+      return Promise.resolve({ sourceId: null, audio: false })
     const host = this.browser.platform.screenCapture
     const request: ScreenCaptureRequest = {
       id: newId('capture'),

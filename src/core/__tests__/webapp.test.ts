@@ -38,7 +38,9 @@ interface Harness {
   now: { value: number }
 }
 
-function harness(options: { pinOk?: boolean; desktop?: boolean } = {}): Harness {
+function harness(
+  options: { pinOk?: boolean; desktop?: boolean; installSurface?: boolean } = {}
+): Harness {
   const events: Harness['events'] = []
   const toasts: string[] = []
   const pageMessages: PageHostMessage[] = []
@@ -49,7 +51,15 @@ function harness(options: { pinOk?: boolean; desktop?: boolean } = {}): Harness 
   const createdTabs: Array<{ url: string }> = []
   const navigations: Array<{ tabId: string; url: string }> = []
   const now = { value: 1_700_000_000_000 }
-  const win = { id: 'w1', isPrivate: false, chrome: 'full', app: null } as unknown as ZenWindow
+  // The window's chrome has an install surface up (the phone's sheet, the desktop's dialog to
+  // come) unless a test says otherwise (`ui.surface`).
+  const win = {
+    id: 'w1',
+    isPrivate: false,
+    chrome: 'full',
+    app: null,
+    surfaces: new Set(options.installSurface === false ? [] : ['install'])
+  } as unknown as ZenWindow
   const tab = {
     id: 't1',
     url: DOCUMENT_URL,
@@ -379,6 +389,26 @@ describe('WebAppService', () => {
     postManifest(h)
     vi.advanceTimersByTime(1500)
     expect(bannerEvents(h)).toHaveLength(1)
+  })
+
+  it('settles a site prompt as dismissed at once, showing nothing, while the window has no install surface up', () => {
+    const h = harness({ desktop: true, installSurface: false })
+    postManifest(h)
+    h.service.handleMessage(h.tab.id, { type: 'webapp', webapp: 'prompt' })
+    // Chrome's answer for a dialog closed unanswered; no sheet is asked of the chrome.
+    expect(h.pageMessages.at(-1)).toEqual({
+      type: 'webapp',
+      action: 'result',
+      outcome: 'dismissed'
+    })
+    expect(h.events.filter((e) => e.name === 'webapp.install')).toEqual([])
+    // The menu's way in is the same: nothing shows.
+    h.service.openInstall(h.tab.id, h.win)
+    expect(h.events.filter((e) => e.name === 'webapp.install')).toEqual([])
+    // The surface mounting (`ui.surface`) lets the prompt through to it.
+    h.win.surfaces.add('install')
+    h.service.openInstall(h.tab.id, h.win)
+    expect(h.events.filter((e) => e.name === 'webapp.install')).toHaveLength(1)
   })
 
   it('reports a failed pin and settles a site prompt as dismissed', async () => {

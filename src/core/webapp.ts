@@ -24,7 +24,7 @@ import {
 import type { Browser } from './browser'
 import { getSpace } from './model'
 import type { PageMessage, ShortcutRequest, StoreIO } from './platform'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 
 /** The persisted document: shortcuts on the Home screen and how often each app was visited. */
 interface WebAppsDocument {
@@ -396,10 +396,15 @@ export class WebAppService {
   // Install sheet (PWA-01 / PWA-04)
   // ---------------------------------------------------------------------------
 
-  /** Open the install sheet (with a manifest) or the name-edit sheet (without). */
+  /**
+   * Open the install sheet (with a manifest) or the name-edit sheet (without). A window whose
+   * chrome has no install surface up (`ChromeSurface`: the phone's sheet; the desktop's dialog
+   * is UI work to come) settles the site's `prompt()` as dismissed at once, the answer Chrome's
+   * closed dialog gives, and shows nothing.
+   */
   openInstall(tabId: string, win: ZenWindow): void {
     const tab = this.browser.tabs.tab(tabId)
-    if (!this.canPin(tab, win) || !tab) {
+    if (!this.canPin(tab, win) || !tab || !surfaceMounted(win, 'install')) {
       this.settleSitePrompt(tabId, 'dismissed')
       return
     }

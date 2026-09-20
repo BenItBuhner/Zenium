@@ -21,7 +21,7 @@ interface Harness {
   downloads: string[]
 }
 
-function harness(options: { host?: 'none' | 'files' | 'system' } = {}): Harness {
+function harness(options: { host?: 'none' | 'files' | 'system'; sheet?: boolean } = {}): Harness {
   const posted: PageHostMessage[] = []
   const copied: Harness['copied'] = []
   const opened: string[] = []
@@ -29,7 +29,11 @@ function harness(options: { host?: 'none' | 'files' | 'system' } = {}): Harness 
   const saved: ShareFile[][] = []
   const system: Harness['system'] = []
   const downloads: string[] = []
-  const win = { id: 'w1' } as ZenWindow
+  // The window's chrome has the share sheet up unless a test says otherwise (`ui.surface`).
+  const win = {
+    id: 'w1',
+    surfaces: new Set(options.sheet === false ? [] : ['share'])
+  } as unknown as ZenWindow
   const tab = { id: 't1', url: 'https://news.example/story', title: 'Story' } as Tab
   const kind = options.host ?? 'system'
   const host: ShareSheetHost | undefined =
@@ -198,6 +202,20 @@ describe('ShareService', () => {
     // A menu share is not tied to a page: a tab's navigation leaves it alone.
     h.service.cancelForTab('t1')
     expect(h.service.listFor(h.win)).toHaveLength(1)
+  })
+
+  it('cancels a page call at once, as a dismissed sheet, while the window has no sheet up', () => {
+    const h = harness({ sheet: false })
+    h.service.handleMessage('t1', CALL)
+    // The page hears Chrome's AbortError right away; nothing is put up to wait on.
+    expect(h.posted).toEqual([{ type: 'share', id: 'c1', result: 'aborted' }])
+    expect(h.service.listFor(h.win)).toEqual([])
+    expect(h.browser.state.commitVolatile).not.toHaveBeenCalled()
+    // The sheet mounting (`ui.surface`) lets the next call through to it.
+    h.win.surfaces.add('share')
+    h.service.handleMessage('t1', { ...CALL, id: 'c2' })
+    expect(h.service.listFor(h.win)).toHaveLength(1)
+    expect(h.posted).toHaveLength(1)
   })
 })
 

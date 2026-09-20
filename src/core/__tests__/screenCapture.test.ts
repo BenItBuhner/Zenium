@@ -27,9 +27,15 @@ interface Harness {
   host: ScreenCaptureHost & { calls: number; resolve: (sources: ScreenCaptureSource[]) => void }
 }
 
-function harness(options: { host?: boolean; systemAudio?: boolean } = {}): Harness {
+function harness(
+  options: { host?: boolean; systemAudio?: boolean; picker?: boolean } = {}
+): Harness {
   const commit = vi.fn()
-  const win = { id: 'w1' } as ZenWindow
+  // The window's chrome has the picker up unless a test says otherwise (`ui.surface`).
+  const win = {
+    id: 'w1',
+    surfaces: new Set(options.picker === false ? [] : ['screenCapture'])
+  } as unknown as ZenWindow
   const tabs: Record<string, Tab> = {
     t1: { id: 't1', title: 'Meet', url: 'https://meet.example/room', favicon: null } as Tab,
     t2: { id: 't2', title: 'Docs', url: 'https://docs.example/', favicon: 'data:x' } as Tab,
@@ -178,6 +184,21 @@ describe('ScreenCaptureService', () => {
     const hostless = harness({ host: false })
     void hostless.service.request({ tabId: 't1', url: 'https://meet.example/', audio: true })
     expect(hostless.service.list()[0]).toMatchObject({ loading: false, systemAudio: false })
+  })
+
+  it('refuses at once, as a cancelled picker, while the window has no picker up', async () => {
+    const h = harness({ picker: false })
+    const answer = h.service.request({ tabId: 't1', url: 'https://meet.example/', audio: true })
+    // Nothing is put up to wait on: no request in state, no OS list asked for.
+    expect(h.service.list()).toEqual([])
+    expect(h.commits()).toBe(0)
+    expect(h.host.calls).toBe(0)
+    expect(await answer).toEqual({ sourceId: null, audio: false })
+    // The picker mounting (`ui.surface`) lets the next call through to it.
+    ;(h.browser.tabs.ownerOf('t1') as ZenWindow).surfaces.add('screenCapture')
+    void h.service.request({ tabId: 't1', url: 'https://meet.example/', audio: true })
+    expect(h.service.list()).toHaveLength(1)
+    expect(h.host.calls).toBe(1)
   })
 
   it('names tab sources and reads them back', () => {
