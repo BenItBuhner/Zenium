@@ -47,6 +47,8 @@ export type HistoryChangeListener = (kind: HistoryChangeKind) => void
 export interface VisitOptions {
   transition?: HistoryTransition
   tabId?: string
+  /** The visit's time, ms since the epoch; absent means now. Values in the future clamp to now. */
+  at?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +107,26 @@ function isVisit(v: unknown): v is HistoryVisit {
 
 function sortByTime(visits: HistoryVisit[]): HistoryVisit[] {
   return [...visits].sort((a, b) => a.visitTime - b.visitTime)
+}
+
+/** A caller-supplied visit time: absent or unusable means now, the future clamps to now. */
+function clampVisitTime(at: number | undefined, now: number): number {
+  return typeof at === 'number' && Number.isFinite(at) ? Math.min(at, now) : now
+}
+
+/**
+ * Where a visit at `time` goes in a chronological list so it stays sorted: after every visit at
+ * the same time (binary search; the list's end when it is the newest).
+ */
+function insertionIndex(visits: HistoryVisit[], time: number): number {
+  let lo = 0
+  let hi = visits.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (visits[mid].visitTime <= time) lo = mid + 1
+    else hi = mid
+  }
+  return lo
 }
 
 /**
@@ -268,44 +290,61 @@ export class HistoryService {
     if (raw && pruned.visits.length !== storedVisits) this.persist()
   }
 
-  /** Record a visit and update the page's aggregate. */
+  /**
+   * Record a visit and update the page's aggregate. `opts.at` dates the visit (default now): an
+   * older visit raises the count and may move `firstVisit` back, but the title, favicon and
+   * `lastVisit` only follow the newest visit of the page.
+   */
   visit(url: string, title: string, favicon: string | null, opts: VisitOptions = {}): void {
     if (!isRecordableUrl(url)) return
     const now = this.now()
+    const at = clampVisitTime(opts.at, now)
+    // Retention would expire it at once; the aggregate must not count what is not kept.
+    if (at < now - RETENTION_MS) return
     const transition = opts.transition ?? 'link'
     const existing = this.entries.get(url)
     if (existing) {
       existing.visitCount += 1
-      existing.lastVisit = now
       if (transition === 'typed') existing.typedCount = (existing.typedCount ?? 0) + 1
-      if (title) existing.title = title
-      if (favicon) existing.favicon = favicon
-      // Re-insert to keep the map in recency order.
-      this.entries.delete(url)
-      this.entries.set(url, existing)
+      existing.firstVisit = Math.min(existing.firstVisit ?? existing.lastVisit, at)
+      if (at >= existing.lastVisit) {
+        existing.lastVisit = at
+        if (title) existing.title = title
+        if (favicon) existing.favicon = favicon
+        // Re-insert to keep the map in recency order.
+        this.entries.delete(url)
+        this.entries.set(url, existing)
+      }
     } else {
       this.entries.set(url, {
         url,
         title: title || url,
         visitCount: 1,
-        lastVisit: now,
-        firstVisit: now,
+        lastVisit: at,
+        firstVisit: at,
         typedCount: transition === 'typed' ? 1 : 0,
         favicon
       })
     }
-    this.visitList.push({
+    this.insertVisit({
       id: newId('visit'),
       url,
       title: title || url,
       favicon: null,
-      visitTime: now,
+      visitTime: at,
       transition,
       ...(opts.tabId ? { tabId: opts.tabId } : {})
     })
     this.enforceRetention(now)
     this.persist()
     this.notify('visit')
+  }
+
+  /** Add one visit to the chronological list: appended when newest, else at its place. */
+  private insertVisit(v: HistoryVisit): void {
+    const last = this.visitList[this.visitList.length - 1]
+    if (!last || v.visitTime >= last.visitTime) this.visitList.push(v)
+    else this.visitList.splice(insertionIndex(this.visitList, v.visitTime), 0, v)
   }
 
   /** Expire and cap cheaply on the hot path: only when something is actually over the line. */
