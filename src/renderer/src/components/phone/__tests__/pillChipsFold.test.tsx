@@ -277,6 +277,25 @@ describe('phonePillChips: the chips as data', () => {
     expect(phonePillChips(state(page), null, ctx)).toEqual([])
   })
 
+  it('draws no lock over a certificate that failed verification, proceeded past or not; the shield keeps its row', () => {
+    const failed = {
+      code: -201,
+      url: 'https://expired.badssl.com/',
+      certificate: null,
+      bypassed: false
+    }
+    for (const bypassed of [false, true]) {
+      const t = tab('https://expired.badssl.com/', {
+        blockedCount: 2,
+        certificateError: { ...failed, bypassed }
+      })
+      const chips = phonePillChips(state(t), t, ctx)
+      expect(chips.map((c) => c.id)).toEqual(['blocked'])
+      expect(chips[0].row?.label).toBe('Requests blocked')
+      expect(pillChipsDrawn(chips)).toEqual([])
+    }
+  })
+
   it('the translate row still offers, and the sheet goes for the bar', async () => {
     const s = offered(state(page))
     const [translate] = phonePillChips(s, page, ctx).filter((c) => c.id === 'translate')

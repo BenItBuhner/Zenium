@@ -796,6 +796,33 @@ describe('phone pill (PillContent)', () => {
       expect(chip.getAttribute('aria-expanded')).toBe('false')
     })
 
+    it('on a private tab the mask keeps the leading slot and the chip takes the lock’s trailing one (v2 §9.19 with §9.29)', () => {
+      const privatePage = tab('https://example.com/some/path', {
+        containerId: PRIVATE_CONTAINER_ID,
+        favicon: 'data:image/png;base64,AAAA'
+      })
+      const el = render(
+        <PillContent
+          state={withMedia(privatePage, [playing()])}
+          tab={privatePage}
+          space={space}
+          interactive
+        />
+      )
+      const order = focusable(el)
+      expect(labels(order)).toEqual([
+        'Address, example.com, Connection is secure',
+        'Site information',
+        'Now playing'
+      ])
+      // The mask, leading, in place of the favicon: the site-information chip as on any private tab.
+      expect(order[1].hasAttribute('data-private-mark')).toBe(true)
+      expect(order[1].querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+      // The media chip trailing where the lock stood; no lock while the state is live.
+      expect(order[2].hasAttribute('data-media')).toBe(true)
+      expect(el.querySelector('svg.lucide-lock')).toBeNull()
+    })
+
     it('stands on another tab’s pill too, for the session tab', () => {
       // The session belongs to t2, gone from this pill's tab list unless it is there.
       const session = playing({ tabId: 't2' })

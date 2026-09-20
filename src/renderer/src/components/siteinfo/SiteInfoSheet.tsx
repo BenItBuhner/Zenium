@@ -497,11 +497,13 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   // names, states and actions the chips had, and a live state chip waits here as a row while a
   // newer state has the pill's slot (`components/phone/pillChips.tsx`).
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
-  const pillChips = pillChipRows(state, tab, {
-    siteInfoOpen: true,
-    mediaSheetOpen,
-    activeTabId: activeTab(state)?.id ?? null
-  })
+  const pillChips = extension
+    ? []
+    : pillChipRows(state, tab, {
+        siteInfoOpen: true,
+        mediaSheetOpen,
+        activeTabId: activeTab(state)?.id ?? null
+      })
   // The chassis measures its detents again when this changes: a level, the reading arriving,
   // or the pill's rows changing under it.
   const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}`
