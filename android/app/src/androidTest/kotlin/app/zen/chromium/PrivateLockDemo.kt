@@ -267,6 +267,11 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             expect("a finger and the PIN turn it on again", touchSwitchRow() && awaitCredentialPrompt(10_000) && answerPin("the switch on again") && awaitSwitch(checked = true))
             finding("  on again: ${switchRow()}; core ${lockOnLeave()}; host switch ${host.privateLock.enabled}, open private tabs ${host.privateLock.openTabs}")
             expect("the host mirrors the switch and the count", host.privateLock.enabled && host.privateLock.openTabs == 1)
+            // The switch's Settings tab goes: the scenes after this one count the seeded regular
+            // pair on the Tabs pane, and the #232 rider wants Settings to open afresh from its
+            // private tab (Settings is one per window – an open one is activated, its opener kept).
+            closeSettingsTabs()
+            finding("  set-up: the switch's Settings tab closed; regular tabs ${regularTabIds()}")
         }
 
         // 2. Home and back (INC-05): the private tab on the secret page, Home, back – the cover.
@@ -339,7 +344,11 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             SystemClock.sleep(1_500)
             val regularCards = cards()
             val guardOnTabs = guardNow()
-            expect("the Tabs pane shows the regular cards, no cover", regularCards.toSet() == setOf(REGULAR_TAB, NOTES_TAB) && !paneCoverUp())
+            val privateIds = privateTabIds()
+            expect(
+                "the Tabs pane shows the regular cards and no private one, no cover",
+                regularCards.containsAll(setOf(REGULAR_TAB, NOTES_TAB)) && regularCards.none { it in privateIds } && !paneCoverUp()
+            )
             expect("FLAG_SECURE is off on the regular pane", !guardOnTabs)
             finding("  Tabs pane: cards $regularCards, cover ${paneCoverUp()}, FLAG_SECURE ${onOff(guardOnTabs)}, lock still held ${host.privateLock.locked}")
             shot("07-regular-pane-under-lock")
@@ -468,6 +477,12 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             coreInvoke("tab.navigate", json("tabId" to p3, "input" to "$ORIGIN/secret.html").toString())
             awaitLoaded(p3, "$ORIGIN/secret.html")
             settle()
+            // No Settings tab may stand: the page is one per window, and the menu would activate
+            // the open one – with the opener it had (run 3: scene 1's, opened from the notes tab).
+            // The rider is a fresh open from the private tab.
+            val standing = closeSettingsTabs()
+            expect("set-up: no Settings tab open before the menu's Settings", settingsTabIds().isEmpty())
+            if (standing.isNotEmpty()) finding("  set-up: Settings tab(s) $standing closed first")
             val picked = pickMenuRow("Settings")
             finding("  Settings row: $picked")
             val settingsTab = awaitPage(SETTINGS_URL, 12_000)
@@ -708,10 +723,15 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
     private fun gridInert(): Boolean =
         jsString("(function(){var g=document.querySelector('.zen-overview-pane .zen-overview-grid');return g&&g.hasAttribute('inert')&&g.getAttribute('aria-hidden')==='true'?'inert':''})()") == "inert"
 
-    /** Every card on the pane shown is masked and named Private tab. */
+    /**
+     * Every card on the pane shown is masked and named Private tab. The cell carries the tab id;
+     * the card inside it (`.zen-overview-card`) carries `data-masked` and the name – composed
+     * since #237 as "Private tab, tab 1 of 2" (run 3 read the cell for both and found neither).
+     */
     private fun cardsMasked(): Boolean =
         jsString(
-            "(function(){var cs=Array.prototype.slice.call(document.querySelectorAll('.zen-overview-pane [data-tab-id]'));" +
+            "(function(){var cs=Array.prototype.slice.call(document.querySelectorAll('.zen-overview-pane [data-tab-id]'))" +
+                ".map(function(cell){return cell.querySelector('.zen-overview-card')||cell});" +
                 "if(!cs.length)return '';return cs.every(function(c){return c.hasAttribute('data-masked')&&(c.getAttribute('aria-label')||'').indexOf('Private tab')===0})?'masked':''})()"
         ) == "masked"
 
@@ -1263,6 +1283,33 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             .filter { tabs.optJSONObject(it)?.optString("containerId") == Profiles.PRIVATE_CONTAINER }
             .sorted()
             .toList()
+    }
+
+    private fun regularTabIds(state: JSONObject = coreState()): List<String> {
+        val tabs = state.optJSONObject("tabs") ?: return emptyList()
+        return tabs.keys().asSequence()
+            .filter { tabs.optJSONObject(it)?.optString("containerId") != Profiles.PRIVATE_CONTAINER }
+            .sorted()
+            .toList()
+    }
+
+    /** The core's Settings tabs (`zen://settings…`), in any container. */
+    private fun settingsTabIds(state: JSONObject = coreState()): List<String> {
+        val tabs = state.optJSONObject("tabs") ?: return emptyList()
+        return tabs.keys().asSequence()
+            .filter { tabs.optJSONObject(it)?.optString("url").orEmpty().startsWith(SETTINGS_URL) }
+            .sorted()
+            .toList()
+    }
+
+    /** Close every Settings tab through the core and wait for the core to drop them; the ids closed. */
+    private fun closeSettingsTabs(): List<String> {
+        val ids = settingsTabIds()
+        for (id in ids) coreInvoke("tab.close", "{\"tabId\":${JSONObject.quote(id)},\"force\":true}")
+        val deadline = SystemClock.uptimeMillis() + 6_000
+        while (settingsTabIds().isNotEmpty() && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(200)
+        if (ids.isNotEmpty()) SystemClock.sleep(800)
+        return ids
     }
 
     private fun awaitNoPrivateTabs(timeoutMs: Long = 8_000): Boolean {
