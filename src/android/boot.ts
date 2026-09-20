@@ -30,6 +30,7 @@ import { fetchDeferredDocuments } from './handoff'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
+import { openShortcutPrivateTab } from './privateShortcut'
 import { AndroidStoreIO, readDocument } from './storeIo'
 import type { ViewEventPayloads } from './views'
 
@@ -71,10 +72,6 @@ export interface HostGlobal {
   /** The launcher's "New private tab" shortcut: a private tab in the current space. */
   newPrivateTab(): void
 }
-
-/** What the shortcut says on a WebView without profiles, where nothing could be kept private. */
-export const PRIVATE_TABS_UNAVAILABLE = 'Private tabs need a newer Android System WebView'
-
 /**
  * Start Zen inside the chrome WebView: build the core on the Android platform, expose the
  * renderer API and the host callbacks. Falls back to the iframe preview host when there is no
@@ -311,13 +308,9 @@ function installHostGlobal(
             parse<{ text?: unknown } | undefined>(json) ?? {}
           ) ?? [])
         : [],
-    // The shortcut is static, so it is offered on a WebView without profiles too, where the core
-    // declines (`capabilities.privateTabs` off): the user hears why instead of getting a tab that
-    // only looks private.
     newPrivateTab: () =>
       withPlatform((platform) => {
-        const id = platform.browser.tabs.newPrivateTab(undefined, platform.window)
-        if (id === null) platform.browser.toast(PRIVATE_TABS_UNAVAILABLE, 'error', platform.window)
+        openShortcutPrivateTab(platform.browser, platform.window)
       })
   }
   ;(window as unknown as { __zenHost: HostGlobal }).__zenHost = host
