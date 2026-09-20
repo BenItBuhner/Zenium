@@ -251,12 +251,15 @@ describe('the import dialog', () => {
     await pick(menulists()[0]!, 'Firefox')
     expect(menulists()).toHaveLength(1)
     const rows = kinds()
-    expect(rows.map((r) => [r.kind, r.checked, r.disabled])).toEqual([
-      ['bookmarks', true, false],
-      ['history', true, false],
-      ['passwords', false, true]
+    expect(rows.map((r) => [r.kind, r.checked, r.disabled, r.text])).toEqual([
+      ['bookmarks', true, false, 'Bookmarks'],
+      ['history', true, false, 'Browsing history'],
+      ['passwords', false, true, 'Saved passwords']
     ])
-    expect(rows[2]!.text).toContain(FIREFOX_LIMIT)
+    // The recorded limit is the inline note under the rows at full ink – not a second line inside
+    // the disabled row, where the check row's §9.30 .4 would leave it unreadable.
+    const notes = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="import-limit"]'))
+    expect(notes.map((n) => n.textContent)).toEqual([`Saved passwords: ${FIREFOX_LIMIT}`])
     expect(submitButton().disabled).toBe(false)
   })
 

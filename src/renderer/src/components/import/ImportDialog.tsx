@@ -231,7 +231,6 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
           <KindRow
             key={kind}
             kind={kind}
-            source={source}
             available={available}
             checked={available && form.checked.has(kind)}
             busy={busy}
@@ -239,6 +238,9 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
           />
         ))}
       </div>
+      {limitNotes(source).map(({ kind, text }) => (
+        <LimitNote key={kind} kind={kind} text={text} />
+      ))}
       {notice && (
         <p
           className={cn(
@@ -264,34 +266,27 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
 }
 
 /**
- * One kind's row: a checkbox with the kind's label; a kind the source cannot give here is one
- * disabled row (the check row puts the .4 on its content, §9.30) whose second line is the
- * recorded limit and the way round.
+ * One kind's row: a checkbox with the kind's label. A kind the source cannot give here is the
+ * same row disabled (the check row puts the .4 on its content, §9.30) – its recorded limit and
+ * the way round are the `LimitNote` under the rows, at full ink, since a line inside the
+ * disabled row would read at .4 and the limit is the one thing the user needs to read.
  */
 function KindRow({
   kind,
-  source,
   available,
   checked,
   busy,
   onChange
 }: {
   kind: ImportKind
-  source: ImportSource | null
   available: boolean
   checked: boolean
   busy: boolean
   onChange: (on: boolean) => void
 }): JSX.Element {
-  const limit = available ? null : (source?.limits[kind] ?? null)
   return (
     <Checkbox
-      className={cn(
-        'px-4',
-        limit
-          ? 'min-h-[var(--v2-row-two-line)] py-[calc((var(--v2-row-two-line)-40px)/2)]'
-          : 'min-h-[var(--v2-row)] py-[calc((var(--v2-row)-20px)/2)]'
-      )}
+      className="min-h-[var(--v2-row)] px-4 py-[calc((var(--v2-row)-20px)/2)]"
       checked={checked}
       disabled={!available}
       aria-readonly={busy || undefined}
@@ -299,18 +294,27 @@ function KindRow({
         if (!busy) onChange(e.currentTarget.checked)
       }}
       data-import-kind={kind}
-      data-disabled={limit ? '' : undefined}
-      label={
-        <>
-          <span className="block">{KIND_LABEL[kind]}</span>
-          {limit && (
-            <span className="block text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
-              {limit}
-            </span>
-          )}
-        </>
-      }
+      data-disabled={available ? undefined : ''}
+      label={KIND_LABEL[kind]}
     />
+  )
+}
+
+/**
+ * A recorded limit as an inline note (§9.12's description form, 13 at 69% after a 16 px aside
+ * glyph): the kind's name in full ink, then what the source cannot give here and the way round.
+ * The same line under the form's rows for a disabled kind and under the result's rows for a
+ * kind that has no result.
+ */
+function LimitNote({ kind, text }: { kind: ImportKind; text: string }): JSX.Element {
+  return (
+    <p className={cn(NOTE, 'pt-2 text-[var(--v2-text-deemphasized)]')} data-testid="import-limit">
+      <Info className={cn(V2_GLYPH, 'mt-0.5')} aria-hidden />
+      <span>
+        <span className="text-[var(--v2-text)]">{KIND_LABEL[kind]}: </span>
+        {text}
+      </span>
+    </p>
   )
 }
 
@@ -412,17 +416,7 @@ function Result({
         </ul>
       )}
       {notes.map(({ kind, text }) => (
-        <p
-          key={kind}
-          className={cn(NOTE, 'pt-2 text-[var(--v2-text-deemphasized)]')}
-          data-testid="import-limit"
-        >
-          <Info className={cn(V2_GLYPH, 'mt-0.5')} aria-hidden />
-          <span>
-            <span className="text-[var(--v2-text)]">{KIND_LABEL[kind]}: </span>
-            {text}
-          </span>
-        </p>
+        <LimitNote key={kind} kind={kind} text={text} />
       ))}
       {offerBar && (
         <Checkbox
