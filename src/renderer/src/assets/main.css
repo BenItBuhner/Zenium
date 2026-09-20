@@ -878,6 +878,36 @@
     opacity: 0.3;
   }
 
+  /*
+   * A web app's standalone window (`app/AppTitleBar.tsx`, MW-23): its one row of chrome is the
+   * toolbar row's height on the window surface – the app's 16 icon and the title in the window
+   * ink at the sidebar's size, medium, 8 apart, 12 in from the leading edge (Chrome's app frame
+   * puts them where its tab strip would start) – with the menu button and the window's buttons
+   * trailing at the toolbar's 4. The row drags the window; the buttons take the pointer.
+   */
+  .zen-app-titlebar {
+    display: flex;
+    height: 40px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 0 12px;
+    color: var(--zen-fg);
+  }
+  .zen-app-titlebar-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    object-fit: cover;
+  }
+  .zen-app-titlebar-title {
+    min-width: 0;
+    flex: 1;
+    font-size: var(--zen-sidebar-font);
+    font-weight: var(--v2-weight-button);
+    line-height: var(--v2-line-small);
+  }
+
   .zen-tab {
     position: relative;
     display: flex;
