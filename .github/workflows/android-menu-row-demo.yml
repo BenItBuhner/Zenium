@@ -1,0 +1,62 @@
+name: Android menu icon row demo
+
+# Records the phone app menu's icon row (matrix TB-08, TB-16's row half): Chrome's Forward, star,
+# Download Page, Page Info and Reload / Stop as the sheet's first group. Every press on the row is
+# a real touch and the driver reads each outcome off the core's state or the chrome's DOM: the
+# disabled Forward at opacity .4 taking a touch without effect, Forward enabled after a navigation
+# and a system back and going forward, Stop halting a slow load from the loopback DemoServer and
+# Reload fetching the page again, the star's fill spring sampled frame by frame as the sheet
+# leaves with the "Saved to Bookmarks" toast and the star reopening filled as Edit Bookmark, Page
+# Info opening the site-info sheet, Download Page saving an archive, a finger held on Reload for
+# the press fill, and the row in dark (findings text in the artifact; the run fails on a FAIL).
+# Dispatch-only, like the tab close demo: it takes about ten minutes and says nothing about a
+# change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY, removed before the branch is marked ready: the demo runs on this branch's pushes
+  # while the row is verified on the emulator.
+  push:
+    branches: [cursor/android-menu-icon-row-c0cf]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-menu-row-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Menu icon row demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuIconRowDemo
+        DEMO_DIR=menu-row-demo
+        DEMO_OUT=artifacts/android-menu-row-demo
+        DEMO_VIDEO=android-menu-row-demo.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-menu-row-demo
+      artifact-path: artifacts/android-menu-row-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Menu icon row demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.MenuIconRowDemo
+        DEMO_DIR=menu-row-demo
+        DEMO_OUT=artifacts/android-menu-row-demo
+        DEMO_VIDEO=android-menu-row-demo.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-menu-row-demo-second-boot
+      artifact-path: artifacts/android-menu-row-demo/
