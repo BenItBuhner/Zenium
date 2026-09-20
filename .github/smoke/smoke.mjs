@@ -1397,34 +1397,41 @@ async function closeExtraWindows(s) {
  * page is a WebContentsView, not a Playwright page. Returns the step's detail.
  */
 async function privateCookiesSwitch(s, privateWindowId) {
-  // Its visible zen://newtab view (the window may hold an adopted preload of the page too).
+  // Its visible zen://newtab view (the window may hold an adopted preload of the page too). What
+  // the window holds instead goes into the failure, so a miss says which page the window shows.
+  let seen = null
   const ntpId = await waitFor(
-    () =>
-      s.app.evaluate(({ BrowserWindow }, wid) => {
+    async () => {
+      const snapshot = await s.app.evaluate(({ BrowserWindow }, wid) => {
         const w = BrowserWindow.fromId(wid)
-        if (!w || w.isDestroyed()) return null
-        const find = (parent) => {
+        if (!w || w.isDestroyed()) return { id: null, views: 'window gone' }
+        const views = []
+        const walk = (parent) => {
           for (const v of parent.children || []) {
             const wc = v.webContents
-            if (
-              wc &&
-              !wc.isDestroyed() &&
-              wc.getURL().startsWith('zen://newtab') &&
-              v.getVisible() &&
-              !wc.isLoading()
-            ) {
-              return wc.id
+            if (wc && !wc.isDestroyed()) {
+              views.push({
+                id: wc.id,
+                url: wc.getURL(),
+                visible: v.getVisible(),
+                loading: wc.isLoading()
+              })
             }
-            const inner = find(v)
-            if (inner) return inner
+            walk(v)
           }
-          return null
         }
-        return find(w.contentView)
-      }, privateWindowId),
+        walk(w.contentView)
+        const hit = views.find((v) => v.url.startsWith('zen://newtab') && v.visible && !v.loading)
+        return { id: hit ? hit.id : null, views }
+      }, privateWindowId)
+      seen = snapshot.views
+      return snapshot.id
+    },
     15000,
     "the private window's zen://newtab view"
-  )
+  ).catch((err) => {
+    throw new Error(`${err.message}; the window's views: ${JSON.stringify(seen)}`)
+  })
   const probe = `(() => {
       const row = document.getElementById('zen-cookies')
       const sw = document.getElementById('zen-cookies-switch')
