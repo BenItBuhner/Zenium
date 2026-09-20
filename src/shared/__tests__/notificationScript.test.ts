@@ -240,7 +240,10 @@ describe('constructing a notification', () => {
   it('coerces and truncates the texts, drops an unparseable icon', () => {
     const h = installWith('granted')
     const long = 'x'.repeat(MAX_NOTIFICATION_TEXT + 50)
-    const n = new h.Notification(long, { body: 12345, icon: 'http://[bad' } as NotificationOptions)
+    const n = new h.Notification(long, {
+      body: 12345,
+      icon: 'http://[bad'
+    } as unknown as NotificationOptions)
     expect(n.title).toHaveLength(MAX_NOTIFICATION_TEXT)
     expect(n.body).toBe('12345')
     expect(n.icon).toBe('')
