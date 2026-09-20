@@ -172,6 +172,7 @@ describe('reader text preferences in the browser', () => {
       })
     )
     expect(reloaded.reader.preferences()).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
       fontSize: 18,
       font: 'sans',
       theme: 'dark',

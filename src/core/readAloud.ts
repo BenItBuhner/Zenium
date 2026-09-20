@@ -43,6 +43,9 @@ export const EXTRACT_TIMEOUT_MS = 8000
  */
 export const VOICES_GRACE_MS = 4000
 
+/** How long a `readAloud.voices` query that found no voices waits for the engine's list before re-asking. */
+export const VOICES_QUERY_GRACE_MS = 1500
+
 /** The read-aloud player's id in the media session (`registerSource`; one session per id). */
 export const READ_ALOUD_SOURCE_ID = 'read-aloud'
 
@@ -156,40 +159,40 @@ export class ReadAloudService {
       return
     }
     const from = args.from ?? 'top'
-    const wantsReader = from === 'reader' || this.browser.reader.isReaderUrl(tab.url)
-    const source: ReadAloudSource =
-      from === 'selection' ? 'selection' : wantsReader ? 'reader' : 'page'
+    const fromSelection = from === 'selection' || from === 'selection-on'
+    const inReader = this.browser.reader.isReaderUrl(tab.url)
+    const wantsReader = from === 'reader' || inReader
+    const source: ReadAloudSource = fromSelection ? 'selection' : wantsReader ? 'reader' : 'page'
     const session = this.newSession(tab.id, tab.url, source, tab.title, '')
     this.session = session
     this.changed()
 
     let text: ReadAloudText | null = null
     let positions: Map<string, ReadAloudBlockPosition> | null = null
-    if (source === 'reader' && this.browser.reader.isReaderUrl(tab.url)) {
-      text = this.readerText(tab.url, tab.title)
-    } else {
-      const extraction = await this.extractFromPage(
-        tab,
-        view,
-        source === 'selection' ? 'selection' : 'top'
+    const extraction = await this.extractFromPage(tab, view, {
+      from: fromSelection ? 'selection' : 'top',
+      ...(from === 'selection-on' ? { then: 'document' as const } : {})
+    })
+    if (this.session !== session) return
+    if (extraction && extraction.blocks.length > 0) {
+      positions = new Map(extraction.blocks.map((b) => [b.id, b.at]))
+      const blocks: ReadAloudBlock[] = extraction.blocks.map((b) =>
+        b.lang
+          ? { id: b.id, kind: b.kind, text: b.text, lang: b.lang }
+          : { id: b.id, kind: b.kind, text: b.text }
       )
-      if (this.session !== session) return
-      if (extraction) {
-        positions = new Map(extraction.blocks.map((b) => [b.id, b.at]))
-        const blocks: ReadAloudBlock[] = extraction.blocks.map((b) =>
-          b.lang
-            ? { id: b.id, kind: b.kind, text: b.text, lang: b.lang }
-            : { id: b.id, kind: b.kind, text: b.text }
-        )
-        const lang = extraction.lang || this.detectedLanguage(tab.id) || this.uiLanguage()
-        text = {
-          source,
-          title: extraction.title || tab.title,
-          lang,
-          blocks,
-          sentences: segmentSentences(blocks, lang)
-        }
+      const lang = extraction.lang || this.detectedLanguage(tab.id) || this.uiLanguage()
+      text = {
+        source,
+        title: extraction.title || tab.title,
+        lang,
+        blocks,
+        sentences: segmentSentences(blocks, lang)
       }
+    } else if (source === 'reader' && inReader) {
+      // The reader document did not answer (no page script, a slow start): its article's HTML,
+      // walked by the same rules, names the same blocks (`b<index>`) for the highlight.
+      text = this.readerText(tab.url, tab.title)
     }
     if (this.session !== session) return
     if (!text || text.sentences.length === 0) {
@@ -205,10 +208,10 @@ export class ReadAloudService {
     let voices = await this.voices()
     if (this.session !== session) return
     if (voices.length === 0) {
-      // The host may still be listing: give it a moment before calling it voiceless.
+      // The host may still be listing: give it a moment, then ask it to list again.
       await this.voicesChangedWithin(VOICES_GRACE_MS)
       if (this.session !== session) return
-      voices = await this.voices()
+      voices = await this.voices(true)
       if (this.session !== session) return
     }
     const resolved = resolveReadAloudVoice(
@@ -370,9 +373,17 @@ export class ReadAloudService {
     }
   }
 
-  /** The host's voices and the per-language default among them (the pickers). */
+  /**
+   * The host's voices and the per-language default among them (the pickers). An empty first
+   * answer is re-asked: the engine may still be listing (a short grace for its `voiceschanged`),
+   * and a host that can list again (`refreshVoices`) is asked to.
+   */
   async voicesResult(): Promise<ReadAloudVoicesResult> {
-    const voices = await this.voices()
+    let voices = await this.voices()
+    if (voices.length === 0 && this.host) {
+      await this.voicesChangedWithin(VOICES_QUERY_GRACE_MS)
+      voices = await this.voices(true)
+    }
     const extra = [this.uiLanguage(), this.session?.text.lang ?? '']
     return {
       voices,
@@ -625,17 +636,21 @@ export class ReadAloudService {
 
   /**
    * Ask the page script for the text: from the top (Readability's article marks the main
-   * content when the page is readerable and the library is at hand) or from the selection.
+   * content when the page is readerable and the library is at hand), from the selection, or
+   * from the selection and then the rest of the document after it (`then: 'document'`, with
+   * Readability's article marking the main content for the continuation). The reader document
+   * is its own article: it is asked as is.
    */
   private async extractFromPage(
     tab: { id: string; url: string; readerable: boolean },
     view: TabView,
-    from: 'top' | 'selection'
+    request: { from: 'top' | 'selection'; then?: 'document' }
   ): Promise<ReadAloudExtraction | null> {
     if (!view.postToPage) return null
     const generation = this.generation
     let keep: string[] | null = null
-    if (from === 'top' && tab.readerable) {
+    const wantsMainContent = request.from === 'top' || request.then === 'document'
+    if (wantsMainContent && tab.readerable && !this.browser.reader.isReaderUrl(tab.url)) {
       keep = await this.readabilityBlocks(view)
       if (this.generation !== generation) return null
     }
@@ -653,7 +668,14 @@ export class ReadAloudService {
         }
       })
     })
-    view.postToPage({ type: 'readAloud', action: 'extract', requestId, from, keep })
+    view.postToPage({
+      type: 'readAloud',
+      action: 'extract',
+      requestId,
+      from: request.from,
+      ...(request.then ? { then: request.then } : {}),
+      keep
+    })
     return extraction
   }
 
@@ -700,16 +722,24 @@ export class ReadAloudService {
   // Voices and languages
   // ---------------------------------------------------------------------------
 
-  private async voices(): Promise<ReadAloudVoice[]> {
-    if (this.voiceList) return this.voiceList
+  /**
+   * The host's voices, kept once listed (`onVoicesChanged` drops them). An empty list is never
+   * kept: the engine lists a moment after it comes up, and the next ask must reach it. `refresh`
+   * asks a host that can list again to (`refreshVoices`), else asks `voices()` again.
+   */
+  private async voices(refresh = false): Promise<ReadAloudVoice[]> {
+    if (this.voiceList && !refresh) return this.voiceList
     if (!this.host) return []
     let voices: ReadAloudVoice[] = []
     try {
-      voices = await this.host.voices()
+      voices =
+        refresh && this.host.refreshVoices
+          ? await this.host.refreshVoices()
+          : await this.host.voices()
     } catch {
       voices = []
     }
-    this.voiceList = voices
+    if (voices.length > 0) this.voiceList = voices
     return voices
   }
 

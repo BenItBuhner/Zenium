@@ -17,6 +17,8 @@ import { ApiError, type ApiContext, type ApiHost, type NamespaceHandlers } from 
  */
 export interface SpeechEngine extends EngineDriver {
   voices(): Promise<TtsVoice[]>
+  /** Optional: have the engine list its voices again (`speechSynthesis.getVoices()` anew) and answer with the list. */
+  refreshVoices?(): Promise<TtsVoice[]>
   onEvent(listener: (id: number, event: EngineEvent) => void): void
   onVoicesChanged(listener: () => void): void
 }

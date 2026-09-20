@@ -73,13 +73,20 @@ export function installReadAloud(transport: ReadAloudScriptTransport): void {
 // Extraction
 // ---------------------------------------------------------------------------
 
-/** `readAloud.extract`: the document's text as blocks with their positions. */
+/**
+ * `readAloud.extract`: the document's text as blocks with their positions. The reader document
+ * answers from its `<article>`, walked by the rules the core walks the article's HTML with (the
+ * same blocks the highlight resolves `b<index>` against); a web page from its main content.
+ */
 export function extract(doc: Document, request: ReadAloudExtractRequest): ReadAloudExtraction {
-  const root = readerArticle(doc) ?? doc.body ?? doc.documentElement
+  const article = readerArticle(doc)
+  const root = article ?? doc.body ?? doc.documentElement
   const lang = documentLanguage(doc)
   let blocks: DomBlock[]
   if (request.from === 'selection') {
-    blocks = selectionBlocks(doc, root, lang)
+    blocks = selectionBlocks(doc, root, lang, { then: request.then, keep: request.keep })
+  } else if (article) {
+    blocks = readerBlocks(article, lang)
   } else {
     const all = walkBlocks(root, lang, { skipFurniture: true, visibleOnly: true })
     blocks = request.keep && request.keep.length > 0 ? keptBlocks(all, request.keep) : all
@@ -141,6 +148,7 @@ export function walkBlocks(root: Element, docLang: string, options: WalkOptions 
     }
     if (node.nodeType !== 1) return
     const el = node as Element
+    if (isMark(el)) return
     const tag = el.tagName.toLowerCase()
     if (tag === 'br') {
       collector.text(' ')
@@ -205,28 +213,53 @@ export function keptBlocks(all: DomBlock[], keep: readonly string[]): DomBlock[]
   return total > 0 && covered / total >= MIN_READABILITY_COVERAGE ? kept : all
 }
 
+export interface SelectionOptions {
+  /** `document`: the document's blocks after the selection follow it (EDGE-11's "read on"). */
+  then?: 'document'
+  /** Readability's block texts, when the core has them: the continuation keeps to the main content. */
+  keep?: readonly string[] | null
+}
+
 /**
  * The selection's text as blocks: the blocks of the document that intersect the selection, in
  * order, the first cut to where the selection starts (its `offset` says where in the run) and
- * the last to where it ends.
+ * the last to where it ends. With `then: 'document'` the rest of the document follows: what
+ * remains of the last block after the selection's end (from that offset), then every block
+ * after it – `keep`'s when they are given and cover enough of the page – so nothing selected is
+ * read twice and nothing after it is left out.
  */
-export function selectionBlocks(doc: Document, root: Element, docLang: string): DomBlock[] {
+export function selectionBlocks(
+  doc: Document,
+  root: Element,
+  docLang: string,
+  options: SelectionOptions = {}
+): DomBlock[] {
   const selection = doc.getSelection?.()
   if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return []
   const range = selection.getRangeAt(0)
   const all = walkBlocks(root, docLang, { visibleOnly: true })
   const out: DomBlock[] = []
-  for (const block of all) {
+  let lastIndex = -1
+  for (let i = 0; i < all.length; i++) {
+    const block = all[i]
     const pieces = block.pieces ?? []
-    if (pieces.some((piece) => range.intersectsNode(piece.node))) out.push(block)
+    if (pieces.some((piece) => range.intersectsNode(piece.node))) {
+      out.push(block)
+      lastIndex = i
+    }
   }
   if (out.length === 0) return out
   const last = out[out.length - 1]
   const end = offsetInBlock(last, range.endContainer, range.endOffset)
+  let remainder: DomBlock | null = null
   if (end < last.text.length) {
     const text = last.text.slice(0, end).trimEnd()
     if (text) out[out.length - 1] = { ...last, text }
     else out.pop()
+    const rest = last.text.slice(end)
+    const restText = rest.trimStart()
+    if (restText)
+      remainder = { ...last, text: restText, offset: end + (rest.length - restText.length) }
   }
   const first = out[0]
   if (first) {
@@ -237,6 +270,18 @@ export function selectionBlocks(doc: Document, root: Element, docLang: string): 
       if (text) out[0] = { ...first, text, offset: start + (rest.length - text.length) }
       else out.shift()
     }
+  }
+  if (options.then !== 'document') return out
+  if (remainder) out.push(remainder)
+  const following = all.slice(lastIndex + 1)
+  const keep = options.keep
+  if (keep && keep.length > 0) {
+    // Readability's blocks stand only when they cover the page as a whole, as for a top start.
+    const kept = keptBlocks(all, keep)
+    const wanted = kept !== all ? new Set(kept) : null
+    for (const block of following) if (!wanted || wanted.has(block)) out.push(block)
+  } else {
+    for (const block of following) out.push(block)
   }
   return out
 }
@@ -290,14 +335,32 @@ function collapsedLength(prefix: string, whole: string): number {
   return collapsed.length
 }
 
-/** The `children` indices from `root` down to `el` (`[]` for the root itself). */
+/**
+ * The attribute of the elements the reader extras add to the text (`readerExtras.ts`: syllable
+ * marks, the line-focus masks). They hold no text of the page and the walk, the paths and the
+ * ranges look past them, so a page's blocks and positions stand while the marks come and go.
+ */
+export const READ_ALOUD_MARK_ATTRIBUTE = 'data-zen-mark'
+
+export function isMark(el: Element): boolean {
+  return el.hasAttribute(READ_ALOUD_MARK_ATTRIBUTE)
+}
+
+/** An element's children without the extras' marks. */
+function childrenOf(el: Element): Element[] {
+  const out: Element[] = []
+  for (const child of Array.from(el.children)) if (!isMark(child)) out.push(child)
+  return out
+}
+
+/** The `children` indices from `root` down to `el` (`[]` for the root itself); marks do not count. */
 export function pathOf(el: Element, root: Element): number[] {
   const path: number[] = []
   let node: Element | null = el
   while (node && node !== root) {
     const parent: Element | null = node.parentElement
     if (!parent) break
-    path.unshift(Array.prototype.indexOf.call(parent.children, node))
+    path.unshift(childrenOf(parent).indexOf(node))
     node = parent
   }
   return path
@@ -307,7 +370,7 @@ export function pathOf(el: Element, root: Element): number[] {
 export function elementAt(root: Element, path: readonly number[]): Element | null {
   let node: Element = root
   for (const index of path) {
-    const next = node.children[index]
+    const next = childrenOf(node)[index]
     if (!next) return null
     node = next
   }
@@ -339,33 +402,68 @@ function highlightApi(doc: Document): HighlightApi | null {
   return { Highlight, registry }
 }
 
-/** The blocks of the reader document's article, walked once (the document is static after render). */
+/**
+ * The blocks of the reader document's article, walked once and kept until the article's DOM
+ * changes (the extras' syllable marks split its text nodes; a mutation drops the cache).
+ */
 let readerBlocksCache: { article: Element; blocks: DomBlock[] } | null = null
+let readerObserved: { article: Element; observer: MutationObserver } | null = null
 
-function readerBlocks(article: Element, lang: string): DomBlock[] {
+export function readerBlocks(article: Element, lang: string): DomBlock[] {
   if (readerBlocksCache && readerBlocksCache.article === article) return readerBlocksCache.blocks
   const blocks = walkBlocks(article, lang)
   readerBlocksCache = { article, blocks }
+  if (readerObserved?.article !== article) {
+    readerObserved?.observer.disconnect()
+    readerObserved = null
+    const view = article.ownerDocument.defaultView
+    if (view && typeof view.MutationObserver === 'function') {
+      const observer = new view.MutationObserver(() => {
+        readerBlocksCache = null
+      })
+      observer.observe(article, { childList: true, characterData: true, subtree: true })
+      readerObserved = { article, observer }
+    }
+  }
   return blocks
 }
 
 /** Painted last, so a repeat of the same message does not rebuild and re-scroll. */
 let lastPainted = ''
 
+/** Who follows the sentence being read (the reader extras' line focus): its range, null when the highlight clears. */
+const sentenceListeners: Array<(range: Range | null) => void> = []
+
+export function onReadAloudSentence(listener: (range: Range | null) => void): void {
+  sentenceListeners.push(listener)
+}
+
+function announceSentence(range: Range | null): void {
+  for (const listener of sentenceListeners) listener(range)
+}
+
 /** `readAloud.highlight`: paint (or clear) the sentence and the word. */
 export function paintHighlight(doc: Document, message: ReadAloudHighlightMessage): void {
   const api = highlightApi(doc)
-  if (!api) return
   if (message.mode === 'off') {
-    api.registry.delete(READ_ALOUD_SENTENCE_HIGHLIGHT)
-    api.registry.delete(READ_ALOUD_WORD_HIGHLIGHT)
+    api?.registry.delete(READ_ALOUD_SENTENCE_HIGHLIGHT)
+    api?.registry.delete(READ_ALOUD_WORD_HIGHLIGHT)
     lastPainted = ''
+    announceSentence(null)
     return
   }
   const block = locateBlock(doc, message)
   if (!block) return
   const sentence = rangeFor(doc, block, message.sentence.start, message.sentence.end)
   const key = `${message.blockId}:${message.sentence.start}:${message.sentence.end}`
+  if (key !== lastPainted) announceSentence(sentence)
+  if (!api) {
+    if (sentence && key !== lastPainted) {
+      lastPainted = key
+      scrollIntoView(doc, sentence)
+    }
+    return
+  }
   if (sentence && (message.mode === 'sentence' || message.mode === 'both')) {
     api.registry.set(READ_ALOUD_SENTENCE_HIGHLIGHT, new api.Highlight(sentence))
   } else {
@@ -403,7 +501,8 @@ function locateBlock(doc: Document, message: ReadAloudHighlightMessage): DomBloc
   const root = article ?? doc.body ?? doc.documentElement
   const element = elementAt(root, message.at.path)
   if (!element) return null
-  const runs = walkBlocks(root, lang).filter((block) => block.ref === element)
+  const blocks = article ? readerBlocks(article, lang) : walkBlocks(root, lang)
+  const runs = blocks.filter((block) => block.ref === element)
   const block = runs[message.at.run] ?? runs.find((b) => b.run === message.at?.run) ?? null
   if (!block) return null
   const offset = message.at.offset
@@ -472,7 +571,16 @@ function rawPosition(
   return null
 }
 
-/** Chrome's follow: the sentence scrolls into view when it is off screen. */
+/** Where an off-screen sentence lands when the view scrolls to it: this far down the view. */
+const FOLLOW_ANCHOR = 0.3
+
+/**
+ * Chrome's follow: the sentence scrolls into view when it is off screen, by its own rect (a
+ * long paragraph's element would centre the paragraph, not the sentence in it), landing in the
+ * upper part of the view with the text after it below; in the reader's column that holds at
+ * every width setting. A document that does not scroll itself (a page with its text in a
+ * scrolling pane) scrolls the sentence's element instead.
+ */
 function scrollIntoView(doc: Document, range: Range): void {
   const view = doc.defaultView
   if (!view) return
@@ -485,8 +593,10 @@ function scrollIntoView(doc: Document, range: Range): void {
   if (rect.width === 0 && rect.height === 0) return
   const height = view.innerHeight || doc.documentElement.clientHeight
   if (rect.top >= 0 && rect.bottom <= height) return
+  const scroller = doc.scrollingElement ?? doc.documentElement
+  const windowScrolls = scroller.scrollHeight > scroller.clientHeight + 1
   const container = range.startContainer.parentElement
-  if (container && typeof container.scrollIntoView === 'function') {
+  if (!windowScrolls && container && typeof container.scrollIntoView === 'function') {
     try {
       container.scrollIntoView({ block: 'center', behavior: 'smooth' })
       return
@@ -494,5 +604,5 @@ function scrollIntoView(doc: Document, range: Range): void {
       /* fall through */
     }
   }
-  view.scrollBy({ top: rect.top - height / 2, behavior: 'smooth' })
+  view.scrollBy({ top: rect.top - height * FOLLOW_ANCHOR, behavior: 'smooth' })
 }

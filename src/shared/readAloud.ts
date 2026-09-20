@@ -135,9 +135,13 @@ export function sanitizeReadAloudSettings(raw: unknown): ReadAloudSettings {
   }
 }
 
-/** Where `readAloud.start` begins: the top, the selection, the reader article, or one sentence. */
+/**
+ * Where `readAloud.start` begins: the top, the selection (`selection` reads it alone;
+ * `selection-on` reads it and then the rest of the document after it, EDGE-11), the reader
+ * article, or one sentence.
+ */
 export type ReadAloudStartFrom =
-  'top' | 'selection' | 'reader' | { blockId: string; sentenceIndex: number }
+  'top' | 'selection' | 'selection-on' | 'reader' | { blockId: string; sentenceIndex: number }
 
 /** What the `readAloud.voices` query answers: the list and the per-language default from it. */
 export interface ReadAloudVoicesResult {
@@ -942,12 +946,17 @@ export interface ReadAloudExtraction {
  * Browser → page: extract the text to read. `keep` carries the texts of the blocks Readability
  * kept (the article's main content) when the page is readerable and the core ran it; the page
  * script keeps the blocks of its own walk whose text matches, so the highlight has their nodes.
+ * `from: 'selection'` with `then: 'document'` (EDGE-11) answers the selection's blocks first and
+ * then the document's after them: the rest of the selection's last block from where the
+ * selection ends, then every block that follows it (`keep`'s when it is given and trusted),
+ * each once; without `then` the selection alone is answered.
  */
 export interface ReadAloudExtractRequest {
   type: 'readAloud'
   action: 'extract'
   requestId: string
   from: 'top' | 'selection'
+  then?: 'document'
   keep?: string[] | null
 }
 

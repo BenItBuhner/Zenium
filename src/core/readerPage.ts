@@ -1,10 +1,15 @@
 import type { ReaderArticle } from './reader'
 import {
+  LINE_FOCUS_MASK_CLASS,
   READER_FONT_LABELS,
   READER_FONT_SIZES,
+  READER_LINE_FOCUS_ATTRIBUTE,
   READER_MESSAGE_KEY,
+  READER_SPACING_ATTRIBUTE,
+  READER_SYLLABLES_ATTRIBUTE,
   READER_THEME_LABELS,
   READER_WIDTH_LABELS,
+  SYLLABLE_MARK_CLASS,
   type ReaderPreferences
 } from '../shared/reader'
 import { READ_ALOUD_SENTENCE_HIGHLIGHT, READ_ALOUD_WORD_HIGHLIGHT } from '../shared/readAloud'
@@ -61,7 +66,11 @@ const STYLE = `
   ::highlight(${READ_ALOUD_WORD_HIGHLIGHT}) { background-color: rgba(255, 149, 0, 0.6); }
   :root[data-theme='dark'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); }
   @media (prefers-color-scheme: dark) { :root[data-theme='auto'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); } }
-  @media print { .toolbar { display: none; } }
+  :root[data-spacing='wide'] article { letter-spacing: 0.06em; word-spacing: 0.16em; line-height: 1.9; }
+  :root[data-spacing='wider'] article { letter-spacing: 0.12em; word-spacing: 0.32em; line-height: 2.15; }
+  .${SYLLABLE_MARK_CLASS}::before { content: '\\00B7'; color: var(--muted); opacity: 0.8; }
+  .${LINE_FOCUS_MASK_CLASS} { position: fixed; left: 0; right: 0; z-index: 20; pointer-events: none; background: color-mix(in srgb, var(--bg) 78%, transparent); }
+  @media print { .toolbar, .${LINE_FOCUS_MASK_CLASS} { display: none; } .${SYLLABLE_MARK_CLASS}::before { content: none; } }
 `
 
 /**
@@ -77,6 +86,9 @@ const SCRIPT = `
   function render() {
     root.style.setProperty('--font-size', state.fontSize + 'px');
     root.dataset.theme = state.theme; root.dataset.font = state.font; root.dataset.width = state.width;
+    root.setAttribute(${JSON.stringify(READER_LINE_FOCUS_ATTRIBUTE)}, String(state.lineFocus || 0));
+    root.setAttribute(${JSON.stringify(READER_SPACING_ATTRIBUTE)}, state.spacing || 'normal');
+    root.setAttribute(${JSON.stringify(READER_SYLLABLES_ATTRIBUTE)}, String(state.syllables === true));
     for (const b of document.querySelectorAll('[data-set]')) {
       const [k, v] = b.dataset.set.split(':');
       b.setAttribute('aria-pressed', String(String(state[k]) === v));
@@ -131,6 +143,9 @@ export function readerPage(article: ReaderArticle, prefs: ReaderPreferences): st
     `data-theme="${prefs.theme}"`,
     `data-font="${prefs.font}"`,
     `data-width="${prefs.width}"`,
+    `${READER_LINE_FOCUS_ATTRIBUTE}="${prefs.lineFocus}"`,
+    `${READER_SPACING_ATTRIBUTE}="${prefs.spacing}"`,
+    `${READER_SYLLABLES_ATTRIBUTE}="${prefs.syllables}"`,
     `data-prefs="${escapeHtml(JSON.stringify(prefs))}"`,
     `style="--font-size: ${prefs.fontSize}px"`
   ]
