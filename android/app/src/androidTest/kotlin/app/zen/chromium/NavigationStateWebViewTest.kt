@@ -110,14 +110,18 @@ class NavigationStateWebViewTest {
      * fresh view the names to publish, each at its position (the reader page two back is not
      * `about:blank`, nor the history page's name). That much is held: the list, the commits of
      * the four loads, the state, the restored list, the match and the names – each of it green
-     * on the device in run 5. What a bare view says past that is logged, not held: `getUrl()`
-     * (the placeholder on the device, after a fresh load and right after `restoreState`),
-     * `getTitle()` at the instant the restore's page finished fired (the placeholder too, in
-     * run 5: the display title off the URL, the entry's own not there yet), what the document
-     * says its title is, the URL the restore's commit is reported under, and what three Backs
-     * bring. The product's view is the one the names and the titles are read from, and the
-     * phone's own list with two reader pages in it, closed and brought back, is the demo's
-     * scene 8.
+     * on the device in runs 5 and 6. What a bare view says past that is logged, not held, and
+     * run 6 (WebView 113 on the API 34 image) had it so: `getUrl()` the placeholder after a fresh
+     * `loadDataWithBaseURL` and right after `restoreState`; the saving view's two internal
+     * items with no title at all (`getTitle()` the placeholder: the display title off the URL);
+     * the restored current entry come back as WebView's own error page ("Webpage not
+     * available"), its commit reported under the placeholder, and Back onto the reader entry
+     * the same (an empty document first, the error page a step later), where Back onto the web
+     * pages was their commit under their URL and their title. None of it is the product's view's
+     * (the demo's stills have the reader document back after Undo, and scene 8 the names and
+     * Back through a list with two reader pages); this view's `shouldInterceptRequest` answers
+     * every URL outside [PAGES] with an empty 404, which is the likeliest difference, and is not
+     * established. The names come from the snapshot either way.
      */
     @Test
     fun internalPagesOnTheListComeBackAsTheirOwnDocumentsUnderTheirNames() {
@@ -180,11 +184,12 @@ class NavigationStateWebViewTest {
         assertEquals(listOf(PAGES[0], NavigationState.BLANK_URL, PAGES[1], NavigationState.BLANK_URL), urlsOf(NavigationState.snapshotJson(restoredListItems, 3)))
 
         // What the bare view says past the restore goes to the log, none of it held: its title
-        // at the instant page finished fired (the placeholder in run 5, the display title off
-        // the URL), what the document says its title is, the URL the restore's commit was
-        // reported under, the list after the commit and its items' titles, and what three
-        // Backs bring (the page between, the reader page, the article). The product's view is
-        // the one the names and the titles are read from; the demo's scene 8 is its proof.
+        // at the instant page finished fired (run 5: the placeholder, the display title off the
+        // URL; run 6: WebView's error page's), what the document says its title is, the URL the
+        // restore's commit was reported under (the placeholder, run 6), the list after the
+        // commit and its items' titles, and what three Backs bring (the page between, the reader
+        // entry, the article). The product's view is the one the names and the titles are read
+        // from; the demo's scene 8 is its proof.
         Log.i(TAG, "after the restore's page finished: getTitle() '${onMain { fresh.title }}', document.title ${documentTitleOf(fresh)}, getUrl() '${onMain { fresh.url }}', the commit reported under ${committed[fresh]}, the list ${describe(fresh)}")
         runCatching {
             for (step in 1..3) {
