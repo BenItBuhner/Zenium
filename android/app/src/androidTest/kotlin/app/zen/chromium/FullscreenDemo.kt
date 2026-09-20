@@ -12,9 +12,11 @@ import android.provider.MediaStore
 import android.util.Log
 import android.view.Surface
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
@@ -181,6 +183,7 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         note("\n2. back out of fullscreen")
         installFadeSampler()
         val resizesBefore = field("resizes")?.toIntOrNull() ?: 0
+        pageJs("window.__resizeMark && window.__resizeMark()")
         val leftAt = SystemClock.uptimeMillis()
         back()
         val left = poll(10_000) { host.fullscreenTab == null }
@@ -197,13 +200,24 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         val fades = fadeCalls()
         note("  chrome opacity per frame around the return (ms:opacity, the frames under 1 with their neighbours): $samples")
         note("  animate() calls on the chrome window since the back: $fades")
-        check("the chrome's return started a 120 ms opacity fade on the window", fades.contains("\"duration\":120"))
+        check("the chrome's return started the 120 ms opacity fade on the window (animate() 0 to 1 over 120 ms)", fades.any(::isTheReturnFade))
+        check("the fade was started once", fades.count(::isTheReturnFade) == 1)
         // At the emulator's frame rate (swiftshader) 120 ms is a frame or two: mid-fade frames are noted, not demanded.
         note("  frames with the chrome under full opacity seen: ${samples.contains(":0")}")
         check("the chrome is fully back", chromeOpacity() == "1")
         check("the hint left with the fullscreen", awaitHint(3_000, present = false) == null)
         val resizesAfter = field("resizes")?.toIntOrNull() ?: 0
-        note("  the page's resize events over the exit: ${resizesAfter - resizesBefore} (the layer's removal and the turn back)")
+        note("  the page's resize events over the exit: ${resizesAfter - resizesBefore}; each (ms after the back, the viewport, fullscreen): ${resizeLog()}")
+    }
+
+    /** The page's resize events since its last mark (`__resizeMark`), one entry each: when, the viewport's size, whether it was fullscreen. */
+    private fun resizeLog(): String {
+        val raw = pageJs("window.__resizeLog ? window.__resizeLog() : null")
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return "none"
+        val all = runCatching { JSONArray(text) }.getOrNull() ?: return "none"
+        if (all.length() == 0) return "none"
+        return (0 until all.length()).mapNotNull { all.optJSONObject(it) }
+            .joinToString(" ") { "${it.optInt("at")}ms:${it.optInt("w")}x${it.optInt("h")}${if (it.optInt("fs") == 1) "(fullscreen)" else ""}" }
     }
 
     /** 3. Fullscreen again: no hint. */
@@ -476,20 +490,35 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
      */
     private fun installFadeSampler() {
         chromeJs(
-            "(function(){window.__fade=[];window.__fadeCalls=[];var t0=performance.now();" +
+            "(function(){window.__fade=[];window.__fadeCalls=[];window.__fadeT0=performance.now();var t0=window.__fadeT0;" +
                 "if(!window.__fadeHooked){window.__fadeHooked=true;var orig=Element.prototype.animate;" +
                 "Element.prototype.animate=function(k,o){if(this.classList&&this.classList.contains('zen-window'))" +
-                "window.__fadeCalls.push(JSON.stringify({at:Math.round(performance.now()-t0),keyframes:k,options:o}));return orig.apply(this,arguments)}}" +
+                "window.__fadeCalls.push({at:Math.round(performance.now()-window.__fadeT0),keyframes:k,options:o});return orig.apply(this,arguments)}}" +
                 "(function s(){var w=document.querySelector('.zen-window');" +
                 "window.__fade.push(Math.round(performance.now()-t0)+':'+(w?getComputedStyle(w).opacity:'none'));" +
                 "if(window.__fade.length<900)requestAnimationFrame(s)})()})()"
         )
     }
 
-    /** The `animate()` calls the chrome window made since the sampler went in, as JSON text. */
-    private fun fadeCalls(): String {
+    /** The `animate()` calls the chrome window made since the sampler went in (`at`, `keyframes`, `options`). */
+    private fun fadeCalls(): List<JSONObject> {
         val raw = chromeJs("JSON.stringify(window.__fadeCalls||[])")
-        return (JSONTokener(raw).nextValue() as? String) ?: raw
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return emptyList()
+        val all = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return (0 until all.length()).mapNotNull { all.optJSONObject(it) }
+    }
+
+    /**
+     * Whether an `animate()` call is the chrome's return fade: opacity 0 to 1 over 120 ms
+     * (`useFullscreenReturn`; the options may be the bare duration).
+     */
+    private fun isTheReturnFade(call: JSONObject): Boolean {
+        val duration = call.optJSONObject("options")?.optInt("duration") ?: call.optInt("options")
+        val frames = call.optJSONArray("keyframes") ?: return false
+        if (frames.length() < 2) return false
+        val first = frames.optJSONObject(0)?.optDouble("opacity", -1.0) ?: -1.0
+        val last = frames.optJSONObject(frames.length() - 1)?.optDouble("opacity", -1.0) ?: -1.0
+        return duration == 120 && first == 0.0 && last == 1.0
     }
 
     /** The samples where the chrome was not fully opaque, with a neighbour on each side. */
@@ -521,7 +550,18 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
     private fun resolves(action: String): String =
         Intent(action).resolveActivity(app.packageManager)?.flattenToShortString() ?: "nothing"
 
-    private fun frontPackage(): String = ui.rootInActiveWindow?.packageName?.toString() ?: "?"
+    /**
+     * The package in front: the active window's root or, when the automation has none (the
+     * camera app's viewfinder stood in front of run 2 with `rootInActiveWindow` null while its
+     * window was plainly in the windows list), the foremost application window's root.
+     */
+    private fun frontPackage(): String {
+        ui.rootInActiveWindow?.packageName?.let { return it.toString() }
+        val foremost = ui.windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .sortedWith(compareByDescending<AccessibilityWindowInfo> { it.isActive }.thenByDescending { it.isFocused }.thenByDescending { it.layer })
+            .firstOrNull()
+        return foremost?.root?.packageName?.toString() ?: "?"
+    }
 
     private fun foreignInFront(): Boolean {
         val front = frontPackage()

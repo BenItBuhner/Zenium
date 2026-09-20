@@ -83,7 +83,17 @@
   };
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
-  window.addEventListener('resize', function () { state.resizes++; render(); });
+  // Every resize on record (when, the viewport, whether fullscreen) since the driver's last mark,
+  // so the exit's relayouts can be told apart: the layer's hand-back, the bars, the turn.
+  var resizeLog = [];
+  var resizeMark = performance.now();
+  window.__resizeMark = function () { resizeLog = []; resizeMark = performance.now(); };
+  window.__resizeLog = function () { return JSON.stringify(resizeLog); };
+  window.addEventListener('resize', function () {
+    state.resizes++;
+    resizeLog.push({ at: Math.round(performance.now() - resizeMark), w: window.innerWidth, h: window.innerHeight, fs: state.fs });
+    render();
+  });
   var onFile = function (input) {
     input.addEventListener('change', function () {
       var f = input.files && input.files[0];
