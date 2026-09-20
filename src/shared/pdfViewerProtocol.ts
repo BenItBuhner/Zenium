@@ -45,8 +45,11 @@ export interface PdfViewerReport {
   fit: PdfFitMode | null
   /** The document's own title (its metadata), when it names one. */
   title: string | null
-  /** The find bar's tally while a search runs; null when none does. */
-  find: { query: string; current: number; total: number } | null
+  /**
+   * The find bar's tally while a search runs; null when none does. `searching` while pages
+   * remain to be read: the total still grows, as Chrome's count does until its final result.
+   */
+  find: { query: string; current: number; total: number; searching: boolean } | null
   outline: PdfOutlineItem[]
   /** `error`: what went wrong, in the viewer's words. */
   error?: string

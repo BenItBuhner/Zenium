@@ -208,6 +208,42 @@ export function annotationRect(
   }
 }
 
+/**
+ * The order a search reads the pages in, pdfium's: from the page in view to the last, then
+ * from the first – the first match the reader sees is the nearest one ahead.
+ */
+export function findOrder(pageCount: number, pageInView: number): number[] {
+  const from = Math.min(Math.max(1, pageInView), Math.max(1, pageCount))
+  const order: number[] = []
+  for (let page = from; page <= pageCount; page++) order.push(page)
+  for (let page = 1; page < from; page++) order.push(page)
+  return order
+}
+
+/**
+ * A page's matches join the tally in reading order, as pdfium's AddFindResult files them: the
+ * first match found becomes current while none is, and a current match stays the same one when
+ * matches land before it (its index moves up by their count).
+ */
+export function mergeMatches(
+  matches: readonly TextMatch[],
+  found: readonly TextMatch[],
+  current: number
+): { matches: TextMatch[]; current: number } {
+  if (found.length === 0) return { matches: [...matches], current }
+  const page = found[0].page
+  let at = matches.findIndex((m) => m.page > page)
+  if (at < 0) at = matches.length
+  const merged = [...matches.slice(0, at), ...found, ...matches.slice(at)]
+  if (current < 0) return { matches: merged, current: at }
+  return { matches: merged, current: at <= current ? current + found.length : current }
+}
+
+/** A hit element's key within its page: the same match, whatever its index in the tally. */
+export function matchKey(match: TextMatch): string {
+  return `${match.run}:${match.start}`
+}
+
 /** Which match `find` lands on: `new` picks the first at or after the page in view, the others step around the ring. */
 export function nextMatchIndex(
   matches: readonly TextMatch[],

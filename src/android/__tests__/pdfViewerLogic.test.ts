@@ -7,9 +7,12 @@ import {
   doubleTapZoom,
   failureText,
   findInRuns,
+  findOrder,
   fitZoom,
+  matchKey,
   matchRect,
   MAX_CANVAS_PIXELS,
+  mergeMatches,
   nextMatchIndex,
   normalizeForFind,
   PAGE_GUTTER,
@@ -19,6 +22,7 @@ import {
   pinchZoom,
   scrollAfterZoom,
   type PageBand,
+  type TextMatch,
   type TextRun
 } from '../pdfViewerLogic'
 import { PDF_MAX_ZOOM, PDF_MIN_ZOOM } from '@shared/pdfViewerProtocol'
@@ -190,6 +194,46 @@ describe('find', () => {
     expect(nextMatchIndex(matches, 2, 'next', 2)).toBe(0)
     expect(nextMatchIndex(matches, 0, 'prev', 2)).toBe(2)
     expect(nextMatchIndex([], 0, 'next', 1)).toBe(-1)
+  })
+
+  it('reads the pages from the one in view to the end, then from the first (pdfium’s order)', () => {
+    expect(findOrder(5, 3)).toEqual([3, 4, 5, 1, 2])
+    expect(findOrder(5, 1)).toEqual([1, 2, 3, 4, 5])
+    expect(findOrder(5, 5)).toEqual([5, 1, 2, 3, 4])
+    // A page in view outside the document (none yet, or past it) reads from an end.
+    expect(findOrder(3, 0)).toEqual([1, 2, 3])
+    expect(findOrder(3, 9)).toEqual([3, 1, 2])
+    expect(findOrder(0, 1)).toEqual([])
+  })
+
+  it('files a page’s matches in reading order and keeps the current match the same one', () => {
+    const on = (page: number, ...starts: number[]): TextMatch[] =>
+      starts.map((start) => ({ page, run: 0, start, length: 4 }))
+    // The search began on page 2: its matches come first and the first becomes current.
+    let tally = mergeMatches([], on(2, 10, 40), -1)
+    expect(tally.current).toBe(0)
+    expect(tally.matches.map((m) => m.page)).toEqual([2, 2])
+    // Page 3 lands after; the current match is unmoved.
+    tally = mergeMatches(tally.matches, on(3, 5), tally.current)
+    expect(tally.current).toBe(0)
+    expect(tally.matches.map((m) => m.page)).toEqual([2, 2, 3])
+    // The search wraps to page 1: its matches file ahead, the current match (page 2's first)
+    // moves up by their count and the ring reads 1, 1, 1, 2, 2, 3.
+    tally = mergeMatches(tally.matches, on(1, 0, 20, 50), tally.current)
+    expect(tally.current).toBe(3)
+    expect(tally.matches.map((m) => `${m.page}:${m.start}`)).toEqual([
+      '1:0',
+      '1:20',
+      '1:50',
+      '2:10',
+      '2:40',
+      '3:5'
+    ])
+    // Next from there steps to page 2's second match, as Chrome's does.
+    expect(nextMatchIndex(tally.matches, tally.current, 'next', 2)).toBe(4)
+    // A page without matches changes nothing; a hit's key names its match within the page.
+    expect(mergeMatches(tally.matches, [], tally.current)).toEqual(tally)
+    expect(matchKey({ page: 2, run: 3, start: 17, length: 4 })).toBe('3:17')
   })
 })
 

@@ -130,18 +130,27 @@ class PdfViewerDemo : DemoHarness("pdf-viewer-demo-state.json", "services-print-
         snap("page-2")
         beat()
 
-        // 6. Find "tide": every match counted and marked on its page, the first one current.
+        // 6. Find "tide": every match counted and marked on its page, the first one ahead of the
+        //    page in view current as soon as it is found (Chrome's find), the tally final once
+        //    every page has been read (`searching` false) – the baseline for Next.
         command(tabId, """{"kind":"find","query":"$FIND_QUERY","direction":"new"}""")
-        val found = awaitReport(tabId, 10_000) { (it.optJSONObject("find")?.optInt("total") ?: 0) > 0 }
+        val found = awaitReport(tabId, 10_000) {
+            val find = it.optJSONObject("find")
+            find != null && find.optInt("total") > 0 && !find.optBoolean("searching", true)
+        }
         val find = found?.optJSONObject("find")
-        note("find '$FIND_QUERY': ${find?.optInt("current")} of ${find?.optInt("total")} on page ${found?.optInt("page")}")
-        expect((find?.optInt("total") ?: 0) >= FIND_MIN_MATCHES, "find counts at least $FIND_MIN_MATCHES matches of '$FIND_QUERY'")
+        val current = find?.optInt("current") ?: 0
+        val total = find?.optInt("total") ?: 0
+        note("find '$FIND_QUERY': $current of $total on page ${found?.optInt("page")}")
+        expect(total >= FIND_MIN_MATCHES, "find counts at least $FIND_MIN_MATCHES matches of '$FIND_QUERY'")
+        expect(current in 1..total, "a match is current once the search has read every page")
         SystemClock.sleep(1_500)
         snap("find")
         beat()
         command(tabId, """{"kind":"find","query":"$FIND_QUERY","direction":"next"}""")
-        val next = awaitReport(tabId, 8_000) { (it.optJSONObject("find")?.optInt("current") ?: 0) == (find?.optInt("current") ?: 0) + 1 }
-        expect(next != null, "Next steps to the following match")
+        val following = if (current >= total) 1 else current + 1
+        val next = awaitReport(tabId, 8_000) { (it.optJSONObject("find")?.optInt("current") ?: 0) == following }
+        expect(next != null, "Next steps to the following match ($following of $total)")
         note("find next: ${next?.optJSONObject("find")?.optInt("current")} of ${next?.optJSONObject("find")?.optInt("total")}")
         command(tabId, """{"kind":"stopFind"}""")
         awaitReport(tabId, 5_000) { it.isNull("find") }

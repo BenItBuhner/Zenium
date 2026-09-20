@@ -31,8 +31,11 @@ import {
   doubleTapZoom,
   failureText,
   findInRuns,
+  findOrder,
   fitZoom,
+  matchKey,
   matchRect,
+  mergeMatches,
   nextMatchIndex,
   OUTLINE_LIMIT,
   pageInView,
@@ -93,6 +96,8 @@ class Viewer {
   private current = 0
   private matches: TextMatch[] = []
   private matchIndex = -1
+  /** Pages remain to be read for the query: the tally is still growing. */
+  private searching = false
   private findQuery = ''
   private findGeneration = 0
   private reportTimer: number | null = null
@@ -577,21 +582,31 @@ class Viewer {
       this.findQuery = query
       this.matches = []
       this.matchIndex = -1
+      this.searching = Boolean(query.trim())
       this.clearHits()
       this.report()
-      if (!query.trim()) return
-      for (const slot of this.slots) {
+      if (!this.searching) return
+      // Chrome's find: the pages read from the one in view, the first match current the moment
+      // it is found and the tally growing as later pages come in, in reading order.
+      for (const pageNumber of findOrder(this.slots.length, this.current || 1)) {
+        const slot = this.slots[pageNumber - 1]
+        if (!slot) continue
         const runs = await this.textOf(slot)
         if (generation !== this.findGeneration) return
-        const found = findInRuns(runs, query, slot.index + 1)
+        const found = findInRuns(runs, query, pageNumber)
         if (found.length) {
-          this.matches.push(...found)
+          const first = this.matchIndex < 0
+          const merged = mergeMatches(this.matches, found, this.matchIndex)
+          this.matches = merged.matches
+          this.matchIndex = merged.current
           this.paintHits(slot, found)
+          if (first) this.markCurrent()
+          this.report()
         }
-        // A long document reports as it goes, so the tally moves while the search runs.
-        if (slot.index % 8 === 7) this.report()
       }
-      if (generation !== this.findGeneration) return
+      this.searching = false
+      this.report()
+      return
     }
     this.matchIndex = nextMatchIndex(this.matches, this.matchIndex, direction, this.current || 1)
     this.markCurrent()
@@ -603,6 +618,7 @@ class Viewer {
     this.findQuery = ''
     this.matches = []
     this.matchIndex = -1
+    this.searching = false
     this.clearHits()
     this.report()
   }
@@ -638,7 +654,7 @@ class Viewer {
       if (!rect) continue
       const hit = document.createElement('div')
       hit.className = 'zen-pdf-hit'
-      hit.dataset.match = String(this.matches.indexOf(match))
+      hit.dataset.match = matchKey(match)
       place(hit, rect)
       slot.hits.append(hit)
     }
@@ -654,7 +670,7 @@ class Viewer {
     const match = this.matches[this.matchIndex]
     if (!match) return
     const slot = this.slots[match.page - 1]
-    const el = slot?.hits.querySelector(`[data-match="${this.matchIndex}"]`)
+    const el = slot?.hits.querySelector(`[data-match="${matchKey(match)}"]`)
     if (el) {
       el.classList.add('current')
       el.scrollIntoView({ block: 'center', inline: 'center' })
@@ -729,7 +745,12 @@ class Viewer {
       fit: this.fit,
       title: this.title,
       find: this.findQuery
-        ? { query: this.findQuery, current: this.matchIndex + 1, total: this.matches.length }
+        ? {
+            query: this.findQuery,
+            current: this.matchIndex + 1,
+            total: this.matches.length,
+            searching: this.searching
+          }
         : null,
       outline: this.outline,
       ...(this.error ? { error: this.error } : {}),
