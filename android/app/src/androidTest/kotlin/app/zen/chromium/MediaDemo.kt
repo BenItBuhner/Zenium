@@ -334,12 +334,12 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
             // The window's own controls: a tap on the window shows its menu, whose Pause / Play is the session's.
             if (win != null) {
                 if (field("state") == "playing") {
-                    touchPipMenu(win, "Pause", "the small window's Pause pauses the video", shotBefore = "11-pip-menu") { field("state") == "paused" }
+                    touchPipMenu(win, "Pause", "the small window's Pause pauses the video", shotAfter = "11-pip-menu") { field("state") == "paused" }
                     SystemClock.sleep(1_500)
                     shot("12-pip-paused")
                     touchPipMenu(win, "Play", "the small window's Play plays the video again") { field("state") == "playing" }
                 } else {
-                    touchPipMenu(win, "Play", "the small window's Play plays the video", shotBefore = "11-pip-menu") { field("state") == "playing" }
+                    touchPipMenu(win, "Play", "the small window's Play plays the video", shotAfter = "11-pip-menu") { field("state") == "playing" }
                 }
             } else {
                 dumpWindows("pip window")
@@ -883,16 +883,21 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     private fun awaitPip(active: Boolean, timeoutMs: Long): Boolean = poll(timeoutMs) { inPip() == active }
 
     /**
-     * The small window's menu (SystemUI's, over the window: the session's actions, Close and the
-     * expand button) under a finger's tap on the window, and the node reading `label` in it. The
-     * menu hides itself after a few seconds, so the look is short and the tap is tried twice; the
-     * windows on screen go to the notes when the menu never showed the label.
+     * The small window's menu (SystemUI's, over the window: the actions, Close and the expand
+     * button) under a finger's tap on the window, and the node reading `label` in it. The menu
+     * hides itself 3.5 seconds after it shows, so the look is at SystemUI's windows alone, every
+     * 100 ms – the second run walked the app's own WebView tree first, a binder call a node, and
+     * the menu had gone by the time the walk reached it – and the tap is tried twice; the windows
+     * on screen go to the notes when the menu never showed the label.
      */
     private fun openPipMenu(win: Rect, label: String): AccessibilityNodeInfo? {
         for (attempt in 1..2) {
             Finger().tap(win.exactCenterX(), win.exactCenterY())
-            val node = awaitInWindows(3_000) { it == label }
-            if (node != null) return node
+            val deadline = SystemClock.uptimeMillis() + 3_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                findInWindows(SYSTEM_UI) { it == label }?.let { return it }
+                SystemClock.sleep(100)
+            }
             if (attempt == 1) {
                 dumpWindows("pip menu after tap $attempt, looking for '$label'")
                 SystemClock.sleep(4_000)
@@ -904,20 +909,22 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     /**
      * A real finger on the small window's menu button `label` (the menu opened by [openPipMenu]
      * and the button touched at once, before the menu hides itself), then up to `timeoutMs` for
-     * `took`, the step's claim named by `effect`; `shotBefore` names a still of the open menu.
+     * `took`, the step's claim named by `effect`; `shotAfter` names a still of the menu right
+     * after the touch – a touch keeps it up two more seconds, so the still shows the menu with
+     * the button's new state, and no still comes between finding the button and touching it.
      */
-    private fun touchPipMenu(win: Rect, label: String, effect: String, timeoutMs: Long = 8_000, shotBefore: String? = null, took: () -> Boolean): Boolean {
+    private fun touchPipMenu(win: Rect, label: String, effect: String, timeoutMs: Long = 8_000, shotAfter: String? = null, took: () -> Boolean): Boolean {
         val node = openPipMenu(win, label) ?: run {
             note("  the small window's menu never showed '$label' (two taps on the window)")
             touchFault("the picture-in-picture window's menu never showed '$label'")
             return false
         }
         note("  pip menu: '$label' at ${bounds(node)}")
-        if (shotBefore != null) shot(shotBefore)
         val point = touchTapPoint(node) ?: run {
             note("  '$label' has no bounds a finger can reach")
             return false
         }
+        if (shotAfter != null) shot(shotAfter)
         if (poll(timeoutMs, took)) {
             note("  finger on the small window's '$label' at ${point.x.toInt()},${point.y.toInt()}: $effect")
             return true
@@ -1050,5 +1057,7 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     companion object {
         private const val PORT = 18136
         private const val TAB = "tab_demo"
+        /** SystemUI, whose windows hold the shade, the lock screen and the picture-in-picture menu. */
+        private const val SYSTEM_UI = "com.android.systemui"
     }
 }
