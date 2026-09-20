@@ -10,9 +10,6 @@ name: Android import demo
 # live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # Temporary: one recording on the import UI branch; removed before the PR leaves draft.
-  push:
-    branches: [cursor/services-import-ui-24d1]
 
 permissions:
   contents: read
