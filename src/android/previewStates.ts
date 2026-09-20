@@ -1,6 +1,7 @@
 import type {
   CertificateDetails,
   ClientCertificateInfo,
+  ExtensionAction,
   ExtensionInfo,
   Tab,
   UIState
@@ -16,7 +17,7 @@ import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
-import { BLANK_URL } from '@shared/url'
+import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
@@ -28,6 +29,7 @@ import {
   dismissToast,
   forgetBanner,
   forgetToast,
+  openExtensionsSheet,
   openOverlay,
   openUrlbar,
   openZoom,
@@ -48,12 +50,14 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_VOICE_EVENT,
   PREVIEW_WEB_APP,
   postPreviewManifest,
   previewQrScript,
-  previewVoiceScript
+  previewVoiceScript,
+  type PreviewExtensionPage
 } from './preview'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
@@ -92,7 +96,12 @@ const QR_EVENT_MARGIN_MS = 250
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
- * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
+ * into view), `sheet=extensions` (the Extensions sheet the app menu's row opens, over the
+ * active page; `then=tap:<row>;hold:<row>` taps a row or long-presses it for its menu),
+ * `extension-page=<id>/<path>` (an extension's page open as a tab, the way its options page
+ * opens: `chrome-extension://<id>/<path>`, which the stand-in host serves a page for; with
+ * `extensions=installed` the chrome knows the extension, so the pill shows its name),
+ * `prompt=<permission>` (the active page asks for that permission: the prompt sheet
  * is up), `private=new` or `private=<url>` (a private tab, blank or on that page),
  * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
  * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
@@ -147,7 +156,13 @@ function apply(browser: Browser, spec: string): void {
     closeMenu()
     closeUrlbar()
     dismissOverview()
-    uiStore.set({ findOpen: false, findTabId: null, zoomTabId: null, install: null })
+    uiStore.set({
+      findOpen: false,
+      findTabId: null,
+      zoomTabId: null,
+      install: null,
+      extensionsSheetOpen: false
+    })
     abortPull()
     cancelVoiceSearch()
     cancelQrScan()
@@ -165,8 +180,60 @@ function apply(browser: Browser, spec: string): void {
     // they hang from the tab that was active in it.
     void clearAutofill(browser)
       .then(dissolveGroup)
+      .then(closeExtensionPage)
       .then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
   })
+}
+
+/**
+ * The tab the last `extension-page=` state opened and the tab that was active before it, put
+ * back before the next state (as the group is): a run of stills takes each state from the same
+ * loose profile.
+ */
+let previewExtensionPage: { tabId: string; activeId: string | null } | null = null
+
+/** The page's tab goes and the tab that was active before it is active again. */
+async function closeExtensionPage(): Promise<void> {
+  const made = previewExtensionPage
+  previewExtensionPage = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state) return
+  const quiet = (): undefined => undefined
+  const restored = made.activeId && state.tabs[made.activeId] ? made.activeId : null
+  if (restored && activeTab(state)?.id !== restored)
+    await cmd('tab.activate', { tabId: restored }).catch(quiet)
+  if (state.tabs[made.tabId])
+    await cmd('tab.close', { tabId: made.tabId, force: true }).catch(quiet)
+  await new Promise<void>((resolve) =>
+    untilState(
+      (s) => !s.tabs[made.tabId] && (restored === null || activeTab(s)?.id === restored),
+      resolve
+    )
+  )
+}
+
+/**
+ * Open the extension's page as a tab, the way `extensions.openOptions` does: the stand-in host
+ * is told what to serve for it first (the name of the extension the seed put in the state; the
+ * document's title the way an options page tends to have one). Resolves once the tab is active
+ * and its page has loaded.
+ */
+async function openExtensionPage(id: string, path: string): Promise<void> {
+  const state = browserStore.get().state
+  const ext = state?.extensions.find((e) => e.id === id)
+  const name = ext?.name || id
+  const url = `${EXTENSION_SCHEME}://${id}/${path}`
+  const page: PreviewExtensionPage = { url, name, title: `${name} settings` }
+  window.dispatchEvent(new CustomEvent(PREVIEW_EXTENSION_PAGE_EVENT, { detail: page }))
+  const activeId = state ? (activeTab(state)?.id ?? null) : null
+  const tabId = await cmd('tab.create', { url, active: true })
+  previewExtensionPage = { tabId, activeId }
+  await new Promise<void>((resolve) =>
+    untilState((s) => {
+      const tab = activeTab(s)
+      return tab !== null && tab.id === tabId && !tab.loading
+    }, resolve)
+  )
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
@@ -320,6 +387,15 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (extensions) seedExtensions(extensions)
     settlePage(target, seed, finish)
     run('page.open', { id: target.page, section: target.section ?? null })
+  } else if (target.kind === 'extension-page') {
+    // The seed goes first, so the tab opens on a page of an extension the chrome knows (its icon
+    // and name in the pill); the steps wait for the page's entrance to settle.
+    seed()
+    void openExtensionPage(target.id, target.path).then(() => {
+      const then = target.then ?? []
+      if (then.length === 0) requestAnimationFrame(finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'group' && tab) {
     // The state is reached as the group forms (the strip is entering: a driver that wants it
     // mid-slide captures at once); the steps wait for the entrance to settle.
@@ -354,6 +430,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'sheet') {
+    // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
+    // sheet mounts on the next render and slides in, and the steps wait for it to settle.
+    seed()
+    openExtensionsSheet()
+    const then = target.then ?? []
+    if (then.length === 0) requestAnimationFrame(() => requestAnimationFrame(finish))
+    else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
   } else if (target.kind === 'permission' && tab) {
     // The active page asks, as its script would (`permissions.decide` is what the host calls
     // from the WebView's permission request); the answer is the prompt sheet's business.
@@ -596,7 +680,8 @@ let extensionsSeed: (() => void) | null = null
  * patched with the capability on and a set of installed extensions, and patched again over every
  * state the core pushes while the spec stands, as the request state is. Variants: `installed`
  * (six extensions: two stores, an unpacked one on Manifest V2, one turned off, one that failed to
- * load, one whose error console holds errors and warnings), `empty` (the capability on, nothing
+ * load, one whose error console holds errors and warnings; three of them enabled with an action,
+ * one wearing a badge, so the Extensions sheet has rows), `empty` (the capability on, nothing
  * installed) and `checking` (the update check running).
  */
 function seedExtensions(variant: string): void {
@@ -626,6 +711,24 @@ function fixtureIcon(letter: string, fill: string): string {
     `<text x="24" y="32" text-anchor="middle" font-family="system-ui, sans-serif" ` +
     `font-size="24" font-weight="600" fill="#fff">${letter}</text></svg>`
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+/**
+ * A fixture extension's `chrome.action` state, as the runtime reports it once the extension has
+ * loaded: the manifest's title and popup, a badge when `badgeText` is given, in the colours the
+ * extension set (null: the chrome's own).
+ */
+function fixtureAction(title: string, over: Partial<ExtensionAction> = {}): ExtensionAction {
+  return {
+    badgeText: '',
+    badgeBackgroundColor: null,
+    badgeTextColor: null,
+    title,
+    icon: null,
+    popup: 'popup.html',
+    enabled: true,
+    ...over
+  }
 }
 
 function fixtureExtension(now: number, over: Partial<ExtensionInfo>): ExtensionInfo {
@@ -681,6 +784,7 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
               'Dark mode for every website. Take care of your eyes, use dark theme for night and daily browsing.',
             path: `/data/user/0/app.zen.chromium/files/zen/extensions/${darkReader}`,
             icon: fixtureIcon('D', '#3f3f52'),
+            action: fixtureAction('Dark Reader', { popup: 'ui/popup/index.html' }),
             permissions: ['alarms', 'contextMenus', 'storage', 'tabs', 'theme', 'fontSettings'],
             hostPermissions: ['<all_urls>'],
             optionsPage: 'ui/options/index.html',
@@ -749,6 +853,12 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
             version: '2026.912.1352',
             description: 'An efficient content blocker. Easy on CPU and memory.',
             icon: fixtureIcon('U', '#800000'),
+            // Blocked on this page, the way the blocker counts on its badge.
+            action: fixtureAction('uBlock Origin Lite', {
+              badgeText: '12',
+              badgeBackgroundColor: '#800000',
+              badgeTextColor: '#ffffff'
+            }),
             permissions: ['activeTab', 'declarativeNetRequest', 'scripting', 'storage'],
             hostPermissions: ['<all_urls>'],
             optionsPage: 'dashboard.html',
@@ -765,6 +875,7 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
             description:
               'At home, at work, or on the go, Bitwarden easily secures all your passwords, passkeys and sensitive information.',
             icon: fixtureIcon('B', '#175ddc'),
+            action: fixtureAction('Bitwarden Password Manager'),
             permissions: [
               'tabs',
               'contextMenus',
@@ -791,6 +902,7 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
             version: '3.0.0.19',
             description: 'Returns ability to see dislike statistics on YouTube',
             icon: fixtureIcon('R', '#ff4c4c'),
+            action: fixtureAction('Return YouTube Dislike'),
             enabled: false,
             hostPermissions: ['*://*.youtube.com/*', '*://returnyoutubedislikeapi.com/*'],
             warnings: [
@@ -943,6 +1055,9 @@ function takeStep(step: PreviewStep): void {
     case 'tap':
       tap(step.text)
       return
+    case 'hold':
+      hold(step.text)
+      return
     case 'back':
       // One system back, committed: the top sheet, or the section over the landing, goes.
       dispatchBackEvent('start', { edge: 'left' })
@@ -963,15 +1078,37 @@ function takeStep(step: PreviewStep): void {
  * the first line of its text), a sheet's option, a footer button – the way a finger would.
  */
 function tap(text: string): void {
+  pressable(text)?.click()
+}
+
+/**
+ * Hold the first button whose accessible label or own text reads `text` – a row with a menu –
+ * the way a finger resting on it would: the row's gestures take the `contextmenu` Chromium
+ * raises for a touch hold (`useRowGestures`), so that event stands for the hold.
+ */
+function hold(text: string): void {
+  const button = pressable(text)
+  if (!button) return
+  const box = button.getBoundingClientRect()
+  button.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: box.left + box.width / 2,
+      clientY: box.top + box.height / 2
+    })
+  )
+}
+
+/** The first button a finger could press whose accessible label or own text reads `text`. */
+function pressable(text: string): HTMLElement | null {
   const wanted = text.trim()
-  const pressable = (el: Element | null | undefined): el is HTMLElement =>
+  const reachable = (el: Element | null | undefined): el is HTMLElement =>
     el instanceof HTMLElement && !el.closest('[inert]') && el.getAttribute('aria-hidden') !== 'true'
   for (const el of document.querySelectorAll<HTMLElement>('button, [role="button"]')) {
-    if (!pressable(el)) continue
-    if (el.getAttribute('aria-label')?.trim() === wanted || el.textContent?.trim() === wanted) {
-      el.click()
-      return
-    }
+    if (!reachable(el)) continue
+    if (el.getAttribute('aria-label')?.trim() === wanted || el.textContent?.trim() === wanted)
+      return el
   }
   // A row draws its label in a child beside its description: the nearest button up from the
   // text node that reads the label.
@@ -979,11 +1116,9 @@ function tap(text: string): void {
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node.textContent?.trim() !== wanted) continue
     const button = node.parentElement?.closest('button, [role="button"]')
-    if (pressable(button)) {
-      button.click()
-      return
-    }
+    if (reachable(button)) return button
   }
+  return null
 }
 
 /** How long the page's first render (its chunk) is waited for before the state goes ahead anyway. */
