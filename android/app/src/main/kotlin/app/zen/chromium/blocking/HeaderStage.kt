@@ -98,27 +98,38 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
     /**
      * Relay `req` (already decided [Decision.needsHeaders] at the request stage) and answer for
      * it, or null to let WebView load it. `requestHeaders` are the request's own; `observer` hears
-     * the header stage's decision like every other. Runs on the intercept thread.
+     * the header stage's decision when it names another match than `requestDecision`, the request
+     * stage's (the desktop's `sameMatch`, contract 5.5: a re-reported request-stage allow would
+     * count twice). Runs on the intercept thread.
+     *
+     * The profile's cookie jar rides only on a first-party relay. WebView attaches `Cookie` at the
+     * network layer, after the intercept, under the profile's third-party cookie policy and
+     * SameSite; a cross-site frame relayed with the whole jar would bypass both, so it goes
+     * without cookies and its `Set-Cookie` is not stored.
      */
     fun relay(
         snap: EngineSnapshot,
         tab: BlockingTab,
         req: Request,
         requestHeaders: Map<String, String>,
-        observer: DecisionObserver?
+        observer: DecisionObserver?,
+        requestDecision: Decision = Decision.ALLOW
     ): Answer? {
         if (req.method != "GET" && req.method != "HEAD") return null
         val headers = relayHeaders(requestHeaders)
-        if (headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
+        val withJar = !req.isThirdParty
+        if (withJar && headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
             cookies.cookieHeader(tab.containerId, req.url)?.let { headers["Cookie"] = it }
         }
         val started = System.nanoTime()
         val response = fetcher.fetch(req.url, req.method, headers) ?: return null
         val indexed = HeaderCondition.index(response.headers)
         val decision = snap.decide(req, indexed)
-        observer?.onDecision(tab, req, decision, System.nanoTime() - started, -1L)
+        if (observer != null && decision.matchedSet != null && !sameMatch(decision, requestDecision)) {
+            observer.onDecision(tab, req, decision, System.nanoTime() - started, -1L)
+        }
         val setCookie = indexed["set-cookie"]
-        if (!setCookie.isNullOrEmpty()) cookies.store(tab.containerId, req.url, setCookie)
+        if (withJar && !setCookie.isNullOrEmpty()) cookies.store(tab.containerId, req.url, setCookie)
         val isMainFrame = req.type == ResourceType.MAIN_FRAME
         return when (val outcome = outcome(decision, response, req.url)) {
             Outcome.PassThrough -> {
@@ -197,6 +208,10 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
 
         /** Response headers the decoded, re-framed body makes wrong (and the cookies WebView drops from an intercepted response; the relay stores them itself). */
         private val DROPPED_RESPONSE_HEADERS = setOf("content-length", "content-encoding", "transfer-encoding", "set-cookie", "connection", "keep-alive")
+
+        /** Both decisions name the same set, rule and filter (`sameMatch` in `blocking.ts`). */
+        fun sameMatch(a: Decision, b: Decision): Boolean =
+            a.matchedSet == b.matchedSet && a.matchedRule == b.matchedRule && a.matchedFilter == b.matchedFilter
 
         /** The request's headers as the relay sends them (minus [DROPPED_REQUEST_HEADERS]). */
         fun relayHeaders(requestHeaders: Map<String, String>): LinkedHashMap<String, String> {

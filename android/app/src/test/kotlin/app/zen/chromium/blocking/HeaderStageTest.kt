@@ -217,9 +217,13 @@ class HeaderStageTest {
         val sub = snap.decide(Request("https://tracker.example/t.js", ResourceType.SCRIPT, "https://news.example/story", partition = "default"))
         assertEquals(Decision.Action.BLOCK, sub.action)
         assertFalse(sub.needsHeaders)
-        // The frame request itself is what the rule can be relayed for.
+        // The frame request itself is the only request the rule could be relayed for, and on its
+        // own it is not worth the relay: a header-stage allow (of either kind) yields, so the
+        // request stage's allow is the outcome with or without the headers (services review of
+        // #219, recommendation 3; `aHeaderConditionedAllowAloneDoesNotAskForTheRelay`).
         val frame = snap.decide(navigation("https://news.example/story"))
-        assertTrue(frame.needsHeaders)
+        assertEquals(Decision.Action.ALLOW, frame.action)
+        assertFalse(frame.needsHeaders)
     }
 
     // --- Blocking.evaluate's relay verdict --------------------------------------------------------
@@ -342,5 +346,90 @@ class HeaderStageTest {
         // A fetch that fails hands the request back to WebView.
         assertNull(HeaderStage(FakeCookies(), FakeFetcher(null)).relay(snap, tab, navigation("https://fixture.example/hello.user.css"), emptyMap(), null))
         assertTrue(tab.redirects.isEmpty())
+    }
+
+    // --- The services review of #219: cookies of a cross-site frame, one report per match ------
+
+    private val adsBlock = set(
+        "ext:a:_dynamic", 2999,
+        """[{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^","resourceTypes":["main_frame","sub_frame"],"responseHeaders":[{"header":"x-ads"}]}}]"""
+    )
+
+    @Test
+    fun aCrossSiteFrameRelaysWithoutTheJar() {
+        val snap = EngineSnapshot(listOf(adsBlock), null)
+        // A third-party frame: WebView would apply the third-party cookie policy and SameSite at the
+        // network layer; the relay sends no cookies and keeps none of the response's.
+        val crossSite = FakeCookies().apply { jar = "session=abc" }
+        val crossFetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "tracker=1; Path=/"))
+        val frame = Request("https://ads.example/frame", ResourceType.SUB_FRAME, "https://news.example/", thirdParty = true, partition = "default")
+        assertNotNull(HeaderStage(crossSite, crossFetcher).relay(snap, FakeTab(), frame, mapOf("Accept" to "text/html"), null))
+        assertFalse(crossFetcher.headers!!.keys.any { it.equals("Cookie", ignoreCase = true) })
+        assertTrue(crossSite.stored.isEmpty())
+        // A same-site frame is first-party traffic: the jar rides and the response's cookies land.
+        val sameSite = FakeCookies().apply { jar = "session=abc" }
+        val sameFetcher = FakeFetcher(response(200, "Content-Type" to "text/html", "Set-Cookie" to "seen=1; Path=/"))
+        val ownFrame = Request("https://ads.example/frame", ResourceType.SUB_FRAME, "https://ads.example/", thirdParty = false, partition = "default")
+        assertNotNull(HeaderStage(sameSite, sameFetcher).relay(snap, FakeTab(), ownFrame, emptyMap(), null))
+        assertEquals("session=abc", sameFetcher.headers!!["Cookie"])
+        assertEquals(listOf(Triple("default", ownFrame.url, listOf("seen=1; Path=/"))), sameSite.stored)
+    }
+
+    @Test
+    fun theHeaderStageReportsOnlyAnotherMatch() {
+        // An allow the request stage matched, with a header-conditioned block above it.
+        val allowThenBlock = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":7,"priority":1,"action":{"type":"allow"},"condition":{"urlFilter":"||ads.example^","resourceTypes":["main_frame"]}},
+                {"id":1,"priority":2,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^","resourceTypes":["main_frame"],"responseHeaders":[{"header":"x-ads"}]}}]"""
+        )
+        val snap = EngineSnapshot(listOf(allowThenBlock), null)
+        val req = navigation("https://ads.example/")
+        val requestStage = snap.decide(req)
+        assertEquals(Decision.Action.ALLOW, requestStage.action)
+        assertEquals(7, requestStage.matchedRule)
+        assertTrue(requestStage.needsHeaders)
+        // The response meets no header condition: the same allow decides again, and the observer,
+        // which already heard it at the request stage, hears nothing (contract 5.5 `sameMatch`).
+        val heard = ArrayList<Decision>()
+        val observer = DecisionObserver { _, _, decision, _, _ -> heard.add(decision) }
+        val quiet = HeaderStage(FakeCookies(), FakeFetcher(response(200, "Content-Type" to "text/html")))
+        assertNotNull(quiet.relay(snap, FakeTab(), req, emptyMap(), observer, requestStage))
+        assertTrue(heard.isEmpty())
+        // The response meets the block's condition: another rule decided, reported once.
+        val tab = FakeTab()
+        val loud = HeaderStage(FakeCookies(), FakeFetcher(response(200, "X-Ads" to "1", "Content-Type" to "text/html")))
+        assertEquals(204, loud.relay(snap, tab, req, emptyMap(), observer, requestStage)!!.status)
+        assertEquals(1, heard.size)
+        assertEquals(Decision.Action.BLOCK, heard[0].action)
+        assertEquals(1, heard[0].matchedRule)
+        assertEquals(listOf("https://ads.example/"), tab.documentsBlocked)
+        // Without a request-stage decision to compare against, any match is news.
+        assertTrue(HeaderStage.sameMatch(requestStage, requestStage))
+        assertFalse(HeaderStage.sameMatch(requestStage, heard[0]))
+    }
+
+    @Test
+    fun aHeaderConditionedAllowAloneDoesNotAskForTheRelay() {
+        // A header-conditioned allow yields at the header stage in any case (no header edits to
+        // cap here), so on its own it does not mark the document `needsHeaders`: no relay is paid
+        // for an outcome the request stage already has. Recorded deviation from the desktop engine.
+        val allowOnly = set(
+            "ext:a:_dynamic", 2999,
+            """[{"id":3,"priority":5,"action":{"type":"allow"},"condition":{"urlFilter":"||fixture.example^","resourceTypes":["main_frame"],"responseHeaders":[{"header":"content-type","values":["text/*"]}]}}]"""
+        )
+        val alone = EngineSnapshot(listOf(allowOnly), null).decide(navigation("https://fixture.example/hello.user.css"))
+        assertEquals(Decision.Action.ALLOW, alone.action)
+        assertFalse(alone.needsHeaders)
+        // Beside a header-conditioned block the relay is still owed, and the allow still wins it
+        // once the headers are in: the outcomes match the desktop engine's.
+        val both = EngineSnapshot(listOf(allowOnly, adsBlock), null)
+        val pending = both.decide(navigation("https://ads.example/"))
+        assertTrue(pending.needsHeaders)
+        val stylusAndAllow = EngineSnapshot(listOf(allowOnly, stylus), null)
+        val usercss = navigation("https://fixture.example/hello.user.css")
+        assertTrue(stylusAndAllow.decide(usercss).needsHeaders)
+        val late = stylusAndAllow.decide(usercss, headers("Content-Type" to "text/css"))
+        assertEquals(Decision.Action.ALLOW, late.action)
     }
 }
