@@ -97,6 +97,9 @@ class ChromeA11yDemo : DemoHarness(
     private var domOffsetY = 0f
     private val events = StringBuilder()
 
+    /** The texts of the `TYPE_ANNOUNCEMENT` events since the last [clearAnnouncements]: what a live region had spoken. */
+    private val announcements = ArrayList<String>()
+
     @Test
     fun record() {
         runDemo()
@@ -541,6 +544,7 @@ class ChromeA11yDemo : DemoHarness(
         val tabsBefore = coreState().getJSONObject("tabs").length()
         val close = revealCardClose("Close Delta", "tab_delta")
         finding("  Delta's Close for the touch: ${close?.toShortString() ?: "not in the tree"} (the bar's top at ${bounds(MENU_LABEL)?.top})")
+        clearAnnouncements()
         if (close == null || !touchTapFresh { it == "Close Delta" }) {
             fail("no touch landed on Close Delta")
             return
@@ -565,12 +569,29 @@ class ChromeA11yDemo : DemoHarness(
                 tableRow("toast", if (label.isBlank()) "–" else "${i + 1}", "button (DOM)", label, "", "${w.roundToInt()} x ${h.roundToInt()}")
             }
         }
+        // The device's proof of the live region is the announcement, not a flag on a node:
+        // Chromium's Android bridge never sets a node's live region ("Deliberately don't call
+        // setLiveRegion because TalkBack speaks the entire region anytime it changes",
+        // AccessibilityNodeInfoBuilder) and instead, when a named node appears inside a live
+        // region, sends a TYPE_ANNOUNCEMENT with that node's text (announceLiveRegionText, off
+        // the LIVE_REGION_NODE_CHANGED event) – which is what TalkBack speaks. Run 3's retry
+        // asserted the flag on the toast's text node and failed on the mechanism, not the toast.
+        val spoken = awaitAnnouncement(6_000) { text != null && it.contains(text) }
+        finding("  announcements since the touch on Close: ${announcementsSeen()}")
+        expect(
+            "the toast's text is announced as the toast appears (TYPE_ANNOUNCEMENT ${quote(spoken.orEmpty())}): Chromium's live region on Android",
+            spoken != null
+        )
         val treeToast = awaitNode(2_500) { it.startsWith("Closed ") }
         if (treeToast != null) {
-            finding("  toast in the tree: ${describe(treeToast)}")
-            expect("the toast's node is a live region", treeToast.liveRegion != View.ACCESSIBILITY_LIVE_REGION_NONE || liveAncestor(treeToast))
+            val region = liveRegionAncestor(treeToast)
+            finding("  toast in the tree: ${describe(treeToast)} (chromeRole ${chromeRole(treeToast)}); its region: ${region?.let { "${describe(it)} chromeRole ${chromeRole(it)}" } ?: "no ancestor within six hops carries a live region's chromeRole"}")
+            expect("the toast's text sits under a node Chromium roles `status` (chromeRole ${chromeRole(region ?: treeToast)})", chromeRole(region ?: treeToast) == "status")
+            if (treeToast.liveRegion != View.ACCESSIBILITY_LIVE_REGION_NONE || liveAncestor(treeToast)) {
+                note("this WebView sets the Android live-region flag on the toast as well (WebView 113 does not: it announces instead)")
+            }
         } else {
-            note("the toast left the tree before UiAutomation listed it (the tree trails the screen on the software GPU); the DOM read above stands")
+            note("the toast left the tree before UiAutomation listed it (the tree trails the screen on the software GPU); the announcement and the DOM read above stand")
         }
         snap("toast")
         val undo = domRect(".zen-message-toast .zen-message-button")
@@ -1025,13 +1046,9 @@ class ChromeA11yDemo : DemoHarness(
         try {
             // 1. The bar at the bottom dock, then at the top.
             barWalk("bottom", report)
-            coreInvoke("settings.update", """{"phoneBarPosition":"top"}""")
-            SystemClock.sleep(2_500)
-            calibrate()
+            setDock("top")
             barWalk("top", report)
-            coreInvoke("settings.update", """{"phoneBarPosition":"bottom"}""")
-            SystemClock.sleep(2_500)
-            calibrate()
+            setDock("bottom")
             // 2. A card and its Close in the overview.
             cardWalk(report)
             // 3. Past the menu's last row.
@@ -1050,6 +1067,22 @@ class ChromeA11yDemo : DemoHarness(
             disableTalkBack()
             bringToFront()
         }
+    }
+
+    /**
+     * The bar docked at `dock` through the core, then the tree caught up with it before
+     * anything reads or touches the bar: after the switch the tree kept the Menu at the old
+     * dock for seconds (run 3 and its retry), so a calibration read the dock's travel as the
+     * chrome's origin and the retry's touches on Tabs and Menu went where the bar had been.
+     * The wait is written down; the origin is re-read once the tree is on the bar.
+     */
+    private fun setDock(dock: String) {
+        val start = SystemClock.uptimeMillis()
+        coreInvoke("settings.update", """{"phoneBarPosition":"$dock"}""")
+        val onBar = awaitTreeOnBar(15_000)
+        calibrate()
+        finding("  [talkback] the bar docked at the $dock; the tree ${if (onBar) "caught up with it" else "still trailed it"} after ${SystemClock.uptimeMillis() - start} ms (Menu in the tree ${freshBounds(MENU_LABEL)?.toShortString()}, in the DOM ${domRect("[data-bar-item=\"menu\"]")?.toShortString()})")
+        if (!onBar) note("[talkback] after the bar's move to the $dock the tree still had the Menu elsewhere 15 s on: the scene's touches went by the DOM's boxes")
     }
 
     /**
@@ -1605,15 +1638,9 @@ class ChromeA11yDemo : DemoHarness(
 
     private fun openOverview(): Boolean {
         clearChrome()
-        // The bar's Tabs button by its label, else by its DOM box (the snapshot WebView names it
-        // by its count alone, see [tabsWant]).
-        val touched = touchTapFresh(4_000) { it.startsWith("Tabs (") } || domRect("[data-bar-item=\"tabs\"]")?.let { box ->
-            val point = touchPoint(box) ?: return@let false
-            Log.i(tag, "touch at ${point.x},${point.y} on the Tabs button's DOM box $box")
-            Finger().tap(point.x, point.y)
-            true
-        } ?: false
-        if (!touched) {
+        // The bar's Tabs button by its label once the tree is on the bar, else by its DOM box
+        // (the snapshot WebView names it by its count alone, see [tabsWant]).
+        if (!touchBarItem("tabs") { it.startsWith("Tabs (") }) {
             fail("no touch landed on the bar's Tabs button")
             return false
         }
@@ -1691,7 +1718,14 @@ class ChromeA11yDemo : DemoHarness(
     /** The app menu up and pulled to its full height (the same pull `openMenuItem` makes), without picking anything. */
     private fun openMenuSheet(): Boolean {
         clearChrome()
-        tapMenuButton()
+        ensureForeground()
+        // The bar's Menu button once the tree is on the bar, else by its DOM box (the harness's
+        // `tapMenuButton` touches the tree's bounds as they are, and the retry's touch after the
+        // dock switch went to the bar's old dock).
+        if (!touchBarItem("menu") { it == MENU_LABEL }) {
+            fail("no touch landed on the bar's Menu button")
+            return false
+        }
         if (waitFor(MENU_HANDLE_LABEL, 6_000) == null) {
             fail("the menu never opened")
             return false
@@ -1820,7 +1854,11 @@ class ChromeA11yDemo : DemoHarness(
         runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
 
     /** A DOM box on screen (px), through the density and the chrome's origin ([calibrate]). */
-    private fun domRect(selector: String): Rect? {
+    private fun domRect(selector: String): Rect? =
+        domRawRect(selector)?.also { it.offset(domOffsetX.roundToInt(), domOffsetY.roundToInt()) }
+
+    /** A DOM box in the chrome WebView's own pixels (CSS px through the density), before the chrome's origin is added. */
+    private fun domRawRect(selector: String): Rect? {
         val raw = chromeValue(
             "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';var r=e.getBoundingClientRect();" +
                 "return [r.left,r.top,r.width,r.height].join(',')})()"
@@ -1828,20 +1866,109 @@ class ChromeA11yDemo : DemoHarness(
         val parts = raw.split(',').mapNotNull { it.toFloatOrNull() }
         if (parts.size != 4 || parts[2] <= 0) return null
         return Rect(
-            (parts[0] * density + domOffsetX).roundToInt(),
-            (parts[1] * density + domOffsetY).roundToInt(),
-            ((parts[0] + parts[2]) * density + domOffsetX).roundToInt(),
-            ((parts[1] + parts[3]) * density + domOffsetY).roundToInt()
+            (parts[0] * density).roundToInt(),
+            (parts[1] * density).roundToInt(),
+            ((parts[0] + parts[2]) * density).roundToInt(),
+            ((parts[1] + parts[3]) * density).roundToInt()
         )
     }
 
-    /** The Menu button in the tree against the same button in the DOM: the chrome's origin on screen. */
-    private fun calibrate() {
-        val fromTree = waitFor(MENU_LABEL, 6_000) ?: return
-        val fromDom = domRect("[data-bar-item=\"menu\"]") ?: return
-        domOffsetX = fromTree.exactCenterX() - fromDom.exactCenterX()
-        domOffsetY = fromTree.exactCenterY() - fromDom.exactCenterY()
-        Log.i(tag, "DOM offset ${domOffsetX}x$domOffsetY (tree $fromTree, dom $fromDom)")
+    /** How far apart the tree's and the DOM's middles of one button may be for the tree to count as caught up with the screen. */
+    private val treeAgreesPx: Float get() = 24 * density
+
+    /**
+     * The Menu button in the tree against the same button in the DOM: the chrome's origin on
+     * screen. Read from the DOM's own pixels (run 3's re-reads went through [domRect], which
+     * already carried the offset before, so each compounded on the last), and taken only once
+     * the two are within [treeAgreesPx] of each other: the tree trails the screen after the bar
+     * moves dock (run 3 and its retry: 2.5 s after the switch the tree still had the Menu at the
+     * old dock, and the origin came out as the dock's whole travel, 1420 px). The last offset
+     * stands when they never meet within `timeoutMs`.
+     */
+    private fun calibrate(timeoutMs: Long = 8_000) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var last = "no read"
+        while (true) {
+            val fromTree = freshBounds(MENU_LABEL)
+            val fromDom = domRawRect("[data-bar-item=\"menu\"]")
+            if (fromTree != null && fromDom != null) {
+                val dx = fromTree.exactCenterX() - fromDom.exactCenterX()
+                val dy = fromTree.exactCenterY() - fromDom.exactCenterY()
+                last = "tree $fromTree, dom $fromDom"
+                if (abs(dx) <= treeAgreesPx && abs(dy) <= treeAgreesPx) {
+                    domOffsetX = dx
+                    domOffsetY = dy
+                    Log.i(tag, "DOM offset ${dx}x$dy ($last)")
+                    return
+                }
+            }
+            if (SystemClock.uptimeMillis() >= deadline) break
+            nudgeFrame()
+            SystemClock.sleep(300)
+        }
+        Log.w(tag, "the tree's Menu and the DOM's never met within $timeoutMs ms ($last): the DOM offset stays ${domOffsetX}x$domOffsetY")
+    }
+
+    /** A node's bounds read past UiAutomation's cache (`refresh`), by its exact label; null when it is not in the tree. */
+    private fun freshBounds(label: String): Rect? {
+        val node = findNode { it == label } ?: return null
+        if (!node.refresh()) return null
+        return Rect().also { node.getBoundsInScreen(it) }
+    }
+
+    /**
+     * Whether the chrome WebView's tree has caught up with the screen on the bar: its Menu
+     * within [treeAgreesPx] of the DOM's, polled for up to `timeoutMs` with a frame asked of
+     * the document each time. Blink sends its location changes from the lifecycle's
+     * accessibility step, which runs with a frame, and the browser side batches them behind a
+     * delayed content-changed event; on the software GPU under TalkBack the tree had the bar at
+     * its old dock 4 s after the switch (the retry: the TalkBack scene's touches on Tabs and
+     * Menu went where the bar had been). How long it took is logged.
+     */
+    private fun awaitTreeOnBar(timeoutMs: Long): Boolean {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + timeoutMs
+        var last = "no read"
+        while (true) {
+            val fromTree = freshBounds(MENU_LABEL)
+            val fromDom = domRect("[data-bar-item=\"menu\"]")
+            if (fromTree != null && fromDom != null) {
+                last = "tree $fromTree, dom $fromDom"
+                if (abs(fromTree.exactCenterX() - fromDom.exactCenterX()) <= treeAgreesPx &&
+                    abs(fromTree.exactCenterY() - fromDom.exactCenterY()) <= treeAgreesPx
+                ) {
+                    Log.i(tag, "the tree is on the bar after ${SystemClock.uptimeMillis() - start} ms ($last)")
+                    return true
+                }
+            }
+            if (SystemClock.uptimeMillis() >= deadline) break
+            nudgeFrame()
+            SystemClock.sleep(300)
+        }
+        Log.w(tag, "the tree still trails the bar after $timeoutMs ms ($last)")
+        return false
+    }
+
+    /** A frame asked of the chrome document (an animation frame), so Blink runs its lifecycle – and the accessibility step that sends location changes – while the scene waits. */
+    private fun nudgeFrame() {
+        chromeJs("(function(){requestAnimationFrame(function(){});return 1})()")
+    }
+
+    /**
+     * A real touch on one of the bar's buttons (`item` is its `data-bar-item`): at the tree's
+     * node once the tree has caught up with the screen ([awaitTreeOnBar]), else at the button's
+     * DOM box – the tree trails the screen after the bar moves dock, and run 3's retry touched
+     * Tabs and Menu at the bar's old dock; the snapshot WebView also names Tabs by its count
+     * alone ([tabsWant]), so its node is not found by the label. False when neither is there.
+     */
+    private fun touchBarItem(item: String, matches: (String) -> Boolean): Boolean {
+        val settled = awaitTreeOnBar(8_000)
+        if (settled && touchTapFresh(4_000, matches)) return true
+        val box = domRect("[data-bar-item=\"$item\"]") ?: return false
+        val point = touchPoint(box) ?: return false
+        Log.i(tag, "touch at ${point.x},${point.y} on the bar's $item by its DOM box $box (${if (settled) "no node of the tree reads its label" else "the tree trails the screen"})")
+        Finger().tap(point.x, point.y)
+        return true
     }
 
     // --- TalkBack --------------------------------------------------------------------------------
@@ -1897,6 +2024,39 @@ class ChromeA11yDemo : DemoHarness(
         val line = "${SystemClock.uptimeMillis()} ${AccessibilityEvent.eventTypeToString(event.eventType)} " +
             "pkg=${event.packageName} class=${event.className} desc=${quote(event.contentDescription?.toString().orEmpty())} text=${event.text}"
         synchronized(events) { events.appendLine(line) }
+        if (event.eventType == AccessibilityEvent.TYPE_ANNOUNCEMENT) {
+            val spoken = (event.text.joinToString(" ") { it?.toString().orEmpty() } + " " + event.contentDescription?.toString().orEmpty()).trim()
+            synchronized(announcements) { announcements += spoken }
+        }
+    }
+
+    private fun clearAnnouncements() = synchronized(announcements) { announcements.clear() }
+
+    private fun announcementsSeen(): List<String> = synchronized(announcements) { ArrayList(announcements) }
+
+    /** The first announcement since [clearAnnouncements] that `matches`, waited for up to `timeoutMs`; null when none came. */
+    private fun awaitAnnouncement(timeoutMs: Long, matches: (String) -> Boolean): String? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (true) {
+            announcementsSeen().firstOrNull(matches)?.let { return it }
+            if (SystemClock.uptimeMillis() >= deadline) return null
+            SystemClock.sleep(150)
+        }
+    }
+
+    /** Chromium's own role for a node (`AccessibilityNodeInfo.chromeRole` in the extras: `status`, `button`, `staticText`), or null. */
+    private fun chromeRole(node: AccessibilityNodeInfo): String? =
+        node.extras.getCharSequence("AccessibilityNodeInfo.chromeRole")?.toString()?.takeIf { it.isNotBlank() }
+
+    /** The nearest ancestor (within six hops) whose Chromium role is a live region's (`status`, `alert`, `log`, `marquee`, `timer`), or null. */
+    private fun liveRegionAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var parent = node.parent
+        var hops = 0
+        while (parent != null && hops++ < 6) {
+            if (chromeRole(parent) in LIVE_ROLES) return parent
+            parent = parent.parent
+        }
+        return null
     }
 
     private fun webViewPackage(): String =
@@ -2016,6 +2176,8 @@ class ChromeA11yDemo : DemoHarness(
         const val QUERY = "coffee"
         /** How far a node's bounds may fall short of a floor (rounding of CSS px to device px). */
         const val TOLERANCE = 1.5
+        /** Chromium's roles that are live regions (`ui::ToString` of the role: `role=status` reads `status`). */
+        val LIVE_ROLES = setOf("status", "alert", "log", "marquee", "timer")
         const val WALK_LIMIT = 5_000
         /** A WebView's class name in the tree – the view's, and Chromium's for the document under it. */
         const val WEBVIEW_CLASS = "android.webkit.WebView"
