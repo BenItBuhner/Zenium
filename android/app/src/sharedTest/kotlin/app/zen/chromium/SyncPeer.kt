@@ -35,6 +35,9 @@ object SyncPeer {
     private const val TAG_BYTES = 16
     private const val FILE_EXT = ".zensync"
 
+    /** The directory every device's file sits in under the chosen folder (`SYNC_DIR_NAME` in `transport.ts`). */
+    const val DIR_NAME = "zenium-sync"
+
     // --- the device file -------------------------------------------------------------------------
 
     /** `<deviceId>.zensync`, the id reduced to characters every file system accepts (`deviceFileName`). */

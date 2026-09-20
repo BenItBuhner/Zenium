@@ -53,15 +53,27 @@ class SyncPeerTest {
 
     // --- the engine's fixture --------------------------------------------------------------------
 
-    /** The repository's fixture, from wherever Gradle runs the test (the module directory, or the root). */
-    private fun fixture(): JSONObject? {
+    /** A file of the repository, from wherever Gradle runs the test (the module directory, or the root). */
+    private fun repoFile(path: String): File? {
         var dir: File? = File("").absoluteFile
         while (dir != null) {
-            val file = File(dir, "src/core/sync/__tests__/fixtures/legacy-device-file.json")
-            if (file.isFile) return JSONObject(file.readText())
+            val file = File(dir, path)
+            if (file.isFile) return file
             dir = dir.parentFile
         }
         return null
+    }
+
+    private fun fixture(): JSONObject? = repoFile("src/core/sync/__tests__/fixtures/legacy-device-file.json")?.let { JSONObject(it.readText()) }
+
+    @Test
+    fun `names the directory and the file suffix as the engine's transport does`() {
+        val transport = repoFile("src/core/sync/transport.ts")
+        assumeTrue("the core's transport is not beside the module", transport != null)
+        val source = transport!!.readText()
+        assertTrue(source.contains("export const SYNC_DIR_NAME = '${SyncPeer.DIR_NAME}'"))
+        assertTrue(source.contains("export const FILE_EXT = '.zensync'"))
+        assertTrue(SyncPeer.deviceFileName("x").endsWith(".zensync"))
     }
 
     @Test
