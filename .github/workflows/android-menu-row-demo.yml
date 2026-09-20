@@ -14,10 +14,6 @@ name: Android menu icon row demo
 # android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  # TEMPORARY, removed before the branch is marked ready: the demo runs on this branch's pushes
-  # while the row is verified on the emulator.
-  push:
-    branches: [cursor/android-menu-icon-row-c0cf]
 
 permissions:
   contents: read
