@@ -1396,7 +1396,7 @@ export class ExtensionService implements ExtensionHost {
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') {
         event.preventDefault()
-        this.closePopup()
+        this.closePopup('escape')
       }
     })
     wc.setWindowOpenHandler(({ url }) => {
@@ -1420,13 +1420,14 @@ export class ExtensionService implements ExtensionHost {
     if (visible) popup.view.webContents.focus()
   }
 
-  closePopup(): void {
+  /** `reason` is `'escape'` for the key the document trapped: the renderer returns focus to the anchor. */
+  closePopup(reason?: 'escape'): void {
     if (!this.popup) return
     const { id, view, win } = this.popup
     this.popup = null
     if (win.alive) {
       ;(win.host as ElectronWindow).win.contentView.removeChildView(view)
-      this.browser.emit('extension.popupClosed', { id }, win)
+      this.browser.emit('extension.popupClosed', reason ? { id, reason } : { id }, win)
     }
     if (!view.webContents.isDestroyed()) view.webContents.close()
   }

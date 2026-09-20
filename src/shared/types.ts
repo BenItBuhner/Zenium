@@ -3874,8 +3874,12 @@ export interface Events {
   // ---- PROVISIONAL: extensions UI (PR #68), see the matching block in `Commands` --------------
   /** The popup's document asked for this size (CSS px); the renderer fits its frame around it. */
   'extension.popupSize': { id: string; width: number; height: number }
-  /** Main closed the popup itself (blur, Escape inside it, a link opened a tab). */
-  'extension.popupClosed': { id: string }
+  /**
+   * Main closed the popup itself (blur, Escape inside it, a link opened a tab). `reason` is
+   * `'escape'` when the document trapped the key: focus then goes back to the anchor (§9.22),
+   * where every other close leaves it where the close put it.
+   */
+  'extension.popupClosed': { id: string; reason?: 'escape' }
   /** Ask before an install or update; the renderer answers with `extension.confirmInstall`. */
   extensionInstallRequest: ExtensionPromptRequest
   /** Ask before granting permissions; the renderer answers with `extension.respondPermissionRequest`. */

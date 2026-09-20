@@ -216,7 +216,9 @@ export function useMainEvents(): void {
       onEvent('extension.popupSize', ({ id, width, height }) =>
         popupSizeReported(id, width, height)
       ),
-      onEvent('extension.popupClosed', () => closeExtensionPopup(false)),
+      onEvent('extension.popupClosed', ({ reason }) =>
+        closeExtensionPopup(false, reason === 'escape' ? 'anchor' : 'page')
+      ),
       onEvent(
         'extensionInstallRequest',
         (prompt) => void enqueueExtensionPrompt(prompt, currentActiveTabId())
