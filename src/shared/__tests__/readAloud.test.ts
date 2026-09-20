@@ -21,20 +21,24 @@ import {
   type ReadAloudVoice
 } from '../readAloud'
 
-const block = (id: string, text: string, kind: ReadAloudBlock['kind'] = 'paragraph', lang?: string): ReadAloudBlock =>
-  lang ? { id, kind, text, lang } : { id, kind, text }
+const block = (
+  id: string,
+  text: string,
+  kind: ReadAloudBlock['kind'] = 'paragraph',
+  lang?: string
+): ReadAloudBlock => (lang ? { id, kind, text, lang } : { id, kind, text })
 
 describe('read aloud settings and the rate ladder', () => {
   it('sanitises stored settings from any version', () => {
     expect(sanitizeReadAloudSettings(undefined)).toEqual(DEFAULT_READ_ALOUD_SETTINGS)
-    expect(sanitizeReadAloudSettings({ rate: 'fast', highlight: 'rainbow', voiceByLanguage: 3 })).toEqual(
-      DEFAULT_READ_ALOUD_SETTINGS
-    )
+    expect(
+      sanitizeReadAloudSettings({ rate: 'fast', highlight: 'rainbow', voiceByLanguage: 3 })
+    ).toEqual(DEFAULT_READ_ALOUD_SETTINGS)
     expect(
       sanitizeReadAloudSettings({
         rate: 9,
         highlight: 'word',
-        voiceByLanguage: { 'EN_us': 'Alex', fr: '', '???': 'x', de: 42 }
+        voiceByLanguage: { EN_us: 'Alex', fr: '', '???': 'x', de: 42 }
       })
     ).toEqual({ rate: 4, highlight: 'word', voiceByLanguage: { 'en-us': 'Alex' } })
   })
@@ -98,9 +102,18 @@ describe('languages and voices (contract 2.4)', () => {
   })
 
   it('falls back to the UI language’s voice and flags it; no-voice only when the engine has none', () => {
-    expect(resolveReadAloudVoice(voices, 'ja', {}, 'en')).toEqual({ voiceId: 'Kyoko', fallback: false })
-    expect(resolveReadAloudVoice(voices, 'de', {}, 'en-GB')).toEqual({ voiceId: 'Daniel', fallback: true })
-    expect(resolveReadAloudVoice(voices, 'de', {}, 'xx')).toEqual({ voiceId: 'Samantha', fallback: true })
+    expect(resolveReadAloudVoice(voices, 'ja', {}, 'en')).toEqual({
+      voiceId: 'Kyoko',
+      fallback: false
+    })
+    expect(resolveReadAloudVoice(voices, 'de', {}, 'en-GB')).toEqual({
+      voiceId: 'Daniel',
+      fallback: true
+    })
+    expect(resolveReadAloudVoice(voices, 'de', {}, 'xx')).toEqual({
+      voiceId: 'Samantha',
+      fallback: true
+    })
     expect(resolveReadAloudVoice([], 'en', {}, 'en')).toEqual({ voiceId: null, fallback: true })
   })
 
@@ -164,11 +177,19 @@ describe('the sentence walker', () => {
   describe('without Intl.Segmenter', () => {
     const original = Intl.Segmenter
     afterEach(() => {
-      Object.defineProperty(Intl, 'Segmenter', { value: original, configurable: true, writable: true })
+      Object.defineProperty(Intl, 'Segmenter', {
+        value: original,
+        configurable: true,
+        writable: true
+      })
     })
 
     it('falls back to punctuation boundaries', () => {
-      Object.defineProperty(Intl, 'Segmenter', { value: undefined, configurable: true, writable: true })
+      Object.defineProperty(Intl, 'Segmenter', {
+        value: undefined,
+        configurable: true,
+        writable: true
+      })
       expect(splitSentencesFallback('One. Two? Three! "Four." Five')).toEqual([
         [0, 4],
         [4, 9],
@@ -220,12 +241,22 @@ describe('blocks from HTML (the reader article) and the collector', () => {
 
   it('splits a block’s inline runs around a nested block, and keeps the inline text with its block', () => {
     const html = `<div>Intro text <b>bold</b><p>Inner para</p>tail text</div>`
-    expect(blocksFromHtml(html, 'en').map((b) => b.text)).toEqual(['Intro text bold', 'Inner para', 'tail text'])
+    expect(blocksFromHtml(html, 'en').map((b) => b.text)).toEqual([
+      'Intro text bold',
+      'Inner para',
+      'tail text'
+    ])
   })
 
   it('tolerates omitted end tags and stray ones', () => {
     const html = `<p>One<p>Two<ul><li>a<li>b</ul></p></div><p>Three&nbsp;&amp; four`
-    expect(blocksFromHtml(html, 'en').map((b) => b.text)).toEqual(['One', 'Two', 'a', 'b', 'Three & four'])
+    expect(blocksFromHtml(html, 'en').map((b) => b.text)).toEqual([
+      'One',
+      'Two',
+      'a',
+      'b',
+      'Three & four'
+    ])
   })
 
   it('inherits lang from ancestors and only marks blocks whose language differs from the document’s', () => {
@@ -270,7 +301,13 @@ describe('the extraction off the wire', () => {
       lang: 'EN-gb',
       blocks: [
         { id: 'b0', kind: 'heading', text: 'Head', at: { path: [1, 0], run: 0, offset: 0 } },
-        { id: 'b1', kind: 'weird', text: 'Body', lang: 'FR', at: { path: [1, 1], run: 1.7, offset: -2 } },
+        {
+          id: 'b1',
+          kind: 'weird',
+          text: 'Body',
+          lang: 'FR',
+          at: { path: [1, 1], run: 1.7, offset: -2 }
+        },
         { id: 'b2', text: 'no position' },
         { id: 'b3', text: 'bad path', at: { path: [-1], run: 0, offset: 0 } },
         'junk'
@@ -282,9 +319,14 @@ describe('the extraction off the wire', () => {
       lang: 'en-gb',
       blocks: [
         { id: 'b0', kind: 'heading', text: 'Head', at: { path: [1, 0], run: 0, offset: 0 } },
-        { id: 'b1', kind: 'paragraph', text: 'Body', lang: 'fr', at: { path: [1, 1], run: 1, offset: 0 } }
+        {
+          id: 'b1',
+          kind: 'paragraph',
+          text: 'Body',
+          lang: 'fr',
+          at: { path: [1, 1], run: 1, offset: 0 }
+        }
       ]
     })
   })
 })
-

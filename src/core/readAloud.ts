@@ -143,7 +143,11 @@ export class ReadAloudService {
       if (this.session !== session) return
       if (extraction) {
         positions = new Map(extraction.blocks.map((b) => [b.id, b.at]))
-        const blocks: ReadAloudBlock[] = extraction.blocks.map(({ at: _at, ...block }) => block)
+        const blocks: ReadAloudBlock[] = extraction.blocks.map((b) =>
+          b.lang
+            ? { id: b.id, kind: b.kind, text: b.text, lang: b.lang }
+            : { id: b.id, kind: b.kind, text: b.text }
+        )
         const lang = extraction.lang || this.detectedLanguage(tab.id) || this.uiLanguage()
         text = {
           source,

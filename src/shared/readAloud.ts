@@ -750,7 +750,7 @@ export function decodeHtmlEntities(text: string): string {
   })
 }
 
-const ATTRIBUTE = /([^\s"'>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
 
 function parseAttributes(source: string): Record<string, string> {
   const attributes: Record<string, string> = {}

@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EXTRACT_TIMEOUT_MS, ReadAloudService, wordEnd } from '../readAloud'
 import type { Browser } from '../browser'
-import type { PageHostMessage, SpeechHost, SpeechHostEvent, SpeechUtteranceOptions } from '../platform'
+import type {
+  PageHostMessage,
+  SpeechHost,
+  SpeechHostEvent,
+  SpeechUtteranceOptions
+} from '../platform'
 import type { ReaderArticle } from '../reader'
 import {
   sanitizeReadAloudSettings,
@@ -138,7 +143,11 @@ interface Harness {
   extractRequests(tabId: string): ReadAloudExtractRequest[]
   highlights(tabId: string): ReadAloudHighlightMessage[]
   /** Answer the latest extraction request of a tab as the page script would. */
-  answer(tabId: string, blocks: Array<Partial<ReadAloudExtractedBlock> & { text: string }>, extra?: { title?: string; lang?: string }): void
+  answer(
+    tabId: string,
+    blocks: Array<Partial<ReadAloudExtractedBlock> & { text: string }>,
+    extra?: { title?: string; lang?: string }
+  ): void
 }
 
 const PAGE = 'https://example.com/article'
@@ -232,7 +241,7 @@ function harness(options: { host?: FakeHost | null } = {}): Harness {
       (views.get(tabId)?.posted ?? []).filter(
         (m): m is ReadAloudHighlightMessage => m.type === 'readAloud' && m.action === 'highlight'
       ),
-    answer: (tabId, blocks, extra = {}) => {
+    answer: (tabId, blocks, extra: { title?: string; lang?: string } = {}) => {
       const requests = requestsOf(tabId)
       const request = requests[requests.length - 1]
       service.handleMessage(tabId, {
@@ -283,12 +292,20 @@ describe('ReadAloudService', () => {
     it('shows loading, asks the page for its text, resolves the voice and speaks the first sentence', async () => {
       h.addTab('t1', PAGE)
       const started = h.service.start({ tabId: 't1' })
-      expect(h.service.uiState()).toMatchObject({ tabId: 't1', status: 'loading', source: 'page', sentenceIndex: -1 })
+      expect(h.service.uiState()).toMatchObject({
+        tabId: 't1',
+        status: 'loading',
+        source: 'page',
+        sentenceIndex: -1
+      })
       await flush()
       const requests = h.extractRequests('t1')
       expect(requests).toHaveLength(1)
       expect(requests[0]).toMatchObject({ from: 'top', keep: null })
-      h.answer('t1', [{ text: 'Hello world. Second sentence.' }, { text: 'Next block.' }], { title: 'Doc', lang: 'en-GB' })
+      h.answer('t1', [{ text: 'Hello world. Second sentence.' }, { text: 'Next block.' }], {
+        title: 'Doc',
+        lang: 'en-GB'
+      })
       await started
       expect(h.service.uiState()).toEqual({
         tabId: 't1',
@@ -341,7 +358,11 @@ describe('ReadAloudService', () => {
       await flush()
       h.answer('t1', [{ text: 'Hallo Welt.' }], { lang: 'de' })
       await started
-      expect(h.service.uiState()).toMatchObject({ status: 'playing', lang: 'de', voiceId: 'Samantha' })
+      expect(h.service.uiState()).toMatchObject({
+        status: 'playing',
+        lang: 'de',
+        voiceId: 'Samantha'
+      })
       expect(h.service.uiState()!.error).toBeUndefined()
     })
 
@@ -352,11 +373,19 @@ describe('ReadAloudService', () => {
       await flush()
       h.answer('t1', [{ text: 'Hello.' }])
       await started
-      expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice', voiceId: null })
+      expect(h.service.uiState()).toMatchObject({
+        status: 'error',
+        error: 'no-voice',
+        voiceId: null
+      })
       expect(h.host.spoken).toHaveLength(0)
       h.host.changeVoices([{ id: 'Late', name: 'Late', lang: 'en', local: true }])
       h.service.setVoice({ voiceId: 'Late' })
-      expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'Late', sentenceIndex: 0 })
+      expect(h.service.uiState()).toMatchObject({
+        status: 'playing',
+        voiceId: 'Late',
+        sentenceIndex: 0
+      })
       expect(h.host.current.options.voiceId).toBe('Late')
     })
 
@@ -393,7 +422,11 @@ describe('ReadAloudService', () => {
       expect(h.extractRequests('t1')[0]).toMatchObject({ from: 'selection' })
       h.answer('t1', [{ text: 'lected text. And more.', at: { path: [1, 3], run: 0, offset: 14 } }])
       await started
-      expect(h.service.uiState()).toMatchObject({ source: 'selection', sentenceIndex: 0, sentenceCount: 2 })
+      expect(h.service.uiState()).toMatchObject({
+        source: 'selection',
+        sentenceIndex: 0,
+        sentenceCount: 2
+      })
       expect(h.highlights('t1')[0].at).toEqual({ path: [1, 3], run: 0, offset: 14 })
 
       started = h.service.start({ tabId: 't1', from: { blockId: 'b2', sentenceIndex: 1 } })
@@ -452,13 +485,20 @@ describe('ReadAloudService', () => {
         voiceId: 'Samantha'
       })
       expect(h.host.current.text).toBe('Head')
-      expect(h.highlights('t1')[0]).toMatchObject({ blockId: 'b0', at: null, sentence: { start: 0, end: 4 } })
+      expect(h.highlights('t1')[0]).toMatchObject({
+        blockId: 'b0',
+        at: null,
+        sentence: { start: 0, end: 4 }
+      })
       expect(view.inserted).toHaveLength(0)
       // The French list item speaks with the French voice; the document's language stays.
       h.host.end()
       h.host.end()
       h.host.end()
-      expect(h.host.current).toMatchObject({ text: 'Bonjour', options: { voiceId: 'Amélie', lang: 'fr' } })
+      expect(h.host.current).toMatchObject({
+        text: 'Bonjour',
+        options: { voiceId: 'Amélie', lang: 'fr' }
+      })
       expect(h.service.uiState()).toMatchObject({ voiceId: 'Amélie', lang: 'en' })
     })
 
@@ -488,7 +528,10 @@ describe('ReadAloudService', () => {
       h.host.start()
       h.host.word(6, 4)
       expect(h.service.uiState()!.word).toEqual({ start: 6, end: 10 })
-      expect(h.highlights('t1').at(-1)).toMatchObject({ sentence: { start: 0, end: 10 }, word: { start: 6, end: 10 } })
+      expect(h.highlights('t1').at(-1)).toMatchObject({
+        sentence: { start: 0, end: 10 },
+        word: { start: 6, end: 10 }
+      })
       // Without a length the word runs to the next space.
       h.host.word(0)
       expect(h.service.uiState()!.word).toEqual({ start: 0, end: 5 })
@@ -504,7 +547,10 @@ describe('ReadAloudService', () => {
       expect(h.host.current.text).toBe('First two.')
       h.host.end()
       expect(h.host.current.text).toBe('Second block.')
-      expect(h.highlights('t1').at(-1)).toMatchObject({ blockId: 'b1', at: { path: [1, 1], run: 0, offset: 0 } })
+      expect(h.highlights('t1').at(-1)).toMatchObject({
+        blockId: 'b1',
+        at: { path: [1, 1], run: 0, offset: 0 }
+      })
       h.host.end()
       h.host.end()
       h.host.end()
@@ -582,7 +628,11 @@ describe('ReadAloudService', () => {
 
     it('reports the host’s error, and resume retries the sentence', () => {
       h.host.error('synthesis-failed')
-      expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'synthesis-failed', word: null })
+      expect(h.service.uiState()).toMatchObject({
+        status: 'error',
+        error: 'synthesis-failed',
+        word: null
+      })
       // Nothing more from the failed utterance counts.
       h.host.end()
       expect(h.service.uiState()!.status).toBe('error')
@@ -661,7 +711,13 @@ describe('ReadAloudService', () => {
       h.translate.preferred = ['de']
       expect(await h.service.voicesResult()).toEqual({
         voices: h.host.voiceList,
-        byLanguage: { en: 'Samantha', 'en-gb': 'Daniel', 'en-us': 'Samantha', fr: 'Amélie', 'fr-ca': 'Amélie' }
+        byLanguage: {
+          en: 'Samantha',
+          'en-gb': 'Daniel',
+          'en-us': 'Samantha',
+          fr: 'Amélie',
+          'fr-ca': 'Amélie'
+        }
       })
     })
   })
