@@ -350,7 +350,11 @@ class Extensions(private val host: Host) {
                 val id = args.str("id")
                 val path = args.str("path")
                 io.execute {
-                    val text = runCatching { fileFor(id, path)?.takeIf { it.isFile }?.readText() }.getOrNull()
+                    // Never a multi-megabyte answer: quoting one took the browser process's heap
+                    // (ExtensionFiles.BRIDGE_TEXT_LIMIT); the runtime streams such files itself.
+                    val file = fileFor(id, path)
+                    val text = ExtensionFiles.bridgeText(file)
+                    if (text == null && file?.isFile == true) Log.w(TAG, "ext.readFile $id $path: ${file.length()} bytes is too large for a bridge answer")
                     main.post { reply(text) }
                 }
             }

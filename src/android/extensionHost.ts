@@ -332,6 +332,15 @@ export class AndroidExtensions implements ExtensionHost {
     return this.io.root
   }
 
+  /**
+   * A file of an installed version (`RuntimeStoreLink.readInstalledFile`): the runtime's
+   * rulesets and stylesheets come this way, streamed by the asset loader rather than quoted
+   * into a bridge answer.
+   */
+  readInstalledFile(dir: string, relative: string): Promise<Uint8Array | null> {
+    return this.io.readInstalledFile(dir, relative)
+  }
+
   async start(): Promise<void> {
     try {
       const swept = await this.io.sweep()
