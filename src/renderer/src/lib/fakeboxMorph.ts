@@ -309,6 +309,24 @@ export function fakeboxBackPulled(value: number): boolean {
   return true
 }
 
+/**
+ * Whether a back's commit on the bar the field morphed into – the gesture let go at `value`, 0
+ * for a back key – is the morph's to run rather than the bar's spring's. It is whenever the
+ * field has not followed the pull: still on its spring toward the bar (a commit mid-flight), or
+ * landed with nothing pulled (a back key; a flick that ended as it landed). The close hook then
+ * runs the closing segment from where the field is, with the velocity carried – not at the end
+ * of the bar's spring to 1, which a field that never followed would meet in a jump (it lands at
+ * the omnibox, and the spring's next frame takes it back from there whole). A field the finger
+ * has pulled part way (`back` > 0) is the spring's: it follows it home, and the close comes as
+ * it lands. Under reduced motion nothing follows a pull, so only the back key is the morph's:
+ * the cut's fade runs at once.
+ */
+export function fakeboxTakesCommit(value: number): boolean {
+  if (!fakeboxOwnsUrlbar() || !geometry) return false
+  if (reducedMotion()) return value <= 0
+  return machine.phase === 'opening' || machine.back <= 0
+}
+
 /** Whether the omnibox on screen is the one the field morphed into. */
 export function fakeboxOwnsUrlbar(): boolean {
   const ui = uiStore.get().urlbar

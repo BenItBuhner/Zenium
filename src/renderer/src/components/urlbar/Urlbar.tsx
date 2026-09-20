@@ -34,7 +34,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
-import { fakeboxBackPulled } from '@renderer/lib/fakeboxMorph'
+import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
@@ -526,6 +526,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       el.style.transformOrigin = '50% 0%'
       el.style.transform = `translateY(${-100 * v}%) scale(${1 - 0.06 * v})`
       el.style.opacity = String(1 - 0.7 * v)
+    },
+    // The bar the field morphed into: a commit the field has not followed – mid-flight, or a
+    // back key with nothing pulled – dismisses on the morph's own closing segment from where the
+    // field is (the close hook starts it), not at the end of the bar's spring, which the field
+    // would meet in a jump. After a pull the bar's spring finishes the way home: the field
+    // follows it (`fakeboxBackPulled`) and the close comes at once when it lands.
+    committed: (value) => {
+      if (!fakeboxTakesCommit(value)) return false
+      close(true)
+      return true
     },
     dismissed: () => close(true)
   })
