@@ -963,21 +963,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * frames the runtime left alone and the shield's state; without the runtime's capture on the
      * page (no `__zenExtStats`), one `none` entry says so.
      */
-    private fun targetErrors(view: WebView): JSONArray =
-        runCatching {
-            JSONArray(
-                JSONTokener(
-                    tabEval(
-                        view,
-                        "JSON.stringify([].concat((window.__errors||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='page';return e})," +
-                            "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})," +
-                            "((window.__zenExtStats&&window.__zenExtStats.frameErrors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='frame';return e})," +
-                            "window.__zenExtStats?[{kept:'stats',untouchedFrames:window.__zenExtStats.untouchedFrames||[],trustedTypes:window.__zenExtStats.trustedTypes,applied:window.__zenExtStats.applied,groups:(window.__zenExtStats.groups||[]).length}]" +
-                            ":[{kept:'none',message:'no __zenExtStats on the page'}]))"
-                    )
-                ).nextValue() as? String ?: "[]"
-            )
-        }.getOrDefault(JSONArray())
+    private fun targetErrors(view: WebView): JSONArray {
+        // tabEval hands a string result back unquoted: the array's text itself.
+        val text = tabEval(
+            view,
+            "JSON.stringify([].concat((window.__errors||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='page';return e})," +
+                "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})," +
+                "((window.__zenExtStats&&window.__zenExtStats.frameErrors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='frame';return e})," +
+                "window.__zenExtStats?[{kept:'stats',untouchedFrames:window.__zenExtStats.untouchedFrames||[],trustedTypes:window.__zenExtStats.trustedTypes,applied:window.__zenExtStats.applied,groups:(window.__zenExtStats.groups||[]).length}]" +
+                ":[{kept:'none',message:'no __zenExtStats on the page'}]))"
+        )
+        return runCatching { JSONArray(text) }.getOrElse { JSONArray().put(JSONObject().put("kept", "unread").put("message", text.take(300))) }
+    }
 
     /**
      * How much slower this job runs than the 113 job at normal speed, the larger of two readings,
