@@ -32,6 +32,24 @@ class PrivateBrowsingTest {
         assertFalse(PrivateBrowsing.captureForRecording)
     }
 
+    /**
+     * The guard has one owner: the chrome's `window.setSecure`, through [PrivateBrowsing.guard].
+     * A second writer reading the page views' visibility (the private session's first cut) missed
+     * the private new tab page, which has no page view, kept the overview's Tabs pane guarded
+     * while private tabs existed, and wrote past the recording override; the flag is written in
+     * the one file.
+     */
+    @Test
+    fun theGuardHasOneOwner() {
+        val sources = listOf("src/main/kotlin", "app/src/main/kotlin").map(::File).firstOrNull { it.isDirectory }
+        assertTrue("src/main/kotlin not found from ${File(".").absolutePath}", sources != null)
+        val writers = sources!!.walkTopDown()
+            .filter { it.extension == "kt" && "LayoutParams.FLAG_SECURE" in it.readText() }
+            .map { it.name }
+            .toList()
+        assertEquals(listOf("PrivateBrowsing.kt"), writers)
+    }
+
     private fun shortcuts() = read(SHORTCUTS_TEMPLATE, "app/$SHORTCUTS_TEMPLATE")
 
     @Test

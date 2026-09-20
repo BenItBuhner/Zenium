@@ -169,7 +169,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
-    override fun onViewsChanged() = privateSession.onViewsChanged()
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
