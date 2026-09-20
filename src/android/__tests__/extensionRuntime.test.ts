@@ -1696,6 +1696,59 @@ describe('AndroidExtensionRuntime: chrome.system.storage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
+  it('reads as the system\u2019s settings that no extension controls, and takes only that value', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['proxy', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    // The shim routes a ChromeSetting's calls as `(setting, details)`.
+    expect(
+      (await call(h, 'bg1', 'proxy', 'get', ['settings', { incognito: false }])).result
+    ).toEqual({
+      value: { mode: 'system' },
+      levelOfControl: 'not_controllable'
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'system' }, scope: 'regular' }
+      ])
+    ).toMatchObject({ ok: true })
+    expect((await call(h, 'bg1', 'proxy', 'clear', ['settings', { scope: 'regular' }])).ok).toBe(
+      true
+    )
+    // A PAC script (what VeePN, NordVPN and Browsec set) has no application on the WebView: the
+    // call fails, so the extension shows its error instead of believing it is connected.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'pac_script', pacScript: { data: 'function FindProxyForURL() {}' } } }
+      ])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('not controllable on Zenium for Android')
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        {
+          value: {
+            mode: 'fixed_servers',
+            rules: { singleProxy: { host: 'p.example', port: 3128 } }
+          }
+        }
+      ])
+    ).toMatchObject({ ok: false, error: expect.stringContaining('not controllable') })
+    // Chrome's own checks come first: a config Chrome refuses is refused with Chrome's message.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', ['settings', { value: { mode: 'nonsense' } }])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('value.mode')
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()
