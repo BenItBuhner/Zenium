@@ -476,6 +476,7 @@ export function V2Sheet({
   handleLabel,
   children,
   api,
+  labelledBy,
   ...data
 }: {
   /** Back-surface name. */
@@ -483,6 +484,11 @@ export function V2Sheet({
   /** A 48 header with this title centred; omitted for a prompt with a `titleBlock`. */
   title?: string
   titleBlock?: ReactNode
+  /**
+   * The id of the element that names the dialog: a `titleBlock`'s `TitleBlock` id. A `title`
+   * names it by itself (`<name>-title`).
+   */
+  labelledBy?: string
   /** The footer slot's content: a `Footer`, or the buttons themselves. */
   footer?: ReactNode
   onDismissed: () => void
@@ -510,6 +516,7 @@ export function V2Sheet({
         onDismissed={onDismissed}
         contentKey={contentKey}
         handleLabel={handleLabel}
+        labelledBy={title ? `${name}-title` : labelledBy}
         header={
           title ? (
             <h2 id={`${name}-title`} className="zen-sheet-title">

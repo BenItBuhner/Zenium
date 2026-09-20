@@ -28,6 +28,7 @@ import { historyAdapter, type ClosedEntrySummary } from '@renderer/lib/historyAd
 import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
+import { tabCardLabel } from '@renderer/lib/overviewLabels'
 import {
   overviewPane,
   pickOverviewPane,
@@ -699,11 +700,19 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   /** A card swiped off the grid is already out of sight: just close the tab. */
   const swipedAway = (tab: Tab): void => undoable([tab], () => run('tab.close', { tabId: tab.id }))
 
+  // The pane's tabs in the order the grid shows them, for what TalkBack says of each card
+  // ("tab 2 of 7", `tabCardLabel`): the essentials' row, the pinned cards, the groups' members
+  // group by group, then the loose cards – the visual order, which is also the DOM's.
+  const ordered = [...essentials, ...pinned, ...groupCards.flatMap((g) => g.tabs), ...loose]
+  const placeOf = (tab: Tab): number => ordered.findIndex((t) => t.id === tab.id) + 1
+
   const card = (tab: Tab): JSX.Element => (
     <OverviewCard
       key={tab.id}
       tab={tab}
       active={tab.id === active?.id}
+      position={placeOf(tab)}
+      count={ordered.length}
       hidden={tab.id === heroTabId && p < 1}
       onPick={pick}
       onClose={(t) => closeTabs([t])}
@@ -835,7 +844,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                         className="zen-essential h-12 w-12"
                         data-active={tab.id === active?.id}
                         data-discarded={tab.discarded}
-                        aria-label={tabTitle(tab)}
+                        aria-label={tabCardLabel(
+                          tabTitle(tab),
+                          placeOf(tab),
+                          ordered.length,
+                          tab.id === active?.id
+                        )}
                         onClick={() => pick(tab)}
                       >
                         <Favicon tab={tab} size={22} />

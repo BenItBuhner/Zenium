@@ -110,7 +110,11 @@ describe('phone shell surfaces (§9.29)', () => {
     )
     const bar = el.querySelector<HTMLElement>('.zen-phone-bar')!
     expect(bar.getAttribute('data-surface')).toBe('window')
-    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    // The pill's surface has no role and no name of its own (A11Y-01: the address button inside
+    // it is the one TalkBack stop); it is found by its class.
+    const pill = el.querySelector<HTMLElement>('.zen-phone-pill')!
+    expect(pill.hasAttribute('role')).toBe(false)
+    expect(pill.hasAttribute('aria-label')).toBe(false)
     expect(pill.getAttribute('data-surface')).toBe('window')
     const chip = pill.querySelector<HTMLElement>('[data-site-info]')!
     expect(chip.closest('[data-surface]')).toBe(pill)

@@ -6,6 +6,7 @@ import { run } from '@renderer/lib/api'
 import { groupColorChannels } from '@renderer/lib/groups'
 import { CELL_ATTR, layoutAnimations } from '@renderer/lib/motion/flip'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { groupCardLabel } from '@renderer/lib/overviewLabels'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -13,8 +14,11 @@ import { departStore } from './departureStore'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
-/** Height of a group card's title row – all a collapsed group shows. */
-export const GROUP_HEADER = 32
+/**
+ * Height of a group card's title row – all a collapsed group shows. The row is itself the button
+ * that folds the group, so it is the phone row's 44 (v2 §9.2, §9.21; A11Y-01's 44 target).
+ */
+export const GROUP_HEADER = 44
 /** The icon folders get by default; a group made on the phone shows its colour instead. */
 export const DEFAULT_FOLDER_ICON = '📁'
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
@@ -231,7 +235,7 @@ export function GroupCard({
       <div
         role="button"
         tabIndex={0}
-        aria-label={`Group ${folder.name}`}
+        aria-label={groupCardLabel(folder.name, count)}
         aria-expanded={!collapsed}
         className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2"
         style={{ height: GROUP_HEADER }}

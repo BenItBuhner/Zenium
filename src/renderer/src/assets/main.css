@@ -451,14 +451,14 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  height: 20px;
+  height: var(--v2-line-small);
   padding: 0 8px;
   border-radius: 999px;
   background: var(--v2-control-fill, var(--v2-fill));
   color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-heading);
-  line-height: 20px;
+  line-height: var(--v2-line-small);
   white-space: nowrap;
 }
 
@@ -2462,7 +2462,7 @@
     white-space: nowrap;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-sheet-header-control {
     position: absolute;
@@ -2654,7 +2654,7 @@
     margin: 0;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-sheet-title-block p {
     margin: 0;
@@ -3376,7 +3376,7 @@
     padding: 16px 16px 0;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
     text-align: center;
   }
   /*
@@ -3429,13 +3429,13 @@
     font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.012em;
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-bm-title-desc {
     margin-top: 4px;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
   }
   /* The body of a form popover or dialog: the title block's 16 above it, 16 to the sides and below. */
   .zen-bm-form {
@@ -3590,7 +3590,7 @@
     gap: 4px;
     color: var(--v2-text);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-small);
     font-weight: 400;
   }
   .zen-bm-dim {
@@ -3739,7 +3739,7 @@
     border-radius: 4px;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
     text-overflow: ellipsis;
     white-space: nowrap;
     transition:
@@ -5803,6 +5803,18 @@
   width: 32px;
   height: 32px;
   border-radius: 9px;
+}
+/*
+ * The phone's icon button is v2 §9.3's one box – 44 × 44, hit area and fill alike, radius 8 – for
+ * every `.zen-toolbar-button` the phone draws (the bar's controls, the overview header's, a tab
+ * card's close), over the 32 above; the glyph inside keeps its 20 (A11Y-01). The surfaces that
+ * already set 44 with a shape of their own (the find bar's 12, the omnibox field's round end cap)
+ * are more specific and keep it.
+ */
+:root[data-form-factor='phone'] .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
 }
 :root[data-pointer='coarse'] .zen-tab {
   height: 42px;
@@ -8247,7 +8259,7 @@
     margin: 0 0 16px;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   /*
    * A row: the base height (§9.2, one line 32 / two lines 52, padding 6) or, holding a control,
@@ -8361,14 +8373,14 @@
     display: inline-flex;
     align-items: center;
     flex-shrink: 0;
-    height: 20px;
+    height: var(--v2-line-small);
     padding: 0 8px;
     border-radius: 999px;
     background: var(--v2-fill);
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-small);
     font-weight: var(--v2-weight-heading);
-    line-height: 20px;
+    line-height: var(--v2-line-small);
     white-space: nowrap;
   }
   .zen-omnibox-results {

@@ -3,6 +3,7 @@ import { useRef } from 'react'
 import { Moon, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
+import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -12,8 +13,11 @@ import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 
 /** Corner radius of a tab card; the page morphs from the content radius to this. */
 export const CARD_RADIUS = 14
-/** Height of a card's title row. */
-export const CARD_HEADER = 40
+/**
+ * Height of a card's title row: the row holds the card's close, a §9.3 phone icon button of 44,
+ * and a phone row holding a 44 icon button is 44 (§9.21, as the list rows are).
+ */
+export const CARD_HEADER = 44
 /**
  * How far past the grid's edges a card counts as on screen, as a share of the grid's height
  * (`useOnScreen` measures from the card's scroller): about a row of cards, so the pictures of
@@ -26,6 +30,12 @@ const CARD_LOOKAHEAD = '35% 0px'
 interface Props {
   tab: Tab
   active: boolean
+  /**
+   * The card's place among the pane's tabs, for what TalkBack says of it ("tab 2 of 7",
+   * `tabCardLabel`): 1-based, in the grid's order.
+   */
+  position: number
+  count: number
   /** The hero stands in for this card while the page morphs into it. */
   hidden: boolean
   onPick: (tab: Tab) => void
@@ -47,6 +57,8 @@ interface Props {
 export function OverviewCard({
   tab,
   active,
+  position,
+  count,
   hidden,
   onPick,
   onClose,
@@ -80,7 +92,7 @@ export function OverviewCard({
         data-active={active}
         data-discarded={tab.discarded || undefined}
         style={style}
-        aria-label={tab.discarded ? `${tabTitle(tab)} – sleeping` : tabTitle(tab)}
+        aria-label={tabCardLabel(tabTitle(tab), position, count, active, tab.discarded === true)}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
@@ -117,8 +129,13 @@ export function CardBody({
 }): JSX.Element {
   return (
     <>
+      {/*
+        The close is the phone's 44 icon button (§9.3, main.css's phone rule on
+        `.zen-toolbar-button`), flush with the card's edge so the whole box stays inside the
+        card's clip; the row is its 44 (`CARD_HEADER`, §9.21).
+      */}
       <header
-        className="flex shrink-0 items-center gap-2 pl-3 pr-1"
+        className="flex shrink-0 items-center gap-2 pl-3 pr-0"
         style={{ height: CARD_HEADER }}
       >
         <span className="zen-overview-card-favicon flex shrink-0">
@@ -141,7 +158,7 @@ export function CardBody({
           <button
             type="button"
             className="zen-toolbar-button h-8 w-8 rounded-[10px]"
-            aria-label="Close tab"
+            aria-label={closeTabLabel(tabTitle(tab))}
             onClick={(e) => {
               e.stopPropagation()
               onClose?.(tab)

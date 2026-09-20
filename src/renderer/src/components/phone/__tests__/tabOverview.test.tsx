@@ -32,6 +32,9 @@ const { BAR_ITEMS, barContext, tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
 const { GROUP_HEADER, GROUP_PAD } = await import('../GroupCard')
+/** Where a group's member rows sit: the title row, the inset, then a 130 card and its 12 gap. */
+const ROW_1 = GROUP_HEADER + 4
+const ROW_2 = ROW_1 + 142
 const { collectCells, FlipTracker, layoutAnimations, REDUCED_FADE_MS } =
   await import('@renderer/lib/motion/flip')
 const { SLOT_DWELL_MS } = await import('@renderer/lib/gestures/dropTarget')
@@ -134,8 +137,8 @@ const DEFAULT_LAYOUT: Array<[string, DOMRect]> = [
   [GRID, new DOMRect(0, 0, 220, 600)],
   [SLOT, new DOMRect(4, 56, 212, 600)],
   [`group:${GROUP}`, new DOMRect(0, 0, 220, 170)],
-  ['m1', new DOMRect(10, 36, 100, 130)],
-  ['m2', new DOMRect(120, 36, 100, 130)],
+  ['m1', new DOMRect(10, ROW_1, 100, 130)],
+  ['m2', new DOMRect(120, ROW_1, 100, 130)],
   ['a', new DOMRect(0, 180, 100, 130)],
   ['b', new DOMRect(110, 180, 100, 130)],
   [NEW_TAB_CELL, new DOMRect(0, 320, 100, 130)]
@@ -729,9 +732,9 @@ describe('a drop on a card', () => {
     const twoRows = 2 * 130 + 12 + GROUP_PAD
     bodyHeights.set(`group:${GROUP}`, twoRows)
     place(`group:${GROUP}`, 0, 0, 220, GROUP_HEADER + twoRows)
-    place('c', 10, 36)
-    place('a', 120, 36)
-    place('b', 10, 178)
+    place('c', 10, ROW_1)
+    place('a', 120, ROW_1)
+    place('b', 10, ROW_2)
     place(NEW_TAB_CELL, 0, GROUP_HEADER + twoRows + 10)
     land(
       stateOf([
@@ -764,9 +767,9 @@ describe('a group changing height', () => {
     // The group card is 32 + 6 + 2 × 130 + 12 = 312 tall; a and the New Tab card are under it.
     bodyHeights.set(`group:${GROUP}`, bodyOf(2))
     place(`group:${GROUP}`, 0, 0, 220, groupOf(2))
-    place('m1', 10, 36)
-    place('m2', 120, 36)
-    place('m3', 10, 178)
+    place('m1', 10, ROW_1)
+    place('m2', 120, ROW_1)
+    place('m3', 10, ROW_2)
     place('a', 0, groupOf(2) + 10)
     place(NEW_TAB_CELL, 110, groupOf(2) + 10)
     render(three())
@@ -797,7 +800,7 @@ describe('a group changing height', () => {
     expect(group.style.height).toBe(`${groupOf(2)}px`)
     // …m3 glides from its inner slot to its loose one, from the first frame (drawn against the
     // slot it will rest in once the height has settled, not the one the browser has it in now)…
-    expect(translate(m3)).toEqual({ x: 10, y: 178 - (groupOf(2) + 10) })
+    expect(translate(m3)).toEqual({ x: 10, y: ROW_2 - (groupOf(2) + 10) })
     // …and a and the New Tab card, whose slots changed too, are held where they were: a is laid
     // out one column over now and drawn back where it was; nothing below moves yet.
     expect(translate(a)).toEqual({ x: -110, y: 0 })
@@ -838,8 +841,8 @@ describe('a group changing height', () => {
     // A group of two across the top (one row), then two loose cards, then the New Tab card.
     bodyHeights.set(`group:${GROUP}`, bodyOf(1))
     place(`group:${GROUP}`, 0, 0, 220, groupOf(1))
-    place('m1', 10, 36)
-    place('m2', 120, 36)
+    place('m1', 10, ROW_1)
+    place('m2', 120, ROW_1)
     place('a', 0, groupOf(1) + 10)
     place('b', 110, groupOf(1) + 10)
     place(NEW_TAB_CELL, 0, groupOf(1) + 150)
@@ -856,7 +859,7 @@ describe('a group changing height', () => {
     // holds the old height for the commit, so the row below is laid out where it was, one card
     // shorter; b is laid out in its inner slot, the second row of the body.
     bodyHeights.set(`group:${GROUP}`, bodyOf(2))
-    place('b', 10, 178)
+    place('b', 10, ROW_2)
     place('a', 0, groupOf(1) + 10)
     place(NEW_TAB_CELL, 110, groupOf(1) + 10)
     render(
@@ -928,7 +931,7 @@ describe('a group changing height', () => {
     ])
     bodyHeights.set(`group:${GROUP}`, bodyOf(1))
     place(`group:${GROUP}`, 0, 0, 100, groupOf(1))
-    place('m1', 6, 36)
+    place('m1', 6, ROW_1)
     place('a', 110, 0)
     place('b', 0, groupOf(1) + 10)
     place(NEW_TAB_CELL, 110, groupOf(1) + 10)
@@ -964,7 +967,7 @@ describe('a group changing height', () => {
     const m1 = cellOf('m1')
     const b = cellOf('b')
     const plus = cellOf(NEW_TAB_CELL)
-    expect(translate(m1)).toEqual({ x: 6, y: 36 })
+    expect(translate(m1)).toEqual({ x: 6, y: ROW_1 })
     expect(translate(b)).toEqual({ x: 0, y: groupOf(1) + 10 - 140 })
     expect(translate(plus)).toEqual({ x: 0, y: groupOf(1) + 10 - 140 })
     const shrank = framesUntil(() => parseFloat(group.style.height) < groupOf(1) - 40)
@@ -1010,8 +1013,8 @@ describe('a group changing height', () => {
     }
     bodyHeights.set(`group:${GROUP}`, bodyOf(1))
     rowBelowAt(start)
-    place('a', 10, 36)
-    place('b', 120, 36)
+    place('a', 10, ROW_1)
+    place('b', 120, ROW_1)
     render(
       stateOf([
         tab('a', 'https://a.example/', { folderId: GROUP }),
@@ -1026,8 +1029,8 @@ describe('a group changing height', () => {
     expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
     expect(group.style.height).toBe(`${start}px`)
     // …a and b glide into their inner slots from the first frame…
-    expect(translate(cellOf('a'))).toEqual({ x: -10, y: -36 })
-    expect(translate(cellOf('b'))).toEqual({ x: -10, y: -36 })
+    expect(translate(cellOf('a'))).toEqual({ x: -10, y: -ROW_1 })
+    expect(translate(cellOf('b'))).toEqual({ x: -10, y: -ROW_1 })
     // …and c and the New Tab card are held where they were while the group grows under them.
     const c = cellOf('c')
     const plus = cellOf(NEW_TAB_CELL)
@@ -1115,8 +1118,8 @@ describe('a group changing height', () => {
     }
     bodyHeights.set(`group:${GROUP}`, bodyOf(1))
     rowBelowAt(start)
-    place('a', 10, 36)
-    place('c', 120, 36)
+    place('a', 10, ROW_1)
+    place('c', 120, ROW_1)
     render(
       stateOf([
         tab('a', 'https://a.example/', { folderId: GROUP }),
@@ -1137,8 +1140,8 @@ describe('a group changing height', () => {
     expect(layoutAnimations.has(`group:${GROUP}`)).toBe(true)
     expect(group.style.height).toBe(`${start}px`)
     // …a and c gliding into their inner slots from their loose ones, b held where it was.
-    expect(translate(cellOf('c'))).toEqual({ x: -120, y: -36 })
-    expect(translate(cellOf('a'))).toEqual({ x: 100, y: -36 })
+    expect(translate(cellOf('c'))).toEqual({ x: -120, y: -ROW_1 })
+    expect(translate(cellOf('a'))).toEqual({ x: 100, y: -ROW_1 })
     expect(cellOf('b').style.transform).toBe('')
     // The height runs out, the row below laid out for it; the ghost lands; the chrome comes on
     // at the end – and no second height run, no second glide, follows the landing.
@@ -1185,7 +1188,7 @@ describe('the New Tab card', () => {
     plus.animate = animate
 
     // c closes from its card: c departs in place – only c.
-    const close = cellOf('c').querySelector<HTMLElement>('[aria-label="Close tab"]')!
+    const close = cellOf('c').querySelector<HTMLElement>('[aria-label^="Close "]')!
     act(() => close.click())
     expect(commands()).toEqual([['tab.close', { tabId: 'c' }]])
     expect(departStore.get().items.map((i) => i.key)).toEqual(['c'])
@@ -1283,7 +1286,7 @@ describe('under reduced motion', () => {
   it('a closing card fades out in place over 120 ms with no shrink, and its neighbours cross-fade into their slots', () => {
     render(loose())
     const plus = cellOf(NEW_TAB_CELL)
-    const close = cellOf('c').querySelector<HTMLElement>('[aria-label="Close tab"]')!
+    const close = cellOf('c').querySelector<HTMLElement>('[aria-label^="Close "]')!
     act(() => close.click())
     expect(departStore.get().items.map((i) => i.key)).toEqual(['c'])
     // Still over its card until the browser shows the close: nothing has started.
