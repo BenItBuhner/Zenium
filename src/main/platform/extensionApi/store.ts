@@ -5,6 +5,7 @@ import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { ContentSettingRule } from '../../../core/extensions/api/contentSettings'
 import type { PersistedMenuItem } from '../../../core/extensions/api/contextMenus'
+import type { InstanceIdRecord } from '../../../core/extensions/api/instanceId'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
 import type { StorageItems } from '../../../core/extensions/api/storage'
@@ -33,6 +34,8 @@ interface PersistedApi {
    * storage): parents before children, restored when the extension loads.
    */
   contextMenus?: Record<string, PersistedMenuItem[]>
+  /** `chrome.instanceID`: the ID generated for the install and when (until `deleteID`). */
+  instanceIds?: Record<string, InstanceIdRecord>
 }
 
 function emptyPersisted(): PersistedApi {
@@ -47,7 +50,8 @@ function emptyPersisted(): PersistedApi {
     privacy: {},
     proxy: {},
     contentSettings: {},
-    contextMenus: {}
+    contextMenus: {},
+    instanceIds: {}
   }
 }
 
@@ -186,6 +190,18 @@ export class ApiStore {
     this.save()
   }
 
+  /** The Instance ID record, unvalidated (`isInstanceIdRecord` validates). */
+  instanceId(extensionId: string): unknown {
+    return this.data.instanceIds?.[extensionId]
+  }
+
+  setInstanceId(extensionId: string, record: InstanceIdRecord | null): void {
+    const all = this.data.instanceIds ?? (this.data.instanceIds = {})
+    if (record) all[extensionId] = record
+    else delete all[extensionId]
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -198,6 +214,7 @@ export class ApiStore {
     delete this.data.proxy?.[extensionId]
     delete this.data.contentSettings?.[extensionId]
     delete this.data.contextMenus?.[extensionId]
+    delete this.data.instanceIds?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
     this.setUserScripts(extensionId, null)

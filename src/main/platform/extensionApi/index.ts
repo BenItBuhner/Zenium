@@ -105,6 +105,7 @@ import { TabCaptureApi } from './tabCapture'
 import { electronStreamRegistrar } from './tabCaptureBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
+import { InstanceIdApi } from './instanceId'
 import { TtsApi } from './tts'
 import { sharedSpeechEngine } from './ttsBridge'
 import { UserScriptsApi } from './userScripts'
@@ -211,6 +212,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
+  readonly instanceId: InstanceIdApi
   readonly systemDisplay: SystemDisplayApi
   readonly systemStorage: SystemStorageApi
   readonly tabGroups: TabGroupsApi
@@ -310,6 +312,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.downloads = new DownloadsApi(this, downloadBridge)
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
+    this.instanceId = new InstanceIdApi(this)
     this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
     this.systemStorage = new SystemStorageApi(this)
     this.tabGroups = new TabGroupsApi(this)
@@ -344,6 +347,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       downloads: this.downloads.handlers,
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
+      instanceID: this.instanceId.handlers,
       'system.display': this.systemDisplay.handlers,
       'system.storage': this.systemStorage.handlers,
       tabGroups: this.tabGroups.handlers,

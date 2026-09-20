@@ -883,6 +883,21 @@ export const API_SPEC: ApiSpec = {
     shape: true,
     permissions: ['gcm']
   },
+  // Chrome exposes `instanceID` with the `gcm` permission. The ID itself is local (Chrome
+  // generates it without the server), so `getID` is stable per install, `getCreationTime` dates
+  // it and `deleteID` drops it; tokens are GCM's, so `getToken` / `deleteToken` fail as Chrome's
+  // Instance ID does with GCM off (WPS PDF watches `getID` from its popup and options).
+  instanceID: {
+    methods: {
+      getID: { params: [] },
+      getCreationTime: { params: [] },
+      getToken: { params: [object('getTokenParams')] },
+      deleteToken: { params: [object('deleteTokenParams')] },
+      deleteID: { params: [] }
+    },
+    events: { onTokenRefresh: {} },
+    permissions: ['gcm']
+  },
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
   // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
   // `getLayout` reports the side the strip docks on.

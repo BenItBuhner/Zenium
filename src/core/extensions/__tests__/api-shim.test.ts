@@ -355,6 +355,30 @@ describe('installExtensionApi', () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
+  it('gives the gcm permission chrome.instanceID too, routed to the host (WPS PDF watches getID)', async () => {
+    const manifest = { manifest_version: 3, name: 'Probe', version: '1.0', permissions: ['gcm'] }
+    g.chrome.runtime.getManifest = () => manifest
+    installExtensionApi(host, API_SPEC)
+    host.respond = (_ns, method) =>
+      method === 'getID'
+        ? { ok: true, value: 'dJ8_Q1x2kYs' }
+        : { ok: false, error: 'Instance ID is disabled.' }
+    expect(await g.chrome.instanceID.getID()).toBe('dJ8_Q1x2kYs')
+    await expect(
+      g.chrome.instanceID.getToken({ authorizedEntity: '1234567890', scope: 'GCM' })
+    ).rejects.toThrow('Instance ID is disabled.')
+    expect(host.calls.map((c) => `${c.namespace}.${c.method}`)).toEqual([
+      'instanceID.getID',
+      'instanceID.getToken'
+    ])
+    expect(g.chrome.instanceID.onTokenRefresh.addListener).toBeTypeOf('function')
+    // Without the permission there is no namespace, as in Chrome.
+    installNativeGlobals(3)
+    g.chrome.runtime.getManifest = () => ({ ...manifest, permissions: ['storage'] })
+    installExtensionApi(host, API_SPEC)
+    expect(g.chrome.instanceID).toBeUndefined()
+  })
+
   it('exposes browserAction instead of action for MV2', () => {
     installNativeGlobals(2)
     const diag = installExtensionApi(host, API_SPEC)
