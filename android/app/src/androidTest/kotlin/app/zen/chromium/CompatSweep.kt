@@ -1986,10 +1986,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         extra.put("pick", pick)
         val found = pollExpr(view, CURSOR_STYLE, scaled(14_000, factor))
         extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        // The pick resolves on the cursor image's `onload` (an `Image` with crossOrigin from the
+        // vendor's CDN, drawn to a canvas, stored as a data URL) and has no `onerror`: a CDN that
+        // refuses the job's emulator (Cloudflare's bot check, which the vendor's welcome tab met
+        // too) hangs the pick before `selected` is written. Asked from the popup, as its own load goes.
+        var cdn = JSONObject()
+        if (popup != null && !found.optBoolean("pass")) {
+            cdn = probe(popup, CURSOR_CDN_PROBE, "__zenCdn", scaled(12_000, factor))
+            extra.put("cdn", cdn)
+        }
         SystemClock.sleep(600)
         snap("${entry.optString("slug")}-cursor-popup")
         runCatching { coreInvoke("extension.closePopup", "null") }
-        return Grade(if (found.optBoolean("pass")) "P" else "F", "Custom Cursor: popup ${if (popup == null) "did not render" else "picked ${pick.toString().take(110)}"}; fixture page cursor ${found.toString().take(200)}", extra)
+        val cdnRefused = cdn.optBoolean("done") && (cdn.optInt("status", 0) !in 200..299 || !cdn.optString("type").startsWith("image/"))
+        val verdict = if (found.optBoolean("pass")) "P" else if (cdnRefused) "n/m" else "F"
+        val cdnNote = if (cdn.optBoolean("done")) "; the vendor's CDN answered the popup ${cdn.optString("status", "?")} ${cdn.optString("type").ifEmpty { cdn.optString("error") }} (${cdn.optInt("thumbsBroken")}/${cdn.optInt("thumbs")} pack thumbnails broken)" else ""
+        return Grade(verdict, "Custom Cursor: popup ${if (popup == null) "did not render" else "picked ${pick.toString().take(110)}"}; fixture page cursor ${found.toString().take(200)}$cdnNote", extra)
     }
 
     /**
@@ -2189,8 +2201,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var click = JSONObject().put("clicked", false)
         if (popup != null) {
             SystemClock.sleep(scaled(4_000, factor))
-            // The popup opens on its Record tab; the screenshot actions live under the Screenshot tab.
-            extra.put("screenshotTab", tabEval(popup, "(function(){var el=Array.prototype.slice.call(document.querySelectorAll('.tab-header-item')).find(function(n){return /^screenshot$/i.test(n.textContent.trim())});if(el)el.click();return String(!!el)})()"))
+            // The popup opens on its Record tab; the screenshot actions live under the Screenshot tab,
+            // whose header is an icon named by `data-tab="screenshot"` (4.4.x), a text "Screenshot" before.
+            extra.put("screenshotTab", tabEval(popup, "(function(){var el=document.querySelector('.tab-header-item[data-tab=\"screenshot\"]')||Array.prototype.slice.call(document.querySelectorAll('.tab-header-item')).find(function(n){return /^screenshot$/i.test(n.textContent.trim())});if(el)el.click();return String(!!el)})()"))
             SystemClock.sleep(scaled(1_500, factor))
             click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, AWESOME_VISIBLE_CLICK)).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, AWESOME_VISIBLE_CLICK))
             if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
@@ -3321,6 +3334,15 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return visible(i)&&/\\.(png|svg|cur|gif)/i.test(i.src)&&!/logo/i.test(i.src+i.alt+i.className)});var hit=cards[0]||imgs[1]||imgs[0];" +
                 "if(!hit)return JSON.stringify({clicked:false,imgs:imgs.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();hit.click();" +
                 "return JSON.stringify({clicked:true,tag:hit.tagName,cls:String(hit.className).slice(0,50),x:r.left+r.width/2,y:r.top+r.height/2,imgs:imgs.length})})()"
+        /**
+         * Custom Cursor's CDN as its popup reaches it: one cursor image fetched from the popup (a
+         * CORS request of the extension origin, as the pick's `Image` with crossOrigin is), with
+         * the status and type it answered, and the pack thumbnails that failed to load.
+         */
+        private const val CURSOR_CDN_PROBE =
+            "(function(){var p=window.__zenCdn={done:false,status:0,type:'',error:null,thumbs:0,thumbsBroken:0};var imgs=Array.prototype.slice.call(document.querySelectorAll('img')).filter(function(i){return /cdn\\.custom-cursor\\.com/.test(i.src)});" +
+                "p.thumbs=imgs.length;p.thumbsBroken=imgs.filter(function(i){return i.complete&&i.naturalWidth===0}).length;" +
+                "fetch('https://cdn.custom-cursor.com/db/cursor/pointer_6.png',{cache:'no-store'}).then(function(r){p.status=r.status;p.type=r.headers.get('content-type')||'';p.done=true}).catch(function(e){p.error=String(e&&e.message||e);p.done=true});return 'asked'})()"
         /** The fixture page's cursor: Custom Cursor's `<style id="custom-cursor">` and the computed `cursor` of html / body. */
         private const val CURSOR_STYLE =
             "(function(){var st=document.getElementById('custom-cursor');var body=getComputedStyle(document.body).cursor;var html=getComputedStyle(document.documentElement).cursor;" +
