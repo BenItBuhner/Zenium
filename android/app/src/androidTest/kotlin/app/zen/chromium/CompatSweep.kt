@@ -1493,7 +1493,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * address is `P`. A missing `chrome.proxy` (the worker's `TypeError`) or a "not implemented"
      * rejection is `F`, ours.
      */
-    private fun vpn(label: String): (Row, JSONObject) -> Grade = { row, entry ->
+    private fun vpn(label: String, pac: Boolean = false): (Row, JSONObject) -> Grade = { row, entry ->
         val extra = JSONObject()
         val factor = speedFactor(entry)
         val bg = backgroundView(row.id)
@@ -1539,6 +1539,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             changed -> Grade("P", "$label: the egress address changed after the connect tap: $note", extra)
             !proxy.optBoolean("pass") -> Grade("F", "$label: the proxy API is not Chrome's shape in the worker: $note", extra)
             popup == null -> Grade("F", "$label: popup did not render in the core check: $note", extra)
+            // The WebView takes one fixed-rule proxy override per app (ProxyController) and no PAC
+            // script; an extension that connects by `pac_script` cannot route the phone's traffic.
+            pac -> Grade("n/a", "$label: the proxy API answers and the popup renders its controls; it connects with a pac_script proxy config, which the WebView cannot apply (ProxyController takes fixed rules and a bypass list only: WebView limit): $note", extra)
             else -> Grade("n/m", "$label: the proxy API answers and the popup renders its controls; a routed egress needs the vendor's live VPN service and its account (not measurable here): $note", extra)
         }
     }
@@ -1807,8 +1810,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("bgnkhhnnamicmpeenaelnjfhikgbkllg", "AdGuard AdBlocker", "adguard", core = ::adBlocker),
         Row("inoeonmfapjbbkmdafoankkfajkcphgd", "Read&Write for Google Chrome", "read-and-write", core = accountGate("Read&Write", Regex("texthelp|readwrite|read&write", RegexOption.IGNORE_CASE))),
         Row("fcoeoabgfenejglbffodgkkbkcdhcgfn", "Claude", "claude", core = accountGate("Claude", Regex("claude\\.ai|anthropic", RegexOption.IGNORE_CASE), page = "sidepanel.html")),
-        Row("majdfhpaihoncoakbjgbdhglocklcgno", "VeePN", "veepn", core = vpn("VeePN")),
-        Row("fjoaledfpmneenckfbpdfhkmimnjocfa", "NordVPN", "nordvpn", core = vpn("NordVPN")),
+        Row("majdfhpaihoncoakbjgbdhglocklcgno", "VeePN", "veepn", core = vpn("VeePN", pac = true)),
+        Row("fjoaledfpmneenckfbpdfhkmimnjocfa", "NordVPN", "nordvpn", core = vpn("NordVPN", pac = true)),
         Row("ljglajjnnkapghbckkcmodicjhacbfhk", "Microsoft Power Automate", "power-automate", core = serviceBacked("Microsoft Power Automate", "flows run through Power Automate for desktop over native messaging and a work account", native = true)),
         Row("nkbihfbeogaeaoehlefnkodbefgpgknn", "MetaMask", "metamask", core = ::walletProvider),
         Row("nenlahapcbofgnanklpelkaejcehkggg", "Capital One Shopping", "capital-one-shopping", core = accountGate("Capital One Shopping", Regex("capitalone|wikibuy", RegexOption.IGNORE_CASE))),
@@ -1823,7 +1826,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("eiaeiblijfjekdanodkjadfinkhbfgcd", "NordPass", "nordpass", account = true, core = popupLogin("NordPass")),
         Row("ekhagklcjbdpajgpjgmbionohlpdbjgc", "Zotero Connector", "zotero", core = ::zotero),
         Row("flliilndjeohchalpbbcdekjklbdgfkk", "Avira Browser Safety", "avira-browser-safety", core = siteVerdict("Avira Browser Safety")),
-        Row("omghfjlpggmjjaagoclmmobgdodcjboh", "Browsec VPN", "browsec", core = vpn("Browsec")),
+        Row("omghfjlpggmjjaagoclmmobgdodcjboh", "Browsec VPN", "browsec", core = vpn("Browsec", pac = true)),
         Row("caljgklbbfbcjjanaijlacgncafpegll", "Avira Password Manager", "avira-password-manager", core = accountGate("Avira Password Manager", Regex("avira", RegexOption.IGNORE_CASE)))
     )
 
