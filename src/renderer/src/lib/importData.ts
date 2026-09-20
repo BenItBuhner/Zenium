@@ -125,7 +125,7 @@ export function kindRows(
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`
 }
 
 const ITEM: Record<ImportKind, [string, string]> = {
@@ -150,11 +150,13 @@ export function outcomeLines(kind: ImportKind, outcome: ImportKindOutcome): stri
   if (outcome.duplicates > 0)
     skipped.push(
       kind === 'history'
-        ? `${outcome.duplicates} already in your history`
-        : `${outcome.duplicates} already saved`
+        ? `${outcome.duplicates.toLocaleString()} already in your history`
+        : `${outcome.duplicates.toLocaleString()} already saved`
     )
-  if (outcome.unreadable > 0) skipped.push(`${outcome.unreadable} could not be opened`)
-  if (outcome.invalid > 0) skipped.push(`${outcome.invalid} unusable`)
+  // The engine's keyring note counts the unopened ones itself, with the reason: once is enough.
+  if (outcome.unreadable > 0 && !outcome.note?.includes('could not be opened'))
+    skipped.push(`${outcome.unreadable.toLocaleString()} could not be opened`)
+  if (outcome.invalid > 0) skipped.push(`${outcome.invalid.toLocaleString()} unusable`)
   if (skipped.length) lines.push(skipped.join(', '))
   if (outcome.note) lines.push(outcome.note)
   return lines

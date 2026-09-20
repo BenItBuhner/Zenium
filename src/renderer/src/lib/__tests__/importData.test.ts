@@ -215,6 +215,25 @@ describe('the words for what an import did', () => {
       '2 passwords imported',
       '5 could not be opened'
     ])
+    // The engine's keyring note already counts the unopened ones with the reason: said once.
+    expect(
+      outcomeLines(
+        'passwords',
+        outcome({
+          imported: 2,
+          unreadable: 1,
+          note: '1 password could not be opened: they are protected by the system keyring, which could not be read.'
+        })
+      )
+    ).toEqual([
+      '2 passwords imported',
+      '1 password could not be opened: they are protected by the system keyring, which could not be read.'
+    ])
+    // Counts read with digit grouping (the chrome's convention for item counts).
+    expect(outcomeLines('history', outcome({ imported: 24000, duplicates: 1200 }))).toEqual([
+      `${(24000).toLocaleString()} visits imported`,
+      `${(1200).toLocaleString()} already in your history`
+    ])
     // A kind that failed says why instead of counting.
     expect(outcomeLines('passwords', outcome({ error: 'The keyring kept its secret.' }))).toEqual([
       'The keyring kept its secret.'

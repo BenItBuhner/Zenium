@@ -177,6 +177,9 @@ function canImport(form: ImportForm): boolean {
 }
 
 const NOTE = 'flex items-start gap-2 px-4 text-[13px] leading-5'
+// A line with the spinner on it clips: the glyph's rotation would otherwise count as scrollable
+// overflow at the body's bottom edge and put a scrollbar on the dialog for the run's length.
+const SPINNER_LINE = cn(NOTE, 'overflow-hidden text-[var(--v2-text-deemphasized)]')
 
 /** The form: the source rows, the kind boxes, the running-browser line, the busy status. */
 function Body({ form }: { form: ImportForm }): JSX.Element {
@@ -184,7 +187,7 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
   const { group, source } = form
   if (form.phase === 'loading') {
     return (
-      <div className={cn(NOTE, 'py-2 text-[var(--v2-text-deemphasized)]')} role="status">
+      <div className={cn(SPINNER_LINE, 'py-2')} role="status">
         <Spinner />
         <span>Looking for other browsers on this computer…</span>
       </div>
@@ -251,11 +254,7 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
         </p>
       )}
       {busy && form.progress && (
-        <p
-          className={cn(NOTE, 'pt-2 text-[var(--v2-text-deemphasized)]')}
-          role="status"
-          data-testid="import-progress"
-        >
+        <p className={cn(SPINNER_LINE, 'pt-2')} role="status" data-testid="import-progress">
           <Spinner className="mt-0.5" />
           <span>{progressLine(form.progress)}</span>
         </p>
