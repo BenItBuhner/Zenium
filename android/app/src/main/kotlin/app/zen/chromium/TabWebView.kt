@@ -284,8 +284,7 @@ class TabWebView(
     fun applyPrivacy() {
         val flags = host.privacy.flags
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
-        settings.mixedContentMode =
-            if (flags.httpsOnly == "always") WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        applyMixedContentPolicy(flags, currentDocument)
         applyCookiePolicy(flags, currentDocument)
         val script = flags.navigatorScript()
         if (script != signalScript) {
@@ -302,6 +301,20 @@ class TabWebView(
     private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
         // The jar of this tab's container: a WebView on another profile is not the default jar's.
         Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
+    }
+
+    /**
+     * An extension's own page in this tab (served on `https://<id>.ext.zenium.invalid/`) fetches
+     * plaintext URLs freely: in Chrome a `chrome-extension:` document is not a mixed-content
+     * restricting origin, only `https:` is, and Stylus's install page reads a usercss off the
+     * `http:` site it came from. Every other document follows the HTTPS-only setting.
+     */
+    private fun applyMixedContentPolicy(flags: PrivacyFlags, documentUrl: String?) {
+        settings.mixedContentMode = when {
+            documentUrl != null && ExtensionUrls.isExtensionUrl(documentUrl) -> WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            flags.httpsOnly == "always" -> WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            else -> WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        }
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -1070,6 +1083,7 @@ class TabWebView(
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) {
             val flags = host.privacy.flags
+            applyMixedContentPolicy(flags, url)
             applyCookiePolicy(flags, url)
             if (retriesFailedEntry(url)) {
                 // The address the core's error page stands in for, asked for again (Proceed past
@@ -1097,6 +1111,7 @@ class TabWebView(
         val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         switchDesktopModeFor(url)
+        if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
         super.loadUrl(url, additionalHttpHeaders)
     }
 
@@ -1499,6 +1514,7 @@ class TabWebView(
             // for the failed load may commit only after this (see failedUrl).
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
+            applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             // Without document-start scripts the signals arrive late, but they arrive.
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
