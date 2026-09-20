@@ -217,8 +217,12 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
 
     override fun demo() {
         ensureForeground()
-        val regularView = host.tabs.get(REGULAR_TAB)
-        expect("set-up: the regular tab's view is on screen", regularView != null && onMain { regularView!!.visibility == View.VISIBLE })
+        // Whichever regular tab the core left active after the warm-up's private session closed
+        // (run 1: the notes tab, not the seeded first one) – the scenes activate what they need.
+        val active = activeCoreTab()?.optString("id")
+        val activeView = active?.let { host.tabs.get(it) }
+        expect("set-up: the active regular tab's view is on screen", active in setOf(REGULAR_TAB, NOTES_TAB) && activeView != null && onMain { activeView.visibility == View.VISIBLE })
+        finding("  set-up: active tab $active")
 
         // 1. The switch (SET-17): Settings > Privacy and Security under a finger, the row reads
         //    off with its description; a finger on it brings the system's credential prompt; the
@@ -285,7 +289,7 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             val watch = view?.let { VisibilityWatch(it, armAtStart = false).also(Thread::start) }
             home()
             expect("Home puts Zenium in the background", awaitFront(ours = false))
-            val lockedAway = host.privateLock.locked
+            val lockedAway = awaitLocked(4_000)
             SystemClock.sleep(1_500)
             returnToApp()
             expect("Zenium is back in front", awaitFront(ours = true))
@@ -564,7 +568,7 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             settle()
             home()
             expect("Home puts Zenium in the background", awaitFront(ours = false))
-            val armed = host.privateLock.locked
+            val armed = awaitLocked(4_000)
             val cleared = shell("locksettings clear --old $PIN").trim()
             pinSet = false
             finding("  away: lock armed $armed; locksettings clear: '$cleared'")
@@ -652,6 +656,20 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             SystemClock.sleep(150)
         }
         return !host.privateLock.locked && !storeLocked()
+    }
+
+    /**
+     * The host's lock armed, waited for: the launcher is in front the moment its window has the
+     * focus, our activity's stop – where the lock goes on – follows its first frame a little
+     * later, so a read the instant the launcher is in front can come too early.
+     */
+    private fun awaitLocked(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (host.privateLock.locked) return true
+            SystemClock.sleep(50)
+        }
+        return host.privateLock.locked
     }
 
     /** A lock cover at rest is in the chrome's DOM (the frame's or the pane's), not one on its way out. */
@@ -931,9 +949,15 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
      * The system's back on the prompt: it closes with the user's cancel. Back closes the PIN
      * field's keyboard first and the prompt itself next (the passwords demos' finding), so it is
      * pressed until the prompt is gone, a clickable Cancel of the prompt the fallback on the
-     * third try. True once it has gone.
+     * third try. True once it has gone. With no prompt up nothing is pressed and it is false:
+     * back with no prompt in front lands on the app (run 1: four of them closed the private tab
+     * whose Unlock had brought no prompt, and the scenes after it lost their session).
      */
     private fun cancelPrompt(): Boolean {
+        if (!credentialPromptShowing()) {
+            finding("  no credential prompt to cancel")
+            return false
+        }
         for (attempt in 1..4) {
             val cancel = if (attempt == 3) nodesInWindows { node ->
                 node.packageName?.toString() in CREDENTIAL_PACKAGES && node.isClickable &&
@@ -984,10 +1008,12 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
      */
     private fun openPrivacySettings(): Boolean {
         if (!switchRowPresent()) {
-            if (!openMenuItem("Settings")) {
-                finding("  the menu's Settings row could not be touched")
-                return false
-            }
+            // The row sits below the fold and the sheet's accessibility nodes keep their
+            // pre-scroll bounds on this engine (run 1: on screen, no node with bounds on it):
+            // pickMenuRow locates the row's box in the chrome's DOM when the tree has none.
+            val picked = pickMenuRow("Settings")
+            finding("  Settings row: $picked")
+            if (!picked.startsWith("a finger")) return false
             if (!awaitChrome("!!document.querySelector('$SETTINGS_SEARCH')||!!document.querySelector('$SWITCH_ROW')", 12_000)) return false
             SystemClock.sleep(1_000)
             if (!switchRowPresent()) {
@@ -1059,11 +1085,14 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
     /**
      * The app menu's row `label` under a finger, wherever it sits: the menu is opened from the
      * bar's button and pulled to its full height as the harness's `openMenuItem` does; the row is
-     * then looked for with bounds on screen, and while it has none a finger scrolls the sheet's
-     * list (`.zen-sheet-scroll`) upwards – with a private tab open the menu gains Close Private
-     * Tabs and Settings sits below the fold. As the last resort the row is located in the chrome's
-     * DOM, scrolled into view there, and the finger lands on its box: a real touch either way.
-     * How it went, for the findings ("a finger …" on success). From the #232 scratch driver.
+     * looked for once with bounds on screen in the accessibility tree, and when the tree has
+     * none for it – on this engine the sheet's nodes keep their pre-scroll bounds, so a row that
+     * is plainly on screen answers to no node (run 1) – the row is located in the chrome's DOM,
+     * scrolled into view there (`scrollIntoView`), and the finger lands on its box: a real touch
+     * either way. Only a row the DOM does not have yet gets the list (`.zen-sheet-scroll`) scrolled
+     * by a finger and the search again – with a private tab open the menu gains Close Private
+     * Tabs and Settings sits below the fold. How it went, for the findings ("a finger …" on
+     * success). From the #232 scratch driver.
      */
     private fun pickMenuRow(label: String): String {
         tapMenuButton()
@@ -1077,14 +1106,24 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             }
             SystemClock.sleep(2_000)
         }
+        val find = "var q=" + JSONObject.quote(label) + ";var b=Array.prototype.slice.call(document.querySelectorAll('.zen-sheet-item'))" +
+            ".filter(function(e){return (e.textContent||'').trim()===q})[0];"
         var swipes = 0
         repeat(4) { attempt ->
-            val node = awaitNode(if (attempt == 0) 3_000 else 2_000) { it == label }
+            val node = awaitNode(if (attempt == 0) 3_000 else 1_000) { it == label }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
                 if (touchTap(node)) return "a finger on the '$label' row at $bounds after $swipes scroll(s) of the list"
-                Log.w(tag, "the '$label' row at $bounds could not be touched; scrolling on")
+                Log.w(tag, "the '$label' row at $bounds could not be touched; the DOM next")
             }
+            chromeJs("(function(){${find}if(b)b.scrollIntoView({block:'center'})})()")
+            SystemClock.sleep(1_200)
+            val box = chromeRectBy(find)
+            if (box != null && box.centerY() in touchable.top until touchable.bottom) {
+                Finger().tap(box.exactCenterX(), box.exactCenterY())
+                return "a finger on the '$label' row at $box, located through the chrome's DOM after $swipes scroll(s) of the list"
+            }
+            if (box != null) Log.w(tag, "the '$label' row's box $box is outside the touchable window $touchable; scrolling on")
             val list = chromeRect(".zen-sheet-scroll") ?: return "the sheet's list is not in the chrome's DOM (menu closed?)"
             val top = maxOf(list.top, touchable.top) + 24f
             val bottom = minOf(list.bottom, touchable.bottom) - 24f
@@ -1099,14 +1138,7 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             swipes++
             SystemClock.sleep(1_600)
         }
-        val find = "var q=" + JSONObject.quote(label) + ";var b=Array.prototype.slice.call(document.querySelectorAll('.zen-sheet-item'))" +
-            ".filter(function(e){return (e.textContent||'').trim()===q})[0];"
-        chromeJs("(function(){${find}if(b)b.scrollIntoView({block:'center'})})()")
-        SystemClock.sleep(1_200)
-        val box = chromeRectBy(find) ?: return "no '$label' row in the sheet's DOM after $swipes scroll(s)"
-        if (box.centerY() !in touchable.top until touchable.bottom) return "the '$label' row's box $box is outside the touchable window"
-        Finger().tap(box.exactCenterX(), box.exactCenterY())
-        return "a finger on the '$label' row at $box, located through the chrome's DOM after $swipes scroll(s) of the list"
+        return "no touchable '$label' row in the sheet after $swipes scroll(s) of the list"
     }
 
     /** The on-screen box of the element the statements `find` leave in `b`; null when none. */
