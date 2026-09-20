@@ -2991,6 +2991,11 @@ export interface Suggestion {
    * (`omnibox.onDeleteSuggestion`). Bookmarks and open tabs are not, as in Chrome.
    */
   deletable?: boolean
+  /**
+   * The section the row is listed under (zero-suggest's "Recent searches", omnibox-20): the
+   * popup draws a heading where a new group starts. Rows without one are in no section.
+   */
+  group?: string
 }
 
 export interface CommandDescriptor {

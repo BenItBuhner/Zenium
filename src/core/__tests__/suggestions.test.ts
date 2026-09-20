@@ -728,6 +728,63 @@ describe('SuggestionService: the shortcuts provider (omnibox-03)', () => {
     ).toBe(false)
   })
 })
+
+describe('SuggestionService: zero-suggest (omnibox-20)', () => {
+  it('lists the remembered searches as a "Recent searches" group over the recent pages', async () => {
+    const { suggestions, shortcuts, history, win } = setup()
+    history.visit('https://recent.example/', 'Recent page', null)
+    shortcuts.learn('ca', {
+      url: 'https://www.google.com/search?q=cats',
+      title: 'cats',
+      kind: 'search',
+      engineId: 'google'
+    })
+    shortcuts.learn('gm', { url: 'https://mail.google.com/', title: 'Gmail', kind: 'url' })
+
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.map((r) => [r.kind, r.group ?? null])).toEqual([
+      ['search', 'Recent searches'],
+      ['history', null]
+    ])
+    expect(rows[0]).toMatchObject({
+      title: 'cats',
+      fill: 'cats',
+      deletable: true,
+      targetId: 'google'
+    })
+    expect(rows[1]).toMatchObject({ url: 'https://recent.example/', deletable: true })
+  })
+
+  it('caps the recent searches at eight, most recent first', async () => {
+    const { suggestions, shortcuts, win } = setup()
+    for (let i = 0; i < 10; i += 1) {
+      shortcuts.learn(`q${i}`, {
+        url: `https://www.google.com/search?q=q${i}`,
+        title: `q${i}`,
+        kind: 'search',
+        engineId: 'google'
+      })
+    }
+    const rows = await suggestions.suggest('', null, win)
+    expect(rows.filter((r) => r.group === 'Recent searches')).toHaveLength(8)
+  })
+
+  it('shows none in a private window, and none with history suggestions off', async () => {
+    const priv = setup('private')
+    priv.shortcuts.learn('c', {
+      url: 'https://www.google.com/search?q=c',
+      title: 'c',
+      kind: 'search'
+    })
+    expect(await priv.suggestions.suggest('', null, priv.win)).toEqual([])
+
+    const { suggestions, shortcuts, history, state, win } = setup()
+    history.visit('https://recent.example/', 'Recent page', null)
+    shortcuts.learn('c', { url: 'https://www.google.com/search?q=c', title: 'c', kind: 'search' })
+    state.settings.historySuggestions = false
+    expect(await suggestions.suggest('', null, win)).toEqual([])
+  })
+})
 describe('SuggestionService: search mode (omnibox-26, -08)', () => {
   it('with an engine given, an address-like typing is a search for that engine', async () => {
     const { suggestions, history, win } = setup()

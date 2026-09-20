@@ -24,6 +24,7 @@ import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { orderedTabsForSpace, tabVisibleIn } from './model'
 import { AnswerService } from './answers'
+import { matchesAtWordStart } from './history'
 
 /**
  * Chromium's relevance scale, so rows from every source sort against each other: the verbatim
@@ -49,6 +50,8 @@ export const RELEVANCE = {
   tab: 1000,
   historyTitlePrefix: 980,
   bookmark: 950,
+  /** A term at the start of a word in the title or of a path segment (HistoryQuick's idea). */
+  historyWordStart: 930,
   space: 900,
   history: 880
 } as const
@@ -523,6 +526,12 @@ export class SuggestionService {
     return out
   }
 
+  /**
+   * History rows (omnibox-02, Chrome's HistoryURL and HistoryQuick providers): the service ranks
+   * the candidates by typed count, visit count and recency; here the band says how the typing
+   * matched – the address's start, the title's start, the start of a word in the title or of a
+   * path segment, or somewhere inside a word – so a word-start match outranks a mid-word one.
+   */
   private historyRows(query: string, limit: number): Ranked[] {
     const q = query.toLowerCase()
     const out: Ranked[] = []
@@ -532,7 +541,9 @@ export class SuggestionService {
         ? RELEVANCE.historyHostPrefix
         : entry.title.toLowerCase().startsWith(q)
           ? RELEVANCE.historyTitlePrefix
-          : RELEVANCE.history
+          : matchesAtWordStart(`${entry.title} ${shown}`, q)
+            ? RELEVANCE.historyWordStart
+            : RELEVANCE.history
       out.push({
         id: `hist:${entry.url}`,
         kind: 'history',
@@ -636,6 +647,25 @@ export class SuggestionService {
         favicon: null,
         targetId: clip,
         fill: ''
+      })
+    }
+    if (!wantsHistory) return rows
+    // Zero-suggest (omnibox-20): the searches the user made, most recent first, as a section of
+    // their own over the recent pages – every row removable.
+    const engines = this.browser.state.searchEngines
+    for (const s of this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)) {
+      const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
+      rows.push({
+        id: `recent:${s.url}`,
+        kind: 'search',
+        title: s.fill,
+        subtitle: `Search with ${engine?.name ?? 'the web'}`,
+        url: s.url,
+        favicon: null,
+        targetId: engine?.id ?? null,
+        fill: s.fill,
+        deletable: true,
+        group: RECENT_SEARCHES_GROUP
       })
     }
     for (const entry of this.browser.history.recent(8)) {
