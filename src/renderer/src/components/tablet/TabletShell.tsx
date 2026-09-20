@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -96,12 +96,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
 
   // The URL bar's popup hangs from the toolbar's address pill, as wide as it (TB-21): the pill
   // is measured as the bar opens and again when the window or the sidebar changes under it.
-  const anchor = useFieldAnchor(windowRef, ui.urlbar.open, [
-    viewport.width,
-    viewport.height,
-    rail,
-    drawerLayout
-  ])
+  const anchor = useFieldAnchor(windowRef, ui.urlbar.open)
   const shellBox: Rect = { x: 0, y: 0, width: viewport.width, height: viewport.height }
 
   // A sideways swipe on the docked sidebar: towards the window's edge collapses it to the rail,
@@ -273,31 +268,54 @@ function TabletDrawer({
 
 /**
  * The toolbar's address pill, in the shell's coordinates, while `active`: what the URL bar's
- * popup hangs from. Measured on open and whenever `deps` say the row may have moved; the pill
- * itself never moves while the bar is up (the bar is a layer over the page, not in the row).
+ * popup hangs from. The row is an external system to React (its boxes are the browser's), so
+ * the rect is read as a store snapshot: taken as the bar opens, and again whenever the row or
+ * the pill changes size (a button joins the row, the window is resized) – the pill never moves
+ * while the bar is up otherwise (the bar is a layer over the page, not in the row).
  */
-function useFieldAnchor(
-  root: React.RefObject<HTMLElement | null>,
-  active: boolean,
-  deps: unknown[]
-): Rect | null {
-  const [anchor, setAnchor] = useState<Rect | null>(null)
-  useLayoutEffect(() => {
-    if (!active) {
-      setAnchor(null)
-      return
-    }
-    const pill = root.current?.querySelector<HTMLElement>(
-      '.zen-tablet-toolbar [data-address-pill]'
-    )
-    const origin = root.current?.getBoundingClientRect()
-    if (!pill || !origin) {
-      setAnchor(null)
-      return
-    }
+function useFieldAnchor(root: React.RefObject<HTMLElement | null>, active: boolean): Rect | null {
+  const last = useRef<Rect | null>(null)
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      if (!active) return () => undefined
+      const observer = new ResizeObserver(notify)
+      const row = root.current?.querySelector<HTMLElement>('.zen-tablet-toolbar')
+      const pill = root.current?.querySelector<HTMLElement>(
+        '.zen-tablet-toolbar [data-address-pill]'
+      )
+      if (row) observer.observe(row)
+      if (pill) observer.observe(pill)
+      window.addEventListener('resize', notify)
+      return () => {
+        observer.disconnect()
+        window.removeEventListener('resize', notify)
+      }
+    },
+    [active, root]
+  )
+  const snapshot = (): Rect | null => {
+    const origin = active ? root.current?.getBoundingClientRect() : undefined
+    const pill = active
+      ? root.current?.querySelector<HTMLElement>('.zen-tablet-toolbar [data-address-pill]')
+      : null
+    if (!origin || !pill) return (last.current = null)
     const r = pill.getBoundingClientRect()
-    setAnchor({ x: r.left - origin.left, y: r.top - origin.top, width: r.width, height: r.height })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, root, ...deps])
-  return anchor
+    const next = {
+      x: r.left - origin.left,
+      y: r.top - origin.top,
+      width: r.width,
+      height: r.height
+    }
+    const prev = last.current
+    if (
+      prev &&
+      prev.x === next.x &&
+      prev.y === next.y &&
+      prev.width === next.width &&
+      prev.height === next.height
+    )
+      return prev
+    return (last.current = next)
+  }
+  return useSyncExternalStore(subscribe, snapshot, () => null)
 }

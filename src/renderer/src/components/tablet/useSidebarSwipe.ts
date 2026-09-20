@@ -1,4 +1,8 @@
-import { useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 
 /** Sideways travel (px) that counts as a swipe; well past a tap's slop and a scroll's wobble. */
 const SWIPE = 48
@@ -34,8 +38,6 @@ export function useSidebarSwipe({
 }): SidebarSwipeHandlers {
   const touch = useRef<{ id: number; x: number; y: number; done: boolean } | null>(null)
   const swallow = useRef(false)
-  const latest = useRef({ side, collapsed, onCollapse, onExpand })
-  latest.current = { side, collapsed, onCollapse, onExpand }
 
   const end = (e: ReactPointerEvent<HTMLElement>): void => {
     if (touch.current?.id === e.pointerId) touch.current = null
@@ -55,11 +57,10 @@ export function useSidebarSwipe({
       if (Math.abs(dx) < SWIPE || Math.abs(dx) < Math.abs(dy) * AXIS_RATIO) return
       t.done = true
       swallow.current = true
-      const { side: at, collapsed: isCollapsed, onCollapse: collapse, onExpand: expand } =
-        latest.current
-      const towardsEdge = at === 'left' ? dx < 0 : dx > 0
-      if (towardsEdge && !isCollapsed) collapse()
-      else if (!towardsEdge && isCollapsed) expand()
+      // The handlers are made afresh each render, so these are the props as they stand.
+      const towardsEdge = side === 'left' ? dx < 0 : dx > 0
+      if (towardsEdge && !collapsed) onCollapse()
+      else if (!towardsEdge && collapsed) onExpand()
     },
     onPointerUp: end,
     onPointerCancel: end,

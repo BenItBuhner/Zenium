@@ -65,7 +65,11 @@ export function TabletToolbar({
           <button
             type="button"
             className="zen-toolbar-button"
-            title={hint(sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar', state, 'sidebar.toggle')}
+            title={hint(
+              sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar',
+              state,
+              'sidebar.toggle'
+            )}
             aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
             aria-pressed={!sidebarCollapsed}
             data-tablet-sidebar-toggle
