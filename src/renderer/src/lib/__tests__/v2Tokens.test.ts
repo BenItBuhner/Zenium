@@ -870,9 +870,19 @@ describe('the v2 primitives (§9.34)', () => {
     expect(panels).not.toMatch(/--v2-selection\b/)
     // The rows' base height, padding and press fill and the icon buttons' box are the
     // primitives' (`.zen-v2-row`, `.zen-v2-icon-button`): the stylesheet restates none of them.
-    expect(panels).not.toMatch(/min-height: var\(--v2-row\)/)
-    expect(panels).not.toMatch(/padding: var\(--v2-row-pad\)|padding: 12px 16px/)
-    expect(panels).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
+    // The one read of the row's padding is `.zen-list-main`'s fold: the row's accessible button
+    // pulls the row's padding out by its margins and gives it back as its own, so the box
+    // TalkBack frames is the row's 44 (A11Y-01) – no row geometry of its own, and nothing moves.
+    const fold = panels.indexOf('.zen-list-main {')
+    expect(fold).toBeGreaterThanOrEqual(0)
+    const foldRule = panels.slice(fold, panels.indexOf('}', fold))
+    expect(foldRule).toMatch(
+      /align-self: stretch;\s*margin: calc\(-1 \* var\(--v2-row-pad\)\) 0;\s*padding: var\(--v2-row-pad\) 0;/
+    )
+    const rest = panels.replace(foldRule, '')
+    expect(rest).not.toMatch(/min-height: var\(--v2-row\)/)
+    expect(rest).not.toMatch(/padding: var\(--v2-row-pad\)|padding: 12px 16px/)
+    expect(rest).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
 })
 

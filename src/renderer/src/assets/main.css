@@ -2287,22 +2287,22 @@
    * goes out on (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it
    * and promotes the face – `will-change` – for those frames only: at rest it is `auto`).
    *
-   * The cell is also the touch target: the tray's whole 44 height and the slot's whole 40 pitch
-   * (§9.2's 44), so the chips tile the tray with no dead space between two faces – a touch
-   * between them lands on the nearer chip – and no target is the 36 face alone. Its negative
-   * margins lay the 40 x 44 box over the 4 of padding the tray and the scroller keep around a 36
-   * margin box, so the pitch and the faces' geometry are unchanged. The one v2 ring (§9.6: 2px
-   * accent, offset 0 light, -2 dark) draws on the round face, not on the rectangular cell, which
-   * is why the cell does not carry a `zen-v2-` class: that unlayered ring rule would outrank
-   * anything written here.
+   * The cell is also the touch target, §9.3's 44 x 44 box (A11Y-01): the tray's whole 44 height
+   * and 44 across the slot's 40 pitch, so the chips tile the tray with no dead space between two
+   * faces – a touch between them lands on the nearer chip, the later cell taking the 4 the boxes
+   * overlap by – and no target is the 36 face alone. Its negative margins lay the 44 x 44 box
+   * over the 4 of padding the tray and the scroller keep around a 36 margin box, so the pitch
+   * and the faces' geometry are unchanged. The one v2 ring (§9.6: 2px accent, offset 0 light, -2 dark)
+   * draws on the round face, not on the rectangular cell, which is why the cell does not carry a
+   * `zen-v2-` class: that unlayered ring rule would outrank anything written here.
    */
   .zen-group-chip {
     position: relative;
     display: flex;
     flex: 0 0 auto;
-    width: 40px;
+    width: 44px;
     height: 44px;
-    margin: -4px -2px;
+    margin: -4px;
     align-items: center;
     justify-content: center;
     color: inherit;
@@ -8551,6 +8551,41 @@
  * v2 rule's -2) would sit on its own fill, under the panel-colour border, and show nothing (a11y-10).
  */
 .zen-zoom-slider [role='slider']:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+/*
+ * Phone: the 28 target is the thumb's own box (A11Y-01). TalkBack frames, and explore-by-touch
+ * hits, the node's bounds, which the `::before` reach above does not grow – so the box is 28 and
+ * the `::before` is the 20 disc drawn inside it, with the ring on the disc. Radix keeps the box
+ * inside the row, so the track gives up the 4 on each side the box gained and the disc still
+ * meets the track's ends. The desktop bubble and the mouse keep the 20 box above.
+ */
+:root[data-form-factor='phone'] .zen-zoom-slider > span:first-child {
+  margin: 0 4px;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider'] {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']::before {
+  inset: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--v2-panel);
+  background: var(--v2-accent);
+}
+:root[data-form-factor='phone']
+  .zen-settings-zoom-stepper
+  .zen-zoom-slider
+  [role='slider']::before {
+  border-color: var(--v2-page);
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible {
+  outline: none;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible::before {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
 }
