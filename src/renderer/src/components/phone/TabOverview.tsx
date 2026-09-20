@@ -147,7 +147,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
   const privatePane = pane === 'private'
   // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
-  // here, and a drag moves nothing (`hoverAt`, `dropCard`); the regular pane keeps its structure.
+  // here – a drag rearranges them and nothing more (`hoverAt`, `dropCard`), as Chrome's incognito
+  // grid lets it; the regular pane keeps its structure.
   const essentials = privatePane ? [] : tabsOnPane(essentialsFor(state, space), 'tabs')
   const pinned = privatePane ? [] : tabsOnPane(pinnedOf(state, space), 'tabs')
   const regular = privatePane ? privateTabsOf(state) : tabsOnPane(regularOf(state, space), 'tabs')
@@ -424,9 +425,15 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   /** The group a tab is shown in (a folder of this space), or null for a loose tab. */
   const groupIdOf = (tab: Tab, s: UIState = state): string | null =>
     tab.folderId && s.folders[tab.folderId]?.spaceId === space.id ? tab.folderId : null
-  /** The regular tabs shown in a group (or loose, for null), in the browser's order. */
+  /**
+   * The pane's tabs shown in a group (or loose, for null), in the browser's order: the regular
+   * pane's are the space's regular tabs of that group, the private ones aside; the private pane's
+   * list is the session's, across the spaces (it makes no groups).
+   */
   const listIn = (s: UIState, folderId: string | null): Tab[] =>
-    regularOf(s, activeSpace(s)).filter((t) => groupIdOf(t, s) === folderId)
+    privatePane
+      ? privateTabsOf(s)
+      : tabsOnPane(regularOf(s, activeSpace(s)), 'tabs').filter((t) => groupIdOf(t, s) === folderId)
 
   /**
    * What the finger is over, from the slots of the last layout (the glide in flight ignored, so
@@ -439,11 +446,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const keep: LiftHover = { target: null, slot: current.slot }
     const grid = scrollRef.current?.getBoundingClientRect()
     if (!grid || x < grid.left || x > grid.right || y < grid.top || y > grid.bottom) return null
-    // Private cards are held for their menu and swiped to close; a drag rearranges nothing.
-    if (privatePane) return keep
     const inside = (r: DOMRect | null): r is DOMRect =>
       r !== null && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-    // Member cards of an expanded group and the loose cards, as shown right now.
+    // Member cards of an expanded group and the loose cards, as shown right now (the private
+    // pane's cards are all loose: it makes no groups, a session being no workspace, so a drag
+    // there only rearranges, as Chrome's incognito grid lets it).
     const cards: Array<{ tab: Tab; list: Tab[]; folderId: string | null }> = []
     for (const folder of groups) {
       if (folder.collapsed) continue
@@ -457,7 +464,13 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       if (!inside(r)) continue
       const ix = r.width * MERGE_INSET_X
       const iy = r.height * MERGE_INSET_Y
-      if (x > r.left + ix && x < r.right - ix && y > r.top + iy && y < r.bottom - iy)
+      if (
+        !privatePane &&
+        x > r.left + ix &&
+        x < r.right - ix &&
+        y > r.top + iy &&
+        y < r.bottom - iy
+      )
         return { target: `card:${other.id}`, slot: current.slot }
       const cx = r.left + r.width / 2
       const cy = r.top + r.height / 2
@@ -495,20 +508,26 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       }
     }
     const unchanged = (): void => expect(() => true)
-    if (privatePane) return unchanged()
-    const regularWithout = regular.filter((t) => t.id !== tab.id)
-    /** Move the tab right before `before` (or to the end of the regular tabs), into `folderId`. */
+    /**
+     * Move the tab right before `before` (or right after `after`, or to the end of the regular
+     * tabs), into `folderId`. The browser's index counts a space's whole regular section – both
+     * modes' tabs, since a space's track holds its private tabs too – so the neighbour's place is
+     * looked up there, not in the pane's list; a private neighbour filed in another space takes
+     * the tab into that space (the private session is one across the spaces).
+     */
     const moveTo = (folderId: string | null, before: Tab | undefined, after?: Tab): void => {
-      const index = before
-        ? regularWithout.indexOf(before)
-        : after
-          ? regularWithout.indexOf(after) + 1
-          : regularWithout.length
-      run('tab.move', { tabId: tab.id, spaceId: space.id, section: 'regular', index })
-      if (groupIdOf(tab) !== folderId) run('tab.moveToFolder', { tabId: tab.id, folderId })
+      const anchor = before ?? after
+      const into = state.spaces.find((s) => s.id === anchor?.spaceId) ?? space
+      const track = regularOf(state, into).filter((t) => t.id !== tab.id)
+      const index = before ? track.indexOf(before) : after ? track.indexOf(after) + 1 : track.length
+      run('tab.move', { tabId: tab.id, spaceId: into.id, section: 'regular', index })
+      if (!privatePane && groupIdOf(tab) !== folderId)
+        run('tab.moveToFolder', { tabId: tab.id, folderId })
     }
     const target = outcome.kind === 'target' ? outcome.target : null
     const slot = outcome.kind === 'slot' ? outcome.slot : null
+    // The private pane never targets a card or a group (`hoverAt`): only its slots move anything.
+    if (privatePane && target) return unchanged()
     if (target?.startsWith('group:')) {
       const folderId = target.slice('group:'.length)
       if (!state.folders[folderId] || groupIdOf(tab) === folderId) return unchanged()
@@ -531,7 +550,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         tabId: tab.id,
         spaceId: space.id,
         section: 'regular',
-        index: regularWithout.indexOf(other) + 1
+        index:
+          regularOf(state, space)
+            .filter((t) => t.id !== tab.id)
+            .indexOf(other) + 1
       })
       void makeGroup([other.id, tab.id], false)
       return expect((s) => {
