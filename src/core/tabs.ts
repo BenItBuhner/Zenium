@@ -51,7 +51,6 @@ import {
   safeBrowsingPageUrl,
   titleForUrl
 } from '../shared/url'
-import { internalPageAliasUrl } from '../shared/internalPages'
 import { isWithinScope } from '../shared/webApp'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
