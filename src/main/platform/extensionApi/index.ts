@@ -42,6 +42,10 @@ import {
 } from '../../../core/extensions/api/spec'
 import { CONTENT_SCRIPT_PRELUDE_FILE } from '../../../core/extensions/api/contentScriptStorage'
 import {
+  hasWithheldPermissions,
+  noWithheldPermissions
+} from '../../../core/extensions/withheldPermissions'
+import {
   USER_SCRIPTS_CHANNELS,
   USER_SCRIPTS_SHIM,
   type HostShimOptions
@@ -92,6 +96,7 @@ import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
 import { SystemDisplayApi } from './systemDisplay'
 import { electronDisplayScreen } from './systemDisplayBridge'
+import { SystemStorageApi } from './systemStorage'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
@@ -201,6 +206,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
   readonly systemDisplay: SystemDisplayApi
+  readonly systemStorage: SystemStorageApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
   readonly debugger: DebuggerApi
@@ -292,6 +298,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
     this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
+    this.systemStorage = new SystemStorageApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
@@ -324,6 +331,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
       'system.display': this.systemDisplay.handlers,
+      'system.storage': this.systemStorage.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
       debugger: this.debugger.handlers,
@@ -539,13 +547,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    */
   private shimOptionsFor(sender: Sender | null): HostShimOptions {
     try {
-      const extensionId = this.contextFor(sender).extensionId
+      const { extensionId, extension } = this.contextFor(sender)
       return {
         toggles: this.userScripts.togglesFor(extensionId),
-        storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null
+        storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null,
+        withheld: hasWithheldPermissions(extension.withheld) ? extension.withheld : null
       }
     } catch {
-      return { toggles: { userScripts: false }, storagePrelude: null }
+      return { toggles: { userScripts: false }, storagePrelude: null, withheld: null }
     }
   }
 
@@ -570,7 +579,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       manifest: ext.manifest as ExtensionManifest,
       path: ext.path,
       sessions: [ses],
-      unpacked: isUnpacked(info)
+      unpacked: isUnpacked(info),
+      withheld: info?.withheld ?? noWithheldPermissions()
     }
     this.extensions.set(ext.id, loaded)
     if (existsSync(join(ext.path, CONTENT_SCRIPT_PRELUDE_FILE))) this.preluded.add(ext.id)

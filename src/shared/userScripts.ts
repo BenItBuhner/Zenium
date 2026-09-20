@@ -1,4 +1,5 @@
 import type { UserScriptRunAt, UserScriptWorld } from '../core/extensions/api/userScripts'
+import type { WithheldPermissions } from './types'
 
 /**
  * The wire between the page preload (`preload/userScripts.ts`, every frame of every tab) and the
@@ -37,6 +38,11 @@ export interface HostShimOptions {
    * extension's install directory, or null when the install carries none.
    */
   storagePrelude: string | null
+  /**
+   * `ShimOptions.withheld`: the permissions the host kept out of the manifest the engine loaded
+   * (`core/extensions/withheldPermissions.ts`), or null when none were.
+   */
+  withheld: WithheldPermissions | null
 }
 
 /**

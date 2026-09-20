@@ -16,6 +16,7 @@ import {
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
 import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
+import { SYSTEM_STORAGE_CONSTANTS, SYSTEM_STORAGE_PERMISSION } from './systemStorage'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
@@ -756,6 +757,21 @@ export const API_SPEC: ApiSpec = {
       MirrorMode: { OFF: 'off', NORMAL: 'normal', MIXED: 'mixed' }
     },
     permissions: [SYSTEM_DISPLAY_PERMISSION]
+  },
+  // The engine's own namespace crashes the browser (Electron never instantiates the
+  // `StorageMonitor` its functions dereference), so the permission is withheld from the manifest
+  // the engine loads (`core/extensions/withheldPermissions.ts`) and the browser layer answers in
+  // Chrome's shape over no devices: nothing to list, no capacity for an unknown id, nothing to
+  // eject; the events exist and never fire. For extensions declaring the permission only.
+  'system.storage': {
+    methods: {
+      getInfo: { params: [] },
+      getAvailableCapacity: { params: [string('id')] },
+      ejectDevice: { params: [string('id')] }
+    },
+    events: { onAttached: {}, onDetached: {} },
+    constants: SYSTEM_STORAGE_CONSTANTS,
+    permissions: [SYSTEM_STORAGE_PERMISSION]
   },
   // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
   omnibox: {
