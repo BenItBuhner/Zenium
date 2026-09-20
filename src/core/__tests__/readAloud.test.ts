@@ -5,6 +5,7 @@ import {
   READ_ALOUD_SOURCE_ID,
   ReadAloudService,
   VOICES_GRACE_MS,
+  VOICES_QUERY_GRACE_MS,
   wordEnd
 } from '../readAloud'
 import type { Browser } from '../browser'
@@ -517,6 +518,71 @@ describe('ReadAloudService', () => {
       expect(h.service.uiState()).toMatchObject({ sentenceIndex: 3 })
     })
 
+    it('selection-on reads the selection and then the document after it (EDGE-11), the main content marked when readerable', async () => {
+      h.addTab('t1', PAGE)
+      let started = h.service.start({ tabId: 't1', from: 'selection-on' })
+      await flush()
+      // The page script is asked for the selection and then the document; no Readability pass
+      // on a page that is not readerable.
+      expect(h.extractRequests('t1')[0]).toMatchObject({
+        from: 'selection',
+        then: 'document',
+        keep: null
+      })
+      // What the page script answers: the selection's blocks, the rest of the last one from the
+      // selection's end, then the blocks after it – every id once, the highlight positions kept.
+      h.answer('t1', [
+        { text: 'lected text. And more.', at: { path: [1, 3], run: 0, offset: 14 } },
+        { text: 'Rest of the block.', at: { path: [1, 3], run: 0, offset: 37 } },
+        { text: 'Next block.', at: { path: [1, 4], run: 0, offset: 0 } }
+      ])
+      await started
+      expect(h.service.uiState()).toMatchObject({
+        source: 'selection',
+        sentenceIndex: 0,
+        sentenceCount: 4
+      })
+      expect(h.host.current.text).toBe('lected text.')
+      h.host.end()
+      h.host.end()
+      expect(h.host.current.text).toBe('Rest of the block.')
+      expect(h.highlights('t1').at(-1)).toMatchObject({
+        blockId: 'b1',
+        at: { path: [1, 3], run: 0, offset: 37 },
+        sentence: { start: 0, end: 18 }
+      })
+      h.host.end()
+      expect(h.host.current.text).toBe('Next block.')
+      h.host.end()
+      expect(h.service.uiState()).toMatchObject({ status: 'ended' })
+
+      // A readerable page: Readability's block texts ride along for the continuation.
+      h.readability = '/* Readability */'
+      const view = h.views.get('t1')!
+      h.tabs.get('t1')!.readerable = true
+      view.scriptResult = { content: '<p>Kept one.</p><p>Kept two.</p>', lang: 'en' }
+      started = h.service.start({ tabId: 't1', from: 'selection-on' })
+      await flush()
+      expect(h.extractRequests('t1')[1]).toMatchObject({
+        from: 'selection',
+        then: 'document',
+        keep: ['Kept one.', 'Kept two.']
+      })
+      h.answer('t1', [{ text: 'one.' }, { text: 'Kept two.' }])
+      await started
+      expect(h.service.uiState()).toMatchObject({ source: 'selection', sentenceCount: 2 })
+
+      // A plain selection start stays selection-only: no `then`, no Readability pass.
+      started = h.service.start({ tabId: 't1', from: 'selection' })
+      await flush()
+      expect(h.extractRequests('t1')[2]).toMatchObject({ from: 'selection', keep: null })
+      expect(h.extractRequests('t1')[2].then).toBeUndefined()
+      expect(view.scripts).toHaveLength(1)
+      h.answer('t1', [{ text: 'Just this.' }])
+      await started
+      expect(h.service.uiState()).toMatchObject({ sentenceCount: 1 })
+    })
+
     it('runs Readability on a readerable page and hands the page script the kept texts', async () => {
       h.readability = '/* Readability */'
       const view = h.addTab('t1', PAGE)
@@ -532,22 +598,42 @@ describe('ReadAloudService', () => {
       expect(h.service.uiState()).toMatchObject({ status: 'playing' })
     })
 
-    it('reads the reader article from its HTML, without a page round trip and without inserting CSS', async () => {
+    const readerArticle = (content: string, title = 'The article'): void => {
       h.articles.set('a1', {
         id: 'a1',
         url: PAGE,
-        title: 'The article',
+        title,
         byline: null,
         siteName: null,
         excerpt: null,
-        content: '<h2>Head</h2><p>Body one. Body two.</p><ul><li lang="fr">Bonjour</li></ul>',
-        length: 40,
+        content,
+        length: content.length,
         lang: 'en',
         dir: null
       })
-      const view = h.addTab('t1', `zen://reader?id=a1&url=${encodeURIComponent(PAGE)}`)
-      await h.service.start({ tabId: 't1' })
-      expect(h.extractRequests('t1')).toHaveLength(0)
+    }
+    const READER_URL = `zen://reader?id=a1&url=${encodeURIComponent(PAGE)}`
+
+    it('reads the reader document’s own blocks (its article walked by the page script, with positions), without inserting CSS', async () => {
+      readerArticle('<h2>Head</h2><p>Body one. Body two.</p><ul><li lang="fr">Bonjour</li></ul>')
+      const view = h.addTab('t1', READER_URL)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      // The reader document is asked as is: from the top, no Readability pass, no `then`.
+      expect(h.extractRequests('t1')).toHaveLength(1)
+      expect(h.extractRequests('t1')[0]).toMatchObject({ from: 'top', keep: null })
+      expect(h.extractRequests('t1')[0].then).toBeUndefined()
+      expect(view.scripts).toHaveLength(0)
+      h.answer(
+        't1',
+        [
+          { text: 'Head', kind: 'heading', at: { path: [0], run: 0, offset: 0 } },
+          { text: 'Body one. Body two.', at: { path: [1], run: 0, offset: 0 } },
+          { text: 'Bonjour', kind: 'list-item', lang: 'fr', at: { path: [2, 0], run: 0, offset: 0 } }
+        ],
+        { title: 'The article', lang: 'en' }
+      )
+      await started
       expect(h.service.uiState()).toMatchObject({
         status: 'playing',
         source: 'reader',
@@ -557,9 +643,10 @@ describe('ReadAloudService', () => {
         voiceId: 'Samantha'
       })
       expect(h.host.current.text).toBe('Head')
+      // The highlight names the block by its position in the reader document.
       expect(h.highlights('t1')[0]).toMatchObject({
         blockId: 'b0',
-        at: null,
+        at: { path: [0], run: 0, offset: 0 },
         sentence: { start: 0, end: 4 }
       })
       expect(view.inserted).toHaveLength(0)
@@ -572,6 +659,53 @@ describe('ReadAloudService', () => {
         options: { voiceId: 'Amélie', lang: 'fr' }
       })
       expect(h.service.uiState()).toMatchObject({ voiceId: 'Amélie', lang: 'en' })
+    })
+
+    it('falls back to the reader article’s HTML, walked by the same rules, when the reader document does not answer', async () => {
+      readerArticle('<h2>Head</h2><p>Body one. Body two.</p><ul><li lang="fr">Bonjour</li></ul>')
+      vi.useFakeTimers()
+      const view = h.addTab('t1', READER_URL)
+      const started = h.service.start({ tabId: 't1' })
+      await vi.advanceTimersByTimeAsync(EXTRACT_TIMEOUT_MS + 1)
+      await started
+      expect(h.service.uiState()).toMatchObject({
+        status: 'playing',
+        source: 'reader',
+        title: 'The article',
+        sentenceCount: 4,
+        voiceId: 'Samantha'
+      })
+      expect(h.host.current.text).toBe('Head')
+      // Without positions the highlight names the block by its index; the reader document
+      // resolves `b<index>` against its own walk of the same article.
+      expect(h.highlights('t1')[0]).toMatchObject({
+        blockId: 'b0',
+        at: null,
+        sentence: { start: 0, end: 4 }
+      })
+      expect(view.inserted).toHaveLength(0)
+      h.host.end()
+      h.host.end()
+      h.host.end()
+      expect(h.host.current).toMatchObject({ text: 'Bonjour', options: { voiceId: 'Amélie' } })
+    })
+
+    it('a reader document that answers no blocks falls back to the HTML too, and an empty article is no-text', async () => {
+      readerArticle('<p>Only this.</p>')
+      h.addTab('t1', READER_URL)
+      let started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [])
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'playing', sentenceCount: 1 })
+      expect(h.host.current.text).toBe('Only this.')
+
+      readerArticle('<p>   </p>')
+      started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [])
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-text' })
     })
 
     it('a second start on another tab ends the first session', async () => {
@@ -792,6 +926,46 @@ describe('ReadAloudService', () => {
         }
       })
     })
+
+    it('never keeps an empty voice list: an empty first answer is re-asked after a grace, through refreshVoices when the host has it', async () => {
+      vi.useFakeTimers()
+      const all = h.host.voiceList
+      let asks = 0
+      let refreshes = 0
+      h.host.voices = () => {
+        asks++
+        return Promise.resolve(asks < 2 ? [] : all)
+      }
+      // The session's list is dropped (the engine says its voices changed) so the query asks anew.
+      h.host.changeVoices(all)
+      // No `refreshVoices` yet: the re-ask goes through `voices()` again.
+      let result = h.service.voicesResult()
+      await vi.advanceTimersByTimeAsync(VOICES_QUERY_GRACE_MS + 1)
+      expect((await result).voices).toEqual(all)
+      expect(asks).toBe(2)
+      // Listed now: kept, no further ask.
+      expect((await h.service.voicesResult()).voices).toEqual(all)
+      expect(asks).toBe(2)
+
+      // The list changes and comes back empty from `voices()`, but the host can list again:
+      // the engine's `voiceschanged` ends the grace early and `refreshVoices` answers.
+      const host = h.host as FakeHost & { refreshVoices?: () => Promise<ReadAloudVoice[]> }
+      host.refreshVoices = () => {
+        refreshes++
+        return Promise.resolve(all)
+      }
+      h.host.voices = () => {
+        asks++
+        return Promise.resolve([])
+      }
+      h.host.changeVoices([])
+      result = h.service.voicesResult()
+      await vi.advanceTimersByTimeAsync(100)
+      h.host.changeVoices(all)
+      expect((await result).voices).toEqual(all)
+      expect(refreshes).toBe(1)
+      expect(asks).toBe(3)
+    })
   })
 
   describe('prepare', () => {
@@ -851,6 +1025,11 @@ describe('ReadAloudService', () => {
       expect(h.service.uiState()).toBeNull()
       h.service.onPageReady('t1')
       await flush()
+      // The reader document is asked for its blocks (the second request on this view).
+      expect(h.service.uiState()).toMatchObject({ status: 'loading', source: 'reader' })
+      expect(h.extractRequests('t1')).toHaveLength(2)
+      h.answer('t1', [{ text: 'From the top.' }], { title: 'Reader title' })
+      await flush()
       expect(h.service.uiState()).toMatchObject({
         tabId: 't1',
         status: 'playing',
@@ -865,7 +1044,7 @@ describe('ReadAloudService', () => {
       h.service.onPageReady('t1')
       await flush()
       expect(h.service.uiState()).toMatchObject({ status: 'loading', source: 'page' })
-      expect(h.extractRequests('t1')).toHaveLength(2)
+      expect(h.extractRequests('t1')).toHaveLength(3)
     })
 
     it('a session that had ended does not come back with the reader', () => {
@@ -987,7 +1166,10 @@ describe('ReadAloudService', () => {
         dir: null
       })
       h.addTab('t1', `zen://reader?id=a1&url=${encodeURIComponent(PAGE)}`)
-      await h.service.start({ tabId: 't1' })
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Body one.' }], { title: 'The article' })
+      await started
       expect(h.sources[0].state).toMatchObject({
         title: 'The article',
         artist: 'example.com',

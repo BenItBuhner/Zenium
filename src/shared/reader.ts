@@ -133,3 +133,17 @@ export function stepReaderFontSize(current: number, direction: number): number {
 
 /** The key a page posts its toolbar changes under (`window.postMessage`), relayed by the page script. */
 export const READER_MESSAGE_KEY = '__zenReader'
+
+/**
+ * The root attributes the reader page's script renders the extras as (`data-line-focus`,
+ * `data-syllables`, `data-spacing`): the stylesheet applies the spacing, the page script's
+ * `readerExtras.ts` watches the other two and does the DOM work.
+ */
+export const READER_LINE_FOCUS_ATTRIBUTE = 'data-line-focus'
+export const READER_SYLLABLES_ATTRIBUTE = 'data-syllables'
+export const READER_SPACING_ATTRIBUTE = 'data-spacing'
+
+/** The syllable mark's class (an empty span; the reader stylesheet draws the dot). */
+export const SYLLABLE_MARK_CLASS = 'zen-syl'
+/** The line-focus masks' class; `data-edge` says which (`top` / `bottom`). */
+export const LINE_FOCUS_MASK_CLASS = 'zen-focus-mask'
