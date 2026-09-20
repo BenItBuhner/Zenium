@@ -41,9 +41,15 @@ export function usePopover(
   const [opener] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null
   )
+  // The latest `returnTo` and `initial`, read when they are needed: callers pass them inline, and
+  // a fresh function on every render must not count as a change (the initial focus is taken
+  // once, when the popover becomes active – not again on every state push while the keyboard is
+  // on one of its controls).
   const latestReturnTo = useRef(returnTo)
+  const latestInitial = useRef(initial)
   useEffect(() => {
     latestReturnTo.current = returnTo
+    latestInitial.current = initial
   })
   // The root from the moment focus moved into it, for the unmount cleanup: a popover that holds
   // its first paint (renders null until the content capture is in place) has no root yet when
@@ -54,16 +60,17 @@ export function usePopover(
     const root = ref.current
     if (!active || !root) return
     entered.current = root
-    if (initial === 'none') return
+    const first = latestInitial.current
+    if (first === 'none') return
     const el =
-      initial === 'container'
+      first === 'container'
         ? root
-        : initial === 'first'
+        : first === 'first'
           ? (focusableIn(root)[0] ?? root)
-          : (initial(root) ?? focusableIn(root)[0] ?? root)
+          : (first(root) ?? focusableIn(root)[0] ?? root)
     if (el === root && root.tabIndex < 0 && !root.hasAttribute('tabindex')) root.tabIndex = -1
     el.focus({ preventScroll: true })
-  }, [active, initial, ref])
+  }, [active, ref])
 
   useEffect(() => {
     if (!active) return
