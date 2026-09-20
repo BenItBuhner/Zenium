@@ -7,7 +7,8 @@ import type {
   IsolationMode,
   UnitWorld
 } from '@core/extensions/runtime/boot'
-import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/api/matchPattern'
+import type { FrameContext } from '@core/extensions/api/matchPattern'
+import { decideFrameBoot } from '@core/extensions/runtime/frameBoot'
 import {
   capturePrimordials,
   createEmulatedEngine,
@@ -474,6 +475,14 @@ declare const __zenExtBoot: Boot
   const content: ContentBootConfig = boot.config
   const unitWorld = content.world
   const frame = frameContext()
+  // Chrome's rules for this frame (frameBoot.ts). In the main world of a frame Chrome would not
+  // inject into (an about:blank / javascript: / srcdoc / data: sub-frame under the `with`
+  // fallback with no declaration opting in) this copy leaves nothing behind: no transport, no
+  // slots, no listeners. A later unit that does inject there installs the runtime itself.
+  const first = decideFrameBoot(content.extension, frame, content.late === true)
+  if (!first.touch) return
+  /** The frame's prototypes stay the page's: no Trusted Types shield here (frameBoot.ts). */
+  const pristine = first.pristine
   const attached: ExtensionBoot[] = []
 
   /**
@@ -554,7 +563,9 @@ declare const __zenExtBoot: Boot
     let result: ShieldResult = { policy: false, patched: 0 }
     if (isolation === 'world')
       result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
-    else {
+    else if (pristine) {
+      /* a frame on an inherited origin keeps the page's sinks; its content scripts write under the page's policy */
+    } else {
       const ownCaller = ownScriptMatcher(Error)
       if (ownCaller)
         result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`, {
@@ -726,9 +737,7 @@ declare const __zenExtBoot: Boot
    */
   const apply = (ext: ExtensionBoot, late: boolean, unit: UnitContext, started: number): void => {
     if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
-    const due: BootGroup[] = []
-    if (!late)
-      for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
+    const due = decideFrameBoot(ext, frame, late).groups
     if (stats) stats.matchMs += performance.now() - started
     if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation, contentUnit)
     for (const group of due) {

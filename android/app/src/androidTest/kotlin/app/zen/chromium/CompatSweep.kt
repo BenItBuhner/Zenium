@@ -767,18 +767,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         coreInvoke("extension.setAllowUserScripts", JSONObject().put("id", row.id).put("allowed", true).toString())
         SystemClock.sleep(2_500)
         val extra = JSONObject()
+        val factor = speedFactor(entry)
+        extra.put("speedFactor", factor)
+        val since = StepEvidence(row)
         val before = tabUrls().keys
         createTab("$BASE/hello.user.js")
-        val installTab = poll(30_000, 500) {
+        val installTab = poll(scaled(30_000, factor), 500) {
             tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && installPage.containsMatchIn(it.value) }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         if (installTab == null) {
-            return Grade("F", "install page never appeared within 30 s: tabs=${tabUrls().values.joinToString().take(200)}", extra)
+            since.record(extra, "afterOpen")
+            return Grade("F", "install page never appeared within ${scaled(30_000, factor) / 1000} s: tabs=${tabUrls().values.joinToString().take(200)}", extra)
         }
         extra.put("installUrl", installTab.value)
         val installView = waitForView(installTab.key)
-        SystemClock.sleep(3_500)
+        // The manager's page asks its background for the script's data and sits on a spinner
+        // until the answer comes: the Install button showing, not a fixed wait, is the cue.
+        val readyAt = SystemClock.elapsedRealtime()
+        val ready = pollExpr(installView, USERSCRIPT_INSTALL_PAGE_STATE, scaled(20_000, factor))
+        extra.put("installPage", ready.put("readyMs", SystemClock.elapsedRealtime() - readyAt).put("console", JSONArray(consoleOf(installView).takeLast(8))))
         snap("${entry.optString("slug")}-userscript-install")
         val click = json(
             tabEval(
@@ -791,10 +799,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         extra.put("click", click)
         val clicked = SystemClock.elapsedRealtime()
+        SystemClock.sleep(1_000)
+        if (installTab.key in tabUrls()) {
+            // What the page shows a second after the click: its spinner back up, the button's
+            // state, its console; the manager's answer to the click comes from its background.
+            snap("${entry.optString("slug")}-userscript-after-click")
+            extra.put("installPageAfterClick", json(tabEval(installView, USERSCRIPT_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+        }
         // The manager closes its install tab once the script is stored; that is the install landing.
-        val installTabGone = poll(USERSCRIPT_INSTALL_MS, 250) { if (installTab.key !in tabUrls()) true else null } == true
+        val installWaitMs = scaled(USERSCRIPT_INSTALL_MS, factor)
+        val installTabGone = poll(installWaitMs, 250) { if (installTab.key !in tabUrls()) true else null } == true
         extra.put("installTabClosedMs", if (installTabGone) SystemClock.elapsedRealtime() - clicked else JSONObject.NULL)
-        if (!installTabGone) SystemClock.sleep(1_000)
+        if (!installTabGone) {
+            SystemClock.sleep(1_000)
+            extra.put("installPageAtDeadline", json(tabEval(installView, USERSCRIPT_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+        }
+        since.record(extra, "afterInstall")
         val bg = backgroundView(row.id)
         if (bg != null) {
             tabEval(bg, "(function(){window.__us=null;Promise.resolve().then(function(){return chrome.userScripts.getScripts()}).then(function(s){window.__us=JSON.stringify({registered:s.length})},function(e){window.__us=JSON.stringify({error:String(e&&e.message||e)})})})()")
@@ -804,26 +824,84 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "dataset: (document.documentElement && document.documentElement.dataset.userscript) || null})"
         val target = createTab("$BASE/us-target.html")
         val targetView = waitForView(target)
-        val deadline = SystemClock.elapsedRealtime() + USERSCRIPT_EFFECT_MS
-        var page = pollExpr(targetView, marker, USERSCRIPT_FIRST_LOAD_MS)
+        val deadline = SystemClock.elapsedRealtime() + scaled(USERSCRIPT_EFFECT_MS, factor)
+        var page = pollExpr(targetView, marker, scaled(USERSCRIPT_FIRST_LOAD_MS, factor))
         extra.put("target", page)
         if (!page.optBoolean("pass")) {
             // The script may have landed after the first document loaded: one reload, same deadline.
+            extra.put("targetErrorsFirstLoad", targetErrors(targetView))
             tabEval(targetView, "location.reload()")
             SystemClock.sleep(1_000)
             page = pollExpr(targetView, marker, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(3_000))
             extra.put("targetReload", page)
         }
         extra.put("targetConsole", JSONArray(consoleOf(targetView).takeLast(10)))
+        // The fixture keeps its uncaught errors with their stacks (`window.__errors`): a console
+        // line names a file and a line, the frames say whose code threw.
+        extra.put("targetErrors", targetErrors(targetView))
+        since.record(extra, "atEnd")
         val readings = "first load ${extra.optJSONObject("target")?.toString()?.take(120)}" +
             (extra.optJSONObject("targetReload")?.let { ", after reload ${it.toString().take(120)}" } ?: "")
         return Grade(
             if (page.optBoolean("pass")) "P" else "F",
-            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), install click ${click.toString().take(120)}, " +
-                "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${USERSCRIPT_INSTALL_MS / 1000} s"}, " +
-                "userScripts: ${extra.opt("userScripts")}, target page: $readings",
+            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), ready after ${ready.optLong("readyMs")} ms ${if (ready.optBoolean("pass")) "" else "(still waiting: ${ready.optString("text").take(60)}) "}" +
+                "install click ${click.toString().take(120)}, " +
+                "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${installWaitMs / 1000} s (${extra.optJSONObject("installPageAtDeadline")?.optString("text")?.take(60)})"}, " +
+                "userScripts: ${extra.opt("userScripts")}, target page: $readings" +
+                (extra.optJSONArray("targetErrors")?.takeIf { it.length() > 0 }?.let { "; first error: ${it.optJSONObject(0)?.optString("message")?.take(80)}" } ?: "") +
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms)" else "",
             extra
         )
+    }
+
+    /** The fixture page's uncaught errors and their stacks, as `us-target.html` keeps them. */
+    private fun targetErrors(view: WebView): JSONArray =
+        runCatching { JSONArray(JSONTokener(tabEval(view, "JSON.stringify((window.__errors||[]).slice(0,6))")).nextValue() as? String ?: "[]") }.getOrDefault(JSONArray())
+
+    /**
+     * How much slower this job runs than the 113 job at normal speed, read off the row's own
+     * store install: about 8 s there for these rows (6.8-11 s in round 3's runs), 12-18 s on a
+     * 156 job at its normal speed, 25-29 s on the slow 156 job of round 2's final run. A core
+     * check's fixed waits scale by it, so a slow job does not fail a working runtime; bounded, so
+     * a wait never grows past four times its size.
+     */
+    private fun speedFactor(entry: JSONObject): Double {
+        val installMs = entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms", 0L) ?: 0L
+        if (installMs <= 0L) return 1.0
+        return (installMs.toDouble() / NOMINAL_INSTALL_MS).coerceIn(1.0, 4.0)
+    }
+
+    private fun scaled(ms: Long, factor: Double): Long = (ms * factor).toLong()
+
+    /**
+     * What the extension's background and the bridge said during one core step: the console lines
+     * the background view added and the bridge trace lines of the extension since the step began
+     * (a `runtime.sendMessage` shows as `msg type=<its discriminator>`, its answer as `msgReply`,
+     * a relayed service-worker port as `sw`), so a handshake that stopped can be placed.
+     */
+    private inner class StepEvidence(private val row: Row) {
+        private val consoleFrom = backgroundView(row.id)?.let { consoleOf(it).size } ?: 0
+        /** Trace lines start with `uptimeMillis`; the ring drops old lines, so the time, not the index, marks the step's start. */
+        private val startedAt = SystemClock.uptimeMillis()
+
+        private fun traceLines(): List<String> {
+            var list: List<String> = emptyList()
+            instrumentation.runOnMainSync { list = host.extensions.traceSnapshot(row.id) }
+            return list.filter { (it.substringBefore(' ').toLongOrNull() ?: Long.MAX_VALUE) >= startedAt }
+        }
+
+        fun record(extra: JSONObject, at: String) {
+            val bg = backgroundView(row.id)
+            val console = bg?.let { consoleOf(it).drop(consoleFrom) } ?: emptyList()
+            val trace = traceLines()
+            extra.put(
+                "bg" + at.replaceFirstChar { it.uppercase() },
+                JSONObject()
+                    .put("console", JSONArray(console.takeLast(15)))
+                    .put("bridge", JSONArray(trace.takeLast(40)))
+                    .put("bridgeLines", trace.size)
+            )
+        }
     }
 
     /**
@@ -958,33 +1036,55 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
     private fun stylus(row: Row, entry: JSONObject): Grade {
         val extra = JSONObject()
+        val factor = speedFactor(entry)
+        extra.put("speedFactor", factor)
+        val since = StepEvidence(row)
         val before = tabUrls().keys
         createTab("$BASE/hello.user.css")
-        val installTab = poll(25_000, 500) {
+        val installTab = poll(scaled(25_000, factor), 500) {
             tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && it.value.contains("install-usercss") }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         var click = JSONObject().put("clicked", false)
+        var ready = JSONObject()
         if (installTab != null) {
             val installView = waitForView(installTab.key)
-            SystemClock.sleep(3_500)
+            // The page parses the usercss in a worker of its own origin reached through the
+            // service worker (round 2, 8.6) and shows a spinner until then: the Install button
+            // coming up is the cue, not a fixed wait.
+            val readyAt = SystemClock.elapsedRealtime()
+            ready = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE, scaled(20_000, factor))
+            extra.put("installPage", ready.put("readyMs", SystemClock.elapsedRealtime() - readyAt).put("console", JSONArray(consoleOf(installView).takeLast(8))))
             snap("${entry.optString("slug")}-usercss-install")
             for (i in 0 until 10) {
                 click = json(tabEval(installView, "(function(){var b=document.querySelector('button.install');if(!b||b.offsetParent===null||b.disabled)return JSON.stringify({clicked:false,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null});b.click();return JSON.stringify({clicked:true})})()"))
                 if (click.optBoolean("clicked")) break
                 SystemClock.sleep(1_000)
             }
-            SystemClock.sleep(3_000)
+            SystemClock.sleep(1_000)
+            // A second after the click: the button (Stylus disables it and relabels it once the
+            // style is saved), the page's message box, its console; the save itself is the
+            // page-to-service-worker `usercss.install` round trip.
+            snap("${entry.optString("slug")}-usercss-after-click")
+            extra.put("installPageAfterClick", json(tabEval(installView, STYLUS_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+            // The style's save and the broadcast to the open tabs, scaled with the job.
+            val landed = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE.replace("pass:!!b&&b.offsetParent!==null&&!b.disabled", "pass:!!b&&(b.disabled||/installed/i.test(b.textContent||''))"), scaled(3_000, factor))
+            extra.put("installPageLanded", landed)
+            since.record(extra, "afterInstall")
         }
         extra.put("installClick", click)
         val tab = createTab("$BASE/page-a.html?stylus")
         val view = waitForView(tab)
-        val found = pollExpr(view, "JSON.stringify({pass: getComputedStyle(document.body).backgroundColor === 'rgb(255, 0, 0)', bg: getComputedStyle(document.body).backgroundColor, styles: document.querySelectorAll('style.stylus, style[id^=\"stylus\"]').length})", 12_000)
+        val found = pollExpr(view, "JSON.stringify({pass: getComputedStyle(document.body).backgroundColor === 'rgb(255, 0, 0)', bg: getComputedStyle(document.body).backgroundColor, styles: document.querySelectorAll('style.stylus, style[id^=\"stylus\"]').length})", scaled(12_000, factor))
         extra.put("page", found)
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
         return Grade(
             if (found.optBoolean("pass")) "P" else "F",
-            "usercss install page ${if (installTab != null) "opened" else "did not open within 25 s (tabs: ${tabUrls().values.joinToString().take(120)})"}, install ${click.toString().take(100)}, page: ${found.toString().take(120)}",
+            "usercss install page ${if (installTab != null) "opened, ready after ${ready.optLong("readyMs")} ms${if (ready.optBoolean("pass")) "" else " (button not up: ${ready.toString().take(100)})"}" else "did not open within ${scaled(25_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(120)})"}, " +
+                "install ${click.toString().take(100)}, after the click: ${extra.optJSONObject("installPageLanded")?.let { "button ${if (it.optBoolean("disabled")) "disabled" else "enabled"} \"${it.optString("label").take(30)}\"${it.optString("message").takeIf { m -> m.isNotEmpty() && m != "null" }?.let { m -> ", message \"${m.take(60)}\"" } ?: ""}" } ?: "n/a"}, " +
+                "page: ${found.toString().take(120)}" +
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms)" else "",
             extra
         )
     }
@@ -1778,6 +1878,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The marker on the target's first document; the rest of [USERSCRIPT_EFFECT_MS] goes to the reload. */
         private const val USERSCRIPT_FIRST_LOAD_MS = 20_000L
         private const val USERSCRIPT_EFFECT_MS = 45_000L
+        /** A store install of these rows on the 113 job at normal speed; a row's own install against it is the job's speed factor ([speedFactor]). */
+        private const val NOMINAL_INSTALL_MS = 8_000L
+        /**
+         * A userscript manager's install page: whether its Install button is up and its spinner
+         * down (Tampermonkey's `ask.html` shows "Please wait..." while its background answers),
+         * the button's state, the page's text.
+         */
+        private const val USERSCRIPT_INSTALL_PAGE_STATE =
+            "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
+                "var isInstall=function(n){return /^(install|confirm installation)$/i.test(label(n))&&visible(n)};" +
+                "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
+                "var hit=buttons.find(isInstall)||nodes.find(isInstall);var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
+                "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),disabled:!!hit.disabled}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
+        /** Stylus's install page: its `button.install` (present, shown, enabled, label, classes), its message box, the page's text. */
+        private const val STYLUS_INSTALL_PAGE_STATE =
+            "(function(){var b=document.querySelector('button.install');var m=document.querySelector('#message-box, .message-box, #message-box-contents');var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!b&&b.offsetParent!==null&&!b.disabled,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,label:b?(b.textContent||'').trim():null,classes:b?String(b.className):null," +
+                "message:m?(m.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):null,text:text.slice(0,160),readyState:document.readyState})})()"
         /**
          * What an account-backed extension's sign-in surface says (the account rows' core grade,
          * [popupLogin]); whole words, so a product name is not one ("Contact 1Password Support").

@@ -30,6 +30,29 @@
     </p>
     <p id="status">No userscript has run.</p>
     <script>
+      // Uncaught errors with their stacks, for the sweep driver (a console line names only the
+      // file and line; a manager's failure inside its own injected code needs the frames).
+      window.__errors = []
+      window.addEventListener('error', function (event) {
+        var error = event.error
+        window.__errors.push({
+          message: String(event.message || (error && error.message) || ''),
+          source: String(event.filename || ''),
+          line: event.lineno || 0,
+          stack:
+            error && error.stack ? String(error.stack).split('\n').slice(0, 12).join('\n') : null
+        })
+      })
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = event.reason
+        window.__errors.push({
+          message: 'unhandled rejection: ' + String((reason && reason.message) || reason),
+          source: '',
+          line: 0,
+          stack:
+            reason && reason.stack ? String(reason.stack).split('\n').slice(0, 12).join('\n') : null
+        })
+      })
       // The page's own script: shows that the page keeps working around the userscript.
       document.getElementById('status').textContent =
         'Page script ran at ' + new Date().toISOString() + '; waiting for a userscript.'

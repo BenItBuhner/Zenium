@@ -298,6 +298,21 @@ export interface FrameContext {
   precursorUrl: string | null
 }
 
+/**
+ * A sub-frame whose document has no URL of its own and lives on an inherited origin: `about:blank`
+ * (also the initial document of a `javascript:` frame, whose URL stays `about:blank`),
+ * `about:srcdoc`, `data:`, `blob:` and `filesystem:` frames. Chrome injects content scripts there
+ * only for declarations that opt in (`match_about_blank`, `match_origin_as_fallback`), matched on
+ * the precursor's URL; nothing of the extension system touches such a frame otherwise.
+ */
+export function inheritsOrigin(frame: FrameContext): boolean {
+  if (frame.isTopFrame) return false
+  const url = frame.url
+  if (url === 'about:blank' || url === 'about:srcdoc' || url.startsWith('about:blank?')) return true
+  const scheme = schemeOf(url)
+  return scheme === 'data' || scheme === 'blob' || scheme === 'filesystem'
+}
+
 /** The URL a content script declaration is matched against for this frame, or null when none applies. */
 export function effectiveMatchUrl(script: ContentScriptMatch, frame: FrameContext): string | null {
   const url = frame.url
