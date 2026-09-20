@@ -15,7 +15,7 @@ import { READER_URL_PREFIX } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
-import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
+import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
@@ -1607,13 +1607,19 @@ const PRIVATE_PAGE = 'https://example.com/'
 /** The device's screen lock as the stand-in host reported it at boot, put back after a `screenlock=` spec. */
 let hostScreenLock: boolean | null = null
 
+/** How long the stand-in host gets to picture the private page before the lock goes on without one. */
+const LOCK_PICTURE_TIMEOUT_MS = 2500
+
 /**
  * `lock=on`: the private tabs' lock as the host puts it on when the app is left with the switch
  * on and private tabs open (`PrivateLock.kt`). The device takes the pictures of the pages on
- * screen as it leaves (`Host.onPause`, `TabWebView.captureThumbnail`), so a private tab in front
- * has its last picture for the cover to blur: the stand-in host is asked for the same copy
- * first (`overlay.snapshot`, the cover's capture), then the lock comes on through the store as
- * `private.lock` would set it. `then` runs once the cover is asked for.
+ * screen as it leaves (`Host.onPause`, `TabWebView.captureThumbnail`, of a painted document), so
+ * a private tab in front has its last picture for the cover to blur: the stand-in host is asked
+ * for the same copy once the page has loaded and painted (`overlay.snapshot`, the cover's
+ * capture; a site's frame cannot be read and answers nothing, `PREVIEW_SAMPLE_ORIGIN`'s page
+ * can), then the lock comes on through the store as `private.lock` would set it. Under the
+ * overview no picture is asked for: the pane's cards lie under the veil themselves. `then` runs
+ * once the cover is asked for.
  */
 function lockPrivateTabs(then: () => void): void {
   const state = browserStore.get().state
@@ -1622,16 +1628,26 @@ function lockPrivateTabs(then: () => void): void {
     applyPrivateLock({ locked: true })
     then()
   }
-  if (!tab || !isPrivateTab(tab) || isEmptyTabUrl(tab.url)) {
+  if (!tab || !isPrivateTab(tab) || isEmptyTabUrl(tab.url) || overviewIsOpen()) {
     lock()
     return
   }
-  void cmd('overlay.snapshot', { tabId: tab.id })
-    .then((data) => {
-      if (typeof data === 'string' && data) rememberThumbnail(tab.id, data)
+  const loaded = (s: UIState): boolean => {
+    const now = activeTab(s)
+    return now !== null && now.id === tab.id && !now.loading
+  }
+  untilState(loaded, () =>
+    afterFrames(2, () => {
+      const picture = cmd('overlay.snapshot', { tabId: tab.id }).catch(() => null)
+      const late = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), LOCK_PICTURE_TIMEOUT_MS)
+      )
+      void Promise.race([picture, late]).then((data) => {
+        if (typeof data === 'string' && data) rememberThumbnail(tab.id, data)
+        lock()
+      })
     })
-    .catch(() => undefined)
-    .then(lock)
+  )
 }
 
 /**
