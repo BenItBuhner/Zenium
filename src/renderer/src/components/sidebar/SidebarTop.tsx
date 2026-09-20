@@ -193,9 +193,9 @@ export function NavRow({
   // The chips fit or hide by priority (`pillChipTiers.ts`, design language v2 §9.29; the #226
   // finding of five chips running past a 240 px sidebar's pill): the pill measures its content
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
-  // site icon and the state chips – the shield, blocked pop-ups, a save prompt's key – are never
-  // hidden; the star, the zoom chip and the informational chips (translate, Reader View) hide
-  // from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
+  // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
+  // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
   // the stylesheet's container query's. A hidden chip's action stays in the app menu and the
   // tab's menu; a chip whose popover is up stays put (§9.20).
   const pill = useRef<HTMLDivElement>(null)
@@ -216,7 +216,7 @@ export function NavRow({
     const counted = shieldState === 'blocking' && tab !== null && tab.blockedCount > 0
     chipsPresent.push({
       id: 'shield',
-      tier: 'state',
+      tier: 'shield',
       width: CHIP_WIDTH.iconButton + (counted ? CHIP_WIDTH.badge : 0)
     })
   }
@@ -408,7 +408,12 @@ export function NavRow({
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
             )}
             {tab && isWebPage && state.capabilities.requestBlocking && (
-              <BlockedChip tab={tab} state={state} variant="desktop" />
+              <BlockedChip
+                tab={tab}
+                state={state}
+                variant="desktop"
+                collapsed={!fits.has('shield')}
+              />
             )}
             {tab && !extension && (isReader || (tab.readerable && fits.has('reader'))) && (
               <PillChip

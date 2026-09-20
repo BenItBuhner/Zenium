@@ -2,20 +2,28 @@
  * Which of the address pill's chips fit, and which hide when the pill cannot hold them all
  * (design language v2 §9.29's tier; Chrome's LocationBarView lays its decorations out the same
  * way). The chips have a priority: the site icon always; then the chips that report a state the
- * user cannot otherwise see (blocked pop-ups, the blocking shield, a save prompt's key) – never
- * hidden; then the star; then the zoom chip; the informational chips (translate, Reader View)
- * lowest. The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do the chips
- * hide, from the lowest priority up; once one does not fit, none below it shows. A hidden chip's
- * action stays reachable from the app menu and the tab's menu (Bookmark, Zoom, Translate Page,
- * Reader View) and from the site information.
+ * user cannot otherwise see (blocked pop-ups, a save prompt's key) – never hidden; then the
+ * star; then the blocking shield (its count is not a state, §9.29: the site information the
+ * site icon opens carries it); then the zoom chip; the informational chips (translate, Reader
+ * View) lowest. The address truncates first – down to `MIN_ADDRESS_WIDTH` – and only then do
+ * the chips hide, from the lowest priority up; once one does not fit, none below it shows. A
+ * hidden chip's action stays reachable from the app menu and the tab's menu (Bookmark, Zoom,
+ * Translate Page, Reader View) and from the site information (the blocking state).
  *
  * Pure, so the rule is unit-tested without a DOM; the pill measures itself and asks.
  */
 
-export type ChipTier = 'site' | 'state' | 'star' | 'zoom' | 'info'
+export type ChipTier = 'site' | 'state' | 'star' | 'shield' | 'zoom' | 'info'
 
 /** Highest priority first: what hides when the pill runs out of room hides from the end. */
-export const CHIP_PRIORITY: readonly ChipTier[] = ['site', 'state', 'star', 'zoom', 'info']
+export const CHIP_PRIORITY: readonly ChipTier[] = [
+  'site',
+  'state',
+  'star',
+  'shield',
+  'zoom',
+  'info'
+]
 
 /** The tiers no width ever hides: the address's own icon and the state the page cannot show. */
 const NEVER_HIDDEN: ReadonlySet<ChipTier> = new Set<ChipTier>(['site', 'state'])

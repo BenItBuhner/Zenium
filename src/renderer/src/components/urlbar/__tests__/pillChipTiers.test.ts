@@ -28,8 +28,8 @@ const inner = (pillWidth: number): number => pillWidth - PILL_PADDING
 const ids = (s: ReadonlySet<string>): string[] => [...s].sort()
 
 describe('the pill chip overflow rule (M8)', () => {
-  it('orders the tiers: site, state, star, zoom, informational', () => {
-    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'zoom', 'info'])
+  it('orders the tiers: site, state, star, shield, zoom, informational', () => {
+    expect(CHIP_PRIORITY).toEqual(['site', 'state', 'star', 'shield', 'zoom', 'info'])
   })
 
   it('hides nothing before the pill has been measured', () => {
@@ -48,12 +48,36 @@ describe('the pill chip overflow rule (M8)', () => {
   it('the site icon and the state chips are never hidden, however narrow the pill', () => {
     const chips: PillChipSpec[] = [
       { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
-      { id: 'shield', tier: 'state', width: CHIP_WIDTH.iconButton + CHIP_WIDTH.badge },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton + CHIP_WIDTH.badge },
       { id: 'popups', tier: 'state', width: CHIP_WIDTH.iconButton },
       { id: 'key', tier: 'state', width: CHIP_WIDTH.iconButton },
       { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
     ]
-    expect(ids(fittingChips(40, chips))).toEqual(['key', 'popups', 'shield', 'site'])
+    expect(ids(fittingChips(40, chips))).toEqual(['key', 'popups', 'site'])
+  })
+
+  it('§9.29: the shield is not a state chip – its count lives in the site information – so it hides after the star', () => {
+    // The default 240 px sidebar's single-row toolbar leaves the pill 100 px: the site icon and
+    // the address only (the #226 pill held site, shield, pop-ups, translate, zoom and star).
+    const everyday: PillChipSpec[] = [
+      { id: 'site', tier: 'site', width: CHIP_WIDTH.site },
+      { id: 'shield', tier: 'shield', width: CHIP_WIDTH.iconButton },
+      { id: 'star', tier: 'star', width: CHIP_WIDTH.star }
+    ]
+    const at = (pill: number): string[] => ids(fittingChips(inner(pill), everyday))
+    expect(at(100)).toEqual(['site'])
+    // The star returns at 130 (§9.29), the shield once it fits beside the star: 26 + 26 + 34 + 56 = 142 → pill 162.
+    expect(at(130)).toEqual(['site', 'star'])
+    expect(at(161)).toEqual(['site', 'star'])
+    expect(at(162)).toEqual(['shield', 'site', 'star'])
+    // With a blocked pop-up the pill keeps that chip and the address takes what is left.
+    const withPopup: PillChipSpec[] = [
+      ...everyday,
+      { id: 'popups', tier: 'state', width: CHIP_WIDTH.iconButton }
+    ]
+    const visible = fittingChips(inner(100), withPopup)
+    expect(ids(visible)).toEqual(['popups', 'site'])
+    expect(addressWidth(inner(100), withPopup, visible)).toBe(80 - 26 - 34)
   })
 
   it('collapses from the lowest priority up: translate first, then zoom, then the star', () => {
