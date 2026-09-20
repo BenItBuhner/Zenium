@@ -18,6 +18,9 @@ name: Android read aloud demo
 # enabled.
 on:
   workflow_dispatch:
+  # Run 5's dispatch (the branch has no dispatch token): taken off again once it has run.
+  push:
+    branches: [cursor/android-read-aloud-e064]
 
 permissions:
   contents: read
