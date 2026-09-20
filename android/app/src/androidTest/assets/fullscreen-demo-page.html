@@ -135,13 +135,16 @@
   onFile($('pick'));
   // The first-time exit hint the chrome draws in the page's top layer (shared/pageHint.ts): the
   // driver asks whether its host element stands, and how it is placed.
+  // The viewport is read from visualViewport where there is one: innerWidth / innerHeight are
+  // whole CSS px, and at the emulator's density (1.75) the frame is a fraction wider.
   window.__hint = function () {
     var h = document.querySelector('zenium-fullscreen-hint');
     if (!h) return null;
     var r = h.getBoundingClientRect();
+    var vv = window.visualViewport;
     return JSON.stringify({ top: r.top, left: r.left, width: r.width, height: r.height,
       opacity: h.style.opacity, transform: h.style.transform,
-      viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+      viewportWidth: vv ? vv.width : window.innerWidth, viewportHeight: vv ? vv.height : window.innerHeight,
       color: getComputedStyle(h).color, popover: typeof h.showPopover === 'function' });
   };
   // What the embed's document sees (same origin, so the top document may ask it).

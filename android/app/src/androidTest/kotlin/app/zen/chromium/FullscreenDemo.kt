@@ -185,12 +185,19 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
             check("the hint is the one 44 px row", hint.optDouble("height") in 40.0..72.0)
             check("the hint wears the light palette", paletteOf(hint) == "light")
             // The lead's L1, the hint's half: its card against the page's viewport (the frame it is
-            // in), as the toast card is measured against its frame in step 6.
+            // in), as the toast card is measured against its frame in step 6. The card's place is
+            // its layout's: a read that caught it moving (run 4's, on the emulator's stalled
+            // frames: the spring in or out is a translateY on the host element and nothing else)
+            // has the travel taken out again.
             val vw = hint.optDouble("viewportWidth")
-            note("  L1: the hint's card: left ${hint.optDouble("left")}, right ${vw - hint.optDouble("left") - hint.optDouble("width")}, bottom ${viewport - bottom}, height ${hint.optDouble("height")}, width ${hint.optDouble("width")} of $vw")
+            val travel = translateYOf(hint)
+            val restBottom = viewport - bottom + travel
+            note("  L1: the hint's card: left ${hint.optDouble("left")}, right ${vw - hint.optDouble("left") - hint.optDouble("width")}, bottom $restBottom" +
+                (if (travel != 0.0) " (read ${viewport - bottom} under translateY(${travel}px))" else "") +
+                ", height ${hint.optDouble("height")}, width ${hint.optDouble("width")} of $vw")
             check("L1: the hint's card is 8 px inside the viewport's sides and bottom, one 44 px row",
                 near(hint.optDouble("left"), TOAST_INSET) && near(vw - hint.optDouble("left") - hint.optDouble("width"), TOAST_INSET) &&
-                    near(viewport - bottom, TOAST_INSET) && near(hint.optDouble("height"), TOAST_ROW))
+                    near(restBottom, TOAST_INSET) && near(hint.optDouble("height"), TOAST_ROW))
         }
         val turned = poll(10_000) { landscape() }
         note("  screen landscape ${SystemClock.uptimeMillis() - enteredAt} ms after the touch: $turned; rotation ${rotation()}; requestedOrientation ${requested()}; dumpsys window: ${dumpsysRotation()}")
@@ -252,6 +259,16 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         note("  L2: the page's inline landing at ${landing?.optInt("at")} ms (${landing?.let { "${it.optInt("w")}x${it.optInt("h")}" }}); the fade's animate() at $fadeAt ms; " +
             "the fade ${if (landing != null && fadeAt != null) (if (fadeAt >= landing.optInt("at")) "follows the landing by ${fadeAt - landing.optInt("at")} ms" else "leads the landing by ${landing.optInt("at") - fadeAt} ms") else "or the landing unread"}")
         check("the chrome's fade starts on the page's landing, not before it (L2)", landing != null && fadeAt != null && fadeAt >= landing.optInt("at"))
+        // The chrome's own account, on the fade's clock (lib/fullscreenLanding.ts): the bars
+        // settling and at rest, the placements it reported, the sizes the host drew. The fade
+        // waits for the host's last frame at the placed size.
+        val story = landingLog()
+        note("  L2: the landing store (ms: settling, placed, sized): ${story.joinToString(" ") { "${it.optInt("at")}: ${it.opt("settling")} ${it.optJSONArray("placed")} ${it.optJSONArray("sized")}" }.ifEmpty { "nothing logged" }}")
+        val settledAt = story.firstOrNull { it.opt("settling") == false && story.indexOf(it) > 0 && story[story.indexOf(it) - 1].opt("settling") == true }?.optInt("at")
+        val sizedAt = story.zipWithNext().lastOrNull { (a, b) -> a.optJSONArray("sized")?.toString() != b.optJSONArray("sized")?.toString() }?.second?.optInt("at")
+        note("  L2: the bars at rest at $settledAt ms; the host's last size drawn at $sizedAt ms; the fade at $fadeAt ms (one clock)")
+        check("the chrome's fade starts on the host's last frame at the placed size, the bars at rest (L2, the chrome's clock)",
+            fadeAt != null && sizedAt != null && settledAt != null && fadeAt >= sizedAt && fadeAt >= settledAt)
     }
 
     /** The page's resize events since its last mark (`__resizeMark`), one entry each: when, the viewport's size, whether it was fullscreen. */
@@ -642,12 +659,14 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
         var last: JSONObject? = null
         val landed = poll(timeoutMs) {
             last = hint()
-            val transform = last?.optString("transform").orEmpty()
-            val y = Regex("translateY\\((-?[0-9.]+)px\\)").find(transform)?.groupValues?.get(1)?.toDoubleOrNull()
-            last != null && (transform.isEmpty() || (y != null && kotlin.math.abs(y) < 2.0))
+            last != null && kotlin.math.abs(translateYOf(last!!)) < 2.0
         }
         return if (landed) last else null
     }
+
+    /** The hint's travel (`translateY`, px) at the read: 0 at rest or without a transform. */
+    private fun translateYOf(hint: JSONObject): Double =
+        Regex("translateY\\((-?[0-9.]+)px\\)").find(hint.optString("transform"))?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0
 
     private fun hintDone(): Boolean = coreState().getJSONObject("settings").optBoolean("fullscreenHintDone")
 
@@ -708,14 +727,31 @@ class FullscreenDemo : MediaDemoBase("android-fullscreen") {
      */
     private fun installFadeSampler() {
         chromeJs(
-            "(function(){window.__fade=[];window.__fadeCalls=[];window.__fadeT0=performance.now();var t0=window.__fadeT0;" +
+            "(function(){window.__fade=[];window.__fadeCalls=[];window.__landing=[];window.__fadeT0=performance.now();var t0=window.__fadeT0;" +
                 "if(!window.__fadeHooked){window.__fadeHooked=true;var orig=Element.prototype.animate;" +
                 "Element.prototype.animate=function(k,o){if(this.classList&&this.classList.contains('zen-window'))" +
-                "window.__fadeCalls.push({at:Math.round(performance.now()-window.__fadeT0),keyframes:k,options:o});return orig.apply(this,arguments)}}" +
+                "window.__fadeCalls.push({at:Math.round(performance.now()-window.__fadeT0),keyframes:k,options:o});return orig.apply(this,arguments)};" +
+                // The landing store's every change (lib/fullscreenLanding.ts, registered under its
+                // key): the bars' word, the placements the chrome reported and the sizes the host drew.
+                "var st=window.__zenStores&&window.__zenStores['fullscreen-landing'];if(st)st.subscribe(function(){var s=st.get();" +
+                "window.__landing.push({at:Math.round(performance.now()-window.__fadeT0),settling:s.settling," +
+                "placed:Array.from(s.placed,function(e){return e[0]+':'+Math.round(e[1].rect.width)+'x'+Math.round(e[1].rect.height)+(e[1].settled?'':'~')})," +
+                "sized:Array.from(s.sized,function(e){return e[0]+':'+Math.round(e[1].width)+'x'+Math.round(e[1].height)})})})}" +
                 "(function s(){var w=document.querySelector('.zen-window');" +
                 "window.__fade.push(Math.round(performance.now()-t0)+':'+(w?getComputedStyle(w).opacity:'none'));" +
                 "if(window.__fade.length<900)requestAnimationFrame(s)})()})()"
         )
+    }
+
+    /**
+     * The landing store's changes since the sampler went in (`at` on the sampler's clock; `settling`;
+     * the placements as `tab:WxH`, `~` for one laid out on settling bars; the drawn sizes).
+     */
+    private fun landingLog(): List<JSONObject> {
+        val raw = chromeJs("JSON.stringify(window.__landing||[])")
+        val text = (JSONTokener(raw).nextValue() as? String) ?: return emptyList()
+        val all = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return (0 until all.length()).mapNotNull { all.optJSONObject(it) }
     }
 
     /** The `animate()` calls the chrome window made since the sampler went in (`at`, `keyframes`, `options`). */
