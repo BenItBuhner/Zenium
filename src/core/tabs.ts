@@ -365,6 +365,8 @@ export class TabManager {
     // Hidden until the window's layout positions it, so it never flashes at stale bounds.
     view.setVisible(false)
     view.attachTo(win.host)
+    // Another window may mean another `display-mode` (an app window's page moving to a browser window).
+    view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
     win.relayout()
     return true
   }
@@ -580,12 +582,14 @@ export class TabManager {
         state.commitVolatile()
         win.relayout()
         this.browser.fullscreen.onHtmlFullscreen(tabId, true)
+        this.browser.pushDisplayMode(win)
       },
       onLeaveHtmlFullscreen: () => {
         for (const w of this.browser.allWindows()) {
           if (w.htmlFullscreenTabId === tabId) {
             w.htmlFullscreenTabId = null
             w.relayout()
+            this.browser.pushDisplayMode(w)
           }
         }
         state.commitVolatile()
@@ -2881,6 +2885,7 @@ export class TabManager {
         this.owners.set(tabId, others[0])
         view.attachTo(others[0].host)
         others[0].relayout()
+        view.postToPage?.({ type: 'display-mode', mode: this.browser.displayModeFor(tabId) })
       } else {
         if (tab) this.rememberNavigation(tabId, view)
         this.destroyView(tabId)

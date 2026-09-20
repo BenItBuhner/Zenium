@@ -22,6 +22,7 @@ import type {
 } from '../../shared/types'
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
+import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   type NotificationPermissionStatus
@@ -633,6 +634,12 @@ export class ElectronPlatform implements Platform {
       if (!tabId || !action || typeof action.type !== 'string') return
       if (!isNewTabUrl(event.senderFrame?.url ?? event.sender.getURL())) return
       browser.newTab.handleAction(tabId, action)
+    })
+    // A page's `display-mode` (MW-23), asked synchronously at document start by every frame of a
+    // tab's page; anything else that asks (the chrome, an extension page) is a browser page.
+    ipcMain.on(DISPLAY_MODE_CHANNEL, (event) => {
+      const tabId = this.views.tabIdForWebContents(event.sender)
+      event.returnValue = tabId ? browser.displayModeFor(tabId) : 'browser'
     })
     this.attachNotificationStatus(browser)
   }

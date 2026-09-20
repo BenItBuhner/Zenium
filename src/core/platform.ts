@@ -46,6 +46,7 @@ import type {
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { DisplayMode } from '../shared/displayMode'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
@@ -238,10 +239,17 @@ export interface GeolocationHostMessage {
   error?: { code: GeolocationErrorCode; message: string }
 }
 
+/** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
+export interface DisplayModeHostMessage {
+  type: 'display-mode'
+  mode: DisplayMode
+}
+
 /**
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
- * the notification polyfill's answers and events, a share call's outcome, a position.
+ * the notification polyfill's answers and events, a share call's outcome, a position, the
+ * page's display mode.
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -249,6 +257,7 @@ export type PageHostMessage =
   | NotificationHostMessage
   | ShareHostMessage
   | GeolocationHostMessage
+  | DisplayModeHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {

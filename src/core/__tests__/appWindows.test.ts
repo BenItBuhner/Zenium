@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
 import { Browser } from '../browser'
 import type {
+  PageHostMessage,
   Platform,
   StoreIO,
   TabView,
@@ -38,6 +39,8 @@ interface FakeView {
   view: TabView
   readonly events: TabViewEvents
   url: string
+  /** What the browser posted into the page (`postToPage`). */
+  posted: PageHostMessage[]
 }
 
 interface FakeWindow {
@@ -46,6 +49,8 @@ interface FakeWindow {
   shown: number
   focused: number
   titles: string[]
+  /** What the host window reports for `isFullScreen`. */
+  fullscreen: boolean
 }
 
 interface Fixture {
@@ -71,13 +76,13 @@ function fixture(options: { windows?: boolean; os?: PlatformOs } = {}): Fixture 
     io: memoryIo(),
     windows: {
       create: (win, init) => {
-        const entry: FakeWindow = { win, init, shown: 0, focused: 0, titles: [] }
+        const entry: FakeWindow = { win, init, shown: 0, focused: 0, titles: [], fullscreen: false }
         hosts.push(entry)
         return stub<WindowHost>({
           alive: true,
           contentSize: () => ({ width: 1280, height: 800 }),
           normalBounds: () => null,
-          isFullScreen: () => false,
+          isFullScreen: () => entry.fullscreen,
           isMaximized: () => false,
           isFocused: () => false,
           isVisible: () => true,
@@ -95,9 +100,18 @@ function fixture(options: { windows?: boolean; os?: PlatformOs } = {}): Fixture 
     },
     views: stub<TabViewHost>({
       createView: (tab: Tab, events: TabViewEvents) => {
-        const fake: FakeView = { tabId: tab.id, events, url: '', view: undefined as never }
+        const fake: FakeView = {
+          tabId: tab.id,
+          events,
+          url: '',
+          view: undefined as never,
+          posted: []
+        }
         const overrides: Partial<TabView> = {
           isDestroyed: () => false,
+          postToPage: (message: PageHostMessage) => {
+            fake.posted.push(message)
+          },
           loadURL: (u: string) => {
             fake.url = u
           },
@@ -352,5 +366,45 @@ describe('--app= launches (MW-23)', () => {
     const f = fixture()
     expect(f.browser.allWindows()).toHaveLength(1)
     expect(f.browser.allWindows()[0].chrome).toBe('full')
+  })
+})
+
+describe('display-mode of a page (MW-23)', () => {
+  it('is browser in a browser window, standalone in an app window, fullscreen while the window is', () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    const tab = f.browser.tabs.createTab({ url: 'https://a.example/', active: true }, browserWin)
+    expect(f.browser.displayModeFor(tab.id)).toBe('browser')
+    const win = f.browser.openAppWindow(APP_URL)!
+    const appTab = f.browser.tabs.activeTabFor(win)!
+    expect(f.browser.displayModeFor(appTab.id)).toBe('standalone')
+    f.hostOf(win).fullscreen = true
+    expect(f.browser.displayModeFor(appTab.id)).toBe('fullscreen')
+    // A tab with no page yet answers browser.
+    expect(f.browser.displayModeFor('no-such-tab')).toBe('browser')
+  })
+
+  it('tells the pages when their window goes fullscreen and back, or one enters element fullscreen', () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    const tab = f.browser.tabs.createTab({ url: 'https://a.example/', active: true }, browserWin)
+    const page = f.viewOf(tab.id)
+    const modes = (): string[] =>
+      page.posted.flatMap((m) => (m.type === 'display-mode' ? [m.mode] : []))
+
+    f.hostOf(browserWin).fullscreen = true
+    browserWin.onWindowStateChanged()
+    expect(modes()).toEqual(['fullscreen'])
+    // Other flag changes (focus, maximise) with fullscreen as it was say nothing.
+    browserWin.onWindowStateChanged()
+    expect(modes()).toEqual(['fullscreen'])
+    f.hostOf(browserWin).fullscreen = false
+    browserWin.onWindowStateChanged()
+    expect(modes()).toEqual(['fullscreen', 'browser'])
+
+    page.events.onEnterHtmlFullscreen()
+    expect(modes().at(-1)).toBe('fullscreen')
+    page.events.onLeaveHtmlFullscreen()
+    expect(modes().at(-1)).toBe('browser')
   })
 })

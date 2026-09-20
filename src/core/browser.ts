@@ -130,6 +130,7 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
@@ -515,6 +516,27 @@ export class Browser {
     })
     this.tabs.createTab({ url, active: true }, win)
     return win
+  }
+
+  /**
+   * The `display-mode` a page reports (`shared/displayMode`): Chrome's answer for the window
+   * holding its live page – `fullscreen` while that window is, `standalone` in an app window,
+   * `browser` elsewhere. `browser` for a tab with no page or window yet.
+   */
+  displayModeFor(tabId: string): DisplayMode {
+    const win = this.tabs.ownerOf(tabId) ?? this.tabs.windowsShowing(tabId)[0]
+    if (!win?.alive) return 'browser'
+    return displayModeFor(win.windowState(), tabId)
+  }
+
+  /**
+   * A window's pages may answer a different `display-mode` now (it went fullscreen or came back,
+   * a page entered or left element fullscreen, a page arrived from another window): tell them,
+   * so a page's `matchMedia('(display-mode: …)')` listeners hear the change as they would in Chrome.
+   */
+  pushDisplayMode(win: ZenWindow): void {
+    for (const [tabId, view] of this.tabs.viewsOwnedBy(win))
+      view.postToPage?.({ type: 'display-mode', mode: this.displayModeFor(tabId) })
   }
 
   /**

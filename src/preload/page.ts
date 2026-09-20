@@ -9,6 +9,12 @@ import {
   type PageScriptMessage
 } from '../shared/pageScript'
 import { installInstallPromptShim } from '../shared/installPrompt'
+import {
+  DISPLAY_MODE_CHANNEL,
+  DISPLAY_MODE_EVENT,
+  installDisplayModeShim,
+  type DisplayMode
+} from '../shared/displayMode'
 import { installMediaSessionBridge, installMediaSessionShim } from '../shared/mediaSessionShim'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
@@ -58,6 +64,17 @@ if (signals && (signals.gpc || signals.dnt))
     func: installNavigatorSignals,
     args: [signals.gpc, signals.dnt]
   })
+// `display-mode` (MW-23): Electron's engine answers `browser` in every window; the page's world
+// gets Zenium's answer for its window (standalone in an app window) before its first script.
+try {
+  const displayMode = ipcRenderer.sendSync(DISPLAY_MODE_CHANNEL) as DisplayMode | undefined
+  contextBridge.executeInMainWorld({
+    func: installDisplayModeShim,
+    args: [displayMode ?? 'browser', DISPLAY_MODE_EVENT]
+  })
+} catch (error) {
+  console.warn('[zen] display-mode shim unavailable:', (error as Error).message)
+}
 installPageDialogs()
 installUserScripts({
   plan: (request) => ipcRenderer.sendSync(USER_SCRIPTS_CHANNELS.plan, request),
@@ -111,6 +128,11 @@ if (process.isMainFrame) {
       console.warn('[zen] page shim unavailable:', (error as Error).message)
     }
   }
+
+  // The window went fullscreen or the page moved to another window: the shim's lists fire `change`.
+  onHost('display-mode', (message) =>
+    document.dispatchEvent(new CustomEvent(DISPLAY_MODE_EVENT, { detail: message.mode }))
+  )
 
   installPageScript({
     send,
