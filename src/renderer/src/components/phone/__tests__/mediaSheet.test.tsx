@@ -1,0 +1,318 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import type { MediaState, Space, Tab, UIState } from '@shared/types'
+
+/*
+ * The in-app player (MW-16): the media sheet the pill's Now playing chip opens on a phone
+ * (`phone/MediaSheet.tsx`), rendered for real in happy-dom. What it shows of the tab's media
+ * (title, artist · site, the times), which controls it offers (the track buttons only through
+ * the page's own handlers, picture-in-picture only for a video where the host has it, Switch to
+ * tab only while another tab is on screen), and what each control sends the host – the same
+ * Media Session actions the OS controls send. And that it leaves with the media.
+ */
+
+const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
+Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const { MediaLayer } = await import('../MediaSheet')
+const { uiStore } = await import('@renderer/lib/ui')
+const { viewportStore } = await import('@renderer/lib/formFactor')
+
+function tab(id: string, url: string, title: string): Tab {
+  return {
+    id,
+    spaceId: 'space',
+    containerId: 'default',
+    url,
+    title,
+    favicon: null,
+    pinned: false,
+    essential: false,
+    pinnedUrl: null,
+    customTitle: null,
+    customIcon: null,
+    windowId: null,
+    folderId: null,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    audible: true,
+    muted: false,
+    discarded: false,
+    frozen: false,
+    cpuThrottle: 1,
+    zoom: 1,
+    splitGroupId: null,
+    createdAt: 0,
+    lastActiveAt: 0,
+    errorCode: null,
+    bookmarked: false,
+    readerable: false,
+    blockedCount: 0
+  } as Tab
+}
+
+const music = tab('t1', 'https://music.example.com/album/1', 'Album – Music')
+const other = tab('t2', 'https://news.example.com/', 'News')
+
+function space(activeTabId: string): Space {
+  return {
+    id: 'space',
+    name: 'Work',
+    icon: '',
+    containerId: 'default',
+    theme: null,
+    tabIds: ['t1', 't2'],
+    activeTabId,
+    pinnedCollapsed: false
+  }
+}
+
+/** The report of a track two minutes long, ten seconds in, the page handling the track actions. */
+function track(over: Partial<MediaState> = {}): MediaState {
+  return {
+    tabId: 't1',
+    playing: true,
+    title: 'Nocturne',
+    artist: 'The Band',
+    artwork: null,
+    video: false,
+    position: { duration: 120, position: 10, playbackRate: 1 },
+    positionAt: Date.now(),
+    actions: ['previoustrack', 'nexttrack'],
+    session: true,
+    ...over
+  }
+}
+
+function state(
+  media: MediaState[],
+  { active = 't1', pictureInPicture = true }: { active?: string; pictureInPicture?: boolean } = {}
+): UIState {
+  return {
+    platform: 'android',
+    capabilities: { windowControls: false, pictureInPicture },
+    tabs: { t1: music, t2: other },
+    spaces: [space(active)],
+    activeSpaceId: 'space',
+    essentialTabIds: [],
+    settings: {},
+    window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
+    media
+  } as unknown as UIState
+}
+
+let root: Root | null = null
+let host: HTMLElement | null = null
+
+function render(s: UIState): void {
+  if (!root) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+  }
+  act(() => root!.render(<MediaLayer state={s} />))
+}
+
+/** The sheet up for `t1`'s media, its wait for the page's cover over (at once, with no page). */
+async function open(s: UIState): Promise<void> {
+  uiStore.set({ mediaSheet: 't1' })
+  render(s)
+  await act(async () => {
+    await Promise.resolve()
+  })
+}
+
+const q = <T extends HTMLElement>(selector: string): T | null => document.querySelector<T>(selector)
+const byLabel = (label: string): HTMLButtonElement | null =>
+  q<HTMLButtonElement>(`[aria-label="${label}"]`)
+const commands = (): [string, unknown][] =>
+  invoke.mock.calls.map(([name, args]) => [name, args] as [string, unknown])
+
+const click = (el: HTMLElement | null): void => {
+  expect(el).not.toBeNull()
+  act(() => el!.click())
+}
+
+const initialViewport = viewportStore.get()
+
+beforeEach(() => {
+  viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'phone' })
+  uiStore.set({ mediaSheet: null })
+  // happy-dom lays nothing out: the layer is 800 tall and the sheet's content 300, as bottomSheet.test has it.
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+    }
+  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get: () => 300
+  })
+  invoke.mockClear()
+})
+
+afterEach(() => {
+  act(() => root?.unmount())
+  host?.remove()
+  root = null
+  host = null
+  viewportStore.set(initialViewport)
+  uiStore.set({ mediaSheet: null })
+})
+
+describe('the media sheet', () => {
+  it('is a Now playing sheet on the chassis with the track, the times and the transport', async () => {
+    await open(state([track()]))
+    const sheet = q('.zen-sheet')
+    expect(sheet).not.toBeNull()
+    expect(sheet!.classList.contains('zen-media-sheet')).toBe(true)
+    expect(sheet!.querySelector('.zen-sheet-title')?.textContent).toBe('Now playing')
+    // A layer on the chassis already: the host's own scrim stays down for it.
+    expect(sheet!.closest('[data-sheet-layer]')).not.toBeNull()
+
+    expect(q('[data-testid="media-title"]')?.textContent).toBe('Nocturne')
+    expect(q('.zen-media-detail')?.textContent).toBe('The Band · music.example.com')
+    // No artwork from the page: the note glyph on a tile, never a broken image.
+    expect(q('.zen-media-art-empty')).not.toBeNull()
+    expect(q('img.zen-media-art')).toBeNull()
+
+    const times = [...q('.zen-media-times')!.children].map((c) => c.textContent)
+    expect(times).toEqual(['0:10', '2:00'])
+    expect(q('[data-testid="media-position"]')).not.toBeNull()
+
+    // The transport: previous, pause (it plays), next – live, since the page handles the tracks.
+    const transport = q('[data-testid="media-transport"]')!
+    const buttons = [...transport.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Previous track',
+      'Pause',
+      'Next track'
+    ])
+    expect(buttons.every((b) => !b.disabled)).toBe(true)
+    expect(buttons.every((b) => b.classList.contains('zen-v2-icon-button'))).toBe(true)
+  })
+
+  it('shows the page’s artwork when it has one and reads Play while paused', async () => {
+    await open(state([track({ playing: false, artwork: 'https://music.example.com/art.png' })]))
+    const art = q<HTMLImageElement>('img.zen-media-art')
+    expect(art?.getAttribute('src')).toBe('https://music.example.com/art.png')
+    expect(art?.getAttribute('alt')).toBe('')
+    expect(byLabel('Play')).not.toBeNull()
+    expect(byLabel('Pause')).toBeNull()
+  })
+
+  it('disables the track buttons at .4 while the page handles neither (§9.30)', async () => {
+    await open(state([track({ actions: [] })]))
+    expect(byLabel('Previous track')?.disabled).toBe(true)
+    expect(byLabel('Next track')?.disabled).toBe(true)
+    expect(byLabel('Pause')?.disabled).toBe(false)
+    // One handled: only its button comes alive.
+    render(state([track({ actions: ['nexttrack'] })]))
+    expect(byLabel('Previous track')?.disabled).toBe(true)
+    expect(byLabel('Next track')?.disabled).toBe(false)
+  })
+
+  it('sends the OS controls’ actions: the toggle, the tracks, the ten-second seeks and a scrub', async () => {
+    await open(state([track()]))
+    click(byLabel('Pause'))
+    expect(commands().at(-1)).toEqual(['media.toggle', { tabId: 't1' }])
+    click(byLabel('Next track'))
+    expect(commands().at(-1)).toEqual(['media.action', { tabId: 't1', action: 'nexttrack' }])
+    click(byLabel('Previous track'))
+    expect(commands().at(-1)).toEqual(['media.action', { tabId: 't1', action: 'previoustrack' }])
+
+    // Paused at 0:10 (the position holds; playing, it would have run on by the milliseconds
+    // since the report): seek forward lands at 0:20, and the display holds the target until the
+    // page's next report; seek backward from there goes back to 0:10, never under zero.
+    render(state([track({ playing: false })]))
+    click(byLabel('Seek forward'))
+    expect(commands().at(-1)).toEqual([
+      'media.action',
+      { tabId: 't1', action: 'seekto', seekTime: 20 }
+    ])
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('0:20')
+    click(byLabel('Seek backward'))
+    expect(commands().at(-1)).toEqual([
+      'media.action',
+      { tabId: 't1', action: 'seekto', seekTime: 10 }
+    ])
+    click(byLabel('Seek backward'))
+    expect(commands().at(-1)).toEqual([
+      'media.action',
+      { tabId: 't1', action: 'seekto', seekTime: 0 }
+    ])
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('0:00')
+
+    // A new report from the page (a later `positionAt`) takes the display back to the live position.
+    render(
+      state([
+        track({
+          playing: false,
+          position: { duration: 120, position: 30, playbackRate: 1 },
+          positionAt: Date.now() + 1
+        })
+      ])
+    )
+    expect(q('.zen-media-times')!.firstElementChild!.textContent).toBe('0:30')
+
+    // The slider is the §10.4 row (the zoom row's), the position spoken as times, ending at the duration.
+    const slider = q('[data-testid="media-position"]')!
+    expect(slider.classList.contains('zen-zoom-slider')).toBe(true)
+    expect(slider.getAttribute('aria-valuetext')).toBe('0:30 of 2:00')
+    const thumb = slider.querySelector('[role="slider"]')
+    expect(thumb?.getAttribute('aria-valuemax')).toBe('120')
+    expect(thumb?.getAttribute('aria-valuenow')).toBe('30')
+  })
+
+  it('has no seek row for a stream without a duration', async () => {
+    await open(state([track({ position: { duration: 0, position: 30, playbackRate: 1 } })]))
+    expect(q('[data-testid="media-seek"]')).toBeNull()
+    expect(q('[data-testid="media-transport"]')).not.toBeNull()
+  })
+
+  it('offers picture-in-picture for a video where the host has it, and sends the tab into it', async () => {
+    await open(state([track({ video: true })]))
+    const row = q<HTMLElement>('[data-testid="media-pip"]')
+    expect(row).not.toBeNull()
+    expect(row!.textContent).toContain('Picture in picture')
+    click(row)
+    expect(commands().at(-1)).toEqual(['media.pictureInPicture', { tabId: 't1' }])
+    // The window shrinks to the video: the sheet goes with it.
+    await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBeNull())
+  })
+
+  it('offers no picture-in-picture for audio, nor for a video where the host has none', async () => {
+    await open(state([track()]))
+    expect(q('[data-testid="media-pip"]')).toBeNull()
+    render(state([track({ video: true })], { pictureInPicture: false }))
+    expect(q('[data-testid="media-pip"]')).toBeNull()
+  })
+
+  it('offers Switch to tab only while another tab is on screen, and switches', async () => {
+    await open(state([track()]))
+    expect(q('[data-testid="media-switch-tab"]')).toBeNull()
+    render(state([track()], { active: 't2' }))
+    const row = q<HTMLElement>('[data-testid="media-switch-tab"]')
+    expect(row?.textContent).toContain('Switch to tab')
+    click(row)
+    expect(commands().at(-1)).toEqual(['tab.activate', { tabId: 't1' }])
+    await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBeNull())
+  })
+
+  it('leaves with the media: a closed tab or an ended clip takes the sheet down', async () => {
+    await open(state([track()]))
+    expect(q('[data-testid="media-sheet"]')).not.toBeNull()
+    render(state([]))
+    await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBeNull())
+  })
+
+  it('renders nothing while no sheet is asked for', () => {
+    render(state([track()]))
+    expect(q('.zen-sheet')).toBeNull()
+  })
+})

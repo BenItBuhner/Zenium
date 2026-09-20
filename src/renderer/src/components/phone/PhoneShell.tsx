@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
+import { AudioLines, Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost, isWebPageUrl } from '@shared/url'
@@ -17,6 +17,7 @@ import {
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
+import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
@@ -29,6 +30,7 @@ import {
   contentAreaStore,
   dismissBanner,
   openBarEditor,
+  openMediaSheet,
   openTabsMenu,
   openUrlbar,
   overlayCoversContent,
@@ -144,8 +146,13 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     onTap: (e) => {
       const icon = (e.target as HTMLElement).closest('[data-site-info]')
       const translate = (e.target as HTMLElement).closest('[data-translate]')
+      const media = (e.target as HTMLElement).closest('[data-media]')
+      const session = media ? mediaSession(state) : null
       if (overviewIsOpen()) closeOverview()
-      else if (tab && translate) {
+      else if (session) {
+        // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16).
+        void openMediaSheet(session.tabId)
+      } else if (tab && translate) {
         // The translation glyph at the end of the pill raises the bar, or puts it away.
         if (barStateOf(state, tab.id)) run('translate.dismiss', { tabId: tab.id })
         else run('translate.offer', { tabId: tab.id })
@@ -499,6 +506,11 @@ export function PillContent({
   // The private marker: the mask glyph in the pill's leading slot on every private tab, page or
   // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
   const privateMark = shown ? isPrivateTab(shown) : false
+  // Now playing (MW-16): the chip is there while a tab holds the media session – the tab the OS
+  // controls show, whichever pill is up – in the accent while it plays, muted while paused; it
+  // opens the in-app player, which switches to the tab when it is another one.
+  const session = mediaSession(state)
+  const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -586,6 +598,23 @@ export function PillContent({
         >
           <Languages className="h-3.5 w-3.5" />
         </Control>
+      )}
+      {session && (
+        <PillChip
+          inert={!interactive}
+          label={session.playing ? 'Now playing' : 'Media paused'}
+          popup="dialog"
+          expanded={mediaSheetOpen}
+          data-media
+          data-testid="media-chip"
+          data-state={session.playing ? 'playing' : 'paused'}
+          className={cn(
+            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+            session.playing ? 'text-[var(--zen-accent)]' : 'opacity-50'
+          )}
+        >
+          <AudioLines className="h-3.5 w-3.5" />
+        </PillChip>
       )}
       {state.spaces.length > 1 && (
         <span className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]">

@@ -123,6 +123,16 @@ export const PREVIEW_AUTOFILL = [
 
 export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
 
+/**
+ * What a `media=<variant>` state has a page report (the Now playing chip comes up in the pill):
+ * `audio`, a track with Media Session metadata, artwork and track handlers, playing; `paused`,
+ * the same paused; `video`, a video without metadata or handlers (the tab's title, the site, the
+ * note tile, the track buttons at .4, the picture-in-picture row); `elsewhere`, the track
+ * playing in another tab than the one on screen (the sheet's "Switch to tab" row).
+ */
+export const PREVIEW_MEDIA = ['audio', 'paused', 'video', 'elsewhere'] as const
+export type PreviewMediaVariant = (typeof PREVIEW_MEDIA)[number]
+
 export type PreviewState =
   | { kind: 'idle' }
   | {
@@ -248,6 +258,12 @@ export type PreviewState =
       progress: number | null
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
+  | {
+      /** A page's media as one of PREVIEW_MEDIA; `sheet` opens the in-app player on it. */
+      kind: 'media'
+      variant: PreviewMediaVariant
+      sheet: boolean
+    }
   | { kind: 'download'; download: PreviewDownloadSpec }
   | {
       /**
@@ -372,24 +388,26 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
- * of them, `&allowed` remembers the site as allowed), `prompt=http-auth` / `prompt=certificate`
- * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in),
- * `prompt=<any other value>` for the permission that page asks for (the permission prompt
- * sheet), `private=<surface>|new|<url>` for a private tab, `voice=<script>` for voice search from the
- * active tab, `overview` for the tab overview over the active page (the grid of cards, with
- * whatever pictures the stand-in host has of the tabs), or `urlbar=<text>` for the pill's
- * editor over the active tab with that text typed (`urlbar=` opens it search-ready, with the
- * page's header row; `newtab` opens it over a new tab page instead; `clip=<text>` puts that on
- * the stand-in clipboard first, so the clipboard row shows; `then=tap:<label>;…` presses the
- * editor's controls once the suggestions are up: `Show`, `Edit`, `Refine`). When several are
- * given, `page` wins over `extension-page`, that over `group`, `group` over `overlay`, `overlay`
- * over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`, that over `private`,
- * `private` over `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `barhide`,
- * `barhide` over `zoom`, `zoom` over `reader`, `reader` over `error`, `error` over the messages,
- * the messages over `webapp`, `webapp` over `download`, `download` over `popups`, `popups` over the security
- * `prompt`, that over `voice`, `voice` over `overview`, and `overview` over `urlbar`. A leading
- * `#` (the URL hash as read) is ignored.
+ * `mime=<type>`), `media=<variant>` for the active page reporting media as one of PREVIEW_MEDIA
+ * (the Now playing chip in the pill; `&sheet` opens the in-app player on it), `popups=<n>` for
+ * n pop-ups blocked on the active page (`&list` opens the list of them, `&allowed` remembers the
+ * site as allowed), `prompt=http-auth` / `prompt=certificate` for a security dialog over the
+ * page (`&failed`, `&proxy`, `&secure` vary the sign-in), `prompt=<any other value>` for the
+ * permission that page asks for (the permission prompt sheet), `private=<surface>|new|<url>`
+ * for a private tab, `voice=<script>` for voice search from the active tab, `overview` for the
+ * tab overview over the active page (the grid of cards, with whatever pictures the stand-in
+ * host has of the tabs), or `urlbar=<text>` for the pill's editor over the active tab with that
+ * text typed (`urlbar=` opens it search-ready, with the page's header row; `newtab` opens it
+ * over a new tab page instead; `clip=<text>` puts that on the stand-in clipboard first, so the
+ * clipboard row shows; `then=tap:<label>;…` presses the editor's controls once the suggestions
+ * are up: `Show`, `Edit`, `Refine`). When several are given, `page` wins over
+ * `extension-page`, that over `group`, `group` over `overlay`, `overlay` over `menu`, `menu`
+ * over `sheet`, `sheet` over the permission `prompt`, that over `private`, `private` over
+ * `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `barhide`, `barhide` over
+ * `zoom`, `zoom` over `reader`, `reader` over `error`, `error` over the messages, the messages
+ * over `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`,
+ * `popups` over the security `prompt`, that over `voice`, `voice` over `overview`, and
+ * `overview` over `urlbar`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -519,6 +537,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const webapp = params.get('webapp')
   if (webapp !== null && (PREVIEW_WEBAPP_SURFACES as readonly string[]).includes(webapp)) {
     return { kind: 'webapp', surface: webapp as PreviewWebAppSurface }
+  }
+  const media = params.get('media')
+  if (media !== null && (PREVIEW_MEDIA as readonly string[]).includes(media)) {
+    return { kind: 'media', variant: media as PreviewMediaVariant, sheet: params.has('sheet') }
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }

@@ -29,6 +29,7 @@ import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
 import { activeSpace, activeTab, regularOf } from '@renderer/lib/selectors'
 import {
   browserStore,
+  closeMediaSheet,
   closeMenu,
   closeOverlay,
   closeReaderPreferences,
@@ -39,6 +40,7 @@ import {
   forgetBanner,
   forgetToast,
   openExtensionsSheet,
+  openMediaSheet,
   openOverlay,
   openReaderPreferences,
   openTabsMenu,
@@ -76,11 +78,13 @@ import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  type PreviewMediaVariant,
   type PreviewPrivateSurface,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
 } from './previewSpec'
+import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
@@ -171,6 +175,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedMedia()
     closeOverlay()
     closeMenu()
     closeTabsMenu()
@@ -595,6 +600,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'webapp' && tab) {
     seed()
     applyWebApp(target.surface, tab.id, spec)
+  } else if (target.kind === 'media' && tab) {
+    void applyMedia(tab.id, target.variant, target.sheet, spec)
   } else if (target.kind === 'qr') {
     // The stand-in camera takes the script, then the camera button is "tapped" for the active
     // tab: the scan sheet goes up and the script's events play into it. The state is reached at
@@ -1682,6 +1689,113 @@ function applyWebApp(surface: PreviewWebAppSurface, tabId: string, spec: string)
       whenStore(() => uiStore.get().toasts.some((t) => t.message.includes('Home screen')), spec)
       return
   }
+}
+
+/** The media a `media=<variant>` state seeded: the tab that reported it, and whether it was made for it. */
+let previewMedia: { tabId: string; made: boolean } | null = null
+
+/** The page the track of an `elsewhere` state plays in, opened behind the one on screen. */
+const PREVIEW_MEDIA_PAGE = 'https://en.wikipedia.org/wiki/Nocturne'
+
+/** The track's artwork: a tile in the album's colour, as a page's 512 square would come in. */
+const PREVIEW_MEDIA_ART = ((): string => {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">` +
+    `<rect width="512" height="512" fill="#2b3a67"/>` +
+    `<circle cx="256" cy="256" r="150" fill="#f7c59f"/>` +
+    `<circle cx="256" cy="256" r="46" fill="#2b3a67"/></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+})()
+
+/**
+ * What the page reports for `variant`, as its script would: the track with its Media Session
+ * metadata and handlers (the `paused` report follows it, so the session has played once, as
+ * the core wants before it shows controls), or a video with neither.
+ */
+function mediaReport(variant: PreviewMediaVariant): MediaReport {
+  if (variant === 'video') {
+    return {
+      ...EMPTY_MEDIA_REPORT,
+      playing: true,
+      video: true,
+      width: 1920,
+      height: 1080,
+      position: { duration: 634, position: 128, playbackRate: 1 }
+    }
+  }
+  return {
+    ...EMPTY_MEDIA_REPORT,
+    playing: true,
+    position: { duration: 251, position: 74, playbackRate: 1 },
+    metadata: {
+      title: 'Nocturne in E-flat major',
+      artist: 'Wave Three Ensemble',
+      album: 'Sessions',
+      artwork: [{ src: PREVIEW_MEDIA_ART, sizes: '512x512', type: 'image/svg+xml' }]
+    },
+    playbackState: 'playing',
+    actions: ['play', 'pause', 'seekto', 'previoustrack', 'nexttrack']
+  }
+}
+
+/** A page's media report, the way its script posts one through the host. */
+function postMedia(tabId: string, media: MediaReport): void {
+  hostGlobal().viewEvent(
+    tabId,
+    'pageMessage',
+    JSON.stringify({ type: 'media', playing: media.playing, media })
+  )
+}
+
+/**
+ * The active page (or, for `elsewhere`, a page opened behind it) reports its media: the core
+ * takes the session and the Now playing chip comes up in the pill; `sheet` then opens the
+ * in-app player on it, the state reached once the store carries it.
+ */
+async function applyMedia(
+  activeId: string,
+  variant: PreviewMediaVariant,
+  sheet: boolean,
+  spec: string
+): Promise<void> {
+  let tabId = activeId
+  let made = false
+  if (variant === 'elsewhere') {
+    tabId = await cmd('tab.create', {
+      url: PREVIEW_MEDIA_PAGE,
+      active: false,
+      afterTabId: activeId
+    })
+    made = true
+  }
+  previewMedia = { tabId, made }
+  const report = mediaReport(variant)
+  postMedia(tabId, report)
+  await new Promise<void>((resolve) =>
+    untilState((s) => s.media.some((m) => m.tabId === tabId && m.session), resolve)
+  )
+  if (variant === 'paused') {
+    postMedia(tabId, { ...report, playing: false, playbackState: 'paused' })
+    await new Promise<void>((resolve) =>
+      untilState((s) => s.media.some((m) => m.tabId === tabId && !m.playing), resolve)
+    )
+  }
+  if (sheet) {
+    await openMediaSheet(tabId)
+    whenStore(() => uiStore.get().mediaSheet === tabId, spec)
+  } else {
+    afterFrames(2, () => done(spec))
+  }
+}
+
+/** The media the last state seeded goes: the sheet closes, the page reports none, a tab made for it closes. */
+function unseedMedia(): void {
+  const seeded = previewMedia
+  previewMedia = null
+  closeMediaSheet()
+  if (!seeded) return
+  postMedia(seeded.tabId, EMPTY_MEDIA_REPORT)
+  if (seeded.made) void run('tab.close', { tabId: seeded.tabId, force: true })
 }
 
 /**
