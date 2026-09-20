@@ -15,17 +15,18 @@ name: Android new tab page morph demo
 # animator_duration_scale 0):
 #  - space:   the space page in portrait on the API 34 image and its own WebView, as the other
 #             phone demos run – real fingers on the field at rest at both docks with the keyboard
-#             rising, the predictive back gesture committing mid-flight, a tap on the double on its
-#             way back, the gesture on the landed omnibox pulled / cancelled / committed, the
+#             rising and on the scrim to dismiss it, a second tap on the double mid-flight
+#             (nothing), the predictive back gesture committing mid-flight, a tap on the double on
+#             its way back, the gesture on the landed omnibox pulled / cancelled / committed, the
 #             gfxinfo frame cost of a round trip, and the overflow question (eight tiles, the system
 #             font size at 1.3, landscape); then FakeboxMorphReducedDemo.
 #  - private: the private page turned to landscape, where the explainer makes the page overflow
 #             past the travel – a steady finger scrolling the field to the pill's slot and back at
-#             both docks, a tap part way through the scrub – on an AOSP image with the Chromium
-#             snapshot SystemWebView.apk swapped in (private tabs need MULTI_PROFILE, which the
-#             API 34 image's WebView 113 lacks; the private demo's recipe, swiftshader_indirect
-#             included: the snapshot WebView under swangle draws one chrome frame every 1.3-3.5 s);
-#             then FakeboxMorphScrubReducedDemo.
+#             both docks, a tap on the docked pill, a tap part way through the scrub – on an AOSP
+#             image with the Chromium snapshot SystemWebView.apk swapped in (private tabs need
+#             MULTI_PROFILE, which the API 34 image's WebView 113 lacks; the private demo's recipe,
+#             swiftshader_indirect included: the snapshot WebView under swangle draws one chrome
+#             frame every 1.3-3.5 s); then FakeboxMorphScrubReducedDemo.
 #
 # Dispatch-only, like the other demos: about half an hour, and it says nothing about a change
 # being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;

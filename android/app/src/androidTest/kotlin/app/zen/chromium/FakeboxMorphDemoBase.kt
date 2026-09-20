@@ -26,8 +26,9 @@ import kotlin.math.roundToInt
  * The scenes, by driver (the two flags):
  *  - [FakeboxMorphDemo] (`scrub = false, reduced = false`), the space page in portrait: a tap on
  *    the field at rest with the bar docked below – the field flies to the omnibox above the
- *    keyboard, whose rise moves the target under the segment – and its dismissal from open; the
- *    same round trip unsampled for the `gfxinfo` frame cost; with the keyboard out of the way (the
+ *    keyboard, whose rise moves the target under the segment – and its dismissal from open by a
+ *    finger on the scrim; a second tap on the double mid-flight (nothing: the flight goes on to
+ *    land); the same round trip unsampled for the `gfxinfo` frame cost; with the keyboard out of the way (the
  *    IME disabled for the scene, since a back with it up goes to it), the predictive back gesture
  *    committing while the field is still flying (a dismissal mid-flight), a tap on the double on
  *    its way back (the closing turning round into an opening), and the gesture on the landed
@@ -44,8 +45,9 @@ import kotlin.math.roundToInt
  *    with the bar below, the page's own field rides up one to one and hands over to the pill by a
  *    cross-fade at the frame's top edge (§11.8 as amended); with the bar above, the double is
  *    carried along the line to the pill's slot, rounding as it goes, and hands over over the last
- *    three tenths – then the scroll back, and a tap on the field part way (from a scrubbed pose)
- *    with its dismissal back to that pose. It needs the Chromium snapshot WebView (private tabs
+ *    three tenths – a tap on the docked pill (the plain open: nothing left to morph), then the
+ *    scroll back, and a tap on the field part way (from a scrubbed pose) with its dismissal back
+ *    to that pose. It needs the Chromium snapshot WebView (private tabs
  *    need `MULTI_PROFILE`, which the API 34 image's WebView 113 lacks), the private demo's recipe.
  *  - [FakeboxMorphReducedDemo] and [FakeboxMorphScrubReducedDemo] (`reduced = true`) run the
  *    tap and the dismissal (and, on the private page, from a scrubbed pose) in a FRESH process
@@ -198,7 +200,8 @@ abstract class FakeboxMorphDemoBase(
 
     /** The space page in portrait: both docks, the keyboard, the back gesture, the turn, the frame cost, the overflow question. */
     private fun morphScenes() {
-        tapAndDismiss("bottom-rest", edge = "bottom", keyboard = true)
+        tapAndDismiss("bottom-rest", edge = "bottom", keyboard = true, dismiss = "scrim")
+        retapMidFlight("bottom-retap")
         frameCost("bottom-cost")
         disableIme()
         midFlightBack("bottom-midflight-back")
@@ -206,7 +209,7 @@ abstract class FakeboxMorphDemoBase(
         pulled("bottom-pulled")
         enableIme()
         dock("top")
-        tapAndDismiss("top-rest", edge = "top", keyboard = true)
+        tapAndDismiss("top-rest", edge = "top", keyboard = true, dismiss = "scrim")
         frameCost("top-cost")
         dock("bottom")
         portraitOverflow()
@@ -244,11 +247,17 @@ abstract class FakeboxMorphDemoBase(
 
     /**
      * A finger on the field at rest: the field flies to the omnibox (over the keyboard, whose rise
-     * moves the target under the segment at a bottom dock), lands, and the dismissal – the shared
-     * close, by the chrome's state: a back for the keyboard, one for the field – runs it home.
+     * moves the target under the segment at a bottom dock), lands, and the dismissal runs it
+     * home – a real finger on the omnibox's scrim (`dismiss = "scrim"`: the largest free band of
+     * the frame beside the sheet, the field and the keyboard, [scrimPoint]; the shared close when
+     * none is 48 px tall) or the shared close by the chrome's state (a back for the keyboard, one
+     * for the field). Both reach the same held close (`interceptUrlbarClose`).
      */
-    private fun tapAndDismiss(scene: String, edge: String, keyboard: Boolean) {
-        section("$scene: a tap on the field at rest, the bar docked $edge${if (keyboard) ", the keyboard rising" else ""}")
+    private fun tapAndDismiss(scene: String, edge: String, keyboard: Boolean, dismiss: String = "back") {
+        section(
+            "$scene: a tap on the field at rest, the bar docked $edge${if (keyboard) ", the keyboard rising" else ""}, " +
+                "dismissed by ${if (dismiss == "scrim") "a tap on the scrim" else "the shared close"}"
+        )
         settleAtRest()
         val g = geometry()
         startSampling()
@@ -263,14 +272,66 @@ abstract class FakeboxMorphDemoBase(
         judge(scene, opening, reducedRun = reduced, g = g, opening = true)
 
         startSampling()
-        val close = closeUrlField()
+        val scrim = if (dismiss == "scrim") tapScrim() else null
+        val close = if (scrim == null) closeUrlField() else null
         val rested = awaitPhase("rest", 6_000)
         SystemClock.sleep(700)
         shot("$scene-closed")
         val closing = stopSampling(scene + "-closing")
-        finding("  ${close.describe()}; phase ${phaseNow()}; ${FakeboxMorph.describe(closing)}")
-        check(scene, "the shared close brought the field home", close.ok && rested, "close ${close.ok}, at rest $rested")
+        val how = when {
+            scrim != null -> "scrim tapped at $scrim"
+            dismiss == "scrim" -> "no scrim to tap (the sheet, the field and the keyboard fill the frame): the shared close instead, ${close?.describe()}"
+            else -> close?.describe()
+        }
+        finding("  $how; phase ${phaseNow()}; ${FakeboxMorph.describe(closing)}")
+        check(scene, "the dismissal brought the field home", (close?.ok ?: true) && rested && !urlbarOpen(), "at rest $rested, bar open ${urlbarOpen()}")
         judge(scene, closing, reducedRun = reduced, g = g, opening = false)
+    }
+
+    /**
+     * A second tap on the double mid-flight is nothing (the machine: a tap on a field opening or
+     * open changes nothing), and the field goes on to land as if untouched – a real finger on the
+     * double's `pointer-events-auto` over the omnibox's scrim, the layer's own guard. The tap is
+     * aimed a little ahead of the box toward the omnibox's field, where the box will be over the
+     * tap's 60 ms ([TAP_LEAD], as the turn's is), so the click does land on the double.
+     */
+    private fun retapMidFlight(scene: String) {
+        section("$scene: a second tap on the double mid-flight changes nothing")
+        settleAtRest()
+        val g = geometry()
+        startSampling()
+        tapField()
+        var retapped: PointF? = null
+        var at = ""
+        val deadline = SystemClock.uptimeMillis() + 2_000
+        while (SystemClock.uptimeMillis() < deadline) {
+            val s = snapshot()
+            val ph = s.optString("ph")
+            val m = s.optDouble("m", 0.0)
+            if (ph == "opening" && m > 0.2 && m < 0.75) {
+                val box = s.optJSONObject("d") ?: break
+                val target = s.optJSONObject("of")
+                val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
+                val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
+                val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, TAP_LEAD) * density)
+                Finger().tap(p.x, p.y)
+                retapped = p
+                at = "m ${"%.2f".format(m)}"
+                break
+            }
+            if (ph == "open") break
+            SystemClock.sleep(6)
+        }
+        val opened = awaitPhase("open", 8_000)
+        awaitIme(shown = true, timeoutMs = 4_000)
+        SystemClock.sleep(900)
+        val frames = stopSampling(scene)
+        finding("  second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE (the flight was over before the double was caught between .2 and .75)"}; open $opened; ${FakeboxMorph.describe(frames)}")
+        check(scene, "the double was caught mid-flight for the second tap", retapped != null, at.ifEmpty { "not caught" })
+        check(scene, "the flight went on to the landing unturned", opened && frames.none { it.phase == "closing" }, "open $opened, phases ${frames.map { it.phase }.distinct()}")
+        judge(scene, frames, reducedRun = false, g = g, opening = true)
+        closeUrlField()
+        awaitPhase("rest", 6_000)
     }
 
     /**
@@ -523,6 +584,7 @@ abstract class FakeboxMorphDemoBase(
         report(scene, FakeboxMorph.oneSurface(up))
         report(scene, FakeboxMorph.noJump(up, g))
         report(scene, FakeboxMorph.barStays(up))
+        dockedPillTap(scene, g, docked)
 
         startSampling()
         val b = Finger()
@@ -539,6 +601,47 @@ abstract class FakeboxMorphDemoBase(
         report(scene, FakeboxMorph.oneSurface(down))
         report(scene, FakeboxMorph.noJump(down, g))
         down.lastOrNull()?.let { report(scene, FakeboxMorph.resolved(it, "", false)) }
+    }
+
+    /**
+     * The pill with the field docked in it, under a real finger: there is nothing left to morph,
+     * so the bar opens as a tap on the pill opens it (`tapFakebox` from a scrub of 1: the plain
+     * open, no double drawn, the machine at rest), and the shared close puts it away again.
+     */
+    private fun dockedPillTap(scene: String, g: FakeboxMorph.Geometry, docked: JSONObject) {
+        val slot = docked.optJSONObject("pl")
+        val s = g.scrubOf(docked.optDouble("sc").toFloat())
+        if (slot == null || s < 0.99f) {
+            finding("  the field is not docked (s ${"%.2f".format(s)}${if (slot == null) ", no pill" else ""}): the docked pill's tap skipped")
+            return
+        }
+        startSampling()
+        val p = PointF(((slot.getDouble("x") + slot.getDouble("w") / 2) * density).toFloat(), ((slot.getDouble("y") + slot.getDouble("h") / 2) * density).toFloat())
+        Finger().tap(p.x, p.y)
+        val plain = awaitUrlbar(open = true, timeoutMs = 3_000)
+        SystemClock.sleep(600)
+        shot("$scene-docked-open")
+        val frames = stopSampling("$scene-docked-tap")
+        val after = snapshot()
+        finding("  the docked pill tapped at $p: bar open $plain, phase '${after.optString("ph")}', look '${after.optString("lk")}'; ${FakeboxMorph.describe(frames)}")
+        check(
+            scene, "a tap on the docked pill opens the bar plainly (nothing left to morph, no double)",
+            plain && after.optString("ph") == "rest" && frames.none { it.doubleDrawn },
+            "open $plain, phase '${after.optString("ph")}', the double drawn in ${frames.count { it.doubleDrawn }} frame(s)"
+        )
+        val close = closeUrlField()
+        awaitPhase("rest", 4_000)
+        SystemClock.sleep(600)
+        check(scene, "the bar closed again from the docked pill", close.ok && !urlbarOpen(), close.describe())
+    }
+
+    private fun awaitUrlbar(open: Boolean, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (urlbarOpen() == open) return true
+            SystemClock.sleep(POLL_MS)
+        }
+        return urlbarOpen() == open
     }
 
     /**
@@ -814,6 +917,38 @@ abstract class FakeboxMorphDemoBase(
         return p
     }
 
+    /**
+     * A point on the omnibox's scrim (the sheet's backdrop, `PhoneSheet`: a press outside the
+     * sheet and the field's band dismisses): inside the content frame above the keyboard, clear
+     * of the sheet, the omnibox's field, the double over it and the pill's slot – the middle of
+     * the tallest free band, on the frame's centre line; null when no band is 48 CSS px tall.
+     */
+    private fun scrimPoint(): PointF? {
+        val g = readGeometry()
+        val frame = g.optJSONObject("frame") ?: return null
+        val s = snapshot()
+        val top = frame.getDouble("y")
+        val bottom = minOf(frame.getDouble("y") + frame.getDouble("h"), g.optDouble("vh", Double.MAX_VALUE) - s.optDouble("ib", 0.0))
+        val taken = listOf("sh", "of", "d", "pl").mapNotNull { s.optJSONObject(it) }
+            .map { it.getDouble("y") to it.getDouble("y") + it.getDouble("h") }
+            .sortedBy { it.first }
+        var free = top
+        var best: Pair<Double, Double>? = null
+        for ((y0, y1) in taken + (bottom to bottom)) {
+            if (y0 - free >= 48 && (best == null || y0 - free > best.second - best.first)) best = free to y0
+            free = maxOf(free, y1)
+        }
+        val band = best ?: return null
+        return PointF(((frame.getDouble("x") + frame.getDouble("w") / 2) * density).toFloat(), ((band.first + band.second) / 2 * density).toFloat())
+    }
+
+    /** A real finger on the scrim ([scrimPoint]); null, and nothing tapped, when the frame has no free band. */
+    private fun tapScrim(): PointF? {
+        val p = scrimPoint() ?: return null
+        Finger().tap(p.x, p.y)
+        return p
+    }
+
     /** The page unscrolled, the bar closed, the machine at rest, before a scene. */
     private fun settleAtRest() {
         if (urlbarOpen()) closeUrlField()
@@ -1005,11 +1140,11 @@ abstract class FakeboxMorphDemoBase(
                 },
                 state: function(){
                   var fm = S('fakebox-morph') || {}, ui = S('ui') || {}, rs = getComputedStyle(document.documentElement);
-                  var sc = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field');
+                  var sc = q('.zen-ntp-scroll'), dbl = q('.zen-fakebox'), pf = q('.zen-ntp-field'), of = q('.zen-omnibox-field'), sh = q('.zen-omnibox-sheet');
                   return JSON.stringify({ ph: fm.phase || '', lk: document.documentElement.dataset.fakebox || '',
                     m: num(rs.getPropertyValue('--zen-ntp-morph')), p: num(rs.getPropertyValue('--zen-ntp-pill')),
-                    sc: sc ? r2(sc.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open),
-                    d: dbl ? box(dbl) : null, pf: pf ? box(pf) : null, pl: pill() });
+                    sc: sc ? r2(sc.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open), ib: num(rs.getPropertyValue('--zen-inset-bottom')),
+                    d: dbl ? box(dbl) : null, pf: pf ? box(pf) : null, pl: pill(), of: of ? box(of) : null, sh: sh ? box(sh) : null });
                 }
               };
               return 'installed';

@@ -6,8 +6,9 @@ import org.junit.runner.RunWith
 
 /**
  * The new tab page's field becoming the omnibox, on the space page in portrait: a real finger on
- * the field at rest at both docks, the keyboard rising under the bottom dock, the predictive back
- * gesture committing mid-flight, a tap on the double on its way back, the gesture on the landed
+ * the field at rest at both docks and on the scrim to dismiss it, the keyboard rising under the
+ * bottom dock, a second tap on the double mid-flight (nothing), the predictive back gesture
+ * committing mid-flight, a tap on the double on its way back, the gesture on the landed
  * omnibox pulled / cancelled / committed, the `gfxinfo` frame cost of a round trip, and the
  * overflow question (eight tiles, the system font size at 1.3, landscape). Judged frame by frame;
  * see [FakeboxMorphDemoBase] for the scenes and the checks. `android-ntp-morph-demo.yml` runs it
@@ -47,8 +48,9 @@ class FakeboxMorphReducedDemo : FakeboxMorphDemoBase(scrub = false, reduced = tr
 /**
  * The scroll scrub on the private page turned to landscape (the explainer makes it overflow past
  * the travel, which the space page in portrait never does): a steady finger carries the field to
- * the pill's slot and back at both docks, and a tap part way through the scrub morphs from the
- * scrubbed pose and returns to it. Private tabs need `WebViewFeature.MULTI_PROFILE`, so the
+ * the pill's slot and back at both docks, a tap on the docked pill opens the bar plainly, and a
+ * tap part way through the scrub morphs from the scrubbed pose and returns to it. Private tabs
+ * need `WebViewFeature.MULTI_PROFILE`, so the
  * workflow runs this driver on an AOSP image with the Chromium snapshot WebView swapped in (the
  * private demo's recipe).
  *
