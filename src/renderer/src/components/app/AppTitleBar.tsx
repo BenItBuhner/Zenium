@@ -6,6 +6,7 @@ import { displayHost } from '@shared/url'
 import { formatWindowTitle } from '@shared/windowTitle'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
 import { Favicon } from '../sidebar/Favicon'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 
 /**
@@ -74,7 +75,7 @@ export function AppTitleBar({
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
       <WindowControls />
     </div>

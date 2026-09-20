@@ -13,6 +13,7 @@ vi.mock('@renderer/lib/api', () => ({
 import { run } from '@renderer/lib/api'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
 import { browserStore } from '@renderer/lib/ui'
+import { TOOLBAR_STROKE } from '../../v2/controls'
 import { AppTitleBar } from '../AppTitleBar'
 
 /*
@@ -158,6 +159,15 @@ describe('AppTitleBar', () => {
     expect(vi.mocked(run).mock.calls.at(-1)?.[0]).toBe('app.menu')
     expect((vi.mocked(run).mock.calls.at(-1)?.[1] as { keyboard: boolean }).keyboard).toBe(true)
     expect(document.activeElement).toBe(button)
+  })
+
+  // Design language v2 §9.3: the title bar's one 16 px glyph draws at the toolbar row's stroke,
+  // as the SVG attribute (the #245 review's chassis item (d)).
+  it('draws its menu glyph at the toolbar stroke', () => {
+    bar(stateWith(), tab())
+    const glyph = q<SVGElement>('[data-zen-app-titlebar] button[aria-haspopup="menu"] svg')
+    expect(glyph.classList.contains('h-4')).toBe(true)
+    expect(glyph.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
   })
 
   it("draws the window's buttons where the host does not, and keeps the host's insets clear", () => {

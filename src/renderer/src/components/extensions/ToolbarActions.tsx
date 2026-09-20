@@ -21,6 +21,7 @@ import {
 } from '@renderer/lib/extensions/toolbar'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { ExtensionIcon } from './ExtensionIcon'
 import { V2IconButton, V2TitleBlock } from './v2'
 
@@ -79,7 +80,7 @@ export function ToolbarActions({
         // Enter and Space come as a click alone.
         onClick={(e) => setPanelAnchor(panelAnchor ? null : anchorOf(e.currentTarget))}
       >
-        <Puzzle className="h-4 w-4" />
+        <Puzzle className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
       {panelAnchor && (
         <ExtensionsPanel

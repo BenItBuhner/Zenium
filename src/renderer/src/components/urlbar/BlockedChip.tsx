@@ -4,6 +4,7 @@ import type { Tab, UIState } from '@shared/types'
 import { blockedChipLabel, chipCount, siteBlockingState } from '@renderer/lib/blockingUi'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { uiStore } from '@renderer/lib/ui'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { PillChip } from './PillChip'
 
 /**
@@ -38,9 +39,12 @@ export function BlockedChip({
   const label = blockedChipLabel(siteState, tab.blockedCount)
   const Icon = siteState === 'blocking' ? Shield : ShieldOff
   const showCount = siteState === 'blocking' && tab.blockedCount > 0
+  // The glyph's size and stroke come from the tokens through `.zen-v2-blocked-chip > svg` (the
+  // phone's 1.75 included); the desktop row also carries §9.3's stroke as the attribute, as its
+  // other 16 px glyphs do, so the row reads one stroke end to end.
   const content = (
     <>
-      <Icon aria-hidden />
+      <Icon aria-hidden strokeWidth={variant === 'desktop' ? TOOLBAR_STROKE : undefined} />
       {showCount && <span className="zen-v2-badge">{chipCount(tab.blockedCount)}</span>}
     </>
   )

@@ -4,6 +4,7 @@ import type { AutofillPrompt, Tab, UIState } from '@shared/types'
 import { chipPrompt, enterAutofillPrompt, toggleAutofillPrompt } from '@renderer/lib/autofill'
 import { uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
+import { TOOLBAR_STROKE } from '../v2/controls'
 
 /** What the chip stands for, in its name and tooltip. */
 function chipLabel(prompt: Exclude<AutofillPrompt, { kind: 'passkey-account' }>): string {
@@ -55,7 +56,7 @@ export function AutofillChip({ state, tab }: { state: UIState; tab: Tab }): JSX.
       onActivate={() => toggleAutofillPrompt(prompt.id)}
       onKeyDown={onKeyDown}
     >
-      <Glyph className="h-4 w-4" />
+      <Glyph className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
     </PillChip>
   )
 }
