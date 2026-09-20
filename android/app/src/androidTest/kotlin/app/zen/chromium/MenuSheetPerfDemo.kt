@@ -99,14 +99,26 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         for (line in readAsset("menu-perf/github/manifest.tsv").lines()) {
             val parts = line.split('\t')
             if (parts.size < 3) continue
-            routes[parts[0]] = parts[1] to gunzipAsset("menu-perf/github/${parts[2]}")
+            routes[parts[0]] = parts[1] to pageAsset("menu-perf/github/${parts[2]}")
         }
-        routes["/article.html"] = "text/html; charset=utf-8" to gunzipAsset("menu-perf/article.html.gz")
+        routes["/article.html"] = "text/html; charset=utf-8" to pageAsset("menu-perf/article.html.gz")
         return routes
     }
 
-    private fun gunzipAsset(name: String): ByteArray =
-        GZIPInputStream(instrumentation.context.assets.open(name)).use { it.readBytes() }
+    /**
+     * The repository keeps the page copies gzipped (`.gz`); AAPT unpacks a `.gz` asset when it
+     * packages the APK and drops the suffix, so the installed APK carries them plain (run
+     * 35539898644 found `article.html`, never `article.html.gz`). Read the plain name, and the
+     * gzipped one should the packaging ever leave them as they are.
+     */
+    private fun pageAsset(name: String): ByteArray {
+        val assets = instrumentation.context.assets
+        return try {
+            assets.open(name.removeSuffix(".gz")).use { it.readBytes() }
+        } catch (_: java.io.FileNotFoundException) {
+            GZIPInputStream(assets.open(name)).use { it.readBytes() }
+        }
+    }
 
     // --- the scenes, before the camera ---------------------------------------------------------------
 
