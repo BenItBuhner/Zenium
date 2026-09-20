@@ -59,7 +59,9 @@ import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { MediaHubButton } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { mediaHubVisible } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -144,8 +146,9 @@ export function NavRow({
     (s) => s.readerPreferences !== null && s.readerPreferences.tabId === tab?.id
   )
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
-  // its chips show where the page is, but nothing can be typed into it. An app window shows
-  // its page the same way until its own title bar lands.
+  // its chips show where the page is, but nothing can be typed into it. (An app window draws
+  // its title bar in place of this row, `app/AppTitleBar.tsx`; should the row ever stand in for
+  // it, the address stays read-only there too.)
   const readOnly = state.window.chrome === 'popup' || state.window.chrome === 'app'
   // An address or text dragged over the pill goes to the tab as typed (lib/dnd.ts, Chrome's
   // paste and go): the pill shows it will take the drop (§9.4) – or, read-only, that it cannot,
@@ -499,12 +502,17 @@ export function NavRow({
           </span>
         </div>
       )}
+      <MediaHubButton state={state} />
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The downloads button joins the fixed set while it is in the row.
-        fixedButtons={FIXED_BUTTONS + (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)}
+        // The media and downloads buttons join the fixed set while they are in the row.
+        fixedButtons={
+          FIXED_BUTTONS +
+          (mediaHubVisible(state) ? 1 : 0) +
+          (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)
+        }
         compact={compact}
       />
       <button

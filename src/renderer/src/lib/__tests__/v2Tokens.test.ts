@@ -103,9 +103,28 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
   ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
+  // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
+  // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
+  ['.zen-install-dialog-body {', "/*\n   * The desktop's share popover"],
+  // The desktop's share popover (components/share/SharePopover.tsx, MW-21): the preview, the QR
+  // card, the targets' hairline, and its unlayered two-line modifier on the shared row (§9.34).
+  ['.zen-share-body {', '@layer components {\n  /*\n   * The screen-capture picker'],
+  // The screen-capture picker (components/screenCapture/ScreenPicker.tsx, MW-19): the panes'
+  // hairline, the fixed list box with its spinner and empty line, the source cards, the footer,
+  // and its unlayered centring of the shared checkbox (§9.34).
+  ['.zen-scpick-panes {', "@layer components {\n  /*\n   * The desktop's media hub"],
+  // The desktop's media hub (components/media/MediaHubPopover.tsx, MediaHubButton.tsx, MW-16):
+  // the players (the artwork tile is the media sheet's `.zen-media-art`, below), the title
+  // pair's press fill, the seek row's times, the transport, the toolbar button's dot.
+  ['.zen-mhub-body {', '@layer components {\n  /*\n   * The media sheet'],
   // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
   // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
-  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back']
+  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back'],
+  // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
+  // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
+  // and line from the scale.
+  ['.zen-app-titlebar {', '.zen-tab {']
 ]
 
 /**
@@ -393,6 +412,90 @@ describe('token families (§9.29)', () => {
     expect(windowFamily).toMatch(
       /--v2-control-text-deemphasized: rgb\(var\(--zen-fg-rgb\) \/ 0\.69\)/
     )
+  })
+})
+
+/**
+ * The desktop platform's surfaces (MW-16 media hub, MW-19 screen picker, MW-21 share popover,
+ * MW-22 install dialog, MW-23 app title bar): their blocks in main.css, by the start marker of
+ * their `V2_SURFACES` entry, and the renderer files they are drawn from.
+ */
+const DESKTOP_PLATFORM_BLOCKS = [
+  '.zen-install-dialog-body {',
+  '.zen-share-body {',
+  '.zen-scpick-panes {',
+  '.zen-mhub-body {',
+  '.zen-app-titlebar {'
+]
+const DESKTOP_PLATFORM_FILES = [
+  'components/install/InstallDialog.tsx',
+  'components/share/SharePopover.tsx',
+  'components/screenCapture/ScreenPicker.tsx',
+  'components/media/MediaHubButton.tsx',
+  'components/media/MediaHubPopover.tsx',
+  'components/app/AppTitleBar.tsx',
+  'lib/qr.ts',
+  'lib/share.ts',
+  'lib/screenPicker.ts',
+  'lib/mediaHub.ts',
+  'lib/media.ts',
+  'hooks/useMediaSeek.ts'
+]
+
+/**
+ * Content drawn inside chrome – favicons, thumbnails, artwork, a QR symbol – keeps its own
+ * colours and is exempt from the token rule by name (§9.29). Every literal colour one of the
+ * files above states, in order, with its reason. A literal not named here fails the guard; a
+ * name whose literal is gone fails it too, so the list cannot outlive the code.
+ */
+const CONTENT_COLOURS: ReadonlyArray<
+  readonly [file: string, literals: readonly string[], reason: string]
+> = [
+  [
+    'components/share/SharePopover.tsx',
+    ['#fff', '#000'],
+    "the share popover's QR symbol: black modules on a white tile in both themes, because a scanner reads it and a theme does not (§9.29, the design lead's ruling on #245)"
+  ]
+]
+
+describe('content pixels inside chrome (§9.29)', () => {
+  const LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|\bcolor-mix\(/gi
+  /** A file's source without its block and line comments, so prose states no colour. */
+  const code = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('are the only literal colours the desktop platform’s surfaces state, each exempt by name', () => {
+    // The rules read tokens only.
+    for (const start of DESKTOP_PLATFORM_BLOCKS) {
+      const surface = V2_SURFACES.find(([s]) => s === start)
+      expect(surface, `v2 surface "${start}"`).toBeDefined()
+      const from = css.indexOf(start)
+      const to = css.indexOf(surface![1], from)
+      expect(from, start).toBeGreaterThanOrEqual(0)
+      expect(to, start).toBeGreaterThan(from)
+      expect(code(css.slice(from, to)).match(LITERAL) ?? [], `${start} states a colour`).toEqual([])
+    }
+    // The components and their helpers: what each states is what is named for it, nothing else.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const [file] of CONTENT_COLOURS)
+      expect(DESKTOP_PLATFORM_FILES, `${file} is not a desktop platform file`).toContain(file)
+    for (const file of DESKTOP_PLATFORM_FILES) {
+      const found = code(readFileSync(join(root, file), 'utf8')).match(LITERAL) ?? []
+      const named = CONTENT_COLOURS.find(([f]) => f === file)?.[1] ?? []
+      expect(found, `${file}: literal colours not exempt by name`).toEqual([...named])
+    }
+  })
+
+  it('draw the QR symbol black on its white tile in both themes, the colours the symbol’s own', () => {
+    const share = readFileSync(
+      fileURLToPath(new URL('../../components/share/SharePopover.tsx', import.meta.url)),
+      'utf8'
+    )
+    // The tile's white under the whole symbol and the modules' black, stated once each on no
+    // theme condition: the SVG is content and does not read `data-theme`.
+    expect(share).toMatch(/<rect width=\{QR_INNER\} height=\{QR_INNER\} fill="#fff" \/>/)
+    expect(share).toMatch(/<path d=\{qr\.path\} fill="#000" \/>/)
+    expect(share).not.toMatch(/data-theme|prefers-color-scheme|--v2-page|--v2-text\b/)
   })
 })
 

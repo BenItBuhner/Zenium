@@ -22,6 +22,7 @@ import {
 } from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
+  type AppWindowInfo,
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
@@ -2296,16 +2297,11 @@ export class Menus {
     const anchor = options.anchor
       ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
       : undefined
-    const { pageControls } = this.browser
-    /** Where Reset Zoom goes: the default zoom for a web page, 100 percent for any other page. */
-    const defaultZoom =
-      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
-    /** The factor the user set (before the system font size), so Reset compares like with like. */
-    const zoomSet = active
-      ? pageControls.remembersZoom(active)
-        ? pageControls.siteZoomOf(active)
-        : active.zoom
-      : 1
+    // A web app's standalone window has Chrome's web-app menu, not the browser's.
+    if (win.chrome === 'app' && win.app) {
+      this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
+      return
+    }
     this.popup(
       [
         // Chrome's icon row heads the phone's menu (TB-08): Forward, the star, Download page,
@@ -2441,29 +2437,7 @@ export class Menus {
         // Chrome's zoom row (- / percentage / +): a native menu has no inline controls, so the
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
-        ...when(!caps.pageControls, {
-          label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
-          submenu: [
-            {
-              label: 'Zoom In',
-              action: 'zoom.in',
-              enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
-              click: () => active && tabs.adjustZoom(active.id, 1)
-            },
-            {
-              label: 'Zoom Out',
-              action: 'zoom.out',
-              enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
-              click: () => active && tabs.adjustZoom(active.id, -1)
-            },
-            {
-              label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
-              action: 'zoom.reset',
-              enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
-              click: () => active && tabs.resetZoom(active.id)
-            }
-          ]
-        }),
+        ...when(!caps.pageControls, this.zoomSubmenu(active)),
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
@@ -2650,6 +2624,132 @@ export class Menus {
             click: () => active && tabs.reload(active.id)
           }
     ]
+  }
+
+  /**
+   * The zoom submenu of the desktop menus: its label carries the live percentage, its Reset
+   * says where it goes – the default zoom for a web page, 100 percent for any other page – and
+   * each step is greyed at the range's end. The factor compared is the one the user set (before
+   * the system font size), so Reset compares like with like.
+   */
+  private zoomSubmenu(active: Tab | undefined): MenuItemTemplate {
+    const { pageControls, tabs } = this.browser
+    const defaultZoom =
+      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
+    const zoomSet = active
+      ? pageControls.remembersZoom(active)
+        ? pageControls.siteZoomOf(active)
+        : active.zoom
+      : 1
+    return {
+      label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
+      submenu: [
+        {
+          label: 'Zoom In',
+          action: 'zoom.in',
+          enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
+          click: () => active && tabs.adjustZoom(active.id, 1)
+        },
+        {
+          label: 'Zoom Out',
+          action: 'zoom.out',
+          enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
+          click: () => active && tabs.adjustZoom(active.id, -1)
+        },
+        {
+          label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
+          action: 'zoom.reset',
+          enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
+          click: () => active && tabs.resetZoom(active.id)
+        }
+      ]
+    }
+  }
+
+  /**
+   * The "⋯" menu of a web app's standalone window (MW-23; Chrome's web-app menu, from the title
+   * bar's button): Copy URL and Open in Zenium – the page in a tab of the browser window behind
+   * the app, where an out-of-scope link goes –, the zoom submenu, Find in Page and Print, and
+   * Uninstall for a window an installed app owns, behind the host's confirmation (Chrome asks
+   * too); the app's windows close with the record. Nothing of the browser's: no tabs, spaces,
+   * windows, library or settings – the window is the app's.
+   */
+  private showWebAppMenu(
+    win: ZenWindow,
+    app: AppWindowInfo,
+    active: Tab | undefined,
+    anchor: MenuAnchor
+  ): void {
+    const { state, tabs } = this.browser
+    const caps = state.capabilities
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    this.popup(
+      [
+        {
+          label: 'Copy URL',
+          action: 'tab.copyUrl',
+          enabled: Boolean(active),
+          click: () => active && tabs.copyUrl(active.id)
+        },
+        {
+          label: 'Open in Zenium',
+          enabled: Boolean(active),
+          click: () => {
+            if (!active) return
+            const target = this.browser.browserWindowFor(win)
+            tabs.createTab({ url: active.url, active: true }, target)
+            target.host.show()
+            target.host.focus()
+          }
+        },
+        { type: 'separator' },
+        this.zoomSubmenu(active),
+        { type: 'separator' },
+        {
+          label: 'Find in Page…',
+          action: 'find.open',
+          enabled: Boolean(active),
+          click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
+        },
+        // Zenium's preview (CT-06), as the browser's menu opens it; the engine's own flow where a
+        // host has no preview.
+        ...when(caps.print, {
+          label: 'Print…',
+          action: 'page.printPreview',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
+        }),
+        ...when(app.appId !== null, { type: 'separator' } as MenuItemTemplate, {
+          label: `Uninstall ${app.name}…`,
+          click: () => void this.uninstallApp(app, win)
+        })
+      ],
+      win,
+      'app',
+      anchor
+    )
+  }
+
+  /** The menu's Uninstall: the host's confirmation first, then the record and its launcher go. */
+  private async uninstallApp(app: AppWindowInfo, win: ZenWindow): Promise<void> {
+    if (app.appId === null) return
+    let ok = false
+    try {
+      ok = await this.browser.platform.dialogs.confirm(
+        {
+          message: `Uninstall ${app.name}?`,
+          detail: `${app.name} and its launcher will be removed from this computer. Its windows close.`,
+          okLabel: 'Uninstall',
+          cancelLabel: 'Cancel',
+          danger: true
+        },
+        win
+      )
+    } catch {
+      ok = false
+    }
+    if (ok) await this.browser.webApps.uninstall(app.appId)
   }
 
   /**

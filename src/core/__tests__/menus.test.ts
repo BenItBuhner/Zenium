@@ -14,6 +14,7 @@ import { Browser } from '../browser'
 import type {
   AppHost,
   ClipboardHost,
+  DialogHost,
   MenuHost,
   MenuItemTemplate,
   MenuPopupOptions,
@@ -141,8 +142,7 @@ const ANDROID: HostCapabilities = {
   readAloud: false
 }
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -196,6 +196,10 @@ interface HarnessOptions {
   spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
   /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
   shortcuts?: boolean
+  /** What the host's confirmation dialog answers (absent: the stub's nothing, read as No). */
+  confirm?: boolean
+  /** Documents already in the store when the browser starts (`webapps.json`, …). */
+  files?: Record<string, string>
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -269,7 +273,7 @@ function harness(
   const platform: Platform = {
     info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
     capabilities,
-    io: memoryIo(),
+    io: memoryIo({ ...opts.files }),
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -285,7 +289,9 @@ function harness(
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
     menus,
-    dialogs: stub(),
+    dialogs: stub<DialogHost>(
+      opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
+    ),
     clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
     shell: stub(),
     net: stub(),
@@ -571,9 +577,10 @@ describe('the app menu', () => {
   })
 
   it('offers the install item only to a window whose chrome has an install surface up', () => {
-    // A desktop host that writes launchers: the engine can install, but the desktop's install
-    // dialog is UI work to come, so until a chrome registers one (`ui.surface`) the menu offers
-    // no way into a prompt nothing would show.
+    // A desktop host that writes launchers: the engine can install, but the item is a way into
+    // the chrome's install dialog, so until the chrome registers one (`ui.surface`, as the
+    // desktop's InstallDialogLayer does on mount) the menu offers no way into a prompt nothing
+    // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
     expect(appMenu(h)).not.toContain('Create shortcut…')
@@ -583,6 +590,93 @@ describe('the app menu', () => {
     expect(appMenu(h)).not.toContain('Create shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
+  })
+
+  describe("a web app's standalone window", () => {
+    /** An installed app on record, so its window is the app's (`appId`) and can be uninstalled. */
+    const NOTES = JSON.stringify({
+      version: 1,
+      pinned: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          startUrl: 'https://notes.example/',
+          scope: 'https://notes.example/',
+          pinnedAt: 1,
+          icon: null,
+          bounds: null
+        }
+      ],
+      engagement: {}
+    })
+    const WEB_APP_MENU = [
+      'Copy URL',
+      'Open in Zenium',
+      '-',
+      'Zoom (100%)',
+      'Zoom (100%) > Zoom In',
+      'Zoom (100%) > Zoom Out',
+      'Zoom (100%) > Reset Zoom (100%)',
+      '-',
+      'Find in Page…',
+      'Print…'
+    ]
+
+    it("has Chrome's web-app menu from its title bar's button, not the browser's", () => {
+      const h = harness(DESKTOP, { files: { 'webapps.json': NOTES } })
+      const app = h.browser.openAppWindow('https://notes.example/today')!
+      h.browser.handleCommand(app, 'app.menu', { anchor: { x: 10, y: 20, width: 28, height: 28 } })
+      expect(labels(h.shown())).toEqual([...WEB_APP_MENU, '-', 'Uninstall Notes…'])
+      // From the button the menu hangs off its bottom edge, as the browser's does.
+      expect(h.where()).toMatchObject({ source: 'app', x: 10, y: 48 })
+      // The browser window keeps its own menu.
+      expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('offers no Uninstall for a window no installed app owns, and no Print where the host cannot', () => {
+      const h = harness({ ...DESKTOP, print: false })
+      const app = h.browser.openAppWindow('https://plain.example/page')!
+      expect(app.app?.appId).toBeNull()
+      h.browser.handleCommand(app, 'app.menu', {})
+      expect(labels(h.shown())).toEqual(WEB_APP_MENU.filter((l) => l !== 'Print…'))
+    })
+
+    it('Open in Zenium puts the page in a tab of the browser window behind the app', () => {
+      const h = harness(DESKTOP)
+      const app = h.browser.openAppWindow('https://plain.example/page', { from: h.win })!
+      const before = h.browser.tabs.activeSpaceFor(h.win).tabIds.length
+      h.browser.handleCommand(app, 'app.menu', {})
+      h.shown()
+        .find((item) => item.label === 'Open in Zenium')
+        ?.click?.()
+      expect(h.browser.tabs.activeSpaceFor(h.win).tabIds.length).toBe(before + 1)
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://plain.example/page')
+      // The app window keeps its page.
+      expect(h.browser.tabs.activeTabFor(app)?.url).toBe('https://plain.example/page')
+    })
+
+    it('Uninstall asks first; a Yes removes the record and closes the app’s windows, a No keeps both', async () => {
+      const no = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: false })
+      const kept = no.browser.openAppWindow('https://notes.example/')!
+      no.browser.handleCommand(kept, 'app.menu', {})
+      no.shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(no.browser.webApps.pinnedFor('https://notes.example/')?.name).toBe('Notes')
+      expect(kept.alive).toBe(true)
+
+      const yes = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: true })
+      const gone = yes.browser.openAppWindow('https://notes.example/')!
+      yes.browser.handleCommand(gone, 'app.menu', {})
+      yes
+        .shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(yes.browser.webApps.pinnedFor('https://notes.example/')).toBeNull()
+      expect(gone.closeApproved).toBe(true)
+    })
   })
 
   it('closes the page group with the page controls where the host has them', () => {

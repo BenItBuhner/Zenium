@@ -878,6 +878,37 @@
     opacity: 0.3;
   }
 
+  /*
+   * A web app's standalone window (`app/AppTitleBar.tsx`, MW-23): its one row of chrome is the
+   * toolbar row's height on the window surface – the app's 16 icon and the title in the window
+   * ink at the sidebar's size and the body weight (§4: chrome text at 400, as a sidebar tab's
+   * title; hierarchy by size, not weight), 8 apart, 12 in from the leading edge (Chrome's app
+   * frame puts them where its tab strip would start) – with the menu button and the window's
+   * buttons trailing at the toolbar's 4. The row drags the window; the buttons take the pointer.
+   */
+  .zen-app-titlebar {
+    display: flex;
+    height: 40px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 0 12px;
+    color: var(--zen-fg);
+  }
+  .zen-app-titlebar-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: var(--v2-radius-control);
+    object-fit: cover;
+  }
+  .zen-app-titlebar-title {
+    min-width: 0;
+    flex: 1;
+    font-size: var(--zen-sidebar-font);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
+  }
+
   .zen-tab {
     position: relative;
     display: flex;
@@ -4848,6 +4879,334 @@
     width: 100%;
     object-fit: cover;
   }
+  /*
+   * The desktop's install dialog (`install/InstallDialog.tsx`): a `--v2-dialog` whose title block
+   * brings its own 16 to the body (§9.23), so the body has none above, the dialog's 16 gutter to
+   * the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16 above is that
+   * gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls should the
+   * shots and a long description outgrow the frame; the footer stays.
+   */
+  .zen-install-dialog-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0 16px;
+    overflow-y: auto;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-dialog-footer {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+  }
+
+  /*
+   * The desktop's share popover (`share/SharePopover.tsx`, §9.20 at 320): only what the popover
+   * chrome, the title block and the shared row do not say. The body runs from the title block's
+   * 16 (§9.23): the preview at the 16 gutter – what is shared as 15/600 clamped to two lines
+   * over its link or text at 13 at 69% on one – then the QR's symbol centred 16 below inside the
+   * card's border and radius (§6's card edge; its white and black are the symbol's own, in the
+   * SVG: a scanner's contrast, not the chrome's), then the targets as rows edge to edge: no
+   * line between the preview and the list (§9.7, no hairline at rest), the gap does it – 10 to
+   * the first row's box, 16 to its label through the row's 6 – and 4 under the last row's fill.
+   */
+  .zen-share-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-share-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 16px;
+  }
+  .zen-share-preview-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-share-preview-detail {
+    overflow: hidden;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-share-glyph {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .zen-share-qr {
+    display: flex;
+    justify-content: center;
+    margin: 16px 16px 0;
+  }
+  .zen-share-qr svg {
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-share-targets {
+    display: flex;
+    flex-direction: column;
+    margin-top: 10px;
+    padding: 0 0 4px;
+  }
+}
+
+/*
+ * What a share target's row adds to the shared v2 row (§9.34: a variant is a modifier on the
+ * primitive, unlayered beside it, never a copy): the §9.2 two-line floor for a target with a
+ * detail line.
+ */
+.zen-v2-row.zen-share-row-two {
+  min-height: var(--v2-row-two-line);
+}
+
+@layer components {
+  /*
+   * The screen-capture picker (`screenCapture/ScreenPicker.tsx`, MW-19): a `--v2-dialog` at 480
+   * (§9.20's table width, room for two cards across). The title block brings its 16 (§9.23);
+   * the shared segment follows at the 16 gutter and is the pane's sticky header: no line under
+   * it at rest, §9.7's hairline once the cards scroll under it (the border is there transparent
+   * so nothing moves when it shows). The pane is a fixed box – 16 padding, two rows of cards
+   * tall – so switching panes moves nothing, and scrolls past two rows. A pane with nothing to
+   * offer says so in §9.17's one line, 15 at 69%, top-anchored with its line 32 under the
+   * segment (the pane's 16 and 16 of its own; never centred in the free height) and left-aligned
+   * at the pane's gutter like a row's label; while the OS's list is out the §9.30 spinner takes
+   * the same place on that line, one anchor for both. A card is the image radio (§9.34: the 2 px
+   * accent outline outside its edge) at 4 padding with the picture in a 16:9 box – letterboxed on
+   * the fill, its radius the card's less the 4 padding, concentric – and the 13 caption under it,
+   * the cards 8 apart as the other image-radio grids (§9.14, §10.4); the only screen is one card
+   * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
+   * checkbox leads it, its box centred on the line rather than on a row's first text line.
+   */
+  .zen-scpick-panes {
+    border-bottom: 1px solid transparent;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-scpick-panes[data-scrolled='true'] {
+    border-color: var(--v2-border);
+  }
+  .zen-scpick-list {
+    display: flex;
+    height: 348px;
+    min-height: 96px;
+    flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .zen-scpick-state {
+    display: flex;
+    min-height: var(--v2-line-body);
+    align-items: center;
+    margin-top: 16px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-scpick-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    align-content: start;
+  }
+  .zen-scpick-grid[data-columns='1'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .zen-scpick-tile {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px;
+    color: var(--v2-text);
+    text-align: left;
+  }
+  .zen-scpick-thumb {
+    display: grid;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: calc(var(--v2-radius-card) - 4px);
+    background: var(--v2-fill);
+    color: var(--v2-text-deemphasized);
+    place-items: center;
+  }
+  .zen-scpick-thumb > img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  /* A tab's picture is its page from the top, as the tab strip's cards show it. */
+  .zen-scpick-thumb[data-kind='tab'] > img {
+    object-fit: cover;
+    object-position: top;
+  }
+  .zen-scpick-thumb > svg {
+    width: 32px;
+    height: 32px;
+    stroke-width: 1.5;
+  }
+  .zen-scpick-caption {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-scpick-icon {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-scpick-footer {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+  }
+  .zen-scpick-audio {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+}
+
+/*
+ * The system-audio box is the shared checkbox (§9.34) centred on the footer's one line, so the
+ * primitive's offset to a row's first text line goes; unlayered, or the primitive's own margin
+ * would beat it.
+ */
+.zen-scpick-audio > .zen-v2-checkbox {
+  margin: 0;
+}
+
+@layer components {
+  /*
+   * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
+   * controls) as a §9.20 popover at 400 under the toolbar row. It opens on its cards with no
+   * title block, like a menu (§9.7: the cards name themselves; the hub's name is the toolbar
+   * button's), so the body carries the popover's own 16 above the first player (§9.20's
+   * padding; 16 under the last one as well), one player per tab, parted by air alone – 28 from
+   * one's transport to the next one's artwork, no line – each at the 16 gutter with 12 between
+   * its parts:
+   * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
+   * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
+   * when there is no picture) beside the title at 15/600 and the
+   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
+   * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
+   * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
+   * (§4) so 0:09 → 0:10 moves nothing), then the transport – previous, back, play / pause, on,
+   * next as §9.3 icon buttons at 8 apart, centred, the middle one's glyph solid as the row's one
+   * emphasis, the way Chrome's controls draw it (as the phone's `.zen-media-*` sheet does), the
+   * track buttons disabled at .4 (§9.30) until the page handles them. The toolbar button wears
+   * a 6 accent dot at its corner while anything plays.
+   */
+  .zen-mhub-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 0 4px;
+  }
+  .zen-mhub-player {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 12px;
+  }
+  .zen-mhub-player + .zen-mhub-player {
+    padding-top: 16px;
+  }
+  .zen-mhub-now {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
+  .zen-mhub-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    border-radius: var(--v2-radius-inner);
+    color: var(--v2-text);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-mhub-text:active {
+    background: var(--v2-fill);
+  }
+  @media (hover: hover) {
+    .zen-mhub-text:hover {
+      background: var(--v2-fill);
+    }
+  }
+  .zen-mhub-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-mhub-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-seek {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-mhub-time {
+    flex-shrink: 0;
+    min-width: 5ch;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-time:last-child {
+    text-align: right;
+  }
+  .zen-mhub-transport {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .zen-mhub-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--v2-accent);
+  }
 }
 
 @layer components {
@@ -4885,6 +5244,11 @@
     gap: 16px;
     padding: 0 16px;
   }
+  /*
+   * The artwork tile – one rule for both in-app players, the phone sheet's and the desktop hub's
+   * (`media/MediaHubPopover.tsx`): 56 at the card radius on the card fill, the picture covering
+   * it; without one, the card hairline and the §9.3 row glyph (20 on the phone, 16 on desktop).
+   */
   .zen-media-art {
     display: flex;
     width: 56px;
