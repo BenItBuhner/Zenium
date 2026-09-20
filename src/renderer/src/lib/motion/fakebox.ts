@@ -181,6 +181,37 @@ export function targetPose(state: FakeboxState, g: FakeboxGeometry): FakeboxPose
 }
 
 /**
+ * The widest the field is in any of its poses: the double's words are laid out once at this
+ * width and clipped by the moving box (v2 §11.8), so a long placeholder never re-wraps or
+ * re-truncates as the width passes through on the way.
+ */
+export function widestPoseWidth(g: FakeboxGeometry): number {
+  return Math.max(g.rest.width, g.slot.width, g.omnibox.width)
+}
+
+/** The page field's left padding (`pl-4`) and the room its mic and camera take (44 each, gap 2, `pr-1.5`; `pr-4` with neither). */
+const FAKEBOX_CONTENT_LEFT = 16
+const FAKEBOX_TRAILING_GLYPH = 44
+const FAKEBOX_TRAILING_GAP = 2
+const FAKEBOX_TRAILING_RIGHT = 6
+const FAKEBOX_PLAIN_RIGHT = 16
+
+/**
+ * The width the double's words are laid out at: the widest pose less the padding and the room
+ * `glyphs` trailing controls (the mic, the camera) take on the page's field, so that at rest the
+ * words truncate exactly where the page's do and the layout never changes on the way.
+ */
+export function fakeboxContentWidth(widest: number, glyphs: number): number {
+  const trailing =
+    glyphs > 0
+      ? glyphs * FAKEBOX_TRAILING_GLYPH +
+        (glyphs - 1) * FAKEBOX_TRAILING_GAP +
+        FAKEBOX_TRAILING_RIGHT
+      : FAKEBOX_PLAIN_RIGHT
+  return Math.max(0, widest - FAKEBOX_CONTENT_LEFT - trailing)
+}
+
+/**
  * How far the surface travels between two poses (px), for the spring to run on so its pace is
  * the distance's: the centres' distance plus half the change of size, never under 120 so a
  * short hop still takes the spring's time to settle.

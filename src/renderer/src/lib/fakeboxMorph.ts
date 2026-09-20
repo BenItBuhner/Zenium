@@ -113,6 +113,19 @@ export const FAKEBOX_VAR = '--zen-ntp-morph'
 /** The handover to the pill on the root: 0 the field's, 1 the pill's slot filled in. */
 export const FAKEBOX_PILL_VAR = '--zen-ntp-pill'
 
+/**
+ * What the layer paints the double from, handed over on every write: the pose, the machine, the
+ * geometry it was posed in (the widest pose is the width the words are laid out at, v2 §11.8),
+ * and whether the double is moving – the spring, the scroll or the back gesture wrote a new pose
+ * this frame or the one before – for `will-change` to be on only while it is (v1 §7 rule 4).
+ */
+export interface FakeboxFrame {
+  pose: FakeboxPose
+  state: FakeboxState
+  geometry: FakeboxGeometry
+  moving: boolean
+}
+
 interface Registration {
   tabId: string
   field: HTMLElement
@@ -128,8 +141,12 @@ let heldClose: UrlbarCloseOptions | null = null
 let finishing = false
 let reducedTimer: ReturnType<typeof setTimeout> | null = null
 let openSeq = 0
-let painter: ((pose: FakeboxPose, state: FakeboxState) => void) | null = null
+let painter: ((frame: FakeboxFrame) => void) | null = null
 let stopWatching: (() => void) | null = null
+/** The pose last painted, to tell a write that moves the double from one that repeats it. */
+let lastPose: FakeboxPose | null = null
+let moving = false
+let settleFrame = 0
 
 const spring = new SpringAnimation(
   SPRING_FAKEBOX,
@@ -148,12 +165,15 @@ const spring = new SpringAnimation(
   }
 )
 
-/** The layer's paint callback: called with the pose once per frame while it is registered. */
-export function setFakeboxPainter(
-  fn: ((pose: FakeboxPose, state: FakeboxState) => void) | null
-): void {
+/** The layer's paint callback: called with the frame once per write while it is registered. */
+export function setFakeboxPainter(fn: ((frame: FakeboxFrame) => void) | null): void {
   painter = fn
-  if (fn && geometry) fn(poseOf(machine, geometry), machine)
+  if (fn && geometry) fn({ pose: poseOf(machine, geometry), state: machine, geometry, moving })
+}
+
+/** Whether the double is moving (a pose written this frame or the last): `will-change` is on. */
+export function fakeboxMoving(): boolean {
+  return moving
 }
 
 /** The pose the field is in now (for a layer mounting mid-flight); null before any measure. */
@@ -420,12 +440,48 @@ function paint(): void {
   if (!geometry || !registration) {
     root.removeProperty(FAKEBOX_VAR)
     root.removeProperty(FAKEBOX_PILL_VAR)
+    lastPose = null
+    settle()
     return
   }
   const pose = poseOf(machine, geometry)
   root.setProperty(FAKEBOX_VAR, pose.open.toFixed(4))
   root.setProperty(FAKEBOX_PILL_VAR, pose.pill.toFixed(4))
-  painter?.(pose, machine)
+  if (lastPose && !samePose(lastPose, pose)) wrote()
+  lastPose = pose
+  painter?.({ pose, state: machine, geometry, moving })
+}
+
+const samePose = (a: FakeboxPose, b: FakeboxPose): boolean =>
+  a.rect.x === b.rect.x &&
+  a.rect.y === b.rect.y &&
+  a.rect.width === b.rect.width &&
+  a.rect.height === b.rect.height &&
+  a.radius === b.radius &&
+  a.pill === b.pill &&
+  a.open === b.open
+
+/**
+ * A write moved the double: it is moving (the layer's `will-change`) until two frames pass
+ * without another – the frame after the spring's rest, the scroll's last event or the finger's
+ * last pull – and then it is painted once more, still, so the hint comes off.
+ */
+function wrote(): void {
+  moving = true
+  if (settleFrame) cancelAnimationFrame(settleFrame)
+  settleFrame = requestAnimationFrame(() => {
+    settleFrame = requestAnimationFrame(() => {
+      settleFrame = 0
+      moving = false
+      paint()
+    })
+  })
+}
+
+function settle(): void {
+  if (settleFrame) cancelAnimationFrame(settleFrame)
+  settleFrame = 0
+  moving = false
 }
 
 /** Whether the page the field belongs to is still the active tab's, and still blank. */

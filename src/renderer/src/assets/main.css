@@ -5885,7 +5885,12 @@
    * field's leaves under it over the second, so no frame has the surface see-through (two half
    * fades stacked would) and the landing is the omnibox field's own look exactly. Its box is
    * laid out per frame by the layer (left, top, width, height, radius) – the overview hero
-   * card's pattern, the one layout-per-frame exception, since the words inside must not scale.
+   * card's pattern, the second and last layout-per-frame exception (v2 §11.8), since the words
+   * inside must not scale. `will-change` only while a write moves the box (`data-moving`, set by
+   * the controller with a write and released two frames after the last; v1 §7 rule 4): never on
+   * the page at rest. The words are laid out once at the widest pose (`.zen-fakebox-content`, its
+   * width set by the layer) inside a clip the box's size, so they never re-wrap or re-truncate on
+   * the way; the mic and the camera ride the box's right edge.
    */
   :root[data-form-factor='phone'] .zen-fakebox {
     corner-shape: var(--zen-corner);
@@ -5896,11 +5901,17 @@
     --zen-fg-rgb: var(--v2-text-rgb);
     --zen-element-bg: var(--v2-fill);
   }
+  :root[data-form-factor='phone'] .zen-fakebox[data-moving] {
+    will-change: left, top, width, height;
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-look,
+  :root[data-form-factor='phone'] .zen-fakebox-clip {
+    border-radius: inherit;
+    corner-shape: inherit;
+  }
   :root[data-form-factor='phone'] .zen-fakebox-look {
     position: absolute;
     inset: 0;
-    border-radius: inherit;
-    corner-shape: inherit;
   }
   :root[data-form-factor='phone'] .zen-fakebox-look-field {
     background: var(--v2-urlbar);

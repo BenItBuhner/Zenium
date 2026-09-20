@@ -9,6 +9,7 @@ import {
   FAKEBOX_REST,
   FAKEBOX_REST_RADIUS,
   FAKEBOX_SHEET_FROM,
+  fakeboxContentWidth,
   landed,
   omniboxUp,
   openPose,
@@ -26,6 +27,7 @@ import {
   showsPageField,
   tapped,
   targetPose,
+  widestPoseWidth,
   type FakeboxGeometry,
   type FakeboxState
 } from '../motion/fakebox'
@@ -103,6 +105,19 @@ describe('the poses', () => {
     // The page is on its way out before the sheet shows, so no frame has both whole.
     expect(FAKEBOX_SHEET_FROM).toBeLessThan(FAKEBOX_PAGE_GONE_AT)
     expect(pageOpacity(FAKEBOX_SHEET_FROM)).toBeLessThan(0.5)
+  })
+
+  it('lays the words out once, at the widest pose, less the room the page field gives its glyphs', () => {
+    // The omnibox's field is the widest pose on a phone (the band edge to edge); the rest is on a
+    // wide page in landscape, where the field is capped and the omnibox is not.
+    expect(widestPoseWidth(bottom)).toBe(omnibox.width)
+    expect(widestPoseWidth({ ...bottom, rest: { ...rest, width: 520 } })).toBe(520)
+    // pl-4, then the mic and the camera (44 each, gap 2) and their pr-1.5 …
+    expect(fakeboxContentWidth(396, 2)).toBe(396 - 16 - (44 + 2 + 44 + 6))
+    expect(fakeboxContentWidth(396, 1)).toBe(396 - 16 - (44 + 6))
+    // … or the field's own pr-4 with neither.
+    expect(fakeboxContentWidth(396, 0)).toBe(396 - 16 - 16)
+    expect(fakeboxContentWidth(10, 2)).toBe(0)
   })
 })
 
