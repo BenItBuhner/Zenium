@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { isValidElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
@@ -378,6 +379,12 @@ function row(model: Model, id: string): Row {
   const found = findRow(model.groups, id)
   if (!found) throw new Error(`no row ${id} in ${model.section.id}`)
   return found
+}
+
+/** The class list of a row's glyph element (a Lucide icon rendered with a `className`). */
+function glyphClass(node: ReactNode): string {
+  if (!isValidElement<{ className?: string }>(node)) throw new Error('not a glyph element')
+  return node.props.className ?? ''
 }
 
 beforeEach(() => invoke.mockClear())
@@ -2070,16 +2077,26 @@ describe('what a row does', () => {
       'import-last-show',
       'import-last-dismiss'
     ])
-    expect(row(last, 'import-last-headline')).toMatchObject({
+    const headline = row(last, 'import-last-headline')
+    expect(headline).toMatchObject({
       kind: 'info',
       label: 'Your bookmarks and settings are ready',
       description: 'From a bookmarks HTML file'
     })
-    expect(row(last, 'import-last-bookmarks')).toMatchObject({
+    const bookmarksRow = row(last, 'import-last-bookmarks')
+    expect(bookmarksRow).toMatchObject({
       kind: 'info',
       label: 'Bookmarks',
       description: '42 bookmarks imported. 3 already saved, 1 unusable'
     })
+    // The outcome is a trailing 16 px glyph in the status ink (the Updates rows' "Verified"),
+    // never a leading one: the group's action rows have no leading slot, and §10.4 keeps the
+    // labels of one list on one left edge.
+    for (const r of [headline, bookmarksRow]) {
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.leading).toBeUndefined()
+      expect(glyphClass(r.trailing)).toContain('zen-settings-ok')
+    }
     expect(row(last, 'import-bookmarks-file')).toMatchObject({ busy: false, disabled: false })
     const show = row(last, 'import-last-show')
     if (show.kind !== 'action') throw new Error('not an action')
@@ -2111,10 +2128,14 @@ describe('what a row does', () => {
       'import-last-headline',
       'import-last-dismiss'
     ])
-    expect(row(failedLast, 'import-last-headline')).toMatchObject({
+    const failedHeadline = row(failedLast, 'import-last-headline')
+    expect(failedHeadline).toMatchObject({
       label: 'The file is not a bookmarks HTML file.',
       tone: 'danger'
     })
+    if (failedHeadline.kind !== 'info') throw new Error('not an info row')
+    // The glyph takes the ink of the text beside it: a failure is danger, not the safety warn.
+    expect(glyphClass(failedHeadline.trailing)).toContain('zen-settings-danger')
 
     // A file pick the user dismissed leaves a cancelled run with nothing reported: no group.
     const dismissedPick = state({

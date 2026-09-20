@@ -315,6 +315,18 @@ function KindRow({
 }
 
 /**
+ * A result row's glyph on the label's line (§9.2, §1 status ink): ok for what came in, the
+ * danger ink for a failure – the same ink its lines take – and the aside glyph where nothing
+ * came in and nothing failed. `StatusGlyph`'s warning is the site-safety ink; a failed import
+ * is an error and reads in `--v2-danger` like every other error message (§9.33).
+ */
+function ResultGlyph({ state }: { state: 'ok' | 'error' | 'none' }): JSX.Element {
+  if (state === 'error')
+    return <CircleAlert className={cn(V2_GLYPH, 'mt-0.5 text-[var(--v2-danger)]')} aria-hidden />
+  return <StatusGlyph state={state === 'ok' ? 'safe' : 'info'} className="mt-0.5" />
+}
+
+/**
  * The result: the headline and the source, one row per kind with its lines, the limits as an
  * inline note, and Chrome's "Show bookmarks bar" box when bookmarks came in.
  */
@@ -342,11 +354,10 @@ function Result({
   return (
     <div className="flex flex-col" data-testid="import-result" data-failed={failed || undefined}>
       <div className="flex items-start gap-2 px-4 pb-2">
-        <StatusGlyph
+        <ResultGlyph
           state={
-            failed ? 'warning' : kinds.some((k) => progress.results[k]?.imported) ? 'safe' : 'info'
+            failed ? 'error' : kinds.some((k) => progress.results[k]?.imported) ? 'ok' : 'none'
           }
-          className="mt-0.5"
         />
         <div className="min-w-0 flex-1">
           <p
@@ -374,9 +385,8 @@ function Result({
                 className="flex items-start gap-2.5 px-4 py-1.5"
                 data-import-kind={kind}
               >
-                <StatusGlyph
-                  state={outcome.error ? 'warning' : outcome.imported > 0 ? 'safe' : 'info'}
-                  className="mt-0.5"
+                <ResultGlyph
+                  state={outcome.error ? 'error' : outcome.imported > 0 ? 'ok' : 'none'}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-[15px] leading-5 text-[var(--v2-text)]">

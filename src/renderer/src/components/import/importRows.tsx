@@ -1,3 +1,5 @@
+import type { JSX } from 'react'
+import { Check, CircleAlert } from 'lucide-react'
 import type { ImportKind, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import {
@@ -11,7 +13,6 @@ import {
 } from '@renderer/lib/importData'
 import { openOverlay } from '@renderer/lib/ui'
 import type { RowGroup, SettingsRow } from '../pages/settings/model'
-import { StatusGlyph } from '../siteControls/pane'
 
 /**
  * Settings > Import on a phone (design-language-v2-draft §10.4, §9.30): Android has no other
@@ -22,7 +23,25 @@ import { StatusGlyph } from '../siteControls/pane'
  * bookmarks and settings are ready", or the failure), one row per kind with what came in and
  * what was skipped, Show imported bookmarks when a folder was made, and Dismiss. The desktop's
  * form of the category is `overlays/ImportSection` with the dialog.
+ *
+ * The result rows tell their outcome with a trailing 16 px glyph in the §1 status ink, as the
+ * Updates rows do ("Verified"): trailing rather than leading because the group's action rows
+ * (Show imported bookmarks, Dismiss) have no leading slot, and §10.4 keeps one left edge for
+ * the labels of a list – a leading glyph on some rows only would indent those labels alone.
+ * A row with nothing to tell (nothing came in, nothing failed) carries no glyph.
  */
+function outcomeGlyph(state: 'ok' | 'error' | null): JSX.Element | undefined {
+  if (state === 'ok')
+    return <Check className="zen-settings-trailing-glyph zen-settings-ok" aria-label="Imported" />
+  if (state === 'error')
+    return (
+      <CircleAlert
+        className="zen-settings-trailing-glyph zen-settings-danger"
+        aria-label="Failed"
+      />
+    )
+  return undefined
+}
 export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
   const progress = state.import
   const running = progress?.status === 'running' ? progress.source.id : null
@@ -82,12 +101,8 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
         label: resultHeadline(last),
         description: resultCaption(last),
         tone: failed ? 'danger' : undefined,
-        leading: (
-          <StatusGlyph
-            state={
-              failed ? 'warning' : kinds.some((k) => last.results[k]?.imported) ? 'safe' : 'info'
-            }
-          />
+        trailing: outcomeGlyph(
+          failed ? 'error' : kinds.some((k) => last.results[k]?.imported) ? 'ok' : null
         ),
         clamp: true
       },
@@ -99,11 +114,7 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
           label: KIND_LABEL[kind],
           description: outcomeLines(kind, outcome).join('. '),
           tone: outcome.error ? 'danger' : undefined,
-          leading: (
-            <StatusGlyph
-              state={outcome.error ? 'warning' : outcome.imported > 0 ? 'safe' : 'info'}
-            />
-          )
+          trailing: outcomeGlyph(outcome.error ? 'error' : outcome.imported > 0 ? 'ok' : null)
         }
       })
     ]
