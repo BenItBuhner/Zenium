@@ -5,6 +5,7 @@ import {
   IMPORT_READY,
   browserSources,
   defaultGroup,
+  finishedImport,
   importedAnything,
   kindRows,
   limitNotes,
@@ -227,6 +228,23 @@ describe('the words for what an import did', () => {
     expect(reportedKinds(p)).toEqual(['bookmarks', 'passwords'])
     expect(importedAnything(p)).toBe(true)
     expect(importedAnything(progress({ results: { history: outcome() } }))).toBe(false)
+  })
+
+  it('the last import worth reporting has finished with something to say: not a run in flight, not a cancelled file pick', () => {
+    const done = progress({ results: { bookmarks: outcome({ imported: 3 }) } })
+    expect(finishedImport(done)).toBe(done)
+    expect(finishedImport(progress({ status: 'running', finishedAt: null }))).toBeNull()
+    expect(finishedImport(null)).toBeNull()
+    // The picker dismissed: stopped before any kind ran, nothing to show.
+    expect(finishedImport(progress({ status: 'cancelled' }))).toBeNull()
+    // Stopped after a kind ran, or with a failure of its own: that is a result.
+    const stopped = progress({
+      status: 'cancelled',
+      results: { bookmarks: outcome({ imported: 3 }) }
+    })
+    expect(finishedImport(stopped)).toBe(stopped)
+    const failed = progress({ status: 'failed', error: 'The profile could not be read.' })
+    expect(finishedImport(failed)).toBe(failed)
   })
 
   it('the busy line names the kind being read', () => {

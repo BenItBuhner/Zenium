@@ -5,6 +5,7 @@ import { cmd, run } from '@renderer/lib/api'
 import {
   FILE_SOURCE,
   browserSources,
+  finishedImport,
   listNames,
   resultCaption,
   resultHeadline,
@@ -46,7 +47,7 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
       : browsers.length === 0
         ? 'No other browsers were found on this computer.'
         : `Found on this computer: ${listNames(browsers.map((g) => g.label))}.`
-  const last = state.import && state.import.status !== 'running' ? state.import : null
+  const last = finishedImport(state.import)
   return (
     <Pane
       title="Import"

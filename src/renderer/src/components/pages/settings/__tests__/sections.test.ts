@@ -2116,6 +2116,22 @@ describe('what a row does', () => {
       tone: 'danger'
     })
 
+    // A file pick the user dismissed leaves a cancelled run with nothing reported: no group.
+    const dismissedPick = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'cancelled',
+        current: null,
+        results: {},
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    expect(section('import', dismissedPick).groups.map((g) => g.id)).toEqual(['import-files'])
+
     // The category's search words reach it from the landing.
     const s = state({ import: null } as Partial<UIState>)
     const hits = searchRows(phoneSections(s), 'csv').map((h) => h.row.id)

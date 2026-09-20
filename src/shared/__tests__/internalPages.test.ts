@@ -28,8 +28,9 @@ describe('the page registry', () => {
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
-    // the browser-wide group past the first hairline: Sync, Accessibility, Keyboard Shortcuts,
-    // Updates; About past the second.
+    // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
+    // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Updates;
+    // About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
@@ -50,6 +51,7 @@ describe('the page registry', () => {
       'passwords',
       'security',
       'sync',
+      'import',
       'accessibility',
       'shortcuts',
       'updates',
@@ -199,6 +201,8 @@ describe('the section model', () => {
       'mods',
       // Ungated, as the desktop Security pane is: every host keeps per-site answers (#62).
       'security',
+      // Ungated too: every host can take a bookmarks HTML or passwords CSV file (ID-23).
+      'import',
       'about'
     ])
     const desktop = availableSections(INTERNAL_PAGES.settings, ALL, 'desktop').map((s) => s.id)
@@ -243,7 +247,7 @@ describe('the landing list', () => {
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
     expect(runs[0]).not.toContain('accessibility')
-    expect(runs[1]).toEqual(['sync', 'accessibility', 'shortcuts', 'updates'])
+    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'shortcuts', 'updates'])
     expect(runs[2]).toEqual(['about'])
   })
 
@@ -253,7 +257,7 @@ describe('the landing list', () => {
     const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
-    expect(runs[1]).toEqual(['accessibility', 'updates'])
+    expect(runs[1]).toEqual(['import', 'accessibility', 'updates'])
   })
 
   it('keeps a break when the section it precedes is missing and drops a run left empty', () => {
@@ -261,12 +265,23 @@ describe('the landing list', () => {
     const runs = landingRuns(page, availableSections(page, noSync, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
-    expect(runs[1]).toEqual(['accessibility', 'updates'])
+    expect(runs[1]).toEqual(['import', 'accessibility', 'updates'])
     expect(runs[2]).toEqual(['about'])
     const bare = landingRuns(page, availableSections(page, NONE, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
     expect(bare).toEqual([
+      ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods', 'security'],
+      ['import'],
+      ['about']
+    ])
+    // Import is the one ungated section of the middle run: without it the run is left empty and
+    // goes, About following the first run directly.
+    const emptied = landingRuns(
+      page,
+      availableSections(page, NONE, 'phone').filter((s) => s.id !== 'import')
+    ).map((run) => run.map((s) => s.id))
+    expect(emptied).toEqual([
       ['look', 'tabs', 'downloads', 'search', 'spaces', 'containers', 'boosts', 'mods', 'security'],
       ['about']
     ])

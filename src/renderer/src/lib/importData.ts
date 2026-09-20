@@ -170,6 +170,17 @@ export function importedAnything(progress: ImportProgress): boolean {
   return reportedKinds(progress).some((kind) => (progress.results[kind]?.imported ?? 0) > 0)
 }
 
+/**
+ * The last import worth reporting: one that finished with something to say. A run still going
+ * is not it, nor a file pick the user cancelled (stopped before any kind ran, nothing to show).
+ */
+export function finishedImport(progress: ImportProgress | null): ImportProgress | null {
+  if (!progress || progress.status === 'running') return null
+  if (progress.status === 'cancelled' && !progress.error && reportedKinds(progress).length === 0)
+    return null
+  return progress
+}
+
 /** The busy form's status line: what is being read right now. */
 export function progressLine(progress: ImportProgress): string {
   const kind = progress.current

@@ -3,6 +3,7 @@ import { run } from '@renderer/lib/api'
 import {
   FILE_SOURCE,
   KIND_LABEL,
+  finishedImport,
   outcomeLines,
   reportedKinds,
   resultCaption,
@@ -70,7 +71,7 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
       rows
     }
   ]
-  const last = progress && progress.status !== 'running' ? progress : null
+  const last = finishedImport(progress)
   if (last) {
     const kinds = reportedKinds(last)
     const failed = Boolean(last.error)
