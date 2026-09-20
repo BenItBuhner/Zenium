@@ -99,9 +99,7 @@ describe('the desktop Sync pane', () => {
   it('another error keeps the status card’s error line in the danger ink and Sync now pressable', () => {
     const html = markup(sync({ lastError: 'Could not read the folder' }))
     // The line takes the §1 status ink through its token, not a literal hue.
-    expect(html).toContain(
-      '<span class="text-[var(--v2-danger)]">Could not read the folder</span>'
-    )
+    expect(html).toContain('<span class="text-[var(--v2-danger)]">Could not read the folder</span>')
     expect(html).not.toContain('<span class="text-red-500">')
     expect(html).not.toContain('data-testid="sync-folder-lost"')
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Sync\s+now<\/button>/)
