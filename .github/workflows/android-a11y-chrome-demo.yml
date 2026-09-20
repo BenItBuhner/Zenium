@@ -1,0 +1,45 @@
+name: Android chrome accessibility and font scale demo
+
+# The device proof for the phone chrome's accessibility tree (A11Y-01) and the chrome's text at
+# the system font sizes (A11Y-05). The chrome is a WebView, so what a screen reader gets is the
+# React chrome's tree as Chromium maps it to AccessibilityNodeInfo; the driver (ChromeA11yDemo)
+# walks that tree through UiAutomation on every surface of the audit – the bar and the pill on an
+# https, an http, a loopback and an internal page, the group strip, the omnibox, the overview and
+# its header menu, a toast, the app menu, Settings with a section and a picker, History,
+# Bookmarks, the find bar, the docked zoom panel – and asserts every control's name, role, state,
+# traversal order and touch target against the audit table, then puts the system font scale at
+# 1.3 and 2.0 (and the bold-text setting on) with the chrome re-measured and photographed at each.
+# TalkBack is switched on for one scene when the system image carries it; when it does not, the
+# driver says so and the tree it read is the proof. The audit (`a11y-chrome-audit.txt`), the
+# findings, the trees and the stills land next to the recording. Dispatch-only, like the other
+# demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+  # TEMPORARY (W3-6): the run trigger for the PR's branch; removed once the run is in.
+  push:
+    branches:
+      - cursor/android-a11y-talkback-font-scale-f36e
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-a11y-chrome-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Chrome accessibility and font scale demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ChromeA11yDemo
+        DEMO_DIR=a11y-chrome-demo
+        DEMO_OUT=artifacts/android-a11y-chrome-demo
+        DEMO_VIDEO=android-a11y-chrome-demo.mp4
+      artifact-name: android-a11y-chrome-demo
+      artifact-path: artifacts/android-a11y-chrome-demo/
+      # Fourteen scenes, three of them at a font scale each: the driver alone runs a good while.
+      timeout-minutes: 70

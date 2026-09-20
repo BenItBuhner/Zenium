@@ -50,6 +50,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
   // out of the stylesheet's text and writes them into the page, which cannot link main.css).
   ['.zen-error-document {', '@layer base {'],
+  // The chrome document's body (A11Y-05, lib/textScale.ts): its weight reads the body weight
+  // token (400 at rest), so the bold-text setting's adjustment reaches every inherited weight.
+  ['  body {\n    font-family: var(--font-sans);', '  input,\n  textarea,'],
+  // The bold-text setting's utility overrides (A11Y-05): the weights set by class move up with
+  // the weight tokens while the setting is on; unlayered, between the focus ring and the first
+  // components layer, so it is cut out before the ring's span.
+  ['/*\n * The bold-text setting (A11Y-05', '@layer components {'],
   // The chrome's focus ring (§1, a11y-10): the base-layer floor under every control of the chrome
   // document, reading the ring token; it ends where the first components layer begins.
   [" * The chrome's focus ring (v2 §1, a11y-10)", '@layer components {'],

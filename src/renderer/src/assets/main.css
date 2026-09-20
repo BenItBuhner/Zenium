@@ -725,6 +725,8 @@
   body {
     font-family: var(--font-sans);
     font-size: 13px;
+    /* 400 at rest; the bold-text setting's adjustment reaches every inherited weight from here (A11Y-05). */
+    font-weight: var(--v2-weight-body);
     color: var(--zen-fg);
     background: var(--zen-bg-solid);
     -webkit-font-smoothing: antialiased;
@@ -789,6 +791,25 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
+}
+
+/*
+ * The bold-text setting (A11Y-05, `lib/textScale.ts`): the weight tokens add the adjustment to
+ * themselves, and the weights the chrome sets by utility class move up with them. Unlayered so
+ * it wins over the utilities; `data-bold-text` is only ever set while the setting is on, so at
+ * rest nothing here applies.
+ */
+:root[data-bold-text='true'] .font-normal {
+  font-weight: var(--v2-weight-body);
+}
+:root[data-bold-text='true'] .font-medium {
+  font-weight: var(--v2-weight-button);
+}
+:root[data-bold-text='true'] .font-semibold {
+  font-weight: var(--v2-weight-heading);
+}
+:root[data-bold-text='true'] .font-bold {
+  font-weight: calc(700 + var(--zen-font-weight-adjustment));
 }
 
 @layer components {
@@ -1968,7 +1989,7 @@
     line-height: 1.25;
   }
   .zen-app-icon[aria-checked='true'] .zen-app-icon-name {
-    font-weight: 500;
+    font-weight: var(--v2-weight-button);
   }
 
   /*
@@ -5573,7 +5594,7 @@
     color: var(--v2-text);
     text-align: center;
     font-size: var(--v2-font-small);
-    font-weight: 600;
+    font-weight: var(--v2-weight-heading);
     line-height: var(--v2-line-small);
   }
   :root[data-form-factor='phone'] .zen-ntp-preset[data-disabled] {

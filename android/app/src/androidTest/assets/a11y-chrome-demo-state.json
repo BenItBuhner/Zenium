@@ -132,36 +132,75 @@
     }
   },
   "shortcutOverrides": {},
-  "bookmarks": [
-    {
-      "id": "bm_1",
-      "url": "https://en.wikipedia.org/wiki/Coffee",
-      "title": "Coffee - Wikipedia",
-      "favicon": null,
-      "createdAt": "{{now-26h}}"
-    },
-    {
-      "id": "bm_2",
-      "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
-      "title": "RFC 2324: HTCPCP/1.0",
-      "favicon": null,
-      "createdAt": "{{now-52h}}"
-    },
-    {
-      "id": "bm_3",
-      "url": "https://news.ycombinator.com/",
-      "title": "Hacker News",
-      "favicon": null,
-      "createdAt": "{{now-78h}}"
-    },
-    {
-      "id": "bm_4",
-      "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
-      "title": "World Wide Web",
-      "favicon": null,
-      "createdAt": "{{now-104h}}"
-    }
-  ],
+  "bookmarkTree": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "1",
+        "parentId": null,
+        "index": 0,
+        "type": "folder",
+        "title": "Bookmarks bar",
+        "dateAdded": 0
+      },
+      {
+        "id": "2",
+        "parentId": null,
+        "index": 1,
+        "type": "folder",
+        "title": "Other bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "3",
+        "parentId": null,
+        "index": 2,
+        "type": "folder",
+        "title": "Mobile bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "b_coffee",
+        "parentId": "3",
+        "index": 0,
+        "type": "url",
+        "title": "Coffee - Wikipedia",
+        "dateAdded": 1788625600000,
+        "url": "https://en.wikipedia.org/wiki/Coffee",
+        "favicon": null
+      },
+      {
+        "id": "b_rfc",
+        "parentId": "3",
+        "index": 1,
+        "type": "url",
+        "title": "RFC 2324: HTCPCP/1.0",
+        "dateAdded": 1788532000000,
+        "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+        "favicon": null
+      },
+      {
+        "id": "b_hn",
+        "parentId": "3",
+        "index": 2,
+        "type": "url",
+        "title": "Hacker News",
+        "dateAdded": 1788438400000,
+        "url": "https://news.ycombinator.com/",
+        "favicon": null
+      },
+      {
+        "id": "b_www",
+        "parentId": "3",
+        "index": 3,
+        "type": "url",
+        "title": "World Wide Web",
+        "dateAdded": 1788344800000,
+        "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+        "favicon": null
+      }
+    ]
+  },
   "windows": [
     {
       "id": "window_main",
