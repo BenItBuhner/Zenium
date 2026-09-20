@@ -13,7 +13,20 @@ describe('reader text preferences', () => {
     expect(sanitizeReaderPreferences('serif')).toEqual(DEFAULT_READER_PREFERENCES)
     expect(
       sanitizeReaderPreferences({ fontSize: 22, font: 'mono', theme: 'sepia', width: 'wide' })
-    ).toEqual({ fontSize: 22, font: 'mono', theme: 'sepia', width: 'wide' })
+    ).toEqual({
+      ...DEFAULT_READER_PREFERENCES,
+      fontSize: 22,
+      font: 'mono',
+      theme: 'sepia',
+      width: 'wide'
+    })
+    // The extras (EDGE-13): a stored set from before them comes back with them off.
+    expect(
+      sanitizeReaderPreferences({ lineFocus: 3, spacing: 'wider', syllables: true })
+    ).toMatchObject({ lineFocus: 3, spacing: 'wider', syllables: true })
+    expect(
+      sanitizeReaderPreferences({ lineFocus: 2, spacing: 'huge', syllables: 'yes' })
+    ).toMatchObject({ lineFocus: 0, spacing: 'normal', syllables: false })
     // A size off the ladder, a font that is not one of the three, a theme spelled wrong: each
     // falls back to its default alone.
     expect(
@@ -32,6 +45,12 @@ describe('reader text preferences', () => {
     // Malformed values are left out rather than defaulted: a patch must not reset a preference
     // the sender did not mean to change.
     expect(readerPreferencesPatch({ fontSize: 13, font: 'sans' })).toEqual({ font: 'sans' })
+    expect(readerPreferencesPatch({ lineFocus: 5, spacing: 'wide', syllables: false })).toEqual({
+      lineFocus: 5,
+      spacing: 'wide',
+      syllables: false
+    })
+    expect(readerPreferencesPatch({ lineFocus: 4, spacing: 'widest', syllables: 1 })).toBeNull()
     expect(readerPreferencesPatch({ fontSize: 'big' })).toBeNull()
     expect(readerPreferencesPatch({ color: 'red' })).toBeNull()
     expect(readerPreferencesPatch(null)).toBeNull()

@@ -16,6 +16,7 @@ import { pdfReportOf, pdfReportTokenOf, type PdfViewerReport } from './pdfViewer
 import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPrompt'
 import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
+import { installReaderExtrasWhenReady } from './readerExtras'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -239,6 +240,9 @@ export function installPageScript(transport: PageScriptTransport): void {
       onReadAloud: transport.onReadAloud.bind(transport)
     })
   if (transport.reportFullscreen) installFullscreenReporter(transport)
+  // The reader document's extras (EDGE-13: line focus, syllables) – a `zen://reader` document
+  // only; `installReaderExtras` finds no article anywhere else.
+  if (location.protocol === 'zen:') installReaderExtrasWhenReady(document)
 
   window.addEventListener(
     'click',
