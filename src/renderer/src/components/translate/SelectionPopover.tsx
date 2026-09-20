@@ -30,6 +30,7 @@ import {
 import { formatBytes } from '@renderer/lib/utils'
 import { V2Button, V2TitleBlock } from '../extensions/v2'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { ControlRow } from './ControlRow'
 import { Menulist } from './Menulist'
 
 /**
@@ -157,7 +158,7 @@ function LanguagesRow({
 }): JSX.Element {
   const source = translation.result?.source ?? null
   return (
-    <div className="zen-v2-row" data-static="" data-control="">
+    <ControlRow>
       {glyph && <Languages className="zen-translate-glyph" aria-hidden />}
       <span className="min-w-0 flex-1 truncate">
         {source ? `${languageName(source)} to` : 'Translate to'}
@@ -169,7 +170,7 @@ function LanguagesRow({
         label="Translate to"
         placeholder="Choose a language"
       />
-    </div>
+    </ControlRow>
   )
 }
 
