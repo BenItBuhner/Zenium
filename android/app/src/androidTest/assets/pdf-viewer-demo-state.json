@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_work",
+  "spaces": [
+    {
+      "id": "space_work",
+      "name": "Work",
+      "icon": "",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [96, 110, 235],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [214, 92, 160],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_pdf"
+      ],
+      "activeTabId": "tab_pdf",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_pdf",
+      "spaceId": "space_work",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://pdf-viewer-demo.invalid/",
+      "title": "Tide tables",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    },
+    "privacy": {
+      "httpsOnly": "off"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_work",
+      "selection": {
+        "space_work": "tab_pdf"
+      },
+      "compact": false
+    }
+  ]
+}
