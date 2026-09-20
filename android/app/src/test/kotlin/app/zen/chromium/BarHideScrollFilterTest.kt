@@ -149,6 +149,34 @@ class BarHideScrollFilterTest {
     }
 
     @Test
+    fun aSecondFingerEndsTheBarsPartOfTheGestureUntilTheNextDown() {
+        // A drag that has begun hiding the bar; a second finger lands and the two pinch: the zoom
+        // scrolls the page in physical px, up and down, with room below and none of it the bar's.
+        val f = filter()
+        f.down(finger)
+        assertEquals(Verdict.REPORT, f.page(900, 930, 2_000, fingerY = finger - 30f))
+        f.pointerDown()
+        assertTrue(f.multiTouch)
+        assertEquals(Verdict.NONE, f.page(930, 1_130, 1_800, offset = 30f, fingerY = finger - 30f))
+        assertEquals(Verdict.NONE, f.page(1_130, 1_000, 1_930, offset = 30f, fingerY = finger - 10f))
+        // The fingers lift: what the page scrolls in the fling window is the pinch's settling, not
+        // a fling of the finger's – nothing, and no show at the top either.
+        f.lifted(2_000L)
+        assertEquals(Verdict.NONE, f.page(1_000, 1_040, 1_890, offset = 30f, now = 2_050L))
+        assertEquals(Verdict.NONE, f.page(40, 0, 2_890, offset = 30f, now = 2_100L))
+        // The next first finger starts afresh.
+        f.down(finger)
+        assertFalse(f.multiTouch)
+        assertEquals(Verdict.REPORT, f.page(0, 20, 2_870, offset = 30f, fingerY = finger - 20f))
+        // A pinch from the bar's edge, at rest: the first scroll it brings starts no hide.
+        val g = filter()
+        g.down(finger)
+        g.pointerDown()
+        assertEquals(Verdict.NONE, g.page(0, 300, 2_000, fingerY = finger - 300f))
+        assertFalse(g.hiding)
+    }
+
+    @Test
     fun aScrollWithNoFingerAndNoFlingIsThePagesOwn() {
         val f = filter()
         assertEquals(Verdict.NONE, f.page(0, 300, 1_000))

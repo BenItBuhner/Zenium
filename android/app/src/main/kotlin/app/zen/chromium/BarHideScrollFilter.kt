@@ -17,6 +17,11 @@ package app.zen.chromium
  *   has been moving the other way – down the page – since the last change.
  * - After the finger lifts, the page's scroll is its fling for [flingGapMs] past the lift and
  *   past every change; later changes (an anchor, a script) move no bar, as in Chrome.
+ * - A second finger. A pinch changes the page's scroll offset as it zooms (the offset is kept in
+ *   physical px and the scale changes under it), and that reaches the view as scrolling too;
+ *   Chrome's controls hold still through a pinch. From the second finger's landing to the next
+ *   first finger's nothing here is the finger's – not the pinch's scroll and not what follows
+ *   the lift – the same rule a top-docked bar's take follows ([BarHideShare.pointerDown]).
  *
  * A bottom-docked bar follows the reported scroll one to one. A top-docked bar is moved by the
  * finger's travel instead ([BarHideShare]) and hears only the flings from here: one reaching
@@ -24,7 +29,7 @@ package app.zen.chromium
  */
 class BarHideScrollFilter(private val flingGapMs: Long, private val fingerTolerancePx: Float) {
     enum class Verdict {
-        /** Not the finger's and not its fling's (nothing on the page, or the layout's clamp): nothing, and no root scroll of the finger's to confirm. */
+        /** Not the finger's and not its fling's (nothing on the page, the layout's clamp, a pinch): nothing, and no root scroll of the finger's to confirm. */
         NONE,
         /** The finger's (or its fling's), and the bar is not to move for it. */
         HELD,
@@ -44,12 +49,21 @@ class BarHideScrollFilter(private val flingGapMs: Long, private val fingerTolera
     /** The bar left its edge under this finger or its fling: the page is laid out tall already. */
     var hiding = false
         private set
+    /** A second finger landed in this gesture: its scroll, and its fling, are nobody's ([pointerDown]). */
+    var multiTouch = false
+        private set
 
     fun down(fingerY: Float) {
         touching = true
         flingUntil = 0L
         hiding = false
+        multiTouch = false
         fingerAtChange = fingerY
+    }
+
+    /** A second finger (a pinch): the bar hears nothing more of this gesture, up to the next [down]. */
+    fun pointerDown() {
+        multiTouch = true
     }
 
     /** The finger lifted (or the touch was cancelled) at `now`: the fling window opens. */
@@ -82,7 +96,7 @@ class BarHideScrollFilter(private val flingGapMs: Long, private val fingerTolera
         now: Long
     ): Verdict {
         val dt = scrollY - oldScrollY
-        if (dt == 0) return Verdict.NONE
+        if (dt == 0 || multiTouch) return Verdict.NONE
         val flinging = flinging(now)
         if (!touching && !flinging) return Verdict.NONE
         if (dt < 0) {

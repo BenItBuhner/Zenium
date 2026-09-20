@@ -122,7 +122,7 @@ class BarHideGesture(
 
     /** One line on where this side stands, for a run's record. */
     fun describe(): String =
-        "frame=${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "null"} touching=${filter.touching} hiding=${filter.hiding} mirror=${share.mirror} taking=${share.taking} rootScrolled=${share.rootScrolled} remaining=${view.scrollRemaining()} moves=$recentMoves"
+        "frame=${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "null"} touching=${filter.touching} multiTouch=${filter.multiTouch} hiding=${filter.hiding} mirror=${share.mirror} taking=${share.taking} rootScrolled=${share.rootScrolled} remaining=${view.scrollRemaining()} moves=$recentMoves"
 
     /** Every touch on the page as it arrives, before anything else has had it. */
     fun onTouch(event: MotionEvent) {
@@ -134,7 +134,12 @@ class BarHideGesture(
                 share.mirror = frame?.offsetPx ?: 0f
                 if (frame != null) emit("start", null)
             }
-            MotionEvent.ACTION_POINTER_DOWN -> share.pointerDown()
+            // A second finger (a pinch): neither the bar's take nor the page's scroll is the bar's
+            // from here to the next down, at either dock.
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                share.pointerDown()
+                filter.pointerDown()
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // From now, not from the event's own time: a lift delivered late (batched behind
                 // a slow frame) still leaves the scroll it started its gap to arrive in.
