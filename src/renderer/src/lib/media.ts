@@ -44,14 +44,23 @@ export function formatMediaTime(seconds: number): string {
 
 /**
  * The line under the title: the artist (the page's metadata, else the site the core filled in)
- * and the site, once each – a page without metadata already has its site for an artist.
+ * and the site, once each – a page without metadata already has its site for an artist – and
+ * never the site when `title`, the line shown above, is the site already (a page without a
+ * title of its own reads as its host): the title over the site, as Chrome's notification, and
+ * the site never twice. An artist the page set stays even when it matches the title.
  */
-export function mediaDetail(media: MediaState, tab: UIState['tabs'][string] | undefined): string {
+export function mediaDetail(
+  media: MediaState,
+  tab: UIState['tabs'][string] | undefined,
+  title = ''
+): string {
   const parts: string[] = []
+  const shown = title.trim()
   const artist = media.artist?.trim() ?? ''
   const host = tab ? displayHost(tab.url) : ''
-  if (artist) parts.push(artist)
-  if (host && host !== artist) parts.push(host)
+  const artistIsSite = artist === host
+  if (artist && !(artistIsSite && artist === shown)) parts.push(artist)
+  if (host && host !== artist && host !== shown) parts.push(host)
   return parts.join(' · ')
 }
 

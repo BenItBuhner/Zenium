@@ -179,6 +179,7 @@ describe('the media sheet', () => {
     expect(q('.zen-media-detail')?.textContent).toBe('The Band · music.example.com')
     // No artwork from the page: the note glyph on a tile, never a broken image.
     expect(q('.zen-media-art-empty')).not.toBeNull()
+    expect(q('.zen-media-art-empty svg')?.classList.contains('lucide-music')).toBe(true)
     expect(q('img.zen-media-art')).toBeNull()
 
     const times = [...q('.zen-media-times')!.children].map((c) => c.textContent)
@@ -194,7 +195,27 @@ describe('the media sheet', () => {
       'Next track'
     ])
     expect(buttons.every((b) => !b.disabled)).toBe(true)
-    expect(buttons.every((b) => b.classList.contains('zen-v2-icon-button'))).toBe(true)
+    // Three of the one §9.3 box: the toggle carries no class of its own (no fill at rest, no
+    // disc), its solid glyph between the outlined skips is the emphasis.
+    expect(buttons.every((b) => b.className === 'zen-v2-icon-button')).toBe(true)
+    expect(byLabel('Pause')?.querySelector('svg')?.getAttribute('fill')).toBe('currentColor')
+    expect(byLabel('Next track')?.querySelector('svg')?.getAttribute('fill')).toBe('none')
+  })
+
+  it('shows a page without metadata as its title over its site, the site never twice', async () => {
+    // The core filled the site in for the artist; the tab reads as its host, having no title.
+    const clip = tab('t1', 'https://music.example.com/clip', 'music.example.com')
+    const s = state([track({ title: undefined, artist: 'music.example.com', video: true })])
+    s.tabs = { ...s.tabs, t1: clip }
+    await open(s)
+    expect(q('[data-testid="media-title"]')?.textContent).toBe('music.example.com')
+    expect(q('.zen-media-detail')).toBeNull()
+    // A video's empty tile is a film strip, not a note.
+    expect(q('.zen-media-art-empty svg')?.classList.contains('lucide-film')).toBe(true)
+    // With a title of its own the page shows it over the site.
+    render({ ...s, tabs: { ...s.tabs, t1: { ...clip, title: 'A clip' } } })
+    expect(q('[data-testid="media-title"]')?.textContent).toBe('A clip')
+    expect(q('.zen-media-detail')?.textContent).toBe('music.example.com')
   })
 
   it('shows the page’s artwork when it has one and reads Play while paused', async () => {

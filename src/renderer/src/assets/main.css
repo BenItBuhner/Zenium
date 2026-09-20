@@ -4792,12 +4792,6 @@
   }
 }
 
-/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
-.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-
 @layer components {
   /*
    * The media sheet (`phone/MediaSheet.tsx`, MW-16: the in-app player the pill's Now playing
@@ -4807,15 +4801,22 @@
    * artist · site line – then the §10.4 slider row for the position (the zoom row's track and
    * thumb, `.zen-zoom-slider`, between the 44 px seek buttons, the times above it in
    * `tabular-nums` (§4) so 0:09 → 0:10 moves nothing) and the transport row: previous, play /
-   * pause, next as §9.3 icon buttons, the middle one on the fill so the eye finds it first, the
-   * track buttons disabled at .4 (§9.30) while the page handles neither.
+   * pause, next as §9.3 icon buttons – the same box, the middle one's glyph solid as its one
+   * emphasis, the way Chrome's global media controls draw it – the track buttons disabled at .4
+   * (§9.30) while the page handles neither.
    */
-  /* The body sits in the sheet's one 16 gutter (§9.25), 16 under the header's title line (§9.7). */
+  /*
+   * The body carries no side padding of its own (§9.25: one gutter of 16, nothing nests a
+   * second): the `ListRow`s and the separator run edge to edge on the primitive's 16, the
+   * now-playing block and the transport take the 16 themselves, and the seek row hangs its 44
+   * step buttons 12 into it so their 20 glyphs sit on the line (the downloads sheet's
+   * arithmetic). 3 on top: 16 under the header's title line (§9.7).
+   */
   .zen-media-body {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 3px 16px 0;
+    padding: 3px 0 0;
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
@@ -4823,6 +4824,7 @@
     display: flex;
     align-items: center;
     gap: 16px;
+    padding: 0 16px;
   }
   .zen-media-art {
     display: flex;
@@ -4851,14 +4853,14 @@
     line-height: var(--v2-line-small);
   }
   /*
-   * The seek row: the step buttons sit at 2 like a sheet header's close (§9.16), their glyphs
-   * on the gutter's line, so the row reaches 14 into each gutter; the times above the track
-   * start and end where the track does (44 + 4 in from the buttons' edge).
+   * The seek row: its 44 step buttons hang 12 into the gutter, so their boxes sit at 4 from the
+   * sheet's edge and the 20 glyphs on the 16 line (§9.25); the times above the track start and
+   * end where the track does (44 + 4 in from the buttons' edge).
    */
   .zen-media-seek {
     display: flex;
     flex-direction: column;
-    margin: 0 -14px;
+    margin: 0 4px;
   }
   .zen-media-times {
     display: flex;
@@ -4880,22 +4882,8 @@
     align-items: center;
     justify-content: center;
     gap: 24px;
+    padding: 0 16px;
   }
-  /* Play / pause: the same 44 as its neighbours, drawn on the fill as a disc (Chrome's notification leads with it). */
-  .zen-media-toggle {
-    background: var(--v2-fill);
-  }
-}
-/* Unlayered like the primitive's own phone radius, so the disc beats it. */
-:root[data-form-factor='phone'] .zen-media-toggle,
-.zen-media-toggle {
-  border-radius: 9999px;
-}
-
-/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
-.zen-media-sheet .zen-sheet-scroll[data-fade-axis] {
-  -webkit-mask-image: none;
-  mask-image: none;
 }
 
 /*

@@ -150,8 +150,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       const session = media ? mediaSession(state) : null
       if (overviewIsOpen()) closeOverview()
       else if (session) {
-        // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16).
-        void openMediaSheet(session.tabId)
+        // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
+        // over a picture of the tab on screen.
+        void openMediaSheet(session.tabId, activeTabId)
       } else if (tab && translate) {
         // The translation glyph at the end of the pill raises the bar, or puts it away.
         if (barStateOf(state, tab.id)) run('translate.dismiss', { tabId: tab.id })

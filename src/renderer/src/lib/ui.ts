@@ -1086,10 +1086,13 @@ export function closeInstallSheet(tabId: string): void {
 
 /**
  * The media sheet (phone): the in-app player for `tabId`'s media, over a capture of the page
- * like every sheet in the frame's host. Opened from the pill's Now playing chip.
+ * like every sheet in the frame's host. Opened from the pill's Now playing chip. The picture is
+ * the active tab's – the tab on screen, which the media's tab need not be (the chip shows on
+ * whichever pill is up) – so the recede holds what the user sees and `snapshotTabId` names the
+ * view the host hides; the sheet's content stays the media's tab.
  */
-export async function openMediaSheet(tabId: string): Promise<void> {
-  await captureActiveTab(tabId)
+export async function openMediaSheet(tabId: string, activeTabId: string | null): Promise<void> {
+  await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
   uiStore.set({ mediaSheet: tabId, drawerOpen: false })
 }

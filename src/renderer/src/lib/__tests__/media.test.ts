@@ -112,6 +112,20 @@ describe('mediaDetail', () => {
     expect(mediaDetail(media({ artist: 'The Band' }), undefined)).toBe('The Band')
     expect(mediaDetail(media({}), undefined)).toBe('')
   })
+
+  it('never repeats the site the title already is, and keeps an artist the page set', () => {
+    const t = tab('t1', 'https://example.com/clip', 'example.com')
+    // A page without a title of its own reads as its host, and the core filled the host in
+    // for its artist: the title says it once, the line under it nothing.
+    expect(mediaDetail(media({ artist: 'example.com' }), t, 'example.com')).toBe('')
+    expect(mediaDetail(media({}), t, 'example.com')).toBe('')
+    // A page with a title and no metadata: its title over its site.
+    expect(mediaDetail(media({ artist: 'example.com' }), t, 'A clip')).toBe('example.com')
+    // The page's own artist stays even when it is the title (a self-titled track).
+    expect(mediaDetail(media({ artist: 'Weezer' }), t, 'Weezer')).toBe('Weezer · example.com')
+    // The title alone never adds a site.
+    expect(mediaDetail(media({}), undefined, 'example.com')).toBe('')
+  })
 })
 
 describe('handlesAction', () => {

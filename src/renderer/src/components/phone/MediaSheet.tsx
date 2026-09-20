@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUpRight,
+  Film,
   Music,
   Pause,
   PictureInPicture2,
@@ -24,7 +25,6 @@ import {
 import { useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeMediaSheet, uiStore } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { ListRow } from '../siteControls/primitives'
@@ -132,8 +132,10 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
 }
 
 /**
- * What plays: the artwork (the page's, else a note glyph on a fill tile) beside the title and,
- * under it, the artist and the site – the composition of the media notification's header.
+ * What plays: the artwork (the page's, else a glyph on a fill tile – a film strip for a video, a
+ * note for audio) beside the title and, under it, the artist and the site – the composition of
+ * the media notification's header. A page without metadata shows its title over its site, and
+ * never the site twice (`mediaDetail` skips what the title already says).
  */
 function NowPlaying({
   media,
@@ -145,7 +147,7 @@ function NowPlaying({
   const [broken, setBroken] = useState(false)
   const artwork = media.artwork && !broken ? media.artwork : null
   const title = media.title?.trim() || tab?.title || 'Media'
-  const detail = mediaDetail(media, tab)
+  const detail = mediaDetail(media, tab, title)
   return (
     <div className="zen-media-now">
       {artwork ? (
@@ -158,7 +160,7 @@ function NowPlaying({
         />
       ) : (
         <span className="zen-media-art zen-media-art-empty" aria-hidden>
-          <Music className={V2_GLYPH} />
+          {media.video ? <Film className={V2_GLYPH} /> : <Music className={V2_GLYPH} />}
         </span>
       )}
       <div className="min-w-0 flex-1">
@@ -277,9 +279,12 @@ function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
 }
 
 /**
- * The transport row: previous track, play or pause, next track – §9.3 icon buttons. The track
- * buttons work only through the page's own handlers (an element has no next track), so they
- * are disabled at .4 (§9.30) until the page registers one.
+ * The transport row: previous track, play or pause, next track – three §9.3 icon buttons in the
+ * one box, the toggle's solid glyph between the outlined skips its only emphasis (no fill at
+ * rest: `--v2-fill` is the press fill, and the primitive's own 120 ms press draws it), as
+ * Chrome's global media controls draw theirs. The track buttons work only through the page's
+ * own handlers (an element has no next track), so they are disabled at .4 (§9.30) until the
+ * page registers one.
  */
 function Transport({ media }: { media: MediaState }): JSX.Element {
   const act = (action: 'previoustrack' | 'nexttrack'): void =>
@@ -297,7 +302,7 @@ function Transport({ media }: { media: MediaState }): JSX.Element {
       </button>
       <button
         type="button"
-        className={cn('zen-v2-icon-button zen-media-toggle')}
+        className="zen-v2-icon-button"
         aria-label={media.playing ? 'Pause' : 'Play'}
         data-testid="media-toggle"
         // The sidebar's control: the Media Session's toggle where the page reports one, the

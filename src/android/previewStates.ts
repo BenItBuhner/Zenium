@@ -1809,7 +1809,9 @@ async function applyMedia(
     )
   }
   if (player) {
-    await openMediaSheet(tabId)
+    // Over the page on screen: the media's for audio / paused / video, the page in front of the
+    // media's tab for `elsewhere`.
+    await openMediaSheet(tabId, page.tabId)
     whenStore(() => uiStore.get().mediaSheet === tabId, spec)
   } else {
     afterFrames(2, () => done(spec))
