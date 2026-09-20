@@ -829,7 +829,12 @@ describe('focus lands in a sheet held for the page’s cover (§9.22, regression
     const picker = (checked: string | null): ReactElement => (
       <>
         <FrameDialogHost frame />
-        <PhoneSheet name="pdf-fit" title="Fit" focus="checked" onClose={() => {}}>
+        <PhoneSheet
+          name="pdf-fit"
+          title={{ pose: 'header', text: 'Fit' }}
+          focus="checked"
+          onClose={() => {}}
+        >
           <div role="radiogroup" aria-label="Fit">
             {['Fit to width', 'Fit to page', 'Actual size'].map((label) => (
               <button
