@@ -16,6 +16,7 @@ import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
 import { createPreviewDownloads } from './previewDownloads'
 import { previewPdfVariantOf } from './previewPdf'
+import { emulateTextZoom } from './previewTextZoom'
 import { CHUNK_CHARS } from './storeIo'
 import { isProbablyUrl } from '@shared/url'
 
@@ -359,6 +360,16 @@ export function createPreviewBridge(): NativeBridge {
   const params = new URLSearchParams(location.search)
   // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
   const sdkInt = Number(params.get('sdk')) || 34
+  // `?fontScale=1.3` stands in for the system font size (`Configuration.fontScale`): the
+  // chrome's text is drawn at that zoom the way the Kotlin host's `textZoom` draws it
+  // (`previewTextZoom.ts` multiplies the stylesheets' font sizes, a desktop browser having no
+  // text zoom of its own) and the environment reports the factor, so the line boxes follow.
+  // `?textZoom=1.8` names a factor other than the setting (Android 14 scales 15 sp by 1.8 at the
+  // 2.0 setting); `?boldText=1` is the bold-text setting (a weight adjustment of 300).
+  const fontScale = Number(params.get('fontScale')) || 1
+  const textZoom = Number(params.get('textZoom')) || fontScale
+  const fontWeightAdjustment = params.get('boldText') === '1' ? 300 : 0
+  emulateTextZoom(textZoom)
   // `?platform=linux|win32|darwin` makes the chrome report a desktop OS, so a capture taken at
   // the desktop form factor shows the desktop's platform-bound rows (the Default Browser
   // section, file URLs, the engine's name) rather than Android's. Capabilities stay the
@@ -555,7 +566,13 @@ export function createPreviewBridge(): NativeBridge {
       downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
-      environment: { largeScreen: false, pointerAndKeyboard: false, fontScale: 1 }
+      environment: {
+        largeScreen: false,
+        pointerAndKeyboard: false,
+        fontScale,
+        textZoom,
+        fontWeightAdjustment
+      }
     }),
     'storage.write': ({ name, text }) =>
       localStorage.setItem(STORAGE_PREFIX + String(name), String(text)),

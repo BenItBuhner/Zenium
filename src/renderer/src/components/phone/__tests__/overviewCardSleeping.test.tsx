@@ -54,6 +54,8 @@ function card(t: Tab): string {
   return renderToStaticMarkup(
     createElement(OverviewCard, {
       tab: t,
+      position: 2,
+      count: 3,
       active: false,
       hidden: false,
       onPick: () => undefined,
@@ -74,17 +76,18 @@ describe('a sleeping tab in the overview', () => {
   it('marks the card, shows the moon by the title and says so to a screen reader', () => {
     const markup = card(tab({ discarded: true }))
     expect(markup).toContain('data-discarded="true"')
-    expect(markup).toContain('aria-label="The story – sleeping"')
+    // The composed name (A11Y-01): title, place, then the sleeping state as one more word.
+    expect(markup).toContain('aria-label="The story, tab 2 of 3, sleeping"')
     expect(markup).toContain('zen-overview-card-sleeping')
     expect(markup).toContain('data-sleeping=""')
     // The close button stays: a sleeping tab closes like any other.
-    expect(markup).toContain('aria-label="Close tab"')
+    expect(markup).toContain('aria-label="Close The story"')
   })
 
   it('draws a loaded page without any of it', () => {
     const markup = card(tab())
     expect(markup).not.toContain('data-discarded')
-    expect(markup).toContain('aria-label="The story"')
+    expect(markup).toContain('aria-label="The story, tab 2 of 3"')
     expect(markup).not.toContain('zen-overview-card-sleeping')
   })
 

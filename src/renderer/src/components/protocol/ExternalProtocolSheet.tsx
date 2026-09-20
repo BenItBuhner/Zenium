@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import {
   AppWindow,
   ExternalLink,
@@ -109,17 +109,20 @@ function displayAddress(url: string): string {
 
 function Header({
   request,
-  phone
+  phone,
+  titleId
 }: {
   request: ExternalProtocolRequest
   phone: boolean
+  /** The phone title's id, the sheet's `aria-labelledby`. */
+  titleId?: string
 }): JSX.Element {
   const Icon = wordsFor(request.scheme).icon
   if (phone) {
     // A prompt: a title block (design language v2 §9.23), not a bar header.
     return (
       <div className="zen-sheet-title-block">
-        <h2>
+        <h2 id={titleId}>
           <Icon className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
           <span className="min-w-0 truncate">{titleOf(request)}</span>
         </h2>
@@ -219,6 +222,7 @@ function Body({
 
 function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
   const [always, setAlways] = useState(false)
   const answer = (allow: boolean): void =>
     answerExternalProtocol(request.requestId, allow, allow && always)
@@ -239,8 +243,9 @@ function ProtocolSheet({ request }: { request: ExternalProtocolRequest }): JSX.E
       onDismissed={() => answer(false)}
       contentKey={`${request.requestId}:${request.canRemember}`}
       handleLabel="Dismiss"
+      labelledBy={titleId}
     >
-      <Header request={request} phone />
+      <Header request={request} phone titleId={titleId} />
       <Body
         request={request}
         always={always}

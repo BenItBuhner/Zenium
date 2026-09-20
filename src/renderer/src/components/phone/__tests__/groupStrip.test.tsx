@@ -953,9 +953,10 @@ describe('a chip joining or leaving the strip', () => {
     expect(rule('.zen-group-chip-face')).not.toMatch(/will-change/)
     expect(rule('.zen-group-chip')).not.toMatch(/will-change/)
     expect(css).not.toMatch(/\n {2}\.zen-group-chip:active \{/)
-    // The cell is the touch target, the tray's 44 by the slot's 40 pitch (§9.2), laid over the
-    // padding around a 36 margin box so the pitch holds; the face is the 36 circle it shows.
-    expect(rule('.zen-group-chip')).toMatch(/width: 40px;\s*height: 44px;\s*margin: -4px -2px;/)
+    // The cell is the touch target, §9.3's 44 x 44 box laid over the slot's 40 pitch (the cells
+    // overlap by 4) and the padding around a 36 margin box, so the pitch holds; the face is the
+    // 36 circle it shows.
+    expect(rule('.zen-group-chip')).toMatch(/width: 44px;\s*height: 44px;\s*margin: -4px;/)
     expect(rule('.zen-group-chip-face')).toMatch(
       /width: 36px;\s*height: 36px;\s*border-radius: 18px;/
     )

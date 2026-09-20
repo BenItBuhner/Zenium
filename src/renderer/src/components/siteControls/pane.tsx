@@ -123,7 +123,7 @@ export function Card({
         <div className="flex items-center gap-2">
           {glyph && (
             <span
-              className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0 self-start"
+              className="mt-[calc((var(--v2-line-heading-box)-var(--v2-icon))/2)] flex shrink-0 self-start"
               aria-hidden
             >
               {glyph}

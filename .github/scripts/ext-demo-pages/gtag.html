@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google tag fixture</title>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-ZENIUMFIX01"></script>
+    <script>
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
+      gtag('js', new Date())
+      gtag('config', 'G-ZENIUMFIX01', { send_page_view: true })
+      gtag('event', 'fixture_loaded', { fixture: 'gtag.html' })
+    </script>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Google tag fixture</h1>
+    <p>
+      This page loads the Google tag (gtag.js) for the measurement id <code>G-ZENIUMFIX01</code> and
+      pushes a <code>config</code> and one <code>event</code> onto <code>dataLayer</code>. Tag
+      debuggers (Tag Assistant) have a tag to find here; the id is not a live property, so nothing
+      is reported anywhere.
+    </p>
+    <p>dataLayer entries: <span id="count">0</span></p>
+    <script>
+      setInterval(function () {
+        document.getElementById('count').textContent = String((window.dataLayer || []).length)
+      }, 500)
+    </script>
+  </body>
+</html>
