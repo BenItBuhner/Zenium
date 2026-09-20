@@ -725,16 +725,21 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['identity']
   },
-  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
+  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
+  // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
+  // `getLayout` reports the side the strip docks on.
   sidePanel: {
     methods: {
       setOptions: { params: [object('options')] },
       getOptions: { params: [object('options', true)] },
       setPanelBehavior: { params: [object('behavior')] },
       getPanelBehavior: { params: [] },
-      open: { params: [object('options')] }
+      open: { params: [object('options')] },
+      close: { params: [object('options')] },
+      getLayout: { params: [] }
     },
-    events: {},
+    events: { onOpened: {}, onClosed: {} },
+    constants: { Side: { LEFT: 'left', RIGHT: 'right' } },
     permissions: ['sidePanel']
   },
   // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
