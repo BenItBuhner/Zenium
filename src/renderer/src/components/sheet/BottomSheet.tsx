@@ -135,7 +135,7 @@ function track(tracker: VelocityTracker, e: ReactPointerEvent<HTMLElement>): voi
  * The sheet is on the recede chassis (`lib/motion/recede.ts`, v2 draft §11): the page behind
  * recedes and the bottom bar fades on the sheet's own progress, reversibly, and a sheet mounted
  * over another recedes the lower one and makes it inert – nothing to opt into. The sheet holds
- * the page under its cover for as long as anything of it shows (`coverPageUnderSheet`, §11.5):
+ * the page under its cover for as long as anything of it shows (`coverPageUnderSheet`, §11.7):
  * where the chrome lies under the pages it comes up only once the live page has given way to its
  * picture, so the recede never starts on a page that is about to be swapped, and the page comes
  * back only once the sheet has landed, whoever closed it.

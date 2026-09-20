@@ -806,7 +806,7 @@
   }
   /*
    * On a phone the window family changes colour by the one blend of the resolved tokens over
-   * 240 ms (design language v2 §11.5, `useTheme`): the window reads the tokens as the blend
+   * 240 ms (design language v2 §11.6, `useTheme`): the window reads the tokens as the blend
    * writes them, and nothing tweens per element – no transition of its own, which would trail
    * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
    */
@@ -1181,7 +1181,7 @@
   }
   /*
    * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
-   * §11.1, §11.5, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
+   * §11.1, §11.7, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
    * sheet's progress and the slot slides its whole height in across the frame's bottom edge on
    * the sheet spring (a 9.23 sheet, not the desktop dialog's 24 px pop), both written per frame
    * with the page's recede; the panels' own pop does not run on top of the slide. Under another
@@ -1778,7 +1778,7 @@
   /*
    * The slot an address pill left behind while it is being carried: a shallow well. Its tint
    * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
-   * (v2 §11.5, nothing tweens per element on the phone), and the target tint is a cut.
+   * (v2 §11.6, nothing tweens per element on the phone), and the target tint is a cut.
    */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);
@@ -2045,7 +2045,7 @@
   }
   /*
    * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
-   * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
+   * the token (v2 §11.6, nothing tweens per element on the phone); the pressed fill is a cut,
    * as the other cards' pressed states are.
    */
   .zen-overview-new {
@@ -2352,7 +2352,7 @@
    * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
    * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
    * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
-   * while the window surfaces blend to the pane's theme (§11.5). The Tabs | Private segment above
+   * while the window surfaces blend to the pane's theme (§11.6). The Tabs | Private segment above
    * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
    * of the sheet), in the window family through the overview's `data-surface="window"`.
    */
