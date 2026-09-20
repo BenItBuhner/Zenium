@@ -1,0 +1,37 @@
+name: Android text tools demo
+
+# Records the text tools' phone surfaces on a hardware-accelerated Android emulator, every
+# control inside a panel under a real finger with its result asserted: Settings > Languages >
+# Spell check on a WebView host (the group states the keyboard's checker; Keyboard settings leads
+# to the system's input-method settings), Settings > Accessibility > Page zoom (Zoom in twice up
+# Chrome's ladder, Force enable zoom on), Settings > Look and Feel > Apply dark theme to sites
+# (the page's WebView allows algorithmic darkening after), and a tab put to sleep by the 30 s
+# timeout shown faded with the moon in the overview and woken by a finger on its card, its page
+# loading again. Dispatch-only: it takes about ten minutes and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file only picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/services-text-tools-ui-24d1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-text-tools-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Text tools demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-text-tools-demo.sh
+      # The guest kernel's console in the log, as the page controls demo has it: runs of that
+      # demo ended with the emulator itself gone a minute into the recording.
+      emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-text-tools-demo
+      artifact-path: artifacts/android-text-tools-demo/
+      timeout-minutes: 50
