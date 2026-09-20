@@ -19,10 +19,12 @@ import { TabDialogs } from '../TabDialogs'
 import { Urlbar } from '../urlbar/Urlbar'
 import {
   closeTabletDrawer,
+  dismissTabletDrawer,
   openTabletDrawer,
+  setTabletDrawerTravel,
   TABLET_TOOLBAR_HEIGHT,
   tabletDrawerLayout,
-  tabletStore
+  tabletDrawerStore
 } from './tabletChrome'
 import { TabletToolbar } from './TabletToolbar'
 import { useSidebarSwipe } from './useSidebarSwipe'
@@ -57,14 +59,15 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   const viewport = useViewport()
   const side = state.settings.sidebarSide
   const drawerLayout = tabletDrawerLayout(viewport.width)
-  const drawerOpen = tabletStore.use((s) => s.drawerOpen)
+  const drawer = tabletDrawerStore.use()
+  const drawerUp = drawer.phase !== 'closed'
   const expanded = state.settings.sidebarExpanded
   // The docked sidebar: the rail in a narrow window, else what the setting says.
   const rail = drawerLayout || !expanded
-  const sidebarCollapsed = drawerLayout ? !drawerOpen : !expanded
+  const sidebarCollapsed = drawerLayout ? !drawerUp : !expanded
   const toggleSidebar = (): void => {
     if (drawerLayout) {
-      if (drawerOpen) closeTabletDrawer()
+      if (drawerUp) closeTabletDrawer()
       else openTabletDrawer()
     } else run('sidebar.toggleExpanded', undefined)
   }
@@ -75,15 +78,15 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
   // the overview shows the private pane (§9.29; MOT-14).
   const privateSurface = usePrivateSurface(state)
 
-  // Picking a tab in the drawer closes it (the phone's drawer rule); so does the room for a
-  // docked sidebar coming back.
+  // Picking a tab in the drawer closes it (the phone's drawer rule); the room for a docked
+  // sidebar coming back drops it without motion.
   const lastActive = useRef(activeTabId)
   useEffect(() => {
-    if (lastActive.current !== activeTabId && drawerOpen) closeTabletDrawer()
+    if (lastActive.current !== activeTabId && drawerUp) closeTabletDrawer()
     lastActive.current = activeTabId
-  }, [activeTabId, drawerOpen])
+  }, [activeTabId, drawerUp])
   useEffect(() => {
-    if (!drawerLayout) closeTabletDrawer()
+    if (!drawerLayout) dismissTabletDrawer()
   }, [drawerLayout])
 
   // Back from a page's fullscreen (MED-01) the chrome fades in over 120 ms once the page's view
@@ -126,6 +129,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
       data-private={privateSurface || undefined}
       data-window-kind={state.window.kind}
       data-window-chrome={state.window.chrome}
+      data-sidebar={rail ? 'rail' : 'expanded'}
       data-testid="chrome-root"
       style={{
         // The toolbar takes the top inset itself; the sides and the bottom (the system bars, the
@@ -153,7 +157,7 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         data-shell-chrome
         className={cn('relative flex min-h-0 flex-1', side === 'right' && 'flex-row-reverse')}
       >
-        <div className="relative flex h-full shrink-0" {...swipe}>
+        <div className="zen-tablet-sidebar relative flex h-full shrink-0" {...swipe}>
           <Sidebar state={state} isDark={isDark} compact={rail} navRow={false} />
         </div>
         <main
@@ -191,8 +195,8 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           anchor={anchor}
         />
       )}
-      {drawerLayout && drawerOpen && (
-        <TabletDrawer state={state} isDark={isDark} side={side} onClose={closeTabletDrawer} />
+      {drawerLayout && drawerUp && (
+        <TabletDrawer state={state} isDark={isDark} side={side} progress={drawer.progress} />
       )}
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
@@ -203,38 +207,66 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
 
 /**
  * The expanded sidebar as a drawer over the page, in a window too narrow to dock it beside one:
- * a scrim over the page (the drawer's rest of the window), the sidebar as a panel at the rail's
- * side. A tap on the scrim, or picking a tab, closes it (`TabletShell`).
+ * the phone's drawer chassis (`zen-drawer-panel`: a translucent panel flush with the window's
+ * edge, rounded towards the content) under the toolbar row, at the rail's side, with the scrim
+ * over the rest of the page; its position and the scrim's depth follow `tabletDrawerStore`'s
+ * progress per frame. A tap on the scrim, a swipe towards the edge, picking a tab or the system
+ * back gesture close it (`TabletShell`, `tabletChrome.ts`).
  */
 function TabletDrawer({
   state,
   isDark,
   side,
-  onClose
+  progress
 }: {
   state: UIState
   isDark: boolean
   side: 'left' | 'right'
-  onClose: () => void
+  progress: number
 }): JSX.Element {
+  const panel = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (panel.current) setTabletDrawerTravel(panel.current.getBoundingClientRect().width)
+  }, [])
+  const swipe = useSidebarSwipe({
+    side,
+    collapsed: false,
+    onCollapse: () => closeTabletDrawer(),
+    onExpand: () => undefined
+  })
+  const shift = (1 - progress) * 100 * (side === 'left' ? -1 : 1)
   return (
     <div
-      className="zen-tablet-drawer absolute inset-0 z-40 flex"
+      className="zen-tablet-drawer absolute inset-x-0 bottom-0 z-40 flex"
+      data-shell-chrome
       data-side={side}
       style={{ top: `calc(var(--zen-inset-top) + ${TABLET_TOOLBAR_HEIGHT}px)` }}
     >
       <div
-        className={cn('zen-tablet-drawer-panel h-full', side === 'right' && 'order-last')}
+        className="zen-overview-scrim pointer-events-none absolute inset-0"
+        style={{ opacity: progress }}
+      />
+      <div
+        className="absolute inset-0"
+        aria-label="Close sidebar"
+        role="presentation"
+        onClick={() => closeTabletDrawer()}
+      />
+      <div
+        ref={panel}
+        className={cn(
+          'zen-drawer-panel zen-tablet-drawer-panel absolute inset-y-0 flex flex-col',
+          side === 'left' ? 'left-0' : 'right-0'
+        )}
         role="dialog"
         aria-label="Sidebar"
+        data-side={side}
+        style={{ transform: `translateX(${shift}%)` }}
+        onClick={(e) => e.stopPropagation()}
+        {...swipe}
       >
-        <Sidebar state={state} isDark={isDark} compact={false} navRow={false} floating />
+        <Sidebar state={state} isDark={isDark} compact={false} navRow={false} />
       </div>
-      <div
-        className="zen-tablet-drawer-scrim min-w-0 flex-1"
-        aria-label="Close sidebar"
-        onClick={onClose}
-      />
     </div>
   )
 }
