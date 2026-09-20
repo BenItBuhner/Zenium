@@ -1,8 +1,12 @@
 import type {
   CertificateDetails,
   ClientCertificateInfo,
+  CommandArgs,
+  CommandName,
+  CommandResult,
   ExtensionAction,
   ExtensionInfo,
+  MenuItemDescriptor,
   Tab,
   UIState
 } from '@shared/types'
@@ -694,13 +698,90 @@ function seedExtensions(variant: string): void {
     browserStore.set({ state: seeded })
   }
   patch()
-  extensionsSeed = browserStore.subscribe(patch)
+  const unpatch = browserStore.subscribe(patch)
+  const unanswer = answerActionMenus(variant)
+  extensionsSeed = () => {
+    unpatch()
+    unanswer()
+  }
 }
 
 /** Stop holding a seeded extension state over the core's pushes. */
 function unseedExtensions(): void {
   extensionsSeed?.()
   extensionsSeed = null
+}
+
+/**
+ * The stand-in host has no extension to ask, so while the `installed` fixture stands the chrome's
+ * bridge answers `extension.actionMenuItems` for the fixture extension that declares
+ * action-context `contextMenus` items (Dark Reader's, `FIXTURE_ACTION_MENUS`) and takes the pick
+ * (`extension.actionMenuClick`) as done, the way the core would; every other command goes
+ * through. Returns the undo.
+ */
+function answerActionMenus(variant: string): () => void {
+  if (variant !== 'installed') return () => undefined
+  const zen = window.zen
+  const invoke = zen.invoke
+  zen.invoke = <K extends CommandName>(
+    name: K,
+    args: CommandArgs<K>
+  ): Promise<CommandResult<K>> => {
+    if (name === 'extension.actionMenuItems') {
+      const { id } = args as CommandArgs<'extension.actionMenuItems'>
+      return Promise.resolve((FIXTURE_ACTION_MENUS[id] ?? []) as CommandResult<K>)
+    }
+    if (name === 'extension.actionMenuClick') return Promise.resolve(undefined as CommandResult<K>)
+    return invoke(name, args)
+  }
+  return () => {
+    if (zen.invoke !== invoke) zen.invoke = invoke
+  }
+}
+
+/**
+ * The action-context `contextMenus` items a fixture extension adds to its long-press menu, as
+ * `extension.actionMenuItems` answers them: Dark Reader's toggles (check states) and a plain row
+ * under its own separator, so the menu sheet shows the extension's group above the browser's.
+ */
+const FIXTURE_ACTION_MENUS: Record<string, MenuItemDescriptor[]> = {
+  eimadpbcbfnmbkopoojfekhnkhdbieeh: [
+    {
+      id: 'action_1_1',
+      type: 'checkbox',
+      label: 'Dark Reader On',
+      enabled: true,
+      checked: true,
+      icon: null,
+      submenu: null
+    },
+    {
+      id: 'action_1_2',
+      type: 'checkbox',
+      label: 'Enable on This Site',
+      enabled: true,
+      checked: false,
+      icon: null,
+      submenu: null
+    },
+    {
+      id: 'action_1_3',
+      type: 'separator',
+      label: '',
+      enabled: true,
+      checked: false,
+      submenu: null
+    },
+    {
+      id: 'action_1_4',
+      type: 'normal',
+      label: 'Open Developer Tools',
+      enabled: true,
+      checked: false,
+      icon: null,
+      submenu: null
+    }
+  ]
 }
 
 /** A 48 px icon for a fixture extension: a rounded tile in its colour with its initial. */
