@@ -16,11 +16,16 @@ const sheets = readdirSync(assets)
   .filter((f) => f.endsWith('.css'))
   .map((f) => [f, readFileSync(join(assets, f), 'utf8')] as const)
 
-/** The `:focus-visible` rules of a stylesheet that set an outline, with the declaration's value. */
+/**
+ * The `:focus-visible` rules of a stylesheet that set an outline, with the declaration's value.
+ * A rule for the unfocused state (`:not(:focus-visible)`, a selection outline that steps aside
+ * for the ring) is not a ring.
+ */
 function ringRules(text: string): Array<{ selector: string; value: string }> {
   const out: Array<{ selector: string; value: string }> = []
   const rule = /([^{}]*:focus-visible[^{}]*)\{([^{}]*)\}/g
   for (const m of text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(rule)) {
+    if (!/:focus-visible/.test((m[1] ?? '').replace(/:not\([^)]*\)/g, ''))) continue
     const body = m[2] ?? ''
     for (const d of body.matchAll(/(?:^|;)\s*outline\s*:\s*([^;]+)/g))
       out.push({ selector: (m[1] ?? '').trim().replace(/\s+/g, ' '), value: (d[1] ?? '').trim() })

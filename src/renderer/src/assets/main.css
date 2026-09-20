@@ -7950,3 +7950,81 @@
     transition-duration: 120ms !important;
   }
 }
+
+/*
+ * `forced-colors: active` (a11y-15): Windows High Contrast and any forced palette. Chromium
+ * repaints the chrome in the palette's keywords – Canvas and CanvasText, ButtonFace, Highlight –
+ * and drops every box-shadow, so a state or an edge the design carries with a fill, a tint or a
+ * shadow alone is gone: the active tab row read like its neighbours, a switch that is on like
+ * one that is off, the pill and the content frame had no edge. The rules here say those in the
+ * palette's own keywords, which forcing leaves alone: what is selected or checked wears Highlight
+ * with HighlightText on it, and edges become borders (in the box, so nothing moves) or, on the
+ * frame the page view covers, an outline. Colour that is the content – the app icon's artwork,
+ * the group editor's swatches – opts out and keeps its own. Unlayered so the base ring and the
+ * components' fills yield to it; a focus ring still wins over a selection outline.
+ */
+@media (forced-colors: active) {
+  /* Selected: the active tab row, folder or Essential, the active space, the picked segment, the current Settings section. */
+  .zen-tab[data-active='true'],
+  .zen-essential[data-active='true'],
+  [data-space-target][aria-current='true'],
+  .zen-segment[data-active='true'],
+  nav > button[aria-current='page'] {
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  /* Multi-selected tabs: the accent outline becomes Highlight; the keyboard's ring takes over when focused. */
+  .zen-tab[data-selected]:not(:focus-visible),
+  .zen-essential[data-selected]:not(:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  /* Edges: the address pill, the segmented control, the app icon cards; the content frame's edge outside the page view. */
+  .zen-pill,
+  .zen-segment,
+  .zen-app-icon {
+    border: 1px solid ButtonBorder;
+  }
+  .zen-content-frame {
+    outline: 1px solid CanvasText;
+    outline-offset: 0;
+  }
+  /* The v2 switch: a bordered track with a CanvasText thumb; on, a Highlight track with a HighlightText thumb. */
+  .zen-v2-switch {
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+  }
+  .zen-v2-switch::after {
+    background-color: CanvasText;
+  }
+  .zen-v2-switch[aria-checked='true'],
+  [aria-checked='true'] .zen-v2-switch {
+    border-color: Highlight;
+    background-color: Highlight;
+  }
+  .zen-v2-switch[aria-checked='true']::after,
+  [aria-checked='true'] .zen-v2-switch::after {
+    background-color: HighlightText;
+  }
+  /* Checked radios, checkboxes, image cards and app icons: filled Highlight (the radio's inset shadow and the card's ring are gone). */
+  .zen-v2-radio[aria-checked='true'],
+  [aria-checked='true'] > .zen-v2-radio,
+  .zen-v2-checkbox:checked,
+  .zen-app-icon[aria-checked='true'] {
+    border-color: Highlight;
+    background-color: Highlight;
+    color: HighlightText;
+  }
+  .zen-v2-checkbox:checked::after {
+    background-color: HighlightText;
+  }
+  .zen-v2-card-radio[aria-checked='true']:not(:focus-visible) {
+    outline: 2px solid Highlight;
+    outline-offset: 0;
+  }
+  /* Colour that is the content keeps its own. */
+  .zen-app-icon svg,
+  .zen-group-editor-swatch-disc {
+    forced-color-adjust: none;
+  }
+}
