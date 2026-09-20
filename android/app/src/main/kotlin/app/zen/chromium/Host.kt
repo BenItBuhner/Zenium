@@ -498,7 +498,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
-            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
+            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions"), if (args.has("maxBytes")) args.num("maxBytes") else null) { files -> reply(files) }
             "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
 
             // --- passwords: vault key protection and re-authentication ---------------------------
