@@ -8,7 +8,9 @@ import type {
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
 import { Browser } from '../browser'
+import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
+import { blocksThirdPartyCookies } from '../protection/policy'
 import type {
   Platform,
   StoreIO,
@@ -422,6 +424,191 @@ describe('NewTabService: state for the page', () => {
     expect(f.browser.newTab.stateFor(activeTab(f)!.id)!.shortcuts.map((s) => s.url)).toEqual([
       'https://docs.example/'
     ])
+  })
+
+  describe('the private page\'s "Block third-party cookies" switch', () => {
+    function privatePage(f: Fixture): { tab: Tab; view: Recorded } {
+      const priv = f.browser.openWindow('private')!
+      const tab = f.browser.tabs.activeTabFor(priv)!
+      expect(tab.containerId).toBe(PRIVATE_CONTAINER_ID)
+      return { tab, view: f.views.find((v) => v.tabId === tab.id)! }
+    }
+
+    function setGlobalMode(f: Fixture, mode: 'allow' | 'block-private' | 'block'): void {
+      f.browser.updateSettings(
+        { privacy: { ...f.browser.state.settings.privacy, thirdPartyCookies: mode } },
+        f.browser.focusedWindow()
+      )
+    }
+
+    it('build(): absent from a regular page, present on a private page with its position and lock', () => {
+      const f = fixture()
+      f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+      const regularId = activeTab(f)!.id
+      const regular = f.browser.newTab.stateFor(regularId)!
+      expect(regular.isPrivate).toBe(false)
+      expect(regular).not.toHaveProperty('privateThirdPartyCookies')
+      const { tab } = privatePage(f)
+      // The default global mode blocks in private windows only: on, not locked.
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: false
+      })
+      // The global `allow`: off. The global `block`: on and locked, whatever the private choice.
+      setGlobalMode(f, 'allow')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: false
+      })
+      setGlobalMode(f, 'block')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true
+      })
+      // The same answer the chrome gets (`PrivacyStatus.privateThirdPartyCookies`).
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual(
+        f.browser.protection.status().privateThirdPartyCookies
+      )
+      // Still absent from the regular page, whatever the modes.
+      expect(f.browser.newTab.stateFor(regularId)).not.toHaveProperty('privateThirdPartyCookies')
+    })
+
+    it('handleAction: on writes block, off writes allow, never default, private pages only', () => {
+      const f = fixture()
+      const { tab } = privatePage(f)
+      const privacy = (): string => f.browser.state.settings.privacy.thirdPartyCookiesPrivate
+      expect(privacy()).toBe('default')
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      expect(privacy()).toBe('allow')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: false
+      })
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: true
+      })
+      expect(privacy()).toBe('block')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: false
+      })
+      // Regular browsing is never touched by it.
+      expect(f.browser.state.settings.privacy.thirdPartyCookies).toBe('block-private')
+      // A regular page has no switch: its action is ignored.
+      f.browser.handleCommand(f.browser.focusedWindow(), 'newtab.open', undefined)
+      const regular = activeTab(f)!
+      expect(regular.containerId).not.toBe(PRIVATE_CONTAINER_ID)
+      f.browser.newTab.handleAction(regular.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      expect(privacy()).toBe('block')
+      // Nor a malformed one.
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: 'no' as unknown as boolean
+      })
+      expect(privacy()).toBe('block')
+    })
+
+    it('handleAction: a write while locked is not refused – the engine keeps it for when the lock lifts', () => {
+      const f = fixture()
+      const { tab } = privatePage(f)
+      setGlobalMode(f, 'block')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies!.locked).toBe(true)
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      expect(f.browser.state.settings.privacy.thirdPartyCookiesPrivate).toBe('allow')
+      // Locked, the switch still shows on; the lock gone, the stored choice shows.
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: true
+      })
+      setGlobalMode(f, 'block-private')
+      expect(f.browser.newTab.stateFor(tab.id)!.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: false
+      })
+    })
+
+    it('a privacy settings change re-pushes a live private page: the lock flips live', async () => {
+      const f = fixture()
+      const { tab, view } = privatePage(f)
+      await settle()
+      const n = view.pushes.length
+      expect(n).toBeGreaterThan(0)
+      expect(view.pushes.at(-1)?.privateThirdPartyCookies).toEqual({ blocked: true, locked: false })
+      setGlobalMode(f, 'block')
+      await settle()
+      expect(view.pushes.length).toBe(n + 1)
+      expect(view.pushes.at(-1)?.privateThirdPartyCookies).toEqual({ blocked: true, locked: true })
+      setGlobalMode(f, 'block-private')
+      await settle()
+      expect(view.pushes.length).toBe(n + 2)
+      expect(view.pushes.at(-1)?.privateThirdPartyCookies).toEqual({
+        blocked: true,
+        locked: false
+      })
+      // The page's own flip comes back to it as the next state.
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      await settle()
+      expect(view.pushes.length).toBe(n + 3)
+      expect(view.pushes.at(-1)?.privateThirdPartyCookies).toEqual({
+        blocked: false,
+        locked: false
+      })
+      // A commit that changes nothing of the page's pushes nothing.
+      f.browser.state.commit()
+      await settle()
+      expect(view.pushes.length).toBe(n + 3)
+    })
+
+    it('end to end: the switch changes what the hosts block for a private context only', () => {
+      const f = fixture()
+      const { tab } = privatePage(f)
+      const request: RequestContext = {
+        url: 'https://tracker.example/p.gif',
+        type: 'image',
+        method: 'GET',
+        documentUrl: 'https://news.example/story'
+      }
+      const regular = (): boolean => blocksThirdPartyCookies(f.browser.protection.flags(), request)
+      const priv = (): boolean =>
+        blocksThirdPartyCookies(f.browser.protection.flags(), { ...request, isPrivate: true })
+      // The default: blocked in private windows, allowed in regular ones.
+      expect([regular(), priv()]).toEqual([false, true])
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      expect([regular(), priv()]).toEqual([false, false])
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: true
+      })
+      expect([regular(), priv()]).toEqual([false, true])
+      // Under the global `allow` the private choice still stands on its own.
+      setGlobalMode(f, 'allow')
+      expect([regular(), priv()]).toEqual([false, true])
+      f.browser.newTab.handleAction(tab.id, {
+        type: 'set-private-third-party-cookies',
+        blocked: false
+      })
+      expect([regular(), priv()]).toEqual([false, false])
+      // The global `block` wins over the private `allow`, and the regular context follows it.
+      setGlobalMode(f, 'block')
+      expect([regular(), priv()]).toEqual([true, true])
+    })
   })
 
   it('the grid is four by two: eight most-visited sites and eight shortcuts', () => {

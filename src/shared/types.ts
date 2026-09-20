@@ -1618,6 +1618,13 @@ export interface NewTabPageState {
   backgroundImage: string | null
   /** The host can open an image file picker. */
   canPickImage: boolean
+  /**
+   * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
+   * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
+   * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
+   * regular page; inert for anything else that reads the state.
+   */
+  privateThirdPartyCookies?: { blocked: boolean; locked: boolean }
 }
 
 /**
@@ -1655,6 +1662,11 @@ export type NewTabPageAction =
     }
   /** The Customize button: Settings opens on its New Tab section. */
   | { type: 'customize' }
+  /**
+   * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
+   * becomes `block` (on) or `allow` (off) – never `default` – and changes private windows only.
+   */
+  | { type: 'set-private-third-party-cookies'; blocked: boolean }
 
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
