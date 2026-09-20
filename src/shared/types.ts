@@ -3478,6 +3478,21 @@ export interface Commands {
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
   'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  /**
+   * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
+   * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
+   * phone's long-press menu sheet, which shows them above the browser's rows as Chrome does
+   * (the desktop's native menu gets the same items through `extension.actionContextMenu`). Each
+   * item's `id` is a handle for `extension.actionMenuClick`; a fresh request retires the
+   * previous handles. Empty when the extension adds none.
+   */
+  'extension.actionMenuItems': { args: { id: string }; result: MenuItemDescriptor[] }
+  /**
+   * The user picked one of the items `extension.actionMenuItems` answered: the extension's
+   * `contextMenus.onClicked` fires with Chrome's `OnClickData` for the `action` context and the
+   * active tab, as a pick in the desktop's menu does.
+   */
+  'extension.actionMenuClick': { args: { id: string; itemId: string }; result: void }
   /** Empties the extension's error console (`ExtensionInfo.errors`). */
   'extension.clearErrors': { args: { id: string }; result: void }
   // ---- PROVISIONAL: extensions UI (PR #68) ------------------------------------------------------

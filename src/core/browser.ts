@@ -2565,6 +2565,9 @@ export class Browser {
           win,
           x !== undefined && y !== undefined ? { x, y } : undefined
         ),
+      'extension.actionMenuItems': ({ id }, win) => this.menus.extensionActionMenuItems(id, win),
+      'extension.actionMenuClick': ({ id, itemId }) =>
+        this.menus.runExtensionActionMenuItem(id, itemId),
       'extension.confirmInstall': ({ requestId, accept }) =>
         this.extensions.respondPrompt(requestId, accept),
       'extension.respondPermissionRequest': ({ requestId, accept }) =>
