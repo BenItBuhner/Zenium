@@ -179,6 +179,9 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         probe = readerProbe()
         finding("  after Syllables: switch ${switchState("Syllables")}; document $probe")
         check("Syllables on: the document's data-syllables true and the page script's marks in the text", switchState("Syllables") == "true" && probe.optString("syllables") == "true" && probe.optInt("marks") > 0)
+        // The switch's thumb and the row's pressed state settle after the probe reads the new
+        // value (run 2's still caught the thumb mid-slide): a beat before the design record.
+        SystemClock.sleep(800)
         snap("preferences-sheet-extras-on")
         beat()
         // Lines in focus: 3 -> 5 through its picker sheet. A §9.13 control-panel row's tap target
@@ -207,6 +210,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         } else {
             check("the Text spacing menulist opens its picker", false)
         }
+        SystemClock.sleep(800)
         snap("preferences-sheet-wider-five-lines")
         beat()
         // The system back closes the sheet alone; the document keeps its extras.
