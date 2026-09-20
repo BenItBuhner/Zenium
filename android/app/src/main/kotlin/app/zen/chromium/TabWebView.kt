@@ -1881,7 +1881,10 @@ class TabWebView(
             // Before `navigated`: the core records the tab's stack as it handles that event, and
             // reads it from the list pushed here (the view's copy, or `Host`'s for the sync call).
             pushHistory()
-            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage).put("document", committedGeneration))
+            // The committed URL as the core spells a tab's URL: an extension page's in Chrome's
+            // form (`chrome-extension://<id>/...`, as [navState] and the list's entries have it),
+            // not the served origin the WebView reported the commit under.
+            host.viewEvent(tabId, "navigated", navState().put("url", ExtensionUrls.present(url)).put("inPage", inPage).put("document", committedGeneration))
             host.backChanged()
         }
 

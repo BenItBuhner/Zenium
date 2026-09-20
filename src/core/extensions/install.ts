@@ -24,6 +24,7 @@ import {
   localeFallbackChain,
   localizeManifest,
   parseManifest,
+  satisfiesMinimumChromeVersion,
   stripJsonComments,
   validateManifest,
   type ExtensionManifest,
@@ -44,7 +45,12 @@ import {
 import { readZip, type ZipArchive, type ZipEntry, type ZipLimits } from './zip'
 
 export type InstallErrorCode =
-  'manifest-missing' | 'manifest-invalid' | 'locale-missing' | 'id-mismatch' | 'key-invalid'
+  | 'manifest-missing'
+  | 'manifest-invalid'
+  | 'locale-missing'
+  | 'id-mismatch'
+  | 'key-invalid'
+  | 'chrome-version-too-low'
 
 export class InstallError extends Error {
   constructor(
@@ -97,6 +103,12 @@ export interface InstallOptions {
   limits?: Partial<ZipLimits>
   /** Fail unless the package's id is exactly this one (the id the user asked to install). */
   expectedId?: string
+  /**
+   * The browser's Chromium version. A package whose manifest names a `minimum_chrome_version`
+   * above it is refused (`chrome-version-too-low`), as Chrome refuses to install one
+   * (`kChromeVersionTooLow`). Without it the minimum goes unchecked.
+   */
+  chromiumVersion?: string | null
 }
 
 export interface ZipInstallOptions extends InstallOptions {
@@ -128,7 +140,8 @@ export async function installFromCrx(
     publicKey: verified.publicKey,
     publisher: verified.publisher,
     signed: true,
-    locale: options.locale ?? null
+    locale: options.locale ?? null,
+    chromiumVersion: options.chromiumVersion ?? null
   })
 }
 
@@ -167,6 +180,7 @@ export async function installFromZip(
     publisher: 'unknown',
     signed: false,
     locale: options.locale ?? null,
+    chromiumVersion: options.chromiumVersion ?? null,
     located,
     parsed
   })
@@ -178,6 +192,7 @@ interface PackageSource {
   publisher: CrxPublisher
   signed: boolean
   locale: string | null
+  chromiumVersion: string | null
   located?: LocatedManifest
   parsed?: ParsedManifest
 }
@@ -233,9 +248,23 @@ async function readManifest(entry: ZipEntry): Promise<ParsedManifest> {
   return { manifest: result.manifest, raw: result.raw, warnings: result.warnings }
 }
 
+/**
+ * Chrome's `kChromeVersionTooLow`: a manifest whose `minimum_chrome_version` is above the
+ * browser's fails to load, so the package is refused before anything is written. The version is
+ * the one the manifest was validated with (a version string, or absent).
+ */
+function refuseAboveChromiumVersion(manifest: ExtensionManifest, chromiumVersion: string): void {
+  if (satisfiesMinimumChromeVersion(manifest, chromiumVersion)) return
+  throw new InstallError(
+    'chrome-version-too-low',
+    `This extension requires Chrome ${manifest.minimum_chrome_version} or newer; Zenium is Chrome ${chromiumVersion}`
+  )
+}
+
 async function buildPackage(archive: ZipArchive, source: PackageSource): Promise<ExtensionPackage> {
   const located = source.located ?? locateManifest(archive)
   const parsed = source.parsed ?? (await readManifest(located.entry))
+  if (source.chromiumVersion) refuseAboveChromiumVersion(parsed.manifest, source.chromiumVersion)
   const { rootPrefix } = located
   const warnings = [...parsed.warnings]
 

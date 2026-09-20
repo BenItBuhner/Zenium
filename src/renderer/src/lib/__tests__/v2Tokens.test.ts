@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { HINT_PALETTE } from '@shared/fullscreenHint'
+import { TOOLBAR_STROKE } from '../../components/v2/controls'
 
 /**
  * The design-language v2 tokens live in one block of main.css (docs/design-language-v2-draft.md).
@@ -286,6 +287,7 @@ const SCALE = [
   'card-padding',
   'content-max',
   'ring',
+  'ring-room',
   'selection',
   'ok',
   'warn',
@@ -323,6 +325,16 @@ describe('design language v2 tokens', () => {
       expect(phone, name).toContain(name)
     for (const name of phone)
       expect(SURFACE, `${name} must not change per form factor`).not.toContain(name)
+  })
+
+  // §9.3, one stroke per toolbar row: the constant the toolbar row's and the app title bar's
+  // glyphs pass as Lucide's `strokeWidth` is the desktop value of the glyph-stroke token, so
+  // the row and the v2 glyphs drawn from the token cannot drift apart (#245 chassis (d)).
+  it('gives the toolbar row the desktop glyph stroke: TOOLBAR_STROKE is --v2-icon-stroke', () => {
+    const m = /--v2-icon-stroke:\s*([\d.]+);/.exec(css.slice(lightBlockStart))
+    expect(m).not.toBeNull()
+    expect(Number(m![1])).toBe(TOOLBAR_STROKE)
+    expect(TOOLBAR_STROKE).toBe(1.5)
   })
 
   it('is read only by the surfaces deliberately moved to v2', () => {

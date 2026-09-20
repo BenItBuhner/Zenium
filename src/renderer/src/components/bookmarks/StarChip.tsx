@@ -6,6 +6,7 @@ import { run } from '@renderer/lib/api'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { closeBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { PillChip } from '../urlbar/PillChip'
+import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
  * The star at the trailing end of the address pill: an outline until the page is bookmarked,
@@ -63,7 +64,7 @@ export function StarChip({
       }}
     >
       <span ref={glyph} className="flex">
-        <Star className="h-4 w-4" />
+        <Star className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </span>
     </PillChip>
   )

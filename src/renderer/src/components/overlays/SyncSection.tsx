@@ -17,6 +17,11 @@ const SCOPE_LABELS: Array<{ key: keyof SyncScope; label: string; hint?: string }
   { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices' },
   { key: 'containers', label: 'Containers' },
   { key: 'bookmarks', label: 'Bookmarks' },
+  {
+    key: 'passwords',
+    label: 'Passwords',
+    hint: 'Saved passwords and passkey records, encrypted with your sync passphrase'
+  },
   { key: 'settings', label: 'Settings' },
   { key: 'shortcuts', label: 'Keyboard shortcuts' },
   { key: 'boosts', label: 'Boosts' }
@@ -34,10 +39,11 @@ export function SyncSection({ state }: { state: UIState }): JSX.Element {
       <section>
         <h3 className="mb-1 text-[15px] font-semibold">Sync</h3>
         <p className="text-[12.5px] text-[var(--zen-muted)]">
-          Keep your Spaces, folders, pinned tabs, Essentials and settings the same on every
-          computer. Pick a folder that is already synced between your devices (Dropbox, iCloud
-          Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is
-          encrypted on this device before it is written – the folder only ever holds ciphertext.
+          Keep your Spaces, folders, pinned tabs, Essentials, bookmarks, passwords and settings the
+          same on every device, including your phone. Pick a folder that is already synced between
+          your devices (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a
+          passphrase. Everything is encrypted on this device before it is written – the folder only
+          ever holds ciphertext.
         </p>
       </section>
       {sync.enabled ? <Connected state={state} /> : <Setup state={state} />}
@@ -170,19 +176,36 @@ function Connected({ state }: { state: UIState }): JSX.Element {
               {sync.lastError ? (
                 <span className="text-red-500">{sync.lastError}</span>
               ) : (
-                sync.folder
+                (sync.folderName ?? sync.folder)
               )}
             </div>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={sync.syncing || sync.pendingMerge}
-            onClick={() => run('sync.now', undefined)}
-          >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
-            now
-          </Button>
+          {sync.folderLost ? (
+            // The folder went away (unmounted drive, revoked tree): the error line above says so and
+            // the initial-choice button takes the user to a folder again; nothing to sync until then.
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={sync.syncing}
+              onClick={() =>
+                void cmd('sync.chooseFolder', undefined).then(
+                  (folder) => folder && run('sync.setFolder', { folder })
+                )
+              }
+            >
+              <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Choose…
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={sync.syncing || sync.pendingMerge}
+              onClick={() => run('sync.now', undefined)}
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
+              now
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
           <Label htmlFor="sync-device-name" className="w-28 shrink-0">

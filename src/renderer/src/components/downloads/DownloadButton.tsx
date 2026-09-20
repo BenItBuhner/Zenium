@@ -6,6 +6,7 @@ import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import { downloadButtonVisible, downloadsUi, toggleDownloadBubble } from '@renderer/lib/downloads'
 import { hint } from '@renderer/lib/shortcuts'
 import { cn } from '@renderer/lib/utils'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { bubbleEntry } from './focus'
 
 /** Ring geometry around the 16px glyph inside the 28px button. */
@@ -77,7 +78,7 @@ export function DownloadButton({
           ui.pulse > 0 && 'zen-dl-glyph-pulse'
         )}
       >
-        <Download className="h-4 w-4" strokeWidth={1.5} />
+        <Download className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </span>
       {bar.mode !== 'none' && (
         <svg

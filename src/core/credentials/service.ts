@@ -5,6 +5,7 @@ import type {
   GeneratorOptions,
   ImportConflict,
   ImportResult,
+  PasskeyEntry,
   PasswordsStatus,
   ReauthOutcome
 } from '../../shared/types'
@@ -422,6 +423,43 @@ export class PasswordService {
 
   findForHttpAuth(origin: string, realm: string): Credential[] {
     return this.store.findForHttpAuth(origin, realm)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sync (ID-09): what the engine publishes and what it applies from other devices
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Every login and passkey record while the vault is open, or null while it is locked: the
+   * engine then neither publishes nor tombstones credential records, and holds the ones it
+   * received until the vault opens (`core/sync/engine.ts`).
+   */
+  syncSources(): { logins: Credential[]; passkeys: PasskeyEntry[] } | null {
+    if (!this.store.unlocked()) return null
+    return { logins: this.store.list(), passkeys: this.store.listPasskeys() }
+  }
+
+  /** Another device's login won the merge: it replaces this device's copy under the same id. */
+  applySyncedLogin(login: Credential): void {
+    this.store.applySynced(login)
+  }
+
+  /**
+   * A passkey's public record from another device. Only the metadata travels: the private key
+   * is the other device's authenticator's, so the entry lists here but signs in only there.
+   */
+  applySyncedPasskey(passkey: PasskeyEntry): void {
+    this.store.applySyncedPasskey(passkey)
+  }
+
+  /** A deletion made on another device; the undo window was that device's. */
+  removeSynced(id: string): void {
+    if (!this.store.removeSynced(id)) this.store.removeSyncedPasskey(id)
+    const pending = this.removed.get(id)
+    if (pending) {
+      clearTimeout(pending.timer)
+      this.removed.delete(id)
+    }
   }
 
   // ---------------------------------------------------------------------------

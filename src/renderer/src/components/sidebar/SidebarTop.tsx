@@ -56,6 +56,7 @@ import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
@@ -204,7 +205,7 @@ export function NavRow({
         enabled={Boolean(tab?.canGoBack)}
         command="tab.back"
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </NavigationButton>
       <NavigationButton
         tab={tab}
@@ -212,7 +213,7 @@ export function NavRow({
         enabled={Boolean(tab?.canGoForward)}
         command="tab.forward"
       >
-        <ArrowRight className="h-4 w-4" />
+        <ArrowRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </NavigationButton>
       <button
         type="button"
@@ -226,7 +227,11 @@ export function NavRow({
           (tab.loading ? run('tab.stop', { tabId: tab.id }) : run('tab.reload', { tabId: tab.id }))
         }
       >
-        {tab?.loading ? <X className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
+        {tab?.loading ? (
+          <X className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        ) : (
+          <RotateCw className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        )}
       </button>
       {!compact && (
         /*
@@ -430,7 +435,7 @@ export function NavRow({
                   else void openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
                 }}
               >
-                <AppWindow className="h-4 w-4" strokeWidth={1.5} />
+                <AppWindow className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
                 {blocked.length > 1 && (
                   <span className="rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)] tabular-nums">
                     {blocked.length}
@@ -523,7 +528,7 @@ export function NavRow({
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
     </div>
   )

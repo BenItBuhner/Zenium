@@ -740,13 +740,28 @@ export interface SyncScope {
   settings: boolean
   shortcuts: boolean
   boosts: boolean
+  /**
+   * Saved logins and the passkeys' public records (ID-09), under the same end-to-end key as
+   * everything else; on by default as Chrome's password sync is.
+   */
+  passwords: boolean
 }
 
 export interface SyncStatus {
   /** Sync is configured (folder + key) and enabled. */
   enabled: boolean
-  /** Folder every device writes its encrypted records to (any cloud-drive / Syncthing folder). */
+  /**
+   * Folder every device writes its encrypted records to (any cloud-drive / Syncthing folder):
+   * the path on desktop, the document tree's URI on Android. Opaque to the chrome; show `folderName`.
+   */
   folder: string | null
+  /** The folder as the user knows it: the path on desktop, the tree's display name on Android. */
+  folderName: string | null
+  /**
+   * The folder cannot be reached any more (an unmounted drive; on Android the tree's permission
+   * was revoked or the folder deleted). Sync stays configured and waits for `sync.setFolder`.
+   */
+  folderLost: boolean
   deviceId: string
   deviceName: string
   scope: SyncScope
@@ -3925,6 +3940,11 @@ export interface Commands {
   }
   'sync.setScope': { args: Partial<SyncScope>; result: void }
   'sync.setDeviceName': { args: { name: string }; result: void }
+  /**
+   * Point a configured device at a folder again (the chosen one was lost, or the user moves
+   * to another): the key stays; a folder holding another passphrase's data is refused.
+   */
+  'sync.setFolder': { args: { folder: string }; result: void }
   'sync.now': { args: void; result: void }
   'sync.confirmMerge': { args: { merge: boolean }; result: void }
   'sync.disconnect': { args: { wipeRemote: boolean }; result: void }

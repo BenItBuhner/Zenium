@@ -681,7 +681,10 @@ export class ExtensionService implements ExtensionHost {
     const started = Date.now()
     try {
       const bytes = new Uint8Array(await fs.readFile(path))
-      const { pkg, kind } = await packageFromFile(name, bytes, { locale: app.getLocale() })
+      const { pkg, kind } = await packageFromFile(name, bytes, {
+        locale: app.getLocale(),
+        chromiumVersion: process.versions.chrome
+      })
       console.log(
         `[zen] extensions: read ${name} as ${pkg.id} ${pkg.version} (${kind}, ${pkg.files.length} files, ${elapsed(started)})`
       )
@@ -741,7 +744,11 @@ export class ExtensionService implements ExtensionHost {
       process.versions.chrome
     )
     const downloaded = Date.now()
-    const pkg = await installFromCrx(download.bytes, { expectedId: id, locale: app.getLocale() })
+    const pkg = await installFromCrx(download.bytes, {
+      expectedId: id,
+      locale: app.getLocale(),
+      chromiumVersion: process.versions.chrome
+    })
     const skipped = download.skipped
       .map((s) => ` (${storeLabel(s.store)}: HTTP ${s.status})`)
       .join('')
@@ -1171,7 +1178,11 @@ export class ExtensionService implements ExtensionHost {
   ): Promise<void> {
     const started = Date.now()
     const bytes = await downloadUpdate(electronStoreFetch, update)
-    const pkg = await installFromCrx(bytes, { expectedId: record.id, locale: app.getLocale() })
+    const pkg = await installFromCrx(bytes, {
+      expectedId: record.id,
+      locale: app.getLocale(),
+      chromiumVersion: process.versions.chrome
+    })
     console.log(
       `[zen] extensions: downloaded update ${record.id} ${record.version} -> ${pkg.version} (${bytes.length} bytes, sha256 ${update.sha256 ? 'verified' : 'not announced'}) in ${elapsed(started)}`
     )

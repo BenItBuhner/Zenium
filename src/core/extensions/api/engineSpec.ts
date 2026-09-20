@@ -660,7 +660,19 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   devtools: null,
   readingList: 'readingList',
   webRequestAuthProvider: 'webRequestAuthProvider',
-  dom: null
+  dom: null,
+  // Permission-gated namespaces the browser layer's table shapes (`spec.ts`) and the phone's
+  // host answers by rejection, or from the table's own inert members (`gcm`): Chrome makes each
+  // of them exist once its permission is declared, and workers read them in their first
+  // statements (VeePN, NordVPN and Browsec `chrome.proxy.settings`, Claude
+  // `chrome.debugger.onEvent`, Read&Write `chrome.gcm.onMessage`), so a namespace missing from
+  // this table was a TypeError before the first listener was registered.
+  proxy: 'proxy',
+  gcm: 'gcm',
+  debugger: 'debugger',
+  topSites: 'topSites',
+  tts: 'tts',
+  contentSettings: 'contentSettings'
 }
 
 /** Permissions that grant a namespace registered under another name. */
@@ -748,6 +760,14 @@ function mergeNamespace(
   over: NamespaceSpec | undefined
 ): NamespaceSpec {
   const eventStyle = over?.eventStyle ?? base?.eventStyle
+  // The `types.ChromeSetting` and `ContentSetting` members (`proxy.settings`,
+  // `contentSettings.cookies`) are the layer's shapes, built by the shim and routed to the host
+  // like methods; they travel with a namespace the engine table leaves alone. A namespace the
+  // engine lists answers its settings itself (`engine.ts` defines `privacy`'s on the context
+  // side), and the shim would replace them with routed ones the host has no answer for.
+  const settings = over ? undefined : base?.settings
+  const ownSettings = over ? undefined : base?.ownSettings
+  const contentSettings = over ? undefined : base?.contentSettings
   return {
     methods: { ...base?.methods, ...over?.methods },
     events: { ...base?.events, ...over?.events },
@@ -759,7 +779,10 @@ function mergeNamespace(
       : {}),
     // A namespace the engine's host implements is no longer a shape.
     ...(base?.shape && !over ? { shape: base.shape } : {}),
-    ...(eventStyle ? { eventStyle } : {})
+    ...(eventStyle ? { eventStyle } : {}),
+    ...(settings ? { settings } : {}),
+    ...(ownSettings ? { ownSettings } : {}),
+    ...(contentSettings ? { contentSettings } : {})
   }
 }
 

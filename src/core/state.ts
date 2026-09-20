@@ -118,6 +118,7 @@ import {
 } from '../shared/newTab'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
+import { defaultScope } from './sync/records'
 import {
   closedNavigationOf,
   closedTabIds,
@@ -322,20 +323,11 @@ export class BrowserState {
     sync: {
       enabled: false,
       folder: null,
+      folderName: null,
+      folderLost: false,
       deviceId: '',
       deviceName: '',
-      scope: {
-        spaces: true,
-        folders: true,
-        pinnedTabs: true,
-        essentials: true,
-        openTabs: false,
-        containers: true,
-        bookmarks: true,
-        settings: true,
-        shortcuts: true,
-        boosts: true
-      },
+      scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
       syncing: false,

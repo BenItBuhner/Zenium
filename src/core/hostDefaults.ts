@@ -6,7 +6,6 @@ import type {
   ResourceSnapshot,
   SidePanelInfo,
   Suggestion,
-  SyncScope,
   SyncStatus
 } from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
@@ -21,6 +20,7 @@ import type {
   TabView,
   UpdateHost
 } from './platform'
+import { defaultScope } from './sync/records'
 import type { ZenWindow } from './window'
 
 /** How often the sleeping-tabs timeout is checked on hosts without a resource governor. */
@@ -185,19 +185,6 @@ export class NoExtensions implements ExtensionHost {
   flushSync(): void {}
 }
 
-const DEFAULT_SCOPE: SyncScope = {
-  spaces: true,
-  folders: true,
-  pinnedTabs: true,
-  essentials: true,
-  openTabs: false,
-  containers: true,
-  bookmarks: true,
-  settings: true,
-  shortcuts: true,
-  boosts: true
-}
-
 /** Hosts without a shared-folder sync transport. */
 export class NoSync implements SyncHost {
   constructor(private readonly browser: Browser) {}
@@ -208,9 +195,11 @@ export class NoSync implements SyncHost {
     return {
       enabled: false,
       folder: null,
+      folderName: null,
+      folderLost: false,
       deviceId: '',
       deviceName: '',
-      scope: { ...DEFAULT_SCOPE },
+      scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
       syncing: false,
@@ -230,6 +219,7 @@ export class NoSync implements SyncHost {
 
   setScope(): void {}
   setDeviceName(): void {}
+  async setFolder(): Promise<void> {}
   async syncNow(): Promise<void> {}
   async confirmMerge(): Promise<void> {}
   disconnect(): void {}

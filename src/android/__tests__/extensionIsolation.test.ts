@@ -55,6 +55,28 @@ describe('the scope proxy of the with-fallback', () => {
     expect(scope.document).toBe(win.document)
   })
 
+  it('as the object of a with block, resolves a bare name the script wrote through globalThis', () => {
+    const win = fakeWindow()
+    const scope = createScopeProxy(win, collectBuiltins(win))
+    // Lit's reactive element as Read&Write's toolbar bundles it: the write goes to
+    // `globalThis`, the read is the bare identifier; an injection wrapped as a content script's
+    // group (`with(window){…}`) finds its own write, and the page's global never sees it.
+    const wrapper = new Function(
+      'window',
+      'self',
+      'globalThis',
+      `with (window) {
+         globalThis.litPropertyMetadata = new WeakMap();
+         var metadata = { own: true };
+         litPropertyMetadata.set(metadata, 'own');
+         return [litPropertyMetadata.get(metadata), typeof setTimeout, 'litPropertyMetadata' in window];
+       }`
+    ) as (w: unknown, s: unknown, g: unknown) => unknown
+    expect(wrapper(scope, scope, scope)).toEqual(['own', 'function', true])
+    expect(win.litPropertyMetadata).toBeUndefined()
+    expect(scope.litPropertyMetadata).toBeInstanceOf(WeakMap)
+  })
+
   it('shows the top frame its own global as `top` and `parent`, a subframe the real ones', () => {
     const top = fakeWindow()
     Object.defineProperty(Object.getPrototypeOf(top) as object, 'top', {
