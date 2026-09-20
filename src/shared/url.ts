@@ -2,7 +2,7 @@
  * URL helpers shared by main and renderer. No Electron / DOM dependencies.
  */
 import type { CertificateDetails } from './types'
-import { EXTENSION_ORIGIN_SUFFIX, parseExtensionUrl } from '../core/extensions/runtime/plan'
+import { extensionIdOfUrl, presentExtensionUrl } from '../core/extensions/runtime/extensionUrls'
 import {
   INTERNAL_ALIAS_SCHEME,
   internalPageAliasUrl,
@@ -75,7 +75,13 @@ export function isInternalUrl(url: string): boolean {
 
 /** Chrome's scheme for an extension's own pages, popups and resources. */
 export const EXTENSION_SCHEME = 'chrome-extension'
-const EXTENSION_ID_RE = /^[a-p]{32}$/
+
+/**
+ * What stands in for the name of an extension the chrome does not know (removed while its
+ * page's tab stayed open, or not listed yet) where the pill shows a host and a title falls back
+ * to one: never the raw id (v2 §10.1 applied to extension pages).
+ */
+export const UNKNOWN_EXTENSION_PAGE_LABEL = 'Extension page'
 
 export interface ExtensionPage {
   /** The extension's id (32 letters a–p, as Chrome forms them). */
@@ -85,31 +91,18 @@ export interface ExtensionPage {
 }
 
 /**
- * The extension page an address shows, in either form it takes: Chrome's
+ * The extension page an address shows, in either spelling it takes: Chrome's
  * `chrome-extension://<id>/<path>` (what the desktop loads and what the Android runtime shows
- * its extensions), or the Android runtime's emulated origin `https://<id>.ext.zenium.invalid/…`
- * (`extensionUrl` in the runtime's plan module: WebView refuses the scheme, so a tab loads the
- * page from there). The chrome shows the first form everywhere and the second never – it is an
- * implementation detail of the runtime, not an address (v2 §10.1 applied to extension pages).
- * Null for anything else.
+ * its extensions), or the Android runtime's served origin `https://<id>.ext.zenium.invalid/…`
+ * (WebView refuses the scheme, so a tab loads the page from there; the runtime's
+ * `extensionUrls.ts` owns the mapping). The chrome shows the first form everywhere and the
+ * second never – it is an implementation detail of the runtime, not an address (v2 §10.1
+ * applied to extension pages). Null for anything else.
  */
 export function extensionPageOf(url: string): ExtensionPage | null {
   if (!url || !url.includes('://')) return null
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return null
-  }
-  if (parsed.protocol === `${EXTENSION_SCHEME}:`) {
-    return EXTENSION_ID_RE.test(parsed.hostname) ? { id: parsed.hostname, url } : null
-  }
-  if (!parseExtensionUrl(url)) return null
-  const id = parsed.hostname.slice(0, -EXTENSION_ORIGIN_SUFFIX.length)
-  return {
-    id,
-    url: `${EXTENSION_SCHEME}://${id}${parsed.pathname}${parsed.search}${parsed.hash}`
-  }
+  const id = extensionIdOfUrl(url)
+  return id ? { id, url: presentExtensionUrl(url) } : null
 }
 
 /**
@@ -291,17 +284,17 @@ export function getHost(url: string): string {
  * omnibox, so a long path or query can never push the domain out of the pill. `www.` is trimmed
  * as in `displayUrl`; a non-default port stays (a dev server is told apart by it); error and
  * Reader View pages show the site they stand in for. An internal page shows its title
- * ("Settings"), as Chrome's omnibox names its own pages. An extension page has no site: its
- * extension's id stands where the host would (the chrome puts the extension's name there when
- * it knows it, `lib/extensions/pages.ts`), and the runtime's emulated origin never shows. Other
- * schemes (`file:`) have no site to show and fall back to `displayUrl`.
+ * ("Settings"), as Chrome's omnibox names its own pages. An extension page has no site: the
+ * extension's name stands where the host would (the chrome puts it there when it knows the
+ * extension, `lib/extensions/pages.ts`) and "Extension page" otherwise – never the id, and never
+ * the runtime's served origin. Other schemes (`file:`) have no site to show and fall back to
+ * `displayUrl`.
  */
 export function displayHost(url: string): string {
   if (!url || url === BLANK_URL) return ''
   const pageTitle = internalPageTitle(url)
   if (pageTitle !== null) return pageTitle
-  const extension = extensionPageOf(url)
-  if (extension) return extension.id
+  if (extensionPageOf(url)) return UNKNOWN_EXTENSION_PAGE_LABEL
   if (url.startsWith(ERROR_URL_PREFIX) || url.startsWith(READER_URL_PREFIX)) {
     try {
       const original = new URL(url).searchParams.get('url')
@@ -353,8 +346,9 @@ export function titleForUrl(url: string): string {
   if (url.startsWith(ERROR_URL_PREFIX)) return 'Problem loading page'
   const pageTitle = internalPageTitle(url)
   if (pageTitle !== null) return pageTitle
-  const extension = extensionPageOf(url)
-  if (extension) return extension.id
+  // An extension's page is named after the extension where the core knows it (`tabs.titleFor`);
+  // here, without the list, it is an extension page and never the id.
+  if (extensionPageOf(url)) return UNKNOWN_EXTENSION_PAGE_LABEL
   const host = getHost(url)
   return host ? host.replace(/^www\./, '') : url
 }
