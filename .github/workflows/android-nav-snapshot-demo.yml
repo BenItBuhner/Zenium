@@ -18,8 +18,6 @@ name: Android navigation snapshot demo
 # live in android-emulator-demo.yml; this file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches: [cursor/android-navigation-snapshot-933f]
 
 permissions:
   contents: read
