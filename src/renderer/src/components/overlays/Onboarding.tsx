@@ -1,12 +1,13 @@
 import type { JSX } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, Eye, Layers, PanelLeftClose, RefreshCw, Rss, Sparkles } from 'lucide-react'
-import type { ColorScheme, UIState } from '@shared/types'
+import type { ColorScheme, ImportSource, UIState } from '@shared/types'
 import { ONBOARDING_ESSENTIALS } from '@shared/defaults'
 import { THEME_PRESETS, resolveTheme } from '@shared/theme'
 import { formatBinding } from '@shared/shortcuts'
-import { run } from '@renderer/lib/api'
+import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { browserSources, listNames, sourceGroups } from '@renderer/lib/importData'
 import { openSettings } from '@renderer/lib/pages'
 import {
   isTouchOnly,
@@ -15,6 +16,8 @@ import {
   type TourFeature,
   type TourStep
 } from '@renderer/lib/onboarding'
+import { openImportSurface } from '@renderer/lib/ui'
+import { activeTab } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'
 import { PhoneOnboarding } from './PhoneOnboarding'
@@ -54,9 +57,10 @@ const FEATURES: Record<TourFeature, { icon: typeof Layers; title: string; text: 
 
 /**
  * The first run. Phones get a short full-screen flow of their own; everything else gets the
- * tour mirroring Zen 1.22's onboarding – look, search engine, Essentials, a tour of Spaces /
- * Boosts / Live Folders, sync where the host has it and the key shortcuts where there is a
- * keyboard to press them on.
+ * tour mirroring Zen 1.22's onboarding – look, search engine, Chrome's import offer when another
+ * browser's profile is on this computer (ID-23), Essentials, a tour of Spaces / Boosts / Live
+ * Folders, sync where the host has it and the key shortcuts where there is a keyboard to press
+ * them on.
  */
 export function Onboarding({ state }: { state: UIState }): JSX.Element {
   const viewport = useViewport()
@@ -72,9 +76,28 @@ function DesktopOnboarding({
   touchOnly: boolean
 }): JSX.Element {
   const sync = state.capabilities.sync
-  const steps = useMemo(() => tourSteps({ sync }, touchOnly), [sync, touchOnly])
+  // Chrome's first-run offer: the browsers found on this computer, probed as the tour opens
+  // (files alone are no offer). The step joins the tour once the probe answers.
+  const [found, setFound] = useState<ImportSource[]>([])
+  useEffect(() => {
+    let live = true
+    void cmd('import.sources', undefined).then((sources) => {
+      if (live) setFound(browserSources(sources ?? []))
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+  const browsers = useMemo(() => sourceGroups(found), [found])
+  const importable = browsers.length > 0
+  const steps = useMemo(
+    () => tourSteps({ sync }, touchOnly, importable),
+    [sync, touchOnly, importable]
+  )
   const features = useMemo(() => tourFeatures({ sync }, touchOnly), [sync, touchOnly])
   const [step, setStep] = useState<TourStep>('welcome')
+  /** The `ImportSource.id` picked on the import step; null is "Not now". */
+  const [importFrom, setImportFrom] = useState<string | null>(null)
   const [scheme, setScheme] = useState<ColorScheme>('system')
   const [engine, setEngine] = useState('google')
   const [picked, setPicked] = useState<string[]>([])
@@ -96,7 +119,16 @@ function DesktopOnboarding({
       patch: { theme: THEME_PRESETS[presetIndex].theme }
     })
     run('onboarding.complete', { searchEngineId: engine, colorScheme: scheme, essentials: picked })
-    if (sync && setupSync) setTimeout(() => openSettings('sync'), 400)
+    const wantsSync = sync && setupSync
+    if (importFrom) {
+      // Settings with the import dialog up on the picked browser; on Sync when both were asked
+      // for, so the dialog's Done leaves the user where the second wish is met.
+      const tabId = activeTab(state)?.id ?? null
+      setTimeout(
+        () => void openImportSurface(tabId, importFrom, wantsSync ? 'sync' : 'import'),
+        400
+      )
+    } else if (wantsSync) setTimeout(() => openSettings('sync'), 400)
   }
 
   const highlights = state.shortcuts.filter((s) =>
@@ -209,6 +241,59 @@ function DesktopOnboarding({
             <p className="text-[12px] text-[var(--zen-muted)]">
               You can add more engines and keywords later in Settings → Search.
             </p>
+          </div>
+        )}
+
+        {step === 'import' && (
+          <div className="flex flex-col gap-4" data-testid="onboarding-import">
+            <h2 className="text-xl font-semibold">Bring your bookmarks and settings</h2>
+            <p className="text-[13px] leading-relaxed text-[var(--zen-muted)]">
+              Zenium found {listNames(browsers.map((b) => b.label))} on this computer. Import the
+              bookmarks, browsing history and saved passwords you kept there – you choose what comes
+              over, and nothing in the other browser changes.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {browsers.map((b) => {
+                const first = b.profiles[0]!
+                const on = importFrom !== null && b.profiles.some((p) => p.id === importFrom)
+                const detail =
+                  b.profiles.length > 1
+                    ? `${b.profiles.length} profiles`
+                    : (first.email ?? (first.running ? 'Open right now' : 'One profile'))
+                return (
+                  <button
+                    key={b.key}
+                    type="button"
+                    className={cn(
+                      'zen-squircle flex flex-col items-start gap-1 rounded-xl border border-[var(--zen-border)] p-3 text-left hover:bg-[var(--zen-element-bg)]',
+                      on && 'bg-[var(--zen-element-bg-active)] ring-2 ring-[var(--zen-accent)]'
+                    )}
+                    aria-pressed={on}
+                    onClick={() => setImportFrom(first.id)}
+                    data-import-browser={b.browser}
+                  >
+                    <span className="text-[13px] font-medium">Import from {b.label}</span>
+                    <span className="text-[11.5px] text-[var(--zen-muted)]">{detail}</span>
+                  </button>
+                )
+              })}
+              <button
+                type="button"
+                className={cn(
+                  'zen-squircle flex flex-col items-start gap-1 rounded-xl border border-[var(--zen-border)] p-3 text-left hover:bg-[var(--zen-element-bg)]',
+                  importFrom === null &&
+                    'bg-[var(--zen-element-bg-active)] ring-2 ring-[var(--zen-accent)]'
+                )}
+                aria-pressed={importFrom === null}
+                onClick={() => setImportFrom(null)}
+                data-import-browser="none"
+              >
+                <span className="text-[13px] font-medium">Not now</span>
+                <span className="text-[11.5px] text-[var(--zen-muted)]">
+                  You can import later from Settings → Import.
+                </span>
+              </button>
+            </div>
           </div>
         )}
 

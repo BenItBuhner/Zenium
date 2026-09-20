@@ -2404,10 +2404,17 @@ export class Menus {
             },
             ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
             { type: 'separator' },
-            {
-              label: 'Import Bookmarks…',
-              click: () => void this.browser.importBookmarks(win)
-            },
+            // Chrome's entry opens Settings > Import with the dialog up; a phone has no other
+            // browser's profile to read and keeps the bookmarks-file pick (Edge Android's).
+            phone
+              ? {
+                  label: 'Import Bookmarks…',
+                  click: () => void this.browser.importBookmarks(win)
+                }
+              : {
+                  label: 'Import Bookmarks and Settings…',
+                  click: () => this.browser.openImportDialog(win)
+                },
             {
               label: 'Export Bookmarks…',
               click: () => void this.browser.exportBookmarks(win)

@@ -291,6 +291,27 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     layouts: ['desktop', 'tablet']
   },
   {
+    // Chrome's "Import bookmarks and settings" (ID-23): another browser's profile on a desktop,
+    // a bookmarks HTML or passwords CSV file on every host.
+    id: 'import',
+    label: 'Import',
+    keywords: [
+      'import',
+      'chrome',
+      'edge',
+      'firefox',
+      'safari',
+      'other browser',
+      'bookmarks',
+      'history',
+      'passwords',
+      'html',
+      'csv',
+      'transfer',
+      'migrate'
+    ]
+  },
+  {
     id: 'accessibility',
     label: 'Accessibility',
     keywords: ['zoom', 'font size', 'text size', 'pinch'],

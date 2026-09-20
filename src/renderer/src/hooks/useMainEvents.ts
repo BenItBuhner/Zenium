@@ -32,6 +32,7 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
+  openImportSurface,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,
@@ -135,6 +136,12 @@ export function useMainEvents(): void {
         }
         closeUrlbar()
         void openOverlay(kind, currentActiveTabId(), null, folderId ?? null, section ?? null)
+      }),
+      onEvent('import.open', () => {
+        // Chrome's chrome://settings/importData: Settings on its Import category, the dialog up
+        // over it (the category alone on a phone, whose rows import from files).
+        closeUrlbar()
+        void openImportSurface(currentActiveTabId())
       }),
       onEvent('theme.open', ({ spaceId }) => {
         closeUrlbar()

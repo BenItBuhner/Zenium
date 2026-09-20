@@ -106,6 +106,7 @@ import {
   UrlForm,
   ZoomBlock
 } from './blocks'
+import { importGroups } from '../../import/importRows'
 import { extensionsGroups } from './extensions'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
 import {
@@ -183,6 +184,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   agents: agentsSection,
   passwords: passwordsSection,
   security: securitySection,
+  import: ({ state, tab }) => importGroups(state, tab.id),
   updates: updatesSection,
   about: aboutSection
 }

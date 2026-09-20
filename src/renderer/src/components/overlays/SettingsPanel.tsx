@@ -39,6 +39,7 @@ import { Switch } from '../ui/switch'
 import { LanguagesSection } from '../translate/LanguagesSection'
 import { AgentsSection } from './AgentsSection'
 import { ClearBrowsingDataSection } from './ClearBrowsingDataSection'
+import { ImportSection } from './ImportSection'
 import { AppIconGroup } from './AppIconPicker'
 import { AutofillSection } from './AutofillSection'
 import { ExtensionsSection, ModsSection } from './AddonsPanel'
@@ -87,6 +88,7 @@ export type SettingsSection =
   | 'passwords'
   | 'security'
   | 'sync'
+  | 'import'
   | 'shortcuts'
   | 'default-browser'
   | 'updates'
@@ -116,6 +118,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'passwords', label: 'Passwords' },
   { id: 'security', label: 'Security' },
   { id: 'sync', label: 'Sync' },
+  { id: 'import', label: 'Import' },
   { id: 'shortcuts', label: 'Keyboard Shortcuts' },
   { id: 'default-browser', label: 'Default Browser' },
   { id: 'updates', label: 'Updates' },
@@ -259,6 +262,7 @@ export function SettingsBody({
           {section === 'passwords' && <PasswordsSection state={state} set={set} />}
           {section === 'security' && <SecuritySection state={state} />}
           {section === 'sync' && <SyncSection state={state} />}
+          {section === 'import' && <ImportSection state={state} />}
           {section === 'shortcuts' && <ShortcutsSection state={state} />}
           {section === 'default-browser' && <DefaultBrowserSection state={state} />}
           {section === 'updates' && <UpdatesSection state={state} set={set} />}

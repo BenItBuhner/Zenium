@@ -4336,6 +4336,11 @@ export interface Events {
   'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
   /** `tabId`: the tab the overlay is about (the print preview prints it), else the active one. */
   'overlay.open': { kind: OverlayKind; folderId?: string; section?: string; tabId?: string }
+  /**
+   * Bookmarks > Import Bookmarks and Settings… (Chrome's `chrome://settings/importData`): the
+   * chrome opens Settings on its Import category with the import dialog up over it.
+   */
+  'import.open': void
   /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
   'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**

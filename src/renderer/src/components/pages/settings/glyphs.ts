@@ -7,6 +7,7 @@ import {
   Download,
   Eye,
   Gauge,
+  Import,
   Info,
   KeyRound,
   Keyboard,
@@ -51,6 +52,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   passwords: KeyRound,
   security: ShieldCheck,
   sync: RefreshCw,
+  import: Import,
   shortcuts: Keyboard,
   updates: CircleFadingArrowUp,
   about: Info
