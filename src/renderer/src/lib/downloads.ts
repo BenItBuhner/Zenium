@@ -1,6 +1,7 @@
 import type { DownloadItem, UIState } from '@shared/types'
 import { resolveDownloadSettings } from '@shared/downloads'
 import { isActiveDownload } from '@shared/downloadsShell'
+import { announce, downloadAnnouncement } from './announce'
 import { onEvent, run } from './api'
 import {
   downloadsEngine,
@@ -206,7 +207,8 @@ export function revealDownload(id: string | null): void {
  * for five seconds and, if Settings say so and this window has focus, the partial bubble opens
  * with the items that finished since the user last looked (Chrome 112+). A flagged file counts
  * as finished here too: its Keep / Discard is what the bubble is for (`download.danger` follows
- * and opens it regardless of the setting).
+ * and opens it regardless of the setting). The focused window's status region says the start
+ * and the end (the event reaches every window; one of them speaks).
  */
 export function handleDownloadChange(change: DownloadChange, state: UIState): void {
   const { item, kind } = change
@@ -215,6 +217,10 @@ export function handleDownloadChange(change: DownloadChange, state: UIState): vo
   const focused = state.window.focused
   const clear = (): boolean => uiStore.get().overlay === 'none' && !bubbleIsOpen()
   if (kind === 'started' || kind === 'done') downloadsUi.set({ sessionHadDownload: true })
+  if (focused) {
+    const words = downloadAnnouncement(item, kind)
+    if (words) announce(words)
+  }
   switch (kind) {
     case 'started':
       holdButton(0)

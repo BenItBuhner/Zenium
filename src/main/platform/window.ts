@@ -199,11 +199,13 @@ export class ElectronWindow implements WindowHost {
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     // The chrome's rows show their menus themselves (and cancel the DOM event, which keeps this
-    // one from firing); what reaches here is a text field, the URL bar or plain chrome.
+    // one from firing); what reaches here is a text field, the URL bar or plain chrome. Shift+F10
+    // and the Menu key arrive as a keyboard-sourced event at the caret or the focused element.
     wc.on('context-menu', (_event, params) =>
       zen.onContextMenu({
         x: params.x,
         y: params.y,
+        keyboard: params.menuSourceType === 'keyboard',
         isEditable: params.isEditable,
         selectionText: params.selectionText,
         editFlags: params.editFlags

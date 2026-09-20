@@ -2,7 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { AutofillPrompt, BookmarkNode, Space, Tab, UIState } from '@shared/types'
+import {
+  PRIVATE_CONTAINER_ID,
+  type AutofillPrompt,
+  type BookmarkNode,
+  type Space,
+  type Tab,
+  type UIState
+} from '@shared/types'
 
 /*
  * The chips inside the URL pill (design language v2 §9.22): the address first, then every chip
@@ -596,6 +603,61 @@ describe('phone pill (PillContent)', () => {
     expect(el.textContent).not.toContain('.ext.zenium.invalid')
     // The puzzle glyph, not a letter of the id.
     expect(el.querySelector('svg.zen-ext-icon-glyph')).not.toBeNull()
+  })
+
+  /*
+   * The private marker (v2 §9.19): the mask glyph in the leading slot on every private tab, page
+   * or none, in place of the favicon; the slot stays the site-information chip.
+   */
+  describe('on a private tab', () => {
+    const privatePage = tab('https://example.com/some/path', {
+      containerId: PRIVATE_CONTAINER_ID,
+      favicon: 'data:image/png;base64,AAAA'
+    })
+
+    it('puts the mask in the leading slot in place of the favicon, on a page as on an empty tab', () => {
+      for (const t of [privatePage, tab('zen://newtab', { containerId: PRIVATE_CONTAINER_ID })]) {
+        const el = render(<PillContent state={state(t)} tab={t} space={space} interactive />)
+        const slot = el.querySelector<HTMLElement>('[data-site-info].order-first')!
+        expect(slot.hasAttribute('data-private-mark')).toBe(true)
+        expect(slot.querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+        expect(slot.querySelector('img, .zen-tab-favicon')).toBeNull()
+        act(() => root?.unmount())
+        host?.remove()
+      }
+    })
+
+    it('keeps the slot a site-information chip (the pill opens the sheet from it), and carries no badge', () => {
+      const el = render(
+        <PillContent state={state(privatePage)} tab={privatePage} space={space} interactive />
+      )
+      const order = focusable(el)
+      expect(labels(order)).toEqual([
+        'Address, example.com',
+        'Site information',
+        'Connection is secure'
+      ])
+      expectChip(order[1], 'Site information')
+      expect(order[1].getAttribute('aria-haspopup')).toBe('dialog')
+      // The pill's tap recogniser routes a tap on a `data-site-info` target to the site information.
+      expect(order[1].hasAttribute('data-site-info')).toBe(true)
+      expect(order[1].hasAttribute('data-private-mark')).toBe(true)
+      act(() => uiStore.set({ siteInfoOpen: true }))
+      expect(order[1].getAttribute('aria-expanded')).toBe('true')
+      expect(el.querySelector('.zen-v2-badge')).toBeNull()
+      expect(el.textContent).not.toContain('Private')
+    })
+
+    it('shows the favicon, not the mask, on a regular tab beside it', () => {
+      const regular = tab('https://example.com/', { favicon: 'data:image/png;base64,AAAA' })
+      const el = render(
+        <PillContent state={state(regular)} tab={regular} space={space} interactive />
+      )
+      const slot = el.querySelector<HTMLElement>('[data-site-info].order-first')!
+      expect(slot.hasAttribute('data-private-mark')).toBe(false)
+      expect(slot.querySelector('svg.lucide-venetian-mask')).toBeNull()
+      expect(slot.querySelector('img')).not.toBeNull()
+    })
   })
 
   it('draws the ghost pill with nothing focusable or announced', () => {

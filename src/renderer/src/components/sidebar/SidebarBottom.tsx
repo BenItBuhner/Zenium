@@ -5,9 +5,11 @@ import type { MediaState, Space, UIState } from '@shared/types'
 import { resolveTheme, rgbToHex } from '@shared/theme'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { openSettings } from '@renderer/lib/pages'
 import { activeTab, isLocalWindow, tabTitle } from '@renderer/lib/selectors'
+import { hint } from '@renderer/lib/shortcuts'
 import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
@@ -104,8 +106,8 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             ))}
             <button
               type="button"
-              className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100"
-              title="New Space"
+              className="zen-toolbar-button h-7 w-7 opacity-50 hover:opacity-100 focus-visible:opacity-100"
+              title={hint('New Space', state, 'space.new')}
               onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
             >
               <Plus className="h-3.5 w-3.5" />
@@ -186,18 +188,21 @@ function SpaceIcon({
       type="button"
       className={cn(
         'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-[10px] px-1 text-[17px] leading-none transition-all',
+        // The other spaces stand back, but no further than 3:1 on the window (a11y-30): at 45 %
+        // a glyph's thin strokes fell to 1.9:1 on a light gradient.
         active
           ? 'bg-[var(--zen-element-bg-active)] opacity-100'
-          : 'opacity-45 hover:opacity-90 hover:bg-[var(--zen-element-bg)]',
+          : 'opacity-70 hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--zen-element-bg)]',
         isDrop && 'opacity-100'
       )}
       data-drop-into={isDrop || undefined}
       data-space-target={space.id}
+      aria-current={active ? 'true' : undefined}
       title={space.name}
       onClick={() => run('space.activate', { spaceId: space.id })}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('space.contextMenu', { spaceId: space.id })
+        run('space.contextMenu', { spaceId: space.id, ...contextMenuAnchor(e) })
       }}
     >
       {dragging && <span data-drop={`space:${space.id}`} className="absolute inset-0 z-10" />}

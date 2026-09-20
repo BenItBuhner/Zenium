@@ -10,6 +10,7 @@ import {
 import {
   ANDROID_MANIFEST,
   ANDROID_RES,
+  ANDROID_SHORTCUTS_META,
   DESKTOP_PNG_SIZE,
   DOCK_PNG_SIZE,
   ICNS_TYPES,
@@ -212,9 +213,17 @@ describe('planAppIcons', () => {
     for (const v of APP_ICON_VARIANTS) {
       expect(block).toContain(`android:icon="@mipmap/ic_launcher_${v.id}"`)
     }
+    // Every alias carries the static shortcuts: the system reads them off the launcher entry,
+    // whichever alias holds it, and never off the alias's target.
+    expect(block.split(ANDROID_SHORTCUTS_META)).toHaveLength(APP_ICON_VARIANTS.length + 1)
+    // The shortcuts file is a template the build writes into each variant's res/xml with the
+    // applicationId spelt out (android/app/build.gradle.kts, WriteShortcuts); no copy sits in res/.
+    expect(existsSync(join(root, 'android/app/src/main/shortcuts/shortcuts.xml'))).toBe(true)
+    expect(existsSync(join(root, ANDROID_RES, 'xml/shortcuts.xml'))).toBe(false)
     // Only the aliases carry the launcher entry; the activity keeps links, share and search.
     const outside = manifest.slice(0, begin) + manifest.slice(end)
     expect(outside).not.toContain('android.intent.category.LAUNCHER')
+    expect(outside).not.toContain('android.app.shortcuts')
     expect(outside).toContain('android.intent.category.BROWSABLE')
     // Idempotent: feeding the output back changes nothing.
     expect(manifestWithAliases(manifest, APP_ICON_VARIANTS)).toBe(manifest)

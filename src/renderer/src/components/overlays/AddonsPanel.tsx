@@ -207,7 +207,7 @@ function ModRow({
           <textarea
             value={css}
             spellCheck={false}
-            className="zen-squircle h-48 w-full resize-y rounded-xl bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px] outline-none ring-1 ring-transparent focus:ring-[var(--zen-accent)]/60"
+            className="zen-squircle h-48 w-full resize-y rounded-xl bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px]"
             onChange={(e) => setCss(e.target.value)}
             onBlur={() => css !== mod.css && run('mod.update', { id: mod.id, patch: { css } })}
           />

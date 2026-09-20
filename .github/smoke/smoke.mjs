@@ -1397,40 +1397,86 @@ async function closeExtraWindows(s) {
  * page is a WebContentsView, not a Playwright page. Returns the step's detail.
  */
 async function privateCookiesSwitch(s, privateWindowId) {
-  // Its visible zen://newtab view (the window may hold an adopted preload of the page too). What
-  // the window holds instead goes into the failure, so a miss says which page the window shows.
-  let seen = null
-  const ntpId = await waitFor(
-    async () => {
-      const snapshot = await s.app.evaluate(({ BrowserWindow }, wid) => {
-        const w = BrowserWindow.fromId(wid)
-        if (!w || w.isDestroyed()) return { id: null, views: 'window gone' }
-        const views = []
-        const walk = (parent) => {
-          for (const v of parent.children || []) {
-            const wc = v.webContents
-            if (wc && !wc.isDestroyed()) {
-              views.push({
-                id: wc.id,
-                url: wc.getURL(),
-                visible: v.getVisible(),
-                loading: wc.isLoading()
-              })
-            }
-            walk(v)
+  // A window opened by a synthetic shortcut gets no focus from a window manager and lands behind
+  // the main one; under Xvfb without one it can sit fully under it. A window Chromium finds
+  // occluded gets no rendering updates: the chrome's ResizeObserver never measures the content
+  // frame, no `layout.report` reaches the core, and the page's view – created and attached –
+  // stays hidden (main red twice on 2026-09-20 with `{url: "zen://newtab/", visible: false}`
+  // after 15 s). So the window is raised before anything is waited for, the wait is split into
+  // the view existing and the view being shown, and a view that stays hidden gets the chrome
+  // nudged into a fresh report: the window raised again and resized by a pixel and back.
+  await s.bringToFront(privateWindowId)
+  const nudged = []
+  const windowViews = () =>
+    s.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = BrowserWindow.fromId(wid)
+      if (!w || w.isDestroyed()) return { shown: null, views: 'window gone' }
+      const views = []
+      const walk = (parent) => {
+        for (const v of parent.children || []) {
+          const wc = v.webContents
+          if (wc && !wc.isDestroyed()) {
+            views.push({
+              id: wc.id,
+              url: wc.getURL(),
+              visible: v.getVisible(),
+              loading: wc.isLoading()
+            })
           }
+          walk(v)
         }
-        walk(w.contentView)
-        const hit = views.find((v) => v.url.startsWith('zen://newtab') && v.visible && !v.loading)
-        return { id: hit ? hit.id : null, views }
-      }, privateWindowId)
+      }
+      walk(w.contentView)
+      const page = (v) => v.url.startsWith('zen://newtab')
+      const hit = views.find((v) => page(v) && v.visible && !v.loading)
+      return { shown: hit ? hit.id : null, exists: views.some(page), views }
+    }, privateWindowId)
+  const nudge = () =>
+    s.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = BrowserWindow.fromId(wid)
+      if (!w || w.isDestroyed()) return
+      w.show()
+      w.focus()
+      w.moveTop()
+      const [width, height] = w.getSize()
+      w.setSize(width + 1, height)
+      w.setSize(width, height)
+    }, privateWindowId)
+  // What the window holds goes into a failure, so a miss says which page the window shows.
+  let seen = null
+  // (a) The page's view exists in the window (the window may hold an adopted preload of it too).
+  await waitFor(
+    async () => {
+      const snapshot = await windowViews()
       seen = snapshot.views
-      return snapshot.id
+      return snapshot.exists ? true : null
     },
     15000,
     "the private window's zen://newtab view"
   ).catch((err) => {
     throw new Error(`${err.message}; the window's views: ${JSON.stringify(seen)}`)
+  })
+  // (b) The view is shown and its page loaded: the chrome placed it. Every 4 s without that, the
+  // chrome is nudged into another layout report.
+  let lastNudge = Date.now()
+  const ntpId = await waitFor(
+    async () => {
+      const snapshot = await windowViews()
+      seen = snapshot.views
+      if (snapshot.shown) return snapshot.shown
+      if (Date.now() - lastNudge >= 4000) {
+        lastNudge = Date.now()
+        nudged.push(new Date().toISOString())
+        await nudge()
+      }
+      return null
+    },
+    20000,
+    "the private window's zen://newtab view shown by the chrome"
+  ).catch((err) => {
+    throw new Error(
+      `${err.message}; the window's views: ${JSON.stringify(seen)}; nudged ${nudged.length} time(s)`
+    )
   })
   const probe = `(() => {
       const row = document.getElementById('zen-cookies')
@@ -1460,7 +1506,7 @@ async function privateCookiesSwitch(s, privateWindowId) {
     10000,
     'the "Block third-party cookies" row on the private new tab page'
   )
-  const detail = { privateWindowId, ntpId, before, row }
+  const detail = { privateWindowId, ntpId, before, row, nudged }
   if (row.role !== 'switch' || row.label !== 'Block third-party cookies') {
     throw new Error(`the row is not the switch it should be: ${JSON.stringify(row)}`)
   }

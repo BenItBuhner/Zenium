@@ -70,6 +70,12 @@ export type { PageFlags } from './platform'
 /** Hidden pages kept awake when memory runs low (`unloadForMemoryPressure`): the recent few. */
 export const KEEP_UNDER_PRESSURE = 3
 
+/** Where the keyboard goes after a tab is activated or closed (`tab.activate` / `tab.close`). */
+export interface TabFocusOptions {
+  /** The keyboard stays in the chrome (the tab strip) instead of moving into the page. */
+  keepFocus?: boolean
+}
+
 /**
  * Owns the live page for every loaded tab and implements Zen's tab behaviours on top of the pure
  * model. Pages are created through the host's `TabViewHost`; everything else is platform neutral.
@@ -91,6 +97,12 @@ export class TabManager {
   private readonly pendingNavigation = new Map<string, NavigationSnapshot>()
   /** Tabs under a window's or the app's unload check: a page that goes is unloaded, not closed. */
   private readonly unloadChecks = new Set<string>()
+  /**
+   * The focus options of a `requestClose` in flight: its unload check closes the page, and a
+   * page that does not object is gone at once, so the tab closes through `onViewGone` – with
+   * these, so a close from the keyboard in the tab strip keeps the keyboard there.
+   */
+  private readonly closeIntents = new Map<string, TabFocusOptions>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
 
@@ -598,6 +610,7 @@ export class TabManager {
       onContextMenu: (params) =>
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
+      onFocused: () => this.browser.emit('focus.page', { tabId }, ownerWindow()),
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
         this.sendPageFlags(tabId)
@@ -1160,7 +1173,7 @@ export class TabManager {
       this.discard(tabId)
       return
     }
-    this.closeTab(tabId, true, owner)
+    this.closeTab(tabId, true, owner, this.closeIntents.get(tabId) ?? {})
   }
 
   // ---------------------------------------------------------------------------
@@ -1203,10 +1216,22 @@ export class TabManager {
    * `beforeunload` handler objects gets to ask "Leave site?" first, and the tab stays when the
    * user says so. Resolves true once the tab is closed.
    */
-  async requestClose(tabId: string, force = false, win?: ZenWindow): Promise<boolean> {
-    if (!(await this.confirmUnload(tabId))) return false
-    this.closeTab(tabId, force, win)
-    return true
+  async requestClose(
+    tabId: string,
+    force = false,
+    win?: ZenWindow,
+    opts: TabFocusOptions = {}
+  ): Promise<boolean> {
+    // The unload check closes a page that does not object: the tab then goes through
+    // `onViewGone`, which reads the options here.
+    this.closeIntents.set(tabId, opts)
+    try {
+      if (!(await this.confirmUnload(tabId))) return false
+      this.closeTab(tabId, force, win, opts)
+      return true
+    } finally {
+      this.closeIntents.delete(tabId)
+    }
   }
 
   /**
@@ -1276,7 +1301,16 @@ export class TabManager {
     else if (this.settings.windowSync !== 'pinned') tab.windowId = null
   }
 
-  activateTab(tabId: string, win: ZenWindow = this.browser.focusedWindow()): void {
+  /**
+   * Make `tabId` the active tab of its space. The page then takes the keyboard, unless
+   * `keepFocus`: activated from the keyboard in the tab strip, the strip keeps it (Chrome's
+   * pane focus stays on the strip until Escape).
+   */
+  activateTab(
+    tabId: string,
+    win: ZenWindow = this.browser.focusedWindow(),
+    opts: TabFocusOptions = {}
+  ): void {
     const m = this.model
     const tab = this.tab(tabId)
     if (!tab || !tabVisibleIn(tab, win.id)) return
@@ -1319,7 +1353,7 @@ export class TabManager {
     this.browser.governor.wakeVisible(win)
     win.findResult = null
     this.browser.state.commit()
-    win.focusContent()
+    if (!opts.keepFocus) win.focusContent()
   }
 
   switchSpace(
@@ -1359,9 +1393,11 @@ export class TabManager {
 
   /**
    * Close a tab. For pinned/essential tabs Zen applies `pinnedCloseBehavior` instead of really
-   * closing (default: reset to the pinned URL, unload and switch to the next tab).
+   * closing (default: reset to the pinned URL, unload and switch to the next tab). `opts` go to
+   * the activation of the neighbour that takes the closed tab's place in `win` (`keepFocus`:
+   * closed with Delete in the tab strip, the strip keeps the keyboard).
    */
-  closeTab(tabId: string, force = false, win?: ZenWindow): void {
+  closeTab(tabId: string, force = false, win?: ZenWindow, opts: TabFocusOptions = {}): void {
     const m = this.model
     const tab = this.tab(tabId)
     if (!tab) return
@@ -1388,7 +1424,7 @@ export class TabManager {
             true,
             source.id
           )
-          if (next) this.activateTab(next, source)
+          if (next) this.activateTab(next, source, opts)
         }
         this.browser.state.commit()
         return
@@ -1434,7 +1470,7 @@ export class TabManager {
     if (closed) this.browser.session.pushTab(closed)
     for (const { w, s, next } of reselect) {
       w.select(s, next)
-      if (w.activeSpaceId === s.id && next) this.activateTab(next, w)
+      if (w.activeSpaceId === s.id && next) this.activateTab(next, w, w === source ? opts : {})
       // A toolbar-only popup has no sidebar to open another tab from: like Chrome's, it closes
       // with its last tab (deferred – the close may be arriving from the page going away).
       else if (!next && w.chrome === 'popup') {

@@ -12,8 +12,10 @@ import { BLANK_URL } from '@shared/url'
  * offers Undo; the header's menu carries "Recently Closed" and "Close All Tabs"; Close all asks
  * first on a prompt sheet with a "Don't ask again" row bound to `settings.confirmCloseAll`, and
  * then departs every unpinned card through `space.closeUnpinned` with one toast for the lot;
- * the recently closed sheet lists the contract's entries and a tap restores one. Rendered for
- * real in happy-dom with the sheets on the frame's dialog host, the frame loop cranked by hand.
+ * the recently closed sheet lists the contract's entries and a tap restores one. On a host with
+ * private tabs each pane closes its own (TAB-02, TAB-03): the regular pane its cards one by one,
+ * the private pane through `tab.closePrivate` from a menu of that one row. Rendered for real in
+ * happy-dom with the sheets on the frame's dialog host, the frame loop cranked by hand.
  */
 
 const SPACE = 'space'
@@ -47,6 +49,8 @@ const { browserStore, claimMessageCards, pickToastAction, uiStore } =
   await import('@renderer/lib/ui')
 const { stageStore } = await import('@renderer/lib/gestures/stage')
 const { CLOSE_SETTLE_MS } = await import('@renderer/lib/closeUndo')
+const { resetOverviewPane } = await import('@renderer/lib/privateTabs')
+const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 
 // --- a profile ---------------------------------------------------------------------------------
 
@@ -352,12 +356,12 @@ describe('the header menu', () => {
     expect(commands()).toEqual([])
   })
 
-  it('with no closed tabs and only pinned tabs both rows are off', async () => {
+  it('with no closed tabs and only pinned tabs both rows are off, their counts kept at zero (§9.17)', async () => {
     show(stateOf([tab('p', 'https://pinned.example/', { pinned: true })]))
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Recently Closed', true],
-      ['Close All Tabs', true]
+      ['Recently Closed (0)', true],
+      ['Close All Tabs (0)', true]
     ])
   })
 })
@@ -545,5 +549,103 @@ describe('closing one card', () => {
     })
     expect(toasts()).toEqual([])
     expect(of('session.recentlyClosed')).toEqual([])
+  })
+})
+
+// --- the two panes of a host with private tabs (TAB-02, TAB-03) --------------------------------
+
+describe('on a host with private tabs', () => {
+  const privateTab = (id: string, url: string, patch: Partial<Tab> = {}): Tab =>
+    tab(id, url, { containerId: PRIVATE_CONTAINER_ID, ...patch })
+  /** The Android host: private tabs live in the space's track beside the regular ones. */
+  const withPrivate = (state: UIState): UIState => ({
+    ...state,
+    capabilities: { ...state.capabilities, privateTabs: true }
+  })
+  /**
+   * Two regular tabs, a pinned one and two private tabs in the one space; Alpha is in view. The
+   * ids are this block's own: the app's undo remembers the entries it has claimed by id while
+   * the list holds them, and `closed:a` from the tests above would still be its.
+   */
+  const mixed = (): UIState =>
+    withPrivate(
+      stateOf([
+        tab('r1', 'https://a.example/', { title: 'Alpha' }),
+        privateTab('p1', 'https://one.example/', { title: 'One' }),
+        tab('r2', 'https://b.example/', { title: 'Beta' }),
+        tab('pin', 'https://pinned.example/', { title: 'Pinned', pinned: true }),
+        privateTab('p2', 'https://two.example/', { title: 'Two' })
+      ])
+    )
+  const segment = (pane: 'tabs' | 'private'): HTMLElement =>
+    document.querySelector<HTMLElement>(`[data-testid="overview-pane-${pane}"]`)!
+  const sheetTitle = (): string | undefined =>
+    document.querySelector<HTMLElement>('.zen-sheet .zen-sheet-title')?.textContent?.trim()
+
+  afterEach(() => {
+    act(() => resetOverviewPane())
+  })
+
+  it("the regular pane's Close All closes the space's regular tabs one by one and leaves the private session be", async () => {
+    show(mixed())
+    closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
+    await openMenu()
+    expect(sheetTitle()).toBe('Work')
+    expect(sheetRows().map((r) => r.textContent?.trim())).toEqual([
+      'Recently Closed (1)',
+      'Close All Tabs (2)'
+    ])
+    await pick('Close All Tabs (2)')
+    expect(dialogTitle()).toBe('Close 2 tabs?')
+    await pick('Close all')
+    // The regular cards depart; not `space.closeUnpinned`, which would take One and Two too.
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['r1', 'r2'])
+    expect(commands()).toEqual([
+      ['tab.close', { tabId: 'r1' }],
+      ['tab.close', { tabId: 'r2' }]
+    ])
+    // One toast for the two once the core files them, with Undo.
+    const state = mixed()
+    file(entry(state.tabs.r1, NOW), entry(state.tabs.r2, NOW))
+    await settle()
+    expect(toasts()).toEqual([['2 tabs closed', 'Undo', false]])
+  })
+
+  it("the private pane's menu is Close Private Tabs alone, its question names the private tabs and says there is no undo, and the close is the core's tab.closePrivate with no toast", async () => {
+    show(mixed())
+    closed = [entry(tab('x', 'https://x.example/', { title: 'X' }), NOW - 60_000)]
+    act(() => segment('private').click())
+    await openMenu()
+    expect(sheetTitle()).toBe('Private')
+    const rows = sheetRows()
+    expect(rows.map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Close Private Tabs (2)', false]
+    ])
+    expect(rows[0].style.color).toContain('--zen-danger')
+    // No recently closed row: none was read for it either.
+    expect(of('session.recentlyClosed')).toEqual([])
+    await pick('Close Private Tabs (2)')
+    expect(dialogTitle()).toBe('Close 2 private tabs?')
+    expect(document.querySelector('.zen-frame-dialogs')!.textContent).toContain(
+      'the private session ends; its history, cookies and site data go with it. There is no undo.'
+    )
+    await pick('Close all')
+    expect(departStore.get().items.map((i) => i.key)).toEqual(['p1', 'p2'])
+    expect(commands()).toEqual([['tab.closePrivate', undefined]])
+    // A private tab is never filed: no toast, and no list read to look for one.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CLOSE_SETTLE_MS + 1)
+    })
+    expect(toasts()).toEqual([])
+    expect(of('session.recentlyClosed')).toEqual([])
+  })
+
+  it('with no private tab open the row stays, greyed, its count at zero (§9.17)', async () => {
+    show(withPrivate(stateOf([tab('a', 'https://a.example/')])))
+    act(() => segment('private').click())
+    await openMenu()
+    expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
+      ['Close Private Tabs (0)', true]
+    ])
   })
 })

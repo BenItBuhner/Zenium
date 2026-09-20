@@ -180,6 +180,9 @@ export function NavRow({
       // on SidebarTop's root.)
       data-bar={compact ? undefined : ''}
       data-zen-nav-row
+      // The toolbar pane of the F6 rotation (lib/panes.ts): F6 lands on the address, Shift+Alt+T
+      // on the first enabled control.
+      data-pane="toolbar"
     >
       <NavigationButton
         tab={tab}

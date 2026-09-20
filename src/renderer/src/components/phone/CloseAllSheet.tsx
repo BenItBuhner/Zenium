@@ -11,30 +11,38 @@ import { PhoneSheet } from './PhoneSheet'
  * for good (`settings.confirmCloseAll`) – switched off only by an answer that goes ahead, as
  * the window prompt's checkbox is. Escape, the scrim, the back gesture and Cancel keep the tabs;
  * Close all, in the danger ink (§10.4), closes them once the sheet is gone, so the cards leave
- * in the open. Focus starts on Cancel so a stray Enter does no harm.
+ * in the open. Focus starts on Cancel so a stray Enter does no harm. From the private pane the
+ * question is the same sheet about the private tabs (TAB-03): closing them ends the session and
+ * wipes its data (INC-04), and nothing is filed for an undo, so the description says so.
  */
 export function CloseAllSheet({
   count,
   spaceName,
+  privateTabs = false,
   onClose,
   onConfirm
 }: {
   count: number
   spaceName: string
+  /** Whether the tabs are the private ones (the private pane's Close Private Tabs). */
+  privateTabs?: boolean
   onClose: () => void
   /** Close the tabs; `askAgain` false turns the question off. */
   onConfirm: (askAgain: boolean) => void
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const [dontAsk, setDontAsk] = useState(false)
-  const tabs = count === 1 ? '1 tab' : `${count} tabs`
+  const noun = privateTabs ? 'private tab' : 'tab'
+  const tabs = count === 1 ? `1 ${noun}` : `${count} ${noun}s`
   return (
     <PhoneSheet
       name="overview-close-all"
       title={`Close ${tabs}?`}
       prompt={{
         icon: <X className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
-        description: `Every open tab in ${spaceName} closes; pinned tabs and Essentials stay. Undo on the toast brings the tabs back.`
+        description: privateTabs
+          ? 'Every private tab closes and the private session ends; its history, cookies and site data go with it. There is no undo.'
+          : `Every open tab in ${spaceName} closes; pinned tabs and Essentials stay. Undo on the toast brings the tabs back.`
       }}
       focus="first"
       onClose={onClose}

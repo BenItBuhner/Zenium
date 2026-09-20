@@ -280,6 +280,11 @@ export interface SpaceTheme {
   monochrome: boolean
   /** Gradient rotation in degrees. */
   rotation: number
+  /**
+   * A theme muted for one scheme whatever the OS uses: the private window's purple stays dark
+   * under a light scheme, the way an Incognito window does, so its light ink keeps reading on it.
+   */
+  scheme?: 'light' | 'dark'
 }
 
 // ---------------------------------------------------------------------------
@@ -1392,6 +1397,21 @@ export interface KeyBinding {
  */
 export type ShortcutPreset = 'chrome' | 'zen'
 
+/**
+ * The chrome's keyboard panes, in F6 order (Chrome's tab strip → toolbar → bookmarks bar → side
+ * panel → web contents). `page` is the active tab's view; the others are regions of the chrome
+ * document, marked `data-pane` on their root.
+ */
+export type PaneId = 'tabs' | 'toolbar' | 'bookmarks' | 'sidepanel' | 'page'
+
+/**
+ * What a pane shortcut asked for: the next / previous pane, or a named one. `from` is where the
+ * key was pressed – a page's view or the chrome document – which the core knows and the chrome
+ * cannot tell (its document reports itself focused while a sibling page view holds the keyboard).
+ */
+export type FocusPaneRequest =
+  { move: 'next' | 'prev'; from: 'chrome' | 'page' } | { pane: 'toolbar' | 'bookmarks' }
+
 export type ShortcutAction =
   | 'compact.toggle'
   | 'compact.toggleSidebar'
@@ -1455,6 +1475,17 @@ export type ShortcutAction =
   | 'nav.reloadSkipCache'
   | 'nav.home'
   | 'nav.stop'
+  /**
+   * Keyboard panes (Chrome's F6 rotation, `BrowserView::GetAccessiblePanes`): the keyboard moves
+   * to the next or previous pane of the chrome that is on screen – tab strip, toolbar, bookmarks
+   * bar, side panel, page – or straight to the toolbar's first control (Shift+Alt+T) or the
+   * bookmarks bar (Shift+Alt+B). The renderer decides where the keyboard is and where it goes
+   * (`focus.pane`); see `renderer/lib/panes.ts`.
+   */
+  | 'focus.nextPane'
+  | 'focus.prevPane'
+  | 'focus.toolbar'
+  | 'focus.bookmarksBar'
   | 'urlbar.focus'
   | 'urlbar.search'
   | 'urlbar.pasteAndGo'
@@ -2729,6 +2760,18 @@ export interface MenuItemDescriptor {
   danger?: boolean
 }
 
+/**
+ * Where a chrome element's context menu opens, from the `contextmenu` event that asked for it
+ * (Chrome's rule): a right-click opens it at the pointer; Shift+F10 and the Menu key open it at
+ * the focused element – Chromium raises the event at the element's middle – in keyboard mode,
+ * so its first item starts selected and the arrow keys take over at once. Chrome CSS pixels.
+ */
+export interface MenuAnchor {
+  x?: number
+  y?: number
+  keyboard?: boolean
+}
+
 export interface MenuDescriptor {
   id: string
   items: MenuItemDescriptor[]
@@ -2856,8 +2899,13 @@ export interface Commands {
     }
     result: string
   }
-  'tab.activate': { args: { tabId: string }; result: void }
-  'tab.close': { args: { tabId: string; force?: boolean }; result: void }
+  /**
+   * `keepFocus`: the keyboard stays where it is – the tab strip, when a row was activated or
+   * closed with Enter, Space or Delete there (Chrome keeps the strip focused until Escape) –
+   * instead of moving into the page as it does for a click.
+   */
+  'tab.activate': { args: { tabId: string; keepFocus?: boolean }; result: void }
+  'tab.close': { args: { tabId: string; force?: boolean; keepFocus?: boolean }; result: void }
   /**
    * A private tab in this window (`capabilities.privateTabs`): the in-memory private container,
    * no history, no persisted downloads; its session is wiped when the last private tab closes.
@@ -2964,7 +3012,7 @@ export interface Commands {
     args: { kind: 'desktop' | 'darken' | 'zoom'; domain: string }
     result: void
   }
-  'tab.contextMenu': { args: { tabId: string }; result: void }
+  'tab.contextMenu': { args: { tabId: string } & MenuAnchor; result: void }
   'tab.toggleDevtools': { args: { tabId: string }; result: void }
   'tab.copyUrl': { args: { tabId: string; markdown?: boolean }; result: void }
   'tab.setIcon': { args: { tabId: string; icon: string | null }; result: void }
@@ -2973,7 +3021,7 @@ export interface Commands {
   /** Alt+click on a sidebar tab: split it with (or separate it from) the active tab. */
   'tab.altClick': { args: { tabId: string }; result: void }
   /** Context menu for several selected tabs (Ctrl / Shift+click in the sidebar). */
-  'tab.selectionContextMenu': { args: { tabIds: string[] }; result: void }
+  'tab.selectionContextMenu': { args: { tabIds: string[] } & MenuAnchor; result: void }
 
   'space.create': {
     args: { name: string; icon: string; containerId: string; theme: SpaceTheme | null }
@@ -2995,7 +3043,7 @@ export interface Commands {
   'space.unloadOthers': { args: void; result: void }
   'space.togglePinnedCollapsed': { args: { spaceId: string }; result: void }
   'space.closeUnpinned': { args: { spaceId?: string }; result: void }
-  'space.contextMenu': { args: { spaceId: string }; result: void }
+  'space.contextMenu': { args: { spaceId: string } & MenuAnchor; result: void }
 
   'folder.create': {
     args: {
@@ -3016,13 +3064,13 @@ export interface Commands {
     result: void
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
-  'folder.contextMenu': { args: { folderId: string }; result: void }
+  'folder.contextMenu': { args: { folderId: string } & MenuAnchor; result: void }
   /**
    * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
    * folder's space and the container of its last member. Resolves with the new tab's id.
    */
   'folder.newTab': { args: { folderId: string }; result: string }
-  'newtab.contextMenu': { args: void; result: void }
+  'newtab.contextMenu': { args: MenuAnchor | void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
   /**
@@ -3206,7 +3254,7 @@ export interface Commands {
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
   /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string }; result: void }
+  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
 
@@ -3309,6 +3357,8 @@ export interface Commands {
       folderId: string
       x: number
       y: number
+      /** Opened with Shift+F10 or the Menu key: the first item starts selected (`MenuAnchor`). */
+      keyboard?: boolean
       /** The bar and its folder panels get Chrome's bar menu (open targets, "Show bookmarks bar"). */
       surface?: 'manager' | 'bar'
     }
@@ -3590,7 +3640,7 @@ export interface Commands {
   }
   'extension.closePopup': { args: void; result: void }
   /** Context menu of an extension's toolbar button (its `contextMenus` items plus Zenium's). */
-  'extension.actionContextMenu': { args: { id: string; x?: number; y?: number }; result: void }
+  'extension.actionContextMenu': { args: { id: string } & MenuAnchor; result: void }
   /**
    * The items an extension adds to its own action's context menu (`chrome.contextMenus` items
    * with the `action` context, in Chrome's layout: check states, submenus, separators), for the
@@ -3962,6 +4012,19 @@ export interface Events {
    * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
    */
   'tabsearch.open': void
+  /**
+   * A shortcut asked the keyboard to move panes (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B). The
+   * renderer works out the pane the keyboard is in and the one it goes to among those on screen,
+   * and asks the core for the chrome's or the page's focus accordingly (`focus.chrome`,
+   * `focus.content`).
+   */
+  'focus.pane': FocusPaneRequest
+  /**
+   * A page's view took the keyboard (the user clicked or tabbed into it, or the core gave it the
+   * focus): whatever control the chrome document had focused is stale – it would keep its focus
+   * ring, and count as the keyboard's place for F6 – and is let go.
+   */
+  'focus.page': { tabId: string }
   /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`

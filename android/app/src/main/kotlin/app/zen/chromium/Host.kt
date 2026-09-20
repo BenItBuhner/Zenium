@@ -123,6 +123,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     override var immersive = false
         private set
+    /**
+     * The chrome's last word on the private surface (`window.setSecure`): a private tab is in
+     * view, or the overview shows its private pane. The window's screenshot guard follows it
+     * (`PrivateBrowsing.guard`).
+     */
+    var privateSurface = false
+        private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
         private set
@@ -162,7 +169,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
-    override fun onViewsChanged() = privateSession.onViewsChanged()
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
@@ -398,6 +404,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
+            "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
@@ -743,6 +750,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             else -> return
         }
         chrome.performHapticFeedback(constant)
+    }
+
+    /** The private surface came or went: the window's screenshot guard goes up or down with it. */
+    fun setPrivateSurface(on: Boolean) {
+        privateSurface = on
+        PrivateBrowsing.guard(activity.window, on)
     }
 
     private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {

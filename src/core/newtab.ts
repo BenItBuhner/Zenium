@@ -140,6 +140,9 @@ export class ForwardingEvents implements TabViewEvents {
   onKey(input: KeyEventInput): boolean {
     return this.target?.onKey(input) ?? false
   }
+  onFocused(): void {
+    this.target?.onFocused?.()
+  }
   onTargetUrl(url: string): void {
     this.target?.onTargetUrl(url)
   }
