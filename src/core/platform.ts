@@ -1021,9 +1021,13 @@ export interface SaveTextFileOptions {
 
 export interface DialogHost {
   confirm(options: ConfirmOptions, win?: ZenWindow): Promise<boolean>
-  /** Let the user pick text files (e.g. CSS mods); resolves with their contents. */
+  /**
+   * Let the user pick text files (e.g. CSS mods); resolves with their contents. `maxBytes` lifts
+   * a host's default size cap for files that are legitimately large (a bookmarks HTML with its
+   * favicons inline); a file over the cap is left out of the result.
+   */
   pickTextFiles(
-    options: { title: string; extensions: string[] },
+    options: { title: string; extensions: string[]; maxBytes?: number },
     win?: ZenWindow
   ): Promise<PickedTextFile[]>
   /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
@@ -2059,6 +2063,57 @@ export interface GeolocationHost {
   scanWifi(): Promise<WifiAccessPoint[]>
 }
 
+export type ImportFileKind = 'file' | 'dir' | 'symlink' | 'missing'
+
+/** A SQLite database opened read-only on a copy of a browser's file (`ImportHost.openSqlite`). */
+export interface ImportDatabase {
+  /** Every row of a `SELECT`; column names as keys, SQLite's values (numbers, strings, blobs as bytes, null). */
+  all(sql: string): Record<string, unknown>[]
+  close(): void
+}
+
+export interface ImportTempCopy {
+  /** The temporary directory holding the copies; the core removes it with `removeTemp`. */
+  dir: string
+  /** The copy of each requested path in order, null for a source that does not exist. */
+  copies: (string | null)[]
+}
+
+/**
+ * The file access the import from other browsers needs (desktop hosts; `core/import`). Every
+ * path decision – where Chrome, Edge, Firefox and Safari keep their profiles, which files hold
+ * what, how a running browser shows – is the core's; the host only reads, lists, copies and opens.
+ * Databases are never opened in place: the core copies them (with their `-wal` / `-journal`
+ * companions) into a temp dir first, the way Chrome's importer does, so the source browser's own
+ * locks are the only thing that can refuse the read.
+ */
+export interface ImportHost {
+  /** The user's home directory. */
+  readonly homeDir: string
+  /** The process environment (`LOCALAPPDATA`, `APPDATA`, `XDG_CONFIG_HOME`). */
+  readonly env: Readonly<Record<string, string | undefined>>
+  /** What is at `path`, without following a symlink (Chrome's `SingletonLock` is one). */
+  stat(path: string): Promise<ImportFileKind>
+  readText(path: string): Promise<string>
+  readBytes(path: string): Promise<Uint8Array>
+  /** The entries of a directory (names, not paths); empty when it does not exist. */
+  list(dir: string): Promise<string[]>
+  /**
+   * Copy the files that exist among `paths` into a fresh temporary directory. Throws when a copy
+   * fails for a reason other than the source missing (a browser holding an exclusive lock).
+   */
+  copyToTemp(paths: string[]): Promise<ImportTempCopy>
+  removeTemp(dir: string): Promise<void>
+  /** Open a database read-only (`node:sqlite`); the core always passes a temp copy. */
+  openSqlite(path: string): Promise<ImportDatabase>
+  /**
+   * The OS keyring secret Chrome / Chromium / Edge encrypt their v11 (Linux) and v10 (macOS)
+   * logins with ("Chrome Safe Storage"), or null when the OS has none to give (Windows, no
+   * `secret-tool`, a locked keyring).
+   */
+  safeStorageSecret(browser: 'chrome' | 'chromium' | 'edge'): Promise<string | null>
+}
+
 export interface Platform {
   readonly info: PlatformInfo
   readonly capabilities: HostCapabilities
@@ -2126,6 +2181,8 @@ export interface Platform {
   readonly geolocation?: GeolocationHost
   /** The folder picker, device name and folder transport behind cross-device sync (`capabilities.sync`). */
   readonly sync?: SyncPlatformHost
+  /** Other browsers' profiles on this machine (desktop); hosts without it import from files only. */
+  readonly importHost?: ImportHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

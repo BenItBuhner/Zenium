@@ -386,12 +386,21 @@ export class BookmarkService {
 
   /** Import a Netscape bookmark file the way Chrome does (see `planNetscapeImport`). */
   importHtml(html: string): BookmarkImportResult | null {
-    const doc = parseNetscapeHtml(html)
+    return this.importDocument(parseNetscapeHtml(html), 'Imported')
+  }
+
+  /**
+   * File a parsed bookmark tree (a Netscape file, another browser's bookmarks brought into the
+   * same shape by `core/import`) the way Chrome does: into the roots while the bar is empty,
+   * else into one `folderTitle` folder on the bar ("Imported", "Imported From Firefox"), numbered
+   * when that name is taken.
+   */
+  importDocument(doc: NetscapeDocument, folderTitle: string): BookmarkImportResult | null {
     if (doc.items.length === 0) return null
     const bar = this.tree.children(BOOKMARKS_BAR_ID)
     const titles = new Set(bar.map((n) => n.title))
-    let importedTitle = 'Imported'
-    for (let n = 2; titles.has(importedTitle); n++) importedTitle = `Imported (${n})`
+    let importedTitle = folderTitle
+    for (let n = 2; titles.has(importedTitle); n++) importedTitle = `${folderTitle} (${n})`
     const plan = planNetscapeImport(doc, {
       barIsEmpty: bar.length === 0,
       nextIndex: (parentId) => this.tree.children(parentId).length,
