@@ -58,7 +58,12 @@ export type SheetFocus = 'first' | 'dialog' | 'checked'
  *    at 69 % on the body line 4 below, 16 to the footer. A phone sheet takes the block only when
  *    it carries a description (§9.23), so the description is the pose's, required; `tone` is for
  *    a description that reports a status (an extension's load error): the §1 status ink,
- *    `data-tone` on the paragraph for the surface's rule.
+ *    `data-tone` on the paragraph for the surface's rule. A prompt about Zenium itself – make it
+ *    the default browser, install or pin it, relaunch it – carries the app's own icon INSTEAD of
+ *    an inline glyph: `appIcon`, the 48 px icon drawn above the block at the block's 16, 16 to
+ *    the title (`.zen-sheet-app-icon`), the desktop prompt's form (§9.23: the identity is the
+ *    title's own word, and an icon beside it would read as a row). A prompt about a site's app
+ *    keeps its own identity row in the body.
  * Both are drawn from the chassis's own slots: the header in `BottomSheet`'s `header` (part of
  * the grip, above the scrolling body), the block as the first content of the body on the
  * chassis's `.zen-sheet-title-block`, as every prompt sheet draws it.
@@ -68,9 +73,12 @@ export type SheetTitle =
   | {
       pose: 'block'
       text: string
-      icon?: ReactNode
       description: string
       tone?: 'warn' | 'danger'
+      /** A 20 px glyph on the title's start; never together with `appIcon`. */
+      icon?: ReactNode
+      /** The 48 px app icon above the block, for a prompt about Zenium itself (§9.23). */
+      appIcon?: ReactNode
     }
 
 /** Where the sheet stands: the frame's dialog host (the default) or over the whole viewport. */
@@ -138,6 +146,12 @@ function Chassis({
       `PhoneSheet "${name}": a description takes the title block (pose 'block', §9.23), not the 48 header`
     )
   }
+  // The app icon stands in for the inline glyph (§9.23), never beside it.
+  if (title.pose === 'block' && title.icon && title.appIcon) {
+    throw new Error(
+      `PhoneSheet "${name}": a prompt about Zenium carries the app icon above its title block instead of a glyph (§9.23), not both`
+    )
+  }
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
   const body = useRef<HTMLDivElement>(null)
@@ -184,13 +198,16 @@ function Chassis({
     >
       <div ref={body}>
         {title.pose === 'block' && (
-          <div className="zen-sheet-title-block">
-            <h2 id={titleId}>
-              {title.icon}
-              <span className="min-w-0 truncate">{title.text}</span>
-            </h2>
-            <p data-tone={title.tone}>{title.description}</p>
-          </div>
+          <>
+            {title.appIcon && <div className="zen-sheet-app-icon">{title.appIcon}</div>}
+            <div className="zen-sheet-title-block">
+              <h2 id={titleId}>
+                {title.icon}
+                <span className="min-w-0 truncate">{title.text}</span>
+              </h2>
+              <p data-tone={title.tone}>{title.description}</p>
+            </div>
+          </>
         )}
         {children}
       </div>

@@ -913,6 +913,45 @@ describe('the v2 primitives (§9.34)', () => {
     expect(rest).not.toMatch(/padding: var\(--v2-row-pad\)|padding: 12px 16px/)
     expect(rest).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
+
+  it('draw a prompt about Zenium with the 48 app icon above the sheet title block, the desktop form (§9.23, #264)', () => {
+    // The chassis slot (`PhoneSheet`'s `appIcon`, `.zen-sheet-app-icon`): 48 at the block's 16
+    // from the sheet's edges, 16 to the title through the block's own padding, beside the block
+    // rule – the same numbers as the desktop prompt's `.zen-default-browser-prompt-icon`. Both
+    // rules are nested one level (the chassis layer, the components layer): cut at their own `}`.
+    const nested = (selector: string): string => {
+      const start = css.indexOf(`${selector} {`)
+      expect(start, `block "${selector}"`).toBeGreaterThanOrEqual(0)
+      return css.slice(start, css.indexOf('\n  }', start))
+    }
+    expect(nested('.zen-sheet-app-icon').match(/^ {4}[a-z-]+:[^;]+;/gm)).toEqual([
+      '    display: flex;',
+      '    flex-shrink: 0;',
+      '    width: 48px;',
+      '    height: 48px;',
+      '    margin: 16px 16px 0;'
+    ])
+    expect(nested('.zen-default-browser-prompt-icon')).toMatch(
+      /width: 48px;\s*height: 48px;\s*margin: var\(--v2-card-padding\) var\(--v2-card-padding\) 0;/
+    )
+    expect(css.indexOf('.zen-sheet-app-icon {')).toBeGreaterThan(
+      css.indexOf('.zen-sheet-title-block {')
+    )
+    // The promo's phone sheet takes the slot and no inline glyph; its mouse dialog draws the
+    // same icon over its block, as the desktop's `AskDialog` does (the one composition).
+    const prompt = readFileSync(
+      fileURLToPath(
+        new URL('../../components/defaultbrowser/DefaultBrowserPrompt.tsx', import.meta.url)
+      ),
+      'utf8'
+    )
+    expect(prompt).toMatch(/appIcon: <AppIconImage variant=\{appIconVariant\(appIcon\)\} \/>/)
+    expect(prompt).not.toMatch(/lucide-react/)
+    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(2)
+    // The site-info sheet's `data-control` rule went with the primitives pass 3: no row on that
+    // surface sets the mark, and the mark's geometry is `.zen-v2-row[data-control]`'s alone.
+    expect(css).not.toMatch(/\.zen-siteinfo-row\[data-control\]/)
+  })
 })
 
 /** The shared `zen-v2-` ring rule's selector, as main.css writes it. */

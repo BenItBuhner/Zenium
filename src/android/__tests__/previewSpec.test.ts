@@ -174,6 +174,7 @@ describe('parsePreviewSpec', () => {
       ]
     })
     expect(parsePreviewSpec('sheet=customise')).toEqual({ kind: 'sheet', sheet: 'customise' })
+    expect(parsePreviewSpec('sheet=promo')).toEqual({ kind: 'sheet', sheet: 'promo' })
     expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
       kind: 'sheet',

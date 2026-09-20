@@ -36,8 +36,11 @@ const PAGE_ROUTE = '/__zen/page/'
 const PDF_ROUTE = '/__zen/pdf/'
 /** The viewer document's script, as the dev server serves it (a module under the Vite root, `src/android`). */
 const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
-/** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
-const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/**
+ * Whether the preview "holds the browser role" (outside the file store: it is not profile data);
+ * `sheet=promo` (previewStates.ts) puts the role up for grabs before it raises the campaign.
+ */
+export const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 /** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
 const DOWNLOADS_DIR = '/Downloads'
 /** Where the stand-in keeps the tab cards' pictures (Kotlin: `cacheDir/zen-thumbs/<tabId>.jpg`). */

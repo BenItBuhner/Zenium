@@ -65,6 +65,7 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  DEFAULT_BROWSER_KEY,
   PREVIEW_ARTICLE,
   PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
@@ -77,6 +78,7 @@ import {
   previewVoiceScript,
   type PreviewExtensionPage
 } from './preview'
+import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '@shared/defaultBrowser'
 import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { dismissSiteInfo, openSiteInfo } from '@renderer/lib/siteInfo'
 import type { ReadAloudStatus } from '@shared/readAloud'
@@ -101,9 +103,11 @@ const STEP_SETTLE_MS = 450
 
 /**
  * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
- * …) and the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …).
+ * …), the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …) and the default-browser
+ * promo's (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
  */
-const SHEET_SURFACE = /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-)/
+const SHEET_SURFACE =
+  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -131,7 +135,8 @@ const QR_EVENT_MARGIN_MS = 250
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
  * or long-presses it for its menu), `sheet=customise` (the new tab page's customise sheet, over
- * the active page), `extension-page=<id>/<path>` (an extension's page open as a
+ * the active page), `sheet=promo` (the default-browser promo, the core's campaign made due over
+ * the active page as the third session raises it), `extension-page=<id>/<path>` (an extension's page open as a
  * tab, the way its options page opens: `chrome-extension://<id>/<path>`, which the stand-in
  * host serves a page for; with `extensions=installed` the chrome knows the extension, so the
  * pill shows its name), `prompt=<permission>` (the active page asks for that permission: the
@@ -560,6 +565,32 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
 }
 
 /**
+ * Raise the default-browser promo (`DefaultBrowserService`, `components/defaultbrowser`): the
+ * campaign is put where the third session finds it – onboarding behind the user, the sessions
+ * counted, nothing shown or dismissed yet, the role not held by the stand-in host – and the
+ * core asked to decide again, as a session start asks it. The sheet goes up once the layer has
+ * the page's picture (`defaultBrowserPrompt` in the ui store); `then` runs from there. The
+ * dismissals a run of stills spends on it never add up: the seed starts the count over.
+ */
+function raisePromo(browser: Browser, then: () => void): void {
+  localStorage.setItem(DEFAULT_BROWSER_KEY, 'false')
+  const { settings } = browser.state
+  settings.onboardingDone = true
+  settings.defaultBrowserPromo = { ...DEFAULT_PROMO_STATE, sessions: PROMO_FIRST_SESSION }
+  browser.state.commit()
+  if (uiStore.get().defaultBrowserPrompt) {
+    then()
+    return
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (!uiStore.get().defaultBrowserPrompt) return
+    unsubscribe()
+    then()
+  })
+  void browser.defaultBrowser.refresh()
+}
+
+/**
  * Take the chrome, now idle, to the state `spec` names. `securityAtRest` settles once the
  * previous state's security prompts are cancelled and forgotten (a prompt raised before that
  * would join the cancelled one's protection space instead of asking).
@@ -675,6 +706,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'sheet' && target.sheet === 'promo') {
+    // The campaign's promo comes up through the core, once the layer has the page's picture.
+    seed()
+    raisePromo(browser, () => {
+      const then = target.then ?? []
+      if (then.length === 0) afterFrames(2, finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'sheet') {
     // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
     // sheet mounts on the next render and slides in, and the steps wait for it to settle. The

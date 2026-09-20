@@ -2831,6 +2831,24 @@
     gap: 4px;
     padding: 16px;
   }
+  /*
+   * A prompt about Zenium itself (the default-browser promo) carries the 48 px app icon above
+   * its title block instead of an inline glyph (§9.23; `PhoneSheet`'s `appIcon`): at the block's
+   * 16 from the sheet's edges, 16 to the title through the block's own padding – the desktop
+   * prompt's form (`.zen-default-browser-prompt-icon`). Content drawn inside chrome: the icon
+   * keeps its own colours (§9.29).
+   */
+  .zen-sheet-app-icon {
+    display: flex;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    margin: 16px 16px 0;
+  }
+  .zen-sheet-app-icon > * {
+    width: 100%;
+    height: 100%;
+  }
   .zen-sheet-title-block h2 {
     display: flex;
     align-items: center;
@@ -3153,9 +3171,6 @@
   }
   .zen-siteinfo-row[data-danger] {
     color: var(--v2-danger);
-  }
-  .zen-siteinfo-row[data-control] {
-    min-height: 40px;
   }
   .zen-siteinfo-row > svg,
   .zen-siteinfo-glyph > svg {
