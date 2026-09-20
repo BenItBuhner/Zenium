@@ -16,6 +16,7 @@ import type {
   MenuHost,
   MenuItemTemplate,
   Platform,
+  SpellcheckHost,
   StoreIO,
   TabView,
   TabViewHost,
@@ -159,6 +160,8 @@ interface Harness {
   clipboardText: { value: string }
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
+  /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
+  spellcheckApplied: SpellcheckApplied[]
 }
 
 interface HarnessOptions {
@@ -169,6 +172,17 @@ interface HarnessOptions {
   fullScreen?: boolean
   /** The host runs the translation engine (`translate.available`), with no model on the device. */
   translate?: boolean
+  /**
+   * The host has a spellchecker of the browser's own with these dictionaries (Electron's session
+   * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
+   */
+  spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
+}
+
+/** The languages the fake spellchecker was last told to check in. */
+interface SpellcheckApplied {
+  enabled: boolean
+  languages: string[]
 }
 
 /** A browser on a host with the given capabilities whose menu popup only records the template. */
@@ -182,6 +196,26 @@ function harness(
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
+  const spellcheckApplied: SpellcheckApplied[] = []
+  const spellcheckHost = (): SpellcheckHost => {
+    const words = new Set<string>()
+    const spec = opts.spellcheck!
+    return {
+      systemLanguages: Boolean(spec.systemLanguages),
+      locales: spec.locales ?? ['en-US'],
+      availableLanguages: () => [...spec.available],
+      apply: (enabled, languages) =>
+        void spellcheckApplied.push({ enabled, languages: [...languages] }),
+      onDictionaryStatus: () => undefined,
+      listWords: async () => [...words],
+      addWord: async (word) => {
+        if (words.has(word)) return false
+        words.add(word)
+        return true
+      },
+      removeWord: async (word) => words.delete(word)
+    }
+  }
   const menus: MenuHost = {
     popup: (items) => {
       last = items
@@ -246,14 +280,24 @@ function harness(
             locales: ['en']
           })
         }
-      : {})
+      : {}),
+    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {})
   }
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
   if (opts.formFactor)
     browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
-  return { browser, win, shown: () => last, popups: () => count, viewCalls, clipboardText, sent }
+  return {
+    browser,
+    win,
+    shown: () => last,
+    popups: () => count,
+    viewCalls,
+    clipboardText,
+    sent,
+    spellcheckApplied
+  }
 }
 
 /** Let a click that reads the host's clipboard finish. */
@@ -1015,6 +1059,89 @@ describe('the page context menu', () => {
     const h = pageHarness(DESKTOP, { emojiPanel: true })
     const menu = h.menu(pageParams({ isEditable: true, editFlags: ALL_EDITS }))
     expect(menu.indexOf('Emoji')).toBe(menu.indexOf('Select All') + 1)
+  })
+
+  it('gives a text field Chrome’s Spell Check submenu after the editing group on a host with its own checker', () => {
+    const h = pageHarness(DESKTOP, {
+      spellcheck: { available: ['en-US', 'en-GB', 'de', 'fr', 'nl'], locales: ['en-US', 'de'] }
+    })
+    const field = pageParams({ isEditable: true, editFlags: ALL_EDITS })
+    const menu = h.menu(field)
+    expect(menu.slice(menu.indexOf('Select All'))).toEqual([
+      'Select All',
+      '-',
+      'Spell Check',
+      '-',
+      'Boosts',
+      'Inspect Element'
+    ])
+    expect(separators(h.items())).toBeLessThanOrEqual(3)
+    // The languages checked now lead, checked; the UI languages' other dictionaries follow,
+    // unchecked; then the switch and the way to Settings › Languages.
+    const submenu = item(h.items(), 'Spell Check').submenu!
+    expect(labels(submenu)).toEqual([
+      'English (United States)',
+      'German',
+      '-',
+      'Check the Spelling of Text Fields',
+      '-',
+      'Language Settings'
+    ])
+    expect(submenu[0]).toMatchObject({ type: 'checkbox', checked: true, enabled: true })
+    expect(submenu[1]).toMatchObject({ type: 'checkbox', checked: false, enabled: true })
+    expect(submenu[3]).toMatchObject({ type: 'checkbox', checked: true })
+
+    // German checks in next to English and reads checked the next time.
+    submenu[1].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: true, languages: ['en-US', 'de'] })
+    h.menu(field)
+    const again = item(h.items(), 'Spell Check').submenu!
+    expect(again[1]).toMatchObject({ label: 'German', checked: true })
+
+    // The switch turns the checker off; the languages then read unchecked and greyed, as in Chrome.
+    again[3].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: false, languages: ['en-US', 'de'] })
+    h.menu(field)
+    const off = item(h.items(), 'Spell Check').submenu!
+    expect(off[0]).toMatchObject({ checked: false, enabled: false })
+    expect(off[1]).toMatchObject({ checked: false, enabled: false })
+    expect(off[3]).toMatchObject({ checked: false })
+    off[3].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: true, languages: ['en-US', 'de'] })
+
+    // Language Settings opens Settings on its Languages section (the overlay on the desktop).
+    h.menu(field)
+    h.sent.length = 0
+    item(h.items(), 'Spell Check').submenu![5].click!()
+    expect(h.sent).toContain('overlay.open')
+  })
+
+  it('sends Add to Dictionary to the profile’s dictionary where the host keeps one, not the view’s session', async () => {
+    const h = pageHarness(DESKTOP, { spellcheck: { available: ['en-US'] } })
+    h.menu(
+      pageParams({
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        misspelledWord: 'Zenium',
+        dictionarySuggestions: ['Zen']
+      })
+    )
+    h.click('Add to Dictionary')
+    await settle()
+    expect(await h.browser.spellcheck.words()).toEqual(['Zenium'])
+    expect(h.viewCalls).toEqual([])
+  })
+
+  it('leaves the Spell Check submenu to hosts that check spelling and choose their own languages', () => {
+    const field = pageParams({ isEditable: true, editFlags: ALL_EDITS })
+    // Android: the system's checker, chosen in the keyboard settings.
+    expect(pageHarness(ANDROID).menu(field)).not.toContain('Spell Check')
+    // macOS: the OS's languages; the submenu would have nothing to offer.
+    const mac = pageHarness(DESKTOP, {
+      spellcheck: { available: ['en-US', 'de'], systemLanguages: true }
+    })
+    expect(mac.menu(field)).not.toContain('Spell Check')
+    expect(mac.spellcheckApplied).toEqual([{ enabled: true, languages: [] }])
   })
 
   it('never needs more than three separators', () => {

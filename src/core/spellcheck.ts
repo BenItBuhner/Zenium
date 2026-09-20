@@ -88,8 +88,8 @@ export class SpellcheckService {
 
   /**
    * Check (or stop checking) in `code`. Turning a language on in a profile at the limit does
-   * nothing (Chrome greys the toggle); turning the last one off leaves the checker on with no
-   * language, which checks nothing – as in Chrome, where the toggle then reads "off".
+   * nothing (Chrome greys the toggle); turning the last one off turns the checker off, as
+   * Chrome's switch reads off once no language is checked (`withSpellcheckLanguage`).
    */
   setLanguage(code: string, on: boolean): void {
     if (!this.host || this.host.systemLanguages) return

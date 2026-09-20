@@ -187,16 +187,22 @@ export function spellcheckLanguageName(code: string, uiLocale = 'en'): string {
   const IntlAny = Intl as unknown as {
     DisplayNames?: new (
       locales: string[],
-      options: { type: 'language' | 'region'; languageDisplay?: 'standard' | 'dialect' }
+      options: {
+        type: 'language' | 'region'
+        languageDisplay?: 'standard' | 'dialect'
+        fallback?: 'code' | 'none'
+      }
     ) => { of(code: string): string | undefined }
   }
   if (IntlAny.DisplayNames) {
     try {
       // `standard` keeps region names spelled out ("Portuguese (Brazil)", not "Brazilian
-      // Portuguese"), which is how Chrome's Languages settings list them.
+      // Portuguese"), which is how Chrome's Languages settings list them; `none` leaves a code
+      // the runtime has no name for to the table rather than "zz (Unknown Region)".
       const name = new IntlAny.DisplayNames([uiLocale, 'en'], {
         type: 'language',
-        languageDisplay: 'standard'
+        languageDisplay: 'standard',
+        fallback: 'none'
       }).of(normalized)
       if (name && name.toLowerCase() !== normalized.toLowerCase()) return name
     } catch {
@@ -224,7 +230,10 @@ export function orderSpellcheckLanguages(
  * Toggle one language of the setting: `on` adds it (at the end; a list already at the limit
  * stays as it is), off removes it. `current` is what the host checks in right now, so switching
  * a language off in a profile that never chose any (the UI-locale default) keeps the others
- * rather than emptying the list back to the default.
+ * rather than emptying the list back to the default. Switching the last language off turns the
+ * checker off and keeps the language: an empty list would mean "not chosen yet" and bring the
+ * UI language straight back, while Chrome's switch reads off once no language is checked, and
+ * the switch turned on again checks in that language once more.
  */
 export function withSpellcheckLanguage(
   settings: SpellcheckSettings,
@@ -237,6 +246,8 @@ export function withSpellcheckLanguage(
   if (on) {
     if (languages.length >= SPELLCHECK_LANGUAGES_MAX) return settings
     languages.push(code)
+  } else if (languages.length === 0) {
+    return base.length === 0 ? settings : { enabled: false, languages: [...base] }
   }
   return { ...settings, languages }
 }
