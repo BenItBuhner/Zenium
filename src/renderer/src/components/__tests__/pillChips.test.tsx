@@ -232,25 +232,36 @@ describe('desktop pill (NavRow)', () => {
   // 1.5, the `--v2-icon-stroke` token's value, not Lucide's default 2 beside it (the #245
   // review's chassis item (d)); the SVG attribute, which is what a reviewer reads off the DOM.
   it('draws every 16 px glyph in the row at the toolbar stroke', () => {
-    // A page with a pop-up refused and a save prompt pending: every chip with a 16 px glyph up.
+    // A page with a pop-up refused, a save prompt pending and the blocking engine on: every chip
+    // with a 16 px glyph up.
+    const base = state(page, [], [savePrompt])
     const el = render(
       <NavRow
-        state={{
-          ...state(page, [], [savePrompt]),
-          blockedPopups: withBlocked(page, 1).blockedPopups
-        }}
+        state={
+          {
+            ...base,
+            capabilities: { ...base.capabilities, requestBlocking: true },
+            settings: { ...base.settings, blocking: { level: 'standard' } },
+            blocking: { enabled: true, siteExceptions: [] },
+            blockedPopups: withBlocked(page, 1).blockedPopups
+          } as unknown as UIState
+        }
         tab={page}
         compact={false}
       />
     )
+    // The shield's glyph is sized by the chip's own rule (`.zen-v2-blocked-chip > svg`), the
+    // others by the `h-4 w-4` utilities.
     const glyphs = Array.from(el.querySelectorAll<SVGElement>('[data-zen-nav-row] svg')).filter(
-      (svg) => svg.classList.contains('h-4')
+      (svg) => svg.classList.contains('h-4') || svg.parentElement?.matches('.zen-v2-blocked-chip')
     )
-    // Back, forward, reload, the blocked pop-ups chip, the key chip, the star and the menu (the
-    // puzzle piece, the downloads and media buttons wait on an extension, a download, a player).
+    // Back, forward, reload, the shield, the blocked pop-ups chip, the key chip, the star and the
+    // menu (the puzzle piece, the downloads and media buttons wait on an extension, a download, a
+    // player).
+    expect(el.querySelector('.zen-v2-blocked-chip')).not.toBeNull()
     expect(el.querySelector('[aria-label="Pop-up blocked"]')).not.toBeNull()
     expect(el.querySelector('[data-af-chip]')).not.toBeNull()
-    expect(glyphs.length).toBe(7)
+    expect(glyphs.length).toBe(8)
     for (const svg of glyphs) expect(svg.getAttribute('stroke-width')).toBe(String(TOOLBAR_STROKE))
     expect(TOOLBAR_STROKE).toBe(1.5)
   })
