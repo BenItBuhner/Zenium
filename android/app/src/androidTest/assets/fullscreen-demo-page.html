@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium fullscreen demo</title>
+<style>
+  html, body { margin: 0; min-height: 100%; font-family: sans-serif; background: #fff; color: #15141a; }
+  h1 { font-size: 22px; margin: 0; padding: 20px 20px 6px; }
+  p.lead { margin: 0; padding: 0 20px 12px; font-size: 15px; line-height: 1.4; color: #5a5866; }
+  .big { display: block; box-sizing: border-box; width: calc(100% - 40px); margin: 10px 20px; height: 72px;
+    font-size: 22px; font-weight: 600; border: 0; border-radius: 16px; background: #1b4332; color: #fff;
+    text-align: center; line-height: 72px; -webkit-tap-highlight-color: transparent; }
+  .big.alt { background: #2d6a4f; }
+  .big.file { background: #264653; }
+  .big:active { filter: brightness(1.2); }
+  .clips { display: flex; gap: 12px; padding: 0 20px; }
+  video { display: block; box-sizing: border-box; background: #000; border-radius: 8px; }
+  #land { width: 60%; aspect-ratio: 16 / 9; }
+  #port { width: 34%; aspect-ratio: 9 / 16; max-height: 160px; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  pre#state { margin: 0; padding: 14px 20px; font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Fullscreen video and the file chooser</h1>
+<p class="lead">A landscape clip, a portrait clip, and two file inputs: one taking a photo (capture), one taking any image.</p>
+<div class="clips">
+  <video id="land" src="/land.webm" loop playsinline preload="auto"></video>
+  <video id="port" src="/port.webm" loop playsinline preload="auto"></video>
+</div>
+<button id="fs-land" class="big">Play landscape fullscreen</button>
+<button id="fs-port" class="big alt">Play portrait fullscreen</button>
+<label id="cap-label" class="big file" for="cap">Take a photo (capture)</label>
+<input id="cap" type="file" accept="image/*" capture>
+<label id="pick-label" class="big file" for="pick">Choose an image</label>
+<input id="pick" type="file" accept="image/*">
+<pre id="state"></pre>
+<script>
+(function () {
+  // Everything the page sees goes into its title as `FS|key:value|key:value`, which the demo
+  // driver reads from the browser core's state (and through evaluateJavascript).
+  var state = { fs: 0, el: 'none', state: 'paused', file: 'none', size: 0, resizes: 0 };
+  var render = function () {
+    var parts = ['FS'];
+    Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
+    var title = parts.join('|');
+    document.title = title;
+    document.getElementById('state').textContent = title.split('|').join('\n');
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var videos = [$('land'), $('port')];
+  var playingOne = function () {
+    return videos.some(function (v) { return !v.paused && !v.ended; });
+  };
+  videos.forEach(function (v) {
+    ['play', 'playing', 'pause', 'ended', 'loadedmetadata'].forEach(function (name) {
+      v.addEventListener(name, function () {
+        state.state = playingOne() ? 'playing' : 'paused';
+        render();
+      });
+    });
+  });
+  var goFullscreen = function (video) {
+    // The tap is the user gesture both need (mediaPlaybackRequiresUserGesture, the Fullscreen API).
+    var played = video.play();
+    if (played && played.catch) played.catch(function (e) { state.err = String(e && e.name || e); render(); });
+    var request = video.requestFullscreen || video.webkitRequestFullscreen || video.webkitEnterFullscreen;
+    if (request) {
+      try {
+        var r = request.call(video);
+        if (r && r.catch) r.catch(function (e) { state.err = String(e && e.name || e); render(); });
+      } catch (e) { state.err = String(e && e.name || e); render(); }
+    }
+  };
+  $('fs-land').addEventListener('click', function () { goFullscreen($('land')); });
+  $('fs-port').addEventListener('click', function () { goFullscreen($('port')); });
+  var onFullscreenChange = function () {
+    var el = document.fullscreenElement || document.webkitFullscreenElement;
+    state.fs = el ? 1 : 0;
+    state.el = el ? (el.id || el.tagName.toLowerCase()) : 'none';
+    render();
+  };
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+  window.addEventListener('resize', function () { state.resizes++; render(); });
+  var onFile = function (input) {
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      state.file = f ? f.name : 'none';
+      state.size = f ? f.size : 0;
+      state.type = f ? (f.type || '?') : '?';
+      state.count = input.files ? input.files.length : 0;
+      render();
+    });
+  };
+  onFile($('cap'));
+  onFile($('pick'));
+  // The first-time exit hint the chrome draws in the page's top layer (shared/pageHint.ts): the
+  // driver asks whether its host element stands, and how it is placed.
+  window.__hint = function () {
+    var h = document.querySelector('zenium-fullscreen-hint');
+    if (!h) return null;
+    var r = h.getBoundingClientRect();
+    return JSON.stringify({ top: r.top, left: r.left, width: r.width, height: r.height,
+      opacity: h.style.opacity, transform: h.style.transform, viewportHeight: window.innerHeight,
+      popover: typeof h.showPopover === 'function' });
+  };
+  render();
+})();
+</script>
+</body>
+</html>
