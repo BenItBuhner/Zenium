@@ -34,10 +34,6 @@ name: Android private lock demo
 # file picks the driver and the engine.
 on:
   workflow_dispatch:
-  # Temporary: the branch's own runs while the private lock is on review (removed before merge).
-  push:
-    branches:
-      - cursor/android-private-tab-lock-913c
 
 permissions:
   contents: read
