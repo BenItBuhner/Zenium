@@ -206,7 +206,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
             )
             is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
-            is Verdict.HeaderStage -> headerStage?.relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer)?.toResponse()
+            is Verdict.HeaderStage -> headerStage?.relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.decision)?.toResponse()
         }
     }
 
@@ -473,7 +473,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 // A document allowed for now that a header-conditioned rule may still overturn
                 // goes through the header stage's relay (HeaderStage); other requests keep the allow.
                 Decision.Action.ALLOW ->
-                    if (decision.needsHeaders && (isMainFrame || type == ResourceType.SUB_FRAME)) Verdict.HeaderStage(req) else Verdict.Pass
+                    if (decision.needsHeaders && (isMainFrame || type == ResourceType.SUB_FRAME)) Verdict.HeaderStage(req, decision) else Verdict.Pass
                 Decision.Action.BLOCK -> {
                     if (isMainFrame) {
                         tab.onDocumentBlocked(url)
@@ -633,9 +633,11 @@ sealed class Verdict {
     /**
      * A document the request stage allowed subject to its response headers
      * ([Decision.needsHeaders]): relayed through the [HeaderStage], which decides it again with
-     * the real headers; WebView loads it itself when there is none.
+     * the real headers; WebView loads it itself when there is none. `decision` is the request
+     * stage's, so the header stage reports only a decision that names another match (the
+     * desktop's `sameMatch`, contract 5.5).
      */
-    class HeaderStage(val request: Request) : Verdict()
+    class HeaderStage(val request: Request, val decision: Decision) : Verdict()
 }
 
 /** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */

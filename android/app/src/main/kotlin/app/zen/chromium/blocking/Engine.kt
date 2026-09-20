@@ -187,7 +187,13 @@ private class Resolution(val headers: Map<String, List<String>>?) {
     fun claim(setId: String, setIndex: Int, rule: DnrRule, req: Request) {
         if (rule.needsHeaders) {
             if (headers == null) {
-                if (rule.effective > lateEffective) lateEffective = rule.effective
+                // Only a rule that could overturn the allow makes the relay worth it: a
+                // header-conditioned allow yields at the header stage in any case (it could
+                // only cap header edits, which this engine has none of), so it does not raise
+                // the bar. Recorded deviation from the desktop engine; the outcomes are the same.
+                if (rule.action != RuleAction.ALLOW && rule.action != RuleAction.ALLOW_ALL_REQUESTS && rule.effective > lateEffective) {
+                    lateEffective = rule.effective
+                }
                 return
             }
             if (!rule.matchesHeaders(headers)) return
