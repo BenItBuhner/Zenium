@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HistoryEntry, HistoryVisit } from '../../shared/types'
 import type { StoreIO } from '../platform'
 import {
+  dayKeyOf,
   groupByDay,
   HistoryService,
+  type ImportedVisit,
   isRecordableUrl,
   MAX_ENTRIES,
   MAX_VISITS,
@@ -15,6 +17,7 @@ import {
   selectRange,
   topSites
 } from '../history'
+import { JsonStore } from '../store/JsonStore'
 
 const DAY = 86_400_000
 const NOW = Date.UTC(2026, 8, 17, 12, 0, 0)
@@ -405,5 +408,286 @@ describe('HistoryService', () => {
     h.updateTitle('https://a.test/', 'Real Title')
     expect(h.visits({ limit: 1 })[0].title).toBe('Real Title')
     expect(h.search('real', 5)[0].title).toBe('Real Title')
+  })
+
+  /** The stored visit list, in the order it is kept. */
+  function storedVisits(io: { docs: Record<string, string> }): HistoryVisit[] {
+    return (JSON.parse(io.docs['history.json']) as { visits: HistoryVisit[] }).visits
+  }
+
+  describe('visit with at', () => {
+    it('records a dated visit at its place: first/last and the count follow, the title and favicon only the newest', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      h.visit('https://a.test/', 'Current', 'data:new')
+      h.visit('https://a.test/', 'Old title', 'data:old', {
+        at: NOW - 2 * DAY,
+        transition: 'typed'
+      })
+      h.visit('https://a.test/', 'Middle', null, { at: NOW - DAY })
+      h.visit('https://b.test/', 'B', null, { at: NOW - 3 * DAY })
+      expect(h.count(0, Infinity)).toBe(4)
+      expect(h.visits({ limit: 10 }).map((v) => [v.title, v.visitTime])).toEqual([
+        ['Current', NOW],
+        ['Middle', NOW - DAY],
+        ['Old title', NOW - 2 * DAY],
+        ['B', NOW - 3 * DAY]
+      ])
+      expect(h.recent(5)[0]).toMatchObject({
+        url: 'https://a.test/',
+        title: 'Current',
+        favicon: 'data:new',
+        visitCount: 3,
+        typedCount: 1,
+        firstVisit: NOW - 2 * DAY,
+        lastVisit: NOW
+      })
+      // The list itself is kept oldest first, the dated visits inserted at their place.
+      h.flushSync()
+      expect(storedVisits(io).map((v) => v.visitTime)).toEqual([
+        NOW - 3 * DAY,
+        NOW - 2 * DAY,
+        NOW - DAY,
+        NOW
+      ])
+      // Day groups put the dated visit on its own day.
+      const groups = h.groupedByDay({ limit: 100 })
+      expect(groups.map((g) => g.dayKey)).toEqual([
+        dayKeyOf(NOW),
+        dayKeyOf(NOW - DAY),
+        dayKeyOf(NOW - 2 * DAY),
+        dayKeyOf(NOW - 3 * DAY)
+      ])
+      expect(groups[2].visits.map((v) => v.title)).toEqual(['Old title'])
+    })
+
+    it('lets a newer dated visit retitle the page and keeps a visit ordered after an equal time', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      h.visit('https://a.test/', 'Old', null, { at: NOW - DAY })
+      h.visit('https://a.test/', 'New', 'data:icon', { at: NOW - 3_600_000 })
+      expect(h.recent(5)[0]).toMatchObject({
+        title: 'New',
+        favicon: 'data:icon',
+        firstVisit: NOW - DAY,
+        lastVisit: NOW - 3_600_000
+      })
+      h.visit('https://a.test/', 'Same time', null, { at: NOW - 3_600_000 })
+      expect(h.recent(5)[0]).toMatchObject({ title: 'Same time', visitCount: 3 })
+      h.flushSync()
+      expect(storedVisits(io).map((v) => v.title)).toEqual(['Old', 'New', 'Same time'])
+    })
+
+    it('clamps a future or unusable at to now and records nothing past the retention window', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://future.test/', 'F', null, { at: NOW + DAY })
+      h.visit('https://nan.test/', 'N', null, { at: Number.NaN })
+      expect(h.visits({ limit: 10 }).map((v) => v.visitTime)).toEqual([NOW, NOW])
+      expect(h.recent(5).map((e) => [e.firstVisit, e.lastVisit])).toEqual([
+        [NOW, NOW],
+        [NOW, NOW]
+      ])
+      h.visit('https://old.test/', 'O', null, { at: NOW - RETENTION_MS - 1 })
+      expect(h.count(0, Infinity)).toBe(2)
+      expect(h.recent(5).some((e) => e.url === 'https://old.test/')).toBe(false)
+      h.visit('https://edge.test/', 'E', null, { at: NOW - RETENTION_MS })
+      expect(h.count(0, Infinity)).toBe(3)
+    })
+  })
+
+  describe('importVisits', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('writes a batch, keeps the list sorted and answers newest first', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      const result = h.importVisits(
+        [
+          { url: 'https://a.test/', title: 'A', at: NOW - 3 * DAY },
+          { url: 'https://b.test/', title: 'B', at: NOW - DAY, transition: 'typed' },
+          { url: 'https://a.test/', title: 'A newer', at: NOW - 2 * DAY, favicon: 'data:a' }
+        ],
+        { source: 'chrome' }
+      )
+      expect(result).toEqual({ imported: 3, skipped: 0 })
+      expect(h.visits({ limit: 10 }).map((v) => [v.url, v.visitTime, v.transition])).toEqual([
+        ['https://b.test/', NOW - DAY, 'typed'],
+        ['https://a.test/', NOW - 2 * DAY, 'link'],
+        ['https://a.test/', NOW - 3 * DAY, 'link']
+      ])
+      expect(h.visits({ host: 'a.test', limit: 5 }).map((v) => v.favicon)).toEqual([
+        'data:a',
+        'data:a'
+      ])
+      expect(new Set(h.visits({ limit: 10 }).map((v) => v.id)).size).toBe(3)
+      h.flushSync()
+      expect(storedVisits(io).map((v) => v.visitTime)).toEqual([
+        NOW - 3 * DAY,
+        NOW - 2 * DAY,
+        NOW - DAY
+      ])
+    })
+
+    it('skips duplicates by (url, at) against stored visits and within the batch', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://a.test/', 'A', null, { at: NOW - DAY })
+      const result = h.importVisits(
+        [
+          { url: 'https://a.test/', at: NOW - DAY },
+          { url: 'https://a.test/', at: NOW - 2 * DAY },
+          { url: 'https://a.test/', at: NOW - 2 * DAY, title: 'Again' },
+          { url: 'https://b.test/', at: NOW - 2 * DAY }
+        ],
+        { source: 'edge' }
+      )
+      expect(result).toEqual({ imported: 2, skipped: 2 })
+      expect(h.count(0, Infinity)).toBe(3)
+      expect(h.recent(5).find((e) => e.url === 'https://a.test/')).toMatchObject({
+        visitCount: 2,
+        firstVisit: NOW - 2 * DAY,
+        lastVisit: NOW - DAY
+      })
+    })
+
+    it('skips pages that never enter history, an unusable at, and visits past retention', () => {
+      const h = new HistoryService(fakeIo(), now)
+      const result = h.importVisits(
+        [
+          { url: 'zen://history', at: NOW - DAY },
+          { url: 'data:text/html,hi', at: NOW - DAY },
+          { url: 'view-source:https://a.test/', at: NOW - DAY },
+          { url: '', at: NOW - DAY },
+          { url: 'https://nan.test/', at: Number.NaN },
+          { url: 'https://inf.test/', at: Infinity },
+          { url: 'https://text.test/', at: '1' as unknown as number },
+          { url: 'https://future.test/', at: NOW + 1 },
+          { url: 'https://old.test/', at: NOW - RETENTION_MS - 1 },
+          { url: 'https://edge.test/', at: NOW - RETENTION_MS },
+          { url: 'https://ok.test/', at: NOW }
+        ],
+        { source: 'firefox' }
+      )
+      expect(result).toEqual({ imported: 2, skipped: 9 })
+      expect(h.visits({ limit: 10 }).map((v) => v.url)).toEqual([
+        'https://ok.test/',
+        'https://edge.test/'
+      ])
+    })
+
+    it('folds a batch into the aggregates once per page with the title and favicon rules', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://a.test/', 'Live title', 'data:live', { at: NOW - DAY })
+      h.visit('https://b.test/', '', null, { at: NOW - DAY })
+      h.visit('https://e.test/', 'E old', 'data:eold', { at: NOW - DAY })
+      const result = h.importVisits(
+        [
+          // Older than a.test's last visit: counted, never retitles it.
+          {
+            url: 'https://a.test/',
+            title: 'Stale',
+            favicon: 'data:stale',
+            at: NOW - 5 * DAY,
+            transition: 'typed'
+          },
+          { url: 'https://a.test/', title: 'Stale 2', at: NOW - 4 * DAY },
+          // Older than b.test's last visit, but b.test has no title or icon: fills them.
+          { url: 'https://b.test/', title: 'Filled', favicon: 'data:filled', at: NOW - 3 * DAY },
+          // A new page: the newest visit's title and icon stand for it.
+          { url: 'https://c.test/', title: 'C old', favicon: 'data:cold', at: NOW - 2 * DAY },
+          { url: 'https://c.test/', title: 'C new', at: NOW - DAY, transition: 'typed' },
+          { url: 'https://c.test/', at: NOW - 3_600_000 },
+          // Newer than e.test's last visit: replaces its title and icon.
+          { url: 'https://e.test/', title: 'E new', favicon: 'data:enew', at: NOW - 3_600_000 }
+        ],
+        { source: 'chrome' }
+      )
+      expect(result).toEqual({ imported: 7, skipped: 0 })
+      const byUrl = new Map(h.recent(10).map((e) => [e.url, e]))
+      expect(byUrl.get('https://a.test/')).toMatchObject({
+        title: 'Live title',
+        favicon: 'data:live',
+        visitCount: 3,
+        typedCount: 1,
+        firstVisit: NOW - 5 * DAY,
+        lastVisit: NOW - DAY
+      })
+      expect(byUrl.get('https://b.test/')).toMatchObject({
+        title: 'Filled',
+        favicon: 'data:filled',
+        visitCount: 2,
+        typedCount: 0,
+        firstVisit: NOW - 3 * DAY,
+        lastVisit: NOW - DAY
+      })
+      expect(byUrl.get('https://c.test/')).toMatchObject({
+        title: 'C new',
+        favicon: 'data:cold',
+        visitCount: 3,
+        typedCount: 1,
+        firstVisit: NOW - 2 * DAY,
+        lastVisit: NOW - 3_600_000
+      })
+      expect(byUrl.get('https://e.test/')).toMatchObject({
+        title: 'E new',
+        favicon: 'data:enew',
+        visitCount: 2,
+        firstVisit: NOW - DAY,
+        lastVisit: NOW - 3_600_000
+      })
+      expect(h.visits({ host: 'c.test', limit: 1 })[0]).toMatchObject({
+        title: 'https://c.test/',
+        favicon: 'data:cold'
+      })
+    })
+
+    it('applies retention and the caps once: a batch over MAX_VISITS keeps the newest', () => {
+      const h = new HistoryService(fakeIo(), now)
+      const writes = vi.spyOn(JsonStore.prototype, 'write')
+      const batch: ImportedVisit[] = []
+      for (let i = 0; i < 60_000; i++)
+        batch.push({ url: `https://s${i % 100}.test/`, at: NOW - i * 1000 })
+      expect(h.importVisits(batch, { source: 'chrome' })).toEqual({ imported: 60_000, skipped: 0 })
+      expect(h.count(0, Infinity)).toBe(MAX_VISITS)
+      const oldestKept = NOW - (MAX_VISITS - 1) * 1000
+      expect(h.count(0, oldestKept)).toBe(0)
+      expect(h.count(oldestKept, oldestKept + 1)).toBe(1)
+      expect(h.visits({ limit: 1 })[0].visitTime).toBe(NOW)
+      expect(h.recent(200)).toHaveLength(100)
+      expect(writes).toHaveBeenCalledTimes(1)
+    })
+
+    it('notifies and persists once per batch, imports nothing twice, and is silent on an empty batch', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      const writes = vi.spyOn(JsonStore.prototype, 'write')
+      const kinds: string[] = []
+      h.onChange((kind) => kinds.push(kind))
+      const batch: ImportedVisit[] = [
+        { url: 'https://a.test/', title: 'A', at: NOW - DAY },
+        { url: 'https://b.test/', title: 'B', at: NOW - 2 * DAY },
+        { url: 'https://c.test/', title: 'C', at: NOW - 3 * DAY }
+      ]
+      expect(h.importVisits(batch, { source: 'safari' })).toEqual({ imported: 3, skipped: 0 })
+      expect(writes).toHaveBeenCalledTimes(1)
+      expect(kinds).toEqual([])
+      vi.advanceTimersByTime(600)
+      expect(kinds).toEqual(['visit'])
+      expect(h.importVisits(batch, { source: 'safari' })).toEqual({ imported: 0, skipped: 3 })
+      expect(h.importVisits([], { source: 'safari' })).toEqual({ imported: 0, skipped: 0 })
+      expect(writes).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(600)
+      expect(kinds).toEqual(['visit'])
+      // Stored visits count as duplicates after a reload too.
+      h.flushSync()
+      expect(storedVisits(io)).toHaveLength(3)
+      const again = new HistoryService(io, now)
+      expect(again.importVisits(batch, { source: 'safari' })).toEqual({ imported: 0, skipped: 3 })
+      expect(again.count(0, Infinity)).toBe(3)
+    })
   })
 })
