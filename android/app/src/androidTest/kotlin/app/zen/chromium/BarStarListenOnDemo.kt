@@ -364,12 +364,14 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         check("the tab is on its first document (history.length 1: a script may close it)", field(VIDEO, "hl") == "1")
         check("nothing is fullscreen before the touch", host.fullscreenTab == null && htmlFullscreenTabId() == null)
         installGoneTabSampler()
-        // The chrome's clock against the driver's, for the page's close to be placed on the same
-        // line as the chrome's own timestamps.
+        // The chrome's clock against the driver's, for the page's close (stamped here, off the
+        // server's hit) to be placed on the chrome's own timeline: performance.now() read over one
+        // round trip and placed at its middle; half the round trip is the placing's slack.
         val t0 = SystemClock.uptimeMillis()
         val perf = jsonNumber(chromeJs("performance.now()"))
         val t1 = SystemClock.uptimeMillis()
         val chromeAtUptime = (t0 + t1) / 2.0 - perf
+        val clockSlack = (t1 - t0) / 2
         val hitsBefore = server.hits("/closing")
         val point = pagePoint(VIDEO, "#fs-close")
         check("the page's button is on screen for a finger", point != null)
@@ -378,22 +380,30 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         val entered = poll(15_000) { host.fullscreenTab?.tabId == VIDEO }
         val enteredAt = SystemClock.uptimeMillis()
         if (!entered) touchFault("a touch on the page's 'Play fullscreen, then close this tab' did not take the video fullscreen")
-        check("a finger on the page's button takes the video fullscreen (host fullscreenTab ${host.fullscreenTab?.tabId}, page fs=${field(VIDEO, "fs")})", entered)
+        check("a finger on the page's button takes the video fullscreen (host fullscreenTab ${host.fullscreenTab?.tabId})", entered)
         check("the chrome's HTML fullscreen names the tab", poll(5_000) { htmlFullscreenTabId() == VIDEO })
-        SystemClock.sleep(1_200)
+        // The page's own word a moment in (its title through the core): the fullscreen seen, the
+        // clip's state. The still is the fullscreen surface as the emulator composes it: this
+        // image's software decoder gives a black frame whatever the clip is doing.
+        poll(3_000) { field(VIDEO, "fs") == "1" }
+        finding("  the page a moment into the fullscreen: \"${title(VIDEO)}\"; the clip at ${pageJs(VIDEO, "document.getElementById('port').currentTime")} s")
+        check("the page saw its fullscreen (fs:1 in its title)", field(VIDEO, "fs") == "1")
+        SystemClock.sleep(800)
         still("fullscreen-gone-tab-01-fullscreen")
-        // The page closes its tab CLOSE_AFTER_MS into the fullscreen: the moments on the driver's clock.
+        // The page closes its tab CLOSE_AFTER_MS into the fullscreen: the moments on the driver's
+        // clock. The loop reads nothing over the chrome – a round trip there waits behind the
+        // exit's work and stamps everything at the same late tick (run 35539099244) – only the
+        // server's hit and the host's layer, both in this process, every 10 ms; the core's word
+        // comes from the chrome's own record afterwards.
         var beaconAt = -1L
         var layerGoneAt = -1L
-        var tabGoneAt = -1L
         val deadline = enteredAt + 20_000
         while (SystemClock.uptimeMillis() < deadline) {
             val now = SystemClock.uptimeMillis()
             if (beaconAt < 0 && server.hits("/closing") > hitsBefore) beaconAt = now
             if (layerGoneAt < 0 && host.fullscreenTab == null) layerGoneAt = now
-            if (tabGoneAt < 0 && chromeJs("!((window.__zenStores.browser.get().state||{tabs:{}}).tabs[${JSONObject.quote(VIDEO)}])") == "true") tabGoneAt = now
-            if (layerGoneAt >= 0 && tabGoneAt >= 0) break
-            SystemClock.sleep(25)
+            if (beaconAt >= 0 && layerGoneAt >= 0) break
+            SystemClock.sleep(10)
         }
         // The fade's 120 ms and whatever the exit still settles.
         SystemClock.sleep(3_000)
@@ -405,14 +415,15 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         val clearedAt = if (cleared.length() > 0) cleared.getJSONObject(0).optInt("at") else -1
         val fade = fades.firstOrNull(::isTheReturnFade)
         val fadeAt = fade?.optInt("at") ?: -1
+        val tabGoneMs = record.optInt("tabGone", -1)
         val recordT0 = record.optDouble("t0", Double.NaN)
         fun onDriverClock(chromeMs: Int): Long = (chromeAtUptime + recordT0 + chromeMs).toLong()
         val refused = field(VIDEO, "refused")
-        finding("  the page's close (its beacon) at +${beaconAt - enteredAt} ms after the fullscreen; the host's layer gone at +${layerGoneAt - enteredAt}; the tab gone from the core at +${tabGoneAt - enteredAt} (driver clock); page title now \"${title(VIDEO)}\"")
-        finding("  the chrome's record (ms since its sampler): fullscreen set ${record.optJSONArray("set")}; cleared $cleared; tab gone ${record.opt("tabGone")}; animate() on the window: ${fades.joinToString(" ") { "${it.optInt("at")}ms:${it.optJSONArray("keyframes")}/${it.opt("options")}" }.ifEmpty { "none" }}")
+        finding("  the page's close (its beacon at the server) at +${beaconAt - enteredAt} ms after the fullscreen; the host's layer gone at +${layerGoneAt - enteredAt} (driver clock, 10 ms polls); page title now \"${title(VIDEO)}\"")
+        finding("  the chrome's record (ms since its sampler): fullscreen set ${record.optJSONArray("set")}; cleared $cleared; tab gone $tabGoneMs; animate() on the window: ${fades.joinToString(" ") { "${it.optInt("at")}ms:${it.optJSONArray("keyframes")}/${it.opt("options")}" }.ifEmpty { "none" }}")
         finding("  the landing store on the way (ms: settling, reports, placed): ${(0 until landing.length()).joinToString(" ") { val e = landing.getJSONObject(it); "${e.optInt("at")}: ${e.opt("settling")} ${e.optInt("reports")} ${e.optJSONArray("placed")}" }.ifEmpty { "nothing logged" }}")
         finding("  chrome opacity per frame around the return (the frames under 1 with their neighbours): ${frames(record)}")
-        check("the page closed its own tab: the tab is gone from the core, the close not refused (refused=$refused)", tabGoneAt >= 0 && refused != "1" && tab(VIDEO) == null)
+        check("the page closed its own tab: the tab is gone from the core, the close not refused (refused=$refused)", tabGoneMs >= 0 && refused != "1" && tab(VIDEO) == null)
         check("the host's fullscreen layer went with the tab", layerGoneAt >= 0 && host.fullscreenTab == null)
         check("the window's HTML fullscreen ended with the tab (htmlFullscreenTabId null)", poll(5_000) { htmlFullscreenTabId() == null })
         check("the chrome's fullscreen state cleared on record (at $clearedAt ms)", clearedAt >= 0)
@@ -422,9 +433,12 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
             "the fade started within 300 ms of the chrome's fullscreen state clearing, not at the 2.5 s landing timeout (fade at $fadeAt ms, cleared at $clearedAt ms: held $held ms)",
             fade != null && clearedAt >= 0 && held in 0..300
         )
-        if (fade != null && beaconAt >= 0) {
-            val fadeUptime = onDriverClock(fadeAt)
-            finding("  supplementary, on the driver's clock: the page's close -> the fade ${fadeUptime - beaconAt} ms (the layer gone at +${layerGoneAt - beaconAt}, the tab gone from the core at +${tabGoneAt - beaconAt}; the thumbnail and the destroy sit between the close and the chrome's state)")
+        if (fade != null && beaconAt >= 0 && clearedAt >= 0) {
+            finding(
+                "  supplementary, on the driver's clock (the chrome's moments placed on it within ±$clockSlack ms): the page's close -> " +
+                    "the host's layer gone +${layerGoneAt - beaconAt} ms -> the chrome's state cleared +${onDriverClock(clearedAt) - beaconAt} ms -> " +
+                    "the fade +${onDriverClock(fadeAt) - beaconAt} ms (the thumbnail and the destroy sit between the close and the chrome's state)"
+            )
         }
         check("the chrome is fully back (opacity 1)", chromeOpacity() == "1")
         check("the article tab has the screen", activeCoreTab()?.optString("id") == ARTICLE)
@@ -509,11 +523,17 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         return runCatching { JSONObject(jsonString(raw)) }.getOrNull()
     }
 
-    /** The star's accessibility node: the clickable button reading Bookmark or Edit Bookmark (the menu is closed, so the bar's). */
+    /**
+     * The star's accessibility node: the one the WebView's tree names Bookmark or Edit Bookmark
+     * (the menu is closed, so the bar's). The labelled node is the one TalkBack reads and the one
+     * an `aria-pressed` would make checkable; the tree does not flag it clickable on this image
+     * (run 35539099244: the harness's own [clickByLabel] walks up to a clickable ancestor for the
+     * same reason), so nothing here asks that of it.
+     */
     private fun starNode(): AccessibilityNodeInfo? =
         findNodeWhere { node ->
             val name = node.contentDescription?.toString()
-            node.isClickable && (name == LABEL_STAR || name == LABEL_EDIT)
+            name == LABEL_STAR || name == LABEL_EDIT
         }
 
     private fun describe(node: AccessibilityNodeInfo?): String =
