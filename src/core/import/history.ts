@@ -48,13 +48,21 @@ export function chromiumTransition(raw: unknown): HistoryTransition | null {
   return core
 }
 
-export function chromiumHistoryVisits(db: ImportDatabase, now: number = Date.now()): ImportedVisits {
+export function chromiumHistoryVisits(
+  db: ImportDatabase,
+  now: number = Date.now()
+): ImportedVisits {
   const out: ImportedVisits = { visits: [], skipped: 0 }
   for (const row of db.all(CHROMIUM_HISTORY_SQL)) {
     const url = typeof row.url === 'string' ? row.url : ''
     const at = webkitToEpochMs(row.visit_time, now)
     const transition = chromiumTransition(row.transition)
-    if (!isImportableUrl(url) || at === undefined || transition === null || Number(row.hidden) === 1) {
+    if (
+      !isImportableUrl(url) ||
+      at === undefined ||
+      transition === null ||
+      Number(row.hidden) === 1
+    ) {
       out.skipped += 1
       continue
     }
@@ -97,7 +105,12 @@ export function firefoxHistoryVisits(db: ImportDatabase, now: number = Date.now(
     const url = typeof row.url === 'string' ? row.url : ''
     const at = prTimeToEpochMs(row.visit_date, now)
     const transition = firefoxTransition(row.visit_type)
-    if (!isImportableUrl(url) || at === undefined || transition === null || Number(row.hidden) === 1) {
+    if (
+      !isImportableUrl(url) ||
+      at === undefined ||
+      transition === null ||
+      Number(row.hidden) === 1
+    ) {
       out.skipped += 1
       continue
     }
@@ -132,7 +145,10 @@ export function safariHistoryVisits(db: ImportDatabase, now: number = Date.now()
 }
 
 /** Oldest first, the same (url, time) never twice. */
-export function dedupeVisits(visits: ImportedVisit[]): { visits: ImportedVisit[]; duplicates: number } {
+export function dedupeVisits(visits: ImportedVisit[]): {
+  visits: ImportedVisit[]
+  duplicates: number
+} {
   const seen = new Set<string>()
   const out: ImportedVisit[] = []
   let duplicates = 0

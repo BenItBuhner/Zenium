@@ -169,7 +169,11 @@ function readBigIntBE(view: DataView, at: number, size: number): bigint {
 }
 
 export function plistDict(value: PlistValue): PlistDict | null {
-  return value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Date)
+  return value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !(value instanceof Uint8Array) &&
+    !(value instanceof Date)
     ? (value as PlistDict)
     : null
 }

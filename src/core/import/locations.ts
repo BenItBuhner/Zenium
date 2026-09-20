@@ -84,10 +84,7 @@ export function chromiumUserDataDirs(browser: ChromiumBrowser, env: ImportEnviro
       if (browser === 'chrome')
         return [joinPath(config, 'google-chrome'), flatpak('com.google.Chrome', 'google-chrome')]
       if (browser === 'edge')
-        return [
-          joinPath(config, 'microsoft-edge'),
-          flatpak('com.microsoft.Edge', 'microsoft-edge')
-        ]
+        return [joinPath(config, 'microsoft-edge'), flatpak('com.microsoft.Edge', 'microsoft-edge')]
       return [
         joinPath(config, 'chromium'),
         joinPath(home, 'snap', 'chromium', 'common', 'chromium'),
@@ -155,7 +152,10 @@ const CHROMIUM_INTERNAL_PROFILES = new Set(['Guest Profile', 'System Profile'])
  * them: the last used first, then the rest by name. A profile's display name is its Google
  * account's name when it uses the default local name, else the local name.
  */
-export function parseLocalState(text: string): { profiles: ChromiumProfileInfo[]; lastUsed: string | null } {
+export function parseLocalState(text: string): {
+  profiles: ChromiumProfileInfo[]
+  lastUsed: string | null
+} {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -277,7 +277,8 @@ export function sqliteCompanions(path: string): string[] {
  * macOS, a `lockfile` on Windows.
  */
 export function chromiumLockPaths(userDataDir: string, os: PlatformOs): string[] {
-  const names = os === 'win32' ? ['lockfile'] : ['SingletonLock', 'SingletonSocket', 'SingletonCookie']
+  const names =
+    os === 'win32' ? ['lockfile'] : ['SingletonLock', 'SingletonSocket', 'SingletonCookie']
   return names.map((n) => joinPath(userDataDir, n))
 }
 

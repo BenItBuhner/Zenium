@@ -15,8 +15,7 @@ export function isMozLz4(bytes: Uint8Array): boolean {
 
 export function decodeMozLz4(bytes: Uint8Array): string {
   if (!isMozLz4(bytes)) throw new Error('Not a mozlz4 file.')
-  const size =
-    (bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24)) >>> 0
+  const size = (bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24)) >>> 0
   const block = decodeLz4Block(bytes.subarray(12), size)
   return new TextDecoder().decode(block)
 }

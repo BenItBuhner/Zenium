@@ -65,7 +65,10 @@ export function fileSources(passwordsAvailable: boolean): ImportSource[] {
 }
 
 /** The way round for passwords a source keeps where no other app can read them. */
-export function passwordLimit(browser: ChromiumBrowser | 'firefox' | 'safari', os: PlatformOs): string {
+export function passwordLimit(
+  browser: ChromiumBrowser | 'firefox' | 'safari',
+  os: PlatformOs
+): string {
   const name = BROWSER_NAMES[browser]
   if (browser === 'firefox')
     return `Firefox keeps its passwords in its own encrypted store. Export them from Firefox (Passwords, then Export passwords) and import the CSV file here.`

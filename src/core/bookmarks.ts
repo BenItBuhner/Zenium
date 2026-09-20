@@ -12,7 +12,12 @@ import {
   topLevelSelection,
   type BookmarkTreeNode
 } from '../shared/bookmarks'
-import { parseNetscapeHtml, planNetscapeImport, serializeNetscapeHtml } from '../shared/netscape'
+import {
+  parseNetscapeHtml,
+  planNetscapeImport,
+  serializeNetscapeHtml,
+  type NetscapeDocument
+} from '../shared/netscape'
 import type { BrowserState } from './state'
 
 export interface CreateBookmarkOptions {

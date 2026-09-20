@@ -58,7 +58,11 @@ export function parseChromiumBookmarks(text: string, now: number = Date.now()): 
     return null
   }
   const seen = new Set<string>()
-  const addRoot = (key: string, flags: { toolbar?: boolean; unfiled?: boolean }, title?: string): void => {
+  const addRoot = (
+    key: string,
+    flags: { toolbar?: boolean; unfiled?: boolean },
+    title?: string
+  ): void => {
     const root = record(roots[key])
     if (!root) return
     seen.add(key)

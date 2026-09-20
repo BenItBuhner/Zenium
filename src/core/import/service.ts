@@ -70,7 +70,15 @@ export class ImportError extends Error {
 }
 
 /** Error codes a file read gets when another process holds the file (or the OS denies the read). */
-const LOCK_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ELOCK', 'ETXTBSY', 'SQLITE_BUSY', 'SQLITE_LOCKED'])
+const LOCK_CODES = new Set([
+  'EBUSY',
+  'EPERM',
+  'EACCES',
+  'ELOCK',
+  'ETXTBSY',
+  'SQLITE_BUSY',
+  'SQLITE_LOCKED'
+])
 
 function errorCode(error: unknown): string {
   const e = error as { code?: unknown } | null
@@ -122,7 +130,11 @@ export class ImportService {
     return this.progress?.status === 'running'
   }
 
-  async run(sourceId: string, kinds: ImportKind[], win?: ZenWindow): Promise<ImportProgress | null> {
+  async run(
+    sourceId: string,
+    kinds: ImportKind[],
+    win?: ZenWindow
+  ): Promise<ImportProgress | null> {
     if (this.running) return this.progress
     const source = (await this.sources()).find((s) => s.id === sourceId)
     if (!source) return null
@@ -258,7 +270,8 @@ export class ImportService {
         }
         const dir = joinPath(source.path, FIREFOX_FILES.backups)
         const newest = newestFirefoxBackup(await host.list(dir))
-        if (!newest) throw new ImportError('Firefox has no readable bookmarks or backups in this profile.')
+        if (!newest)
+          throw new ImportError('Firefox has no readable bookmarks or backups in this profile.')
         const bytes = await host.readBytes(joinPath(dir, newest))
         return {
           result: firefoxBookmarksFromBackup(decodeFirefoxBackup(bytes), this.now()),
@@ -276,14 +289,17 @@ export class ImportService {
 
   private async importHistory(source: ImportSource, outcome: ImportKindOutcome): Promise<void> {
     const sink = historyImportSink(this.browser.history)
-    if (!sink) throw new ImportError('Browsing history cannot be imported on this version of Zenium.')
+    if (!sink)
+      throw new ImportError('Browsing history cannot be imported on this version of Zenium.')
     let read: ImportedVisits
     switch (source.browser) {
       case 'chrome':
       case 'chromium':
       case 'edge':
-        read = await this.withDatabase(source, joinPath(source.path, CHROMIUM_FILES.history), (db) =>
-          chromiumHistoryVisits(db, this.now())
+        read = await this.withDatabase(
+          source,
+          joinPath(source.path, CHROMIUM_FILES.history),
+          (db) => chromiumHistoryVisits(db, this.now())
         )
         break
       case 'firefox':
@@ -324,12 +340,15 @@ export class ImportService {
       const path = joinPath(source.path, file)
       if ((await host.stat(path)) !== 'file') continue
       found = true
-      const part = await this.withDatabase(source, path, (db) => chromiumLogins(db, keys, this.now()))
+      const part = await this.withDatabase(source, path, (db) =>
+        chromiumLogins(db, keys, this.now())
+      )
       read.logins.push(...part.logins)
       read.unreadable += part.unreadable
       read.invalid += part.invalid
     }
-    if (!found) throw new ImportError(`${source.browserName} has no saved passwords in this profile.`)
+    if (!found)
+      throw new ImportError(`${source.browserName} has no saved passwords in this profile.`)
     outcome.unreadable += read.unreadable
     outcome.invalid += read.invalid
     if (read.unreadable > 0 && !secret)
@@ -339,7 +358,12 @@ export class ImportService {
           : `${read.unreadable} ${plural(read.unreadable, 'password')} could not be opened: they are protected by the system keyring, which could not be read.`
     if (read.logins.length === 0) return
     await this.ensureVaultUnlocked()
-    const result = this.browser.passwords.store.importRows(read.logins, 'skip', source.browser, this.now())
+    const result = this.browser.passwords.store.importRows(
+      read.logins,
+      'skip',
+      source.browser,
+      this.now()
+    )
     outcome.imported += result.added + result.replaced
     outcome.duplicates += result.skipped
     outcome.invalid += result.invalid
@@ -349,7 +373,8 @@ export class ImportService {
     const passwords = this.browser.passwords
     if (passwords.store.unlocked()) return
     const gate = await passwords.unlock()
-    if (gate.status !== 'ok' || !passwords.store.unlocked()) throw new ImportError(VAULT_LOCKED_MESSAGE)
+    if (gate.status !== 'ok' || !passwords.store.unlocked())
+      throw new ImportError(VAULT_LOCKED_MESSAGE)
   }
 
   // ---------------------------------------------------------------------------
@@ -386,13 +411,13 @@ export class ImportService {
 
   /**
    * Copy the database with its `-wal` / `-shm` / `-journal` companions into a temp dir, open the
-   * copy read-only, run `use`, and clean up whatever happened. A copy the source browser refuses
+   * copy read-only, run `read`, and clean up whatever happened. A copy the source browser refuses
    * (Windows' exclusive share) becomes the lock refusal.
    */
   private async withDatabase<T>(
     source: ImportSource,
     path: string,
-    use: (db: ImportDatabase) => T | Promise<T>
+    read: (db: ImportDatabase) => T | Promise<T>
   ): Promise<T> {
     const host = this.requireHost()
     let dir: string | null = null
@@ -400,10 +425,11 @@ export class ImportService {
       const copy = await host.copyToTemp(sqliteCompanions(path))
       dir = copy.dir
       const main = copy.copies[0]
-      if (!main) throw new ImportError(`${source.browserName} has no ${fileLabel(path)} in this profile.`)
+      if (!main)
+        throw new ImportError(`${source.browserName} has no ${fileLabel(path)} in this profile.`)
       const db = await host.openSqlite(main)
       try {
-        return await use(db)
+        return await read(db)
       } finally {
         db.close()
       }
@@ -421,7 +447,9 @@ export class ImportService {
       return new ImportError(fullDiskAccessMessage())
     if (source.running || LOCK_CODES.has(code) || /locked|busy/i.test(messageOf(error)))
       return new ImportError(lockedMessage(source.browserName), true)
-    return new ImportError(`Could not read ${source.browserName}'s ${fileLabel(path)}: ${messageOf(error)}`)
+    return new ImportError(
+      `Could not read ${source.browserName}'s ${fileLabel(path)}: ${messageOf(error)}`
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -437,8 +465,16 @@ export class ImportService {
     const isBookmarks = source.id === FILE_SOURCE_IDS.bookmarks
     const files = await this.browser.platform.dialogs.pickTextFiles(
       isBookmarks
-        ? { title: 'Import bookmarks', extensions: ['html', 'htm'], maxBytes: MAX_IMPORT_FILE_BYTES }
-        : { title: 'Import passwords from CSV', extensions: ['csv', 'txt'], maxBytes: MAX_IMPORT_FILE_BYTES },
+        ? {
+            title: 'Import bookmarks',
+            extensions: ['html', 'htm'],
+            maxBytes: MAX_IMPORT_FILE_BYTES
+          }
+        : {
+            title: 'Import passwords from CSV',
+            extensions: ['csv', 'txt'],
+            maxBytes: MAX_IMPORT_FILE_BYTES
+          },
       win
     )
     // The picker took the chrome's focus; see `Browser.importBookmarks`.
@@ -455,7 +491,12 @@ export class ImportService {
           const doc = parseNetscapeHtml(file.text)
           if (doc.items.length === 0) continue
           any = true
-          this.writeBookmarks({ items: doc.items, skipped: 0 }, IMPORTED_FOLDER_TITLES.file, outcome, progress)
+          this.writeBookmarks(
+            { items: doc.items, skipped: 0 },
+            IMPORTED_FOLDER_TITLES.file,
+            outcome,
+            progress
+          )
         }
         if (!any) throw new ImportError('No bookmarks were found in that file.')
       } else {

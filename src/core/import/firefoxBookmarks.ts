@@ -55,7 +55,10 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-export function firefoxBookmarksFromPlaces(db: ImportDatabase, now: number = Date.now()): ImportedBookmarks {
+export function firefoxBookmarksFromPlaces(
+  db: ImportDatabase,
+  now: number = Date.now()
+): ImportedBookmarks {
   const rows: Row[] = db.all(FIREFOX_BOOKMARKS_SQL).map((r) => ({
     id: num(r.id),
     type: num(r.type),
@@ -126,7 +129,10 @@ export function decodeFirefoxBackup(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes)
 }
 
-export function firefoxBookmarksFromBackup(text: string, now: number = Date.now()): ImportedBookmarks {
+export function firefoxBookmarksFromBackup(
+  text: string,
+  now: number = Date.now()
+): ImportedBookmarks {
   let data: unknown
   try {
     data = JSON.parse(text)
@@ -137,7 +143,13 @@ export function firefoxBookmarksFromBackup(text: string, now: number = Date.now(
   if (!root || !Array.isArray(root.children)) throw new Error('The bookmark backup has no roots.')
   const out: ImportedBookmarks = { items: [], skipped: 0 }
   const convert = (node: Record<string, unknown>): ImportedBookmarkItem | null => {
-    const typeCode = num(node.typeCode) || (node.type === 'text/x-moz-place-container' ? TYPE_FOLDER : node.type === 'text/x-moz-place' ? TYPE_BOOKMARK : 0)
+    const typeCode =
+      num(node.typeCode) ||
+      (node.type === 'text/x-moz-place-container'
+        ? TYPE_FOLDER
+        : node.type === 'text/x-moz-place'
+          ? TYPE_BOOKMARK
+          : 0)
     const title = str(node.title)
     const addDate = prTimeToEpochMs(node.dateAdded, now)
     if (typeCode === TYPE_FOLDER) {
@@ -163,7 +175,12 @@ export function firefoxBookmarksFromBackup(text: string, now: number = Date.now(
         return null
       }
       const icon = str(node.iconUri)
-      return bookmark(title, url, { addDate }, icon && !icon.startsWith('fake-favicon-uri:') ? icon : undefined)
+      return bookmark(
+        title,
+        url,
+        { addDate },
+        icon && !icon.startsWith('fake-favicon-uri:') ? icon : undefined
+      )
     }
     out.skipped += 1
     return null
