@@ -139,7 +139,7 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
             "no aria-pressed on the star, its node not checkable (a button, not a toggle)",
             rest != null && rest.isNull("pressed") && restNode != null && !restNode.isCheckable
         )
-        check("TalkBack names it '$LABEL_STAR'", restNode?.contentDescription?.toString() == LABEL_STAR)
+        check("TalkBack names it '$LABEL_STAR'", restNode?.let(::nameOf) == LABEL_STAR)
         still("bar-star-01-outlined-light-bottom")
         beat()
 
@@ -183,7 +183,7 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         )
         check(
             "still no aria-pressed once filled; TalkBack names it '$LABEL_EDIT'",
-            filledDom != null && filledDom.isNull("pressed") && filledNode != null && !filledNode.isCheckable && filledNode.contentDescription?.toString() == LABEL_EDIT
+            filledDom != null && filledDom.isNull("pressed") && filledNode != null && !filledNode.isCheckable && nameOf(filledNode) == LABEL_EDIT
         )
         check("a touch on the toast's Edit opened the editor sheet", editFromToast)
         if (editFromToast) {
@@ -381,15 +381,20 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
         val enteredAt = SystemClock.uptimeMillis()
         if (!entered) touchFault("a touch on the page's 'Play fullscreen, then close this tab' did not take the video fullscreen")
         check("a finger on the page's button takes the video fullscreen (host fullscreenTab ${host.fullscreenTab?.tabId})", entered)
-        check("the chrome's HTML fullscreen names the tab", poll(5_000) { htmlFullscreenTabId() == VIDEO })
-        // The page's own word a moment in (its title through the core): the fullscreen seen, the
-        // clip's state. The still is the fullscreen surface as the emulator composes it: this
-        // image's software decoder gives a black frame whatever the clip is doing.
-        poll(3_000) { field(VIDEO, "fs") == "1" }
-        finding("  the page a moment into the fullscreen: \"${title(VIDEO)}\"; the clip at ${pageJs(VIDEO, "document.getElementById('port').currentTime")} s")
-        check("the page saw its fullscreen (fs:1 in its title)", field(VIDEO, "fs") == "1")
-        SystemClock.sleep(800)
+        // The still first, ahead of every round trip to the chrome (each takes the better part
+        // of a second under the fullscreen's software decode on this image, run 35539766163),
+        // since the page closes its tab CLOSE_AFTER_MS into the fullscreen. It is the fullscreen
+        // surface as the emulator composes it: the image's software decoder gives a black frame
+        // whatever the clip is doing (the page's title says what it is doing).
+        SystemClock.sleep(1_000)
         still("fullscreen-gone-tab-01-fullscreen")
+        check("the chrome's HTML fullscreen names the tab", poll(5_000) { htmlFullscreenTabId() == VIDEO })
+        // The page's own word a moment in, read off its title through the core: nothing is asked
+        // of the page itself (its `evaluateJavascript` answered late under the fullscreen).
+        var word = title(VIDEO)
+        poll(2_000) { word = title(VIDEO); word.contains("|fs:1|") }
+        finding("  the page a moment into the fullscreen: \"$word\"")
+        check("the page saw its fullscreen, its clip playing (fs:1, state:playing in its title)", word.contains("|fs:1|") && word.contains("|state:playing|"))
         // The page closes its tab CLOSE_AFTER_MS into the fullscreen: the moments on the driver's
         // clock. The loop reads nothing over the chrome – a round trip there waits behind the
         // exit's work and stamps everything at the same late tick (run 35539099244) – only the
@@ -525,20 +530,26 @@ class BarStarListenOnDemo : DemoHarness("bar-star-listen-on-demo-state.json", "a
 
     /**
      * The star's accessibility node: the one the WebView's tree names Bookmark or Edit Bookmark
-     * (the menu is closed, so the bar's). The labelled node is the one TalkBack reads and the one
-     * an `aria-pressed` would make checkable; the tree does not flag it clickable on this image
-     * (run 35539099244: the harness's own [clickByLabel] walks up to a clickable ancestor for the
-     * same reason), so nothing here asks that of it.
+     * (the menu is closed, so the bar's). The name is what TalkBack reads – the WebView carries a
+     * button's `aria-label` as the node's text, not its content description (runs 35539099244 and
+     * 35539766163: the harness's text-or-description match touched the star while a read of the
+     * description alone found nothing), so [nameOf] takes either – and the node an `aria-pressed`
+     * would make checkable. The tree does not flag it clickable on this image (the harness's own
+     * [clickByLabel] walks up to a clickable ancestor for the same reason), so nothing asks that.
      */
     private fun starNode(): AccessibilityNodeInfo? =
         findNodeWhere { node ->
-            val name = node.contentDescription?.toString()
+            val name = nameOf(node)
             name == LABEL_STAR || name == LABEL_EDIT
         }
 
+    /** What TalkBack reads for the node: its text, else its content description. */
+    private fun nameOf(node: AccessibilityNodeInfo): String? =
+        node.text?.toString()?.takeIf { it.isNotEmpty() } ?: node.contentDescription?.toString()
+
     private fun describe(node: AccessibilityNodeInfo?): String =
         if (node == null) "MISSING"
-        else "'${node.contentDescription}' ${node.className} checkable=${node.isCheckable} checked=${node.isChecked} clickable=${node.isClickable} enabled=${node.isEnabled}"
+        else "text '${node.text}' description '${node.contentDescription}' ${node.className} checkable=${node.isCheckable} checked=${node.isChecked} clickable=${node.isClickable} enabled=${node.isEnabled}"
 
     private fun editorUp(): Boolean = chromeJs("!!(window.__zenStores.ui.get().bookmarkEdit)") == "true"
 
