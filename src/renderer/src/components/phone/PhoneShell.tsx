@@ -1,9 +1,9 @@
 import type { CSSProperties, JSX } from 'react'
 import { useEffect, useRef } from 'react'
-import { Globe, Languages, Lock, Search } from 'lucide-react'
+import { Globe, Languages, Lock, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
-import { displayHost, isEmptyTabUrl, isWebPageUrl } from '@shared/url'
+import { displayHost, isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import {
@@ -445,8 +445,9 @@ export function PillContent({
   // while the translation shows), as on the desktop pill at rest; other pages keep the pill clear.
   const translation = shown && isWebPageUrl(shown.url) ? translateStateOf(state, shown.id) : null
   const translateBarUp = shown ? barStateOf(state, shown.id) !== null : false
-  // The mask glyph of a private tab without a page is drawn at the phone's 20 (v2 §9.19).
-  const iconSize = shown && isPrivateTab(shown) && isEmptyTabUrl(shown.url) ? 20 : 16
+  // The private marker: the mask glyph in the pill's leading slot on every private tab, page or
+  // none, at the phone's 20 (v2 §9.19; Chrome's incognito toolbar glyph).
+  const privateMark = shown ? isPrivateTab(shown) : false
   const Control = interactive ? 'button' : 'span'
   const controlProps = interactive ? { type: 'button' as const } : {}
   return (
@@ -480,19 +481,26 @@ export function PillContent({
           popup="dialog"
           expanded={siteInfoOpen}
           data-site-info
+          data-private-mark={privateMark || undefined}
           className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
         >
-          <Favicon tab={shown} size={iconSize} />
+          {privateMark ? (
+            <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+          ) : (
+            <Favicon tab={shown} size={16} />
+          )}
         </PillChip>
       ) : (
         <Search className="order-first h-4 w-4 shrink-0 opacity-60" />
       )}
       {/*
-        The private marker (v2 §9.19): while the private tab has no page the mask glyph stands in
-        its favicon slot (`Favicon`) and that is all; once it has one the favicon shows like any
-        other. The pill carries no "Private" badge – the private theme on the whole window, the
-        mask in the overview header and on the tab card say it, and a badge would cost the host
-        its room on a phone; badges are for lists that mix private and normal items.
+        The private marker (v2 §9.19): on a private tab the mask glyph takes the pill's leading
+        slot in place of the favicon, page or none, the way Chrome's incognito toolbar carries its
+        glyph; the slot stays the site-information chip, so site information opens from the mask
+        as it does from a favicon. The pill carries no "Private" badge – the private theme on the
+        whole window, the mask here, in the overview header and on the tab card say it, and a
+        badge would cost the host its room on a phone; badges are for lists that mix private and
+        normal items.
       */}
       {shown && !page && !extension && state.capabilities.requestBlocking && (
         <BlockedChip tab={shown} state={state} variant="phone" interactive={interactive} />
