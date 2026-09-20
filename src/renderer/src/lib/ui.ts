@@ -1051,6 +1051,11 @@ export function closeBookmarkChrome(
 
 /** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
+  // The sheet is the Home-screen install's (the phone's chassis); a desktop install gets its own
+  // dialog, still to land – until it does, a desktop prompt is not shown here. (The core sends
+  // none to a window without an install surface up; this keeps the sheet off the desktop even
+  // should one arrive.)
+  if (prompt.surface === 'desktop') return
   await captureActiveTab(prompt.tabId)
   run('focus.chrome', undefined)
   uiStore.set({ install: prompt, drawerOpen: false })

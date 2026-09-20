@@ -484,12 +484,14 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     support: { desktop: 'enforced', android: 'n-a' }
   },
   {
+    // The picker is the consent (Chrome has no separate screen-sharing prompt): a site the row
+    // allows gets the picker, whose cancel refuses the call; a site set to Deny gets no picker.
     id: 'display-capture',
     label: 'Screen sharing',
-    description: 'Zenium does not share your screen with sites',
+    description: 'Sites can ask to share your screen, a window or a tab; you pick what they see',
     group: 'additional',
-    builtInDefault: 'deny',
-    choices: ['deny'],
+    builtInDefault: 'allow',
+    choices: ['allow', 'deny'],
     promptLabel: null,
     allowOnce: false,
     support: { desktop: 'enforced', android: 'n-a' }

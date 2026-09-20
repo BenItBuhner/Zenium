@@ -44,6 +44,8 @@ const DESKTOP: HostCapabilities = {
   pinShortcuts: false,
   translate: true,
   voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
   selectionToolbar: false,
   popupSurface: true,
   qrScan: false

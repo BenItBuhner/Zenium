@@ -176,6 +176,8 @@ export class FullscreenService {
     const before = this.windowFullscreen.get(win.id) ?? false
     if (fullscreen === before) return
     this.windowFullscreen.set(win.id, fullscreen)
+    // Its pages' `display-mode` is `fullscreen` now (or no longer), as in Chrome.
+    this.browser.pushDisplayMode(win)
     const active = this.browser.tabs.activeTabFor(win)
     if (!fullscreen) {
       if (this.holdWindow === win) {
