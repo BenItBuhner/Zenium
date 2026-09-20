@@ -249,9 +249,11 @@ abstract class FakeboxMorphDemoBase(
      * A finger on the field at rest: the field flies to the omnibox (over the keyboard, whose rise
      * moves the target under the segment at a bottom dock), lands, and the dismissal runs it
      * home – a real finger on the omnibox's scrim (`dismiss = "scrim"`: the largest free band of
-     * the frame beside the sheet, the field and the keyboard, [scrimPoint]; the shared close when
-     * none is 48 px tall) or the shared close by the chrome's state (a back for the keyboard, one
-     * for the field). Both reach the same held close (`interceptUrlbarClose`).
+     * the frame beside the sheet, the field and the keyboard, [scrimPoint]; with the keyboard up
+     * in portrait there is none, so one back puts the keyboard away first – the back the shared
+     * close would spend on it – and the finger goes to the band it frees; the shared close when
+     * none is 48 px tall even then) or the shared close by the chrome's state (a back for the
+     * keyboard, one for the field). Both reach the same held close (`interceptUrlbarClose`).
      */
     private fun tapAndDismiss(scene: String, edge: String, keyboard: Boolean, dismiss: String = "back") {
         section(
@@ -272,15 +274,23 @@ abstract class FakeboxMorphDemoBase(
         judge(scene, opening, reducedRun = reduced, g = g, opening = true)
 
         startSampling()
-        val scrim = if (dismiss == "scrim") tapScrim() else null
+        var keyboardPutAway = false
+        var scrim = if (dismiss == "scrim") tapScrim() else null
+        if (dismiss == "scrim" && scrim == null && imeShown()) {
+            back()
+            keyboardPutAway = awaitIme(shown = false, timeoutMs = 4_000)
+            SystemClock.sleep(600)
+            scrim = tapScrim()
+        }
         val close = if (scrim == null) closeUrlField() else null
         val rested = awaitPhase("rest", 6_000)
         SystemClock.sleep(700)
         shot("$scene-closed")
         val closing = stopSampling(scene + "-closing")
+        val keyboard = if (keyboardPutAway) "the keyboard put away by one back first; " else ""
         val how = when {
-            scrim != null -> "scrim tapped at $scrim"
-            dismiss == "scrim" -> "no scrim to tap (the sheet, the field and the keyboard fill the frame): the shared close instead, ${close?.describe()}"
+            scrim != null -> "${keyboard}scrim tapped at $scrim"
+            dismiss == "scrim" -> "${keyboard}no scrim to tap (the sheet and the field fill the frame): the shared close instead, ${close?.describe()}"
             else -> close?.describe()
         }
         finding("  $how; phase ${phaseNow()}; ${FakeboxMorph.describe(closing)}")
@@ -291,9 +301,13 @@ abstract class FakeboxMorphDemoBase(
     /**
      * A second tap on the double mid-flight is nothing (the machine: a tap on a field opening or
      * open changes nothing), and the field goes on to land as if untouched – a real finger on the
-     * double's `pointer-events-auto` over the omnibox's scrim, the layer's own guard. The tap is
-     * aimed a little ahead of the box toward the omnibox's field, where the box will be over the
-     * tap's 60 ms ([TAP_LEAD], as the turn's is), so the click does land on the double.
+     * double's `pointer-events-auto` over the omnibox's scrim, the layer's own guard. The double
+     * is caught anywhere on its way ([RETAP_FROM] to [RETAP_TO] of the value: the omnibox opening
+     * under it and the keyboard rising put the emulator's chrome at a frame or two a second, and
+     * a reading of the machine comes back about once a frame, so a narrow window is never seen),
+     * and the tap is aimed a little ahead of the box toward the omnibox's field, where the box
+     * will be over the tap's 60 ms ([RETAP_LEAD]: less than the turn's, since the box is caught
+     * at any pace of the spring's, the fastest included).
      */
     private fun retapMidFlight(scene: String) {
         section("$scene: a second tap on the double mid-flight changes nothing")
@@ -303,17 +317,17 @@ abstract class FakeboxMorphDemoBase(
         tapField()
         var retapped: PointF? = null
         var at = ""
-        val deadline = SystemClock.uptimeMillis() + 2_000
+        val deadline = SystemClock.uptimeMillis() + 6_000
         while (SystemClock.uptimeMillis() < deadline) {
             val s = snapshot()
             val ph = s.optString("ph")
             val m = s.optDouble("m", 0.0)
-            if (ph == "opening" && m > 0.2 && m < 0.75) {
+            if (ph == "opening" && m > RETAP_FROM && m < RETAP_TO) {
                 val box = s.optJSONObject("d") ?: break
                 val target = s.optJSONObject("of")
                 val cy = (box.getDouble("y") + box.getDouble("h") / 2).toFloat()
                 val ty = target?.let { (it.getDouble("y") + it.getDouble("h") / 2).toFloat() } ?: cy
-                val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, TAP_LEAD) * density)
+                val p = PointF(((box.getDouble("x") + box.getDouble("w") / 2) * density).toFloat(), FakeboxMorph.lerp(cy, ty, RETAP_LEAD) * density)
                 Finger().tap(p.x, p.y)
                 retapped = p
                 at = "m ${"%.2f".format(m)}"
@@ -326,7 +340,7 @@ abstract class FakeboxMorphDemoBase(
         awaitIme(shown = true, timeoutMs = 4_000)
         SystemClock.sleep(900)
         val frames = stopSampling(scene)
-        finding("  second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE (the flight was over before the double was caught between .2 and .75)"}; open $opened; ${FakeboxMorph.describe(frames)}")
+        finding("  second tap ${retapped?.let { "at $it ($at)" } ?: "NOWHERE (the flight was over before the double was caught between $RETAP_FROM and $RETAP_TO)"}; open $opened; ${FakeboxMorph.describe(frames)}")
         check(scene, "the double was caught mid-flight for the second tap", retapped != null, at.ifEmpty { "not caught" })
         check(scene, "the flight went on to the landing unturned", opened && frames.none { it.phase == "closing" }, "open $opened, phases ${frames.map { it.phase }.distinct()}")
         judge(scene, frames, reducedRun = false, g = g, opening = true)
@@ -534,13 +548,29 @@ abstract class FakeboxMorphDemoBase(
         c.hold(300)
         c.up()
         val committed = SystemClock.uptimeMillis()
-        val rested = awaitPhase("rest", 6_000)
+        val rested = awaitPhase("rest", 8_000)
         val latency = SystemClock.uptimeMillis() - committed
         SystemClock.sleep(600)
         shot("$scene-committed")
         val frames2 = stopSampling(scene + "-commit")
+        // The bar's spring runs the field home over the emulator's frames (a 300 ms spring takes
+        // seconds at four frames a second, the step clamped per frame), so the claim is by frames:
+        // the first rest frame follows the one the field came home on, no frame between holding
+        // the bar (and its scrim) over a field at rest. The wall-clock latency is the emulator's.
+        val home = frames2.indexOfFirst { it.pulled && it.morph <= 0.01f }
+        val rest = frames2.indexOfFirst { it.phase == "rest" }
+        val between = if (home >= 0 && rest > home) rest - home - 1 else -1
         finding("  committed: at rest $rested after $latency ms (poll resolution ${POLL_MS} ms); ${FakeboxMorph.describe(frames2)}")
-        check(scene, "the commit closed the bar at once (no scrim held after it)", rested && latency < 400, "$latency ms to rest")
+        check(
+            scene, "the commit closed the bar at once (no scrim held after it)",
+            rested && home >= 0 && rest > home && between <= 1,
+            when {
+                !rested -> "never at rest"
+                home < 0 -> "no pulled frame had the field home (m 0)"
+                rest <= home -> "no rest frame after the field came home"
+                else -> "the field home on frame $home (${frames2[home].t} ms), at rest on frame $rest (${frames2[rest].t} ms), $between frame(s) between; $latency ms by the clock"
+            }
+        )
         report(scene, FakeboxMorph.oneSurface(frames2))
         report(scene, FakeboxMorph.noJump(frames2))
         report(scene, FakeboxMorph.barStays(frames2))
@@ -587,16 +617,26 @@ abstract class FakeboxMorphDemoBase(
         dockedPillTap(scene, g, docked)
 
         startSampling()
-        val b = Finger()
-        b.down(x, startY - total * 0.6f)
-        b.moveBy(0f, total * 0.6f + 20f * density, 1_100)
-        b.hold(600)
-        b.up()
-        SystemClock.sleep(900)
+        // The same finger back to the top: a steady swipe the whole scroll long (and a little over),
+        // and where the page is still scrolled when it lifts – the touch slop and the first frames
+        // of a swipe move the finger, not the page – another for what is left, up to three.
+        var strokes = 0
+        var left = snapshot().optDouble("sc").toFloat()
+        while (left > 0.5f && strokes < 3) {
+            val b = Finger()
+            val distance = (left + 20f) * density
+            b.down(x, (startY - distance).coerceAtLeast(touchable.top + 24f * density))
+            b.moveBy(0f, distance, (900 + 200 * strokes).toLong())
+            b.hold(600)
+            b.up()
+            SystemClock.sleep(900)
+            strokes++
+            left = snapshot().optDouble("sc").toFloat()
+        }
         shot("$scene-back")
         val down = stopSampling(scene + "-down")
         val home = snapshot()
-        finding("  scrolled back to ${"%.1f".format(home.optDouble("sc"))} CSS px: look '${home.optString("lk").ifEmpty { "rest" }}'; ${FakeboxMorph.describe(down)}")
+        finding("  scrolled back to ${"%.1f".format(home.optDouble("sc"))} CSS px in $strokes stroke(s): look '${home.optString("lk").ifEmpty { "rest" }}'; ${FakeboxMorph.describe(down)}")
         report(scene, if (g.dockBelow) FakeboxMorph.ridesWithPage(down, g) else FakeboxMorph.scrubOnTheLine(down, g))
         report(scene, FakeboxMorph.oneSurface(down))
         report(scene, FakeboxMorph.noJump(down, g))
@@ -1048,13 +1088,20 @@ abstract class FakeboxMorphDemoBase(
         /** The interruption scenes race the spring (some 300 ms of flight): tries before the scene counts as failed. */
         private const val ATTEMPTS = 3
         /**
-         * The closing's value under which the double is caught for the turn: the spring's tail
-         * (`SPRING_SNAPPY` 420 / 40 is all but critically damped: .16 at about 170 ms, at rest by
-         * 320), where some 150 ms remain and the box covers a tenth of the travel per 60 ms tap.
+         * The closing's value under which the double is caught for the turn: the spring's second
+         * half (`SPRING_SNAPPY` 420 / 40 is all but critically damped: .25 at about 140 ms, .16 at
+         * 170, at rest by 320), where some 180 ms remain – a reading of the machine comes back
+         * once a frame or so, so the tail alone (.16) may never be read in time – and the box
+         * still moves, which the tap's lead ([TAP_LEAD]) allows for.
          */
-        private const val TURN_AT = 0.16
+        private const val TURN_AT = 0.25
         /** How far from the box's centre toward the field's rest box the turn's tap is aimed: where the box will be mid-tap. */
         private const val TAP_LEAD = 0.4f
+        /** The opening's values between which the double is caught for the second tap: any pace of the flight but its two ends. */
+        private const val RETAP_FROM = 0.1
+        private const val RETAP_TO = 0.95
+        /** The second tap's lead toward the omnibox's field: a little, since the box may be caught at the spring's fastest. */
+        private const val RETAP_LEAD = 0.15f
         /** How far through the travel the page is scrolled for a tap part way. */
         private const val PART_WAY = 0.45f
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
@@ -1092,6 +1139,19 @@ abstract class FakeboxMorphDemoBase(
               };
               var q = function(sel, root){ return (root || document).querySelector(sel); };
               var BAR = '.zen-phone-bar:not([aria-hidden])';
+              // The elements whose fades the morph runs (or that ride its value): an animation or
+              // transition of theirs still pending – no start time yet, the compositor's next frame
+              // owed – is the emulator's lag, and the judge excuses the frame under reduced motion.
+              var FADED = '.zen-ntp-scroll, .zen-ntp-field, .zen-ntp-fades, .zen-fakebox-layer, .zen-omnibox-sheet, .zen-omnibox-field, .zen-phone-bar';
+              var pending = function(){
+                if (!document.getAnimations) return 0;
+                var n = 0, all = document.getAnimations();
+                for (var k = 0; k < all.length; k++) {
+                  var a = all[k], tg = a.pending && a.effect && a.effect.target;
+                  if (tg && tg.closest && tg.closest(FADED)) n++;
+                }
+                return n;
+              };
               var frames = [], start = 0, raf = 0;
               var sample = function(now){
                 var root = document.documentElement, rs = getComputedStyle(root);
@@ -1104,7 +1164,7 @@ abstract class FakeboxMorphDemoBase(
                   sc: scroller ? r2(scroller.scrollTop) : 0, uo: !!(ui.urlbar && ui.urlbar.open),
                   ib: num(rs.getPropertyValue('--zen-inset-bottom')),
                   bar: bar ? eff(bar) : -1, sh: sheet ? eff(sheet) : -1, pg: scroller ? eff(scroller) : -1,
-                  ba: !!bh.allowed, bh: num(bh.progress)
+                  ba: !!bh.allowed, bh: num(bh.progress), pa: pending()
                 };
                 if (dbl) {
                   var fc = q('.zen-fakebox-field .zen-fakebox-content', dbl), fld = q('.zen-fakebox-field', dbl), om = q('.zen-fakebox-omni', dbl);
