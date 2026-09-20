@@ -9,11 +9,12 @@ name: Android bar hide on scroll demo
 # fails the run when a claim does not hold; see BarHideDemo.kt. Dispatch-only, like the gesture
 # demo. The build, the emulator and its caches live in android-emulator-demo.yml; this file only
 # picks the driver and the colour scheme.
+#
+# This driver also proves the shared harness (DemoHarness.kt: it closes the URL field twice per
+# run, under the conditions of PR #200's retry), so a harness change dispatches it; the optional
+# `harness-tests` input runs other instrumentation classes on the same emulator ahead of the
+# demo, e.g. WebViewLoadDataFoldProbe (the bare-WebView loadDataWithBaseURL history probe).
 on:
-  # TEMPORARY (harness PR): one dispatch per push of the branch; removed in the next commit.
-  push:
-    branches:
-      - cursor/android-harness-close-urlbar-63ba
   workflow_dispatch:
     inputs:
       theme:
@@ -23,6 +24,12 @@ on:
         options:
           - light
           - dark
+      harness-tests:
+        description: >-
+          Instrumentation classes to run ahead of the demo, comma-separated (for example
+          app.zen.chromium.WebViewLoadDataFoldProbe); empty runs the demo alone
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -37,12 +44,11 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
-      # The shared driver chooses the demo from its environment (see the script's header). The
-      # bare-WebView probe ahead of the demo (WebViewLoadDataFoldProbe: does the image's WebView
-      # fold adjacent loadDataWithBaseURL documents into one history entry?) is for the harness
-      # PR's run only and comes out with the push trigger above.
+      # The shared driver chooses the demo from its environment (see the script's header); a
+      # comma-separated DEMO_CLASS runs the classes in order, so the harness tests asked for go
+      # ahead of the demo on the same emulator.
       script-env: |
-        DEMO_CLASS=app.zen.chromium.WebViewLoadDataFoldProbe,app.zen.chromium.BarHideDemo
+        DEMO_CLASS=${{ inputs.harness-tests != '' && format('{0},app.zen.chromium.BarHideDemo', inputs.harness-tests) || 'app.zen.chromium.BarHideDemo' }}
         DEMO_DIR=bar-hide-demo
         DEMO_OUT=artifacts/android-bar-hide-demo
         DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
@@ -60,7 +66,7 @@ jobs:
     with:
       script: .github/scripts/android-gesture-demo.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.WebViewLoadDataFoldProbe,app.zen.chromium.BarHideDemo
+        DEMO_CLASS=${{ inputs.harness-tests != '' && format('{0},app.zen.chromium.BarHideDemo', inputs.harness-tests) || 'app.zen.chromium.BarHideDemo' }}
         DEMO_DIR=bar-hide-demo
         DEMO_OUT=artifacts/android-bar-hide-demo
         DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4

@@ -37,8 +37,13 @@ import java.util.concurrent.TimeUnit
  * [TAG] and sent as instrumentation status (`INSTRUMENTATION_STATUS: fold-probe.* = …` in
  * `instrument.txt`), with the exact WebView package and version, the API level and the image.
  * Nothing here asserts the count either way: the numbers are the finding, and they go into the
- * draft. The run fails only when a load never finishes. Listed ahead of `BarHideDemo` in
- * `DEMO_CLASS` of `android-bar-hide-demo.yml` for the harness PR's run.
+ * draft. The run fails only when a load never finishes.
+ *
+ * Dispatch-only: `android-bar-hide-demo.yml` with `harness-tests` set to this class runs it on
+ * the demo's emulator ahead of the demo. Run once so far (PR #238, WebView 113.0.5672.136 on the
+ * API 34 Google APIs image): no fold in any of the three shapes – 3 entries for the sketch, 4
+ * with a web page between, 4 with `about:blank` between – so the fold W2-11 saw needs something
+ * the sketch dropped (its `zen://` base and history URLs, first of all); the draft says which.
  */
 @RunWith(AndroidJUnit4::class)
 class WebViewLoadDataFoldProbe {
