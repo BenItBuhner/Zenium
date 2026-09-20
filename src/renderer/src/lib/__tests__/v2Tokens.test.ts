@@ -45,6 +45,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The zen://error page (shared/zenPages.ts cuts this block, the token block and the v2 button
   // out of the stylesheet's text and writes them into the page, which cannot link main.css).
   ['.zen-error-document {', '@layer base {'],
+  // The chrome's focus ring (§1, a11y-10): the base-layer floor under every control of the chrome
+  // document, reading the ring token; it ends where the first components layer begins.
+  [" * The chrome's focus ring (v2 §1, a11y-10)", '@layer components {'],
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],

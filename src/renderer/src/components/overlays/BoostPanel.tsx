@@ -227,7 +227,7 @@ export function BoostPanel({ state }: { state: UIState }): JSX.Element {
             value={css}
             spellCheck={false}
             placeholder={`/* applied to every ${domain} page */`}
-            className="zen-squircle h-24 w-full resize-y rounded-xl bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px] outline-none ring-1 ring-transparent focus:ring-[var(--zen-accent)]/60"
+            className="zen-squircle h-24 w-full resize-y rounded-xl bg-[var(--zen-element-bg)] p-2.5 font-mono text-[12px]"
             onChange={(e) => setCss(e.target.value)}
             onBlur={() => css !== draft.css && patch({ css })}
           />

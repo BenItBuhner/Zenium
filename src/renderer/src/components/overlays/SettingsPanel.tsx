@@ -220,6 +220,7 @@ export function SettingsBody({
               'zen-squircle flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] hover:bg-[var(--zen-element-bg)]',
               section === item.id && 'bg-[var(--zen-element-bg-active)] font-medium'
             )}
+            aria-current={section === item.id ? 'page' : undefined}
             onClick={() => setSection(item.id)}
           >
             {item.label}
