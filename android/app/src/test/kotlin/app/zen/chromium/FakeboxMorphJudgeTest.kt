@@ -90,6 +90,25 @@ class FakeboxMorphJudgeTest {
         return frames
     }
 
+    /**
+     * A back committed on the landed omnibox after a pull: the bar's spring runs the field home
+     * under the pull (the machine open, the look pulled, `BackDismissal.commit`), then rest.
+     */
+    private fun pulledHome(g: Geometry, omni: Box): List<Frame> {
+        val frames = ArrayList<Frame>()
+        frames += frame(0, "open", "open", 1f, g, omni, omniField = OmniField(omni, 1f, 1f), pageField = PageField(g.rest, 0f))
+        val values = springValues.map { 1 - it }
+        values.forEachIndexed { i, m ->
+            frames += frame(
+                16 + i * 16, "open", "pulled", m, g, omni,
+                double = double(lerpBox(g.rest, omni, m), m),
+                pageField = PageField(g.rest, 0f), omniField = OmniField(omni, 0f, 0f), pill = well
+            )
+        }
+        frames += frame(16 + values.size * 16, "rest", "", 0f, g, omni, pageField = PageField(g.rest, 1f), pill = well, urlbarOpen = false)
+        return frames
+    }
+
     /** The page scrolled under a steady finger to `to` px, one frame per `step` px. */
     private fun scrub(g: Geometry, to: Float, step: Float = 12f): List<Frame> {
         val frames = ArrayList<Frame>()
@@ -204,6 +223,44 @@ class FakeboxMorphJudgeTest {
         assertTrue(v.detail, v.ok)
     }
 
+    @Test
+    fun `the keyboard carrying the omnibox up whole on the landing frame is the target's move, not a pop`() {
+        // The emulator's frame clock: the inset arrives between the double's last frame and the landing
+        // (run 1's bottom-retap, frames 21-22: 24 -> 332 px), and the omnibox's field (the landed field
+        // with it) is drawn 300 px higher than the double was.
+        val n = springValues.size
+        val lifted = omniBottom.copy(y = omniBottom.y - 300f)
+        val carried = spoil(opening(bottom, omniBottom, moving = { i -> if (i >= n) lifted else omniBottom }), n + 1) { it.copy(insetBottom = 300f) }
+        val v = FakeboxMorph.noJump(carried)
+        assertTrue(v.detail, v.ok)
+        // The double that trails the target by the frame the controller takes to re-measure: the inset
+        // and the omnibox's box move on one pair, the double follows on the next.
+        val trailing = spoil(opening(bottom, omniBottom, moving = { i -> if (i >= n - 1) lifted else omniBottom }), n) { f ->
+            f.copy(insetBottom = 300f, double = f.double!!.copy(box = omniBottom))
+        }.let { spoil(it, n + 1) { f -> f.copy(insetBottom = 300f) } }
+        val t = FakeboxMorph.noJump(trailing)
+        assertTrue(t.detail, t.ok)
+        // The same move with no change of the inset is the landing popping away from where the double was.
+        val frames = opening(bottom, omniBottom)
+        val popped = spoil(frames, frames.lastIndex) { it.with(omniField = OmniField(lifted, 1f, 1f)) }
+        assertFalse(FakeboxMorph.noJump(popped).ok)
+        // And the keyboard's inset alone, with the omnibox's field standing (a top dock), excuses nothing.
+        val topFrames = opening(top, omniTop)
+        val cut = spoil(spoil(topFrames, 3) { it.with(double = it.double!!.copy(box = omniTop)) }, 3) { it.copy(insetBottom = 300f) }
+        assertFalse(FakeboxMorph.noJump(cut).ok)
+    }
+
+    @Test
+    fun `two pulled frames are the finger's pace and are not bounded`() {
+        // A flick on a slow frame clock: the value drops from .86 to .34 between two pulled frames, the box with it.
+        val flicked = pulledHome(bottom, omniBottom).filterIndexed { i, _ -> i !in 3..6 }
+        val v = FakeboxMorph.noJump(flicked)
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("left to the gesture"))
+        // The same drop on the closing segment is the spring's, and a pop.
+        assertFalse(FakeboxMorph.noJump(closing(bottom, omniBottom).filterIndexed { i, _ -> i !in 3..6 }).ok)
+    }
+
     // --- the line ------------------------------------------------------------------------------------
 
     @Test
@@ -305,6 +362,28 @@ class FakeboxMorphJudgeTest {
         val frames = closing(top, omniTop)
         val stuck = spoil(frames, frames.lastIndex) { it.copy(urlbarOpen = true) }
         assertFalse(FakeboxMorph.returned(stuck).ok)
+    }
+
+    @Test
+    fun `a back committed after a pull comes home pulled on the bar's spring, and that is a return too`() {
+        val frames = pulledHome(bottom, omniBottom)
+        val back = FakeboxMorph.returned(frames)
+        assertTrue(back.detail, back.ok)
+        assertTrue(back.detail, back.detail.contains("pulled home"))
+        val spring = FakeboxMorph.monotoneSpring(frames)
+        assertTrue(spring.detail, spring.ok)
+        assertTrue(spring.detail, spring.detail.contains("pulled-home"))
+        assertTrue(FakeboxMorph.oneSurface(frames).detail, FakeboxMorph.oneSurface(frames).ok)
+        // The value growing on the way home is the spring turning round.
+        val turned = spoil(frames, 8) { it.with(morph = 0.6f) }
+        assertFalse(FakeboxMorph.monotoneSpring(turned).ok)
+        // The bar whole again for a frame between the field's coming home and the rest is not a return.
+        val held = frames.toMutableList().apply {
+            add(lastIndex, frame(get(lastIndex - 1).t + 16, "open", "open", 1f, bottom, omniBottom, omniField = OmniField(omniBottom, 1f, 1f), pageField = PageField(bottom.rest, 0f)))
+        }
+        assertFalse(FakeboxMorph.returned(held).ok)
+        // A pull the finger holds without a rest after it is not a return.
+        assertFalse(FakeboxMorph.returned(frames.dropLast(1)).ok)
     }
 
     @Test
@@ -442,9 +521,62 @@ class FakeboxMorphJudgeTest {
     }
 
     @Test
+    fun `a field the scroll holds part way resolves to the double at a top dock and to the page's field at a bottom one`() {
+        val heldTop = scrub(top, top.travel * 0.5f).last()
+        assertTrue(heldTop.doubleDrawn)
+        val v = FakeboxMorph.resolved(heldTop, "scrub", urlbarOpen = false)
+        assertTrue(v.detail, v.ok)
+        assertTrue(v.detail, v.detail.contains("scrubbed part way"))
+        // The same double asked to be at rest is one too many.
+        assertFalse(FakeboxMorph.resolved(heldTop, "", urlbarOpen = false).ok)
+        // At a bottom dock the page's field rides: a double beside it is two.
+        val heldBottom = scrub(bottom, bottom.travel * 0.5f).last()
+        assertTrue(FakeboxMorph.resolved(heldBottom, "scrub", urlbarOpen = false).ok)
+        assertFalse(FakeboxMorph.resolved(heldBottom.with(double = double(heldBottom.pageField!!.box, 0f)), "scrub", urlbarOpen = false).ok)
+    }
+
+    @Test
+    fun `a fade the compositor had not started is not judged rather than failed`() {
+        // The sampler saw the omnibox's content whole, then gone, with the fade pending on every segment frame.
+        val cut = reducedOpening(listOf(0f, 0f, 1f))
+        val pending = cut.map { if (it.phase == "opening") it.copy(pending = 1) else it }
+        val v = FakeboxMorph.reducedFade(pending)
+        assertTrue(v.detail, v.ok)
+        assertFalse(v.judged)
+        assertTrue(v.toString(), v.toString().endsWith("NOT JUDGED"))
+        assertTrue(v.detail, v.detail.contains("pending on the compositor"))
+        // The same rows without the pending are the cut they look like.
+        assertFalse(FakeboxMorph.reducedFade(cut).ok)
+        // A fade the compositor did draw is judged, pending or not, and one surface excuses the pending frames.
+        val drawn = reducedOpening(listOf(0.3f, 0.7f, 1f)).map { if (it.phase == "opening") it.copy(pending = 1) else it }
+        assertTrue(FakeboxMorph.reducedFade(drawn).judged)
+        val one = FakeboxMorph.oneSurface(drawn, reduced = true)
+        assertTrue(one.detail, one.ok)
+        assertTrue(one.detail, one.detail.contains("3 frame(s) not judged"))
+        // A double still travelling under a pending fade is the chrome's fault, judged and failed.
+        val travelled = FakeboxMorph.reducedFade(reducedOpening(listOf(0f, 0f, 1f), m = 0.5f).map { if (it.phase == "opening") it.copy(pending = 1) else it })
+        assertFalse(travelled.ok)
+        assertTrue(travelled.judged)
+    }
+
+    @Test
+    fun `a single segment frame in a gap wider than the fade is not judged, in a narrower one it is a failure`() {
+        val sparse = reducedOpening(listOf(0f))
+        // Rest at 0, the one opening frame at 40, open at 80: an 80 ms gap, the fade would have shown.
+        val narrow = FakeboxMorph.reducedFade(sparse)
+        assertFalse(narrow.ok)
+        assertTrue(narrow.detail, narrow.detail.contains("sampled on 1 frame(s)"))
+        // The landing sampled 200 ms on: the fade fits in the gap unseen.
+        val wide = FakeboxMorph.reducedFade(sparse.mapIndexed { i, f -> if (i == sparse.lastIndex) f.copy(t = 200) else f })
+        assertTrue(wide.detail, wide.ok)
+        assertFalse(wide.judged)
+        assertTrue(wide.detail, wide.detail.contains("wider than the fade"))
+    }
+
+    @Test
     fun `a frame parses from the sampler's row`() {
         val row = JSONObject(
-            """{"t":48,"ph":"opening","lk":"opening","m":0.41,"p":0,"sc":0,"uo":true,"ib":0,"ba":false,"bh":0,
+            """{"t":48,"ph":"opening","lk":"opening","m":0.41,"p":0,"sc":0,"uo":true,"ib":0,"ba":false,"bh":0,"pa":2,
                "d":{"b":{"x":37.1,"y":191.8,"w":336.8,"h":46.4},"r":16.1,"l":1,"lf":1,"lo":0.82,"fw":0.18,"ow":0,"mv":true},
                "pf":{"b":{"x":24,"y":300,"w":363,"h":48},"o":0},
                "of":{"b":{"x":56,"y":36,"w":299,"h":44},"bd":0,"ct":0},
@@ -466,9 +598,15 @@ class FakeboxMorphJudgeTest {
         assertFalse(f.barHideAllowed)
         assertTrue(f.inFlight)
         assertTrue(f.doubleDrawn)
+        assertEquals(2, f.pending)
+        assertFalse(f.pulled)
         val bare = FakeboxMorph.parse(JSONObject("""{"t":0,"ph":"rest","lk":"","m":0,"p":0,"sc":0,"uo":false,"ib":0}"""))
         assertEquals(-1f, bare.bar, 1e-4f)
         assertEquals(null, bare.double)
         assertEquals(null, bare.drawnBox)
+        assertEquals(0, bare.pending)
+        val pulled = FakeboxMorph.parse(JSONObject("""{"t":0,"ph":"open","lk":"pulled","m":0.6,"p":0,"sc":0,"uo":true,"ib":0}"""))
+        assertTrue(pulled.pulled)
+        assertTrue(pulled.inFlight)
     }
 }

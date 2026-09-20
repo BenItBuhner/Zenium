@@ -121,12 +121,22 @@ object FakeboxMorph {
         val page: Float,
         /** The bar's hide-on-scroll: its gate (`barMayHide`) and its value (`--zen-bar-hide`). */
         val barHideAllowed: Boolean = false,
-        val barHide: Float = 0f
+        val barHide: Float = 0f,
+        /**
+         * How many of the fades' animations and transitions (the omnibox's field and sheet, the
+         * double's layer, the page, the bar) had not started by this frame – `Animation.pending`:
+         * their start time waits on the compositor's next frame, which the emulator's software GPU
+         * takes hundreds of ms over (gfxinfo: a 600 ms median frame), so a 120 ms fade can be over
+         * before it is ever drawn. A frame with one pending is the emulator's, not the chrome's.
+         */
+        val pending: Int = 0
     ) {
         val doubleDrawn: Boolean get() = (double?.coverage ?: 0f) > EPS
         val pageFieldDrawn: Boolean get() = (pageField?.opacity ?: 0f) > EPS
         val omniDrawn: Boolean get() = (omniField?.drawn ?: 0f) > EPS
         val inFlight: Boolean get() = phase == "opening" || phase == "closing" || look == "pulled"
+        /** The finger's (or the back's spring's) pull on the landed omnibox, not a segment of the morph's own. */
+        val pulled: Boolean get() = phase == "open" && look == "pulled"
 
         /** Where the field is drawn on this frame, whichever incarnation draws it; null when none does. */
         val drawnBox: Box?
@@ -148,9 +158,13 @@ object FakeboxMorph {
         fun scrubOf(scroll: Float): Float = clamp01(scroll / travel)
     }
 
-    /** One check's outcome, one line of the findings. */
-    data class Verdict(val check: String, val ok: Boolean, val detail: String) {
-        override fun toString(): String = "$check: $detail ${if (ok) "PASS" else "FAIL"}"
+    /**
+     * One check's outcome, one line of the findings. `judged` false: the frames could not carry
+     * the check (the emulator's compositor never drew the fade the check is about) – the line says
+     * NOT JUDGED, and `ok` is true so the run does not fail on the emulator's account.
+     */
+    data class Verdict(val check: String, val ok: Boolean, val detail: String, val judged: Boolean = true) {
+        override fun toString(): String = "$check: $detail ${if (!judged) "NOT JUDGED" else if (ok) "PASS" else "FAIL"}"
     }
 
     /** An opacity under this is not drawn (computed styles round; a fade's tail). */
@@ -231,7 +245,8 @@ object FakeboxMorph {
             sheet = row.optDouble("sh", -1.0).toFloat(),
             page = row.optDouble("pg", -1.0).toFloat(),
             barHideAllowed = row.optBoolean("ba"),
-            barHide = num(row, "bh")
+            barHide = num(row, "bh"),
+            pending = row.optInt("pa")
         )
     }
 
@@ -275,17 +290,23 @@ object FakeboxMorph {
      * segment is the 120 ms cross-fade in place of whatever goes and whatever comes (the sum of
      * one holds, more loosely: the two eases run on separate clocks a frame apart). Frames at
      * rest with the omnibox up are another hand's (the pill tapped once docked) and are left
-     * alone.
+     * alone; so, under reduced motion, is a frame on which a fade is still [Frame.pending] on the
+     * compositor – the emulator's frame, not the chrome's – and the verdict says how many were.
      */
     fun oneSurface(frames: List<Frame>, reduced: Boolean = false): Verdict {
         var worst: String? = null
         var faults = 0
+        var excused = 0
         for ((i, f) in frames.withIndex()) {
             val pageField = f.pageField?.opacity ?: 0f
             val double = f.double?.coverage ?: 0f
             val omni = f.omniField?.drawn ?: 0f
             val pillWords = f.pillSlot?.let { if (it.away) it.words else if (f.look == "docked") 1f else 0f } ?: 0f
             val fault: String? = when {
+                reduced && f.pending > 0 -> {
+                    excused++
+                    null
+                }
                 reduced && f.inFlight -> {
                     val sum = pageField + double + omni
                     if (abs(sum - 1f) > 0.3f) "frame $i (${f.look}, ${f.t} ms): the fades sum to ${sum.p()} (page field ${pageField.p()}, double ${double.p()}, omnibox ${omni.p()})" else null
@@ -318,10 +339,11 @@ object FakeboxMorph {
                 if (worst == null) worst = fault
             }
         }
+        val pending = if (excused > 0) " ($excused frame(s) not judged: a fade pending on the compositor)" else ""
         return Verdict(
             "one surface",
             faults == 0,
-            if (faults == 0) "every frame draws the field once (${frameRate(frames)})" else "$faults frame(s) draw it twice or not at all; first: $worst"
+            if (faults == 0) "every frame draws the field once (${frameRate(frames)})$pending" else "$faults frame(s) draw it twice or not at all; first: $worst$pending"
         )
     }
 
@@ -333,13 +355,21 @@ object FakeboxMorph {
      * margin), wherever the field is the double's or a flight begins or ends (the frame before
      * the first flight frame and the landing's are compared across: a field that lands anywhere
      * but where the omnibox's field takes over has popped). The segment's distance is the
-     * largest separation seen between the field and the omnibox's box. Two rest frames with the
-     * double drawn are the top dock's scrub, which the finger drives, not the spring: given the
-     * geometry the field may move as far as the scroll's share of the travel carries it along the
-     * line to the slot (plus the margin), and no further; without it they are left to 'the scrub's
-     * line'. Two rest frames without a double are not compared: at a bottom dock the riding field
-     * hands over to the pill by a fade across the frame (§11.8 as amended), which 'rides with the
-     * page' judges. Reduced motion is not held to this: its jump is the design (see [reducedFade]).
+     * largest separation seen between the field and the omnibox's box. The field's move is taken
+     * net of the keyboard's ([shift]): the omnibox's box moves with the inset under a segment (a
+     * bottom dock; on the emulator's frame clock the keyboard can arrive whole between two
+     * frames, and on the landing's own), and a field that stays on its line to a target the
+     * inset moved has not popped, whether it followed the target within the frame or trails it by
+     * the one the controller takes to re-measure; a target that moved without the inset (a
+     * landing drawn anywhere else) is not excused. Two pulled frames are the finger's (or the back's spring's)
+     * pace, not the morph's, and are not bounded: 'the line' holds their box to the value. Two
+     * rest frames with the double drawn are the top dock's scrub, which the finger drives, not
+     * the spring: given the geometry the field may move as far as the scroll's share of the
+     * travel carries it along the line to the slot (plus the margin), and no further; without it
+     * they are left to 'the scrub's line'. Two rest frames without a double are not compared: at
+     * a bottom dock the riding field hands over to the pill by a fade across the frame (§11.8 as
+     * amended), which 'rides with the page' judges. Reduced motion is not held to this: its jump
+     * is the design (see [reducedFade]).
      */
     fun noJump(frames: List<Frame>, g: Geometry? = null): Verdict {
         val distance = frames.mapNotNull { f -> f.drawnBox?.let { b -> f.omniField?.box?.let { b.distance(it) } } }.maxOrNull() ?: 0f
@@ -348,14 +378,19 @@ object FakeboxMorph {
         var worst: String? = null
         var compared = 0
         var scrubbed = 0
+        var pulled = 0
         for (i in 1 until frames.size) {
             val a = frames[i - 1]
             val b = frames[i]
+            if (a.pulled && b.pulled) {
+                pulled++
+                continue
+            }
             val dm = abs(b.morph - a.morph)
             val flight = a.inFlight || b.inFlight
             val scrub = !flight && g != null && a.doubleDrawn && b.doubleDrawn
             val compare = flight || scrub
-            val moved = if (compare) a.drawnBox?.let { x -> b.drawnBox?.let { y -> x.distance(y) } } ?: 0f else 0f
+            val moved = if (compare) shift(frames.getOrNull(i - 2), a, b) else 0f
             val allowed = if (scrub) abs(g!!.scrubOf(b.scroll) - g.scrubOf(a.scroll)) * g.rest.distance(g.slot) + 3f else bound
             if (compare) compared++
             if (scrub) scrubbed++
@@ -373,9 +408,35 @@ object FakeboxMorph {
         return Verdict(
             "no pop",
             faults == 0,
-            if (faults == 0) "no frame moves the value by more than ${MAX_STEP.p()} or the field by more than ${bound.f()} px of ${distance.f()} ($compared pair(s) compared${if (scrubbed > 0) ", $scrubbed under the finger" else ""})"
+            if (faults == 0) "no frame moves the value by more than ${MAX_STEP.p()} or the field by more than ${bound.f()} px of ${distance.f()} ($compared pair(s) compared" +
+                (if (scrubbed > 0) ", $scrubbed under the finger" else "") + (if (pulled > 0) ", $pulled pulled pair(s) left to the gesture" else "") + ")"
             else "$faults jump(s); first: $worst"
         )
+    }
+
+    /**
+     * How far the field moved between two frames, net of the keyboard's: the move as drawn, less
+     * the part of the omnibox field's own move (the target's) that the inset's change accounts
+     * for – over this pair and the one before it, since the controller may trail the target by
+     * the frame it takes to re-measure and make the following move a pair late. A target that
+     * moved with no change of the inset (a layout shift, a landing drawn somewhere else) is not
+     * excused, nor is the inset's change where the target did not move (a top dock's keyboard).
+     * 0 when a frame draws no field.
+     */
+    private fun shift(before: Frame?, a: Frame, b: Frame): Float {
+        val x = a.drawnBox ?: return 0f
+        val y = b.drawnBox ?: return 0f
+        val drawn = x.distance(y)
+        val inset = abs(b.insetBottom - a.insetBottom) + (before?.let { abs(a.insetBottom - it.insetBottom) } ?: 0f)
+        val target = targetMove(a, b) + (before?.let { targetMove(it, a) } ?: 0f)
+        return max(0f, drawn - min(inset, target))
+    }
+
+    /** How far the omnibox's field (the segment's target) moved between two frames; 0 where a frame has none. */
+    private fun targetMove(a: Frame, b: Frame): Float {
+        val ta = a.omniField?.box ?: return 0f
+        val tb = b.omniField?.box ?: return 0f
+        return ta.distance(tb)
     }
 
     // --- the line --------------------------------------------------------------------------------
@@ -440,15 +501,31 @@ object FakeboxMorph {
 
     // --- monotone --------------------------------------------------------------------------------
 
-    /** Opening, the value only grows; closing, it only shrinks – the spring never turns round on its own. */
+    /**
+     * Opening, the value only grows; closing, it only shrinks – the spring never turns round on
+     * its own. A back committed on the landed omnibox runs the field home on the bar's own spring
+     * instead (`BackDismissal.commit`, the value under the pull): those pulled frames, the run of
+     * them that ends at rest ([committedPull]), are held to the same – only shrinking – while a
+     * pull under the finger (a hold, a cancel) is the finger's and is not.
+     */
     fun monotoneSpring(frames: List<Frame>): Verdict {
         var faults = 0
         var worst: String? = null
         var opening = 0
         var closing = 0
+        var home = 0
+        val commit = committedPull(frames)
         for (i in 1 until frames.size) {
             val a = frames[i - 1]
             val b = frames[i]
+            if (commit != null && i - 1 >= commit.first && i <= commit.last) {
+                home++
+                if (b.morph > a.morph + 0.005f) {
+                    faults++
+                    if (worst == null) worst = "frames ${i - 1}-$i (pulled home): ${a.morph.p()} -> ${b.morph.p()}"
+                }
+                continue
+            }
             if (a.phase != b.phase) continue
             when (b.phase) {
                 "opening" -> {
@@ -467,11 +544,26 @@ object FakeboxMorph {
                 }
             }
         }
+        val steps = opening + closing + home
         return Verdict(
             "monotone spring",
-            faults == 0 && opening + closing > 0,
-            if (opening + closing == 0) "no segment frames" else if (faults == 0) "the value never turned round ($opening opening, $closing closing steps)" else "$faults turn(s); first: $worst"
+            faults == 0 && steps > 0,
+            if (steps == 0) "no segment frames"
+            else if (faults == 0) "the value never turned round ($opening opening, $closing closing${if (home > 0) ", $home pulled-home" else ""} steps)"
+            else "$faults turn(s); first: $worst"
         )
+    }
+
+    /**
+     * The frames of a back's commit running the landed field home on the bar's spring: the last
+     * run of pulled frames (phase open, look pulled) that a rest frame follows directly. Null when
+     * no pull ended at rest.
+     */
+    private fun committedPull(frames: List<Frame>): IntRange? {
+        val rest = (1 until frames.size).lastOrNull { frames[it].phase == "rest" && frames[it - 1].pulled } ?: return null
+        var first = rest - 1
+        while (first > 0 && frames[first - 1].pulled) first--
+        return first until rest
     }
 
     /**
@@ -570,25 +662,28 @@ object FakeboxMorph {
     /**
      * The end of a closing: the last closing frame draws the double, the first rest frame after
      * it the page's field (or the scrubbed double, at a top dock part way) and no omnibox, with
-     * the bar closed on that frame.
+     * the bar closed on that frame. A back committed on the landed field comes home pulled
+     * instead of closing (the bar's spring, see [monotoneSpring]): the same is asked of its last
+     * pulled frame and the rest frame after it.
      */
     fun returned(frames: List<Frame>): Verdict {
-        val lastFlight = frames.indexOfLast { it.phase == "closing" }
-        if (lastFlight < 0) return Verdict("the return", false, "no closing frame was sampled")
+        val lastFlight = frames.indexOfLast { it.phase == "closing" || it.pulled }
+        if (lastFlight < 0) return Verdict("the return", false, "no closing (or pulled) frame was sampled")
         val firstRest = (lastFlight + 1 until frames.size).firstOrNull { frames[it].phase == "rest" }
             ?: return Verdict("the return", false, "the segment never came to rest within the sample")
         val a = frames[lastFlight]
+        val how = if (a.phase == "closing") "closing" else "pulled home"
         val b = frames[firstRest]
         val problems = ArrayList<String>()
         if (firstRest != lastFlight + 1) problems += "${firstRest - lastFlight - 1} frame(s) between the flight and the rest"
-        if (!a.doubleDrawn) problems += "the last closing frame draws no double"
+        if (!a.doubleDrawn) problems += "the last $how frame draws no double"
         if (b.urlbarOpen) problems += "the bar is still open on the first rest frame"
         if (b.omniDrawn) problems += "the omnibox's field draws ${b.omniField!!.drawn.p()} at rest"
         if (!b.pageFieldDrawn && !b.doubleDrawn && b.look != "docked") problems += "nothing draws the field on the first rest frame"
         return Verdict(
             "the return",
             problems.isEmpty(),
-            if (problems.isEmpty()) "the page had its field back on the frame after the double's last (m ${a.morph.p()} at ${a.t} ms, at rest ${b.t} ms, look '${b.look.ifEmpty { "rest" }}')"
+            if (problems.isEmpty()) "the page had its field back on the frame after the double's last ($how, m ${a.morph.p()} at ${a.t} ms, at rest ${b.t} ms, look '${b.look.ifEmpty { "rest" }}')"
             else problems.joinToString("; ")
         )
     }
@@ -766,12 +861,18 @@ object FakeboxMorph {
      * is drawn at all (a field the scroll holds part way at a top dock), holds one box through
      * the segment; the omnibox's field arrives (opening) or leaves (closing) on an opacity ramp
      * of about [REDUCED_FADE_MS] – at least two frames, never a cut – and the page's field the
-     * other way; and the value itself jumps rather than travels (no frame part way).
+     * other way; and the value itself jumps rather than travels (no frame part way). The fade
+     * itself is the compositor's to draw: where a frame of the segment had it [Frame.pending] –
+     * the emulator's software GPU had not started it by the time the controller's 120 ms hold
+     * was over, so the sampler saw the content whole, then gone – or where the sampler had a
+     * single frame in a gap wider than the fade, the fade is NOT JUDGED rather than failed; the
+     * box and the value, which the chrome writes itself, are judged either way.
      */
     fun reducedFade(frames: List<Frame>): Verdict {
         val segments = segmentsOf(frames).filter { run -> run.any { it.phase == "opening" || it.phase == "closing" } }
         if (segments.isEmpty()) return Verdict("reduced motion", false, "no segment was sampled")
         val problems = ArrayList<String>()
+        val unjudged = ArrayList<String>()
         for (segment in segments) {
             val phase = segment.first().phase
             val boxes = segment.mapNotNull { it.double?.box }
@@ -785,7 +886,14 @@ object FakeboxMorph {
             val omni = segment.mapNotNull { f -> f.omniField?.let { f.t to it.content } }
             val ramp = omni.filter { it.second > EPS && it.second < 1 - EPS }
             val span = if (omni.size >= 2) omni.last().first - omni.first().first else 0
+            val pending = segment.count { it.pending > 0 }
+            // The sampler's gap around the segment: the frame before its first to the frame after its last.
+            val before = frames.indexOf(segment.first()) - 1
+            val after = frames.indexOf(segment.last()) + 1
+            val gap = (if (after in frames.indices) frames[after].t else segment.last().t) - (if (before >= 0) frames[before].t else segment.first().t)
             when {
+                pending > 0 && ramp.isEmpty() -> unjudged += "$phase: the fade was still pending on the compositor on $pending of ${segment.size} frame(s) (${gap} ms around the segment)"
+                omni.size < 2 && gap >= REDUCED_FADE_MS -> unjudged += "$phase: the omnibox's field was sampled on ${omni.size} frame(s) in a gap of $gap ms, wider than the fade"
                 omni.size < 2 -> problems += "$phase: the omnibox's field was sampled on ${omni.size} frame(s)"
                 ramp.isEmpty() && span >= 40 -> problems += "$phase: the omnibox's content cut ${omni.first().second.p()} -> ${omni.last().second.p()} with no frame part way over $span ms"
                 phase == "opening" && omni.last().second < omni.first().second -> problems += "$phase: the omnibox's content fell ${omni.first().second.p()} -> ${omni.last().second.p()}"
@@ -794,10 +902,16 @@ object FakeboxMorph {
             val fadeSpan = if (ramp.size >= 2) ramp.last().first - ramp.first().first else 0
             if (fadeSpan > REDUCED_FADE_MAX_MS) problems += "$phase: the fade ran $fadeSpan ms (about $REDUCED_FADE_MS expected)"
         }
+        val judged = unjudged.isEmpty()
         return Verdict(
             "reduced motion",
             problems.isEmpty(),
-            if (problems.isEmpty()) "${segments.size} segment(s): nothing travelled, the value jumped, the omnibox faded over more than one frame" else problems.joinToString("; ")
+            when {
+                problems.isNotEmpty() -> (problems + unjudged).joinToString("; ")
+                judged -> "${segments.size} segment(s): nothing travelled, the value jumped, the omnibox faded over more than one frame"
+                else -> "${segments.size} segment(s): nothing travelled and the value jumped; the fade the emulator never drew: " + unjudged.joinToString("; ")
+            },
+            judged = judged || problems.isNotEmpty()
         )
     }
 
@@ -825,14 +939,20 @@ object FakeboxMorph {
     /**
      * Where a sequence ends: the look asked for, the bar open or not as asked, and exactly one
      * incarnation of the field drawn (the omnibox's when open, the page's or the pill when not).
+     * A scrubbed pose (`look` scrub) is the one rest the double may be that incarnation: at a top
+     * dock the scroll holds the field part way along the line, and the double is what draws it
+     * there (`drawsSurface`); at a bottom dock the page's own field rides, and a double would be
+     * one too many.
      */
     fun resolved(frame: Frame, look: String, urlbarOpen: Boolean): Verdict {
         val problems = ArrayList<String>()
         if (frame.look != look) problems += "look '${frame.look.ifEmpty { "rest" }}', expected '${look.ifEmpty { "rest" }}'"
         if (frame.urlbarOpen != urlbarOpen) problems += "the bar is ${if (frame.urlbarOpen) "open" else "closed"}, expected ${if (urlbarOpen) "open" else "closed"}"
-        if (frame.doubleDrawn) problems += "a double is drawn at ${frame.double!!.coverage.p()}"
+        val scrubbedDouble = look == "scrub" && frame.doubleDrawn
+        if (frame.doubleDrawn && !scrubbedDouble) problems += "a double is drawn at ${frame.double!!.coverage.p()}"
         val incarnations = listOfNotNull(
             if (frame.pageFieldDrawn) "the page's field (${frame.pageField!!.opacity.p()})" else null,
+            if (scrubbedDouble) "the double, scrubbed part way (${frame.double!!.coverage.p()})" else null,
             if (frame.omniDrawn) "the omnibox's field (${frame.omniField!!.drawn.p()})" else null,
             if (frame.pillSlot != null && !frame.pillSlot.away) "the pill" else null
         )
