@@ -601,7 +601,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     seed()
     applyWebApp(target.surface, tab.id, spec)
   } else if (target.kind === 'media' && state && tab) {
-    void applyMedia(state, tab, target.variant, target.sheet, spec)
+    void applyMedia(state, tab, target.variant, target.player, spec)
   } else if (target.kind === 'qr') {
     // The stand-in camera takes the script, then the camera button is "tapped" for the active
     // tab: the scan sheet goes up and the script's events play into it. The state is reached at
@@ -1775,14 +1775,14 @@ async function mediaPage(
 
 /**
  * The page on screen (or, for `elsewhere`, a page opened behind it) reports its media: the core
- * takes the session and the Now playing chip comes up in the pill; `sheet` then opens the
+ * takes the session and the Now playing chip comes up in the pill; `player` then opens the
  * in-app player on it, the state reached once the store carries it.
  */
 async function applyMedia(
   state: UIState,
   active: Tab,
   variant: PreviewMediaVariant,
-  sheet: boolean,
+  player: boolean,
   spec: string
 ): Promise<void> {
   const page = await mediaPage(state, active)
@@ -1808,7 +1808,7 @@ async function applyMedia(
       untilState((s) => s.media.some((m) => m.tabId === tabId && !m.playing), resolve)
     )
   }
-  if (sheet) {
+  if (player) {
     await openMediaSheet(tabId)
     whenStore(() => uiStore.get().mediaSheet === tabId, spec)
   } else {

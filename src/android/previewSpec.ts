@@ -259,10 +259,13 @@ export type PreviewState =
     }
   | { kind: 'webapp'; surface: PreviewWebAppSurface }
   | {
-      /** A page's media as one of PREVIEW_MEDIA; `sheet` opens the in-app player on it. */
+      /**
+       * A page's media as one of PREVIEW_MEDIA; `player` opens the in-app player (the media
+       * sheet) on it – `&player`, not `sheet=`, which names the chrome's own sheets.
+       */
       kind: 'media'
       variant: PreviewMediaVariant
-      sheet: boolean
+      player: boolean
     }
   | { kind: 'download'; download: PreviewDownloadSpec }
   | {
@@ -389,7 +392,7 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`), `media=<variant>` for the active page reporting media as one of PREVIEW_MEDIA
- * (the Now playing chip in the pill; `&sheet` opens the in-app player on it), `popups=<n>` for
+ * (the Now playing chip in the pill; `&player` opens the in-app player on it), `popups=<n>` for
  * n pop-ups blocked on the active page (`&list` opens the list of them, `&allowed` remembers the
  * site as allowed), `prompt=http-auth` / `prompt=certificate` for a security dialog over the
  * page (`&failed`, `&proxy`, `&secure` vary the sign-in), `prompt=<any other value>` for the
@@ -540,7 +543,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const media = params.get('media')
   if (media !== null && (PREVIEW_MEDIA as readonly string[]).includes(media)) {
-    return { kind: 'media', variant: media as PreviewMediaVariant, sheet: params.has('sheet') }
+    return { kind: 'media', variant: media as PreviewMediaVariant, player: params.has('player') }
   }
   const download = params.get('download')
   if (download) return { kind: 'download', download: parseDownload(download, params) }
