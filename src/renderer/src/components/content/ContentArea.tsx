@@ -51,13 +51,19 @@ import { ZoomSheet } from './ZoomSheet'
 interface Props {
   state: UIState
   ui: UiState
+  /**
+   * Whether the open URL bar is drawn in this frame (the desktop layouts: floating in the page's
+   * area, or attached across its top). The phone and the tablet shells draw it themselves – the
+   * phone in its bar band, the tablet as its toolbar pill's popup – and pass false.
+   */
+  hostsUrlbar?: boolean
 }
 
 /**
  * The area where tab views live. Everything rendered here is chrome that shows *around* or
  * *instead of* the web content (split gutters, glance frame, URL bar, panels, empty state).
  */
-export function ContentArea({ state, ui }: Props): JSX.Element {
+export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const sidePanelRef = useRef<HTMLDivElement>(null)
   // The frame recedes under a phone sheet (main.css reads `--zen-recede` on it, §11.1).
@@ -312,7 +318,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 ready={ui.glanceReady}
               />
             )}
-            {ui.urlbar.open && local && !phone && (
+            {ui.urlbar.open && local && !phone && hostsUrlbar && (
               <Urlbar
                 key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
                 state={state}

@@ -8,7 +8,13 @@ import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
-import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
+import {
+  isPhone,
+  useFormFactorReport,
+  useViewport,
+  type FormFactor
+} from '@renderer/lib/formFactor'
+import { dismissStage } from '@renderer/lib/gestures/stage'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { activeTab } from '@renderer/lib/selectors'
 import {
@@ -40,6 +46,7 @@ import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
 import { TabHoverCard } from './components/TabHoverCard'
+import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
@@ -54,12 +61,18 @@ export function App(): JSX.Element {
   useGlobalKeys(state)
   useNewTabEvent()
   usePointerTracking()
+  useStageContinuity(viewport.formFactor)
   const ui = uiStore.use()
+  // A page's sized popup and a web app's window keep the one-row desktop chrome at any size and
+  // with any pointer (`formFactorFor`): the tablet shell is for a window with tabs to show.
+  const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
 
   return (
     <>
       {viewport.formFactor === 'phone' ? (
         <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
+      ) : viewport.formFactor === 'tablet' && !popupChrome ? (
+        <TabletShell state={state} ui={ui} isDark={theme.isDark} />
       ) : (
         <DesktopShell state={state} theme={theme} />
       )}
@@ -71,7 +84,10 @@ export function App(): JSX.Element {
   )
 }
 
-/** Desktop, tablet and DeX: Zen's vertical sidebar next to the content card. */
+/**
+ * Desktop and DeX: Zen's vertical sidebar next to the content card. Also the one-row windows (a
+ * page's popup, a web app) at every form factor, the tablet's included.
+ */
 function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }): JSX.Element {
   const ui = uiStore.use()
   const tab = activeTab(state)
@@ -548,6 +564,18 @@ function useNewTabEvent(): void {
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
   }, [])
+}
+
+/**
+ * The gesture stage – the tab overview, a tab switch in flight – belongs to the touch layouts,
+ * and lives in `stageStore`, not in a shell: a tablet window narrowed into the phone chrome (or
+ * widened back) swaps its shell with the overview still open, drawn by the next shell's stage at
+ * the next frame (TABLET-08). Only the desktop layout, which has no stage, takes it down.
+ */
+function useStageContinuity(formFactor: FormFactor): void {
+  useEffect(() => {
+    if (formFactor === 'desktop') dismissStage()
+  }, [formFactor])
 }
 
 /** Remember where the pointer went down so renderer-hosted menus can anchor there. */
