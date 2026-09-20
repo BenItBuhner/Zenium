@@ -1188,6 +1188,12 @@ export class TabManager {
       id?: string
       /** The tab whose page opened this one (see `Tab.openerTabId`). */
       openerTabId?: string
+      /**
+       * Whether the opener opened this tab in the background, for its placement (tabs-30): a
+       * background open joins the opener's group, a foreground one sits right after the opener.
+       * Defaults to `active === false`; `adoptView` states it, activating only once the view hangs.
+       */
+      background?: boolean
       /** Opened by another app's intent (see `Tab.fromIntent`). */
       fromIntent?: boolean
     },
@@ -1233,10 +1239,14 @@ export class TabManager {
       const after = this.tab(opts.afterTabId)
       const placed = index !== undefined
       if (!placed && after && after.spaceId === space.id && after.pinned === tab.pinned) {
-        // A tab opened by `after` lands after `after`'s opener group, so consecutive background
-        // opens from one page keep their order (tabs-30); any other after-tab sits right after it.
+        // A background tab opened by `after` lands after `after`'s opener group, so consecutive
+        // background opens from one page keep their order (tabs-30); a foreground open sits right
+        // after its opener, as Chrome places it, and so does any other after-tab.
+        const background = opts.background ?? opts.active === false
         const grouped =
-          tab.openerTabId === after.id ? openerGroupIndex(m, space, tab, after.id) : null
+          background && tab.openerTabId === after.id
+            ? openerGroupIndex(m, space, tab, after.id)
+            : null
         index = grouped ?? sectionIndexOf(m, after) + 1
         tab.folderId = tab.folderId ?? after.folderId
       } else if (!placed && this.settings.newTabPosition === 'after-current' && !tab.pinned) {
@@ -1282,6 +1292,7 @@ export class TabManager {
         spaceId: parent?.spaceId ?? undefined,
         containerId: parent?.containerId,
         active: false,
+        background: !opts.active,
         afterTabId: parent && !parent.essential ? parent.id : undefined,
         load: false,
         openerTabId: parent?.id

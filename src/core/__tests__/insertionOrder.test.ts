@@ -50,7 +50,10 @@ function fakeView(): TabView {
 interface Harness {
   browser: Browser
   win: ZenWindow
-  /** Open a tab; a background open with an opener is the link-in-new-tab / window.open case. */
+  /**
+   * Open a tab; with an opener it is the link-in-new-tab / window.open case, placed next to the
+   * opener (`afterTabId`) the way every opener call site asks (menus, `open-tab`, `adoptView`).
+   */
   open: (url: string, opts?: { active?: boolean; openerTabId?: string }) => Tab
   /** The ids of the window space's regular tabs, in strip order. */
   order: () => string[]
@@ -101,7 +104,12 @@ function harness(): Harness {
     win,
     open: (url, opts = {}) =>
       browser.tabs.createTab(
-        { url, active: opts.active ?? true, openerTabId: opts.openerTabId },
+        {
+          url,
+          active: opts.active ?? true,
+          openerTabId: opts.openerTabId,
+          afterTabId: opts.openerTabId
+        },
         win
       ),
     order: () => regular().map((t) => t.id),
@@ -136,6 +144,41 @@ describe('opener group ordering (tabs-30)', () => {
     const b = h.open('https://b.test/', { active: false, openerTabId: opener.id })
     // A's child stays under A; B follows the group: opener, A, A1, B.
     expect(label(h, { O: opener.id, A: a.id, A1: a1.id, B: b.id })).toEqual(['O', 'A', 'A1', 'B'])
+  })
+
+  it('a foreground open sits right after its opener, ahead of earlier background children', () => {
+    const h = harness()
+    const opener = h.open('https://opener.test/')
+    const a = h.open('https://a.test/', { active: false, openerTabId: opener.id })
+    const b = h.open('https://b.test/', { active: false, openerTabId: opener.id })
+    // Chrome inserts a foreground link-open adjacent to the active tab, not after its group.
+    const f = h.open('https://f.test/', { active: true, openerTabId: opener.id })
+    expect(label(h, { O: opener.id, A: a.id, B: b.id, F: f.id })).toEqual(['O', 'F', 'A', 'B'])
+  })
+
+  it('an adopted window.open places by how the page opened it, not by its deferred activation', () => {
+    const h = harness()
+    const opener = h.open('https://opener.test/')
+    const a = h.open('https://a.test/', { active: false, openerTabId: opener.id })
+    // `adoptView` creates the tab inactive and activates it once the view hangs: the foreground
+    // popup still goes right after the opener, the background one after the group.
+    const fg = h.browser.tabs.adoptView(
+      fakeView(),
+      { tabId: 'popup-fg', parentTabId: opener.id, active: true },
+      h.win
+    ).tab
+    const bg = h.browser.tabs.adoptView(
+      fakeView(),
+      { tabId: 'popup-bg', parentTabId: opener.id, active: false },
+      h.win
+    ).tab
+    expect(h.active()).toBe(fg.id)
+    expect(label(h, { O: opener.id, A: a.id, FG: fg.id, BG: bg.id })).toEqual([
+      'O',
+      'FG',
+      'A',
+      'BG'
+    ])
   })
 
   it('a tab opened with no opener still goes right after the current tab (unchanged)', () => {
