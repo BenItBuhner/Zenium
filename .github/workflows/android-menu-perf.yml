@@ -1,0 +1,80 @@
+name: Android menu perf
+
+# The performance program's profile of the three-dot menu sheet (perf-program.md, PERF-2):
+# MenuSheetPerfDemo opens and closes the menu with real touches, ten cycles a scene, and drags it
+# between its detents, over a loopback copy of github.com's repository page and a long article
+# plus one pass over the real github.com, on an Android 15 emulator; per scene it captures HWUI's
+# framestats, the chrome WebView's own Chromium trace (blink, cc, v8, the scheduler, input, the
+# DevTools timeline) and an in-chrome probe, and one Perfetto system trace spans the scenes
+# (sched gfx view input wm am binder_driver + the SurfaceFlinger frame timeline). The readers
+# (android-menu-perf.sh) write the tables into the job summary and menu-perf-report.md in the
+# artifact, next to the raw traces (open the Perfetto one at ui.perfetto.dev, the WebView ones in
+# chrome://tracing or the Perfetto UI). The measured scenes run before the recorder rolls, since
+# screenrecord composes a second copy of every frame on the emulator's software GPU; the recorded
+# part is the media: one open, a drag up and down, a press on the scrim. Dispatch-only: it takes
+# about twenty minutes. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme of the chrome
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+      cycles:
+        description: Open / close cycles per scene (the drag scenes do half as many pairs)
+        type: string
+        default: '10'
+      live:
+        description: Also run the scene over the real github.com (needs a network)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-menu-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Menu perf (${{ inputs.theme || 'light' }}, ${{ inputs.cycles || '10' }} cycles)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-menu-perf.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-menu-perf
+        DEMO_VIDEO=android-menu-perf-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e cycles ${{ inputs.cycles || '10' }} -e live ${{ (inputs.live == false) && '0' || '1' }}
+      setup-script: |
+        python3 -m pip install --user -q perfetto
+      api-level: '35'
+      timeout-minutes: 75
+      artifact-name: android-menu-perf-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-menu-perf/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed.
+  profile-again:
+    name: Menu perf (${{ inputs.theme || 'light' }}), second boot
+    needs: profile
+    if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-menu-perf.sh
+      script-env: |
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_OUT=artifacts/android-menu-perf
+        DEMO_VIDEO=android-menu-perf-${{ inputs.theme || 'light' }}.mp4
+        DEMO_ARGS=-e cycles ${{ inputs.cycles || '10' }} -e live ${{ (inputs.live == false) && '0' || '1' }}
+      setup-script: |
+        python3 -m pip install --user -q perfetto
+      api-level: '35'
+      timeout-minutes: 75
+      artifact-name: android-menu-perf-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-menu-perf/

@@ -196,6 +196,12 @@ function analyseScene(scene, events, probe, clocks) {
     out.notes.push('scene window is the whole trace')
   }
   out.windowMs = (b - a) / 1000
+  // A ring buffer that filled drops the oldest events: say so, since the early motions would then
+  // have no trace behind their probe record.
+  const firstTs = main[0]?.ts ?? a
+  if (firstTs > a + 1_000_000) {
+    out.notes.push(`the trace starts ${((firstTs - a) / 1000).toFixed(0)} ms into the scene's ${out.windowMs.toFixed(0)} ms window (the buffer overran): motions before that have probe numbers only`)
+  }
 
   // Align the probe's clock to the trace through the marks both saw.
   let offset = null

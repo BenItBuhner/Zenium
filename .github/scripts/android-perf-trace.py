@@ -17,7 +17,8 @@ from collections import defaultdict
 
 from perfetto.trace_processor import TraceProcessor
 
-args = [a for a in sys.argv[1:] if not a.startswith('--')]
+FLAGS_WITH_VALUE = {'--app', '--json'}
+args = [a for i, a in enumerate(sys.argv[1:]) if not a.startswith('--') and (i == 0 or sys.argv[i] not in FLAGS_WITH_VALUE)]
 trace_path = args[0]
 scenes_path = args[1] if len(args) > 1 else None
 app = sys.argv[sys.argv.index('--app') + 1] if '--app' in sys.argv else 'io.github.benitbuhner.zenium.debug'
