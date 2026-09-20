@@ -42,7 +42,8 @@ import kotlin.math.roundToInt
  *     pill's stops (field, site icon, lock) and the sheet's rows as the tree names them, written
  *     next to the recording.
  *
- * Measurements and outcomes go to `android-chip-fold-results.json`; the claims that did not hold
+ * Measurements and outcomes go to `android-chip-fold-results.txt` (JSON; the shared recipe pulls
+ * `.txt`, `.png` and `.jpg` off the device); the claims that did not hold
  * fail the instrumentation at the end, after the stills are flushed.
  */
 @RunWith(AndroidJUnit4::class)
@@ -144,7 +145,7 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
             glyphSlotStep()
             talkBackStep()
         } finally {
-            File(out, "android-chip-fold-results.json").writeText(results.toString(2) + "\n")
+            File(out, "android-chip-fold-results.txt").writeText(results.toString(2) + "\n")
             File(out, "android-chip-fold-verdict.txt").writeText(
                 if (failures.isEmpty()) "OK\n" else failures.joinToString("\n", postfix = "\n")
             )
@@ -166,7 +167,10 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         note("  ${describeTab(GITHUB_TAB)}")
         claim("the pill draws the lock and nothing else after the address", chips == listOf("lock"), "drew $chips")
         claim("no translate chip in the pill", !pill.optBoolean("translateChip"), "a [data-translate] stands in the pill")
-        claim("no shield or count in the pill", buttons.none { it.startsWith("Requests blocked") || it.contains("blocked") }, "buttons $buttons")
+        // The address stop itself speaks the count ("1 request blocked": the design), so the shield
+        // is looked for among the other buttons (run 1's claim read the address's own label).
+        val others = buttons.filterNot { it.startsWith("Address,") }
+        claim("no shield or count in the pill", others.none { it.startsWith("Requests blocked") || it.contains("blocked") }, "buttons $buttons")
         claim(
             "the pill's buttons are the address, the site icon and the lock",
             buttons.size == 3 && buttons[0].startsWith("Address,") && SITE_ICON_LABEL in buttons && LOCK_LABEL in buttons,
@@ -295,12 +299,22 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         note("  rows for the folded chips (chrome): $rows")
         note("  rows as the tree names them: ${rows.map { treeLabel(it) ?: "(not in the tree)" }}")
         results.put("sheetRows", JSONArray(rows))
-        val blocked = tab(GITHUB_TAB)?.optInt("blockedCount") ?: 0
-        val shield = rows.firstOrNull { it.startsWith("Requests blocked") }
-        claim("the shield row is in the sheet", shield != null, "rows $rows")
-        if (shield != null && blocked > 0) {
-            claim("the shield row carries the count", shield == "Requests blocked, $blocked" || shield.endsWith(", $blocked") || shield.contains("$blocked"), "row '$shield' for $blocked blocked")
+        var blocked = tab(GITHUB_TAB)?.optInt("blockedCount") ?: 0
+        var shieldRead = rows.firstOrNull { it.startsWith("Requests blocked") }
+        claim("the shield row is in the sheet", shieldRead != null, "rows $rows")
+        if (shieldRead != null) {
+            // github.com keeps loading in the background and the count moves under the sheet (run
+            // 1: the row read 3, the tab 4 a moment later, the row at 4 on the still), so the row
+            // and the tab are read together until they agree; the row follows the count live.
+            poll(8_000) {
+                blocked = tab(GITHUB_TAB)?.optInt("blockedCount") ?: 0
+                shieldRead = sheetRows().firstOrNull { it.startsWith("Requests blocked") }
+                shieldRead?.endsWith(", $blocked") == true
+            }
+            note("  the shield row against the tab's count: '$shieldRead' for $blocked blocked")
+            if (blocked > 0) claim("the shield row carries the count", shieldRead?.endsWith(", $blocked") == true, "row '$shieldRead' for $blocked blocked")
         }
+        val shield = shieldRead
         val translate = rows.firstOrNull { it.startsWith("Translate this page") }
         if (translateState(GITHUB_TAB) != null) {
             claim("the translate row is in the sheet with its pair", translate != null && translate.contains(","), "rows $rows")
@@ -315,6 +329,7 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
                 translateState(GITHUB_TAB)?.let { !it.optBoolean("dismissed") } == true
             }
             results.put("translateRowRaisesBar", took)
+            claim("a finger on the translate row raises the translate bar", took, "the offer stayed dismissed")
             if (took) {
                 awaitSurface(up = false, timeoutMs = 6_000)
                 SystemClock.sleep(1_500)
@@ -331,12 +346,15 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
             closeSheets()
         }
 
-        // The shield row: the sheet leaves and the Settings tab stands at Privacy and Security.
+        // The shield row: the sheet leaves and the Settings tab stands at Privacy and Security. The
+        // row is found by its name's prefix alone: the count in it moves while the page loads
+        // (run 1: the row read 3 when listed and 4 by the finger, so a whole-name match missed).
         if (shield != null && openSiteInfo()) {
-            val took = touchTapLabelExpecting(shield, "the Settings tab is at Privacy and Security", timeoutMs = 10_000, prefix = true) {
+            val took = touchTapLabelExpecting("Requests blocked", "the Settings tab is at Privacy and Security", timeoutMs = 10_000, prefix = true) {
                 activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
             }
             results.put("shieldRowOpensPrivacy", took)
+            claim("a finger on the shield row leads to Settings › Privacy and Security", took, "the active tab is ${activeCoreTab()?.optString("url")}")
             if (took) {
                 awaitSurface(up = true, timeoutMs = 6_000)
                 SystemClock.sleep(1_500)
@@ -411,6 +429,7 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         if (chipNode != null) {
             val took = touchTapLabelExpecting(CHIP_PLAYING, "the media sheet is up", timeoutMs = 10_000) { chromeSurfaceUp() }
             results.put("mediaChipOpensSheet", took)
+            claim("a finger on the Now playing chip opens the media sheet", took, "no surface came up")
             if (took) {
                 SystemClock.sleep(1_500)
                 note("  media sheet: title '${findNode { it == "Zenium demo clip" }?.let { "shown" } ?: "not in the tree"}'")

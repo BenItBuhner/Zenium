@@ -10,7 +10,7 @@ name: Android pill chip fold demo
 # count leading to Settings › Privacy and Security, the translate offer raising its bar), a playing
 # video taking the lock's slot with the Now playing chip on the §11.4 cross-fade (the chrome's
 # `animate` calls on record) and giving it back, and what TalkBack hears at the address stop. The
-# driver writes `android-chip-fold-results.json` and `android-chip-fold-notes.txt`, and fails when
+# driver writes `android-chip-fold-results.txt` (JSON) and `android-chip-fold-notes.txt`, and fails when
 # a claim did not hold. Dispatch-only, like the other demos: it takes about twelve minutes and says
 # nothing about a change being correct. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file only picks the driver and the demo it runs.
