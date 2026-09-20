@@ -218,6 +218,11 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.barShow()")
     }
 
+    /** Touch exploration (TalkBack) turned on or off: on, the bar that hides on scroll stays put (`lib/barHide.ts` `setBarHideTouchExploration`). */
+    fun barTouchExploration(enabled: Boolean) {
+        js("window.__zenHost&&__zenHost.barTouchExploration($enabled)")
+    }
+
     /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
     fun backCommit(callback: (Boolean) -> Unit) {
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }

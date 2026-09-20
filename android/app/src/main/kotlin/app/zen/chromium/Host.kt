@@ -22,6 +22,7 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -69,6 +70,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
     val siteData = SiteData()
+    private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
+    private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
+        Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
+        chrome.barTouchExploration(enabled)
+    }
+
+    /** An accessibility service explores the screen by touch right now (TalkBack). */
+    val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
 
     init {
         // A private session the last run did not get to end (a crash, the system killing the app)
@@ -96,6 +105,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 return super.onRequestSendAccessibilityEvent(host, child, event)
             }
         }
+        // Touch exploration (TalkBack) on: the bar does not hide on scroll at all, and comes back
+        // if it was off – Chrome never hides its controls while an accessibility service is on. The
+        // chrome starts from the state in the boot payload and hears each change from here.
+        accessibility?.addTouchExplorationStateChangeListener(touchExplorationListener)
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
@@ -230,7 +243,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 // A speech recogniser on the device: the mic buttons show (voice search, OMN-19).
                 "voiceSearch" to voice.available,
                 // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
-                "qrScan" to qrScan.available
+                "qrScan" to qrScan.available,
+                // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
+                "touchExploration" to touchExploration
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -1226,6 +1241,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
+        accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         extensions.destroy()
         cancelProbe()
         media.destroy()

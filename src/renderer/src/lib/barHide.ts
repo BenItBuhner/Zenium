@@ -26,7 +26,8 @@ import { browserStore, contentAreaStore, pageHidden, uiStore, type UiState } fro
  * Gating (`barMayHide`): the bar stays put on the new tab page and the internal pages, while
  * the omnibox is editing, while a sheet or any chrome covers the page, while find or the zoom
  * panel is docked, during a pull-to-refresh, while the keyboard is up, while the pill is being
- * carried, and with the setting off. A gate closing on a hidden bar brings it back on the spring.
+ * carried, while an accessibility service explores the screen by touch, and with the setting
+ * off. A gate closing on a hidden bar brings it back on the spring.
  */
 
 export type BarHidePhase = 'rest' | 'dragging' | 'flinging' | 'settling'
@@ -92,6 +93,15 @@ export interface BarHideGate {
   pulling: boolean
   /** The pill is being carried to the other edge. */
   carrying: boolean
+  /**
+   * An accessibility service explores the screen by touch (TalkBack; the host's
+   * `AccessibilityManager.isTouchExplorationEnabled`). Chrome never hides its controls while an
+   * accessibility service is on: a user reading the page by swipes would lose the toolbar and
+   * have to find it again. The same here, keyed on touch exploration – a service that leaves it
+   * off (switch access) still has the bar come back when its focus lands on the hidden pill
+   * (`showBar`). The Settings switch is left as it is.
+   */
+  touchExploring: boolean
 }
 
 export function barMayHide(gate: BarHideGate): boolean {
@@ -103,7 +113,8 @@ export function barMayHide(gate: BarHideGate): boolean {
     !gate.panelDocked &&
     !gate.keyboardUp &&
     !gate.pulling &&
-    !gate.carrying
+    !gate.carrying &&
+    !gate.touchExploring
   )
 }
 
@@ -524,6 +535,21 @@ export function resetBarHide(): void {
   machine.reset()
 }
 
+/** An accessibility service explores the screen by touch, as the host last said. */
+let touchExploration = false
+
+/**
+ * Host → chrome: touch exploration (TalkBack) turned on or off
+ * (`AccessibilityManager.isTouchExplorationEnabled` and its change listener, `Host.kt`; the
+ * boot payload carries the state at start). On, the bar does not hide and comes back if it was
+ * off its edge, as Chrome's controls stay while an accessibility service is on.
+ */
+export function setBarHideTouchExploration(enabled: boolean): void {
+  if (touchExploration === enabled) return
+  touchExploration = enabled
+  evaluateGate()
+}
+
 /** The gate as the stores stand. */
 export function currentGate(): BarHideGate {
   const state = browserStore.get().state
@@ -538,7 +564,8 @@ export function currentGate(): BarHideGate {
     panelDocked: ui.findOpen || ui.zoomTabId !== null,
     keyboardUp: ui.insets.bottom >= KEYBOARD_INSET_MIN,
     pulling: pullStore.get().phase !== 'idle',
-    carrying: dockStore.get().phase !== 'idle'
+    carrying: dockStore.get().phase !== 'idle',
+    touchExploring: touchExploration
   }
 }
 

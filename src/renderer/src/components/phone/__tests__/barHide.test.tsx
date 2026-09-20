@@ -12,6 +12,7 @@ import {
   resetBarHide,
   setBarHideContext,
   setBarHideHost,
+  setBarHideTouchExploration,
   showBar,
   type BarHideHostFrame
 } from '@renderer/lib/barHide'
@@ -113,6 +114,7 @@ describe('the published hide progress', () => {
 
   afterEach(() => {
     resetBarHide()
+    setBarHideTouchExploration(false)
     setBarHideContext({ present: false })
     setBarHideHost(null)
     contentAreaStore.set({ area: null })
@@ -349,6 +351,32 @@ describe('the published hide progress', () => {
     expect(barHideStore.get().phase).toBe('settling')
     settle()
     expect(rootVar()).toBe(0)
+    expectAgreement()
+  })
+
+  it('touch exploration (TalkBack) on: the bar does not hide and comes back if it was off; off again, it may hide', () => {
+    // Chrome never hides its controls while an accessibility service is on; the host says when
+    // touch exploration turns on or off (the boot payload at start, `barTouchExploration` after).
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    setBarHideTouchExploration(true)
+    expect(barHideStore.get().allowed).toBe(false)
+    expect(barHideStore.get().phase).toBe('settling')
+    settle()
+    expect(rootVar()).toBe(0)
+    expect(uiStore.get().barHidden).toBe(false)
+    expectAgreement()
+    // A scroll while the service is on moves nothing.
+    scroll([60])
+    expect(rootVar()).toBe(0)
+    expectAgreement()
+    setBarHideTouchExploration(false)
+    expect(barHideStore.get().allowed).toBe(true)
+    scroll([60])
+    expect(rootVar()).toBe(1)
     expectAgreement()
   })
 

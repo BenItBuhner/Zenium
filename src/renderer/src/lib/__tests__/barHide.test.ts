@@ -63,7 +63,8 @@ describe('barMayHide: the gate', () => {
     panelDocked: false,
     keyboardUp: false,
     pulling: false,
-    carrying: false
+    carrying: false,
+    touchExploring: false
   }
 
   it('is open only with the setting on and nothing in the way', () => {
@@ -78,7 +79,8 @@ describe('barMayHide: the gate', () => {
     ['find or the zoom panel docked', { panelDocked: true }],
     ['the keyboard up', { keyboardUp: true }],
     ['a pull-to-refresh in flight', { pulling: true }],
-    ['the pill being carried', { carrying: true }]
+    ['the pill being carried', { carrying: true }],
+    ['an accessibility service exploring by touch', { touchExploring: true }]
   ] as Array<[string, Partial<BarHideGate>]>)('closes with %s', (_name, change) => {
     expect(barMayHide({ ...open, ...change })).toBe(false)
   })

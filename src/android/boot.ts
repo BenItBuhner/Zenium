@@ -23,6 +23,7 @@ import {
   dispatchBarNavigation,
   dispatchBarScroll,
   setBarHideHost,
+  setBarHideTouchExploration,
   showBar,
   type BarScrollPayload,
   type BarScrollPhase
@@ -80,6 +81,12 @@ export interface HostGlobal {
    * off its edge: the bar comes back so what was focused is on screen (see `Host.kt`).
    */
   barShow(): void
+  /**
+   * Touch exploration (TalkBack) turned on or off (`AccessibilityManager`'s change listener,
+   * `Host.kt`; the boot payload carries the state at start): on, the bar that hides on scroll
+   * stays put and comes back if it was off its edge.
+   */
+  barTouchExploration(enabled: boolean): void
   /** The user tapped the notification / launcher again: bring a URL in. */
   openUrl(url: string): void
   /**
@@ -130,7 +137,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   syncPrivateSurface(bridge)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
-  syncBarHide(bridge)
+  syncBarHide(bridge, boot)
   browser.start()
   hostGlobal.flush()
 
@@ -277,15 +284,18 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
  * The bar that hides on scroll (`lib/barHide.ts`): the host streams the active page's scroll in
  * and hears back, per frame, where the bar is – it moves the page's edge on the bar's side to
  * match, and watches (or, with the bar docked at the top, takes over) the page's touches only
- * while the frame says the bar may hide (`null` turns it off).
+ * while the frame says the bar may hide (`null` turns it off). Whether an accessibility service
+ * explores by touch is read off the boot payload here; changes arrive as
+ * `__zenHost.barTouchExploration`.
  */
-function syncBarHide(bridge: Bridge): void {
+function syncBarHide(bridge: Bridge, boot: BootInfo): void {
   setBarHideHost({
     apply: (frame) => bridge.send('chrome.setBarHide', frame ?? { enabled: false }),
     // The chrome's console reaches the logcat (`ZenChrome`): each phase, and every move of the
     // bar that was not the finger's, on the record next to the host's own (`BarHide`, `ZenHost`).
     note: (reason) => console.debug(`bar hide: ${reason}`)
   })
+  setBarHideTouchExploration(boot.touchExploration === true)
 }
 
 /**
@@ -339,6 +349,7 @@ function installHostGlobal(
     barScroll: (tabId, phase, json) =>
       dispatchBarScroll(tabId, phase as BarScrollPhase, parse<BarScrollPayload | null>(json)),
     barShow: () => showBar(),
+    barTouchExploration: (enabled) => setBarHideTouchExploration(enabled === true),
     openUrl: (url) =>
       withPlatform((platform) =>
         platform.browser.openExternalUrl(url, platform.window, { fromIntent: true })
