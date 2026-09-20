@@ -785,6 +785,42 @@ describe('SuggestionService: zero-suggest (omnibox-20)', () => {
     expect(await suggestions.suggest('', null, win)).toEqual([])
   })
 })
+
+describe('SuggestionService: suggestion privacy toggles (omnibox-45)', () => {
+  it('drops history rows and the inline completion with history suggestions off, bookmarks stay', async () => {
+    const { suggestions, history, bookmarks, state, win } = setup()
+    history.visit('https://example.org/', 'Example Domain', null, { transition: 'typed' })
+    bookmarks.create({ title: 'Example mark', url: 'https://marks.example/example' })
+    state.settings.historySuggestions = false
+
+    const results = await suggestions.suggest('exam', null, win)
+    expect(results.some((r) => r.kind === 'history' || r.inline)).toBe(false)
+    expect(results.some((r) => r.kind === 'bookmark')).toBe(true)
+    expect(results[0]).toMatchObject({ kind: 'search', title: 'exam' })
+  })
+
+  it('drops bookmark rows with bookmark suggestions off, history stays', async () => {
+    const { suggestions, history, bookmarks, state, win } = setup()
+    history.visit('https://example.org/docs', 'Example docs', null)
+    bookmarks.create({ title: 'Example mark', url: 'https://marks.example/example' })
+    state.settings.bookmarkSuggestions = false
+
+    const results = await suggestions.suggest('example', null, win)
+    expect(results.some((r) => r.kind === 'bookmark')).toBe(false)
+    expect(results.some((r) => r.kind === 'history')).toBe(true)
+  })
+
+  it('an explicit @bookmarks or @history scope still answers with the toggles off', async () => {
+    const { suggestions, history, bookmarks, state, win } = setup()
+    history.visit('https://example.org/docs', 'Example docs', null)
+    bookmarks.create({ title: 'Example mark', url: 'https://marks.example/example' })
+    state.settings.bookmarkSuggestions = false
+    state.settings.historySuggestions = false
+    expect(kinds(await suggestions.suggest('@bookmarks example', null, win))).toContain('bookmark')
+    expect(kinds(await suggestions.suggest('@history example', null, win))).toContain('history')
+  })
+})
+
 describe('SuggestionService: search mode (omnibox-26, -08)', () => {
   it('with an engine given, an address-like typing is a search for that engine', async () => {
     const { suggestions, history, win } = setup()

@@ -104,6 +104,9 @@ export class SuggestionService {
     const defaultEngine = state.defaultSearchEngine()
     const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
+    // Suggestion privacy (omnibox-45): the history and bookmark sources can be switched off.
+    const wantsHistory = !isPrivate && state.settings.historySuggestions !== false
+    const wantsBookmarks = !isPrivate && state.settings.bookmarkSuggestions !== false
 
     // Search mode (omnibox-26): the bar's engine, or Chrome's legacy `?` prefix in the text.
     let modeEngine = opts.engineId ? engines.find((e) => e.id === opts.engineId) : undefined
@@ -198,7 +201,7 @@ export class SuggestionService {
     if (!keyword && wantsHistory) rows.push(...this.shortcutRows(query, engines))
 
     // The default match to complete inline: the most frecent visited host or URL with this prefix.
-    if (!keyword && !isPrivate) {
+    if (!keyword && wantsHistory) {
       const autofill = this.browser.history.autofill(query)
       if (autofill && autofill.fill.length > query.length) {
         rows.push({
@@ -235,10 +238,8 @@ export class SuggestionService {
       rows.push(...this.commandRows(query, win))
       if (!local) rows.push(...this.spaceRows(query, win))
       rows.push(...this.tabRows(query, currentTabId, win, 3))
-      if (!isPrivate) {
-        rows.push(...this.bookmarkRows(query, 3))
-        rows.push(...this.historyRows(query, 6))
-      }
+      if (wantsBookmarks) rows.push(...this.bookmarkRows(query, 3))
+      if (wantsHistory) rows.push(...this.historyRows(query, 6))
     }
 
     // Network sources run together; the popup waits for the slowest but never past its timeout.
@@ -618,6 +619,7 @@ export class SuggestionService {
       fill: query,
       relevance: RELEVANCE.verbatim
     })
+    // An explicit `@history foo` is the user asking for these rows: the toggles do not apply.
     if (terms) {
       rows.push(
         ...(scope.scope === 'bookmarks'
@@ -633,7 +635,7 @@ export class SuggestionService {
    * copied"; the kind alone, from the clip's description – the content is read only when the
    * user reveals or picks the row), then the recent history.
    */
-  private async emptyState(): Promise<Suggestion[]> {
+  private async emptyState(wantsHistory: boolean): Promise<Suggestion[]> {
     const rows: Suggestion[] = []
     const clip = await this.browser.searchEngines.peekClipboard()
     // An image on the clipboard has nowhere to go: Zenium has no visual search, so no row.

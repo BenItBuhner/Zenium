@@ -224,6 +224,8 @@ export const DEFAULT_SETTINGS: Settings = {
   searchEngineId: 'google',
   searchEngines: [],
   searchSuggestions: true,
+  historySuggestions: true,
+  bookmarkSuggestions: true,
   showFullUrls: false,
   containerSpecificEssentials: true,
   essentialsMax: 12,

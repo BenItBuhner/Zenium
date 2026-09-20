@@ -1980,6 +1980,14 @@ export interface Settings {
   searchEngines?: SearchEngine[]
   searchSuggestions: boolean
   /**
+   * Suggestion privacy (omnibox-45, Chrome's "Autocomplete searches and URLs", Edge's per-source
+   * switches): rows from the browsing history (and the inline address completion), and rows
+   * from the bookmarks. Absent in profiles from before they existed (read as on). Private
+   * windows show neither whatever these say.
+   */
+  historySuggestions?: boolean
+  bookmarkSuggestions?: boolean
+  /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
    * eliding them at rest. Absent in profiles from before it existed (read as false).
    */
