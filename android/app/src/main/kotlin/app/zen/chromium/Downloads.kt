@@ -397,7 +397,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
      * user's own.
      */
     fun openWith(savePath: String, mimeType: String) {
-        val uri = shareUri(savePath) ?: return
+        val uri = chooserUri(savePath) ?: return
         val chooser = Intent.createChooser(viewIntent(uri, savePath, mimeType), null)
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
@@ -409,7 +409,7 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
 
     /** The share sheet with the downloaded file itself (its name as the subject). */
     fun share(savePath: String, mimeType: String, name: String) {
-        val uri = shareUri(savePath) ?: return
+        val uri = chooserUri(savePath) ?: return
         val type = mimeType.ifEmpty { activity.contentResolver.getType(uri) ?: DownloadSink.mimeFor(savePath) }
         val send = Intent(Intent.ACTION_SEND).apply {
             setType(type)
@@ -813,6 +813,28 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         savePath.startsWith("content:") -> Uri.parse(savePath)
         savePath.startsWith("file:") -> Uri.parse(savePath).path?.let { shareableUri(File(it)) }
         else -> shareableUri(File(savePath))
+    }
+
+    /**
+     * The URI the share sheet and the "Open with" chooser get: a MediaStore download as the app's
+     * own FileProvider URI when its file is on disk where the provider reaches and the app may
+     * read it (the public Downloads, written by this install), so the sheet reads the file's name
+     * and size from it as it does from Chrome's FileProvider – Android 14's chooser asks
+     * MediaProvider for a column it refuses ("Invalid column flags") and then shows the row id
+     * for the file. Otherwise the URI `shareUri` gives.
+     */
+    private fun chooserUri(savePath: String): Uri? = shareUri(savePath)?.let { providerUriFor(it) ?: it }
+
+    @Suppress("DEPRECATION") // DATA: the one column that names the file on disk
+    private fun providerUriFor(uri: Uri): Uri? {
+        if (uri.authority != MediaStore.AUTHORITY) return null
+        val path = runCatching {
+            activity.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: return null
+        val file = File(path)
+        if (!file.isFile || !file.canRead()) return null
+        return fileProviderUri(file)
     }
 
     /**
