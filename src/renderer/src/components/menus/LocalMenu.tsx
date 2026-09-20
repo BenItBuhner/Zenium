@@ -92,13 +92,14 @@ function PopoverMenu({
     // to .94, and an end-aligned menu measured through it would land 6% of its width off.
     setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
   }, [anchor, items.length])
-  // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item.
+  // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item; a
+  // letter goes to (or runs) the item it names, as in Chrome's menus (a11y-08).
   usePopover(ref, {
     onClose,
     active: box !== null,
     initial: fromKeyboard ? 'first' : 'container'
   })
-  useArrowKeys(ref, '.zen-v2-menu-item')
+  useArrowKeys(ref, '.zen-v2-menu-item', { mnemonics: true })
   useLightDismiss(ref, onClose, { anchor: () => anchor.element ?? null })
   const withIcons = items.some((item) => !isSeparator(item) && item.icon)
   return (

@@ -5,6 +5,7 @@ import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { cmd, run } from '@renderer/lib/api'
 import { pathForFile } from '@renderer/lib/dnd'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore } from '@renderer/lib/drag'
 import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
 import { ChromePortal, toRect } from '@renderer/lib/portals'
@@ -414,8 +415,7 @@ export function BookmarksBar({
     run('bookmark.contextMenu', {
       ids: node ? [node.id] : [],
       folderId: BOOKMARKS_BAR_ID,
-      x: e.clientX,
-      y: e.clientY,
+      ...contextMenuAnchor(e),
       surface: 'bar'
     })
   }
@@ -444,6 +444,9 @@ export function BookmarksBar({
       aria-label="Bookmarks bar"
       className={cn('zen-bm-bar zen-no-drag', className)}
       data-surface="window"
+      // The bookmarks bar pane of the F6 rotation (lib/panes.ts): F6 and Shift+Alt+B land on the
+      // roving chip.
+      data-pane="bookmarks"
       onContextMenu={(e) => contextMenu(e, null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -573,8 +576,7 @@ export function BookmarksBar({
             run('bookmark.contextMenu', {
               ids: [node.id],
               folderId: node.id,
-              x: e.clientX,
-              y: e.clientY,
+              ...contextMenuAnchor(e),
               surface: 'bar'
             })
           }}

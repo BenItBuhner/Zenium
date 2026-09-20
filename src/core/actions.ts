@@ -166,7 +166,23 @@ export class Actions {
         return
       }
 
-      // --- url bar / find ---
+      // --- keyboard panes / url bar / find ---
+      // The key's source says where the keyboard is: a page's view, or the chrome document (the
+      // renderer then reads its focused element).
+      case 'focus.nextPane':
+      case 'focus.prevPane':
+        return this.browser.emit(
+          'focus.pane',
+          {
+            move: action === 'focus.nextPane' ? 'next' : 'prev',
+            from: ctx.sourceTabId === null ? 'chrome' : 'page'
+          },
+          win
+        )
+      case 'focus.toolbar':
+        return this.browser.emit('focus.pane', { pane: 'toolbar' }, win)
+      case 'focus.bookmarksBar':
+        return this.browser.emit('focus.pane', { pane: 'bookmarks' }, win)
       case 'urlbar.focus':
         return this.browser.emit('urlbar.toggle', { mode: 'edit' }, win)
       case 'urlbar.search':

@@ -15,6 +15,7 @@ import type {
   ClipboardHost,
   MenuHost,
   MenuItemTemplate,
+  MenuPopupOptions,
   Platform,
   SpellcheckHost,
   StoreIO,
@@ -158,6 +159,8 @@ interface Harness {
   shown: () => MenuItemTemplate[]
   /** How many popups the host was asked for. */
   popups: () => number
+  /** The options of the last popup: where it opened and whether the keyboard asked for it. */
+  where: () => MenuPopupOptions | null
   /** Every call a tab view received, as `method(args)`. */
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
@@ -196,6 +199,7 @@ function harness(
 ): Harness {
   const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
   let last: MenuItemTemplate[] = []
+  let lastOptions: MenuPopupOptions | null = null
   let count = 0
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
@@ -221,8 +225,9 @@ function harness(
     }
   }
   const menus: MenuHost = {
-    popup: (items) => {
+    popup: (items, options) => {
       last = items
+      lastOptions = options
       count += 1
     }
   }
@@ -297,6 +302,7 @@ function harness(
     win,
     shown: () => last,
     popups: () => count,
+    where: () => lastOptions,
     viewCalls,
     clipboardText,
     sent,
@@ -1871,6 +1877,97 @@ describe('the download row menu', () => {
     const before = h.popups()
     h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
     expect(h.popups()).toBe(before)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Where a menu opens for the keyboard (Shift+F10, the Menu key; a11y-08)
+// ---------------------------------------------------------------------------
+
+describe('a menu asked for from the keyboard', () => {
+  /** The page sits to the right of the sidebar: its coordinates are offset in the window's. */
+  const placePage = (h: PageHarness): void =>
+    h.win.applyLayout({
+      placements: [{ tabId: h.tabId, rect: { x: 300, y: 60, width: 900, height: 700 }, radius: 8 }],
+      glance: null,
+      contentHidden: false
+    })
+
+  it("a page's menu opens at the focused element or caret, in the window's coordinates, first item selected", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', x: 400, y: 260, keyboard: true })
+  })
+
+  it("a page's menu from the pointer opens at the pointer, which the host does by itself", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'mouse' }))
+    expect(h.where()).toMatchObject({ source: 'page' })
+    expect(h.where()).not.toHaveProperty('x')
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.menu(pageParams({ x: 100, y: 200 }))
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it('a page the chrome has not placed still gets keyboard mode', () => {
+    const h = pageHarness()
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', keyboard: true })
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the URL bar's menu opens at the caret for Shift+F10, at the pointer otherwise", async () => {
+    const h = pageHarness()
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({
+        target: 'urlbar',
+        tabId: h.tabId,
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        x: 420,
+        y: 18,
+        keyboard: true
+      }),
+      h.win
+    )
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 420, y: 18, keyboard: true })
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS }),
+      h.win
+    )
+    expect(h.where()).not.toHaveProperty('keyboard')
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the chrome's rows pass their anchor through the commands: at the row, keyboard mode", () => {
+    const h = pageHarness()
+    const space = h.win.activeSpace()
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 120,
+      y: 240,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 120, y: 240, keyboard: true })
+    h.browser.handleCommand(h.win, 'space.contextMenu', { spaceId: space.id, x: 30, y: 900 })
+    expect(h.where()).toMatchObject({ source: 'space', x: 30, y: 900 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    const folderId = h.browser.createFolder(space.id, 'Work', '📁', h.win).id
+    h.browser.handleCommand(h.win, 'folder.contextMenu', {
+      folderId,
+      x: 100,
+      y: 300,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'folder', x: 100, y: 300, keyboard: true })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', { x: 90, y: 500, keyboard: true })
+    expect(h.where()).toMatchObject({ source: 'newtab', x: 90, y: 500, keyboard: true })
+    // A right-click's command without an anchor is the pointer's, as before.
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    expect(h.where()).toMatchObject({ source: 'tab' })
+    expect(h.where()).not.toHaveProperty('x')
   })
 })
 

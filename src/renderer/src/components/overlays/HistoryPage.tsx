@@ -16,6 +16,7 @@ import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { dayLabel } from '@shared/dayKey'
 import { cmd, onEvent, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -443,7 +444,7 @@ function VisitRow({
   const title = visit.title || host
   const contextMenu = (e: MouseEvent): void => {
     e.preventDefault()
-    run('history.contextMenu', { visitId: visit.id, url: visit.url })
+    run('history.contextMenu', { visitId: visit.id, url: visit.url, ...contextMenuAnchor(e) })
   }
   return (
     <li className="zen-history-row group" data-selected={selected} onContextMenu={contextMenu}>

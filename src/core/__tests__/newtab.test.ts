@@ -304,6 +304,9 @@ describe('NewTabService: preloading', () => {
     // Its host events now reach the tab.
     preloads[0].events.onTitleUpdated('New Tab')
     expect(f.browser.tabs.tab(tab!.id)?.title).toBe('New Tab')
+    // The optional ones too: the page taking the keyboard is reported for the tab (focus.page).
+    preloads[0].events.onFocused?.()
+    expect(eventsNamed(f, 'focus.page')).toEqual([{ tabId: tab!.id }])
     // And the next page is preloaded straight away.
     await settle()
     expect(f.views.length).toBe(created + 1)
