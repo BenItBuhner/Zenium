@@ -5979,7 +5979,10 @@
    * suggestions rise in under the arriving field rather than over the tiles); its field's
    * backdrop and content are the double's until the field lands – the field draws nothing of
    * its own on the way, so no frame has two fields – and at the landing nothing replays: the
-   * pill-grow and the fades stay off while the morph owns the bar.
+   * pill-grow and the fades stay off while the morph owns the bar. The content's own opacity
+   * transitions (the toolbar button's 120 ms, its resting 85 %) are off too: the field's content
+   * is the double's until the landing and the double's again from the frame a pull begins, so
+   * the omnibox's own goes and comes on that frame, not over a fade beside its stand-in.
    */
   :root[data-fakebox='opening'] .zen-omnibox-sheet,
   :root[data-fakebox='closing'] .zen-omnibox-sheet,
@@ -5994,12 +5997,16 @@
   :root[data-fakebox='closing'] .zen-omnibox-field > *,
   :root[data-fakebox='pulled'] .zen-omnibox-field > * {
     animation: none;
+    transition: none;
     opacity: 0;
   }
   :root[data-fakebox='open'] .zen-omnibox-sheet,
   :root[data-fakebox='open'] .zen-omnibox-field::before,
   :root[data-fakebox='open'] .zen-omnibox-field > * {
     animation: none;
+  }
+  :root[data-fakebox='open'] .zen-omnibox-field .zen-toolbar-button {
+    transition-property: background, transform;
   }
 }
 
@@ -10726,6 +10733,27 @@
   :root[data-fakebox='opening'] .zen-ntp-fades,
   :root[data-fakebox='closing'] .zen-ntp-fades {
     transition: opacity 120ms var(--zen-ease) !important;
+  }
+  /*
+   * What the scrub and the morph write per frame – the double's box and the layer's clip, the
+   * page field's and the pill's opacities on `--zen-ntp-pill`, the double's looks and contents
+   * on `--zen-ntp-morph`, the pill's well filling in – never transitions: the 0.01 ms the rule
+   * above leaves every property change would put each of them one frame behind the finger (a
+   * transition starts on the next frame, however short), so the box would trail the scroll by a
+   * frame and at the handover the pill's words and the field would both be drawn, or neither,
+   * for a frame. The finger's motion is one to one (§11.3). The layer's 120 ms fades above are
+   * animations, untouched by this.
+   */
+  :root[data-form-factor='phone'] .zen-fakebox-layer,
+  :root[data-form-factor='phone'] .zen-fakebox,
+  :root[data-form-factor='phone'] .zen-ntp-field,
+  :root[data-form-factor='phone'] .zen-phone-pill,
+  :root[data-form-factor='phone'] .zen-phone-pill > *,
+  :root[data-form-factor='phone'] .zen-fakebox-look,
+  :root[data-form-factor='phone'] .zen-fakebox-content,
+  :root[data-form-factor='phone'] .zen-fakebox-omni,
+  :root[data-form-factor='phone'] .zen-fakebox-trailing {
+    transition-property: none !important;
   }
   /*
    * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
