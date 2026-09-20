@@ -16,6 +16,11 @@ import {
   type DisplayMode
 } from '../shared/displayMode'
 import { installMediaSessionBridge, installMediaSessionShim } from '../shared/mediaSessionShim'
+import {
+  SCREEN_CAPTURE_INTENT_CHANNEL,
+  installScreenCaptureBridge,
+  installScreenCaptureShim
+} from '../shared/screenCapture'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
 import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
@@ -95,6 +100,25 @@ installUserScripts({
 
 const send = (message: PageScriptMessage | PageMessage): void =>
   ipcRenderer.send('zen:page', message)
+
+// Screen capture (MW-19), in every frame of a site (an iframe allowed `display-capture` may
+// call too): the page's `getDisplayMedia` announces whether it asked for audio before the
+// engine's permission request, which does not say, so the picker offers system audio when
+// Chrome's would. The ask is synchronous – the permission request follows the call at once.
+if (location.protocol === 'https:' || location.protocol === 'http:') {
+  installScreenCaptureBridge({
+    intent: (audio) => {
+      ipcRenderer.sendSync(SCREEN_CAPTURE_INTENT_CHANNEL, audio)
+    },
+    installShim: (eventName) => {
+      try {
+        contextBridge.executeInMainWorld({ func: installScreenCaptureShim, args: [eventName] })
+      } catch (error) {
+        console.warn('[zen] screen capture shim unavailable:', (error as Error).message)
+      }
+    }
+  })
+}
 
 if (!process.isMainFrame) {
   // A gesture inside a cross-origin iframe never reaches the host's `input-event` (Electron

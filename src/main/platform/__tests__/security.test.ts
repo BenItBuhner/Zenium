@@ -78,7 +78,7 @@ describe('permissionRequestDetails', () => {
 })
 
 describe('permissionName', () => {
-  const at = (mediaTypes?: Array<'video' | 'audio'>): Record<string, unknown> => ({
+  const at = (mediaTypes?: Array<'video' | 'audio'>): Electron.MediaAccessPermissionRequest => ({
     isMainFrame: true,
     requestingUrl: 'https://meet.example',
     ...(mediaTypes ? { mediaTypes } : {})

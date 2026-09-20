@@ -23,6 +23,7 @@ import type {
 import { isNewTabUrl } from '../../shared/url'
 import { contentSettingId } from '../../shared/contentSettings'
 import { DISPLAY_MODE_CHANNEL } from '../../shared/displayMode'
+import { SCREEN_CAPTURE_INTENT_CHANNEL } from '../../shared/screenCapture'
 import {
   NOTIFICATION_PERMISSION_CHANNEL,
   type NotificationPermissionStatus
@@ -569,8 +570,19 @@ export class ElectronPlatform implements Platform {
       const tabId = webContents ? this.views.tabIdForWebContents(webContents) : undefined
       const request = permissionRequestDetails(webContents, details, tabId)
       // A `getDisplayMedia` call arrives as `media` without devices: the screen-sharing row,
-      // whose Allow hands the call to the picker (`screenCapture.attach`) instead of a prompt.
+      // whose Allow puts the picker up right here – the picker is the consent, and only a
+      // refusal at this stage reads as Chrome's `NotAllowedError` to the page. Its answer waits
+      // for the engine's display-media request (`screenCapture.attach`).
       const permission = permissionName(rawPermission, details)
+      if (permission === 'display-capture' && tabId && webContents) {
+        void permissions
+          .decide(permission, url, request)
+          .then((allowed) =>
+            allowed ? this.screenCapture.permission(webContents, tabId, url) : false
+          )
+          .then(callback)
+        return
+      }
       // Chromium does not tell us whether a page's launch of another application had a
       // gesture, so the core's own activation tracking decides: without one the launch is
       // listed with the tab's blocked pop-ups instead of prompting.
@@ -640,6 +652,15 @@ export class ElectronPlatform implements Platform {
     ipcMain.on(DISPLAY_MODE_CHANNEL, (event) => {
       const tabId = this.views.tabIdForWebContents(event.sender)
       event.returnValue = tabId ? browser.displayModeFor(tabId) : 'browser'
+    })
+    // A page's `getDisplayMedia` call, announced synchronously by its main-world shim right
+    // before the engine sees it (MW-19): whether it asked for audio, which the permission
+    // request that follows does not say. Only a tab's page is heard; the answer is immediate,
+    // as the page's call waits on it.
+    ipcMain.on(SCREEN_CAPTURE_INTENT_CHANNEL, (event, audio: unknown) => {
+      if (this.views.viewForWebContents(event.sender))
+        this.screenCapture.intent(event.sender, audio === true)
+      event.returnValue = true
     })
     this.attachNotificationStatus(browser)
   }
