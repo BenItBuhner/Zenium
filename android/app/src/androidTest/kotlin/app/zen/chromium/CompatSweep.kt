@@ -290,16 +290,24 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val restored = waitForView(restoredId)
         val rendered = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(restored)) true else null }
         report.put("renderedMs", SystemClock.uptimeMillis() - since)
+        // A page may keep itself out of sight until its background answers (uBO Lite's dashboard
+        // stays `body.loading`, visibility hidden and so without innerText, until its worker's
+        // `getOptionsPageData` resolves, and on a restart the worker loads its rulesets first):
+        // the screenshot waits for visible text, the page as the user sees it, and the report
+        // says when it came.
+        val visible = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (visibleText(restored)) true else null }
+        report.put("visible", visible == true).put("visibleMs", SystemClock.uptimeMillis() - since)
         SystemClock.sleep(1_500)
         snap("restored-options-tab")
         val after = json(tabEval(restored, RESTORED_PAGE_REPORT))
         val console = consoleOf(restored)
         report.put("after", after).put("console", JSONArray(console.takeLast(20)))
         val attached = after.optString("runtimeId") == id
-        val verdict = if (rendered == true && attached) "P" else if (rendered == true) "PARTIAL" else "F"
+        val verdict = if (rendered == true && attached && visible == true) "P" else if (rendered == true) "PARTIAL" else "F"
         report.put("verdict", verdict).put(
             "note",
-            if (rendered == true) "the restored tab rendered ${after.optInt("els")} elements ${(SystemClock.uptimeMillis() - since) / 1000} s after the restart" +
+            if (rendered == true) "the restored tab rendered ${after.optInt("els")} elements ${report.optLong("renderedMs") / 1000} s after the restart" +
+                (if (visible == true) ", visible text ${report.optLong("visibleMs") / 1000} s after it" else ", no visible text within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the render") +
                 (if (attached) ", chrome.runtime.id is the extension's" else ", but chrome.runtime.id reads ${after.optString("runtimeId")}")
             else "the restored tab did not render within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the restart: ${after.toString().take(300)}"
         )
@@ -1439,6 +1447,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /** The document has content: text, or more than a handful of elements (an icon-only popup). */
     private fun rendered(view: WebView): Boolean =
         tabEval(view, "String(!!document.body && (document.body.innerText.trim().length > 0 || document.body.querySelectorAll('*').length > 3))", 5) == "true"
+
+    /** The document shows text (innerText leaves out what visibility hides): the page as seen. */
+    private fun visibleText(view: WebView): Boolean =
+        tabEval(view, "String(!!document.body && document.body.innerText.trim().length > 20)", 5) == "true"
 
     private fun sheetSize(view: WebView): JSONObject {
         val report = JSONObject()
