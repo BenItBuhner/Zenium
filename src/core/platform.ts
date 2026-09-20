@@ -22,6 +22,7 @@ import type {
   HapticKind,
   HostCapabilities,
   KeyBinding,
+  MenuGlyph,
   NavigationSnapshot,
   NewTabPageAction,
   NewTabPageCommand,
@@ -932,6 +933,12 @@ export interface MenuItemTemplate {
    * (recently closed entries, `chrome.contextMenus` items).
    */
   icon?: string | null
+  /**
+   * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
+   * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
+   * have no such row and ignore it; the phone layout alone builds one.
+   */
+  glyph?: MenuGlyph
   submenu?: MenuItemTemplate[]
   click?: () => void
   /**

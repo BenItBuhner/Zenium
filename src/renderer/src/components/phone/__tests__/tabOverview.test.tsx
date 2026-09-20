@@ -399,6 +399,83 @@ describe('the overview grid as one FLIP set', () => {
   })
 })
 
+// --- the card and group menus ------------------------------------------------------------------
+
+/*
+ * A held card's menu (#94) and a held group's menu (#147) are menus of the overview: their rows
+ * are menu items and take Title Case (v2 §9.1, the ruling from #207's review), where the card's
+ * X, the header's controls and the sheets' titles stay sentence case.
+ */
+describe('the card and group menus', () => {
+  const sheetLabels = (): Array<string | null> =>
+    [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((el) => el.textContent)
+  const grouped = (): UIState =>
+    stateOf([
+      tab('m1', 'https://one.example/', { folderId: GROUP }),
+      tab('m2', 'https://two.example/', { folderId: GROUP }),
+      tab('a', 'https://a.example/'),
+      tab('b', 'https://b.example/')
+    ])
+
+  it("a held card's rows are menu items in Title Case, the group's own name as given", () => {
+    render(grouped())
+    pickUp('a')
+    const p = at('a', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    expect(sheetLabels()).toEqual([
+      'New Group',
+      'Add to Research',
+      'Close Other Tabs (3)',
+      'Close Tab'
+    ])
+  })
+
+  it("a held member's rows offer the move out of its group in Title Case", () => {
+    render(grouped())
+    pickUp('m1')
+    const p = at('m1', 0.5, 0.5)
+    letGo(p.x, p.y)
+    act(() => elapse(300))
+    act(() => settleSprings())
+    expect(sheetLabels()).toEqual([
+      'New Group',
+      'Remove from Group',
+      'Close Other Tabs (3)',
+      'Close Tab'
+    ])
+  })
+
+  it("a held group's rows are menu items in Title Case, the count with its unit", () => {
+    render(grouped())
+    // A right click is the hold, for the mouse (`useLongPress`): the header opens its sheet.
+    const header = document.querySelector<HTMLElement>('[aria-label="Group Research"]')!
+    act(() => {
+      header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    act(() => settleSprings())
+    expect(sheetLabels()).toEqual(['Rename', 'Collapse', 'Ungroup', 'Close Group (2 Tabs)'])
+    // The colour swatches are a radio group, named for assistive technology; not menu rows.
+    expect(document.querySelector('[role="radiogroup"][aria-label="Colour"]')).not.toBeNull()
+  })
+
+  it('a group of one counts its tab in the singular', () => {
+    render(
+      stateOf([
+        tab('m1', 'https://one.example/', { folderId: GROUP }),
+        tab('a', 'https://a.example/')
+      ])
+    )
+    const header = document.querySelector<HTMLElement>('[aria-label="Group Research"]')!
+    act(() => {
+      header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    })
+    act(() => settleSprings())
+    expect(sheetLabels()).toContain('Close Group (1 Tab)')
+  })
+})
+
 // --- (B) dragging out of a group -----------------------------------------------------------------
 
 describe('a card dragged out of its group', () => {
@@ -1506,9 +1583,9 @@ describe('the private pane', () => {
     const labels = [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map(
       (el) => el.textContent
     )
-    expect(labels).toContain('Close other tabs (3)')
+    expect(labels).toContain('Close Other Tabs (3)')
     // No grouping on the private pane: the session is not a workspace.
-    expect(labels).not.toContain('New group')
+    expect(labels).not.toContain('New Group')
   })
 
   /*

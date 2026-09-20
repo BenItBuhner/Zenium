@@ -2902,6 +2902,14 @@ export interface CommandDescriptor {
 // Renderer-hosted menus (hosts without native popup menus)
 // ---------------------------------------------------------------------------
 
+/**
+ * The glyph an icon-row item draws. The phone app menu's first group is Chrome's row of icon
+ * buttons (Forward, the bookmark star, Download page, Page info, Reload / Stop): the core names
+ * the glyph, the chrome draws it, and the item's label is the button's accessible name. A menu
+ * whose items carry no glyph is rows of text, as before.
+ */
+export type MenuGlyph = 'forward' | 'star' | 'download' | 'info' | 'reload' | 'stop'
+
 export interface MenuItemDescriptor {
   id: string
   type: 'normal' | 'separator' | 'checkbox' | 'radio'
@@ -2913,6 +2921,11 @@ export interface MenuItemDescriptor {
   submenu: MenuItemDescriptor[] | null
   /** A destructive row ("Delete"), drawn in the danger ink. */
   danger?: boolean
+  /**
+   * An icon-row item: the chrome draws a group whose items all carry a glyph as a row of icon
+   * buttons (design language v2 §9.3) rather than rows of text, the label as each button's name.
+   */
+  glyph?: MenuGlyph
 }
 
 /**
@@ -4251,6 +4264,12 @@ export interface Events {
   'downloads.reveal': { id: string | null }
   /** Open the page zoom sheet for a tab (hosts with page controls). */
   'zoom.open': { tabId: string }
+  /**
+   * The app menu's Page info button on a phone: the chrome opens the site information sheet for
+   * the tab, as the pill's site chip does (the sheet and its data are the chrome's; the core only
+   * asks for it, the way `zoom.open` asks for the zoom sheet).
+   */
+  'siteInfo.open': { tabId: string }
   /**
    * The app menu's Extensions row on a phone: the chrome opens its sheet of the extensions'
    * actions (one row per enabled extension with an action; the desktop has the toolbar for it).

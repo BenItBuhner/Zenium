@@ -25,7 +25,9 @@ export function serialiseMenu(
         enabled: item.enabled ?? true,
         checked: Boolean(item.checked),
         icon: item.icon ?? null,
-        submenu: item.submenu ? serialise(item.submenu) : null
+        submenu: item.submenu ? serialise(item.submenu) : null,
+        // Only an icon-row item carries a glyph; every other descriptor keeps its shape.
+        ...(item.glyph ? { glyph: item.glyph } : {})
       }
     })
   return { items: serialise(items), handlers }

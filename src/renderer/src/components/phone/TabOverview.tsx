@@ -964,10 +964,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
 
 /**
  * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06);
- * "Close other tabs" stays on a card's own menu, where it names the card it keeps. The rows are
- * menu items, so Title Case (v2 §9.1; the card menus' rows from #94/#147 take the rule in a
- * follow-up); a row with nothing to act on keeps its count, at zero ("Recently Closed (0)"), and
- * is disabled at .4, never hidden (§9.17).
+ * "Close Other Tabs" stays on a card's own menu, where it names the card it keeps. The rows are
+ * menu items, so Title Case (v2 §9.1), as the card and group menus' rows are; a row with nothing
+ * to act on keeps its count, at zero ("Recently Closed (0)"), and is disabled at .4, never hidden
+ * (§9.17).
  * The private pane's menu is the one row "Close Private Tabs", named as the app menu names it:
  * no recently closed list applies there (Chrome's Incognito switcher has no Recent tabs either),
  * so the row is not there, not greyed – §9.17's rule is for a count of zero.
@@ -1075,9 +1075,11 @@ function TabSheet({
   onCloseOthers: (tab: Tab) => void
 }): JSX.Element {
   const current = tab.folderId && state.folders[tab.folderId] ? tab.folderId : null
+  // The rows are menu items, so Title Case (v2 §9.1, the #207 ruling): "New Group", "Close Other
+  // Tabs (3)"; a group's own name is written as the user gave it.
   const actions: SheetAction[] = []
   if (groupable && !tab.pinned && !tab.essential) {
-    actions.push({ id: 'new-group', label: 'New group', onPick: () => onNewGroup(tab) })
+    actions.push({ id: 'new-group', label: 'New Group', onPick: () => onNewGroup(tab) })
     for (const g of groups) {
       if (g.id === current) continue
       actions.push({
@@ -1090,20 +1092,20 @@ function TabSheet({
     if (current)
       actions.push({
         id: 'ungroup',
-        label: 'Remove from group',
+        label: 'Remove from Group',
         onPick: () => run('tab.moveToFolder', { tabId: tab.id, folderId: null })
       })
   }
   if (!tab.pinned && !tab.essential && others > 0)
     actions.push({
       id: 'close-others',
-      label: `Close other tabs (${others})`,
+      label: `Close Other Tabs (${others})`,
       destructive: true,
       onPick: () => onCloseOthers(tab)
     })
   actions.push({
     id: 'close',
-    label: 'Close tab',
+    label: 'Close Tab',
     destructive: true,
     onPick: () => onCloseTab(tab)
   })
@@ -1122,6 +1124,7 @@ function GroupSheet({
   onCloseGroup: (folder: Folder) => void
 }): JSX.Element {
   const palette = Object.keys(FOLDER_COLORS) as FolderColor[]
+  // Menu items, so Title Case (v2 §9.1): the count keeps its unit, capitalised with the rest.
   const actions: SheetAction[] = [
     {
       id: 'rename',
@@ -1141,7 +1144,7 @@ function GroupSheet({
     },
     {
       id: 'close',
-      label: `Close group (${count} tab${count === 1 ? '' : 's'})`,
+      label: `Close Group (${count} ${count === 1 ? 'Tab' : 'Tabs'})`,
       destructive: true,
       onPick: () => onCloseGroup(folder)
     }

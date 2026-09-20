@@ -163,6 +163,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'overlay.open',
   'find.open',
   'zoom.open',
+  'siteInfo.open',
   'extensions.open',
   'reader.preferences',
   'theme.open',
