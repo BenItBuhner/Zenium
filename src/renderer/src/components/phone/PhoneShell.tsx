@@ -514,10 +514,11 @@ export function PillContent({
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   // The chips after the address as data (`phonePillChips`): the lock, the blocking shield with
   // its count, a translate offer, the Now playing chip (MW-16). At rest the pill draws the
-  // favicon, the host and the lock alone – Bennett's rule (OMN-02, over v2 §9.29 on the phone):
+  // favicon, the host and the lock alone – v2 §9.29 as amended on Bennett's ruling (OMN-02):
   // the shield and the translate offer are the site-information sheet's rows, always, and a
-  // transient state chip (media) is here while its state is live (`lib/pillChips.ts`). The
-  // favicon ahead of the host and the lock both open the sheet the others went into.
+  // transient state chip (media) takes the lock's slot while its state is live, the lock
+  // returning when it ends (`lib/pillChips.ts`). The favicon ahead of the host and the lock
+  // both open the sheet the others went into; the favicon alone while a state has the slot.
   const chips = phonePillChips(state, shown, {
     siteInfoOpen,
     mediaSheetOpen,

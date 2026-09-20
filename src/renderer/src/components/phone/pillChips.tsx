@@ -11,25 +11,36 @@ import { chipCount, requests, siteBlockingState } from '@renderer/lib/blockingUi
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
 import { openSettings } from '@renderer/lib/pages'
-import { foldPillChips, pillChipFold, type PillChipFold } from '@renderer/lib/pillChips'
+import {
+  foldPillChips,
+  liveArrival,
+  pillChipFold,
+  type PillChipFold,
+  type PillFold
+} from '@renderer/lib/pillChips'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
-import { overlayAvailable } from '@renderer/lib/ui'
+import { openMediaSheet, overlayAvailable } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { PillChip } from '../urlbar/PillChip'
 
 /*
- * The phone pill's trailing chips as data (OMN-02; Bennett's rule of 2026-09-20 over v2 §9.29
- * on the phone, see `lib/pillChips.ts`): what each one is, what it says, what it does, how it
- * draws – built once from the browser state, then drawn by the pill (the lock, a live state
- * chip), by the ghost that cross-fades a change, and listed by the site-information sheet (the
- * shield with its count, the translate offer) as rows with the same names, states and actions
- * the chips had (#115's shield, #106's translate offer re-hosted, not rewritten: their words and
- * their commands are the services' helpers), so nothing is lost, only moved.
+ * The phone pill's trailing chips as data (OMN-02; v2 §9.29 as amended on Bennett's ruling, see
+ * `lib/pillChips.ts`): what each one is, what it says, what it does, how it draws – built once
+ * from the browser state, then drawn by the pill (the lock, or the live state chip in its
+ * slot), by the ghost that cross-fades a change, and listed by the site-information sheet (the
+ * shield with its count, the translate offer, a state waiting behind a newer one) as rows with
+ * the same names, states and actions the chips had (#115's shield, #106's translate offer,
+ * #233's media chip re-hosted, not rewritten: their words and their commands are the services'
+ * helpers), so nothing is lost, only moved.
  */
 
-/** The chips the phone pill knows after the address, in the pill's order. */
-export type PillChipId = 'lock' | 'blocked' | 'translate' | 'media'
+/**
+ * The chips the phone pill knows after the address, in the pill's order. `save-prompt` is
+ * §9.29's other state chip – a save-password or save-address key – for when the phone grows one
+ * (the desktop has `AutofillChip`); the slot rule already holds for it.
+ */
+export type PillChipId = 'lock' | 'blocked' | 'translate' | 'media' | 'save-prompt'
 
 /** How long a chip's arrival or departure cross-fades, on opacity (v2 §11.4; the same under reduced motion). */
 export const CHIP_FOLD_FADE_MS = 120
@@ -50,7 +61,7 @@ export interface PillChipModel {
   spoken: string
   /** Draw the chip in the pill: a real button, or an inert span for the ghost and the carried pill. A sheet chip has none. */
   render?: (interactive: boolean) => ReactNode
-  /** Its row in the sheet. A chip drawn in the pill has none. */
+  /** Its row in the sheet. The glyph has none; a state chip has both, for when it waits behind a newer state. */
   row?: PillChipRow
 }
 
@@ -212,16 +223,27 @@ export function phonePillChips(
     })
   }
 
-  // Now playing (MW-16, #233): a transient state chip, in the pill while a tab holds the media
-  // session – whichever pill is up – and gone otherwise; in the accent while it plays. Opens the
-  // in-app player. Whether it folds is the lead's open question (`lib/pillChips.ts`).
+  // Now playing (MW-16, #233; §9.33): a transient state chip, in the pill while a tab holds the
+  // media session – whichever pill is up – and gone otherwise; in the accent while it plays. It
+  // takes the glyph's slot (§9.29: the lock gives way and returns when the media stops). Opens
+  // the in-app player – from the pill, or from its sheet row while a newer state has the slot,
+  // the sheet leaving for the player.
   const session = mediaSession(state)
   if (session) {
     const label = session.playing ? 'Now playing' : 'Media paused'
     chips.push({
       id: 'media',
       fold: pillChipFold('media'),
-      spoken: '',
+      spoken: label,
+      row: {
+        glyph: <AudioLines className={session.playing ? 'text-[var(--zen-accent)]' : undefined} />,
+        label,
+        value: session.title?.trim() || undefined,
+        activate: () => {
+          dismissSiteInfo()
+          void openMediaSheet(session.tabId, ctx.activeTabId)
+        }
+      },
       render: (interactive) => (
         <PillChip
           inert={!interactive}
@@ -242,9 +264,35 @@ export function phonePillChips(
   return chips
 }
 
-/** The chips the pill draws after the address, in its order: the lock and the live state chips. */
+/*
+ * The live states' order of arrival (`liveArrival`), oldest first, as the pill has seen them:
+ * the one record the pill and the sheet both fold by, so they agree on which state has the
+ * slot and which waits. Brought up to date from every set of chips built – idempotent for the
+ * same set, so the pill, the carried pill and the sheet building the same state in one commit
+ * leave it as they found it.
+ */
+let arrival: readonly string[] = []
+
+/** Forget the states' order of arrival (tests). */
+export function resetLiveArrival(): void {
+  arrival = []
+}
+
+function arrivalOf(chips: readonly PillChipModel[]): readonly string[] {
+  const live = chips.filter((c) => c.fold === 'live').map((c) => c.id)
+  const next = liveArrival(arrival, live)
+  if (next.length !== arrival.length || next.some((id, i) => id !== arrival[i])) arrival = next
+  return arrival
+}
+
+/** The pill's chips folded by the rule and the states' record: what the pill draws, what the sheet lists, what gave way. */
+export function foldPhonePillChips(chips: readonly PillChipModel[]): PillFold<PillChipModel> {
+  return foldPillChips(chips, arrivalOf(chips))
+}
+
+/** The chips the pill draws after the address: the lock, or the live state chip in its slot. */
 export function pillChipsDrawn(chips: readonly PillChipModel[]): PillChipModel[] {
-  return foldPillChips(chips).shown
+  return foldPhonePillChips(chips).shown
 }
 
 /** The chips the sheet lists for `tab`, in the pill's order, each with its row. */
@@ -253,14 +301,14 @@ export function pillChipRows(
   tab: Tab,
   ctx: PillChipContext
 ): Array<PillChipModel & { row: PillChipRow }> {
-  return foldPillChips(phonePillChips(state, tab, ctx)).folded.filter(
+  return foldPhonePillChips(phonePillChips(state, tab, ctx)).folded.filter(
     (chip): chip is PillChipModel & { row: PillChipRow } => chip.row !== undefined
   )
 }
 
 /** What TalkBack hears of the sheet's chips at the address, in the pill's order (`foldedChipsSpoken`). */
 export function pillChipsSpoken(chips: readonly PillChipModel[]): string[] {
-  return foldPillChips(chips).folded.map((chip) => chip.spoken)
+  return foldPhonePillChips(chips).folded.map((chip) => chip.spoken)
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +331,15 @@ interface Ghost {
 }
 
 /**
- * The chips after the address, drawn in the pill. When the set changes – a chip arrives or
- * leaves (the lock on a navigation, the media chip with its session) – the run it showed until
- * this commit is kept as a ghost over the new one, anchored at the run's end like the run
- * itself, and the change cross-fades on opacity over {@link CHIP_FOLD_FADE_MS} in place (v2
- * §11.4; the same under reduced motion): a chip that keeps its slot does not move or flicker
- * (its ghost copy is hidden), a chip that leaves fades out where it stood, a chip that arrives
- * fades in where it stands. Never a slide. The carried pill (`interactive` false) draws the run
- * plain: it is a picture of the docked one.
+ * The chips after the address, drawn in the pill. When the set changes – the lock arrives or
+ * leaves on a navigation, a live state takes the lock's slot and gives it back (§9.29), one
+ * state replaces another – the run it showed until this commit is kept as a ghost over the new
+ * one, anchored at the run's end like the run itself, and the change cross-fades on opacity
+ * over {@link CHIP_FOLD_FADE_MS} in place (v2 §11.4; the same under reduced motion): a chip
+ * that keeps its slot does not move or flicker (its ghost copy is hidden), a chip that leaves
+ * fades out where it stood, a chip that arrives fades in where it stands – the lock and the
+ * media chip swap in the one slot. Never a slide. The carried pill (`interactive` false) draws
+ * the run plain: it is a picture of the docked one.
  */
 export function ChipRun({
   chips,

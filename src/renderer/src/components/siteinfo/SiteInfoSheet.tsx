@@ -492,9 +492,10 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
     levels.motion.pop()
   }
   const cookies = info?.cookies.items ?? []
-  // The chips the phone pill keeps out of the pill (OMN-02): the blocking shield with its count
-  // and the translate offer are this sheet's rows, always, at its top, with the same names,
-  // states and actions the chips had (`components/phone/pillChips.tsx`).
+  // The chips the phone pill keeps out of the pill (OMN-02, v2 §9.29): the blocking shield with
+  // its count and the translate offer are this sheet's rows, always, at its top, with the same
+  // names, states and actions the chips had, and a live state chip waits here as a row while a
+  // newer state has the pill's slot (`components/phone/pillChips.tsx`).
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
   const pillChips = pillChipRows(state, tab, {
     siteInfoOpen: true,
@@ -672,12 +673,13 @@ function SheetTitle({
 }
 
 /**
- * What the phone pill carries only here (OMN-02; Bennett's rule over v2 §9.29 on the phone: the
+ * What the phone pill carries only here (OMN-02; v2 §9.29 as amended on Bennett's ruling: the
  * pill shows the favicon, the host and the lock, nothing else): a rows group at the top of the
  * root level, over a hairline, one chassis row per chip with the chip's name, its state as the
  * value and its action – the shield row carries the blocked count and leads on to the blocking
- * lists in Settings, the translate row still offers (the sheet leaves for the bar) – so nothing
- * is lost, only moved. No heading: the rows name themselves. Nothing on a page with neither.
+ * lists in Settings, the translate row still offers (the sheet leaves for the bar), a media row
+ * waiting behind a newer state opens the player – so nothing is lost, only moved. No heading:
+ * the rows name themselves. Nothing on a page with neither.
  */
 function PillChipRows({
   chips

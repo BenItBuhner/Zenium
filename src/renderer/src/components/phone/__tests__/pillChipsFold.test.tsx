@@ -5,12 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { MediaState, Space, Tab, UIState } from '@shared/types'
 
 /*
- * The phone pill at rest as the pill draws it (OMN-02; Bennett's rule of 2026-09-20 over v2
- * §9.29 on the phone; the pure rule is `lib/__tests__/pillChips.test.ts`): the chips as data
- * with what TalkBack hears and what their sheet rows say and do; the pill drawing the favicon,
- * the host and the lock alone, the shield and the translate offer the sheet's, the states of
- * those spoken at the address; the run's cross-fade on a set change (§11.4): a ghost of the
- * run it showed, in place, gone after 120 ms, never a slide.
+ * The phone pill at rest as the pill draws it (OMN-02; v2 §9.29 as amended on Bennett's ruling;
+ * the pure rule is `lib/__tests__/pillChips.test.ts`): the chips as data with what TalkBack
+ * hears and what their sheet rows say and do; the pill drawing the favicon, the host and the
+ * lock alone, the shield and the translate offer the sheet's, the states of those spoken at the
+ * address; a live media chip taking the lock's slot and giving it back, a second state never
+ * stacking; the run's cross-fade on a set change (§11.4): a ghost of the run it showed, in
+ * place, gone after 120 ms, never a slide.
  */
 
 const invoke = vi.fn<(name: string, args?: unknown) => Promise<null>>(async () => null)
@@ -18,8 +19,17 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const { PillContent } = await import('../PhoneShell')
-const { CHIP_FOLD_FADE_MS, ChipRun, phonePillChips, pillChipRows, pillChipsDrawn } =
-  await import('../pillChips')
+const {
+  CHIP_FOLD_FADE_MS,
+  ChipRun,
+  foldPhonePillChips,
+  phonePillChips,
+  pillChipRows,
+  pillChipsDrawn,
+  pillChipsSpoken,
+  resetLiveArrival
+} = await import('../pillChips')
+type PillChipModel = ReturnType<typeof phonePillChips>[number]
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
@@ -171,10 +181,20 @@ const addressLabel = (el: ParentNode): string | null =>
 const labels = (el: ParentNode): string[] =>
   Array.from(el.querySelectorAll<HTMLElement>('button')).map((b) => b.getAttribute('aria-label')!)
 
+/** §9.29's other state chip, as the phone will build it: a save-password key, live, with a row for when it waits. */
+const savePrompt: PillChipModel = {
+  id: 'save-prompt',
+  fold: 'live',
+  spoken: 'Save password',
+  render: () => <span data-chip-render="save-prompt" />,
+  row: { glyph: null, label: 'Save password', activate: () => undefined }
+}
+
 beforeEach(() => {
   uiStore.set({ siteInfoOpen: false, mediaSheet: null })
   siteInfoStore.set({ tabId: null, anchor: null })
   invoke.mockClear()
+  resetLiveArrival()
 })
 
 afterEach(() => {
@@ -203,19 +223,30 @@ describe('phonePillChips: the chips as data', () => {
       '',
       '5 requests blocked',
       'Translation offered',
-      ''
+      'Now playing'
     ])
   })
 
-  it('draws the lock and the media chip in the pill, and gives the shield and the offer their rows', () => {
+  it('draws the lock and the media chip, gives the shield and the offer their rows, and the media chip both', () => {
     const chips = phonePillChips(playing(offered(state(counted))), counted, ctx)
     expect(chips.filter((c) => c.render).map((c) => c.id)).toEqual(['lock', 'media'])
-    expect(chips.filter((c) => c.row).map((c) => c.id)).toEqual(['blocked', 'translate'])
+    expect(chips.filter((c) => c.row).map((c) => c.id)).toEqual(['blocked', 'translate', 'media'])
     const rows = Object.fromEntries(chips.map((c) => [c.id, c.row]))
     expect(rows.blocked?.label).toBe('Requests blocked')
     expect(rows.blocked?.value).toBe('5')
     expect(rows.translate?.label).toBe('Translate this page')
     expect(rows.translate?.value).toBe('German to English')
+    expect(rows.media?.label).toBe('Now playing')
+    expect(rows.media?.value).toBe('Nocturne')
+  })
+
+  it('the media row opens the player for the session’s tab, and the sheet leaves for it', async () => {
+    const [media] = phonePillChips(playing(state(page)), page, ctx).filter((c) => c.id === 'media')
+    uiStore.set({ siteInfoOpen: true })
+    siteInfoStore.set({ tabId: 't1', anchor: null })
+    media!.row!.activate()
+    expect(uiStore.get().siteInfoOpen).toBe(false)
+    await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBe('t1'))
   })
 
   it('says on the shield’s row when nothing is blocked here, and speaks nothing of it on a quiet page', () => {
@@ -279,9 +310,64 @@ describe('pillChipRows: what the sheet lists', () => {
     expect(pillChipRows(state(tab('zen://settings')), tab('zen://settings'), ctx)).toEqual([])
   })
 
-  it('pillChipsDrawn is the pill’s side of the same rule', () => {
+  it('pillChipsDrawn is the pill’s side of the same rule: the media chip in the lock’s slot while it plays', () => {
     const chips = phonePillChips(playing(offered(state(counted))), counted, ctx)
-    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['lock', 'media'])
+    expect(pillChipsDrawn(chips).map((c) => c.id)).toEqual(['media'])
+    expect(foldPhonePillChips(chips).yielded.map((c) => c.id)).toEqual(['lock'])
+    expect(pillChipsSpoken(chips)).toEqual(['5 requests blocked', 'Translation offered'])
+  })
+})
+
+describe('the glyph slot: one live state at a time (§9.29)', () => {
+  const s = offered(state(counted))
+
+  it('the lock gives way to the media chip and returns when the media stops', () => {
+    expect(pillChipsDrawn(phonePillChips(s, counted, ctx)).map((c) => c.id)).toEqual(['lock'])
+    expect(pillChipsDrawn(phonePillChips(playing(s), counted, ctx)).map((c) => c.id)).toEqual([
+      'media'
+    ])
+    expect(pillChipsDrawn(phonePillChips(s, counted, ctx)).map((c) => c.id)).toEqual(['lock'])
+  })
+
+  it('a second state never stacks: the newer shows, the older waits in the sheet as a row and is spoken at the address', () => {
+    const media = phonePillChips(playing(s), counted, ctx)
+    expect(pillChipsDrawn(media).map((c) => c.id)).toEqual(['media'])
+    // A save prompt arrives while the media plays: the key takes the slot, the media chip is a
+    // row under the shield and the offer, and the address says it is playing.
+    const both = [...media, savePrompt]
+    const fold = foldPhonePillChips(both)
+    expect(fold.shown.map((c) => c.id)).toEqual(['save-prompt'])
+    expect(fold.folded.map((c) => c.id)).toEqual(['blocked', 'translate', 'media'])
+    expect(fold.folded.every((c) => c.row !== undefined)).toBe(true)
+    expect(pillChipsSpoken(both)).toEqual([
+      '5 requests blocked',
+      'Translation offered',
+      'Now playing'
+    ])
+    // The prompt is answered: the media chip has the slot again.
+    expect(pillChipsDrawn(media).map((c) => c.id)).toEqual(['media'])
+  })
+
+  it('order of arrival decides: a media session starting under a live key takes the slot from it', () => {
+    const chips = phonePillChips(s, counted, ctx)
+    expect(pillChipsDrawn([...chips, savePrompt]).map((c) => c.id)).toEqual(['save-prompt'])
+    const media = phonePillChips(playing(s), counted, ctx)
+    expect(pillChipsDrawn([...media, savePrompt]).map((c) => c.id)).toEqual(['media'])
+    expect(foldPhonePillChips([...media, savePrompt]).folded.map((c) => c.id)).toEqual([
+      'blocked',
+      'translate',
+      'save-prompt'
+    ])
+  })
+
+  it('the pill and the sheet fold by one record, so they agree on which state waits', () => {
+    const pill = foldPhonePillChips([...phonePillChips(playing(s), counted, ctx), savePrompt])
+    const sheet = foldPhonePillChips([...phonePillChips(playing(s), counted, ctx), savePrompt])
+    expect(pill.shown.map((c) => c.id)).toEqual(['save-prompt'])
+    expect(sheet.folded.map((c) => c.id)).toEqual(['blocked', 'translate', 'media'])
+    // Both states end: the sheet lists the shield and the offer alone and the record is empty.
+    expect(pillChipRows(s, counted, ctx).map((r) => r.id)).toEqual(['blocked', 'translate'])
+    expect(pillChipsDrawn(phonePillChips(s, counted, ctx)).map((c) => c.id)).toEqual(['lock'])
   })
 })
 
@@ -307,7 +393,7 @@ describe('PillContent at rest', () => {
     expect(addressLabel(el)).toBe('Address, github.com')
   })
 
-  it('keeps a live Now playing chip after the lock, and says nothing of it at the address', () => {
+  it('a live Now playing chip takes the lock’s slot: the lock gives way, the chip is its own stop, the address says nothing of it', () => {
     const el = render(
       <PillContent
         state={playing(offered(state(counted)))}
@@ -316,9 +402,26 @@ describe('PillContent at rest', () => {
         interactive
       />
     )
-    expect(shown(el)).toEqual(['lock', 'media'])
-    expect(addressLabel(el)).toBe('Address, github.com, 5 requests blocked, Translation offered')
+    expect(shown(el)).toEqual(['media'])
+    expect(labels(el)).toEqual([
+      'Address, github.com, 5 requests blocked, Translation offered',
+      'Site information',
+      'Now playing'
+    ])
     expect(el.querySelector('[data-media]')?.getAttribute('aria-label')).toBe('Now playing')
+    expect(el.querySelector('[data-site-info]')).not.toBeNull()
+  })
+
+  it('the lock returns when the media stops', () => {
+    const el = render(
+      <PillContent state={playing(state(page))} tab={page} space={space} interactive />
+    )
+    expect(shown(el)).toEqual(['media'])
+    act(() =>
+      root!.render(<PillContent state={state(page)} tab={page} space={space} interactive />)
+    )
+    expect(shown(el)).toEqual(['lock'])
+    expect(labels(el)).toEqual(['Address, github.com', 'Site information', 'Connection is secure'])
   })
 
   it('has no chip run at all on an http page: the shield went to the sheet and there is no lock', () => {
@@ -338,7 +441,7 @@ describe('PillContent at rest', () => {
         interactive={false}
       />
     )
-    expect(shown(el)).toEqual(['lock', 'media'])
+    expect(shown(el)).toEqual(['media'])
     expect(el.querySelectorAll('button').length).toBe(0)
   })
 })
@@ -373,44 +476,50 @@ describe('ChipRun cross-fades a set change in place (§11.4)', () => {
   const drawn = (s: UIState, t: Tab): ReturnType<typeof phonePillChips> =>
     pillChipsDrawn(phonePillChips(s, t, ctx))
 
-  it('keeps a ghost of the run it showed over the new one, gone after 120 ms, never a slide', () => {
+  it('swaps the lock for the media chip in the one slot: a ghost of the lock fades out where it stood, the chip fades in there, gone after 120 ms, never a slide', () => {
     vi.useFakeTimers()
     const [lock] = drawn(state(page), page)
-    const [, media] = drawn(playing(state(page)), page)
+    const [media] = drawn(playing(state(page)), page)
+    expect([lock!.id, media!.id]).toEqual(['lock', 'media'])
     const el = render(<ChipRun chips={[lock!]} interactive />)
     expect(ghostOf(el)).toBeNull()
     expect(fades).toEqual([])
-    // Media arrives: one commit, one ghost of [lock] over the new [lock, media], both runs
-    // anchored at their end.
-    act(() => root!.render(<ChipRun chips={[lock!, media!]} interactive />))
+    // The media starts: one commit, one ghost of [lock] over the new [media], both runs
+    // anchored at their end – the same slot.
+    act(() => root!.render(<ChipRun chips={[media!]} interactive />))
     const ghost = ghostOf(el)
     expect(ghost).not.toBeNull()
     expect(ghost!.getAttribute('aria-hidden')).toBe('true')
     expect(ghost!.querySelectorAll('button').length).toBe(0)
     const copies = Array.from(ghost!.children) as HTMLElement[]
     expect(copies.length).toBe(1)
-    // The lock moves one slot from the end: its copy fades out where it stood while the live
-    // lock fades in one slot up; media fades in at the end. Opacity is all that moves, at 120 ms.
+    // Opacity is all that moves, at 120 ms: the lock's copy out, the live media chip in.
     expect(copies.map((c) => c.style.visibility)).toEqual([''])
     expect(fades.map((f) => [f.from, f.to, f.duration])).toEqual([
       [1, 0, CHIP_FOLD_FADE_MS],
-      [0, 1, CHIP_FOLD_FADE_MS],
       [0, 1, CHIP_FOLD_FADE_MS]
     ])
-    expect(fades.map((f) => f.el)).toEqual([copies[0], liveChip(el, 'lock'), liveChip(el, 'media')])
+    expect(fades.map((f) => f.el)).toEqual([copies[0], liveChip(el, 'media')])
     act(() => {
       vi.advanceTimersByTime(CHIP_FOLD_FADE_MS)
     })
     expect(ghostOf(el)).toBeNull()
-    expect(shown(el)).toEqual(['lock', 'media'])
+    expect(shown(el)).toEqual(['media'])
+    // The media stops: the lock returns the same way.
+    act(() => root!.render(<ChipRun chips={[lock!]} interactive />))
+    expect(fades.slice(2).map((f) => [f.to, f.el])).toEqual([
+      [0, ghostOf(el)!.children[0]],
+      [1, liveChip(el, 'lock')]
+    ])
   })
 
-  it('hides the ghost copy of a chip that keeps its slot from the run’s end', () => {
+  it('hides the ghost copy of a chip that keeps its slot from the run’s end (a run of more than one)', () => {
     vi.useFakeTimers()
-    const [lock, media] = drawn(playing(state(page)), page)
+    const [lock] = drawn(state(page), page)
+    const [media] = drawn(playing(state(page)), page)
     const el = render(<ChipRun chips={[lock!, media!]} interactive />)
-    // The lock leaves alone (a navigation to http while playing): media stands where it stood,
-    // at the end, and neither moves nor flickers.
+    // The first chip leaves alone: the last stands where it stood, at the end, and neither
+    // moves nor flickers.
     act(() => root!.render(<ChipRun chips={[media!]} interactive />))
     const copies = Array.from(ghostOf(el)!.children) as HTMLElement[]
     expect(copies.map((c) => c.style.visibility)).toEqual(['', 'hidden'])
@@ -421,18 +530,19 @@ describe('ChipRun cross-fades a set change in place (§11.4)', () => {
   it('does not start the fade over when the pill re-renders during it', () => {
     vi.useFakeTimers()
     const [lock] = drawn(state(page), page)
-    const [, media] = drawn(playing(state(page)), page)
+    const [media] = drawn(playing(state(page)), page)
     render(<ChipRun chips={[lock!]} interactive />)
-    act(() => root!.render(<ChipRun chips={[lock!, media!]} interactive />))
-    expect(fades.length).toBe(3)
+    act(() => root!.render(<ChipRun chips={[media!]} interactive />))
+    expect(fades.length).toBe(2)
     // The same set again as new objects (a store change): the run keeps its ghost and its
     // running fades, and the ghost still goes at the 120 ms mark, not later.
     act(() => {
       vi.advanceTimersByTime(CHIP_FOLD_FADE_MS / 2)
     })
     const again = drawn(playing(state(page)), page)
+    expect(again.map((c) => c.id)).toEqual(['media'])
     act(() => root!.render(<ChipRun chips={again} interactive />))
-    expect(fades.length).toBe(3)
+    expect(fades.length).toBe(2)
     expect(ghostOf(host!)).not.toBeNull()
     act(() => {
       vi.advanceTimersByTime(CHIP_FOLD_FADE_MS / 2)
@@ -457,9 +567,9 @@ describe('ChipRun cross-fades a set change in place (§11.4)', () => {
   it('draws the carried pill’s run plain: no ghost on a change', () => {
     vi.useFakeTimers()
     const [lock] = drawn(state(page), page)
-    const [, media] = drawn(playing(state(page)), page)
+    const [media] = drawn(playing(state(page)), page)
     const el = render(<ChipRun chips={[lock!]} interactive={false} />)
-    act(() => root!.render(<ChipRun chips={[lock!, media!]} interactive={false} />))
+    act(() => root!.render(<ChipRun chips={[media!]} interactive={false} />))
     expect(ghostOf(el)).toBeNull()
     expect(fades).toEqual([])
   })

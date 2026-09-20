@@ -749,17 +749,14 @@ describe('phone pill (PillContent)', () => {
       ])
     })
 
-    it('comes after the lock as a chip whose popup is the media sheet, named by the state', () => {
+    it('takes the lock’s slot as a chip whose popup is the media sheet, named by the state (v2 §9.29)', () => {
       const el = render(
         <PillContent state={withMedia(page, [playing()])} tab={page} space={space} interactive />
       )
       const order = focusable(el)
-      expect(labels(order)).toEqual([
-        'Address, example.com',
-        'Site information',
-        'Connection is secure',
-        'Now playing'
-      ])
+      // The lock gave way to the live state: the site icon ahead of the address still opens
+      // the site information.
+      expect(labels(order)).toEqual(['Address, example.com', 'Site information', 'Now playing'])
       const chip = el.querySelector<HTMLElement>('[data-media]')!
       expectChip(chip, 'Now playing')
       expect(chip.hasAttribute('data-pill-chip')).toBe(true)
@@ -815,13 +812,14 @@ describe('phone pill (PillContent)', () => {
       )
       expect(focusable(el).length).toBe(0)
       expect(el.querySelectorAll('[aria-label]').length).toBe(0)
-      // A second hidden span in the chip run beside the lock's, with no tap target on it; the
-      // site icon is its own hidden span ahead of the address.
+      // One hidden span in the chip run – the media chip in the lock's slot – with no tap
+      // target on it; the site icon is its own hidden span ahead of the address.
       expect(el.querySelector('[data-media]')).toBeNull()
       const row = el.firstElementChild!
       expect(row.querySelector(':scope > span[aria-hidden].order-first')).not.toBeNull()
       const run = row.querySelector('[data-testid="pill-chips"]')!
-      expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(2)
+      expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(1)
+      expect(run.querySelector('[data-chip="media"]')).not.toBeNull()
       expect(run.querySelectorAll('button').length).toBe(0)
     })
   })
