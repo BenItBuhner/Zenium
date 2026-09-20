@@ -1690,26 +1690,66 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     /**
      * Zotero Connector: on a page carrying Highwire / Dublin Core citation metadata its content
-     * script detects the Embedded Metadata translator and the connector renames its toolbar
-     * button "Save to Zotero (Embedded Metadata)" for that tab (`action.setTitle`, per tab);
-     * "Web Page with Snapshot" is the generic translator (the connector ran, nothing detected).
+     * script hands the document to the connector's offscreen sandbox, the Embedded Metadata
+     * translator is detected there and reported to the worker (`Connector_Browser.onTranslators`,
+     * the tab's info), and the connector renames its toolbar button "Save to Zotero (Embedded
+     * Metadata)" for that tab (`action.setTitle`, per tab). Chrome shows the rename only once the
+     * first-run notice is dismissed: a fresh install's button reads "Zotero Connector" until its
+     * first click opens the notice in the page (an extension frame) and the user closes it
+     * (`firstUse`); the desktop check read the same way. So: the detection is read from the
+     * worker's tab info, the button is clicked, the notice closed with Escape (its own key) and
+     * the title read; a notice the key did not reach is closed as its button closes it (the
+     * `firstUse` pref, then the connector's own `_updateExtensionUI`) and the title read again.
      */
     private fun zotero(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
+        val bg = backgroundView(row.id)
         val tab = createTab("$BASE/zotero.html")
         val view = waitForView(tab)
-        var title = ""
-        poll(scaled(30_000, factor), 700) {
-            title = extensionAction(row.id)?.optString("title") ?: ""
-            if (title.contains("Embedded Metadata", ignoreCase = true)) true else null
+        val extra = JSONObject()
+        var info = JSONObject()
+        if (bg != null) {
+            poll(scaled(45_000, factor), 1_500) {
+                tabEval(bg, ZOTERO_TAB_INFO)
+                info = poll(5_000, 200) {
+                    tabEval(bg, "window.__zenZotero && window.__zenZotero.done ? JSON.stringify(window.__zenZotero) : null").takeIf { it != "null" }
+                }?.let(::json) ?: info
+                if ((info.optJSONArray("translators")?.length() ?: 0) > 0) true else null
+            }
+        } else extra.put("background", "no background view")
+        extra.put("tabInfo", info)
+        val translators = info.optJSONArray("translators")?.let { arr -> List(arr.length()) { arr.optString(it) } } ?: emptyList()
+        val detected = translators.any { it.contains("Embedded Metadata", ignoreCase = true) }
+        val renamed = { (extensionAction(row.id)?.optString("title") ?: "").contains("Embedded Metadata", ignoreCase = true) }
+        val notice = JSONObject()
+        if (translators.isNotEmpty()) {
+            // The first click: Zotero has no popup, so the click is its `action.onClicked`, and
+            // the connector's handler opens the first-run notice in the page.
+            showTab(tab)
+            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            SystemClock.sleep(scaled(4_000, factor))
+            snap("${entry.optString("slug")}-first-run-notice")
+            notice.put("frameHosts", json(tabEval(view, ZOTERO_NOTICE_HOSTS)))
+            key(KeyEvent.KEYCODE_ESCAPE)
+            val byKey = poll(scaled(10_000, factor), 500) { if (renamed()) true else null }
+            notice.put("closedBy", if (byKey != null) "escape" else "pref")
+            if (byKey == null && bg != null) {
+                tabEval(bg, ZOTERO_CLOSE_NOTICE)
+                poll(scaled(10_000, factor), 500) { if (renamed()) true else null }
+                notice.put("update", json(tabEval(bg, "JSON.stringify(window.__zenZoteroUpdate || null)")))
+            }
         }
-        val extra = JSONObject().put("title", title).put("action", extensionAction(row.id) ?: JSONObject.NULL).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        val title = extensionAction(row.id)?.optString("title") ?: ""
+        extra.put("notice", notice).put("title", title).put("action", extensionAction(row.id) ?: JSONObject.NULL)
+        extra.put("console", JSONArray(consoleOf(view).takeLast(10)))
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
-        if (!title.contains("Embedded Metadata", ignoreCase = true)) extra.put("errors", targetErrors(view))
+        if (!detected) extra.put("errors", targetErrors(view))
+        val labels = translators.joinToString()
         return when {
-            title.contains("Embedded Metadata", ignoreCase = true) -> Grade("P", "the toolbar button reads \"$title\" on the citation page", extra)
-            title.contains("Save to Zotero", ignoreCase = true) -> Grade("PARTIAL", "the connector ran but detected no translator: the button reads \"$title\"", extra)
-            else -> Grade("F", "the button never changed on the citation page within ${scaled(30_000, factor) / 1000} s: title \"$title\"", extra)
+            detected && renamed() -> Grade("P", "Embedded Metadata detected for the citation tab (the worker's tab info: $labels); after the first-run notice (closed by ${notice.optString("closedBy")}) the toolbar button reads \"$title\"", extra)
+            detected -> Grade("PARTIAL", "Embedded Metadata detected for the citation tab ($labels), but the toolbar button still reads \"$title\" after the first-run notice", extra)
+            translators.isNotEmpty() -> Grade("PARTIAL", "the connector ran but detected only $labels on the citation page; the button reads \"$title\"", extra)
+            else -> Grade("F", "no translator detected for the citation tab within ${scaled(45_000, factor) / 1000} s: ${info.toString().take(200)}; the button reads \"$title\"", extra)
         }
     }
 
@@ -2686,5 +2726,35 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val AUTHENTICATOR_SEED =
             "(function(){window.__zenSeed=null;var hash='zenium-sweep-totp-0001';var item={};item[hash]={account:'sweep@zenium.invalid',issuer:'Zenium',secret:'JBSWY3DPEHPK3PXP',type:'totp',index:0,hash:hash,encrypted:false,counter:0,period:30,digits:6,algorithm:'SHA1',pinned:false};" +
                 "try{chrome.storage.sync.set(item).then(function(){return chrome.storage.sync.get(hash)}).then(function(v){window.__zenSeed='saved, read back '+Object.keys(v||{}).length+' key'},function(e){window.__zenSeed='error: '+String(e&&e.message||e)})}catch(e){window.__zenSeed='threw: '+String(e&&e.message||e)}return 'asked'})()"
+        /**
+         * From Zotero Connector's worker: the connector's own record of the citation tab
+         * (`Connector_Browser.getTabInfo`), the translators its content script and offscreen
+         * sandbox detected for it (their labels) and whether the first-run notice is still owed
+         * (`firstUse`). Lands on `window.__zenZotero`.
+         */
+        private const val ZOTERO_TAB_INFO =
+            "(function(){var p=window.__zenZotero={done:false,translators:[],firstUse:null,tab:null,error:null};var citation=function(t){return /\\/zotero\\.html/.test(t.url||t.pendingUrl||'')};" +
+                "try{chrome.tabs.query({},function(tabs){try{var tab=(tabs||[]).filter(citation)[0];if(!tab){p.error='no citation tab among '+(tabs||[]).length;p.done=true;return}p.tab={id:tab.id,active:!!tab.active,url:tab.url||null};" +
+                "var info=Zotero.Connector_Browser.getTabInfo(tab.id);p.translators=((info&&info.translators)||[]).map(function(t){return t.label});p.firstUse=!!Zotero.Prefs.get('firstUse');p.done=true}catch(e){p.error=String(e&&e.message||e);p.done=true}})}" +
+                "catch(e){p.error=String(e&&e.message||e);p.done=true}return 'asked'})()"
+        /**
+         * Closing Zotero's first-run notice as its button does, for a notice the emulator's
+         * Escape did not reach: the pref the button sets, then the connector's own
+         * `_updateExtensionUI` for the citation tab (what the button's handler runs next). The
+         * outcome lands on `window.__zenZoteroUpdate`.
+         */
+        private const val ZOTERO_CLOSE_NOTICE =
+            "(function(){var p=window.__zenZoteroUpdate={done:false,error:null};var citation=function(t){return /\\/zotero\\.html/.test(t.url||t.pendingUrl||'')};" +
+                "try{Zotero.Prefs.set('firstUse',false);chrome.tabs.query({},function(tabs){try{var tab=(tabs||[]).filter(citation)[0];if(!tab){p.error='no citation tab';p.done=true;return}" +
+                "Promise.resolve(Zotero.Connector_Browser._updateExtensionUI(tab)).then(function(){p.done=true},function(e){p.error=String(e&&e.message||e);p.done=true})}catch(e){p.error=String(e&&e.message||e);p.done=true}})}" +
+                "catch(e){p.error=String(e&&e.message||e);p.done=true}return 'asked'})()"
+        /**
+         * The page's view of Zotero's frames: the connector mounts each (the notice among them)
+         * as an iframe in a closed shadow root on a bare body-level div, so the page sees only
+         * the hosts; their count, and whether the last one is drawn full-screen.
+         */
+        private const val ZOTERO_NOTICE_HOSTS =
+            "(function(){var hosts=Array.prototype.slice.call(document.body?document.body.children:[]).filter(function(e){return e.tagName==='DIV'&&e.attributes.length===0&&e.childNodes.length===0});" +
+                "var last=hosts[hosts.length-1];var r=last?last.getBoundingClientRect():null;return JSON.stringify({hosts:hosts.length,last:r?{w:r.width,h:r.height}:null,innerW:innerWidth,innerH:innerHeight})})()"
     }
 }
