@@ -6,13 +6,17 @@ vi.mock('../api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
-import type { WebAppInstallPrompt } from '@shared/types'
+import type { UIState, WebAppInstallPrompt } from '@shared/types'
 import { cmd, run } from '../api'
 import {
+  browserStore,
   chromeNeedsKeyboard,
   closeClearBrowsingData,
+  closeImportDialog,
   closeMediaSheet,
   openClearBrowsingData,
+  openImportDialog,
+  openImportSurface,
   openInstallSheet,
   openMediaSheet,
   overlayCoversContent,
@@ -34,7 +38,9 @@ afterEach(() => {
     snapshot: null,
     snapshotTabId: null,
     install: null,
-    mediaSheet: null
+    mediaSheet: null,
+    importDialog: null,
+    overlaySection: null
   })
   vi.mocked(run).mockClear()
   vi.mocked(cmd).mockClear()
@@ -119,5 +125,44 @@ describe('chrome surfaces over the content', () => {
     vi.mocked(run).mockClear()
     closeClearBrowsingData()
     expect(run).not.toHaveBeenCalled()
+  })
+
+  it('the import dialog is a dialog over the page in the same way, opened once with its preselected source (ID-23)', async () => {
+    expect(overlayCoversContent(idle())).toBe(false)
+    await openImportDialog(null, 'chrome:Default')
+    expect(idle().importDialog).toEqual({ source: 'chrome:Default' })
+    expect(overlayCoversContent(idle())).toBe(true)
+    expect(chromeNeedsKeyboard()).toBe(true)
+    expect(panelAloneOverContent(idle())).toBe(false)
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    vi.mocked(run).mockClear()
+    // A second ask while it is up changes nothing (the menu pressed twice).
+    await openImportDialog(null, null)
+    expect(idle().importDialog).toEqual({ source: 'chrome:Default' })
+    expect(run).not.toHaveBeenCalled()
+    closeImportDialog()
+    expect(idle().importDialog).toBeNull()
+    expect(run).toHaveBeenCalledWith('focus.content', undefined)
+  })
+
+  it('the import surface is Settings on Import with the dialog over it on a mouse; the category alone where Settings is a page', async () => {
+    browserStore.set({
+      state: { capabilities: { pageTabs: false } } as unknown as UIState
+    })
+    await openImportSurface('t1', 'firefox:abcd', 'sync')
+    expect(idle().overlay).toBe('settings')
+    expect(idle().overlaySection).toBe('sync')
+    expect(idle().importDialog).toEqual({ source: 'firefox:abcd' })
+    uiStore.set({ overlay: 'none', overlaySection: null, importDialog: null })
+    vi.mocked(run).mockClear()
+
+    browserStore.set({
+      state: { capabilities: { pageTabs: true } } as unknown as UIState
+    })
+    await openImportSurface('t1')
+    expect(idle().overlay).toBe('none')
+    expect(idle().importDialog).toBeNull()
+    expect(run).toHaveBeenCalledWith('page.open', { id: 'settings', section: 'import' })
+    browserStore.set({ state: null })
   })
 })

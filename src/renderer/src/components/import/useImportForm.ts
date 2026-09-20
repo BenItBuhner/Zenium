@@ -128,11 +128,15 @@ export function useImportForm(
     refresh()
   }, [refresh])
 
+  // Busy from the press until the state carries the run (its first `running` progress may
+  // arrive a tick after `import.run` is sent), then the result once the run has finished.
   const running = progress?.status === 'running'
   const phase: ImportPhase = running
     ? 'busy'
-    : submitted && progress
-      ? 'result'
+    : submitted
+      ? progress
+        ? 'result'
+        : 'busy'
       : sources === null
         ? 'loading'
         : 'form'

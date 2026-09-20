@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ImportSource, UIState } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import {
+  FILE_SOURCE,
   browserSources,
   listNames,
   resultCaption,
@@ -36,7 +37,8 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
       live = false
     }
   }, [])
-  const open = (): void => void openImportDialog(activeTab(state)?.id ?? null)
+  const open = (source: string | null = null): void =>
+    void openImportDialog(activeTab(state)?.id ?? null, source)
   const browsers = sources ? sourceGroups(browserSources(sources)) : null
   const found =
     browsers === null
@@ -58,7 +60,7 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
             description="From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari"
             control
             trailing={
-              <V2Button onClick={open} data-testid="open-import-dialog">
+              <V2Button onClick={() => open()} data-testid="open-import-dialog">
                 Import…
               </V2Button>
             }
@@ -75,7 +77,7 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
             description="Choose the file in the import dialog"
             control
             trailing={
-              <V2Button onClick={open} data-testid="open-import-file">
+              <V2Button onClick={() => open(FILE_SOURCE.bookmarks)} data-testid="open-import-file">
                 Import file…
               </V2Button>
             }

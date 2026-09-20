@@ -28,6 +28,9 @@ export const KIND_LABEL: Record<ImportKind, string> = {
 export const IMPORT_TITLE = 'Import bookmarks and settings'
 export const IMPORT_READY = 'Your bookmarks and settings are ready'
 
+/** The two file sources' ids (`core/import/sources.ts`, `FILE_SOURCE_IDS`). */
+export const FILE_SOURCE = { bookmarks: 'file:bookmarks', passwords: 'file:passwords' } as const
+
 /** One entry of the "From" menulist: a browser with its profiles, or one file source. */
 export interface SourceGroup {
   /** The browser id, or the file source's id. */
@@ -189,7 +192,8 @@ export function resultHeadline(progress: ImportProgress): string {
 /** "From Google Chrome (Person 1)": the result's line under the headline. */
 export function resultCaption(progress: ImportProgress): string {
   const { source } = progress
-  if (source.browser === 'file') return `From a ${source.browserName.toLowerCase()}`
+  if (source.browser === 'file')
+    return `From a ${source.browserName.charAt(0).toLowerCase()}${source.browserName.slice(1)}`
   const profile = source.name !== source.browserName ? ` (${source.name})` : ''
   return `From ${source.browserName}${profile}`
 }

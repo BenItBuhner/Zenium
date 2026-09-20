@@ -1,6 +1,7 @@
 import type { ImportKind, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import {
+  FILE_SOURCE,
   KIND_LABEL,
   outcomeLines,
   reportedKinds,
@@ -10,9 +11,6 @@ import {
 import { openOverlay } from '@renderer/lib/ui'
 import type { RowGroup, SettingsRow } from '../pages/settings/model'
 import { StatusGlyph } from '../siteControls/pane'
-
-/** The two file sources' ids (`core/import/sources.ts`, `FILE_SOURCE_IDS`). */
-export const FILE_SOURCE = { bookmarks: 'file:bookmarks', passwords: 'file:passwords' } as const
 
 /**
  * Settings > Import on a phone (design-language-v2-draft §10.4, §9.30): Android has no other

@@ -4,6 +4,7 @@ import type {
   ExtensionErrorEntry,
   ExtensionInfo,
   HostCapabilities,
+  ImportSource,
   SafetyCheckResult,
   Settings,
   Tab,
@@ -399,6 +400,7 @@ describe('the section model', () => {
       'agents',
       'passwords',
       'security',
+      'import',
       'accessibility',
       'updates',
       'about'
@@ -1957,6 +1959,167 @@ describe('what a row does', () => {
       kind: 'zoom',
       domain: 'a.test'
     })
+  })
+
+  it('carries ID-23’s Import rows: the two file imports over `dialog.openText`, busy while theirs runs, and the last import until it is dismissed', async () => {
+    // Android has no other browser's profile to read: the category is the file rows alone,
+    // the passwords one behind the host's vault.
+    const idle = section('import', state({ import: null } as Partial<UIState>))
+    expect(idle.groups.map((g) => g.id)).toEqual(['import-files'])
+    expect(allRows(idle.groups).map((r) => r.id)).toEqual([
+      'import-bookmarks-file',
+      'import-passwords-file'
+    ])
+    expect(idle.groups.every(groupShows)).toBe(true)
+    const noVault = state({
+      import: null,
+      capabilities: { ...ANDROID, passwords: false }
+    } as Partial<UIState>)
+    expect(allRows(section('import', noVault).groups).map((r) => r.id)).toEqual([
+      'import-bookmarks-file'
+    ])
+
+    // A press asks the engine for that one kind from the file source; the host's file dialog
+    // is the engine's to open.
+    const bookmarks = row(idle, 'import-bookmarks-file')
+    expect(bookmarks).toMatchObject({
+      kind: 'action',
+      label: 'Import bookmarks from a file',
+      busy: false,
+      disabled: false
+    })
+    if (bookmarks.kind !== 'action') throw new Error('not an action')
+    bookmarks.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:bookmarks',
+        kinds: ['bookmarks']
+      })
+    )
+    const passwords = row(idle, 'import-passwords-file')
+    if (passwords.kind !== 'action') throw new Error('not an action')
+    passwords.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:passwords',
+        kinds: ['passwords']
+      })
+    )
+
+    // While the bookmarks file imports its row is busy (§9.30) and the other row waits.
+    const html: ImportSource = {
+      id: 'file:bookmarks',
+      browser: 'file',
+      browserName: 'Bookmarks HTML file',
+      profileId: '',
+      name: 'Bookmarks HTML file',
+      path: '',
+      running: false,
+      kinds: ['bookmarks'],
+      limits: {}
+    }
+    const running = section(
+      'import',
+      state({
+        import: {
+          source: html,
+          kinds: ['bookmarks'],
+          status: 'running',
+          current: 'bookmarks',
+          results: {},
+          error: null,
+          folderId: null,
+          startedAt: 1,
+          finishedAt: null
+        }
+      } as Partial<UIState>)
+    )
+    expect(row(running, 'import-bookmarks-file')).toMatchObject({ busy: true, disabled: false })
+    expect(row(running, 'import-passwords-file')).toMatchObject({ busy: false, disabled: true })
+    expect(running.groups.map((g) => g.id)).toEqual(['import-files'])
+    invoke.mockClear()
+    const busyRow = row(running, 'import-bookmarks-file')
+    if (busyRow.kind !== 'action') throw new Error('not an action')
+    busyRow.onPress?.()
+    expect(invoke).not.toHaveBeenCalled()
+
+    // The result stays as a group under the rows: the headline in Chrome's words, a row per
+    // kind with what came in and what was skipped, Show imported bookmarks for the folder made,
+    // Dismiss clearing it.
+    const finished = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: { imported: 42, duplicates: 3, unreadable: 0, invalid: 1, error: null }
+        },
+        error: null,
+        folderId: 'imported-folder',
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const last = section('import', finished)
+    expect(last.groups.map((g) => g.id)).toEqual(['import-files', 'import-last'])
+    expect(last.groups[1].heading).toBe('Last import')
+    expect(last.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-show',
+      'import-last-dismiss'
+    ])
+    expect(row(last, 'import-last-headline')).toMatchObject({
+      kind: 'info',
+      label: 'Your bookmarks and settings are ready',
+      description: 'From a bookmarks HTML file'
+    })
+    expect(row(last, 'import-last-bookmarks')).toMatchObject({
+      kind: 'info',
+      label: 'Bookmarks',
+      description: '42 bookmarks imported. 3 already saved, 1 unusable'
+    })
+    expect(row(last, 'import-bookmarks-file')).toMatchObject({ busy: false, disabled: false })
+    const show = row(last, 'import-last-show')
+    if (show.kind !== 'action') throw new Error('not an action')
+    show.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('bookmarks'))
+    expect(uiStore.get().overlayFolderId).toBe('imported-folder')
+    uiStore.set({ overlay: 'none', overlayFolderId: null })
+    const dismiss = row(last, 'import-last-dismiss')
+    if (dismiss.kind !== 'action') throw new Error('not an action')
+    dismiss.onPress?.()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('import.dismiss', undefined))
+
+    // A failure is the headline in the danger tone, no folder to show.
+    const failed = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'failed',
+        current: null,
+        results: {},
+        error: 'The file is not a bookmarks HTML file.',
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const failedLast = section('import', failed)
+    expect(failedLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-dismiss'
+    ])
+    expect(row(failedLast, 'import-last-headline')).toMatchObject({
+      label: 'The file is not a bookmarks HTML file.',
+      tone: 'danger'
+    })
+
+    // The category's search words reach it from the landing.
+    const s = state({ import: null } as Partial<UIState>)
+    const hits = searchRows(phoneSections(s), 'csv').map((h) => h.row.id)
+    expect(hits).toContain('import-passwords-file')
   })
 
   it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {
