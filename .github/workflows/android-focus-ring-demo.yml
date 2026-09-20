@@ -11,9 +11,6 @@ name: Android focus ring demo
 # Dispatch-only, like the other demos: it takes about ten minutes. The build, the emulator and the
 # Gradle cache live in android-emulator-demo.yml; this file only picks the driver.
 on:
-  # TEMPORARY (#272's verification run); removed in the final head.
-  push:
-    branches: [cursor/android-primitives-pass-3-37f1]
   workflow_dispatch:
 
 permissions:
