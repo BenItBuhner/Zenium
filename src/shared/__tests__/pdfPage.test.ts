@@ -7,6 +7,7 @@ import {
   pdfPageUrl,
   pdfViewerAssetMime,
   pdfViewerAssetUrl,
+  pdfViewerBaseUrl,
   pdfViewerDocumentUrl,
   pdfViewerPageHtml,
   pdfViewerRequestFor
@@ -16,8 +17,10 @@ import {
   PDF_MIN_ZOOM,
   PDF_VIEWER_GLOBAL,
   PDF_VIEWER_MESSAGE_KEY,
+  PDF_VIEWER_TOKEN_KEY,
   pdfCommandScript,
   pdfReportOf,
+  pdfReportTokenOf,
   steppedZoom
 } from '../pdfViewerProtocol'
 
@@ -84,9 +87,13 @@ describe('what the host serves under the viewer’s origin', () => {
 })
 
 describe('the viewer document', () => {
-  const html = pdfViewerPageHtml({ id: 'dl1', name: 'Tide <tables> & "notes".pdf' })
+  const html = pdfViewerPageHtml({
+    id: 'dl1',
+    name: 'Tide <tables> & "notes".pdf',
+    token: 'tok-1'
+  })
 
-  it('carries the document’s name escaped, its addresses for the script and the viewer’s files', () => {
+  it('carries the document’s name escaped, its token, its addresses for the script and the viewer’s files', () => {
     expect(html).toContain('<title>Tide &lt;tables&gt; &amp; &quot;notes&quot;.pdf</title>')
     expect(html).toContain(`src="${pdfViewerAssetUrl('viewer.mjs')}"`)
     const config = /window\.__zeniumPdfDocument=(\{.*?\})<\/script>/.exec(html)
@@ -94,9 +101,37 @@ describe('the viewer document', () => {
     expect(JSON.parse(config![1])).toEqual({
       id: 'dl1',
       name: 'Tide <tables> & "notes".pdf',
+      token: 'tok-1',
       src: pdfViewerDocumentUrl(),
       workerSrc: pdfViewerAssetUrl('pdf.worker.mjs')
     })
+  })
+
+  it('keeps a name that spells a script element’s end inside the config', () => {
+    const tricky = pdfViewerPageHtml({ id: 'dl1', name: '</script><script>x()//.pdf', token: 't' })
+    expect(tricky).not.toContain('</script><script>x()')
+    const config = /window\.__zeniumPdfDocument=(\{.*?\})<\/script>/.exec(tricky)
+    expect(JSON.parse(config![1]).name).toBe('</script><script>x()//.pdf')
+  })
+
+  it('opens the body with the hidden plugin element of Chrome’s viewer document, which content scripts tell a PDF tab by', () => {
+    // The shape Kami's "Open with Kami" looks for: an embed of the PDF type whose src is
+    // `about:blank` (Chrome's viewer page), first in the body; it draws nothing here.
+    expect(html).toMatch(
+      /<body><embed name="plugin" type="application\/pdf" src="about:blank" internalid="dl1" hidden>/
+    )
+  })
+
+  it('runs under the document’s own http(s) address, else on the viewer’s origin', () => {
+    expect(pdfViewerBaseUrl({ url: 'https://example.test/papers/report.pdf?v=2#page=3' })).toBe(
+      'https://example.test/papers/report.pdf?v=2#page=3'
+    )
+    expect(pdfViewerBaseUrl({ url: 'http://10.0.2.2:8765/sample.pdf' })).toBe(
+      'http://10.0.2.2:8765/sample.pdf'
+    )
+    expect(pdfViewerBaseUrl({ url: '' })).toBe(`${PDF_VIEWER_ORIGIN}/`)
+    expect(pdfViewerBaseUrl({ url: 'blob:https://example.test/abc' })).toBe(`${PDF_VIEWER_ORIGIN}/`)
+    expect(pdfViewerBaseUrl({ url: 'content://downloads/1' })).toBe(`${PDF_VIEWER_ORIGIN}/`)
   })
 
   it('keeps the engine’s pinch zoom away and hides the status once the pages are up', () => {
@@ -165,5 +200,15 @@ describe('the protocol between the viewer and the chrome', () => {
     expect(pdfReportOf({ other: report })).toBeNull()
     expect(pdfReportOf('zeniumPdf')).toBeNull()
     expect(pdfReportOf(null)).toBeNull()
+  })
+
+  it('reads the document’s token beside the report, and nothing for a message without one', () => {
+    expect(pdfReportTokenOf({ [PDF_VIEWER_MESSAGE_KEY]: {}, [PDF_VIEWER_TOKEN_KEY]: 'tok' })).toBe(
+      'tok'
+    )
+    expect(pdfReportTokenOf({ [PDF_VIEWER_TOKEN_KEY]: '' })).toBeNull()
+    expect(pdfReportTokenOf({ [PDF_VIEWER_TOKEN_KEY]: 7 })).toBeNull()
+    expect(pdfReportTokenOf({})).toBeNull()
+    expect(pdfReportTokenOf(null)).toBeNull()
   })
 })

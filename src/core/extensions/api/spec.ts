@@ -883,6 +883,22 @@ export const API_SPEC: ApiSpec = {
     shape: true,
     permissions: ['gcm']
   },
+  // A print destination the extension provides to Chrome's print preview: four events the
+  // browser raises from its print dialog, no methods. Zenium's print dialog is the engine's own
+  // and asks no extension for printers yet, so the events exist and never fire; the namespace
+  // is the shape Chrome has once the permission is declared (Save to Google Drive registers all
+  // three of its listeners in its worker's constructor, and a missing namespace ended it there).
+  printerProvider: {
+    methods: {},
+    events: {
+      onGetPrintersRequested: {},
+      onGetUsbPrinterInfoRequested: {},
+      onGetCapabilityRequested: {},
+      onPrintRequested: {}
+    },
+    shape: true,
+    permissions: ['printerProvider']
+  },
   // Chrome exposes `instanceID` with the `gcm` permission. The ID itself is local (Chrome
   // generates it without the server), so `getID` is stable per install, `getCreationTime` dates
   // it and `deleteID` drops it; tokens are GCM's, so `getToken` / `deleteToken` fail as Chrome's
