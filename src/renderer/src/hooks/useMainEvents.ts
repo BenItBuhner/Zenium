@@ -27,6 +27,7 @@ import {
   openNewTabShortcutDialog,
   openInstallSheet,
   openOverlay,
+  openPrintPreview,
   openUrlbar,
   openZoom,
   overlayAvailable,
@@ -94,8 +95,17 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openNewTabShortcutDialog(request)
       }),
-      onEvent('overlay.open', ({ kind, folderId, section }) => {
+      onEvent('overlay.open', ({ kind, folderId, section, tabId }) => {
         const ui = uiStore.get()
+        // The print preview is a frame dialog over the tab it prints (`zen://print` has no panel
+        // of its own): the core opens a session for the tab and asks for its surface here.
+        if (kind === 'print') {
+          const target = tabId ?? currentActiveTabId()
+          if (!target) return
+          closeUrlbar()
+          void openPrintPreview(target)
+          return
+        }
         // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
         // its sections. The core routes its own callers through `page.open`; a stray request
         // for the overlay goes the same way (`openOverlay` refuses the kind on such a host).

@@ -27,6 +27,7 @@ import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
+import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
 
@@ -56,8 +57,9 @@ const TAB_ICONS = [
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the Clear
  * browsing data dialog Settings opens on a mouse, the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
- * Settings > Autofill and the vault passphrase asked for by a re-authenticated command run from
- * the chrome. The modal ones render through the `FrameDialogHost` this mounts, so they centre
+ * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
+ * the chrome and the print preview (Chrome's constrained window at the frame's size). The modal
+ * ones render through the `FrameDialogHost` this mounts, so they centre
  * in the box it is placed in – the content frame on desktop, the shell on phones – over a scrim
  * that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop it portals
  * to the chrome layer, anchored under the star; on phones it is a sheet in the host. The zoom
@@ -109,6 +111,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
       <ClearBrowsingDataDialog />
+      <PrintPreviewDialog state={state} />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
       <InstallLayer />
       <AutofillPrompts state={state} />
