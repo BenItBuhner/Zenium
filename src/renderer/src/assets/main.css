@@ -8594,6 +8594,9 @@
   line-height: var(--v2-line-body);
   font-weight: var(--v2-weight-body);
 }
+:root:not([data-form-factor='phone']) .zen-read-aloud {
+  height: calc(var(--v2-control) + 8px);
+}
 :root[data-form-factor='phone'] .zen-read-aloud {
   flex-direction: column;
   align-items: stretch;
@@ -8613,9 +8616,13 @@
 :root:not([data-form-factor='phone']) .zen-read-aloud-header {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 :root:not([data-form-factor='phone']) .zen-read-aloud-controls {
   flex: 0 0 auto;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
   padding-right: 8px;
 }
 /* The desktop's voice menulist: the §9.13 control at a bounded width, the voice's name truncating. */

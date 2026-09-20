@@ -2483,7 +2483,8 @@ export class Menus {
         },
         // Edge's Immersive Reader has "Text preferences" on its toolbar; here the item sits under
         // Reader View while an article is open, and the chrome shows the popover (a mouse) or
-        // the sheet (a phone) that the reader page's own toolbar mirrors.
+        // the sheet (a phone): the one home of the reader's controls, the document carrying no
+        // toolbar of its own (§10.1). On a phone, whose pill has no chip, this is the way in.
         ...when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
           label: 'Text Preferences…',
           click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
