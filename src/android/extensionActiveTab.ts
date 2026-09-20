@@ -15,10 +15,13 @@ export class ActiveTabGrants {
 
   constructor(private readonly hasPermission: (extensionId: string) => boolean) {}
 
-  /** The user invoked the extension on `tab`. */
-  grant(extensionId: string, tab: Tab): void {
+  /**
+   * The user invoked the extension on `tab`, whose page reads as `url` to extensions (the tab's
+   * own address unless the host presents another, as for the PDF viewer's tab).
+   */
+  grant(extensionId: string, tab: Tab, url: string = tab.url): void {
     if (!this.hasPermission(extensionId)) return
-    const origin = originPattern(tab.url)
+    const origin = originPattern(url)
     if (!origin) return
     let perTab = this.grants.get(extensionId)
     if (!perTab) {

@@ -1,4 +1,6 @@
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, type ExtensionInfo } from '@shared/types'
+import { pdfPageDownloadId } from '@shared/pdfPage'
+import { PDF_VIEWER_ORIGIN } from '@shared/pdfViewerProtocol'
 import type { Browser } from '@core/browser'
 import type { MenuItemTemplate, PageContextParams, StoreIO } from '@core/platform'
 import type { ZenWindow } from '@core/window'
@@ -1176,7 +1178,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // A toolbar click is the user gesture `activeTab` waits for. A private tab the extension may
     // not see is no tab (Chrome hides the action there).
     const tab = this.api.tabs.activeTabFor(ext)
-    if (tab) this.api.activeTab.grant(id, tab)
+    if (tab) this.api.activeTab.grant(id, tab, this.api.tabs.urlOf(tab))
     // The tab's own popup when `action.setPopup` named one for it, else the global one.
     const action = this.api.actionStateFor(id, tab ? this.api.tabs.chromeIdFor(tab.id) : undefined)
     if (!action.enabled) return
@@ -1698,7 +1700,19 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (this.extensions.size === 0) return
     const tab = this.browser.tabs.tab(tabId)
     const chromeTabId = this.api.tabs.chromeIdFor(tabId)
-    const facts = { chromeTabId, committedUrl: tab?.url ?? '' }
+    // The addresses the events carry are the ones extensions read the tab as (`TabIds.urlFor`):
+    // the PDF viewer's tab is its document's URL, and the viewer document itself – reported
+    // under the viewer's origin or WebView's `data:` stand-in for a `loadDataWithBaseURL`
+    // document – reads as that URL too while the tab shows it.
+    const present = (url: string): string => {
+      const shown = this.api.tabs.urlFor(url)
+      if (shown !== url || !tab) return shown
+      const viewer = pdfPageDownloadId(tab.url) !== null
+      return viewer && (url.startsWith(PDF_VIEWER_ORIGIN) || url.startsWith('data:'))
+        ? this.api.tabs.urlOf(tab)
+        : url
+    }
+    const facts = { chromeTabId, committedUrl: tab ? this.api.tabs.urlOf(tab) : '' }
     // With the WebView's navigation listener the `navigation` reports carry the family; without
     // it, the client callbacks (commit, finish, failure) are what there is to infer from.
     const derived = this.env?.navigationListener === true
@@ -1714,11 +1728,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       case 'navigation': {
         if (!derived) return
         const report = navigationReport(payload)
-        if (report) this.webNavigationEvents(tabId, this.webNavigation.report(tabId, facts, report))
+        if (report) {
+          report.url = present(report.url)
+          this.webNavigationEvents(tabId, this.webNavigation.report(tabId, facts, report))
+        }
         return
       }
       case 'navigated': {
-        const p = payload as ViewEventPayloads['navigated']
+        const raw = payload as ViewEventPayloads['navigated']
+        const p = { ...raw, url: present(raw.url) }
         if (!derived) {
           this.webNavigationEvents(
             tabId,
@@ -1745,7 +1763,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         return
       }
       case 'stopLoading': {
-        const url = (payload as ViewEventPayloads['stopLoading']).url
+        const url = present((payload as ViewEventPayloads['stopLoading']).url)
         if (!derived)
           this.webNavigationEvents(tabId, this.webNavigation.inferredFinish(tabId, facts, url))
         updated({ status: 'complete' })
@@ -1768,7 +1786,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
             this.webNavigation.inferredFailure(
               tabId,
               facts,
-              p.url,
+              present(p.url),
               netErrorName(p.code, p.description)
             )
           )

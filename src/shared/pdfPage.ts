@@ -6,6 +6,14 @@
  * pdf.js worker and the download's bytes from `PDF_VIEWER_ORIGIN` (`pdfViewerProtocol.ts`),
  * which the shell's URLs point at, while the tab's address stays `zen://pdf`.
  *
+ * The document itself runs under the PDF's own URL (`pdfViewerBaseUrl`: the base URL the host
+ * loads the shell with), as Chrome's PDF viewer presents its tab: extensions see the tab under
+ * that URL (`tabs`, `webNavigation`), a content script matching it runs in the document and
+ * reads it as `location.href` (Kami's "Open with Kami", a content script on every URL that
+ * looks for Chrome's viewer), and the viewer's own requests, now cross-origin to
+ * `PDF_VIEWER_ORIGIN`, are answered with the CORS headers they need. A PDF with no http(s)
+ * address to stand under runs on `PDF_VIEWER_ORIGIN` itself.
+ *
  * Pure: addresses, the shell's HTML and the missing-file page. The viewer's behaviour lives in
  * `src/android/pdfViewer.ts` (built into the app's assets); the protocol between the two in
  * `pdfViewerProtocol.ts`.
@@ -47,10 +55,30 @@ export interface PdfDocumentInfo {
   name: string
   /** The file's location on the host, for the host to serve; never reaches the document. */
   path: string
+  /**
+   * The document's own address, the download's URL: what the viewer's document runs under
+   * (`pdfViewerBaseUrl`) and what the tab reads as to extensions. Empty when unknown.
+   */
+  url: string
+  /**
+   * A secret of this document's, written into the shell and posted beside every report
+   * (`pdfViewerProtocol.ts`): the core takes a report for the tab only with it, since the
+   * document's origin is the PDF's, which any page of that origin shares.
+   */
+  token: string
 }
 
 /** Resolves `zen://pdf?id=…` to the download it shows (null once the file is gone). */
 export type PdfPageLookup = (id: string) => PdfDocumentInfo | null
+
+/**
+ * The base URL the host loads the shell with (`loadDataWithBaseURL`): the document's own
+ * http(s) address, so the document runs under it as under Chrome's viewer; the viewer's origin
+ * for a document that has none (never `zen://`, which has no origin to fetch from).
+ */
+export function pdfViewerBaseUrl(doc: Pick<PdfDocumentInfo, 'url'>): string {
+  return /^https?:\/\/[^/]+/i.test(doc.url) ? doc.url : `${PDF_VIEWER_ORIGIN}/`
+}
 
 /** The document's own address for its bytes, and the viewer's files, under the viewer's origin. */
 export function pdfViewerDocumentUrl(): string {
@@ -118,14 +146,24 @@ function escapeHtml(s: string): string {
  * viewport's top, a go-to could not reach the last page). A document that never overflows the
  * window keeps the layout viewport at the screen's size, and every measurement against the
  * scroller is a measurement of the screen.
+ *
+ * The body opens with the plugin element Chrome's PDF viewer's top document holds (`<embed
+ * type="application/pdf" src="about:blank">`, the shape Chrome's viewer page is generated with):
+ * an extension's content script running in the document, as it does in Chrome's, tells a PDF
+ * tab by it (Kami's "Open with Kami" looks for that embed, or for the closed-shadow-root frame
+ * of Chrome's newer viewer). It is hidden and draws nothing: the WebView has no PDF plugin, and
+ * the pages are the viewer's own.
  */
-export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): string {
+export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name' | 'token'>): string {
+  // Inside a script element: a `<` of the file's name (the server's to choose) must not read as
+  // the element's end.
   const config = JSON.stringify({
     id: doc.id,
     name: doc.name,
+    token: doc.token,
     src: pdfViewerDocumentUrl(),
     workerSrc: pdfViewerAssetUrl(PDF_VIEWER_ASSETS.worker)
-  })
+  }).replace(/</g, '\\u003c')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(doc.name)}</title><style>
   :root { color-scheme: light dark; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #525659; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
@@ -142,7 +180,7 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   .zen-pdf-status[hidden] { display: none; }
   .zen-pdf-status p { max-width: 420px; line-height: 1.5; margin: 0; }
 </style><script>window.__zeniumPdfDocument=${config}</script></head>
-<body><div id="scroller"><div id="pages"></div></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>
+<body><embed name="plugin" type="application/pdf" src="about:blank" internalid="${escapeHtml(doc.id)}" hidden><div id="scroller"><div id="pages"></div></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>
 <script type="module" src="${pdfViewerAssetUrl(PDF_VIEWER_ASSETS.script)}"></script></body></html>`
 }
 

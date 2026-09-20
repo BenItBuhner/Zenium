@@ -331,6 +331,11 @@ export interface Harness {
   toasts: string[]
   /** What `browser.extensions.list()` answers (the store's view: icons for the menus). */
   infos: ExtensionInfo[]
+  /**
+   * The PDF viewer's documents (`browser.pdf.documentUrl`): a viewer tab's address
+   * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
+   */
+  pdfDocuments: Map<string, string>
   /** Write the debounced JSON documents out now and parse one of them. */
   saved: (name: string) => Record<string, unknown>
 }
@@ -387,6 +392,7 @@ export function harness(
       isFullScreen: () => false
     }
   } as unknown as ZenWindow
+  const pdfDocuments = new Map<string, string>()
   const browser = {
     platform: { io },
     state: {
@@ -401,6 +407,7 @@ export function harness(
       toasts.push(message)
     },
     extensions: { list: () => infos },
+    pdf: { documentUrl: (url: string) => pdfDocuments.get(url) ?? null },
     tabs: {
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
@@ -469,6 +476,7 @@ export function harness(
     notifyState,
     toasts,
     infos,
+    pdfDocuments,
     saved: (name) => {
       runtime.flushSync()
       return JSON.parse(files.get(name) ?? '{}') as Record<string, unknown>

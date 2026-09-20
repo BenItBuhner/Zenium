@@ -883,12 +883,14 @@ class Extensions(private val host: Host) {
      * `onPageStarted(url)` of a WebView: the previous document's endpoints are gone. The callback
      * is posted at commit and can land after the new document's bootstrap already said hello
      * (measured on the emulator: background pages register and make their first calls before
-     * it arrives), so endpoints of a main frame that reported exactly the new URL are kept.
+     * it arrives), so endpoints of a main frame that reported exactly the new URL are kept – or
+     * [documentUrl], the address the document reads as its own where that differs from the
+     * tab's (the PDF viewer page: `zen://pdf` for the tab, the PDF's URL for the document).
      * Passing no URL (the view is going away) drops everything.
      */
-    fun onDocumentGone(view: WebView, url: String? = null) {
+    fun onDocumentGone(view: WebView, url: String? = null, documentUrl: String? = null) {
         val mine = endpoints.filterValues { it.view === view }
-        val kept = if (url == null) emptyMap() else mine.filterValues { it.isMainFrame && it.url == url }
+        val kept = if (url == null) emptyMap() else mine.filterValues { it.isMainFrame && (it.url == url || it.url == documentUrl) }
         if (kept.isNotEmpty()) {
             lateOnPageStarted++
             Log.d(TAG, "onPageStarted($url) after ${kept.size} endpoint(s) of the new document said hello; kept")
