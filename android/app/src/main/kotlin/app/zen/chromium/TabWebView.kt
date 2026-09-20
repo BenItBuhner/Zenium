@@ -1928,7 +1928,13 @@ class TabWebView(
         }
 
         override fun onCloseWindow(window: WebView) {
-            // Pages closing themselves are rare enough that leaving the tab open is fine.
+            // Blink asks only for a window a script may close (one it opened, or a tab still on its
+            // first document, `history.length` 1): Chrome closes the tab, and an extension page
+            // opened with `tabs.create` counts on it (Tampermonkey's install page closes itself once
+            // its background lets the request go). The view goes the way of a page-initiated close:
+            // the core hears `destroyed` and closes the tab.
+            if (window !== this@TabWebView) return
+            post { host.tabs.destroy(tabId) }
         }
     }
 

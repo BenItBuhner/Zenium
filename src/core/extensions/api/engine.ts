@@ -360,7 +360,12 @@ export function createEmulatedEngine(
 
   type MessageTarget = { extensionId?: string | null; tabId?: unknown; options?: unknown }
 
-  const sendMessage = (target: MessageTarget, data: unknown): Promise<unknown> =>
+  /**
+   * `callback`: the sender passed one, so a port every listener let close without a response is
+   * reported to it as an error, as Chrome reports it ("The message port closed before a response
+   * was received."); the promise form resolves with undefined there.
+   */
+  const sendMessage = (target: MessageTarget, data: unknown, callback: boolean): Promise<unknown> =>
     new Promise((resolve, reject) => {
       const id = ++seq
       pending.set(id, { resolve, reject })
@@ -369,6 +374,7 @@ export function createEmulatedEngine(
         id,
         target,
         data: data === undefined ? null : data,
+        ...(callback ? { callback: true } : {}),
         ...(userScript ? { userScript: true } : {})
       })
     })
@@ -488,7 +494,10 @@ export function createEmulatedEngine(
       ),
     sendMessage: (...args: unknown[]) => {
       const { extensionId, message, options, callback } = parseSendMessageArgs(args)
-      return settle(sendMessage({ extensionId, options: options ?? null }, message), callback)
+      return settle(
+        sendMessage({ extensionId, options: options ?? null }, message, callback !== undefined),
+        callback
+      )
     },
     connect: (...args: unknown[]) => {
       const rest = [...args]
@@ -548,7 +557,10 @@ export function createEmulatedEngine(
         const tabId = rest.shift()
         const callback = takeCallback(rest)
         const [message, options] = rest
-        return settle(sendMessage({ tabId, options: options ?? null }, message), callback)
+        return settle(
+          sendMessage({ tabId, options: options ?? null }, message, callback !== undefined),
+          callback
+        )
       },
       connect: (tabId: unknown, connectInfo?: unknown) => connect({ tabId }, connectInfo)
     }

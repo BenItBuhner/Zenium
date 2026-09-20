@@ -533,7 +533,7 @@ export class ExtensionApi {
       case 'userScripts':
         return this.userScriptsCall(ext, method, args)
       case 'runtime':
-        return this.runtimeCall(ext, method)
+        return this.runtimeCall(ext, method, args)
       case 'declarativeNetRequest':
         return this.host.dnr.call(ext, method, args)
       case 'notifications':
@@ -1308,7 +1308,11 @@ export class ExtensionApi {
 
   // --- runtime ---------------------------------------------------------------
 
-  private async runtimeCall(ext: AttachedExtension, method: string): Promise<unknown> {
+  private async runtimeCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
     const id = ext.record.id
     switch (method) {
       case 'openOptionsPage':
@@ -1321,10 +1325,10 @@ export class ExtensionApi {
       // Chrome 109+ hands the callback one `{ status, version }`; the promise form resolves with it.
       case 'requestUpdateCheck':
         return this.host.requestUpdateCheck(id)
-      case 'getContexts':
+      case 'getContexts': {
         // An extension page's URL as Chrome spells it (`extensionUrls.ts`); its origin stays the
         // served one, what `location.origin` answers inside the page, as for a message sender.
-        return this.host.router.of(id).map((e) => ({
+        const contexts: ExtensionContext[] = this.host.router.of(id).map((e) => ({
           contextId: e.id,
           contextType: contextTypeOf(e.context),
           documentId: e.id,
@@ -1338,6 +1342,8 @@ export class ExtensionApi {
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
           windowId: 1
         }))
+        return filterContexts(contexts, asRecord(args[0]))
+      }
       // No native messaging hosts on the phone: Chrome's answer for a host that does not exist.
       case 'sendNativeMessage':
       case 'connectNative':
@@ -1675,6 +1681,48 @@ export function contextTypeOf(context: EngineContextKind): string {
     default:
       return 'TAB'
   }
+}
+
+/** One `runtime.getContexts` answer (Chrome's `ExtensionContext`). */
+export interface ExtensionContext {
+  contextId: string
+  contextType: string
+  documentId: string
+  documentOrigin: string
+  documentUrl: string
+  frameId: number
+  incognito: boolean
+  tabId: number
+  windowId: number
+}
+
+/**
+ * `runtime.getContexts(filter)`: every property of Chrome's `ContextFilter` that is given keeps
+ * only the contexts whose value is among the listed ones (`incognito` a single boolean); an
+ * empty filter keeps them all. Tampermonkey asks for `OFFSCREEN_DOCUMENT` contexts to know
+ * whether to create its offscreen document: with the filter ignored it never did.
+ */
+export function filterContexts(
+  contexts: ExtensionContext[],
+  filter: Record<string, unknown>
+): ExtensionContext[] {
+  const listed = (name: string, value: unknown): boolean => {
+    const wanted = filter[name]
+    if (!Array.isArray(wanted)) return true
+    return wanted.some((entry) => entry === value)
+  }
+  return contexts.filter(
+    (context) =>
+      listed('contextIds', context.contextId) &&
+      listed('contextTypes', context.contextType) &&
+      listed('documentIds', context.documentId) &&
+      listed('documentOrigins', context.documentOrigin) &&
+      listed('documentUrls', context.documentUrl) &&
+      listed('frameIds', context.frameId) &&
+      listed('tabIds', context.tabId) &&
+      listed('windowIds', context.windowId) &&
+      (typeof filter.incognito !== 'boolean' || filter.incognito === context.incognito)
+  )
 }
 
 /**

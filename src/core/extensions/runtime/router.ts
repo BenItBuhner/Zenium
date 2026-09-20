@@ -39,6 +39,8 @@ interface PendingMessage {
   sawListeners: boolean
   awaitingAsync: Set<string>
   done: boolean
+  /** The sender passed a callback (Chrome reports a closed port as an error to those alone). */
+  callback: boolean
 }
 
 interface PortState {
@@ -123,7 +125,8 @@ export class MessageRouter {
           sender,
           Number(message.id),
           (message.target ?? {}) as MessageTarget,
-          message.data
+          message.data,
+          message.callback === true
         )
         return true
       case 'msgReply':
@@ -248,7 +251,8 @@ export class MessageRouter {
     sender: Endpoint,
     senderMessageId: number,
     target: MessageTarget,
-    data: unknown
+    data: unknown,
+    callback = false
   ): void {
     const targets = this.targetsFor(sender, target)
     if (typeof targets === 'string' || targets.length === 0) {
@@ -267,7 +271,8 @@ export class MessageRouter {
       outstanding: new Set(targets.map((t) => t.id)),
       sawListeners: false,
       awaitingAsync: new Set(),
-      done: false
+      done: false,
+      callback
     }
     this.pending.set(rid, pending)
     const info = this.senderInfo(sender)
@@ -302,12 +307,17 @@ export class MessageRouter {
     this.settle(rid, pending)
   }
 
-  /** Everyone answered without a response: "no listener anywhere" is an error, otherwise undefined. */
+  /**
+   * Everyone answered without a response. "No listener anywhere" is an error; listeners that
+   * let the port close without answering are an error too, but only to a sender that passed a
+   * callback (Chrome keeps that difference: a callback says a response was expected, the promise
+   * form takes the closed port as delivery – `OneTimeMessageHandler::DisconnectOpener`).
+   */
   private settle(rid: number, pending: PendingMessage): void {
     if (pending.done || pending.outstanding.size > 0 || pending.awaitingAsync.size > 0) return
     pending.done = true
     this.pending.delete(rid)
-    if (pending.sawListeners)
+    if (pending.sawListeners && !pending.callback)
       this.outbox.send(pending.sender, {
         t: 'reply',
         id: pending.senderMessageId,
@@ -319,7 +329,7 @@ export class MessageRouter {
         t: 'reply',
         id: pending.senderMessageId,
         ok: false,
-        error: NO_RECEIVER
+        error: pending.sawListeners ? PORT_CLOSED : NO_RECEIVER
       })
   }
 

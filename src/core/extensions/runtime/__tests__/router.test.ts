@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MessageRouter, NO_RECEIVER, type Endpoint, type RouterOutbox } from '../router'
+import {
+  MessageRouter,
+  NO_RECEIVER,
+  PORT_CLOSED,
+  type Endpoint,
+  type RouterOutbox
+} from '../router'
 
 const EXT = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
 
@@ -96,6 +102,29 @@ describe('runtime.sendMessage', () => {
     const [deliver2] = take('bg')
     router.handle('bg', { t: 'msgReply', id: deliver2.id, handled: false, listeners: true })
     expect(take('cs')).toEqual([{ t: 'reply', id: 3, ok: true, result: null }])
+  })
+
+  it('reports a port the listeners let close to a sender that passed a callback', () => {
+    // Chrome's OneTimeMessageHandler::DisconnectOpener: the callback form takes a closed port
+    // as "The message port closed before a response was received." (it asked for a response),
+    // the promise form as delivery; "nobody listens" stays the receiving-end error for both.
+    const { router, take } = setup()
+    router.register(endpoint('cs'))
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+
+    router.handle('cs', { t: 'msg', id: 1, target: { extensionId: null }, data: 1, callback: true })
+    const [deliver] = take('bg')
+    router.handle('bg', { t: 'msgReply', id: deliver.id, handled: false, listeners: true })
+    expect(take('cs')).toEqual([{ t: 'reply', id: 1, ok: false, error: PORT_CLOSED }])
+
+    router.handle('cs', { t: 'msg', id: 2, target: { extensionId: null }, data: 1, callback: true })
+    const [deliver2] = take('bg')
+    router.handle('bg', { t: 'msgReply', id: deliver2.id, handled: true, willRespond: true })
+    router.unregister('bg')
+    expect(take('cs')).toEqual([{ t: 'reply', id: 2, ok: false, error: PORT_CLOSED }])
+
+    router.handle('cs', { t: 'msg', id: 3, target: { extensionId: null }, data: 1, callback: true })
+    expect(take('cs')).toEqual([{ t: 'reply', id: 3, ok: false, error: NO_RECEIVER }])
   })
 
   it('waits for an asynchronous sendResponse', () => {

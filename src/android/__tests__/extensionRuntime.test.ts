@@ -1119,6 +1119,21 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
     expect(contexts.find((c) => c.contextId === 'pop1')?.documentUrl).toBe(
       `chrome-extension://${ID}/popup.html`
     )
+    // The filter keeps only the listed values (Tampermonkey asks for OFFSCREEN_DOCUMENT contexts
+    // before creating its offscreen document: with the filter ignored it never created one).
+    const byType = async (types: string[]): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: types }])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(await byType(['OFFSCREEN_DOCUMENT'])).toEqual([])
+    expect(await byType(['POPUP'])).toEqual(['pop1'])
+    expect((await byType(['TAB', 'BACKGROUND'])).sort()).toEqual(['bg1', 'docP.1', 'docQ.1'])
+    const byTab = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['TAB'], frameIds: [0] }])
+    ).result as Array<Record<string, unknown>>
+    expect(byTab.map((c) => c.contextId)).toEqual(['docP.1'])
     // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
     const tabId = h.runtime.api.tabs.chromeIdFor('t1')
     message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })
