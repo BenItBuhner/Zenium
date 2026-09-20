@@ -548,6 +548,87 @@ describe('the v2 primitives (§9.34)', () => {
     expect(css).not.toMatch(/--zen-settings-pad/)
   })
 
+  it('grow a one-line row around its control by 4 above and below (§9.21): one unlayered mark on the row rule', () => {
+    // pr-228 nit 2: `--v2-row-pad` around a 32 / 40 control measured 44 / 64. The control row is
+    // the row primitive with `data-control` – padding 4, the base `min-height` still the row's –
+    // so a 32 control makes 40 and a 40 one 48, a 28 / 44 icon button 36 / 52, and a text-only
+    // row stays 32 / 44. It states the padding and nothing else: the geometry is the row rule's.
+    expect(block('.zen-v2-row[data-control]').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  padding-block: 4px;'
+    ])
+    expect(ruleAt('.zen-v2-row[data-control]')).toBeGreaterThan(ruleAt('.zen-v2-row'))
+    expect(nesting(ruleAt('.zen-v2-row[data-control]'))).toBe(0)
+    // `ListRow` leaves the numbers to it: no utility height or padding on the row.
+    const primitives = readFileSync(
+      fileURLToPath(new URL('../../components/siteControls/primitives.tsx', import.meta.url)),
+      'utf8'
+    )
+    const from = primitives.indexOf('export function ListRow(')
+    expect(from).toBeGreaterThanOrEqual(0)
+    const listRow = primitives.slice(from, primitives.indexOf('\n}\n', from))
+    expect(listRow).not.toMatch(/min-h-\[|py-\[|py-\d/)
+    expect(listRow).toMatch(/data-control=\{controlRow\}/)
+  })
+
+  it('draw the radio’s checked dot at §9.14’s 6 px: the inset ring is (box − 2 − 6) / 2 inside the 1 px border', () => {
+    // (box − 6) / 2 measured a 4 px dot (the #235 ruling): the inset shadow starts inside the
+    // border, so the border's 2 comes off the box before the dot does.
+    const checked = block(
+      ".zen-v2-radio[aria-checked='true'],\n[aria-checked='true'] > .zen-v2-radio"
+    )
+    expect(checked).toMatch(
+      /box-shadow: inset 0 0 0 calc\(\(var\(--v2-checkbox\) - 2px - 6px\) \/ 2\) var\(--v2-accent\)/
+    )
+    expect(css.match(/calc\(\(var\(--v2-checkbox\) - 6px\) \/ 2\)(?! - 1px)/g) ?? []).toHaveLength(
+      0
+    )
+  })
+
+  it('let a field’s invalid state win over its focus ring (§9.12): the ring in the danger ink, on the shared field and the phone field alike', () => {
+    // Dark's inset ring (−2, §1) lay over the 1 px danger border and hid it: focused and invalid,
+    // the ring is `--v2-danger` – its 2 px, offset and shape the shared ring's – so the field
+    // reads invalid either way, in light and in dark. The invalid rule re-inks the ring through
+    // its token, the chrome's seam for re-inking a shared rule, and every form of the ring reads
+    // that token (the shared ring, its coarse-pointer form, the base layer's), so no rule of the
+    // field's needs the ring forms' weight – no `:root` bump, no `outline-color` restatement.
+    expect(block(".zen-v2-field[aria-invalid='true']").match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+      '  --v2-ring: var(--v2-danger);',
+      '  border-color: var(--v2-danger);'
+    ])
+    expect(nesting(ruleAt(".zen-v2-field[aria-invalid='true']"))).toBe(0)
+    expect(css).not.toMatch(/:root \.zen-v2-field/)
+    expect(css).not.toMatch(/\.zen-v2-field\[aria-invalid='true'\]:focus-visible/)
+    // The token is the one the ring forms draw with, declared once for the chrome and once here.
+    expect(css.match(/--v2-ring:/g)).toHaveLength(2)
+    expect(
+      block(
+        "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
+      )
+    ).toMatch(/outline: 2px solid var\(--v2-ring\)/)
+    expect(block(':focus-visible', css.indexOf('@layer base {'))).toMatch(
+      /outline: 2px solid var\(--v2-ring\)/
+    )
+    // The phone field (phonePanels.css) reads the same two states off the input it wraps, where
+    // the ARIA state sits, in the same tokens – its ring re-inked by `outline-color`, since the
+    // wrapper's clear button would inherit the token.
+    const panels = readFileSync(
+      fileURLToPath(new URL('../../components/phone/phonePanels.css', import.meta.url)),
+      'utf8'
+    )
+    const rule = (selector: string): string => {
+      const at = panels.indexOf(`${selector} {`)
+      expect(at, selector).toBeGreaterThanOrEqual(0)
+      return panels.slice(at, panels.indexOf('}', at))
+    }
+    expect(rule(".zen-phone-field:has(> input[aria-invalid='true'])")).toMatch(
+      /border-color: var\(--v2-danger\)/
+    )
+    expect(rule(".zen-phone-field:has(> input[aria-invalid='true']):focus-within")).toMatch(
+      /outline-color: var\(--v2-danger\)/
+    )
+    expect(rule('.zen-phone-field:focus-within')).toMatch(/outline: 2px solid var\(--v2-ring\)/)
+  })
+
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {
     // The static row (§9.34) is the row primitive with `data-static`: the attribute is read in
     // exactly three places, all in the row's own rule set – the static rule, and the `:not()` of

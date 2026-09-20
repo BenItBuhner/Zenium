@@ -1128,6 +1128,13 @@ export interface PlacePopoverOptions {
    * window minus 16 alone.
    */
   capHeight?: boolean
+  /**
+   * The column a bar-less anchor stands in – its scroll container or the frame (lib/anchor.ts
+   * `columnOf`): the anchor's half of it, not of `bar`, decides the alignment in (1), while the
+   * popover still hangs from `bar` (the anchor's own box then). Without it an anchor that is its
+   * own bar sits in neither half and always start-aligns.
+   */
+  column?: Rect
 }
 
 const extent = (width: PopoverExtent): number =>
@@ -1140,7 +1147,8 @@ const extent = (width: PopoverExtent): number =>
  *
  * Horizontally: (1) start edges aligned with the anchor's box, or end edges when the anchor is
  * in the trailing half of `bar` – the bar or pill the anchor sits in (the anchor itself when it
- * stands alone); (2) a box that would cross the margin flips to the other alignment, still on
+ * stands alone) – or, for an anchor standing alone, of `options.column`, the column it stands
+ * in; (2) a box that would cross the margin flips to the other alignment, still on
  * the anchor's edge (a right-hand sidebar's or a bar's last button grows the other way); (3) if
  * neither fits, the aligned box slides the least distance that does, so the popover keeps
  * overlapping the anchor's box and never detaches from what opened it; (4) a popover wider than
@@ -1182,7 +1190,8 @@ export function placePopover(
   const maxLeft = viewport.width - POPOVER_MARGIN - w
   const fits = (left: number): boolean => left >= minLeft && left <= maxLeft
   const at = { start: anchor.x, end: anchor.x + anchor.width - w }
-  const trailing = anchor.x + anchor.width / 2 > bar.x + bar.width / 2
+  const half = options.column ?? bar
+  const trailing = anchor.x + anchor.width / 2 > half.x + half.width / 2
   const preferred: PopoverAlignment = preferredAlignment ?? (trailing ? 'end' : 'start')
   const flipped: PopoverAlignment = preferred === 'start' ? 'end' : 'start'
   let alignment: PopoverAlignment = preferred
