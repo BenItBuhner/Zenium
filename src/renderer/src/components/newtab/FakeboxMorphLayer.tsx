@@ -13,9 +13,10 @@ import { browserStore, uiStore } from '@renderer/lib/ui'
  * the field while it draws: the page's own field, the pill's slot and the omnibox's field all
  * yield to it (the root's `data-fakebox`), and a tap on it is a tap on the field – from a scrubbed
  * position it completes the morph, mid-way back it turns the field round. Its look is two layers
- * crossfaded by the morph's value (main.css `.zen-fakebox-*`): the field's opaque surface and the
- * omnibox field's raised panel, the words leaving over the first half as the omnibox's arrive
- * over the second. The rectangle is the overview hero card's pattern (`lerpRect`, left / top /
+ * handed over by the morph's value (main.css `.zen-fakebox-*`): the omnibox field's raised panel
+ * arrives over the first half on top of the field's opaque surface, with the field's words
+ * leaving, and the field's surface leaves under it over the second as the omnibox's own words
+ * arrive – never two half fades stacked. The rectangle is the overview hero card's pattern (`lerpRect`, left / top /
  * width / height per frame) rather than a clip or a transform: the words inside must not scale.
  * Mounted above the shell; it draws nothing while the field is at rest or has landed.
  */

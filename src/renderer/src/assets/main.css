@@ -5880,9 +5880,12 @@
   }
   /*
    * The double: the field's own look at one end and the omnibox field's at the other, on two
-   * layers crossfaded by the value (opacity per frame, never a shadow tweened); its box is laid
-   * out per frame by the layer (left, top, width, height, radius) – the overview hero card's
-   * pattern, the one layout-per-frame exception, since the words inside must not scale.
+   * layers handed over by the value (opacity per frame, never a shadow tweened) – the omnibox's
+   * look arrives over the first half on top of the field's, whole by the midpoint, and the
+   * field's leaves under it over the second, so no frame has the surface see-through (two half
+   * fades stacked would) and the landing is the omnibox field's own look exactly. Its box is
+   * laid out per frame by the layer (left, top, width, height, radius) – the overview hero
+   * card's pattern, the one layout-per-frame exception, since the words inside must not scale.
    */
   :root[data-form-factor='phone'] .zen-fakebox {
     corner-shape: var(--zen-corner);
@@ -5902,12 +5905,12 @@
   :root[data-form-factor='phone'] .zen-fakebox-look-field {
     background: var(--v2-urlbar);
     box-shadow: var(--v2-shadow-panel);
-    opacity: calc((1 - var(--zen-ntp-morph, 0)) * (1 - var(--zen-ntp-pill, 0)));
+    opacity: calc(clamp(0, 2 - 2 * var(--zen-ntp-morph, 0), 1) * (1 - var(--zen-ntp-pill, 0)));
   }
   :root[data-form-factor='phone'] .zen-fakebox-look-omni {
     background: var(--zen-panel-bg);
     box-shadow: var(--zen-shadow-1);
-    opacity: var(--zen-ntp-morph, 0);
+    opacity: clamp(0, 2 * var(--zen-ntp-morph, 0), 1);
   }
   /* The field's glyph and words go over the morph's first half and with the handover to the
      pill; the mic and the camera leave as soon as the field moves, as Chrome's do. */
