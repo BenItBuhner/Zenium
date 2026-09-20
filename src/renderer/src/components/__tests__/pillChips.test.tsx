@@ -626,12 +626,14 @@ describe('phone pill (PillContent)', () => {
       act(() => root?.unmount())
       host?.remove()
     }
-    // The control: the same offer on a website shows the translate chip.
+    // The control: the same offer on a website is spoken at the address – the offer is the
+    // site-information sheet's row on the phone (OMN-02), never a chip in the pill.
     const site = tab('https://example.com/')
     const s = state(site)
     s.translate = { available: true, tabs: { [site.id]: { status: 'offered' } } } as never
     const el = render(<PillContent state={s} tab={site} space={space} interactive />)
-    expect(el.querySelector('[data-translate]')).not.toBeNull()
+    expect(el.querySelector('[data-translate]')).toBeNull()
+    expect(labels(focusable(el))[0]).toBe('Address, example.com, Translation offered')
   })
 
   it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
@@ -708,9 +710,13 @@ describe('phone pill (PillContent)', () => {
     expect(focusable(el).length).toBe(0)
     expect(el.querySelectorAll('button').length).toBe(0)
     expect(el.querySelectorAll('[aria-label]').length).toBe(0)
-    // The two chips are plain hidden spans in the pill's row (the favicon tile is inside one).
+    // The two chips are plain hidden spans: the site icon's in the pill's row (the favicon tile
+    // is inside it), the lock's in the chip run after the address.
     const row = el.firstElementChild!
-    expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(2)
+    expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(1)
+    const run = row.querySelector('[data-testid="pill-chips"]')!
+    expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(1)
+    expect(run.querySelectorAll('button').length).toBe(0)
   })
 
   // The Now playing chip (MW-16): the in-app player's entry, there while a tab holds the media

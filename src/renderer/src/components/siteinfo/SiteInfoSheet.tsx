@@ -75,12 +75,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { focusAnchor, wrapTab } from '../bookmarks/popover'
-import {
-  foldedChipRows,
-  pillChipsStore,
-  type PillChipModel,
-  type PillChipRow
-} from '../phone/pillChips'
+import { pillChipRows, type PillChipModel, type PillChipRow } from '../phone/pillChips'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { Favicon } from '../sidebar/Favicon'
 import { SiteInfoDesktopLayer } from '../siteControls/SiteInfoPopover'
@@ -497,19 +492,18 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
     levels.motion.pop()
   }
   const cookies = info?.cookies.items ?? []
-  // The chips the pill folded into this sheet (v2 §9.29, OMN-02): the docked pill publishes
-  // what did not fit beside the host, the sheet lists them at its top with the same names,
-  // states and actions (`components/phone/pillChips.tsx`).
-  const folded = pillChipsStore.use()
+  // The chips the phone pill keeps out of the pill (OMN-02): the blocking shield with its count
+  // and the translate offer are this sheet's rows, always, at its top, with the same names,
+  // states and actions the chips had (`components/phone/pillChips.tsx`).
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
-  const foldedChips = foldedChipRows(state, tab, folded, {
+  const pillChips = pillChipRows(state, tab, {
     siteInfoOpen: true,
     mediaSheetOpen,
     activeTabId: activeTab(state)?.id ?? null
   })
   // The chassis measures its detents again when this changes: a level, the reading arriving,
-  // or the folded rows changing under it.
-  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${foldedChips.length}`
+  // or the pill's rows changing under it.
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}`
 
   return (
     <>
@@ -556,7 +550,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 />
               </div>
             ) : (
-              <FoldedChipRows chips={foldedChips} />
+              <PillChipRows chips={pillChips} />
             )}
             {!extension && (
               <SheetMainRows
@@ -678,22 +672,21 @@ function SheetTitle({
 }
 
 /**
- * The chips the pill folded into the sheet (v2 §9.29, OMN-02): a rows group at the top of the
- * root level, under its own heading and over a hairline, one chassis row per folded chip with
- * the chip's name, its state as the value and its action – a folded translate offer still
- * offers, a folded blocked count still leads to its lists, a folded media chip still opens the
- * player – so nothing is lost, only moved. The lock has no row: the Connection row under the
- * hairline already says what it said. Nothing when the pill holds every chip.
+ * What the phone pill carries only here (OMN-02; Bennett's rule over v2 §9.29 on the phone: the
+ * pill shows the favicon, the host and the lock, nothing else): a rows group at the top of the
+ * root level, over a hairline, one chassis row per chip with the chip's name, its state as the
+ * value and its action – the shield row carries the blocked count and leads on to the blocking
+ * lists in Settings, the translate row still offers (the sheet leaves for the bar) – so nothing
+ * is lost, only moved. No heading: the rows name themselves. Nothing on a page with neither.
  */
-function FoldedChipRows({
+function PillChipRows({
   chips
 }: {
   chips: ReadonlyArray<PillChipModel & { row: PillChipRow }>
 }): JSX.Element | null {
   if (chips.length === 0) return null
   return (
-    <div className="flex flex-col" data-testid="siteinfo-folded-chips">
-      <SheetHeading title="From the address bar" />
+    <div className="flex flex-col" data-testid="siteinfo-pill-chips">
       {chips.map((chip) => (
         <SheetRow
           key={chip.id}

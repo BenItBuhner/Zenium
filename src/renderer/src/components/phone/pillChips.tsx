@@ -1,55 +1,40 @@
-/* eslint-disable react-refresh/only-export-components -- the pill's chip kit: the run and the ruler ship with the chip models they draw, the fold hook that measures them and the store the site-information sheet reads */
-import type { JSX, ReactNode, RefObject } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+/* eslint-disable react-refresh/only-export-components -- the pill's chip kit: the run that draws the chips ships with the chip models it draws and the rows the site-information sheet lists */
+import type { JSX, ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { AudioLines, Languages, Lock, Shield, ShieldOff } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import type { TranslateTabState } from '@shared/translate'
 import type { Tab, UIState } from '@shared/types'
 import { isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { blockedChipLabel, siteBlockingState } from '@renderer/lib/blockingUi'
+import { chipCount, siteBlockingState } from '@renderer/lib/blockingUi'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
-import { mediaTitle } from '@renderer/lib/mediaHub'
 import { openSettings } from '@renderer/lib/pages'
-import {
-  PILL_CHIP_BOX,
-  foldPillChips,
-  pillChipCost,
-  type PillChipSpec,
-  type PillFold
-} from '@renderer/lib/pillChips'
+import { foldPillChips, pillChipFold, type PillChipFold } from '@renderer/lib/pillChips'
 import { closeSiteInfo, dismissSiteInfo } from '@renderer/lib/siteInfo'
-import { createStore } from '@renderer/lib/store'
-import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
-import { openMediaSheet, overlayAvailable } from '@renderer/lib/ui'
+import { barStateOf, isTranslating, pairLabel, translateStateOf } from '@renderer/lib/translate'
+import { overlayAvailable } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
 
 /*
- * The phone pill's trailing chips as data (v2 §9.29, OMN-02): what each one is, what it says,
- * what it does, how it draws – built once from the browser state, then drawn by the pill (the
- * chips that fit), the ruler that measures them, the ghost that cross-fades a change, and the
- * site-information sheet's folded rows (the chips that did not fit), so the sheet carries the
- * same names, states and actions as the pill and nothing is lost, only moved. The fold itself
- * is `lib/pillChips.ts`'s pure model; this module measures the pill for it (once per change,
- * never per frame) and draws what it decides.
+ * The phone pill's trailing chips as data (OMN-02; Bennett's rule of 2026-09-20 over v2 §9.29
+ * on the phone, see `lib/pillChips.ts`): what each one is, what it says, what it does, how it
+ * draws – built once from the browser state, then drawn by the pill (the lock, a live state
+ * chip), by the ghost that cross-fades a change, and listed by the site-information sheet (the
+ * shield with its count, the translate offer) as rows with the same names, states and actions
+ * the chips had (#115's shield, #106's translate offer re-hosted, not rewritten: their words and
+ * their commands are the services' helpers), so nothing is lost, only moved.
  */
 
-/** The chips the phone pill can hold after the address, in the pill's order. */
-export type PillChipId = 'blocked' | 'lock' | 'translate' | 'media'
+/** The chips the phone pill knows after the address, in the pill's order. */
+export type PillChipId = 'lock' | 'blocked' | 'translate' | 'media'
 
-/** The id the pill's leading glyph (the anchor the fold never touches) measures under. */
-export const PILL_ANCHOR_ID = 'site-info'
-
-/** The space label at the pill's end measures under this id: not a chip, but it takes room. */
-export const PILL_SPACE_ID = 'space'
-
-/** How long a chip's fold or unfold cross-fades, on opacity (v2 §11.4; the same under reduced motion). */
+/** How long a chip's arrival or departure cross-fades, on opacity (v2 §11.4; the same under reduced motion). */
 export const CHIP_FOLD_FADE_MS = 120
 
-/** A folded chip's row in the site-information sheet: the same name, state and action. */
+/** A chip's row in the site-information sheet: the same name, state and action. */
 export interface PillChipRow {
   glyph: ReactNode
   label: string
@@ -60,28 +45,25 @@ export interface PillChipRow {
 
 export interface PillChipModel {
   id: PillChipId
-  /** The state TalkBack hears at the address once the chip folded (`foldedChipsSpoken`). */
+  fold: PillChipFold
+  /** The state TalkBack hears at the address for a chip in the sheet; '' for nothing to report. */
   spoken: string
-  /** The chip's flow width before the ruler measured it (its 44 box less the margins). */
-  flow: number
-  /** What can change the chip's width; the ruler measures again when it changes. */
-  measureKey: string
-  /** Draw the chip: a real button in the pill, an inert span for the ghost, the ruler and the carried pill. */
-  render: (interactive: boolean) => ReactNode
-  /** Its row in the sheet once folded; null when the sheet carries the state anyway (the lock: the Connection row). */
-  row: PillChipRow | null
+  /** Draw the chip in the pill: a real button, or an inert span for the ghost and the carried pill. A sheet chip has none. */
+  render?: (interactive: boolean) => ReactNode
+  /** Its row in the sheet. A chip drawn in the pill has none. */
+  row?: PillChipRow
 }
 
 /** What the pill's chips need to know of the chrome around them. */
 export interface PillChipContext {
   siteInfoOpen: boolean
   mediaSheetOpen: boolean
-  /** The tab on screen: the media sheet takes its picture (`openMediaSheet`). */
+  /** The tab on screen, for a row that opens something over its picture. */
   activeTabId: string | null
 }
 
+/** A §9.3 44 × 44 box laid over the pill's 28 pitch (#237): the negative margins carry the difference. */
 const CHIP_CLASS = '-mx-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full'
-const STANDARD_FLOW = PILL_CHIP_BOX - 24
 
 function translateSpoken(translation: TranslateTabState): string {
   switch (translation.status) {
@@ -99,27 +81,29 @@ function translateSpoken(translation: TranslateTabState): string {
   }
 }
 
-function blockedSpoken(tab: Tab, state: UIState): string {
-  const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
-  switch (siteState) {
-    case 'blocking':
-      return tab.blockedCount > 0
-        ? `${tab.blockedCount} ${tab.blockedCount === 1 ? 'request' : 'requests'} blocked`
-        : 'Nothing blocked yet'
-    case 'excepted':
-      return 'Blocking off for this site'
-    case 'off':
-      return 'Blocking off'
+/** The translate row's value: the pair on offer in the bar's words, else where the translation is. */
+function translateValue(translation: TranslateTabState): string | undefined {
+  switch (translation.status) {
+    case 'offered':
+      return pairLabel(translation.source, translation.target) || undefined
+    case 'downloading':
+    case 'translating':
+      return 'Translating…'
+    case 'translated':
+      return 'Translated'
+    case 'error':
+      return 'Failed'
     default:
-      return ''
+      return undefined
   }
 }
 
 /**
- * The chips the phone pill shows after the address for `tab`, in the pill's order: the blocked
- * count, the lock, the translate offer, the Now playing chip – each present on the same terms
- * as before the fold (see `PillContent`), the fold deciding afterwards which stay. Nothing for
- * an internal page, an extension's page or no tab.
+ * The chips the phone pill has after the address for `tab`, in the pill's order: the lock, the
+ * blocking shield with its count, the translate offer, the Now playing chip – each present on
+ * the same terms as when the pill drew them all (#106, #115, #233), `lib/pillChips.ts`'s rule
+ * deciding which the pill draws and which the sheet lists. Nothing for an internal page, an
+ * extension's page or no tab.
  */
 export function phonePillChips(
   state: UIState,
@@ -133,43 +117,15 @@ export function phonePillChips(
   const page = internalPageOf(tab.url) !== null
   const chips: PillChipModel[] = []
 
-  // The blocked count: on every web page while the host blocks requests; opens the site
-  // information from the pill. Folded, its row leads on to Settings › Privacy, where the
-  // blocking lists live: the sheet it would open is the one the row is in.
-  if (!page && !extension && state.capabilities.requestBlocking) {
-    const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
-    if (siteState !== 'no-site') {
-      const label = blockedChipLabel(siteState, tab.blockedCount)
-      chips.push({
-        id: 'blocked',
-        spoken: blockedSpoken(tab, state),
-        flow: PILL_CHIP_BOX - 8,
-        measureKey: `${siteState}:${tab.blockedCount}`,
-        render: (interactive) => (
-          <BlockedChip tab={tab} state={state} variant="phone" interactive={interactive} />
-        ),
-        row: {
-          glyph: siteState === 'blocking' ? <Shield /> : <ShieldOff />,
-          label: label.replace(/ · Site information$/, ''),
-          activate: () => {
-            if (!overlayAvailable('settings')) dismissSiteInfo()
-            openSettings('privacy')
-          }
-        }
-      })
-    }
-  }
-
-  // The lock: a secure connection – no lock over a certificate that failed verification (the
-  // interstitial, or the page the user proceeded to). It opens the site information, whose
-  // Connection row says the same – folded, it lands on that row and adds none of its own.
+  // The lock: the pill's one site-information glyph after the host – a secure connection, and no
+  // lock over a certificate that failed verification (the interstitial, or the page the user
+  // proceeded to). It opens the site information, as the favicon ahead of the host does.
   const secure = tab.url.startsWith('https://') && !tab.certificateError && !extension && !page
   if (secure) {
     chips.push({
       id: 'lock',
-      spoken: 'Connection is secure',
-      flow: STANDARD_FLOW,
-      measureKey: 'lock',
+      fold: pillChipFold('lock'),
+      spoken: '',
       render: (interactive) => (
         <PillChip
           inert={!interactive}
@@ -181,42 +137,73 @@ export function phonePillChips(
         >
           <Lock className="h-3.5 w-3.5 opacity-50" />
         </PillChip>
-      ),
-      row: null
+      )
     })
   }
 
-  // Translation: there once the page has been offered or translated (in the accent while the
-  // translation shows). The chip raises the translate bar or puts it away; the row does the
-  // same from the sheet, which closes so the bar under the pill is seen.
+  // The blocking shield and its count (#115): on every web page while the host blocks requests.
+  // In the sheet it is the row the count goes on – the shield glyph, the count as the value (the
+  // chip's own formatting), "Off for this site" or "Blocking off" when nothing is blocked here –
+  // and it leads on to Settings › Privacy and security, where the lists and the site exceptions
+  // are; the sheet leaves first, as its Site settings row does.
+  if (!page && !extension && state.capabilities.requestBlocking) {
+    const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
+    if (siteState !== 'no-site') {
+      const count = tab.blockedCount
+      const value =
+        siteState === 'blocking'
+          ? chipCount(count)
+          : siteState === 'excepted'
+            ? 'Off for this site'
+            : 'Blocking off'
+      const spoken =
+        siteState === 'blocking'
+          ? count > 0
+            ? `${count} ${count === 1 ? 'request' : 'requests'} blocked`
+            : ''
+          : siteState === 'excepted'
+            ? 'Blocking off for this site'
+            : 'Blocking off'
+      chips.push({
+        id: 'blocked',
+        fold: pillChipFold('blocked'),
+        spoken,
+        row: {
+          glyph: siteState === 'blocking' ? <Shield /> : <ShieldOff />,
+          label: 'Requests blocked',
+          value,
+          activate: () => {
+            if (!overlayAvailable('settings')) dismissSiteInfo()
+            openSettings('privacy')
+          }
+        }
+      })
+    }
+  }
+
+  // The translate offer (#106): there once the page has been offered or translated. The chip
+  // raised the translate bar or put it away; the row does the same from the sheet, which closes
+  // so the bar under the pill is seen. The value is the pair on offer in the bar's words.
   const translation = isWebPageUrl(tab.url) ? translateStateOf(state, tab.id) : null
   if (translation) {
     const barUp = barStateOf(state, tab.id) !== null
     const label = barUp ? 'Hide the translation bar' : 'Translate this page'
-    const translating = isTranslating(translation)
     const toggle = (): void => {
       if (barUp) run('translate.dismiss', { tabId: tab.id })
       else run('translate.offer', { tabId: tab.id })
     }
     chips.push({
       id: 'translate',
+      fold: pillChipFold('translate'),
       spoken: translateSpoken(translation),
-      flow: STANDARD_FLOW,
-      measureKey: 'translate',
-      render: (interactive) => (
-        <PillChip
-          inert={!interactive}
-          label={label}
-          data-translate
-          className={cn(CHIP_CLASS, translating ? 'text-[var(--zen-accent)]' : 'opacity-50')}
-        >
-          <Languages className="h-3.5 w-3.5" />
-        </PillChip>
-      ),
       row: {
-        glyph: <Languages />,
+        glyph: (
+          <Languages
+            className={isTranslating(translation) ? 'text-[var(--zen-accent)]' : undefined}
+          />
+        ),
         label,
-        value: translating ? 'Translated' : undefined,
+        value: translateValue(translation),
         activate: () => {
           closeSiteInfo()
           toggle()
@@ -225,17 +212,16 @@ export function phonePillChips(
     })
   }
 
-  // Now playing (MW-16): while a tab holds the media session, whichever pill is up; in the
-  // accent while it plays. Opens the in-app player; from the sheet the player takes over.
+  // Now playing (MW-16, #233): a transient state chip, in the pill while a tab holds the media
+  // session – whichever pill is up – and gone otherwise; in the accent while it plays. Opens the
+  // in-app player. Whether it folds is the lead's open question (`lib/pillChips.ts`).
   const session = mediaSession(state)
   if (session) {
     const label = session.playing ? 'Now playing' : 'Media paused'
-    const sessionTab = state.tabs[session.tabId]
     chips.push({
       id: 'media',
-      spoken: label,
-      flow: STANDARD_FLOW,
-      measureKey: 'media',
+      fold: pillChipFold('media'),
+      spoken: '',
       render: (interactive) => (
         <PillChip
           inert={!interactive}
@@ -249,152 +235,32 @@ export function phonePillChips(
         >
           <AudioLines className="h-3.5 w-3.5" />
         </PillChip>
-      ),
-      row: {
-        glyph: <AudioLines />,
-        label,
-        value: mediaTitle(session, sessionTab),
-        activate: () => {
-          dismissSiteInfo()
-          void openMediaSheet(session.tabId, ctx.activeTabId)
-        }
-      }
+      )
     })
   }
 
   return chips
 }
 
-// ---------------------------------------------------------------------------
-// What folded, for the sheet
-// ---------------------------------------------------------------------------
-
-export interface PillChipsFolded {
-  /** The tab whose pill folded these. */
-  tabId: string | null
-  /** The ids of the chips folded out of the pill, the first to fold first. */
-  folded: string[]
+/** The chips the pill draws after the address, in its order: the lock and the live state chips. */
+export function pillChipsDrawn(chips: readonly PillChipModel[]): PillChipModel[] {
+  return foldPillChips(chips).shown
 }
 
-/** The docked pill publishes what it folded; the site-information sheet lists it. */
-export const pillChipsStore = createStore<PillChipsFolded>(
-  { tabId: null, folded: [] },
-  'zen:pill-chips'
-)
-
-/** The folded chips of `tab`'s pill that have a row of their own in the sheet. */
-export function foldedChipRows(
+/** The chips the sheet lists for `tab`, in the pill's order, each with its row. */
+export function pillChipRows(
   state: UIState,
   tab: Tab,
-  folded: PillChipsFolded,
   ctx: PillChipContext
 ): Array<PillChipModel & { row: PillChipRow }> {
-  if (folded.tabId !== tab.id || folded.folded.length === 0) return []
-  const set = new Set(folded.folded)
-  return phonePillChips(state, tab, ctx).filter(
-    (chip): chip is PillChipModel & { row: PillChipRow } => set.has(chip.id) && chip.row !== null
+  return foldPillChips(phonePillChips(state, tab, ctx)).folded.filter(
+    (chip): chip is PillChipModel & { row: PillChipRow } => chip.row !== undefined
   )
 }
 
-// ---------------------------------------------------------------------------
-// Measuring the pill
-// ---------------------------------------------------------------------------
-
-interface Measure {
-  /** The pill's content width, in px: what the address and everything beside it share. */
-  room: number
-  /** Each item's flow width by id (`data-chip` on the ruler's wrappers). */
-  flows: Record<string, number>
-}
-
-/** The last measure taken by any pill: the first render of a remounted pill folds from it. */
-let lastMeasure: Measure = { room: 0, flows: {} }
-
-function sameMeasure(a: Measure, b: Measure): boolean {
-  if (a.room !== b.room) return false
-  const ka = Object.keys(a.flows)
-  const kb = Object.keys(b.flows)
-  return ka.length === kb.length && ka.every((k) => a.flows[k] === b.flows[k])
-}
-
-function readRuler(span: HTMLElement, ruler: HTMLElement): Measure {
-  const flows: Record<string, number> = {}
-  for (const child of Array.from(ruler.children)) {
-    const id = child.getAttribute('data-chip')
-    if (id) flows[id] = (child as HTMLElement).offsetWidth
-  }
-  return { room: span.clientWidth, flows }
-}
-
-/**
- * Measure the pill and fold its chips. `spanRef` is the pill's content row (the address and
- * the chips share its width), `rulerRef` the hidden ruler holding an inert copy of every item
- * the fold has to account for – the leading glyph, each chip, the space label – each in a
- * wrapper carrying `data-chip=<id>` whose width is the item's flow (its box less the margins
- * that lay it over the pitch). One read of the layout per change: on mount and when the chip
- * set or a chip's content changes (`signature`), and through a ResizeObserver when the pill's
- * width changes (a rotation, the bar's buttons rearranged) or an item's does (the text zoom
- * growing a badge). Never per frame. An unmeasured item counts its estimate; an unlaid-out pill
- * (0 wide) folds nothing.
- */
-export function usePillFold(
-  spanRef: RefObject<HTMLElement | null>,
-  rulerRef: RefObject<HTMLElement | null>,
-  chips: readonly PillChipModel[],
-  signature: string
-): PillFold {
-  const [measure, setMeasure] = useState<Measure>(lastMeasure)
-  useLayoutEffect(() => {
-    const span = spanRef.current
-    const ruler = rulerRef.current
-    if (!span || !ruler) return
-    const read = (): void => {
-      const next = readRuler(span, ruler)
-      lastMeasure = next
-      setMeasure((m) => (sameMeasure(m, next) ? m : next))
-    }
-    read()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(read)
-    observer.observe(span)
-    observer.observe(ruler)
-    return () => observer.disconnect()
-  }, [spanRef, rulerRef, signature])
-
-  const flowOf = (id: string, estimate: number): number => {
-    const measured = measure.flows[id]
-    return measured !== undefined && measured > 0 ? measured : estimate
-  }
-  const space = measure.flows[PILL_SPACE_ID]
-  const room = measure.room - (space ? pillChipCost(space) : 0)
-  const specs: PillChipSpec[] = [
-    { id: PILL_ANCHOR_ID, tier: 'anchor', width: pillChipCost(flowOf(PILL_ANCHOR_ID, 18)) },
-    ...chips.map((chip) => ({ id: chip.id, width: pillChipCost(flowOf(chip.id, chip.flow)) }))
-  ]
-  return foldPillChips(specs, room)
-}
-
-/**
- * The ruler: an inert copy of every item the fold accounts for, out of the flow and hidden,
- * laid out as the pill lays them out so their widths are what they take in it. `items` map an
- * id to the copy to measure.
- */
-export function PillRuler({
-  rulerRef,
-  items
-}: {
-  rulerRef: RefObject<HTMLSpanElement | null>
-  items: ReadonlyArray<[id: string, copy: ReactNode]>
-}): JSX.Element {
-  return (
-    <span ref={rulerRef} className="zen-pill-ruler" aria-hidden="true">
-      {items.map(([id, copy]) => (
-        <span key={id} data-chip={id} className="inline-flex shrink-0 items-center">
-          {copy}
-        </span>
-      ))}
-    </span>
-  )
+/** What TalkBack hears of the sheet's chips at the address, in the pill's order (`foldedChipsSpoken`). */
+export function pillChipsSpoken(chips: readonly PillChipModel[]): string[] {
+  return foldPillChips(chips).folded.map((chip) => chip.spoken)
 }
 
 // ---------------------------------------------------------------------------
@@ -417,13 +283,14 @@ interface Ghost {
 }
 
 /**
- * The chips after the address, drawn in the pill. When the set changes – a chip folds or
- * unfolds, arrives or leaves – the run it showed until this commit is kept as a ghost over the
- * new one, anchored at the run's end like the run itself, and the change cross-fades on opacity
- * over {@link CHIP_FOLD_FADE_MS} in place (v2 §11.4; the same under reduced motion): a chip that
- * keeps its slot does not move or flicker (its ghost copy is hidden), a chip that leaves fades
- * out where it stood, a chip that arrives fades in where it stands. Never a slide. The carried
- * pill (`interactive` false) draws the run plain: it is a picture of the docked one.
+ * The chips after the address, drawn in the pill. When the set changes – a chip arrives or
+ * leaves (the lock on a navigation, the media chip with its session) – the run it showed until
+ * this commit is kept as a ghost over the new one, anchored at the run's end like the run
+ * itself, and the change cross-fades on opacity over {@link CHIP_FOLD_FADE_MS} in place (v2
+ * §11.4; the same under reduced motion): a chip that keeps its slot does not move or flicker
+ * (its ghost copy is hidden), a chip that leaves fades out where it stood, a chip that arrives
+ * fades in where it stands. Never a slide. The carried pill (`interactive` false) draws the run
+ * plain: it is a picture of the docked one.
  */
 export function ChipRun({
   chips,
@@ -492,7 +359,7 @@ export function ChipRun({
     <span ref={runRef} className="zen-pill-run" data-testid="pill-chips">
       {chips.map((chip) => (
         <span key={chip.id} className="contents" data-chip={chip.id}>
-          {chip.render(interactive)}
+          {chip.render?.(interactive)}
         </span>
       ))}
       {ghost && (
@@ -504,25 +371,11 @@ export function ChipRun({
         >
           {ghost.chips.map((chip) => (
             <span key={chip.id} className="inline-flex shrink-0 items-center">
-              {chip.render(false)}
+              {chip.render?.(false)}
             </span>
           ))}
         </span>
       )}
     </span>
   )
-}
-
-/**
- * Publish what the docked pill folded for `tabId`, once per change: the site-information
- * sheet lists those chips. The carried pill and the tests' detached pills do not publish.
- */
-export function usePublishFold(publish: boolean, tabId: string | null, folded: string[]): void {
-  const key = folded.join('|')
-  useEffect(() => {
-    if (!publish) return
-    const current = pillChipsStore.get()
-    if (current.tabId === tabId && current.folded.join('|') === key) return
-    pillChipsStore.set({ tabId, folded: key ? key.split('|') : [] })
-  }, [publish, tabId, key])
 }
