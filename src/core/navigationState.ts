@@ -189,17 +189,20 @@ export class NavigationStateStore {
     this.joined.clear()
     this.dirty.clear()
     const listed = this.readIndex()
-    this.indexOnDisk = listed === null ? '' : indexKey(listed)
-    if (listed === null) return
+    if (listed === null) {
+      this.indexOnDisk = ''
+      return
+    }
+    // An index with entries that are not ids is rewritten at the next fire.
+    this.indexOnDisk = listed.clean ? indexKey(listed.ids) : null
     const orphans: Op[] = []
-    for (const id of listed) {
+    for (const id of listed.ids) {
       if (referenced.has(id)) this.ids.add(id)
       else orphans.push({ id, name: navigationDocumentName(id), text: null })
     }
-    if (orphans.length === 0) return
-    this.run(orphans)
+    if (orphans.length > 0) this.run(orphans)
     // The index shrinks by the swept ids at the next fire.
-    this.schedule()
+    if (orphans.length > 0 || !listed.clean) this.schedule()
   }
 
   /**
@@ -359,12 +362,13 @@ export class NavigationStateStore {
     this.indexOnDisk = null
   }
 
-  private readIndex(): string[] | null {
+  /** The ids the index lists; `clean` when every entry was an id and none twice. */
+  private readIndex(): { ids: string[]; clean: boolean } | null {
     const raw = this.parse(NAVIGATION_STATE_INDEX) as Partial<NavigationStateIndex> | null
     if (!raw || raw.version !== NAVIGATION_STATE_VERSION || !Array.isArray(raw.ids)) return null
     const ids = new Set<string>()
     for (const id of raw.ids) if (typeof id === 'string' && isSafeId(id)) ids.add(id)
-    return [...ids]
+    return { ids: [...ids], clean: ids.size === raw.ids.length }
   }
 
   private readDocument(tabId: string): NavigationStateDocument | null {
