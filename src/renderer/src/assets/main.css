@@ -5820,22 +5820,23 @@
 .zen-v2-field:focus-visible {
   border-color: var(--v2-accent);
 }
-.zen-v2-field[aria-invalid='true'] {
-  border-color: var(--v2-danger);
-}
 /*
- * Invalid and focused: the invalid state wins over the ring. A text field's ring is the inset
- * one (§1: −2 on text fields, where an outside ring would clip), which in dark lies over the
- * 1 px danger border and hid it; the ring takes the danger ink itself (§1: status ink is shared
- * by both families; §9.12: the validation reads in `--v2-danger`), the one rule for light and
- * dark, so the field reads invalid focused or not – Firefox's in-content fields colour the
- * focus outline the same way (`:user-invalid:focus-visible`). Its 2 px, offset and shape stay
- * the shared ring's. `:root` carries the rule to the weight of the ring's coarse-pointer and
- * dark forms (`:root[data-pointer='coarse'] …`, §1 above), which restate the ring's colour and
- * would otherwise keep it on a phone.
+ * Invalid (§9.12): the danger border, and the ring's token re-inked so that, focused, the
+ * invalid state wins over the ring. A text field's ring is the inset one (§1: −2 on text
+ * fields, where an outside ring would clip), which in dark lies over the 1 px danger border and
+ * hid it; the ring takes the danger ink itself (§1: status ink is shared by both families;
+ * §9.12: the validation reads in `--v2-danger`), its 2 px, offset and shape the shared ring's,
+ * so the field reads invalid focused or not, in light and in dark – Firefox's in-content fields
+ * colour the focus outline the same way (`:user-invalid:focus-visible`). The token rather than
+ * an `outline-color` rule: every form of the ring reads `var(--v2-ring)` – the base layer's,
+ * the shared `zen-v2-` ring and its coarse-pointer form (§1 above) – so one declaration reaches
+ * them all at the invalid rule's own weight, the way the chrome re-inks a shared rule
+ * (`[data-surface] { --v2-control-accent: … }` above); the field is always a leaf input, so
+ * nothing inherits the override.
  */
-:root .zen-v2-field[aria-invalid='true']:focus-visible {
-  outline-color: var(--v2-danger);
+.zen-v2-field[aria-invalid='true'] {
+  --v2-ring: var(--v2-danger);
+  border-color: var(--v2-danger);
 }
 /* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
 .zen-v2-field:disabled,

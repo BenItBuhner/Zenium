@@ -587,19 +587,30 @@ describe('the v2 primitives (§9.34)', () => {
   it('let a field’s invalid state win over its focus ring (§9.12): the ring in the danger ink, on the shared field and the phone field alike', () => {
     // Dark's inset ring (−2, §1) lay over the 1 px danger border and hid it: focused and invalid,
     // the ring is `--v2-danger` – its 2 px, offset and shape the shared ring's – so the field
-    // reads invalid either way, in light and in dark on one rule. It carries `:root` to weigh
-    // what the ring's coarse-pointer and dark forms weigh (`:root[data-pointer='coarse'] …`,
-    // §1), which restate the ring's colour and won on a phone without it.
-    expect(block(".zen-v2-field[aria-invalid='true']")).toMatch(/border-color: var\(--v2-danger\)/)
+    // reads invalid either way, in light and in dark. The invalid rule re-inks the ring through
+    // its token, the chrome's seam for re-inking a shared rule, and every form of the ring reads
+    // that token (the shared ring, its coarse-pointer form, the base layer's), so no rule of the
+    // field's needs the ring forms' weight – no `:root` bump, no `outline-color` restatement.
+    expect(block(".zen-v2-field[aria-invalid='true']").match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+      '  --v2-ring: var(--v2-danger);',
+      '  border-color: var(--v2-danger);'
+    ])
+    expect(nesting(ruleAt(".zen-v2-field[aria-invalid='true']"))).toBe(0)
+    expect(css).not.toMatch(/:root \.zen-v2-field/)
+    expect(css).not.toMatch(/\.zen-v2-field\[aria-invalid='true'\]:focus-visible/)
+    // The token is the one the ring forms draw with, declared once for the chrome and once here.
+    expect(css.match(/--v2-ring:/g)).toHaveLength(2)
     expect(
-      block(":root .zen-v2-field[aria-invalid='true']:focus-visible").match(/^ {2}[a-z-]+:[^;]+;/gm)
-    ).toEqual(['  outline-color: var(--v2-danger);'])
-    expect(nesting(ruleAt(":root .zen-v2-field[aria-invalid='true']:focus-visible"))).toBe(0)
-    expect(css.indexOf(":root .zen-v2-field[aria-invalid='true']:focus-visible")).toBeGreaterThan(
-      css.indexOf(":root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible")
+      block(
+        "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
+      )
+    ).toMatch(/outline: 2px solid var\(--v2-ring\)/)
+    expect(block(':focus-visible', css.indexOf('@layer base {'))).toMatch(
+      /outline: 2px solid var\(--v2-ring\)/
     )
     // The phone field (phonePanels.css) reads the same two states off the input it wraps, where
-    // the ARIA state sits, in the same tokens.
+    // the ARIA state sits, in the same tokens – its ring re-inked by `outline-color`, since the
+    // wrapper's clear button would inherit the token.
     const panels = readFileSync(
       fileURLToPath(new URL('../../components/phone/phonePanels.css', import.meta.url)),
       'utf8'
