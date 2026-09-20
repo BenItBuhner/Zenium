@@ -93,10 +93,11 @@ class TabHost(private val container: FrameLayout, private val host: PageHost) {
         view.tabId = tabId
         views[tabId] = view
         reported.remove(viewId)?.let { reported[tabId] = it }
-        // Whatever the popup loaded before the core knew its tab id is reported now.
+        // Whatever the popup loaded before the core knew its tab id is reported now: the list
+        // first, as at a commit, so the core records it as it handles the `navigated`.
+        view.pushHistory(force = true)
         host.viewEvent(tabId, "navigated", view.navState().put("inPage", false))
         if (!view.title.isNullOrEmpty()) host.viewEvent(tabId, "title", json("title" to view.title))
-        view.pushHistory(force = true)
     }
 
     fun destroy(tabId: String) {
