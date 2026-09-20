@@ -57,6 +57,7 @@ import { SpacesDrawer } from './SpacesDrawer'
 import { TabPreview } from './TabPreview'
 import { TabsQuickMenu } from './TabsQuickMenu'
 import { useBarHold, type BarHoldHandlers } from './useBarHold'
+import { useFullscreenReturn } from './useFullscreenReturn'
 import { useGestureHint } from './useGestureHint'
 import { useGroupStrip, type GroupStripPresence } from './useGroupStrip'
 import { usePillGestures, type PillGestureHandlers } from './usePillGestures'
@@ -191,6 +192,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
     })
   }, [edge, htmlFullscreen, onboarding, stripUp, borderless])
   useEffect(() => () => setBarHideContext({ present: false }), [])
+  // Back from a page's fullscreen (MED-01) the chrome – bar, pill and frame – fades in over
+  // 120 ms, opacity alone: the page is laid out once, as the chrome's frames are placed.
+  const windowRef = useRef<HTMLDivElement | null>(null)
+  useFullscreenReturn(windowRef, htmlFullscreen)
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(
@@ -224,6 +229,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // through `showBar` instead.
   return (
     <div
+      ref={windowRef}
       className="zen-window relative flex h-full w-full flex-col overflow-clip"
       data-dark={isDark}
       data-private={privateSurface || undefined}

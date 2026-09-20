@@ -565,6 +565,7 @@ class TabWebView(
             // The settled value of a Promise an evaluate() script returned (see evaluate()).
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
+            is PageMessageRoute.Fullscreen -> host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight)
             is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
         }
     }
@@ -2060,7 +2061,7 @@ class TabWebView(
             webView: WebView,
             filePathCallback: ValueCallback<Array<Uri>>,
             fileChooserParams: FileChooserParams
-        ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
+        ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             // The WebView only asks without a gesture when the site may open windows on its own.

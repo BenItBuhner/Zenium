@@ -2037,6 +2037,8 @@ export interface Settings {
   newTab: NewTabSettings
   /** The one-time gesture hint (a toast after the first page) has been shown (phones). */
   gestureHintDone: boolean
+  /** The one-time exit hint for a video in fullscreen (GN-20) has been shown (phones). */
+  fullscreenHintDone: boolean
   /**
    * Spell checking of text fields: on / off and the dictionary languages (Settings › Languages).
    * Absent in profiles from before it existed (`sanitizeSpellcheck` fills the defaults).

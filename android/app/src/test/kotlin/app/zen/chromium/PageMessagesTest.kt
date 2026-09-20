@@ -35,6 +35,21 @@ class PageMessagesTest {
     }
 
     @Test
+    fun aFullscreenReportIsTheHostsOwnWithItsVideoSize() {
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, 1920, 1080),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1920, "videoHeight" to 1080), token)
+        )
+        // Fullscreen ended, or an element without a video: no size.
+        assertEquals(PageMessageRoute.Fullscreen(false, 0, 0), routePageMessage(message("type" to "fullscreen", "active" to false), token))
+        // A size that makes no sense is read as none known.
+        assertEquals(
+            PageMessageRoute.Fullscreen(true, 0, 0),
+            routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to -4, "videoHeight" to "wide"), token)
+        )
+    }
+
+    @Test
     fun anythingElseGoesToTheCoreWithoutTheToken() {
         val route = routePageMessage(message("type" to "media", "playing" to true), token)
         assertTrue(route is PageMessageRoute.Forward)

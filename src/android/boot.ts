@@ -34,8 +34,10 @@ import {
   type PullEventPayload,
   type PullEventPhase
 } from '@renderer/lib/pull'
+import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments } from './handoff'
+import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
@@ -332,12 +334,21 @@ function installHostGlobal(
           )
       }),
     hostEvent: (name, json) =>
-      withPlatform((platform) =>
+      withPlatform((platform) => {
+        // The host's own toasts go straight to the chrome's cards (the renderer is in reach here,
+        // not in the platform): the file chooser's camera refused, Open settings when for good.
+        if (name === 'toast') {
+          showHostToast(parse(json), {
+            toast: (message, kind, action) => pushToast(message, kind, action ? { action } : {}),
+            openSettings: () => bridge.send('app.openSettings')
+          })
+          return
+        }
         platform.hostEvent(
           name as keyof HostEventPayloads,
           parse<HostEventPayloads[keyof HostEventPayloads]>(json)
         )
-      ),
+      }),
     onKey: (tabId, json) =>
       queued === null
         ? (platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false)

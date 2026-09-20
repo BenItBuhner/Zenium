@@ -23,6 +23,24 @@ export interface PageHint {
   duration: number
   /** The chrome's colour scheme, for the hint's colours. */
   dark: boolean
+  /**
+   * Its shape: Chrome's exclusive-access bubble centred at the top (the default), or the phone
+   * chrome's toast card (v2 §9.33) along the bottom edge, as the shared `ToastCard` draws it.
+   */
+  kind?: 'bubble' | 'toast'
+}
+
+/**
+ * The phone's first-time hint for a video in fullscreen (GN-20): how to leave, in Chrome for
+ * Android's words. A toast without an action, shown once (`settings.fullscreenHintDone`).
+ */
+export const FULLSCREEN_EXIT_HINT = 'Swipe down or press back to exit full screen'
+/** How long a toast without an action stands (§9.33's 2.8 s, the chrome's `TOAST_DURATION`). */
+export const TOAST_SHOW_MS = 2800
+
+/** The hint for a video in fullscreen on the phone: the chrome's toast, drawn in the page. */
+export function fullscreenExitHint(dark: boolean): PageHint {
+  return { text: FULLSCREEN_EXIT_HINT, exit: null, duration: TOAST_SHOW_MS, dark, kind: 'toast' }
 }
 
 /** Chrome waits this long after entering fullscreen before the bubble shows (`kShowExitBubbleTime`). */

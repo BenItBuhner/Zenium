@@ -1,4 +1,12 @@
 import { HINT_FADE_MS, hintPalette, type PageHint } from './fullscreenHint'
+import {
+  isAtRest,
+  SPRING_GENTLE,
+  SPRING_SNAPPY,
+  stepSpring,
+  type SpringConfig,
+  type SpringState
+} from './spring'
 
 /*
  * The fullscreen hint as the page script draws it: a v2 toast (radius 8, a 1px border, the
@@ -6,19 +14,43 @@ import { HINT_FADE_MS, hintPalette, type PageHint } from './fullscreenHint'
  * the element in fullscreen, fading in and – after its time – out. It lives in a closed shadow
  * root on a tag of its own so the page's styles do not reach it, and every style is set through
  * the CSSOM so a page's content security policy has nothing to refuse.
+ *
+ * The `toast` kind is the phone chrome's message card instead (v2 §9.33, `ToastCard`'s
+ * `.zen-message` metrics: a 44 px row 8 px inside the edges, 15/20 text at the body weight,
+ * the panel, the hairline, the card radius and shadow) along the bottom edge, moving as the
+ * chrome's toasts move (`useMessageMotion`): in across the edge on `SPRING_GENTLE`, out on
+ * `SPRING_SNAPPY` thinning with its travel, a 120 ms fade in place under reduced motion
+ * (§11.3). The springs are the shared ones, stepped per frame here, since the page's CSS
+ * transitions could not carry them.
  */
 
 const HOST_TAG = 'zenium-fullscreen-hint'
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif'
+
+/** The toast's inset from the frame's edges (§9.33) and its row height. */
+export const TOAST_INSET_PX = 8
+export const TOAST_ROW_PX = 44
+/** The fade an appearance or departure becomes under reduced motion (§11.3). */
+export const TOAST_REDUCED_FADE_MS = 120
 
 /** Where hints go: the document element, so a page that replaces its body leaves them alone. */
 function mount(): Element {
   return document.documentElement
 }
 
+/** Whether the page's user asked for reduced motion (the chrome's toasts fade in place then). */
+function reducedMotion(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 /** The hint's element for `hint`, styled and ready to be shown. */
 export function renderHint(hint: PageHint): HTMLElement {
   const palette = hintPalette(hint.dark)
+  const toast = hint.kind === 'toast'
   const host = document.createElement(HOST_TAG)
   host.setAttribute('role', 'status')
   host.setAttribute('aria-live', 'polite')
@@ -28,12 +60,13 @@ export function renderHint(hint: PageHint): HTMLElement {
   Object.assign(host.style, {
     position: 'fixed',
     inset: 'auto',
-    top: '24px',
-    left: '0',
-    right: '0',
+    top: toast ? 'auto' : '24px',
+    bottom: toast ? `calc(${TOAST_INSET_PX}px + env(safe-area-inset-bottom, 0px))` : 'auto',
+    left: toast ? `${TOAST_INSET_PX}px` : '0',
+    right: toast ? `${TOAST_INSET_PX}px` : '0',
     margin: '0 auto',
-    width: 'fit-content',
-    maxWidth: 'calc(100vw - 48px)',
+    width: toast ? 'auto' : 'fit-content',
+    maxWidth: toast ? 'none' : 'calc(100vw - 48px)',
     height: 'auto',
     padding: '0',
     border: '0',
@@ -43,28 +76,33 @@ export function renderHint(hint: PageHint): HTMLElement {
     zIndex: '2147483647',
     pointerEvents: 'none',
     opacity: '0',
-    transition: `opacity ${HINT_FADE_MS}ms ease`
+    // The bubble fades on a transition; the toast is moved per frame (`installHint`).
+    transition: toast ? 'none' : `opacity ${HINT_FADE_MS}ms ease`
   })
   const root = host.attachShadow({ mode: 'closed' })
   const panel = document.createElement('div')
   Object.assign(panel.style, {
     display: 'flex',
-    flexDirection: 'column',
+    flexDirection: toast ? 'row' : 'column',
     alignItems: 'center',
-    gap: '4px',
-    padding: '10px 16px',
+    gap: toast ? '8px' : '4px',
+    boxSizing: 'border-box',
+    minHeight: toast ? `${TOAST_ROW_PX}px` : 'auto',
+    padding: toast ? '3px 14px' : '10px 16px',
     borderRadius: '8px',
     border: `1px solid ${palette.border}`,
     background: palette.panel,
     color: palette.text,
     boxShadow: '0 2px 6px rgb(0 0 0 / 0.2)',
-    font: `15px/1.4 ${FONT}`,
-    textAlign: 'center',
-    whiteSpace: 'nowrap'
+    font: toast ? `400 15px/20px ${FONT}` : `15px/1.4 ${FONT}`,
+    textAlign: toast ? 'left' : 'center',
+    whiteSpace: toast ? 'normal' : 'nowrap',
+    overflowWrap: 'anywhere'
   })
   if (hint.text) {
     const line = document.createElement('div')
     line.textContent = hint.text
+    if (toast) line.style.flex = '1 1 auto'
     panel.appendChild(line)
   }
   if (hint.exit) {
@@ -97,17 +135,77 @@ export function renderHint(hint: PageHint): HTMLElement {
   return host
 }
 
+/** A motion under way (a spring or a fade); calling it stops the motion where it is. */
+type Cancel = () => void
+
+function frame(cb: (now: number) => void): number {
+  return requestAnimationFrame(cb)
+}
+
+/**
+ * Run `config`'s spring from `from` to `target` (px), `onFrame` with every position and `done`
+ * once at rest – the chrome's `SpringAnimation` in a page's clothes. Frames longer than 64 ms
+ * (a stall) are stepped as 64 ms so the spring does not leap.
+ */
+export function springTo(
+  from: number,
+  target: number,
+  config: SpringConfig,
+  onFrame: (x: number) => void,
+  done: () => void
+): Cancel {
+  let state: SpringState = { x: from, v: 0 }
+  let last: number | null = null
+  let handle = frame(function step(now) {
+    const dt = last === null ? 1 / 60 : Math.min(0.064, Math.max(0.001, (now - last) / 1000))
+    last = now
+    state = stepSpring(state, target, dt, config)
+    onFrame(state.x)
+    if (isAtRest(state, target)) done()
+    else handle = frame(step)
+  })
+  return () => cancelAnimationFrame(handle)
+}
+
+/** Fade `el` from `from` to `to` over `ms`, per frame (§11.3's fade in place). */
+export function fadeTo(
+  el: HTMLElement,
+  from: number,
+  to: number,
+  ms: number,
+  done: () => void
+): Cancel {
+  const startedAt = performance.now()
+  el.style.opacity = from.toFixed(3)
+  let handle = frame(function step(now) {
+    const t = Math.min(1, (now - startedAt) / ms)
+    el.style.opacity = (from + (to - from) * t).toFixed(3)
+    if (t >= 1) done()
+    else handle = frame(step)
+  })
+  return () => cancelAnimationFrame(handle)
+}
+
+/** How much of the toast is still present `y` px into its `reach` (the chrome's `dismissPresence`). */
+export function toastPresence(y: number, reach: number): number {
+  if (reach <= 0) return 1
+  return Math.min(1, Math.max(0, 1 - Math.abs(y) / reach))
+}
+
 /** The page's hint, one at a time: a new hint replaces the one standing, null takes it down. */
 export function installHint(onHint: (listener: (hint: PageHint | null) => void) => void): void {
   let current: HTMLElement | null = null
-  let fade: ReturnType<typeof setTimeout> | null = null
+  let stand: ReturnType<typeof setTimeout> | null = null
   let gone: ReturnType<typeof setTimeout> | null = null
+  let motion: Cancel | null = null
 
   const clearTimers = (): void => {
-    if (fade !== null) clearTimeout(fade)
+    if (stand !== null) clearTimeout(stand)
     if (gone !== null) clearTimeout(gone)
-    fade = null
+    stand = null
     gone = null
+    motion?.()
+    motion = null
   }
   const remove = (): void => {
     clearTimers()
@@ -123,6 +221,74 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
     }
     el.remove()
   }
+
+  /** The bubble: a fade in, its stand, a fade out. */
+  const showBubble = (el: HTMLElement, hint: PageHint): void => {
+    // Two frames so the transition starts from the hidden state.
+    requestAnimationFrame(() => requestAnimationFrame(() => (el.style.opacity = '1')))
+    stand = setTimeout(() => {
+      el.style.opacity = '0'
+      gone = setTimeout(() => {
+        if (current === el) remove()
+      }, HINT_FADE_MS)
+    }, hint.duration)
+  }
+
+  /**
+   * The toast: in from below its edge on the gentle spring, its stand, out on the snappy one
+   * thinning with its travel; a fade in place either way under reduced motion. `will-change`
+   * only while it moves (§9.33).
+   */
+  const showToast = (el: HTMLElement, hint: PageHint): void => {
+    const leaveWith = (leave: (done: () => void) => Cancel): void => {
+      stand = setTimeout(() => {
+        stand = null
+        motion?.()
+        motion = leave(() => {
+          motion = null
+          if (current === el) remove()
+        })
+      }, hint.duration)
+    }
+    if (reducedMotion()) {
+      motion = fadeTo(el, 0, 1, TOAST_REDUCED_FADE_MS, () => (motion = null))
+      leaveWith((done) =>
+        fadeTo(el, Number.parseFloat(el.style.opacity) || 1, 0, TOAST_REDUCED_FADE_MS, done)
+      )
+      return
+    }
+    // A card's length past its edge, the inset included (the chrome's `reach`).
+    const reach = Math.max(1, el.offsetHeight + TOAST_INSET_PX)
+    let y = reach
+    const place = (to: number): void => {
+      y = to
+      el.style.transform = `translateY(${to.toFixed(2)}px)`
+    }
+    const moving = (on: boolean): void => {
+      el.style.willChange = on ? 'transform, opacity' : ''
+    }
+    place(reach)
+    el.style.opacity = '1'
+    moving(true)
+    motion = springTo(reach, 0, SPRING_GENTLE, place, () => {
+      motion = null
+      moving(false)
+    })
+    leaveWith((done) => {
+      moving(true)
+      return springTo(
+        y,
+        reach,
+        SPRING_SNAPPY,
+        (to) => {
+          place(to)
+          el.style.opacity = toastPresence(to, reach).toFixed(3)
+        },
+        done
+      )
+    })
+  }
+
   const show = (hint: PageHint): void => {
     remove()
     const el = renderHint(hint)
@@ -135,14 +301,8 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
         /* a document that cannot show popovers keeps the fixed element */
       }
     }
-    // Two frames so the transition starts from the hidden state.
-    requestAnimationFrame(() => requestAnimationFrame(() => (el.style.opacity = '1')))
-    fade = setTimeout(() => {
-      el.style.opacity = '0'
-      gone = setTimeout(() => {
-        if (current === el) remove()
-      }, HINT_FADE_MS)
-    }, hint.duration)
+    if (hint.kind === 'toast') showToast(el, hint)
+    else showBubble(el, hint)
   }
 
   onHint((hint) => (hint ? show(hint) : remove()))

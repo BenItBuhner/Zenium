@@ -112,6 +112,12 @@ interface PageHost {
 
     fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback)
     fun exitFullscreen(tab: TabWebView)
+    /**
+     * The page's `fullscreenchange` ([PageMessageRoute.Fullscreen]): a fullscreen element is
+     * there or gone, with the natural size of the video it shows (0 × 0 for none known). A host
+     * that turns the screen with a landscape video reads it (MED-01); the default leaves it.
+     */
+    fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int) {}
     /** Leave the host's own fullscreen (a back while [immersive]); a host without one has nothing to do. */
     fun leaveImmersive() {}
     fun openExternal(url: String)

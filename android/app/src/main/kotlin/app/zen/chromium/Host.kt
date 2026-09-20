@@ -160,6 +160,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /** The page's fullscreen element as the WebView renders it (the view in the fullscreen layer), while there is one. */
     val fullscreenView: View? get() = fullscreenLayer.getChildAt(0)
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+    /**
+     * The fullscreen video's natural size as its page last reported it ([fullscreenVideo]), and
+     * the tab it is in: the screen turns by it (MED-01). The page's `fullscreenchange` follows the
+     * engine's `onShowCustomView`, so the report usually finds [fullscreenTab] set and turns the
+     * screen at once; kept here for the other order, and dropped when the page says fullscreen
+     * ended.
+     */
+    private var fullscreenVideoTab: TabWebView? = null
+    private var fullscreenVideoSize: Pair<Int, Int>? = null
+    /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
+    private var fullscreenOrientationHeld = false
     override var immersive = false
         private set
     /**
@@ -604,6 +615,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "speech.voices" -> readAloud.voices(reply)
             "speech.speak" -> { readAloud.speak(args); reply(null) }
             "speech.stop" -> { readAloud.stop(); reply(null) }
+
+            // Android's details page for Zenium (its permissions): the Open settings of a toast the
+            // host raised itself (`toast` host event: the file chooser's camera refused for good).
+            "app.openSettings" -> { openAppDetails(); reply(null) }
             // --- the OS media controls, the pages' notifications, the private session -------------
             "media.update" -> { media.update(args.optJSONObject("session")); reply(null) }
             "media.pip" -> media.enterPictureInPicture(args.obj("session"), reply)
@@ -704,6 +719,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         setSystemBarsHidden(true)
         // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
+        // The page's size report came ahead of the engine's view: the screen turns now.
+        if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(tab, width, height) }
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -711,6 +728,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     override fun exitFullscreen(tab: TabWebView) {
         if (fullscreenTab !== tab) return
+        // The orientation goes back to the system's as the layer goes, so the chrome that returns
+        // is laid out for the screen the system settles on.
+        releaseFullscreenOrientation()
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
         fullscreenCallback?.onCustomViewHidden()
@@ -719,10 +739,56 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (!immersive) setSystemBarsHidden(false)
         // Out of fullscreen while the window is the small one: the tab's own view takes it over.
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
+        // A hint standing over the page (the first-time exit hint, GN-20) leaves with the fullscreen.
+        tab.postToPage(json("type" to "hint", "hint" to null).toString())
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
     }
+
+    /**
+     * The page's `fullscreenchange` with the fullscreen video's natural size, from the page
+     * script's reporter (`installFullscreenReporter`; the media report of #223 is debounced and
+     * describes the playing element, which a video going fullscreen before its first play is
+     * not). A landscape video turns the activity to `SENSOR_LANDSCAPE`, rotation lock or not,
+     * as Chrome's orientation lock does; a portrait or square one, or an element without a
+     * video, turns nothing ([FullscreenOrientation]). The chrome hears of the video
+     * (`fullscreen.video`) for the first-time exit hint (GN-20).
+     */
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int) {
+        if (!active) {
+            if (fullscreenVideoTab === tab) {
+                fullscreenVideoTab = null
+                fullscreenVideoSize = null
+            }
+            return
+        }
+        // No video, or a size not known yet (the script reports again at loadedmetadata).
+        if (videoWidth <= 0 || videoHeight <= 0) return
+        fullscreenVideoTab = tab
+        fullscreenVideoSize = videoWidth to videoHeight
+        if (fullscreenTab === tab) turnForVideo(tab, videoWidth, videoHeight)
+    }
+
+    private fun turnForVideo(tab: TabWebView, videoWidth: Int, videoHeight: Int) {
+        val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
+        if (orientation == FullscreenOrientation.RELEASED) {
+            releaseFullscreenOrientation()
+        } else {
+            fullscreenOrientationHeld = true
+            activity.requestedOrientation = orientation
+        }
+        chrome.hostEvent("fullscreen.video", json("tabId" to tab.tabId, "width" to videoWidth, "height" to videoHeight))
+    }
+
+    private fun releaseFullscreenOrientation() {
+        if (!fullscreenOrientationHeld) return
+        fullscreenOrientationHeld = false
+        activity.requestedOrientation = FullscreenOrientation.RELEASED
+    }
+
+    /** Whether the fullscreen video holds the screen in landscape right now (the demos read it). */
+    val fullscreenLandscape: Boolean get() = fullscreenOrientationHeld
 
     /** The user is leaving for Home or Recents ([MainActivity.onUserLeaveHint]): Android 8-11's way into picture-in-picture. */
     fun onUserLeaveHint() = media.onUserLeaveHint()
@@ -802,6 +868,20 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             } catch (e: ActivityNotFoundException) {
                 // The next screen down is on every device.
             }
+        }
+    }
+
+    /**
+     * Android's details page for Zenium, where a permission refused for good is turned back on
+     * (the Open settings of the camera toasts: the QR sheet's through `qr.openSettings`, the file
+     * chooser's through `app.openSettings`).
+     */
+    fun openAppDetails() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
+        try {
+            activity.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "no application details screen")
         }
     }
 

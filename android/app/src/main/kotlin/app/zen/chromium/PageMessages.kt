@@ -20,6 +20,14 @@ sealed class PageMessageRoute {
     /** The main document's DOMContentLoaded (Electron's `dom-ready`). */
     object DomReady : PageMessageRoute()
 
+    /**
+     * A `fullscreenchange` in the page (`installFullscreenReporter`): whether the document has a
+     * fullscreen element and the natural size of the video it shows – 0 × 0 for no video, or a
+     * size not known yet. The host turns the screen by it ([PageHost.fullscreenVideo], MED-01);
+     * the core never sees it.
+     */
+    data class Fullscreen(val active: Boolean, val videoWidth: Int, val videoHeight: Int) : PageMessageRoute()
+
     /** Anything else goes to the core as a `pageMessage` view event, without the token. */
     data class Forward(val message: JSONObject) : PageMessageRoute()
 }
@@ -33,6 +41,11 @@ fun routePageMessage(data: String?, token: String): PageMessageRoute {
         "hello" -> PageMessageRoute.Hello
         "evalResult" -> PageMessageRoute.EvalResult(obj.optInt("id"), obj.strOrNull("value"))
         "domReady" -> PageMessageRoute.DomReady
+        "fullscreen" -> PageMessageRoute.Fullscreen(
+            obj.optBoolean("active"),
+            obj.optInt("videoWidth").coerceAtLeast(0),
+            obj.optInt("videoHeight").coerceAtLeast(0)
+        )
         else -> {
             obj.remove("token")
             PageMessageRoute.Forward(obj)
