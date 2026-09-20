@@ -32,8 +32,10 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -96,6 +98,8 @@ const fixed = (value, decimals = 2) =>
     ? '–'
     : Number(value).toFixed(decimals)
 const code = (text) => `\`${String(text).replace(/`/g, '')}\``
+/** Inside a raw HTML block (`<summary>`) GFM renders no inline markdown, so code is a tag there. */
+const codeTag = (text) => `<code>${String(text).replace(/[<>&`]/g, '')}</code>`
 
 function budgetCell(record) {
   const b = record.budget
@@ -125,7 +129,7 @@ function stages(record) {
   const names = Object.keys(stageMs)
   if (names.length === 0) return ''
   const lines = [
-    `<details><summary>${code(record.scene)}${record.source ? ` (${record.source})` : ''}: ${record.sampled ?? 0} frames sampled (${record.skipped ?? 0} skipped), ${record.long ?? 0} past their deadline</summary>`,
+    `<details><summary>${codeTag(record.scene)}${record.source ? ` (${record.source})` : ''}: ${record.sampled ?? 0} frames sampled (${record.skipped ?? 0} skipped), ${record.long ?? 0} past their deadline</summary>`,
     '',
     '| stage | mean ms | max ms | long frames |',
     '| --- | ---: | ---: | ---: |',
@@ -323,16 +327,20 @@ function latestScenes(repo, branch) {
       ).artifacts ?? []
     const reports = artifacts.filter((a) => a.name.startsWith(ARTIFACT_PREFIX) && !a.expired)
     for (const artifact of reports) {
-      const dir = join(tmpdir(), `jank-report-${run.id}-${artifact.id}`)
-      mkdirSync(dir, { recursive: true })
+      // A fresh directory every time: `gh run download` refuses to overwrite a file it finds.
+      const dir = mkdtempSync(join(tmpdir(), `jank-report-${run.id}-${artifact.id}-`))
+      let records
       try {
         gh('run', 'download', String(run.id), '-R', repo, '-n', artifact.name, '-D', dir)
+        records = readRecords(dir).scenes
       } catch (error) {
         console.error(`${artifact.name} of run ${run.id}: ${String(error.message).split('\n')[0]}`)
         continue
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
       }
       opened++
-      for (const record of readRecords(dir).scenes) {
+      for (const record of records) {
         // Runs come newest first: the first record of a scene is its latest.
         if (byScene.has(record.scene)) continue
         byScene.set(record.scene, {
