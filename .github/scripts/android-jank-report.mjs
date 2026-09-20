@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 // The jank budget gate's report: the frame statistics the emulator drivers record through
-// DemoHarness.measureFrames (one JSON line per scene in frames.jsonl, schema v1 – see the
-// harness) rendered as the Markdown table of a job summary, in two modes:
+// DemoHarness.measureFrames / traceFrames (one JSON line per scene in frames.jsonl, schema v2 –
+// see the harness and internal/android-parity/perf-jank-gate-helper.md) rendered as the Markdown
+// tables of a job summary, in two modes:
 //
 //   node android-jank-report.mjs summary <findings dir> [--gate soft|hard] [--out <dir>]
-//     Every frames.jsonl under the findings (a chained run leaves one per driver directory),
-//     as one table: scene, kind, frames, janky share, the 50 / 90 / 95 / 99th percentiles, the
-//     stage most often long, the budget and the verdict; each scene's stage table folded under
-//     it. Printed to stdout (the workflow appends it to $GITHUB_STEP_SUMMARY); written to
-//     <out>/jank-report.md with the frames.jsonl copied beside it when --out is given (the small
-//     `jank-report-*` artifact the release reads); and, with $GITHUB_OUTPUT set, the same as one
-//     JSON line under `report` (the shared workflow's `jank-report` output: {"v":1,"gate","scenes"
-//     [the records as recorded],"over":[scene names over budget],"enforced":[the faults]}).
+//     Every frames.jsonl under the findings (a chained run leaves one per driver directory), as
+//     TWO tables: (1) HWUI's frames per scene – frames, janky share, the 50 / 90 / 95 / 99th
+//     percentiles, the stage most often long – REPORTED, never gated (on the recipe's software
+//     GPU every frame is late whatever the chrome does); (2) the GATE's columns per scene – the
+//     chrome WebView renderer main thread's time per frame (mean / p95 / max), layouts and paints
+//     and style recalculations per frame, long tasks, from the scene's Blink trace; the ratios
+//     against the scene's same-run baseline (p95 / baseline p95, janky share less the baseline's)
+//     – and the verdict. The budgets per scene kind under them; each scene's stage table and
+//     trace line folded under that. Printed to stdout (the workflow appends it to
+//     $GITHUB_STEP_SUMMARY); written to <out>/jank-report.md with the frames.jsonl copied beside
+//     it when --out is given (the small `jank-report-*` artifact the release reads); and, with
+//     $GITHUB_OUTPUT set, the same as one JSON line under `report` (the shared workflow's
+//     `jank-report` output: {"v":2,"gate","scenes":[the records as recorded],"over":[scene names
+//     over budget],"enforced":[the faults]}).
 //
 //   node android-jank-report.mjs main [--repo owner/name] [--branch main] [--fallback-branch <b>]
-//     The latest table of the given branch (main), for the release dry-run's summary: the
+//     The latest tables of the given branch (main), for the release dry-run's summary: the
 //     `jank-report-*` artifacts of the most recent GREEN runs of the android-*.yml workflows on
 //     that branch, read through `gh` (GH_TOKEN with actions: read), the newest measurement of
 //     every scene kept, with the run it came from. Reading the artifacts costs seconds; booting
@@ -23,10 +30,11 @@
 //     instead, labelled (a pull request's dry-run shows its own head's numbers before they are
 //     on main). Never fails: an API error is a line in the summary.
 //
-// The caveat printed under every table: the recipe's emulator has a software GPU (-gpu
-// swangle), which inflates the render thread's `commands` and `swap` stages many times over
-// against a phone and puts most frames past their deadline; the numbers compare on this one
-// recipe alone, and the budgets are relative to it.
+// The caveat printed under every table: HWUI's numbers are the Android UI thread's and render
+// thread's on a software GPU (-gpu swangle) – 100 percent janky, frame times in the hundreds of
+// ms, by construction – and are not device performance; the defensible before / after numbers
+// are the main-thread ms and the layouts / paints per frame, and the ratios against a baseline
+// measured on the same recipe minutes apart.
 import { execFileSync } from 'node:child_process'
 import {
   appendFileSync,
@@ -101,15 +109,32 @@ const code = (text) => `\`${String(text).replace(/`/g, '')}\``
 /** Inside a raw HTML block (`<summary>`) GFM renders no inline markdown, so code is a tag there. */
 const codeTag = (text) => `<code>${String(text).replace(/[<>&`]/g, '')}</code>`
 
-function budgetCell(record) {
-  const b = record.budget
+/** A number with at most two decimals, trailing zeros dropped (the budgets' way). */
+const short = (value) =>
+  value === undefined || value === null || Number.isNaN(value)
+    ? '–'
+    : String(Number(Number(value).toFixed(2)))
+const plus = (points) => `${points >= 0 ? '+' : '-'}${short(Math.abs(points) * 100)} pt`
+
+/** A budget in words: the v2 shape (ratios and trace columns), or a v1 record's (share and p95). */
+function describeBudget(b) {
   if (!b) return '–'
-  return `janky ≤ ${pct(b.jankyShare)}, p95 ≤ ${b.p95} ms${b.provisional ? ' (provisional)' : ''}`
+  const text =
+    b.p95Ratio !== undefined
+      ? `vs baseline p95 ≤ ${short(b.p95Ratio)}x, janky ≤ +${short(b.sharePoints * 100)} pt; trace layouts ≤ ${short(b.layoutsPerFrame)}/frame, ` +
+        `paints ≤ ${short(b.paintsPerFrame)}/frame, main-thread p95 ≤ ${short(b.mainThreadP95Ms)} ms, long tasks ≤ ${b.longTasks}`
+      : `janky ≤ ${pct(b.jankyShare)}, p95 ≤ ${b.p95} ms (schema v1)`
+  return b.provisional ? `${text} (provisional)` : text
 }
 
 function verdictCell(record) {
   if (!record.frames) return '**not measured**'
-  if (record.verdict === 'within') return 'within'
+  const gated = record.gated ?? []
+  if (record.verdict === 'within') {
+    if (gated.length === 0)
+      return record.v >= 2 ? 'reported only (no baseline, no trace)' : 'within (schema v1)'
+    return `within (gated on ${gated.join(' + ')})`
+  }
   const breaches = (record.breaches ?? []).join('; ')
   return record.enforced
     ? `**FAULT** (${breaches})`
@@ -123,37 +148,98 @@ function dominantCell(record) {
   return `${code(record.dominant)}${long ? ` (${long} long frames)` : ''}`
 }
 
-/** One scene's stage table, folded. */
-function stages(record) {
+/** The trace's main-thread time per frame: mean / p95 / max. */
+function mainThreadCell(record) {
+  const t = record.trace
+  if (!t) return record.traceMissing ? 'no trace' : '–'
+  if (!t.found) return 'no main thread'
+  const ms = t.mainThreadMs
+  if (!ms) return t.frames ? `${t.frames} frames, no times` : 'no frames'
+  return `${fixed(ms.mean, 1)} / ${fixed(ms.p95, 1)} / ${fixed(ms.max, 1)}`
+}
+
+function perFrameCell(record, key, decimals = 2) {
+  const t = record.trace
+  if (!t || !t.found) return '–'
+  return fixed(t.perFrame?.[key], decimals)
+}
+
+function longTasksCell(record) {
+  const t = record.trace
+  if (!t || !t.found) return '–'
+  return t.longTasks ? `${t.longTasks} (longest ${fixed(t.longestTaskMs, 0)} ms)` : '0'
+}
+
+function baselineCell(record) {
+  if (!record.baseline) return '–'
+  const r = record.ratio
+  if (!r) return `${code(record.baseline)}: not measured`
+  return `${code(record.baseline)}: p95 ${r.p95 === null || r.p95 === undefined ? '–' : `${short(r.p95)}x`}, janky ${plus(r.sharePoints)}`
+}
+
+/** One scene's stage table and trace line, folded. */
+function folded(record) {
   const stageMs = record.stageMs ?? {}
   const names = Object.keys(stageMs)
-  if (names.length === 0) return ''
+  const t = record.trace
+  if (names.length === 0 && !t && !record.traceMissing) return ''
   const lines = [
-    `<details><summary>${codeTag(record.scene)}${record.source ? ` (${record.source})` : ''}: ${record.sampled ?? 0} frames sampled (${record.skipped ?? 0} skipped), ${record.long ?? 0} past their deadline</summary>`,
-    '',
-    '| stage | mean ms | max ms | long frames |',
-    '| --- | ---: | ---: | ---: |',
-    ...names.map(
-      (name) =>
-        `| ${code(name)} | ${fixed(stageMs[name].mean)} | ${fixed(stageMs[name].max)} | ${stageMs[name].long ?? 0} |`
-    )
+    `<details><summary>${codeTag(record.scene)}${record.source ? ` (${record.source})` : ''}: ${record.sampled ?? 0} frames sampled (${record.skipped ?? 0} skipped), ${record.long ?? 0} past their deadline${t?.found ? `; trace: ${t.frames} main-thread frames` : ''}</summary>`,
+    ''
   ]
+  if (names.length) {
+    lines.push(
+      '| stage | mean ms | max ms | long frames |',
+      '| --- | ---: | ---: | ---: |',
+      ...names.map(
+        (name) =>
+          `| ${code(name)} | ${fixed(stageMs[name].mean)} | ${fixed(stageMs[name].max)} | ${stageMs[name].long ?? 0} |`
+      ),
+      ''
+    )
+  }
+  if (t?.found) {
+    lines.push(
+      `Trace (renderer main thread ${code(t.thread)}, ${t.events} events, ${fixed(t.windowMs, 0)} ms${t.whole ? ', the whole trace' : ''}): ` +
+        `${t.frames} frames; busy ${fixed(t.busyMs, 0)} ms (${fixed(t.busyPerFrameMs, 1)} ms/frame), script ${fixed(t.scriptMs, 0)} ms; ` +
+        `layouts ${t.layoutCount}, paints ${t.paintCount}, style recalcs ${t.styleRecalcCount} (${fixed(t.perFrame?.styleRecalc, 2)}/frame), ` +
+        `layer updates ${t.layerChurn} (${fixed(t.perFrame?.layerChurn, 1)}/frame); long tasks ${t.longTasks}, longest ${fixed(t.longestTaskMs, 0)} ms.`,
+      ''
+    )
+  } else if (t) {
+    lines.push(
+      `Trace: no renderer main thread among its ${t.threads} threads (${t.events} events).`,
+      ''
+    )
+  } else if (record.traceMissing) {
+    lines.push(`Trace: none read – ${record.traceMissing}.`, '')
+  }
   const reasons = Object.entries(record.reasons ?? {})
   if (reasons.length)
-    lines.push('', `HWUI's reasons: ${reasons.map(([k, v]) => `${k} ${v}`).join(', ')}.`)
+    lines.push(`HWUI's reasons: ${reasons.map(([k, v]) => `${k} ${v}`).join(', ')}.`, '')
+  const notes = record.notes ?? []
+  if (notes.length) lines.push(`Notes: ${notes.join('; ')}.`, '')
   lines.push('</details>')
   return lines.join('\n')
 }
 
-const CAVEAT =
+const CAVEAT_HWUI =
   "Frames, janky frames and the percentiles (ms) are HWUI's own (`dumpsys gfxinfo framestats`) since the " +
-  "scene's reset; the long stage is the stage most often the largest in the sampled frames past their " +
-  "deadline (the CSV's last frames). Emulator caveat: the recipe renders on a software GPU (`-gpu swangle`), " +
-  'which inflates `commands` and `swap` many times over against a phone – the numbers compare on this one ' +
-  'recipe alone, and the budgets are relative to it, not phone frame times.'
+  "scene's reset – the Android UI thread's and render thread's – and the long stage is the stage most often " +
+  'the largest in the sampled frames past their deadline. REPORTED, NEVER GATED: the recipe renders on a software ' +
+  "GPU (`-gpu swangle`), so every frame misses its deadline and the frame times are the recipe's, not the " +
+  "chrome's and not device performance (100 % janky, p50 in the hundreds of ms, by construction)."
+
+const CAVEAT_GATE =
+  "The gate reads what the software GPU does not dominate: the chrome WebView renderer main thread's work in " +
+  'the scene from its Blink trace (`android.webkit.TracingController`: main-thread ms per frame as mean / p95 / ' +
+  'max, `Layout` / `Paint` / `UpdateLayoutTree` per `BeginMainFrame`, top-level tasks over 50 ms), and the RATIOS ' +
+  "against a same-run baseline scene (the same motion with the chrome's part removed), which cancel the recipe. " +
+  'Main-thread ms and layouts / paints per frame are the defensible before / after numbers; swangle frame times ' +
+  'are not to be quoted as device performance. A scene with neither trace nor baseline is reported only.'
 
 /**
- * The table of `scenes` (records; `run` on a record adds its run's column). `gate` labels the
+ * The tables of `scenes` (records; `run` on a record adds its run's column). `gate` labels the
  * heading; `title` is the heading text.
  */
 function render(scenes, { title, gate, withRun = false, note = '' }) {
@@ -167,35 +253,35 @@ function render(scenes, { title, gate, withRun = false, note = '' }) {
   }
   const over = scenes.filter((s) => s.verdict !== 'within')
   const enforced = scenes.filter((s) => s.enforced)
+  const gatedScenes = scenes.filter((s) => (s.gated ?? []).length > 0)
+  const traced = scenes.filter((s) => s.trace?.found)
   lines.push(
     `${scenes.length} scene${scenes.length === 1 ? '' : 's'} measured under a ${code(gate ?? scenes[0].gate ?? 'soft')} gate: ` +
+      `${gatedScenes.length} gated (${traced.length} with a trace, ${scenes.filter((s) => s.baseline).length} against a baseline), ` +
+      `${scenes.length - gatedScenes.length} reported only. ` +
       (over.length === 0
-        ? 'every scene within its budget.'
-        : `${over.length} over budget (${over.map((s) => code(s.scene)).join(', ')})${enforced.length ? `, ${enforced.length} a fault` : ', reported only'}.`),
+        ? 'Every gated scene is within its budget.'
+        : `${over.length} over budget (${over.map((s) => code(s.scene)).join(', ')})${enforced.length ? ` – ${enforced.length} a fault` : ' – reported, not enforced'}.`),
     ''
   )
-  const head = [
-    'scene',
-    'kind',
-    'frames',
-    'janky',
-    'p50',
-    'p90',
-    'p95',
-    'p99',
-    'long stage',
-    'budget',
-    'verdict'
-  ]
-  const align = ['---', '---', '---:', '---:', '---:', '---:', '---:', '---:', '---', '---', '---']
+  const runCell = (s) =>
+    s.run
+      ? `[${s.run.name} #${s.run.number}](${s.run.url}) · ${s.run.sha.slice(0, 7)} · ${s.run.date}`
+      : '–'
+  const sceneCell = (s) => code(s.scene) + (s.source ? ` <sub>${s.source}</sub>` : '')
+
+  // (1) HWUI's frames: reported.
+  lines.push('#### HWUI frames (reported, never gated)', '')
+  const head1 = ['scene', 'kind', 'frames', 'janky', 'p50', 'p90', 'p95', 'p99', 'long stage']
+  const align1 = ['---', '---', '---:', '---:', '---:', '---:', '---:', '---:', '---']
   if (withRun) {
-    head.push('run')
-    align.push('---')
+    head1.push('run')
+    align1.push('---')
   }
-  lines.push(`| ${head.join(' | ')} |`, `| ${align.join(' | ')} |`)
+  lines.push(`| ${head1.join(' | ')} |`, `| ${align1.join(' | ')} |`)
   for (const s of scenes) {
     const cells = [
-      code(s.scene) + (s.source ? ` <sub>${s.source}</sub>` : ''),
+      sceneCell(s),
       s.kind ?? '–',
       s.frames ?? 0,
       s.frames ? `${s.janky} (${pct(s.jankyShare)})` : '–',
@@ -203,22 +289,57 @@ function render(scenes, { title, gate, withRun = false, note = '' }) {
       s.frames ? s.p90 : '–',
       s.frames ? s.p95 : '–',
       s.frames ? s.p99 : '–',
-      dominantCell(s),
-      budgetCell(s),
-      verdictCell(s)
+      dominantCell(s)
     ]
-    if (withRun)
-      cells.push(
-        s.run
-          ? `[${s.run.name} #${s.run.number}](${s.run.url}) · ${s.run.sha.slice(0, 7)} · ${s.run.date}`
-          : '–'
-      )
+    if (withRun) cells.push(runCell(s))
     lines.push(`| ${cells.join(' | ')} |`)
   }
-  lines.push('', CAVEAT, '')
+  lines.push('', CAVEAT_HWUI, '')
+
+  // (2) The gate: the Blink main thread's columns and the ratios.
+  lines.push('#### The gate: Blink main thread (per frame) and ratios against the baseline', '')
+  const head2 = [
+    'scene',
+    'main-thread ms/frame (mean / p95 / max)',
+    'layouts/frame',
+    'paints/frame',
+    'style recalcs/frame',
+    'long tasks',
+    'vs baseline',
+    'verdict'
+  ]
+  const align2 = ['---', '---:', '---:', '---:', '---:', '---', '---', '---']
+  lines.push(`| ${head2.join(' | ')} |`, `| ${align2.join(' | ')} |`)
   for (const s of scenes) {
-    const folded = stages(s)
-    if (folded) lines.push(folded, '')
+    lines.push(
+      `| ${[
+        sceneCell(s),
+        mainThreadCell(s),
+        perFrameCell(s, 'layout'),
+        perFrameCell(s, 'paint'),
+        perFrameCell(s, 'styleRecalc'),
+        longTasksCell(s),
+        baselineCell(s),
+        verdictCell(s)
+      ].join(' | ')} |`
+    )
+  }
+  lines.push('')
+  const budgets = new Map()
+  for (const s of scenes) if (s.budget && !budgets.has(s.kind)) budgets.set(s.kind, s.budget)
+  if (budgets.size)
+    lines.push(
+      'Budgets: ' +
+        [...budgets.entries()]
+          .map(([kind, b]) => `**${kind}** – ${describeBudget(b)}`)
+          .join(' · ') +
+        '.',
+      ''
+    )
+  lines.push(CAVEAT_GATE, '')
+  for (const s of scenes) {
+    const fold = folded(s)
+    if (fold) lines.push(fold, '')
   }
   return lines.join('\n')
 }
@@ -255,7 +376,7 @@ function summary() {
       writeFileSync(join(args.out, TABLES), tables.map((f) => readFileSync(f, 'utf8')).join('\n'))
   }
   const report = {
-    v: 1,
+    v: 2,
     gate: gate ?? scenes[0]?.gate ?? 'soft',
     scenes,
     over: scenes.filter((s) => s.verdict !== 'within').map((s) => s.scene),

@@ -9,7 +9,9 @@ import java.util.Locale
  * the unit tests and the instrumentation alike (`src/sharedTest`), never into the app. The
  * harness's `measureFrames` (DemoHarness.kt) resets the stats, runs a scene, dumps them and hands
  * the text here; what comes back is one [Scene]: the summary HWUI keeps since the reset, the last
- * frames' stage timings from the CSV, and the budget's verdict (`JankBudget`).
+ * frames' stage timings from the CSV, the chrome renderer's main-thread reading when the scene
+ * took a trace ([BlinkTrace], `traceFrames`), the ratios against the scene's baseline, and the
+ * budget's verdict (`JankBudget`).
  *
  * Two things in the dump, two readings:
  *
@@ -249,8 +251,11 @@ object FrameStats {
     // --- the scene -------------------------------------------------------------------------------
 
     /**
-     * One measured scene: what `measureFrames` records. [summary] is null when the dump had none;
-     * the verdict then says the scene was not measured.
+     * One measured scene: what `measureFrames` / `traceFrames` records. [summary] is null when the
+     * dump had none; the verdict then says the scene was not measured. [baseline] names the
+     * same-run scene the ratios are read against (null for none); [ratio] is those ratios once
+     * the baseline is known ([resolve]); [trace] is the renderer main thread's reading when the
+     * scene took a trace, and [traceMissing] why it has none although it asked for one.
      */
     data class Scene(
         val name: String,
@@ -262,21 +267,30 @@ object FrameStats {
         val durationMs: Long,
         val summary: Summary?,
         val analysis: Analysis,
+        val baseline: String?,
+        val trace: BlinkTrace.Reading?,
+        val traceMissing: String?,
         val budget: JankBudget.Budget,
+        val ratio: JankBudget.Ratio?,
         val verdict: JankBudget.Verdict
     ) {
         /** The gate makes the breach a fault: hard and over. */
         val enforced: Boolean get() = JankBudget.enforces(gate, verdict)
 
-        /** One JSON object on one line (`frames.jsonl`), keys in a fixed order. Schema version 1; see the harness docs. */
+        /** What the gate reads of this scene. */
+        fun reading(): JankBudget.Reading =
+            JankBudget.Reading(summary?.frames ?: 0, summary?.jankyShare ?: 0.0, summary?.p95Ms ?: 0, trace, traceMissing)
+
+        /** One JSON object on one line (`frames.jsonl`), keys in a fixed order. Schema version 2; see the harness docs. */
         fun toJson(): String {
             val sb = StringBuilder("{")
-            sb.append("\"v\":1")
+            sb.append("\"v\":2")
             sb.append(",\"scene\":").append(quote(name))
             sb.append(",\"kind\":").append(quote(kind.key))
             sb.append(",\"gate\":").append(quote(gate.key))
             sb.append(",\"at\":").append(quote(Instant.ofEpochMilli(startedAtMs).toString()))
             sb.append(",\"durationMs\":").append(durationMs)
+            sb.append(",\"baseline\":").append(baseline?.let { quote(it) } ?: "null")
             val s = summary
             sb.append(",\"frames\":").append(s?.frames ?: 0)
             sb.append(",\"janky\":").append(s?.janky ?: 0)
@@ -298,19 +312,41 @@ object FrameStats {
             }
             sb.append("}")
             sb.append(",\"dominant\":").append(analysis.dominant?.let { quote(it) } ?: "null")
-            sb.append(",\"budget\":{\"jankyShare\":").append(number(budget.jankyShare, 4))
-                .append(",\"p95\":").append(budget.p95Ms)
+            sb.append(",\"ratio\":")
+            if (ratio == null) {
+                sb.append("null")
+            } else {
+                sb.append("{\"p95\":").append(ratio.p95?.let { number(it, 3) } ?: "null")
+                    .append(",\"sharePoints\":").append(number(ratio.sharePoints, 4)).append("}")
+            }
+            sb.append(",\"trace\":").append(trace?.toJson() ?: "null")
+            sb.append(",\"traceMissing\":").append(traceMissing?.let { quote(it) } ?: "null")
+            sb.append(",\"budget\":{\"p95Ratio\":").append(number(budget.p95Ratio, 3))
+                .append(",\"sharePoints\":").append(number(budget.sharePoints, 4))
+                .append(",\"layoutsPerFrame\":").append(number(budget.layoutsPerFrame, 3))
+                .append(",\"paintsPerFrame\":").append(number(budget.paintsPerFrame, 3))
+                .append(",\"mainThreadP95Ms\":").append(number(budget.mainThreadP95Ms, 2))
+                .append(",\"longTasks\":").append(budget.longTasks)
                 .append(",\"provisional\":").append(budget.provisional).append("}")
+            sb.append(",\"gated\":[")
+            verdict.gated.joinTo(sb, ",") { quote(it) }
+            sb.append("]")
             sb.append(",\"verdict\":").append(quote(if (verdict.within) "within" else "over"))
             sb.append(",\"breaches\":[")
             verdict.breaches.joinTo(sb, ",") { quote(it) }
+            sb.append("]")
+            sb.append(",\"notes\":[")
+            verdict.notes.joinTo(sb, ",") { quote(it) }
             sb.append("]")
             sb.append(",\"enforced\":").append(enforced)
             sb.append("}")
             return sb.toString()
         }
 
-        /** The scene for a human, several lines: the summary line, then one line per stage. What the driver logs. */
+        /**
+         * The scene for a human, several lines: the summary line, the baseline and trace lines
+         * when the scene has them, the sampling line, then one line per stage. What the driver logs.
+         */
         fun table(): String {
             val s = summary
             val sb = StringBuilder()
@@ -325,6 +361,11 @@ object FrameStats {
             sb.append("; budget ").append(budget.describe()).append(": ").append(verdict.describe())
             if (enforced) sb.append(" [FAULT: the gate is hard]") else if (!verdict.within) sb.append(" [reported: the gate is ").append(gate.key).append("]")
             sb.append('\n')
+            if (baseline != null) {
+                sb.append("  vs baseline ").append(baseline).append(": ").append(ratio?.describe() ?: "not measured in this run").append('\n')
+            }
+            if (trace != null) sb.append("  ").append(trace.describe()).append('\n')
+            else if (traceMissing != null) sb.append("  trace: none read (").append(traceMissing).append(")\n")
             sb.append("  sampled ").append(analysis.sampled).append(" frames (").append(analysis.skipped).append(" skipped), ")
                 .append(analysis.long).append(" past their deadline; long stage most often: ").append(analysis.dominant ?: "-").append('\n')
             if (analysis.stages.isNotEmpty()) {
@@ -340,7 +381,11 @@ object FrameStats {
         }
     }
 
-    /** Build the [Scene] of one measurement: the dump read against the kind's budget. */
+    /**
+     * Build the [Scene] of one measurement: the dump read against the kind's budget, with the
+     * trace's reading (or why there is none) and the ratios against `baseline` when it is among
+     * `measured` (the scenes measured so far; [resolve] settles the rest once the run is over).
+     */
     fun scene(
         name: String,
         kind: JankBudget.Kind,
@@ -348,11 +393,32 @@ object FrameStats {
         startedAtMs: Long,
         durationMs: Long,
         dump: Dump,
-        budget: JankBudget.Budget = JankBudget.budgetFor(kind)
+        budget: JankBudget.Budget = JankBudget.budgetFor(kind),
+        baseline: String? = null,
+        trace: BlinkTrace.Reading? = null,
+        traceMissing: String? = null,
+        measured: List<Scene> = emptyList()
     ): Scene {
-        val summary = dump.summary
-        val verdict = JankBudget.evaluate(budget, summary?.frames ?: 0, summary?.jankyShare ?: 0.0, summary?.p95Ms ?: 0)
-        return Scene(name, kind, gate, startedAtMs, durationMs, summary, dump.analyse(), budget, verdict)
+        val unsettled = Scene(
+            name, kind, gate, startedAtMs, durationMs, dump.summary, dump.analyse(), baseline, trace, traceMissing, budget,
+            ratio = null, verdict = JankBudget.Verdict(within = true, breaches = emptyList(), gated = emptyList(), notes = emptyList())
+        )
+        return settle(unsettled, measured)
+    }
+
+    /**
+     * Every scene's verdict read again with all of `scenes` known: a baseline measured after the
+     * scene that names it counts now. What the harness writes down once the run is over.
+     */
+    fun resolve(scenes: List<Scene>): List<Scene> = scenes.map { settle(it, scenes) }
+
+    /** `scene`'s ratio and verdict against the baseline it names among `known` (the latest of that name). */
+    private fun settle(scene: Scene, known: List<Scene>): Scene {
+        val baseline = scene.baseline?.let { name -> known.lastOrNull { it.name == name && it !== scene } }
+        val reading = scene.reading()
+        val baselineReading = baseline?.reading()
+        val ratio = if (baselineReading != null && baselineReading.frames > 0 && reading.frames > 0) JankBudget.ratio(reading, baselineReading) else null
+        return scene.copy(ratio = ratio, verdict = JankBudget.evaluate(scene.budget, reading, scene.baseline, baselineReading))
     }
 
     // --- JSON ------------------------------------------------------------------------------------

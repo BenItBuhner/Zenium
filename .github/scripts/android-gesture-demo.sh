@@ -298,10 +298,11 @@ elif [ "${#parts[@]}" -gt 1 ]; then
   fi
 fi
 # Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump,
-# the frame statistics: frames.jsonl and frames.txt, the raw framestats-*.txt dumps).
+# the frame statistics: frames.jsonl and frames.txt, the raw framestats-*.txt dumps, the scenes'
+# WebView traces trace-*.json.gz).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png | *.jpg | *.txt | *.jsonl) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
+    *.png | *.jpg | *.txt | *.jsonl | *.json.gz) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
 if [ -f "$out/frames.txt" ]; then

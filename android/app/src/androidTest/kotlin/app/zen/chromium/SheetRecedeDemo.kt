@@ -74,10 +74,12 @@ import kotlin.math.sqrt
  * page comes from a loopback server in this process ([DemoServer]). The `theme` instrumentation
  * argument (`light`, the default, or `dark`) picks the colour scheme.
  *
- * The jank record ([measureFrames], `frames.jsonl`): before the probed steps the menu is opened
+ * The jank record ([traceFrames], `frames.jsonl`): before the probed steps the menu is opened
  * and closed once with no camera on it, the `menu-sheet-open` and `menu-sheet-close` scenes
- * (`open`), whose frames the budget's gate (`jankGate`, soft unless the workflow says hard)
- * reports or fails. The cycle is unmarked, so the recording's judgement begins at step 1.
+ * (`open`), each with the chrome WebView's trace around it (the renderer main thread's layouts,
+ * paints and time per frame while the sheet mounts and springs), whose numbers the budget's gate
+ * (`jankGate`, soft unless the workflow says hard) reports or fails. The cycle is unmarked, so the
+ * recording's judgement begins at step 1.
  */
 @RunWith(AndroidJUnit4::class)
 class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "sheet-recede-demo") {
@@ -191,19 +193,19 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         val f = Finger()
 
         // 0. The app menu up and down once with nothing else running: the jank record's two `open`
-        //    scenes (DemoHarness.measureFrames). The probes below screenshot as fast as the emulator
+        //    scenes (DemoHarness.traceFrames). The probes below screenshot as fast as the emulator
         //    gives frames while a sheet moves, which the app's own frames would pay for, so the
         //    frames are read here, on the cycle before them; the menu button is found before the
         //    block (a read of the tree is the app's main thread's work). The block waits [MOTION_MS]
         //    for the spring: a frame nothing moves in is no frame, so a wait past the landing costs
         //    the reading nothing.
         val menu = menuButton()
-        measureFrames("menu-sheet-open", JankBudget.Kind.OPEN) {
+        traceFrames("menu-sheet-open", JankBudget.Kind.OPEN) {
             f.tap(menu)
             SystemClock.sleep(MOTION_MS)
         }
         settleUp()
-        measureFrames("menu-sheet-close", JankBudget.Kind.OPEN) {
+        traceFrames("menu-sheet-close", JankBudget.Kind.OPEN) {
             back()
             SystemClock.sleep(MOTION_MS)
         }

@@ -180,16 +180,33 @@ class FrameStatsTest {
 
     // --- the scene -------------------------------------------------------------------------------
 
-    private val budget = JankBudget.Budget(jankyShare = 0.6, p95Ms = 80, provisional = true)
+    private val budget = JankBudget.Budget(p95Ratio = 2.0, sharePoints = 0.10, layoutsPerFrame = 2.0, paintsPerFrame = 2.0, mainThreadP95Ms = 120.0, longTasks = 3, provisional = true)
+    private val BASELINE = "bar-hide-scroll-setting-off"
 
-    private fun scene(gate: JankBudget.Gate, budget: JankBudget.Budget = this.budget) =
-        FrameStats.scene("bar-hide-scroll-bottom", JankBudget.Kind.GESTURE, gate, 1_789_938_000_000L, 2_400, api34, budget)
+    private fun scene(
+        gate: JankBudget.Gate,
+        budget: JankBudget.Budget = this.budget,
+        baseline: String? = null,
+        trace: BlinkTrace.Reading? = null,
+        traceMissing: String? = null,
+        measured: List<FrameStats.Scene> = emptyList()
+    ) = FrameStats.scene("bar-hide-scroll-bottom", JankBudget.Kind.GESTURE, gate, 1_789_938_000_000L, 2_400, api34, budget, baseline, trace, traceMissing, measured)
+
+    /** The baseline scene: the same drag with the setting off, read off the API 29 dump (27 frames, 33% janky, p95 46). */
+    private fun baselineScene(gate: JankBudget.Gate, budget: JankBudget.Budget = this.budget, measured: List<FrameStats.Scene> = emptyList()) =
+        FrameStats.scene(BASELINE, JankBudget.Kind.GESTURE, gate, 1_789_938_010_000L, 2_400, api29, budget, measured = measured)
+
+    private val trace = BlinkTrace.Reading(
+        found = true, thread = "4242:4242", frames = 12, frameMs = BlinkTrace.Stat(6.0, 14.0, 12.0), busyMs = 90.0, scriptMs = 3.0,
+        layoutCount = 6, paintCount = 3, styleRecalcCount = 12, layerChurn = 24, longTasks = 0, longestTaskMs = 14.0,
+        events = 200, threads = 4, windowMs = 1200.0, whole = false
+    )
 
     @Test
     fun `the JSON line is one line, keys in a fixed order, and parses back to the numbers`() {
         val json = scene(JankBudget.Gate.SOFT).toJson()
         assertFalse(json.contains('\n'))
-        assertTrue(json, json.startsWith("{\"v\":1,\"scene\":\"bar-hide-scroll-bottom\",\"kind\":\"gesture\",\"gate\":\"soft\",\"at\":\"2026-09-20T21:00:00Z\",\"durationMs\":2400,\"frames\":83,\"janky\":41,\"jankyShare\":0.494,\"jankyLegacy\":45,\"p50\":16,\"p90\":48,\"p95\":61,\"p99\":120,\"reasons\":{"))
+        assertTrue(json, json.startsWith("{\"v\":2,\"scene\":\"bar-hide-scroll-bottom\",\"kind\":\"gesture\",\"gate\":\"soft\",\"at\":\"2026-09-20T21:00:00Z\",\"durationMs\":2400,\"baseline\":null,\"frames\":83,\"janky\":41,\"jankyShare\":0.494,\"jankyLegacy\":45,\"p50\":16,\"p90\":48,\"p95\":61,\"p99\":120,\"reasons\":{"))
         val o = JSONObject(json)
         assertEquals(41, o.getJSONObject("reasons").getInt("Frame deadline missed"))
         assertEquals(7, o.getInt("sampled"))
@@ -203,32 +220,103 @@ class FrameStatsTest {
         val stageKeys = Regex(""""(\w+)":\{"mean"""").findAll(json.substringAfter("\"stageMs\":{")).map { it.groupValues[1] }.toList()
         assertEquals(FrameStats.STAGES.map { it.name }, stageKeys)
         assertEquals("commands", o.getString("dominant"))
+        // Schema v2: the ratio, the trace and the trace's absence are there, null when the scene has none.
+        assertTrue(o.isNull("ratio"))
+        assertTrue(o.isNull("trace"))
+        assertTrue(o.isNull("traceMissing"))
+        assertTrue(json, json.contains("\"dominant\":\"commands\",\"ratio\":null,\"trace\":null,\"traceMissing\":null,\"budget\":{\"p95Ratio\":2,\"sharePoints\":0.1,\"layoutsPerFrame\":2,\"paintsPerFrame\":2,\"mainThreadP95Ms\":120,\"longTasks\":3,\"provisional\":true},\"gated\":[],\"verdict\":\"within\",\"breaches\":[],\"notes\":[\"reported only: the scene names no baseline and took no trace\"],\"enforced\":false}"))
         val b = o.getJSONObject("budget")
-        assertEquals(0.6, b.getDouble("jankyShare"), 1e-9)
-        assertEquals(80, b.getInt("p95"))
+        assertEquals(2.0, b.getDouble("p95Ratio"), 1e-9)
+        assertEquals(0.1, b.getDouble("sharePoints"), 1e-9)
+        assertEquals(120, b.getInt("mainThreadP95Ms"))
         assertTrue(b.getBoolean("provisional"))
         assertEquals("within", o.getString("verdict"))
+        assertEquals(0, o.getJSONArray("gated").length())
         assertEquals(0, o.getJSONArray("breaches").length())
         assertFalse(o.getBoolean("enforced"))
     }
 
     @Test
-    fun `a breach is named in the verdict, the JSON and the table, and enforced under a hard gate alone`() {
-        val over = JankBudget.Budget(jankyShare = 0.3, p95Ms = 40, provisional = false)
-        val soft = scene(JankBudget.Gate.SOFT, over)
-        val hard = scene(JankBudget.Gate.HARD, over)
-        assertEquals(listOf("janky 49% > 30%", "p95 61 ms > 40 ms"), soft.verdict.breaches)
+    fun `a breach of the ratios is named in the verdict, the JSON and the table, and enforced under a hard gate alone`() {
+        val tight = JankBudget.Budget(p95Ratio = 1.0, sharePoints = 0.0, layoutsPerFrame = 2.0, paintsPerFrame = 2.0, mainThreadP95Ms = 120.0, longTasks = 3, provisional = false)
+        val soft = scene(JankBudget.Gate.SOFT, tight, baseline = BASELINE, measured = listOf(baselineScene(JankBudget.Gate.SOFT, tight)))
+        val hard = scene(JankBudget.Gate.HARD, tight, baseline = BASELINE, measured = listOf(baselineScene(JankBudget.Gate.HARD, tight)))
+        assertEquals(listOf("p95 61 ms is 1.33x the baseline's 46 ms > 1x", "janky 49.4% is +16.06 pt over the baseline's 33.33% > +0 pt"), soft.verdict.breaches)
+        assertEquals(listOf("ratio"), soft.verdict.gated)
         assertFalse(soft.verdict.within)
         assertFalse(soft.enforced)
         assertTrue(hard.enforced)
-        assertTrue(soft.table(), soft.table().contains("over: janky 49% > 30%; p95 61 ms > 40 ms [reported: the gate is soft]"))
+        assertTrue(soft.table(), soft.table().contains("over: p95 61 ms is 1.33x the baseline's 46 ms > 1x; janky 49.4% is +16.06 pt over the baseline's 33.33% > +0 pt [reported: the gate is soft]"))
+        assertTrue(soft.table(), soft.table().lines()[1] == "  vs baseline bar-hide-scroll-setting-off: p95 1.33x the baseline's, janky +16.06 pt")
         assertTrue(hard.table(), hard.table().contains("[FAULT: the gate is hard]"))
         val o = JSONObject(hard.toJson())
         assertEquals("over", o.getString("verdict"))
         assertEquals("hard", o.getString("gate"))
+        assertEquals(BASELINE, o.getString("baseline"))
+        assertEquals(1.326, o.getJSONObject("ratio").getDouble("p95"), 1e-9)
+        assertEquals(0.1606, o.getJSONObject("ratio").getDouble("sharePoints"), 1e-9)
         assertEquals(2, o.getJSONArray("breaches").length())
+        assertEquals("ratio", o.getJSONArray("gated").getString(0))
         assertTrue(o.getBoolean("enforced"))
         assertFalse(o.getJSONObject("budget").getBoolean("provisional"))
+    }
+
+    @Test
+    fun `a baseline measured after the scene that names it counts once the run is resolved`() {
+        val wide = budget.copy(sharePoints = 0.25)
+        val first = scene(JankBudget.Gate.HARD, wide, baseline = BASELINE)
+        assertNull(first.ratio)
+        assertEquals(listOf("baseline 'bar-hide-scroll-setting-off' was not measured in this run"), first.verdict.breaches)
+        assertTrue(first.enforced)
+        assertEquals("  vs baseline bar-hide-scroll-setting-off: not measured in this run", first.table().lines()[1])
+        val control = baselineScene(JankBudget.Gate.HARD, wide, measured = listOf(first))
+        val settled = FrameStats.resolve(listOf(first, control))
+        assertEquals(listOf("bar-hide-scroll-bottom", BASELINE), settled.map { it.name })
+        val scene = settled[0]
+        assertEquals(1.326, scene.ratio!!.p95!!, 5e-4)
+        assertEquals(0.1606, scene.ratio!!.sharePoints, 5e-5)
+        assertTrue(scene.verdict.breaches.toString(), scene.verdict.within)
+        assertEquals(listOf("ratio"), scene.verdict.gated)
+        assertFalse(scene.enforced)
+        assertEquals("  vs baseline bar-hide-scroll-setting-off: p95 1.33x the baseline's, janky +16.06 pt", scene.table().lines()[1])
+        // The baseline itself names no baseline and took no trace: reported only, unchanged by the resolve.
+        assertEquals(control.verdict, settled[1].verdict)
+        assertEquals("reported only (no baseline, no trace)", settled[1].verdict.describe())
+        // A resolve is idempotent.
+        assertEquals(settled, FrameStats.resolve(settled))
+    }
+
+    @Test
+    fun `a scene with a trace carries the renderer main thread's reading in its JSON and its table, gated on it`() {
+        val traced = scene(JankBudget.Gate.HARD, trace = trace)
+        assertTrue(traced.verdict.within)
+        assertEquals(listOf("trace"), traced.verdict.gated)
+        val o = JSONObject(traced.toJson())
+        val t = o.getJSONObject("trace")
+        assertEquals(12, t.getInt("frames"))
+        assertEquals(12.0, t.getJSONObject("mainThreadMs").getDouble("p95"), 1e-9)
+        assertEquals(0.5, t.getJSONObject("perFrame").getDouble("layout"), 1e-9)
+        assertEquals(24, t.getInt("layerChurn"))
+        assertTrue(o.isNull("traceMissing"))
+        assertEquals("within", o.getString("verdict"))
+        val lines = traced.table().lines()
+        assertTrue(lines[0], lines[0].endsWith("(provisional): within (gated on trace)"))
+        assertEquals("  trace: 12 main-thread frames in 1200 ms; main-thread ms/frame mean 6.0 max 14.0 p95 12.0; per frame: layouts 0.50 (6), paints 0.25 (3), style recalcs 1.00 (12), layer updates 2.0 (24); long tasks 0 (longest 14 ms), busy 90 ms, script 3 ms", lines[1])
+        assertTrue(lines[2].startsWith("  sampled 7 frames"))
+    }
+
+    @Test
+    fun `a scene that asked for a trace and got none says why - a breach, gated on the trace it lacks`() {
+        val untraced = scene(JankBudget.Gate.SOFT, traceMissing = "WebView tracing did not start")
+        assertFalse(untraced.verdict.within)
+        assertEquals(listOf("no trace was read: WebView tracing did not start"), untraced.verdict.breaches)
+        assertEquals(listOf("trace"), untraced.verdict.gated)
+        assertFalse(untraced.enforced)
+        val o = JSONObject(untraced.toJson())
+        assertTrue(o.isNull("trace"))
+        assertEquals("WebView tracing did not start", o.getString("traceMissing"))
+        assertEquals("over", o.getString("verdict"))
+        assertEquals("  trace: none read (WebView tracing did not start)", untraced.table().lines()[1])
     }
 
     @Test
@@ -246,6 +334,7 @@ class FrameStatsTest {
         assertTrue(o.isNull("dominant"))
         assertEquals("open", o.getString("kind"))
         assertEquals(0, o.getJSONObject("reasons").length())
+        assertEquals(0, o.getJSONArray("gated").length())
     }
 
     @Test
@@ -253,7 +342,8 @@ class FrameStatsTest {
         val table = scene(JankBudget.Gate.SOFT).table()
         val lines = table.lines()
         assertEquals(
-            "scene bar-hide-scroll-bottom (gesture, 2400 ms): 83 frames, 41 janky (49%), p50 16 p90 48 p95 61 p99 120 ms; budget janky <= 60%, p95 <= 80 ms (provisional): within",
+            "scene bar-hide-scroll-bottom (gesture, 2400 ms): 83 frames, 41 janky (49%), p50 16 p90 48 p95 61 p99 120 ms; " +
+                "budget vs baseline p95 <= 2x, janky <= +10 pt; trace layouts <= 2/frame, paints <= 2/frame, main-thread p95 <= 120 ms, long tasks <= 3 (provisional): reported only (no baseline, no trace)",
             lines[0]
         )
         assertEquals("  sampled 7 frames (3 skipped), 4 past their deadline; long stage most often: commands", lines[1])
