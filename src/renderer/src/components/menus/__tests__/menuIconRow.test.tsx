@@ -282,7 +282,7 @@ describe('the icon row', () => {
 })
 
 describe('the star', () => {
-  it('opens unfilled on a page that is not bookmarked and fills on the press, on the spring, as the sheet leaves; the core’s save follows once the sheet is gone', async () => {
+  it('opens unfilled on a page that is not bookmarked and fills on the press, on one spring to the end, as the sheet leaves; the core’s save follows once the sheet is gone', async () => {
     await show(appMenu({ bookmarked: false }))
     const star = button('Bookmark This Page')
     expect(star.dataset.filled).toBe('false')
@@ -294,16 +294,33 @@ describe('the star', () => {
     // The fill is under way before the sheet has landed: opacity climbs frame by frame, the
     // filled star growing with it, and nothing is picked yet.
     const seen: number[] = [fillOpacity()]
+    const scales: number[] = [fillScale()]
     let landed = false
     for (let n = 0; n < 40 && !landed; n++) {
       frame()
       seen.push(fillOpacity())
+      scales.push(fillScale())
       landed = picks().length > 0
     }
-    const climbing = seen.filter((o) => o > 0 && o < 1)
-    expect(climbing.length).toBeGreaterThan(1)
-    for (let i = 1; i < climbing.length; i++) expect(climbing[i]).toBeGreaterThan(climbing[i - 1])
-    expect(Math.max(...seen)).toBeGreaterThan(0.9)
+    // The fill comes to rest before the sheet lands (the same spring over 1 rests before the
+    // same spring over the sheet's height does), and stays there.
+    const rest = seen.indexOf(1)
+    expect(rest).toBeGreaterThan(0)
+    expect(seen.slice(rest).every((o) => o === 1)).toBe(true)
+    // One spring to the end, not a ramp and a cut: every frame climbs; no frame steps more than
+    // the spring's own largest 16 ms step (.12 – the px-scaled rest thresholds snapped .52 → 1 in
+    // one frame); the frame that lands closes less than a hundredth (the unit-scaled restDelta);
+    // and the motion takes the spring's time (22 frames at 16 ms), not five.
+    const path = seen.slice(0, rest + 1)
+    const steps = path.slice(1).map((o, i) => o - path[i])
+    expect(steps.every((step) => step > 0)).toBe(true)
+    expect(Math.max(...steps)).toBeLessThan(0.2)
+    expect(steps[steps.length - 1]).toBeLessThan(0.01)
+    expect(path.length).toBeGreaterThanOrEqual(15)
+    // The scale rides the same value: .6 at the start, 1 at rest, climbing with the opacity.
+    expect(scales[0]).toBeCloseTo(0.6)
+    expect(scales[rest]).toBeCloseTo(1)
+    for (let i = 1; i <= rest; i++) expect(scales[i]).toBeGreaterThanOrEqual(scales[i - 1])
     runAll()
     expect(fillOpacity()).toBe(1)
     expect(fillScale()).toBeCloseTo(1, 1)

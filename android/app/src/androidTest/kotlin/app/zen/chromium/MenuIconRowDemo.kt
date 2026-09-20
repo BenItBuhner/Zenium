@@ -280,11 +280,18 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         }
         val climbs = opacities.indices.count { it > 0 && opacities[it] > opacities[it - 1] + 0.001 }
         val peak = opacities.maxOrNull() ?: 0.0
-        // SPRING_SNAPPY reaches .9 in about 190 ms; the software GPU paints few frames in that time,
-        // so the claim is a climb over more than one frame to near the fill, not a frame count.
+        // The frame that lands the fill: on the unit-scaled spring it closes under .02 whatever the
+        // frame length (the motion clamps a stalled frame to 64 ms); the px-scaled rest thresholds
+        // snapped the last half of the fill in one frame (run 1 sampled .16 -> 1.00), which the
+        // climb-and-peak claim alone let through. A cut lands on exactly 1, so it is always sampled.
+        val landing = opacities.indexOfFirst { it >= 0.999 }
+        val landingStep = if (landing > 0) opacities[landing] - opacities[landing - 1] else 0.0
+        // SPRING_SNAPPY reaches .9 in about 200 ms and rests by 370; the software GPU paints few
+        // frames in that time, so the claim is a climb over more than one frame to the fill with no
+        // cut at the end, not a frame count.
         record(
-            "the fill climbed on its spring over several frames as the sheet left (${samples.length()} frames, $climbs climbing, peak ${"%.2f".format(peak)}; path ${opacities.joinToString(" ") { "%.2f".format(it) }})",
-            climbs >= 2 && peak > 0.8
+            "the fill climbed on its spring over several frames as the sheet left, with no cut into the fill (${samples.length()} frames, $climbs climbing, peak ${"%.2f".format(peak)}, landing step ${"%.3f".format(landingStep)}; path ${opacities.joinToString(" ") { "%.2f".format(it) }})",
+            climbs >= 2 && peak > 0.8 && landingStep < 0.1
         )
         record("the toast '$TOAST_SAVED' came", toasted)
         still("saved-toast")

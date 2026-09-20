@@ -6,7 +6,7 @@ import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
-import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ReloadStopGlyph } from '../phone/BarGlyphs'
@@ -223,10 +223,21 @@ function MenuGlyphView({ glyph }: { glyph: Exclude<MenuGlyph, 'star'> }): JSX.El
 }
 
 /**
+ * `SPRING_SNAPPY` for the fill's 0…1 value. The shared spring's rest thresholds are in px and
+ * px/s (`restDelta` .4, `restSpeed` 8), so on a unit value they would call the fill settled at
+ * 60 percent and snap it to the end – a five-frame ramp and a cut, not a spring; a hundredth of
+ * each lets the fill run to rest as a position does (22 frames at 60 Hz, .9 at 200 ms, at rest
+ * by 370 ms, no frame stepping more than .13). `BarPreview`'s presence spring takes the same
+ * numbers.
+ */
+const SPRING_FILL: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
+
+/**
  * The star with its fill: the outline, and over it a filled star whose opacity and scale one
- * `SPRING_SNAPPY` spring writes per frame (design language v2 §11: transform and opacity only,
- * one interruptible spring – a change of mind before it lands retargets the same motion; reduced
- * motion jumps to the end). It opens at rest where the bookmark is, with no motion of its own.
+ * `SPRING_SNAPPY` spring (`SPRING_FILL`, its rest at the unit's scale) writes per frame (design
+ * language v2 §11: transform and opacity only, one interruptible spring – a change of mind before
+ * it lands retargets the same motion; reduced motion jumps to the end). It opens at rest where
+ * the bookmark is, with no motion of its own.
  */
 function StarGlyph({ filled }: { filled: boolean }): JSX.Element {
   const fill = useRef<HTMLSpanElement>(null)
@@ -240,7 +251,7 @@ function StarGlyph({ filled }: { filled: boolean }): JSX.Element {
     }
     const to = filled ? 1 : 0
     if (!spring.current) {
-      spring.current = new SpringAnimation(SPRING_SNAPPY, paint, paint)
+      spring.current = new SpringAnimation(SPRING_FILL, paint, paint)
       paint(to)
       spring.current.start(to, 0, to)
     } else spring.current.retarget(to)
