@@ -15,9 +15,6 @@ name: Android media demo
 # file only picks the driver.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/services-android-media-24d1
 
 permissions:
   contents: read
