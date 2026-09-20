@@ -138,7 +138,12 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
       hosted
       onDismissed={closeCustomize}
       handleLabel="Resize sheet"
-      header={<h2 className="zen-sheet-title">New tab page</h2>}
+      labelledBy="zen-ntp-customize-title"
+      header={
+        <h2 id="zen-ntp-customize-title" className="zen-sheet-title">
+          New tab page
+        </h2>
+      }
     >
       <div className="zen-ntp-customize flex flex-col pb-4">
         <Section title="Layout">

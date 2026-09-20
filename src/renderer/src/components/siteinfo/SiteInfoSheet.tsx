@@ -499,6 +499,14 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
         onDismissed={() => siteInfoDismissed()}
         contentKey={contentKey}
         handleLabel="Dismiss"
+        // The dialog's name as TalkBack opens it (A11Y-01): what the sheet is and whose, then the
+        // level's title once the sheet has drilled into one (the root pane stays in the track, so
+        // the name is composed rather than pointed at a title element).
+        label={
+          level === 'main'
+            ? `Site information for ${sheetTitleOf(site, extension)}`
+            : LEVEL_TITLES[level]
+        }
         header={
           level !== 'main' ? (
             <>
@@ -509,9 +517,9 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 onClick={pop}
                 aria-label="Back to site information"
               >
-                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
               </button>
-              <span className="zen-sheet-title">{LEVEL_TITLES[level]}</span>
+              <h2 className="zen-sheet-title">{LEVEL_TITLES[level]}</h2>
             </>
           ) : undefined
         }
@@ -612,6 +620,11 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
  * The sheet opens on a title block (§9.23): the favicon on the host's start, the connection
  * under it. An extension's page names no host: the block says whose page it is.
  */
+/** The sheet's title: the site's host, an extension page's kind, or the browser's own name. */
+function sheetTitleOf(site: SiteDescription, extension: ExtensionPageChrome | null): string {
+  return extension ? 'Extension page' : site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+}
+
 function SheetTitle({
   tab,
   state,
@@ -625,7 +638,7 @@ function SheetTitle({
   security: Security
   extension: ExtensionPageChrome | null
 }): JSX.Element {
-  const title = extension ? 'Extension page' : site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+  const title = sheetTitleOf(site, extension)
   const container =
     tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
       ? state.containers.find((c) => c.id === tab.containerId)?.name
@@ -867,6 +880,7 @@ function ConfirmSheet({
       }}
       contentKey={`site-info-confirm:${kind}`}
       handleLabel="Dismiss"
+      label={words.title}
     >
       <div className="zen-sheet-title-block">
         <h2>

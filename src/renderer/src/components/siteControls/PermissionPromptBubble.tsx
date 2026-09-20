@@ -239,6 +239,7 @@ function PromptSheet({ prompt, closing, onClosed }: SurfaceProps): JSX.Element |
       name="permission-prompt"
       api={api}
       handleLabel="Resize permission prompt"
+      labelledBy={titleId}
       // A pull-down or scrim tap is the same "not now" as Escape; the core hears it once.
       onDismissed={() => {
         respond('dismiss')

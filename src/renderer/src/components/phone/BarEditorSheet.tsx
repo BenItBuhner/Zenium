@@ -481,9 +481,12 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
       onDismissed={() => closeBarEditor()}
       handleLabel="Resize editor"
       className="zen-bar-editor"
+      labelledBy="zen-bar-editor-title"
       header={
         <>
-          <h2 className="zen-sheet-title">Navigation Bar</h2>
+          <h2 id="zen-bar-editor-title" className="zen-sheet-title">
+            Navigation Bar
+          </h2>
           <button
             type="button"
             className="zen-sheet-header-control"
@@ -492,7 +495,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
             disabled={isDefaultPhoneBar(layout)}
             onClick={() => edit(defaultPhoneBar())}
           >
-            <RotateCcw className="h-5 w-5" strokeWidth={1.75} />
+            <RotateCcw className="h-5 w-5" strokeWidth={1.75} aria-hidden />
           </button>
         </>
       }

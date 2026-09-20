@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info, Star } from 'lucide-react'
 import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
@@ -70,6 +70,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
     [path, menu.items]
   )
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
 
   // The system back gesture drives the sheet's own dismissal: the finger pulls it down, commit
   // slides it away, cancel springs it back; the back button and Escape slide it away too. On
@@ -89,6 +90,7 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
       onDismissed={() => closeMenu()}
       contentKey={`${menu.id}:${path.map((item) => item.id).join('/')}`}
       handleLabel="Resize menu"
+      labelledBy={titleId}
       header={
         <>
           {path.length > 0 && (
@@ -99,10 +101,12 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
               onClick={() => setNav((n) => ({ path: n.path.slice(0, -1), direction: -1 }))}
               aria-label="Back"
             >
-              <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+              <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
             </button>
           )}
-          <span className="zen-sheet-title">{title}</span>
+          <h2 id={titleId} className="zen-sheet-title">
+            {title}
+          </h2>
         </>
       }
     >
@@ -135,6 +139,18 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                     type="button"
                     disabled={!item.enabled}
                     className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
+                    // A checked row draws a check; the tree carries the state (A11Y-01), as the
+                    // extensions sheet's rows do.
+                    role={
+                      item.type === 'checkbox'
+                        ? 'menuitemcheckbox'
+                        : item.type === 'radio'
+                          ? 'menuitemradio'
+                          : undefined
+                    }
+                    aria-checked={
+                      item.type === 'checkbox' || item.type === 'radio' ? item.checked : undefined
+                    }
                     onClick={() => {
                       if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
                       else sheet.current?.dismiss(() => pickMenuItem(item.id))
@@ -142,12 +158,13 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
                   >
                     <span className="min-w-0 flex-1 truncate">{item.label}</span>
                     {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
                     )}
                     {item.submenu && (
                       <ChevronRight
                         className="zen-sheet-item-secondary h-5 w-5 shrink-0"
                         strokeWidth={1.75}
+                        aria-hidden
                       />
                     )}
                   </button>

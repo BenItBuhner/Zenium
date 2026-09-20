@@ -187,35 +187,70 @@
   /* Remaining radii: checkbox 2, inner boxes and context menus 6 (§2). */
   --v2-radius-checkbox: 2px;
   --v2-radius-inner: 6px;
+  /*
+   * The system font size (A11Y-05, `lib/textScale.ts`): the host draws the chrome's text at
+   * `--zen-text-zoom` (Android: the chrome WebView's `textZoom`, 1.3 at Large, 1.8 at Android 14's
+   * 200 percent), a zoom of the text alone – the font tokens below stay in CSS px and the host
+   * zooms them; only the line boxes and the rows built on them read this factor, so text grows
+   * inside a growing line while controls, glyphs and box-to-box distances hold. The bold-text
+   * setting is a weight adjustment (300 when on) the weight tokens add to themselves. Both sit
+   * on the root's inline style; hosts that scale no text leave the defaults and the same pixels.
+   */
+  --zen-text-zoom: 1;
+  --zen-font-weight-adjustment: 0;
   /* Type scale (§4): hierarchy by size, weights 400 / 600, buttons 500. */
   --v2-font-title: 22px;
   --v2-font-heading: 17px;
   --v2-font-body: 15px;
   --v2-font-small: 13px;
-  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. */
+  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. These are for
+     `line-height` only: Blink multiplies a `line-height` length by the text zoom itself, as it
+     does `font-size`, so the line box grows with the text without the token carrying the factor
+     (a token that did was zoomed twice on the device: a 50 row measured 60 at 1.3). */
   --v2-line-title: 28px;
   --v2-line-heading: 22px;
   --v2-line-body: 20px;
   /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
   --v2-line-small: 20px;
-  --v2-weight-body: 400;
-  --v2-weight-button: 500;
-  --v2-weight-heading: 600;
-  /* Density (§5, §9.2–9.3): rows and controls; phones override below. */
-  --v2-row: 32px;
-  --v2-row-two-line: 52px;
+  /* The same line boxes as the box model sees them – for `min-height`, `margin`, `padding` and
+     the row tokens, which Blink does not zoom: what the line box measures at the text zoom. */
+  --v2-line-title-box: calc(var(--v2-line-title) * var(--zen-text-zoom));
+  --v2-line-heading-box: calc(var(--v2-line-heading) * var(--zen-text-zoom));
+  --v2-line-body-box: calc(var(--v2-line-body) * var(--zen-text-zoom));
+  --v2-line-small-box: calc(var(--v2-line-small) * var(--zen-text-zoom));
+  /* The bold-text setting adds its 300 to every weight, clamped at 900 (§4: 400 → 700, 500 → 800,
+     600 → 900, and a 700 holds at 900). */
+  --v2-weight-body: min(900, calc(400 + var(--zen-font-weight-adjustment)));
+  --v2-weight-button: min(900, calc(500 + var(--zen-font-weight-adjustment)));
+  --v2-weight-heading: min(900, calc(600 + var(--zen-font-weight-adjustment)));
+  /* Density (§5, §9.2–9.3): rows and controls; phones override below. A row is its body line
+     plus the row padding on both sides (§9.2: 20 + 12 = 32, two lines 20 + 20 + 12 = 52), so it
+     grows from its line box at a larger text size while the control heights hold. */
+  --v2-row: calc(var(--v2-line-body-box) + 12px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 12px);
   /* A row's vertical padding (§9.34): what is left of the row around its body line, halved – 6
      on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
-  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
+  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body-box)) / 2);
   --v2-control: 32px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
-  --v2-menu-row: 31px;
+  --v2-menu-row: calc(var(--v2-line-body-box) + 11px);
   --v2-icon-button: 28px;
   --v2-icon: 16px;
   --v2-icon-stroke: 1.5;
   --v2-card-padding: 16px;
   --v2-content-max: 664px;
+  /* A tab card's title row (§9.21, `OverviewCard`): the 13 px title's 20 line plus 24, 44 at the
+     default size, growing from its line box like the rows; two lines from scale 1.5 (§4 / §9.2:
+     the two-line title rule above `@layer components`). */
+  --zen-overview-card-header: calc(var(--v2-line-small-box) + 24px);
+  /* A group card's title row (§9.21, `GroupCard`): the 13 px name's 20 line plus 24, 44 at the
+     default size and one line at every size (a group's name never wraps); the card's collapse
+     heights read the same number as `groupHeaderHeight()`. */
+  --zen-overview-group-header: calc(var(--v2-line-small-box) + 24px);
+}
+:root[data-text-scale='larger'] {
+  --zen-overview-card-header: calc(2 * var(--v2-line-small-box) + 24px);
 }
 :root[data-theme='dark'] {
   --v2-page: #1c1b22;
@@ -247,13 +282,13 @@
 :root[data-pointer='coarse'] {
   --v2-radius-control: 6px;
 }
-/* Phones scale hit targets, not the vocabulary (§5, §9.3). */
+/* Phones scale hit targets, not the vocabulary (§5, §9.3); rows are the line box plus 24. */
 :root[data-form-factor='phone'] {
-  --v2-row: 44px;
-  --v2-row-two-line: 64px;
+  --v2-row: calc(var(--v2-line-body-box) + 24px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 24px);
   --v2-control: 40px;
   --v2-checkbox: 20px;
-  --v2-menu-row: 44px;
+  --v2-menu-row: calc(var(--v2-line-body-box) + 24px);
   --v2-icon-button: 44px;
   --v2-icon: 20px;
   --v2-icon-stroke: 1.75;
@@ -400,19 +435,24 @@
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
 /*
- * On the window (the first run and the tab overview's backdrop, `data-surface="window"`) the
- * secondary reads the window family through the control roles (§9.29): a fill of the window's
- * ink, not the page's – beside the rule and unlayered like it, since a layered override would
- * lose to it. The primary keeps the rule's `--v2-accent`, the clamped mix, for its contrast on a
- * gradient of the accent's own hue.
+ * On the window (the first run, the tab overview's backdrop and the content frame's strips,
+ * `data-surface="window"`) the secondary reads the window family through the control roles
+ * (§9.29): a fill of the window's ink, not the page's – beside the rule and unlayered like it,
+ * since a layered override would lose to it. The primary keeps the rule's `--v2-accent`, the
+ * clamped mix, for its contrast on a gradient of the accent's own hue. The strip is a mouse
+ * surface, so its secondary's hover is the window's hover fill (the shared hover rule reads the
+ * page's).
  */
 .zen-firstrun .zen-v2-button:not([data-primary]),
-.zen-overview .zen-v2-button:not([data-primary]) {
+.zen-overview .zen-v2-button:not([data-primary]),
+.zen-frame-strip .zen-v2-button:not([data-primary]) {
   background: var(--v2-control-fill);
   color: var(--v2-control-text);
 }
 .zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled),
-.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled) {
+.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled),
+.zen-frame-strip .zen-v2-button:not([data-primary]):hover:not(:disabled),
+.zen-frame-strip .zen-v2-button:not([data-primary]):active:not(:disabled) {
   background: var(--v2-control-fill-hover);
 }
 /*
@@ -438,14 +478,14 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  height: 20px;
+  height: var(--v2-line-small-box);
   padding: 0 8px;
   border-radius: 999px;
   background: var(--v2-control-fill, var(--v2-fill));
   color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-heading);
-  line-height: 20px;
+  line-height: var(--v2-line-small);
   white-space: nowrap;
 }
 
@@ -712,6 +752,8 @@
   body {
     font-family: var(--font-sans);
     font-size: 13px;
+    /* 400 at rest; the bold-text setting's adjustment reaches every inherited weight from here (A11Y-05). */
+    font-weight: var(--v2-weight-body);
     color: var(--zen-fg);
     background: var(--zen-bg-solid);
     -webkit-font-smoothing: antialiased;
@@ -776,6 +818,74 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
+}
+
+/*
+ * The bold-text setting (A11Y-05, `lib/textScale.ts`): the weight tokens add the adjustment to
+ * themselves, and the weights the chrome sets by utility class move up with them. Unlayered so
+ * it wins over the utilities; `data-bold-text` is only ever set while the setting is on, so at
+ * rest nothing here applies.
+ */
+:root[data-bold-text='true'] .font-normal {
+  font-weight: var(--v2-weight-body);
+}
+:root[data-bold-text='true'] .font-medium {
+  font-weight: var(--v2-weight-button);
+}
+:root[data-bold-text='true'] .font-semibold {
+  font-weight: var(--v2-weight-heading);
+}
+:root[data-bold-text='true'] .font-bold {
+  font-weight: min(900, calc(700 + var(--zen-font-weight-adjustment)));
+}
+
+/*
+ * The system font size above the default (A11Y-05; v2 §4 / §9.2, the ruling on #237): a row's
+ * label is written to fit one line at scale 1, and above it (`data-text-scale`, `lib/textScale.ts`)
+ * it may wrap to a second line before its ellipsis, the row growing from its line box – a setting
+ * turned on to read must not cut the words it enlarged. Descriptions keep their two lines; the
+ * omnibox's suggestion rows stay one line at every scale, as Chrome's do. The rows a sheet or the
+ * quick menu draws at a fixed height take that height as a floor here, so the second line has
+ * room. Unlayered so it wins over `truncate`; `data-text-scale` is only ever set above scale 1,
+ * so at rest nothing here applies.
+ */
+:root[data-text-scale]
+  :is(.zen-v2-row, .zen-sheet-item, .zen-quick-menu-item, .zen-bar-row)
+  > .truncate,
+:root[data-text-scale] .zen-list-title,
+:root[data-text-scale] .zen-settings-label,
+:root[data-text-scale] .zen-settings-category-label {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+:root[data-text-scale] .zen-sheet-item {
+  height: auto;
+  min-height: var(--v2-row);
+  padding-block: var(--v2-row-pad);
+}
+:root[data-text-scale] .zen-quick-menu-item {
+  height: auto;
+  min-height: var(--v2-menu-row);
+  padding-block: calc((var(--v2-menu-row) - var(--v2-line-body-box)) / 2);
+}
+/*
+ * A tab card's title (§9.21, the same ruling): one line to 1.3, where about nine characters still
+ * read; two lines from 1.5 (`data-text-scale='larger'`), the card's title row growing by a line
+ * (`--zen-overview-card-header`, below) and the picture giving the room.
+ */
+:root[data-text-scale='larger'] .zen-overview-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  line-height: var(--v2-line-small);
+  /* A one-word title (a host, "Settings") breaks across the two lines rather than ending in an
+     ellipsis after four characters: what the two lines are for. */
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 @layer components {
@@ -1471,7 +1581,7 @@
    * on desktop), so a toast with nothing but its text is exactly a row tall.
    */
   .zen-message {
-    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body)) / 2 - 4px);
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body-box)) / 2 - 4px);
     position: relative;
     display: flex;
     align-items: center;
@@ -1513,7 +1623,7 @@
   }
   /* The desktop sidebar's toast: the small type, a 28 button, in the sidebar's own column. */
   .zen-message-compact {
-    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small)) / 2 - 4px);
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small-box)) / 2 - 4px);
     padding: 3px 4px 3px 10px;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
@@ -1643,7 +1753,7 @@
   }
   .zen-banner-title .zen-message-glyph {
     align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   /* A description wraps to at most two lines, then ellipsis (§9.2). */
   .zen-banner-detail {
@@ -1955,7 +2065,7 @@
     line-height: 1.25;
   }
   .zen-app-icon[aria-checked='true'] .zen-app-icon-name {
-    font-weight: 500;
+    font-weight: var(--v2-weight-button);
   }
 
   /*
@@ -2064,6 +2174,10 @@
   .zen-overview-card:active {
     transform: scale(0.975);
   }
+  /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
+  .zen-overview-card-header {
+    height: var(--zen-overview-card-header);
+  }
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
@@ -2151,6 +2265,11 @@
   .zen-group[data-clip] {
     overflow: hidden;
   }
+  /* Collapsed at rest, the card is its header (the spring writes the height inline on the way
+     there and clears it once it has landed), so a text-size change while it stands reaches it. */
+  .zen-group[data-collapsed] {
+    height: var(--zen-overview-group-header);
+  }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
   }
@@ -2161,7 +2280,9 @@
   .zen-group[data-chrome='off'] > .zen-group-header {
     opacity: 0;
   }
+  /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
   .zen-group-header {
+    height: var(--zen-overview-group-header);
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
     transition:
@@ -2170,6 +2291,12 @@
   }
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
+  }
+  /* A group's own icon is a glyph (§4: glyphs hold while text scales): the WebView's text zoom
+     multiplies every font size, so the badge divides its 14 by the zoom first and lands on 14
+     at every system font size, inside its 16 box (run 2's overflow probe: +15 px at 1.8). */
+  .zen-group-badge {
+    font-size: calc(14px / var(--zen-text-zoom));
   }
   .zen-group-dot {
     background: rgb(var(--zen-group-rgb));
@@ -2274,22 +2401,22 @@
    * goes out on (`GroupStrip.tsx`, which pauses the face's transition while a spring writes it
    * and promotes the face – `will-change` – for those frames only: at rest it is `auto`).
    *
-   * The cell is also the touch target: the tray's whole 44 height and the slot's whole 40 pitch
-   * (§9.2's 44), so the chips tile the tray with no dead space between two faces – a touch
-   * between them lands on the nearer chip – and no target is the 36 face alone. Its negative
-   * margins lay the 40 x 44 box over the 4 of padding the tray and the scroller keep around a 36
-   * margin box, so the pitch and the faces' geometry are unchanged. The one v2 ring (§9.6: 2px
-   * accent, offset 0 light, -2 dark) draws on the round face, not on the rectangular cell, which
-   * is why the cell does not carry a `zen-v2-` class: that unlayered ring rule would outrank
-   * anything written here.
+   * The cell is also the touch target, §9.3's 44 x 44 box (A11Y-01): the tray's whole 44 height
+   * and 44 across the slot's 40 pitch, so the chips tile the tray with no dead space between two
+   * faces – a touch between them lands on the nearer chip, the later cell taking the 4 the boxes
+   * overlap by – and no target is the 36 face alone. Its negative margins lay the 44 x 44 box
+   * over the 4 of padding the tray and the scroller keep around a 36 margin box, so the pitch
+   * and the faces' geometry are unchanged. The one v2 ring (§9.6: 2px accent, offset 0 light, -2 dark)
+   * draws on the round face, not on the rectangular cell, which is why the cell does not carry a
+   * `zen-v2-` class: that unlayered ring rule would outrank anything written here.
    */
   .zen-group-chip {
     position: relative;
     display: flex;
     flex: 0 0 auto;
-    width: 40px;
+    width: 44px;
     height: 44px;
-    margin: -4px -2px;
+    margin: -4px;
     align-items: center;
     justify-content: center;
     color: inherit;
@@ -2449,7 +2576,7 @@
     white-space: nowrap;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-sheet-header-control {
     position: absolute;
@@ -2641,7 +2768,7 @@
     margin: 0;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-sheet-title-block p {
     margin: 0;
@@ -3363,7 +3490,7 @@
     padding: 16px 16px 0;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
     text-align: center;
   }
   /*
@@ -3416,13 +3543,13 @@
     font-size: 17px;
     font-weight: 600;
     letter-spacing: -0.012em;
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-bm-title-desc {
     margin-top: 4px;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
   }
   /* The body of a form popover or dialog: the title block's 16 above it, 16 to the sides and below. */
   .zen-bm-form {
@@ -3577,7 +3704,7 @@
     gap: 4px;
     color: var(--v2-text);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-small);
     font-weight: 400;
   }
   .zen-bm-dim {
@@ -3627,7 +3754,7 @@
     flex-shrink: 0;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-bm-row-title {
     overflow: hidden;
@@ -3726,7 +3853,7 @@
     border-radius: 4px;
     color: var(--v2-text-deemphasized);
     font-size: 15px;
-    line-height: 20px;
+    line-height: var(--v2-line-body);
     text-overflow: ellipsis;
     white-space: nowrap;
     transition:
@@ -4050,7 +4177,7 @@
     justify-content: center;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-dl-row-text {
@@ -4439,7 +4566,7 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-firstrun-row-glyph > svg {
     width: 100%;
@@ -4464,7 +4591,7 @@
     min-height: var(--v2-row);
     align-items: center;
     gap: 12px;
-    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 16px;
+    padding: calc((var(--v2-row) - var(--v2-line-body-box)) / 2) 16px;
     color: inherit;
     text-align: left;
     font-size: var(--v2-font-body);
@@ -4480,7 +4607,7 @@
     height: var(--v2-checkbox);
     flex-shrink: 0;
     align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
     border-radius: 9999px;
     transition:
@@ -4579,7 +4706,7 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-downloads-text {
@@ -5044,7 +5171,7 @@
   }
   .zen-scpick-state {
     display: flex;
-    min-height: var(--v2-line-body);
+    min-height: var(--v2-line-body-box);
     align-items: center;
     margin-top: 16px;
     color: var(--v2-text-deemphasized);
@@ -5576,7 +5703,7 @@
     color: var(--v2-text);
     text-align: center;
     font-size: var(--v2-font-small);
-    font-weight: 600;
+    font-weight: var(--v2-weight-heading);
     line-height: var(--v2-line-small);
   }
   :root[data-form-factor='phone'] .zen-ntp-preset[data-disabled] {
@@ -5807,6 +5934,44 @@
   height: 32px;
   border-radius: 9px;
 }
+/*
+ * The phone's icon button is v2 §9.3's one box – 44 × 44, hit area and fill alike, radius 8 – for
+ * every `.zen-toolbar-button` the phone draws (the bar's controls, the overview header's, a tab
+ * card's close), over the 32 above; the glyph inside keeps its 20 (A11Y-01). The surfaces that
+ * already set 44 with a shape of their own (the find bar's 12, the omnibox field's round end cap)
+ * are more specific and keep it.
+ */
+:root[data-form-factor='phone'] .zen-toolbar-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+}
+/*
+ * The bar's buttons sit on the 36 pitch their 32 boxes had (v2 §9.3 as amended by the lead's L1
+ * ruling on #237): the 44 box is laid over a 32 margin box, so neighbours overlap by 8 the way
+ * the pill's chips overlap on their 28, and the band keeps its room for the pill – 252 wide with
+ * the host's 198 px on the 412 phone at scale 1, where 44 boxes in flow would have taken 48 of
+ * it. The pressed fill still draws the whole 44 and the tree reports the 44 bounds; the glyphs
+ * stay where they were. The editor's preview draws the same buttons and measures this margin
+ * box, so it lays out on the same pitch (`BarPreview`).
+ */
+:root[data-form-factor='phone'] [data-bar-item] {
+  margin-inline: -6px;
+}
+/*
+ * A tab card's close lies over the card's corner from outside its clip (a sibling of the card's
+ * button, A11Y-01), so its outer corner is the card's and its pressed fill never shows past it.
+ */
+:root[data-form-factor='phone'] .zen-overview-card-close {
+  border-top-right-radius: var(--zen-card-radius);
+  /* Centred on the title row: at the default size the row is the button's 44 and this is 0; at a
+     larger text size the row grows and the 44 box holds (A11Y-05). */
+  top: calc((var(--zen-overview-card-header) - 44px) / 2);
+}
+/* Off the card's corner once the row has grown, the box takes its own §9.3 corner. */
+:root[data-form-factor='phone'][data-text-scale] .zen-overview-card-close {
+  border-top-right-radius: 8px;
+}
 :root[data-pointer='coarse'] .zen-tab {
   height: 42px;
   border-radius: 11px;
@@ -5849,9 +6014,6 @@
 :root[data-pointer='coarse'] .zen-kbd,
 :root[data-pointer='coarse'] .zen-kbd-hint {
   display: none;
-}
-:root[data-pointer='coarse'] .zen-suggestion {
-  height: 44px;
 }
 :root[data-pointer='coarse'] button:focus-visible,
 :root[data-pointer='coarse'] [role='button']:focus-visible {
@@ -6069,7 +6231,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   stroke-width: var(--v2-icon-stroke);
 }
 .zen-omnibox-page-title {
@@ -6121,6 +6283,12 @@
 }
 .zen-v2-icon-button.zen-omnibox-refine:active:not(:disabled) {
   background: var(--v2-control-fill);
+}
+/* The sheet's suggestion rows: 44 at the default text size (the phone row, §5), and taller from
+   the line box as the system font size grows (A11Y-05) – the body line plus 24, like `--v2-row`
+   on a phone, on any coarse pointer. */
+:root[data-pointer='coarse'] .zen-suggestion {
+  min-height: calc(var(--v2-line-body-box) + 24px);
 }
 
 /* ---------------------------------------------------------------------------
@@ -6515,7 +6683,7 @@
   height: var(--v2-checkbox);
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
   border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
   border-radius: 50%;
   background: var(--v2-page);
@@ -6549,7 +6717,7 @@
   flex-shrink: 0;
   width: var(--v2-checkbox);
   height: var(--v2-checkbox);
-  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  margin: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2) 0 0;
   border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
   border-radius: var(--v2-radius-checkbox);
   background: var(--v2-page);
@@ -7041,7 +7209,7 @@
   align-items: center;
   justify-content: center;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
 }
 .zen-settings-leading > svg,
 .zen-settings-glyph {
@@ -7106,7 +7274,7 @@
  */
 .zen-settings-row[data-lines='3'] > .zen-settings-trailing {
   align-self: flex-start;
-  min-height: var(--v2-line-body);
+  min-height: var(--v2-line-body-box);
   margin-top: var(--zen-settings-label-top, 0px);
 }
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
@@ -8234,7 +8402,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin: calc((var(--v2-line-heading) - var(--v2-icon)) / 2) -4px 0 0;
+  margin: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2) -4px 0 0;
   stroke-width: var(--v2-icon-stroke);
 }
 /*
@@ -8330,12 +8498,12 @@
   margin-block: calc(var(--v2-row-pad) - 4px);
 }
 .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-checkbox {
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
 }
 /* Three text lines (the description wrapped): the controls centre on the label's line instead. */
 .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
   align-self: flex-start;
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
 }
 /*
  * A form field in a card (§9.12, §9.21): its label above it, 15/400 on the 20 px line, 4 px to
@@ -8408,7 +8576,7 @@
   width: var(--v2-icon);
   height: var(--v2-icon);
   flex-shrink: 0;
-  margin-top: calc((var(--v2-line-small) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-small-box) - var(--v2-icon)) / 2);
   stroke-width: var(--v2-icon-stroke);
 }
 /*
@@ -8496,7 +8664,7 @@
   margin-block: calc(var(--v2-row-pad) - 4px);
 }
 .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions:has(> .zen-protection-menulist) {
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-control)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-control)) / 2);
 }
 .zen-protection-menulist {
   min-width: 220px;
@@ -8542,7 +8710,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin: calc((var(--v2-line-heading) - var(--v2-icon)) / 2) -4px 0 0;
+  margin: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2) -4px 0 0;
   stroke-width: var(--v2-icon-stroke);
 }
 .zen-protection-card-title-text {
@@ -8611,7 +8779,7 @@
 }
 .zen-protection-action-row[data-wrapped] > svg {
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
 }
 /* The pane's two buttons outside the `zen-v2-` prefix take the shared ring (§1, §9.6) as it is. */
 .zen-protection-radio:focus-visible,
@@ -8627,10 +8795,11 @@
 }
 
 /*
- * Settings → Default Browser and the "Make Zenium your default browser" strip, on design
- * language v2 (docs/design-language-v2-draft.md §1–§3, §9): a flat card with a 1 px border, the
- * shared v2 button above, and rows that grow around their control (§9.21). v1 motion only. They
- * read the token block and nothing else.
+ * Settings → Default Browser and the "Make Zenium your default browser" strip, with the desktop's
+ * default-browser prompt, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): a
+ * flat card with a 1 px border, the shared v2 button above, rows that grow around their control
+ * (§9.21), the strip as a window surface (§9.29). v1 motion only. They read the token block and
+ * nothing else.
  */
 @layer components {
   /* The frame's strips ("Make Zenium your default browser", "Restore pages?") stay in layout but
@@ -8649,7 +8818,7 @@
     margin: 0 0 16px;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   /*
    * A row: the base height (§9.2, one line 32 / two lines 52, padding 6) or, holding a control,
@@ -8694,7 +8863,7 @@
     flex-shrink: 0;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-default-browser-description {
     font-size: var(--v2-font-small);
@@ -8706,6 +8875,53 @@
   }
   .zen-default-browser-ok {
     color: var(--v2-ok);
+  }
+  /*
+   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx): a window
+   * surface (§9.29, `data-surface="window"` on it) – the theme's ink on `--v2-window-fill` – with
+   * §9.7's hairline at its bottom edge, the one line it draws. It grows around its 32 px buttons
+   * to 40 (§9.21: the 4 above and below are its own padding), 16 px gutters, the sentence at 15
+   * on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   */
+  .zen-frame-strip {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    min-height: calc(var(--v2-control) + 8px);
+    padding: 4px var(--v2-card-padding);
+    color: var(--v2-control-text);
+    background: var(--v2-window-fill);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  /* The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7). */
+  .zen-frame-strip::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+  }
+  .zen-frame-strip-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /*
+   * The desktop prompt's app icon (defaultbrowser/DefaultBrowserPrompt.tsx): 48, at the top of
+   * the title block – 16 in from the dialog's edges, 16 to the title under it, the block's own
+   * rhythm (§9.23). Content drawn inside chrome: it keeps the icon's own colours (§9.29).
+   */
+  .zen-default-browser-prompt-icon {
+    display: block;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    margin: var(--v2-card-padding) var(--v2-card-padding) 0;
   }
 }
 
@@ -8763,14 +8979,14 @@
     display: inline-flex;
     align-items: center;
     flex-shrink: 0;
-    height: 20px;
+    height: var(--v2-line-small-box);
     padding: 0 8px;
     border-radius: 999px;
     background: var(--v2-fill);
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-small);
     font-weight: var(--v2-weight-heading);
-    line-height: 20px;
+    line-height: var(--v2-line-small);
     white-space: nowrap;
   }
   .zen-omnibox-results {
@@ -8941,6 +9157,41 @@
  * v2 rule's -2) would sit on its own fill, under the panel-colour border, and show nothing (a11y-10).
  */
 .zen-zoom-slider [role='slider']:focus-visible {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+/*
+ * Phone: the 28 target is the thumb's own box (A11Y-01). TalkBack frames, and explore-by-touch
+ * hits, the node's bounds, which the `::before` reach above does not grow – so the box is 28 and
+ * the `::before` is the 20 disc drawn inside it, with the ring on the disc. Radix keeps the box
+ * inside the row, so the track gives up the 4 on each side the box gained and the disc still
+ * meets the track's ends. The desktop bubble and the mouse keep the 20 box above.
+ */
+:root[data-form-factor='phone'] .zen-zoom-slider > span:first-child {
+  margin: 0 4px;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider'] {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']::before {
+  inset: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--v2-panel);
+  background: var(--v2-accent);
+}
+:root[data-form-factor='phone']
+  .zen-settings-zoom-stepper
+  .zen-zoom-slider
+  [role='slider']::before {
+  border-color: var(--v2-page);
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible {
+  outline: none;
+}
+:root[data-form-factor='phone'] .zen-zoom-slider [role='slider']:focus-visible::before {
   outline: 2px solid var(--v2-ring);
   outline-offset: 0;
 }

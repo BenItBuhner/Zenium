@@ -1,0 +1,219 @@
+{
+  "version": 3,
+  "activeSpaceId": "space_browse",
+  "spaces": [
+    {
+      "id": "space_browse",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_alpha",
+        "tab_beta",
+        "tab_gamma",
+        "tab_example",
+        "tab_cern",
+        "tab_delta"
+      ],
+      "activeTabId": "tab_example"
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder_research",
+      "spaceId": "space_browse",
+      "name": "Research",
+      "icon": "📚",
+      "collapsed": false,
+      "color": "blue"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab_alpha",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "http://127.0.0.1:18160/alpha.html",
+      "title": "Alpha",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_beta",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "http://127.0.0.1:18160/beta.html",
+      "title": "Beta",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_gamma",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": "folder_research",
+      "url": "http://127.0.0.1:18160/gamma.html",
+      "title": "Gamma",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_example",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_cern",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://info.cern.ch/",
+      "title": "http://info.cern.ch",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_delta",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18160/delta.html",
+      "title": "Delta",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "privacy": {
+      "httpsOnly": "off"
+    },
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarkTree": {
+    "schemaVersion": 1,
+    "nodes": [
+      {
+        "id": "1",
+        "parentId": null,
+        "index": 0,
+        "type": "folder",
+        "title": "Bookmarks bar",
+        "dateAdded": 0
+      },
+      {
+        "id": "2",
+        "parentId": null,
+        "index": 1,
+        "type": "folder",
+        "title": "Other bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "3",
+        "parentId": null,
+        "index": 2,
+        "type": "folder",
+        "title": "Mobile bookmarks",
+        "dateAdded": 0
+      },
+      {
+        "id": "b_coffee",
+        "parentId": "3",
+        "index": 0,
+        "type": "url",
+        "title": "Coffee - Wikipedia",
+        "dateAdded": 1788625600000,
+        "url": "https://en.wikipedia.org/wiki/Coffee",
+        "favicon": null
+      },
+      {
+        "id": "b_rfc",
+        "parentId": "3",
+        "index": 1,
+        "type": "url",
+        "title": "RFC 2324: HTCPCP/1.0",
+        "dateAdded": 1788532000000,
+        "url": "https://www.rfc-editor.org/rfc/rfc2324.html",
+        "favicon": null
+      },
+      {
+        "id": "b_hn",
+        "parentId": "3",
+        "index": 2,
+        "type": "url",
+        "title": "Hacker News",
+        "dateAdded": 1788438400000,
+        "url": "https://news.ycombinator.com/",
+        "favicon": null
+      },
+      {
+        "id": "b_www",
+        "parentId": "3",
+        "index": 3,
+        "type": "url",
+        "title": "World Wide Web",
+        "dateAdded": 1788344800000,
+        "url": "https://info.cern.ch/hypertext/WWW/TheProject.html",
+        "favicon": null
+      }
+    ]
+  },
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_browse",
+      "selection": {
+        "space_browse": "tab_example"
+      },
+      "compact": false
+    }
+  ]
+}
