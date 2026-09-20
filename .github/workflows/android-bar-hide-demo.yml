@@ -10,6 +10,10 @@ name: Android bar hide on scroll demo
 # demo. The build, the emulator and its caches live in android-emulator-demo.yml; this file only
 # picks the driver and the colour scheme.
 on:
+  # TEMPORARY (harness PR): one dispatch per push of the branch; removed in the next commit.
+  push:
+    branches:
+      - cursor/android-harness-close-urlbar-63ba
   workflow_dispatch:
     inputs:
       theme:
@@ -33,12 +37,33 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
-      # The shared driver chooses the demo from its environment (see the script's header).
+      # The shared driver chooses the demo from its environment (see the script's header). The
+      # bare-WebView probe ahead of the demo (WebViewLoadDataFoldProbe: does the image's WebView
+      # fold adjacent loadDataWithBaseURL documents into one history entry?) is for the harness
+      # PR's run only and comes out with the push trigger above.
       script-env: |
-        DEMO_CLASS=app.zen.chromium.BarHideDemo
+        DEMO_CLASS=app.zen.chromium.WebViewLoadDataFoldProbe,app.zen.chromium.BarHideDemo
         DEMO_DIR=bar-hide-demo
         DEMO_OUT=artifacts/android-bar-hide-demo
         DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
       artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-bar-hide-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Bar hide on scroll demo (${{ inputs.theme || 'light' }}), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.WebViewLoadDataFoldProbe,app.zen.chromium.BarHideDemo
+        DEMO_DIR=bar-hide-demo
+        DEMO_OUT=artifacts/android-bar-hide-demo
+        DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+      artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}-second-boot
       artifact-path: artifacts/android-bar-hide-demo/
