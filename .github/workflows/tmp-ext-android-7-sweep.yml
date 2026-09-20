@@ -12,6 +12,9 @@ name: TEMPORARY - compat round 4 sweep trigger
 # (bgnkhhnnamicmpeenaelnjfhikgbkllg), out of Java heap while Kotlin quoted a 21 MB ruleset file
 # into one bridge answer; the second (35508604947) measured the thirty rows behind it without
 # it. After runs carry all thirty-one rows: the rulesets are read through the asset loader now.
+# The first after run (35512741951) measured the runtime fixes up to fde398d4; the second
+# measures the final head (the worker's platform operations, the scoped injection, the driver's
+# account-gate, NordPass, GoFullPage, Authenticator and Zotero readings).
 on:
   push:
     branches:
