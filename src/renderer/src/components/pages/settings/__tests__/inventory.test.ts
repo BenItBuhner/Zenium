@@ -721,4 +721,19 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       expect(dupes, `${id} repeats row ids`).toEqual([])
     }
   })
+
+  // The desktop vocabulary (§10.5): a command row trails a button, so the phone's whole-row tap
+  // targets the other programs added never reach the desktop as bare text. A row that leaves the
+  // page (chevron, external) or leads with a status glyph (the safety check's results) is the
+  // pressable row on both.
+  it('gives every plain action row a desktop button label', () => {
+    const bare: string[] = []
+    for (const [id, model] of models) {
+      for (const row of allRows(model.groups)) {
+        if (row.kind !== 'action' || row.leaves || row.leading || row.button) continue
+        bare.push(`${id} › ${row.label}`)
+      }
+    }
+    expect(bare).toEqual([])
+  })
 })

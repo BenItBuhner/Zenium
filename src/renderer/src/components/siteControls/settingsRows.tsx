@@ -149,6 +149,7 @@ export function safetyCheckGroups({ state, navigate }: SectionContext): RowGroup
           id: 'safety-check-now',
           label: 'Check now',
           keywords: ['safety check', 'run'],
+          button: 'Check now',
           onPress: check
         }
       ]
@@ -201,6 +202,7 @@ function permissionsReview(
               description: flag
                 ? `${names} · ${flag.reason === 'unused' ? 'Not used for weeks' : 'Several at once'}`
                 : names,
+              button: 'Reset…',
               confirm: {
                 title: `Reset ${host}?`,
                 description: 'The site asks again the next time it needs a permission.',
@@ -254,6 +256,7 @@ function notificationsReview(
                 site.shown > 0
                   ? `${count(site.shown, 'notification')} since Zenium started`
                   : 'None since Zenium started',
+              button: 'Stop…',
               confirm: {
                 title: `Stop notifications from ${host}?`,
                 description: 'The site is blocked from sending notifications.',
@@ -303,6 +306,7 @@ export function clearDataGroups({ state }: SectionContext): RowGroup[] {
               ? `History, cookies, cache and more, across ${containers} containers and the private session`
               : 'History, cookies, cache and more, including the private session',
           keywords: ['history', 'cookies', 'cache', 'site data', 'delete', 'passwords'],
+          button: 'Clear…',
           form: {
             title: 'Clear browsing data',
             description:
@@ -379,6 +383,7 @@ export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
                 label: 'Reset site settings',
                 description:
                   'The site follows the defaults again and asks when it needs something.',
+                button: 'Reset…',
                 confirm: {
                   title: `Reset ${host}?`,
                   description: 'Every answer the site keeps is forgotten.',
@@ -399,6 +404,7 @@ export function siteSettingsGroups({ state }: SectionContext): RowGroup[] {
       label: 'Reset all sites',
       description: 'Every site follows the defaults again.',
       destructive: true,
+      button: 'Reset all…',
       confirm: {
         title: 'Reset the settings of every site?',
         description: 'Every site asks again the next time it needs a permission.',
@@ -484,6 +490,7 @@ function ruleRow(typeId: string, rule: PermissionRule): ActionRow {
     id: `${typeId}:${rule.origin}:${rule.permission}`,
     label: host,
     description: qualified ? describeRule(rule) : rule.decision === 'allow' ? 'Allowed' : 'Blocked',
+    button: 'Forget…',
     confirm: {
       title: `Forget the answer for ${host}?`,
       description: 'The site asks again the next time it needs it.',

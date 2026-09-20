@@ -2119,6 +2119,7 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           id: 'add-search-engine',
           label: 'Add search engine',
           keywords: ['custom', 'opensearch', '%s'],
+          button: 'Add…',
           form: {
             title: 'Add search engine',
             description: 'Put %s in the URL where the search terms go.',
@@ -2238,6 +2239,7 @@ function vaultGateGroup(status: PasswordsStatus, gate: VaultGate): RowGroup {
               keywords,
               busy: gate.busy,
               disabled: status.error !== null,
+              button: 'Unlock',
               onPress: () => gate.unlock()
             }
           ]
@@ -2514,6 +2516,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
             id: `languages-${id}-add`,
             label: 'Add a language',
             keywords: [title],
+            button: 'Add…',
             form: {
               title,
               render: (close) => (
@@ -2538,6 +2541,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
           label: 'Remove model',
           description: 'It is downloaded again the next time these languages are translated.',
           destructive: true,
+          button: 'Remove…',
           confirm: {
             title: `Remove the ${pair} model?`,
             description: `${formatBytes(m.bytes)} is freed; the model is downloaded again the next time a page in these languages is translated.`,
@@ -2596,6 +2600,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
                   id: `languages-read:${code}:first`,
                   label: 'Translate pages into this language',
                   description: 'Puts it first among the languages you read.',
+                  button: 'Make first',
                   onPress: () => set({ preferred: [code, ...preferred.filter((c) => c !== code)] })
                 } satisfies SettingsRow
               ]
@@ -2607,6 +2612,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
                   id: `languages-read:${code}:remove`,
                   label: 'Remove',
                   description: 'Pages in this language are offered for translation again.',
+                  button: 'Remove',
                   onPress: () => set({ preferred: preferred.filter((c) => c !== code) })
                 } satisfies SettingsRow
               ]
@@ -2628,6 +2634,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
           id: `languages-always:${code}:ask`,
           label: 'Remove',
           description: 'Zenium asks before translating pages in this language again.',
+          button: 'Remove',
           onPress: () => rule(code, 'ask')
         }
       ]),
@@ -2646,6 +2653,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
           id: `languages-never:${code}:ask`,
           label: 'Remove',
           description: 'Zenium offers to translate pages in this language again.',
+          button: 'Remove',
           onPress: () => rule(code, 'ask')
         }
       ]),
@@ -2664,6 +2672,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
             id: `languages-site:${site}:forget`,
             label: 'Remove',
             description: 'Zenium offers to translate this site again.',
+            button: 'Remove',
             onPress: () =>
               set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
           }
@@ -2688,6 +2697,7 @@ function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
           label: 'Download a model',
           description: 'Fetch a language pair ahead of time, for pages read offline.',
           keywords: ['offline', 'language pair'],
+          button: 'Download…',
           form: {
             title: 'Download a model',
             render: (close) => (
@@ -2799,6 +2809,7 @@ function spellcheckGroups(state: UIState, dictionary: DictionaryWords): RowGroup
             id: `spellcheck-language:${language.code}:remove`,
             label: 'Remove',
             description: 'Text fields are no longer checked in this language.',
+            button: 'Remove',
             onPress: () => run('spellcheck.setLanguage', { code: language.code, on: false })
           }
         ],
@@ -2833,6 +2844,7 @@ function spellcheckGroups(state: UIState, dictionary: DictionaryWords): RowGroup
           label: 'Add a language',
           keywords,
           disabled: off,
+          button: 'Add…',
           form: {
             title: 'Add a language to check in',
             render: (close) => (
@@ -2883,6 +2895,7 @@ function customDictionaryGroups(
               id: `spellcheck-word:${word}:remove`,
               label: 'Remove',
               description: 'The checker marks this word again.',
+              button: 'Remove',
               onPress: () => dictionary.remove(word)
             }
           ],
@@ -2903,6 +2916,7 @@ function customDictionaryGroups(
           description: 'One word the checker never marks.',
           keywords: ['custom dictionary', 'customize spell check', ...keywords],
           disabled: off,
+          button: 'Add…',
           form: {
             title: 'Add a new word',
             render: (close) => (
