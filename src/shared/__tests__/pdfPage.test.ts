@@ -106,6 +106,12 @@ describe('the viewer document', () => {
     expect(html).toMatch(/background: #525659; background: light-dark\(/)
   })
 
+  it('pans the pages in a scroller the size of the screen, so a wide viewport never grows the window', () => {
+    expect(html).toContain('<div id="scroller"><div id="pages"></div></div>')
+    expect(html).toMatch(/#scroller \{[^}]*position: fixed; inset: 0; overflow: auto;/)
+    expect(html).toMatch(/html, body \{[^}]*overflow: hidden;/)
+  })
+
   it('has a page for a download that is gone', () => {
     expect(pdfMissingPageHtml()).toContain('This file is no longer available')
   })

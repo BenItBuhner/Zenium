@@ -108,6 +108,16 @@ function escapeHtml(s: string): string {
  * the pages in both schemes (the light scheme's grey first, for a WebView without
  * `light-dark()`). Pinch zoom is the viewer's (`touch-action` keeps the engine's away), a
  * single finger scrolls as on any page.
+ *
+ * The pages pan inside `#scroller`, a box the size of the screen, not the window: a WebView
+ * with a wide viewport (Android's `useWideViewPort`, on for every page in the tab) grows the
+ * layout viewport to the content's width once a page is wider than the screen – past the fit,
+ * 1450 css px of page in a 400 px screen gave a 1472 x 2786 px layout viewport with the screen
+ * a window into it – and the window's scroll, the elements' rects and its height then measure
+ * that viewport rather than the screen (the page indicator read the page under the layout
+ * viewport's top, a go-to could not reach the last page). A document that never overflows the
+ * window keeps the layout viewport at the screen's size, and every measurement against the
+ * scroller is a measurement of the screen.
  */
 export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): string {
   const config = JSON.stringify({
@@ -118,8 +128,9 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   })
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(doc.name)}</title><style>
   :root { color-scheme: light dark; }
-  html, body { margin: 0; min-height: 100%; background: #525659; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #525659; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f0f0f5; color: light-dark(#1e1e24, #f0f0f5); }
+  #scroller { position: fixed; inset: 0; overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; }
   #pages { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 8px 24px; box-sizing: border-box; width: max-content; min-width: 100%; transform-origin: 0 0; }
   .zen-pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 4px #0006; overflow: hidden; }
   .zen-pdf-page > canvas { display: block; width: 100%; height: 100%; }
@@ -131,7 +142,7 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   .zen-pdf-status[hidden] { display: none; }
   .zen-pdf-status p { max-width: 420px; line-height: 1.5; margin: 0; }
 </style><script>window.__zeniumPdfDocument=${config}</script></head>
-<body><div id="pages"></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>
+<body><div id="scroller"><div id="pages"></div></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>
 <script type="module" src="${pdfViewerAssetUrl(PDF_VIEWER_ASSETS.script)}"></script></body></html>`
 }
 

@@ -194,12 +194,29 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
                 (report(tabId)?.optJSONObject("find")?.optInt("current") ?: 0) == following
             }
             note("find next: ${if (stepped) "took" else "did not take"}; ${report(tabId)?.optJSONObject("find")}")
+            // The viewer scrolled the match into view, and the page it reports – the bar's
+            // indicator – is the match's page: the first match is on the first page, the last on
+            // the last (a viewer measuring a wide layout viewport read page 2 with page 3 up).
+            val matchPage = when (following) {
+                1 -> PdfViewerDemoSite.FIND_FIRST_PAGE
+                total -> PdfViewerDemoSite.FIND_LAST_PAGE
+                else -> null
+            }
+            if (matchPage != null) {
+                val onMatch = awaitReport(tabId, 8_000) { it.optInt("page") == matchPage }
+                note("after find next: report page ${report(tabId)?.optInt("page")}; geometry ${geometry()}")
+                expect(onMatch != null, "the viewer reports the page of match $following, page $matchPage")
+            }
             SystemClock.sleep(800)
             val closed = touchTapLabelExpecting("Close find bar", "the search is over and the viewer's bar is back", timeoutMs = 8_000) {
                 report(tabId)?.isNull("find") == true && findByLabelPrefix("Zoom") != null
             }
             note("close find bar: ${if (closed) "took" else "did not take"}")
             awaitIme(false)
+            // The pages stay where the search left them, and the bar back in its slot says so.
+            if (matchPage != null) {
+                expect(waitFor(pageIndicator(matchPage, pageCount), 8_000) != null, "the bar's page indicator reads $matchPage / $pageCount after the search")
+            }
         }
         SystemClock.sleep(800)
 
@@ -321,14 +338,17 @@ class PdfViewerUiDemo : DemoHarness("pdf-viewer-demo-state.json", "services-prin
     }
 
     /**
-     * What the viewer document sees, for the findings: its scroll and viewport, the visual
-     * viewport when the WebView reports one, and each page's band on screen (CSS px), the
-     * numbers the viewer's `pageInView` reads, so a page indicator that trails a touch can be read back.
+     * What the viewer document sees, for the findings: the scroller's offset and box (the
+     * viewer's own viewport, `pdfPage.ts`), the window's layout viewport beside it (a wide
+     * viewport grows it past the screen once a page is wider than the screen – the run that
+     * read page 2 with page 3 on screen), the visual viewport when the WebView reports one, and
+     * each page's band down the screen (CSS px), the numbers the viewer's `pageInView` reads.
      */
     private fun geometry(): String = tabJs(
-        "(function(){var v=window.visualViewport;" +
+        "(function(){var v=window.visualViewport;var s=document.getElementById('scroller');" +
             "var pages=[].slice.call(document.querySelectorAll('.zen-pdf-page')).map(function(p){var r=p.getBoundingClientRect();return Math.round(r.top)+'..'+Math.round(r.bottom)});" +
-            "return 'scroll '+Math.round(window.scrollX)+','+Math.round(window.scrollY)+' inner '+window.innerWidth+'x'+window.innerHeight" +
+            "return (s?'scroller '+Math.round(s.scrollLeft)+','+Math.round(s.scrollTop)+' of '+s.scrollWidth+'x'+s.scrollHeight+' box '+s.clientWidth+'x'+s.clientHeight+' ':'')" +
+            "+'window '+Math.round(window.scrollX)+','+Math.round(window.scrollY)+' inner '+window.innerWidth+'x'+window.innerHeight" +
             "+' root '+document.documentElement.clientWidth+'x'+document.documentElement.clientHeight+' doc '+document.documentElement.scrollHeight" +
             "+(v?' visual '+Math.round(v.width)+'x'+Math.round(v.height)+' @'+v.scale.toFixed(2)+' off '+Math.round(v.offsetLeft)+','+Math.round(v.offsetTop):'')" +
             "+' hidden '+document.hidden+' pages ['+pages.join(' ')+']'})()"

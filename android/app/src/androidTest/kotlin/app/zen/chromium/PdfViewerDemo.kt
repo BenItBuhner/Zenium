@@ -285,6 +285,8 @@ internal object PdfViewerDemoSite {
     const val LINK_TEXT = "Tide tables for the week (PDF)"
     const val PDF_TITLE = "Tide tables, week 38"
     const val FIND_QUERY = "tide"
+    /** The first "tide" in reading order is the title on page 1, the last "Check the tide" on the last page. */
+    const val FIND_FIRST_PAGE = 1
     /** "tide" in the headings and lines below, case aside (the find is case-insensitive). */
     const val FIND_MIN_MATCHES = 6
     val PDF_PAGES = listOf(
@@ -302,6 +304,8 @@ internal object PdfViewerDemoSite {
             "Check the tide before crossing to the island."
         )
     )
+    /** The page of the last "tide" (see [FIND_FIRST_PAGE]). */
+    val FIND_LAST_PAGE = PDF_PAGES.size
 
     /** The page offering the file, and the file itself as a PDF response without a disposition. */
     fun routes(): Map<String, Pair<String, ByteArray>> = mapOf(
