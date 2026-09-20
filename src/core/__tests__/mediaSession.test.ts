@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { MIN_SESSION_DURATION_S, MediaSessionService, siteOf } from '../mediaSession'
 import type { Browser } from '../browser'
 import type {
@@ -124,7 +124,7 @@ function play(h: Harness, tabId: string, r: MediaReport = report()): void {
 function readAloud(
   tabId: string,
   overrides: Partial<Omit<MediaSessionSource, 'onAction'>> = {}
-): MediaSessionSource & { onAction: ReturnType<typeof vi.fn> } {
+): MediaSessionSource & { onAction: Mock<MediaSessionSource['onAction']> } {
   const actions: MediaSessionSourceAction[] = [
     'play',
     'pause',
@@ -142,7 +142,7 @@ function readAloud(
     actions,
     position: null,
     ...overrides,
-    onAction: vi.fn()
+    onAction: vi.fn<MediaSessionSource['onAction']>()
   }
 }
 

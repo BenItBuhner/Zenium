@@ -488,7 +488,7 @@ function sourceState(
   base: SourceState,
   patch: Partial<Omit<MediaSessionSource, 'id' | 'onAction'>>
 ): SourceState {
-  const next: SourceState = {
+  return {
     id: base.id,
     tabId: patch.tabId ?? base.tabId,
     title: patch.title ?? base.title,
@@ -498,7 +498,6 @@ function sourceState(
     actions: [...(patch.actions ?? base.actions)],
     position: patch.position !== undefined ? patch.position : (base.position ?? null)
   }
-  return next
 }
 
 function isReport(value: unknown): value is MediaReport {
