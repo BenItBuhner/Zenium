@@ -103,9 +103,28 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
   ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
+  // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
+  // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
+  ['.zen-install-dialog-body {', "/*\n   * The desktop's share popover"],
+  // The desktop's share popover (components/share/SharePopover.tsx, MW-21): the preview, the QR
+  // card, the targets' hairline, and its unlayered two-line modifier on the shared row (§9.34).
+  ['.zen-share-body {', '@layer components {\n  /*\n   * The screen-capture picker'],
+  // The screen-capture picker (components/screenCapture/ScreenPicker.tsx, MW-19): the panes'
+  // hairline, the fixed list box with its spinner and empty line, the source cards, the footer,
+  // and its unlayered centring of the shared checkbox (§9.34).
+  ['.zen-scpick-panes {', "@layer components {\n  /*\n   * The desktop's media hub"],
+  // The desktop's media hub (components/media/MediaHubPopover.tsx, MediaHubButton.tsx, MW-16):
+  // the players, the artwork tile, the title pair's press fill, the seek row's times, the
+  // transport, the toolbar button's dot.
+  ['.zen-mhub-body {', '@layer components {\n  /*\n   * The media sheet'],
   // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
   // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
-  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back']
+  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back'],
+  // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
+  // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
+  // and line from the scale.
+  ['.zen-app-titlebar {', '.zen-tab {']
 ]
 
 /**

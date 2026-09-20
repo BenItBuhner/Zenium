@@ -4973,10 +4973,18 @@
     height: 1px;
     background: var(--v2-border);
   }
-  .zen-v2-row.zen-share-row-two {
-    min-height: var(--v2-row-two-line);
-  }
+}
 
+/*
+ * What a share target's row adds to the shared v2 row (§9.34: a variant is a modifier on the
+ * primitive, unlayered beside it, never a copy): the §9.2 two-line floor for a target with a
+ * detail line.
+ */
+.zen-v2-row.zen-share-row-two {
+  min-height: var(--v2-row-two-line);
+}
+
+@layer components {
   /*
    * The screen-capture picker (`screenCapture/ScreenPicker.tsx`, MW-19): a `--v2-dialog` at 480
    * (§9.20's table width, room for two cards across). The title block brings its 16 (§9.23);
@@ -5085,10 +5093,18 @@
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
-  .zen-scpick-audio > .zen-v2-checkbox {
-    margin: 0;
-  }
+}
 
+/*
+ * The system-audio box is the shared checkbox (§9.34) centred on the footer's one line, so the
+ * primitive's offset to a row's first text line goes; unlayered, or the primitive's own margin
+ * would beat it.
+ */
+.zen-scpick-audio > .zen-v2-checkbox {
+  margin: 0;
+}
+
+@layer components {
   /*
    * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
    * controls) as a §9.20 popover at 400 under the toolbar row. The body runs from the title
