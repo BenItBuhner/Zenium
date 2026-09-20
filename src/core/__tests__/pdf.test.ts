@@ -48,7 +48,9 @@ interface Fixture {
   opened: string[]
 }
 
-function fixture(opts: { viewer?: boolean; shareHost?: boolean } = {}): Fixture {
+function fixture(
+  opts: { viewer?: boolean; shareHost?: boolean; windows?: boolean; document?: boolean } = {}
+): Fixture {
   const sent: Fixture['sent'] = []
   const loads: Fixture['loads'] = []
   const scripts: Fixture['scripts'] = []
@@ -63,7 +65,7 @@ function fixture(opts: { viewer?: boolean; shareHost?: boolean } = {}): Fixture 
     opened: []
   }
   const capabilities = stub<HostCapabilities>({
-    windows: true,
+    windows: opts.windows ?? true,
     updates: false,
     agents: false,
     pageTabs: true,
@@ -113,7 +115,7 @@ function fixture(opts: { viewer?: boolean; shareHost?: boolean } = {}): Fixture 
         return stub<TabView>({
           isDestroyed: () => false,
           isVisible: () => true,
-          hasDocument: () => true,
+          hasDocument: () => opts.document ?? true,
           getURL: () => url,
           getTitle: () => '',
           canGoBack: () => false,
@@ -258,6 +260,34 @@ describe('a PDF the tab navigates to', () => {
     f.browser.downloads.finish(item.id, 'interrupted')
     await new Promise((r) => setTimeout(r, 0))
     expect(f.loads.some((l) => l.url.startsWith('zen://pdf'))).toBe(false)
+  })
+
+  it('keeps the tab it is bound for and brings no Downloads sheet over it while it transfers', async () => {
+    // A single-window host (Android) whose tab was opened for the PDF alone: no document, no
+    // history. For any other download the host closes such a tab and shows its panel.
+    const f = fixture({ windows: false, document: false })
+    const tab = openSite(f, 'https://example.test/report.pdf')
+    const item = f.browser.downloads.begin(PDF_INIT(tab.id))
+    f.browser.onDownloadStarted(tab.id)
+    await new Promise((r) => setTimeout(r, 250))
+    expect(f.browser.tabs.tab(tab.id)).toBeDefined()
+    expect(f.sent.some((s) => s.name === 'overlay.open')).toBe(false)
+    await completeDownload(f, item.id)
+    expect(f.browser.tabs.tab(tab.id)?.url).toBe(`zen://pdf?id=${item.id}`)
+    expect(f.browser.pdf.expects(tab.id)).toBe(false)
+
+    const plain = openSite(f, 'https://example.test/archive.zip')
+    f.browser.downloads.begin(
+      PDF_INIT(plain.id, {
+        url: 'https://example.test/archive.zip',
+        filename: 'archive.zip',
+        mimeType: 'application/zip'
+      })
+    )
+    f.browser.onDownloadStarted(plain.id)
+    await new Promise((r) => setTimeout(r, 250))
+    expect(f.browser.tabs.tab(plain.id)).toBeUndefined()
+    expect(f.sent.some((s) => s.name === 'overlay.open')).toBe(true)
   })
 })
 

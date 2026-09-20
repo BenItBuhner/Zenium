@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { looksLikeStatements } from '../../core/agent/util'
 import {
   PDF_VIEWER_ORIGIN,
   pdfMissingPageHtml,
@@ -132,6 +133,13 @@ describe('the protocol between the viewer and the chrome', () => {
     expect(run({})).toBe(false)
     expect(run({ [PDF_VIEWER_GLOBAL]: { command: (c: unknown) => taken.push(c) } })).toBe(true)
     expect(taken).toEqual([{ kind: 'find', query: 'a"b', direction: 'new' }])
+  })
+
+  it('is one expression to a host that tells them from statements without a parser', () => {
+    // Android's `executeJavaScript` wraps what reads as a statement list into a function and
+    // loses its value; the chrome would then take every command for one the document refused.
+    expect(looksLikeStatements(pdfCommandScript({ kind: 'goTo', page: 2 }))).toBe(false)
+    expect(looksLikeStatements(pdfCommandScript({ kind: 'stopFind' }))).toBe(false)
   })
 
   it('reads a report out of the viewer’s window message and nothing else', () => {

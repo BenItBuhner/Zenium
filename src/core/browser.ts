@@ -735,6 +735,10 @@ export class Browser {
    */
   onDownloadStarted(sourceTabId: string | null): void {
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
+    // A PDF the tab navigated to opens in the tab's own viewer once it is down
+    // (`PdfViewerService`): as in Chrome Android the tab stays for it, and no Downloads surface
+    // comes over the page – the sheet would take the fingers meant for the viewer.
+    if (sourceTabId && this.pdf.expects(sourceTabId)) return
     // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
     // from `download.changed` instead (Chrome-style button, or the bubble when
     // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the

@@ -66,6 +66,16 @@ export class PdfViewerService {
       this.pending.set(item.id, init.sourceTabId)
   }
 
+  /**
+   * Whether a PDF the tab navigated to is on its way to the viewer: the tab keeps its place
+   * while the file downloads (Chrome shows the transfer in the tab), and no Downloads surface
+   * comes over it.
+   */
+  expects(tabId: string): boolean {
+    for (const owner of this.pending.values()) if (owner === tabId) return true
+    return false
+  }
+
   private onDownloadChange(item: DownloadItem, kind: DownloadChangeKind): void {
     if (kind === 'removed') {
       this.pending.delete(item.id)

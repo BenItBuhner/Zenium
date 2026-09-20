@@ -100,9 +100,15 @@ export function steppedZoom(zoom: number, steps: number): number {
   return PDF_ZOOM_STEPS[Math.min(PDF_ZOOM_STEPS.length - 1, Math.max(0, index))]
 }
 
-/** The JavaScript that hands `command` to the viewer document; true when the document took it. */
+/**
+ * The JavaScript that hands `command` to the viewer document; true when the document took it.
+ * One expression – an arrow function called at once – so a host that tells expressions from
+ * statement lists without a parser (Android's `executeJavaScript`, `looksLikeStatements`) runs
+ * it as the former and hands its value back; a classic `(function(){…})()` reads as statements
+ * there and its value is lost.
+ */
 export function pdfCommandScript(command: PdfViewerCommand): string {
-  return `(function(){var v=window[${JSON.stringify(PDF_VIEWER_GLOBAL)}];if(!v||typeof v.command!=='function')return false;v.command(${JSON.stringify(command)});return true})()`
+  return `(() => { const v = window[${JSON.stringify(PDF_VIEWER_GLOBAL)}]; if (!v || typeof v.command !== 'function') return false; v.command(${JSON.stringify(command)}); return true })()`
 }
 
 /** The report inside a window message the viewer posted, or null for any other message. */
