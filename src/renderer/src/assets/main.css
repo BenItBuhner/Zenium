@@ -5830,9 +5830,11 @@
  * by both families; §9.12: the validation reads in `--v2-danger`), the one rule for light and
  * dark, so the field reads invalid focused or not – Firefox's in-content fields colour the
  * focus outline the same way (`:user-invalid:focus-visible`). Its 2 px, offset and shape stay
- * the shared ring's.
+ * the shared ring's. `:root` carries the rule to the weight of the ring's coarse-pointer and
+ * dark forms (`:root[data-pointer='coarse'] …`, §1 above), which restate the ring's colour and
+ * would otherwise keep it on a phone.
  */
-.zen-v2-field[aria-invalid='true']:focus-visible {
+:root .zen-v2-field[aria-invalid='true']:focus-visible {
   outline-color: var(--v2-danger);
 }
 /* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
