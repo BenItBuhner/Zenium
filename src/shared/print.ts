@@ -214,7 +214,7 @@ export const PRINT_MESSAGES = {
   /** Nothing to print: the pages picked are not in the document (odd pages of a zero-page document). */
   noPages: 'No pages selected',
   previewFailed: 'Print preview failed',
-  printFailed: 'Something went wrong. Check your printer and try again.',
+  printFailed: 'Couldn’t print – check your printer and try again',
   saveFailed: 'The PDF could not be saved'
 } as const
 

@@ -95,13 +95,17 @@ function PrintDialog({ tabId, state }: { tabId: string; state: UIState }): JSX.E
       onCancel={closePrintPreview}
       api={api}
       width="frame"
+      // Focus opens on Destination, the first field, as in Chrome (§9.22); until the session
+      // brings the rows, on the dialog itself rather than on Cancel (the Destination menulist
+      // then takes the keyboard as it mounts, `autoFocus` below).
+      initialFocus={firstControl}
       className="flex-row-reverse"
       data-testid="print-preview"
       data-busy={form.running ? '' : undefined}
       data-phase={form.phase}
     >
-      {/* The column comes first in the tree so the keyboard lands on Destination, as in Chrome;
-          the row is reversed so the pages sit on the start side, as Chrome draws them. */}
+      {/* The column comes first in the tree so Tab walks it before the pane, as in Chrome; the
+          row is reversed so the pages sit on the start side, as Chrome draws them. */}
       <div className="flex w-[400px] shrink-0 flex-col" data-testid="print-options">
         <TitleBlock
           id={titleId}
@@ -113,8 +117,11 @@ function PrintDialog({ tabId, state }: { tabId: string; state: UIState }): JSX.E
           }
           scrolled={scrolled}
         />
+        {/* The rows keep their height whatever the column holds (§9.21): a column taller than
+            the dialog scrolls here, under the sticky title block and over the pinned footer,
+            rather than pressing its rows together. */}
         <div
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1 [&>*]:shrink-0"
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
           {form.session && <Options form={form} systemDialogKey={systemDialogKey} state={state} />}
@@ -145,6 +152,20 @@ function PrintDialog({ tabId, state }: { tabId: string; state: UIState }): JSX.E
     </DesktopDialog>
   )
 }
+
+/**
+ * The dialog's first field once the rows are up – the Destination menulist, the column's first
+ * control in the tree – or nothing while the session loads (the dialog takes the focus then).
+ */
+function firstControl(root: HTMLElement): HTMLElement | null {
+  return root.querySelector<HTMLElement>('.zen-v2-menulist')
+}
+
+/**
+ * One width for every control the column's rows trail (§9.13, as Chrome's column): 160, the
+ * 400 form's two fifths, on the menulists and the Copies field alike, so their edges line up.
+ */
+const CONTROL_WIDTH = 'w-40'
 
 /** The column's rows: Chrome's settings, in its order, with the disclosure over the rest. */
 function Options({
@@ -178,6 +199,8 @@ function Options({
         options={destinationOptions(printers)}
         onChange={(value) => form.setDestination(destinationFromValue(value))}
         readOnly={busy}
+        autoFocus
+        controlClassName={CONTROL_WIDTH}
       />
       <ChoiceRow<PrintPagesMode>
         label={PRINT_LABELS.pages}
@@ -185,6 +208,7 @@ function Options({
         options={PAGES_OPTIONS}
         onChange={form.setPagesMode}
         readOnly={busy}
+        controlClassName={CONTROL_WIDTH}
       />
       {settings.pages.mode === 'custom' && (
         <FieldBlock
@@ -216,7 +240,7 @@ function Options({
             label={PRINT_LABELS.copies}
             control
             trailing={
-              <div className="w-24">
+              <div className={CONTROL_WIDTH}>
                 <Field
                   value={texts.copies}
                   inputMode="numeric"
@@ -249,6 +273,7 @@ function Options({
         options={LAYOUT_OPTIONS}
         onChange={(layout) => form.update({ layout })}
         readOnly={busy}
+        controlClassName={CONTROL_WIDTH}
       />
       {printerOnly && (
         <ChoiceRow
@@ -257,6 +282,7 @@ function Options({
           options={COLOR_OPTIONS}
           onChange={(color) => form.update({ color })}
           readOnly={busy}
+          controlClassName={CONTROL_WIDTH}
         />
       )}
       <ListRow
@@ -284,6 +310,7 @@ function Options({
             options={PAPER_OPTIONS}
             onChange={(paperSize) => form.update({ paperSize })}
             readOnly={busy}
+            controlClassName={CONTROL_WIDTH}
           />
           <ChoiceRow<PrintMarginsMode>
             label={PRINT_LABELS.margins}
@@ -291,6 +318,7 @@ function Options({
             options={MARGINS_OPTIONS}
             onChange={(mode) => form.update({ margins: { ...settings.margins, mode } })}
             readOnly={busy}
+            controlClassName={CONTROL_WIDTH}
           />
           {settings.margins.mode === 'custom' && (
             <MarginFields form={form} onEnter={submitOnEnter} />
@@ -301,6 +329,7 @@ function Options({
             options={SCALE_OPTIONS}
             onChange={(mode) => form.update({ scale: { ...settings.scale, mode } })}
             readOnly={busy}
+            controlClassName={CONTROL_WIDTH}
           />
           {settings.scale.mode === 'custom' && (
             <FieldBlock
@@ -348,6 +377,7 @@ function Options({
                   options={DUPLEX_OPTIONS}
                   onChange={(duplexEdge) => form.update({ duplexEdge })}
                   readOnly={busy}
+                  controlClassName={CONTROL_WIDTH}
                 />
               )}
             </>
@@ -403,10 +433,7 @@ function MarginFields({
           const id = `${base}-${side}`
           return (
             <div key={side} className="flex min-w-0 flex-col">
-              <label
-                htmlFor={id}
-                className="text-[13px] leading-5 text-[var(--v2-text-deemphasized)]"
-              >
+              <label htmlFor={id} className="text-[15px] leading-5">
                 {MARGIN_SIDE_LABELS[side]} ({form.unit})
               </label>
               <Field
@@ -509,7 +536,7 @@ function CheckRow({
 } & DataAttributes): JSX.Element {
   return (
     <Checkbox
-      className="min-h-[var(--v2-row)] px-4 py-[calc((var(--v2-row)-20px)/2)]"
+      className="min-h-[var(--v2-row)] px-4 py-[var(--v2-row-pad)]"
       checked={checked}
       aria-readonly={busy || undefined}
       onChange={onChange}
@@ -522,7 +549,7 @@ function CheckRow({
 /** A sub-heading over rows (§9.27): 15/600, the row's 16 gutter, 8 to the first row's box. */
 function SubHeading({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <h3 className="px-4 pt-3 pb-1 text-[15px] leading-5 font-semibold text-[var(--v2-text)]">
+    <h3 className="px-4 pt-3 pb-2 text-[15px] leading-5 font-semibold text-[var(--v2-text)]">
       {children}
     </h3>
   )

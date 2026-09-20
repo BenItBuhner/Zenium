@@ -47,9 +47,9 @@ describe('the destination menulist', () => {
   it('shows copies and colour for a printer only', () => {
     const settings = defaultPrintSettings('en-US')
     expect(showsPrinterOnly({ ...settings, destination: { kind: 'pdf' } })).toBe(false)
-    expect(showsPrinterOnly({ ...settings, destination: { kind: 'printer', name: 'Office' } })).toBe(
-      true
-    )
+    expect(
+      showsPrinterOnly({ ...settings, destination: { kind: 'printer', name: 'Office' } })
+    ).toBe(true)
   })
 })
 

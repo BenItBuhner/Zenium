@@ -169,7 +169,7 @@ export function PreviewPane({
           >
             <button
               type="button"
-              className="zen-v2-icon-button rounded-full"
+              className="zen-v2-icon-button zen-print-page-step"
               aria-label="Previous page"
               disabled={dimmed || index <= 0}
               onClick={() => goTo(index - 1)}
@@ -186,7 +186,7 @@ export function PreviewPane({
             </span>
             <button
               type="button"
-              className="zen-v2-icon-button rounded-full"
+              className="zen-v2-icon-button zen-print-page-step"
               aria-label="Next page"
               disabled={dimmed || index >= pages.length - 1}
               onClick={() => goTo(index + 1)}

@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
-import { ExternalLink, Lock, RotateCw, Share2 } from 'lucide-react'
+import { CircleAlert, ExternalLink, Lock, RotateCw, Share2 } from 'lucide-react'
 import type { PdfFitMode, PdfOutlineItem } from '@shared/pdfViewerProtocol'
 import {
   currentOutlineKey,
@@ -16,6 +16,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from '../phone/PhoneSheet'
+import { V2_GLYPH } from '../v2/controls'
 
 /**
  * The PDF viewer bar's sheets (`PdfViewerBar.tsx`), each a `PhoneSheet` on the hosted chassis:
@@ -380,8 +381,18 @@ export function PdfPasswordSheet({
             />
           </span>
           {showError && (
-            <p id={errorId} role="alert" className="text-[13px] leading-5 text-[var(--v2-danger)]">
-              Incorrect password. Try again.
+            // §9.12 validation text: one clause in the danger ink after the alert glyph, as the
+            // print column's error lines (Chrome's viewer writes it as one clause too).
+            <p
+              id={errorId}
+              role="alert"
+              className="flex items-start gap-2 text-[13px] leading-5 text-[var(--v2-danger)]"
+            >
+              <CircleAlert
+                className={cn(V2_GLYPH, 'mt-[calc((var(--v2-line-body)-var(--v2-icon))/2)]')}
+                aria-hidden
+              />
+              <span>Incorrect password, try again</span>
             </p>
           )}
         </div>

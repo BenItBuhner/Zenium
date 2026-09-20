@@ -11,7 +11,6 @@ import {
   pdfViewerStore
 } from '@renderer/lib/pdfViewer'
 import { openFindBar } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import {
   PdfGoToPageSheet,
   PdfMoreSheet,
@@ -81,7 +80,8 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
         data-state={status}
         data-testid="pdf-bar"
       >
-        {/* One bar row (§9.32): the 44 controls at 2 px margins, text at the 16 gutter. */}
+        {/* One bar row (§9.32): the 44 controls at 2 px margins, text at the 16 gutter – the
+            indicator's own 8 and the Unlock / Open with buttons' 14 on the row's 2 (§9.25). */}
         <div className="flex min-h-12 items-center gap-1 pl-2 pr-0.5">
           {status === 'password' ? (
             <>
@@ -90,7 +90,7 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
               </span>
               <button
                 type="button"
-                className="zen-v2-button mr-1.5 shrink-0"
+                className="zen-v2-button mr-3.5 shrink-0"
                 data-primary
                 onClick={() => setSheet('password')}
               >
@@ -104,7 +104,7 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
               </span>
               <button
                 type="button"
-                className="zen-v2-button mr-1.5 shrink-0"
+                className="zen-v2-button mr-3.5 shrink-0"
                 aria-busy={openingWith || undefined}
                 onClick={openWith}
               >
@@ -113,15 +113,11 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
             </>
           ) : (
             <>
-              {/* The page indicator: Chrome's "1 / 3" pill, here a target that goes to a page. */}
+              {/* The page indicator: Chrome's "1 / 3", here a target that goes to a page – the
+                  shared button with the bar's modifier (`.zen-v2-button.zen-pdf-pages`). */}
               <button
                 type="button"
-                className={cn(
-                  'zen-pdf-pages flex h-10 shrink-0 items-center rounded-[var(--v2-radius-control)] px-2 tabular-nums',
-                  'transition-[background] duration-[120ms] hover:bg-[var(--v2-fill)] active:bg-[var(--v2-fill)]',
-                  'disabled:opacity-40 disabled:hover:bg-transparent'
-                )}
-                style={{ fontWeight: 'var(--v2-weight-heading)' }}
+                className="zen-v2-button zen-pdf-pages shrink-0"
                 aria-label={ready ? `Page ${page} of ${pageCount}. Go to page` : 'Loading pages'}
                 disabled={!ready}
                 onClick={() => setSheet('goto')}

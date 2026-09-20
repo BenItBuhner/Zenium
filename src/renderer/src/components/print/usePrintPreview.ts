@@ -337,7 +337,9 @@ export function usePrintPreview(tabId: string): PrintPreviewForm {
   }, [tabId])
 
   const effective = settings ?? session?.settings ?? defaultPrintSettings(navigator.language)
-  const summary = printSummary(effective, pageCount)
+  // The total counts the pages the pane shows: while the range field is in error, the last
+  // selection that parsed, as Chrome keeps its count – never "0 sheets" for a refused range.
+  const summary = printSummary({ ...effective, pages: validPages }, pageCount)
   const twoSided = twoSidedAvailable(effective.destination, session?.printers ?? [])
   // Chrome greys Print while the preview is behind the settings: the document up must be the
   // one these settings lay out, so the count and the pages it will send are the ones shown.
