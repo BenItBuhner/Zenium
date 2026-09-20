@@ -24,12 +24,6 @@ name: Android chrome accessibility and font scale demo
 # demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
-  # TEMPORARY (W3-6): the run trigger for the PR's branch; removed once the run is in. Only a
-  # push whose head commit says `[a11y-run]` records (the budget is one run and one retry), so
-  # the milestone pushes between them cost nothing.
-  push:
-    branches:
-      - cursor/android-a11y-talkback-font-scale-f36e
 
 permissions:
   contents: read
@@ -41,6 +35,8 @@ concurrency:
 jobs:
   record:
     name: Chrome accessibility and font scale demo
+    # The `[a11y-run]` gate stays for a PR's temporary push trigger (the run budget is one run
+    # and one retry): under one, only a head commit that says so records.
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[a11y-run]')
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
