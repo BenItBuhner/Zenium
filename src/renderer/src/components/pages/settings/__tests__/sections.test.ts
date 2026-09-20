@@ -28,6 +28,7 @@ import {
 import { MAX_NEW_TAB_SHORTCUTS } from '@shared/newTab'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus, type PrivacyStatus } from '@shared/privacy'
 import { emptyUpdateStatus } from '@shared/updates'
@@ -249,6 +250,7 @@ function state(patch: Partial<UIState> = {}, settings: Partial<Settings> = {}): 
     newTabShortcuts: [],
     newTabBackground: { image: false, canPick: false },
     translate: TRANSLATE,
+    spellcheck: UNAVAILABLE_SPELLCHECK,
     ...patch
   } as unknown as UIState
 }
@@ -1290,7 +1292,9 @@ describe('the section model', () => {
       'never-add',
       'sites',
       'models',
-      'models-add'
+      'models-add',
+      // CT-07's spell check group closes the category (its own test below).
+      'spellcheck'
     ])
     expect(languages.groups.every(groupShows)).toBe(true)
     expect(languages.groups.map((g) => g.heading)).toEqual([
@@ -1303,7 +1307,8 @@ describe('the section model', () => {
       null,
       'Sites never translated',
       'Translation models',
-      null
+      null,
+      'Spell check'
     ])
 
     // The offer switch and the lists write through the engine's commands, not the settings.
@@ -1733,7 +1738,13 @@ describe('the section model', () => {
   it('leaves out what the host cannot do: no Sites group or Accessibility without page controls', () => {
     const desktop = state({
       platform: 'linux',
-      capabilities: { ...ANDROID, pageControls: false, pullToRefresh: false, defaultBrowser: false }
+      capabilities: {
+        ...ANDROID,
+        pageControls: false,
+        darkenSites: false,
+        pullToRefresh: false,
+        defaultBrowser: false
+      }
     })
     const look = section('look', desktop)
     expect(look.groups.map((g) => g.id)).not.toContain('sites')
@@ -2605,9 +2616,9 @@ describe('searching the rows', () => {
     const scheme = row(look, 'toolbar-layout')
     expect(rowText(scheme)).toContain('Collapsed toolbar')
     const tabs = section('tabs')
-    const after = row(tabs, 'unload-after')
-    expect(after.kind).toBe('field')
-    expect(rowText(after)).toContain(after.kind === 'field' ? (after.display ?? after.value) : '')
+    const max = row(tabs, 'essentials-max')
+    expect(max.kind).toBe('field')
+    expect(rowText(max)).toContain(max.kind === 'field' ? (max.display ?? max.value) : '')
   })
 
   it('carries #156’s protection groups at Chrome’s positions: Safe Browsing after Safety check, cookies after Clear browsing data, HTTPS-only, secure DNS and the signals after Site settings', () => {

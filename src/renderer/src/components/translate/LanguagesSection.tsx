@@ -1,10 +1,15 @@
-import type { JSX, ReactNode } from 'react'
-import { Children } from 'react'
+import type { FormEvent, JSX, ReactNode } from 'react'
+import { Children, useCallback, useEffect, useId, useState } from 'react'
 import { ArrowUp, Trash2, type LucideIcon } from 'lucide-react'
 import type { TranslatePreferences } from '@shared/translate'
 import type { UIState } from '@shared/types'
 import { languageName } from '@shared/languageNames'
-import { run } from '@renderer/lib/api'
+import {
+  SPELLCHECK_LANGUAGES_MAX,
+  type SpellcheckDictionaryStatus,
+  type SpellcheckLanguage
+} from '@shared/spellcheck'
+import { cmd, run } from '@renderer/lib/api'
 import {
   languageOptions,
   modelOptions,
@@ -14,7 +19,7 @@ import {
   type LanguageOption
 } from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
-import { V2CheckRow, V2IconButton } from '../extensions/v2'
+import { V2Button, V2CheckRow, V2Field, V2FormField, V2IconButton } from '../extensions/v2'
 import { Menulist } from './Menulist'
 
 /**
@@ -28,7 +33,9 @@ import { Menulist } from './Menulist'
  * its icon buttons being the targets) and grown around its control (§9.21); the checkbox, the
  * icon buttons and the menulist are the shared primitives. The `SettingsPanel` shows it behind
  * the `translate` capability. On a phone Settings is a tab and these rows are the `languages`
- * category's builder (`pages/settings/sections.tsx`), never this pane.
+ * category's builder (`pages/settings/sections.tsx`), never this pane. Chrome's "Spell check"
+ * section (`SpellcheckGroups`) follows the translation groups, as it follows the languages on
+ * chrome://settings/languages.
  */
 export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
   const { translate } = state
@@ -113,7 +120,245 @@ export function LanguagesSection({ state }: { state: UIState }): JSX.Element {
       </Group>
 
       <ModelsGroup state={state} />
+
+      <SpellcheckGroups state={state} />
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Spell check (CT-07, CT-19)
+// ---------------------------------------------------------------------------
+
+/** What a language's dictionary is doing, as the row's deemphasised detail; nothing while it is ready. */
+function dictionaryDetail(status: SpellcheckDictionaryStatus): string | undefined {
+  if (status === 'downloading') return 'Downloading dictionary…'
+  if (status === 'failed') return 'Dictionary download failed'
+  return undefined
+}
+
+/**
+ * Chrome's Settings › Languages › Spell check: the switch ("Check the spelling of text fields"),
+ * the languages the fields are checked in – each with what its dictionary is doing, a way to stop
+ * checking in it, and a menulist to add one of the host's other dictionaries up to Chrome's five
+ * – and the custom dictionary ("Customize spell check"). The list is Chrome's dependent group:
+ * with the switch off its rows read at .4 and take no press (§9.30), the switch alone stays
+ * live. A host whose checker follows the OS's languages (macOS) shows where they are chosen
+ * instead of a list it cannot change; a host with no checker of the browser's own (the WebView)
+ * says the keyboard's checker does the work and leads to its settings.
+ */
+export function SpellcheckGroups({ state }: { state: UIState }): JSX.Element {
+  const status = state.spellcheck
+  const settings = state.settings.spellcheck
+  if (!status.available) {
+    return (
+      <Group
+        title="Spell check"
+        description="Text fields are checked by the spell checker of the keyboard in use. Its languages, and whether it marks or corrects words as you type, are chosen with the keyboard in the system settings."
+      >
+        <div className="zen-v2-row zen-translate-control-row" data-static="">
+          <V2Button onClick={() => run('spellcheck.openKeyboardSettings', undefined)}>
+            Open keyboard settings
+          </V2Button>
+        </div>
+      </Group>
+    )
+  }
+  const checked = status.languages.filter((l) => l.enabled)
+  const remaining = status.languages.filter((l) => !l.enabled)
+  const atLimit = checked.length >= SPELLCHECK_LANGUAGES_MAX
+  const off = !settings.enabled
+  return (
+    <>
+      <Group
+        title="Spell check"
+        description="Misspelt words in text fields are underlined as you type; their menu offers corrections and Add to Dictionary."
+      >
+        <V2CheckRow
+          label="Check the spelling of text fields"
+          checked={settings.enabled}
+          onChange={(enabled) => run('spellcheck.setEnabled', { enabled })}
+        />
+      </Group>
+      {status.systemLanguages ? (
+        <Group
+          title="Languages"
+          description="The system's spell checker checks in the languages chosen for it in System Settings › Keyboard; a text field's menu switches between them."
+        />
+      ) : (
+        <Group
+          title="Languages"
+          description={`Text fields are checked in up to ${SPELLCHECK_LANGUAGES_MAX} languages at a time. A dictionary is downloaded the first time a language is checked in and kept on this device.`}
+          card
+        >
+          {checked.length === 0 && <Empty>No languages yet</Empty>}
+          {checked.map((language) => (
+            <SpellcheckLanguageRow key={language.code} language={language} disabled={off} />
+          ))}
+          {atLimit ? (
+            <div className="zen-v2-row zen-translate-caption" data-static="">
+              Up to {SPELLCHECK_LANGUAGES_MAX} languages can be checked at a time. Remove one to add
+              another.
+            </div>
+          ) : (
+            remaining.length > 0 && (
+              <AddRow
+                label="Add a language to check in"
+                placeholder="Add a language…"
+                options={remaining.map((l) => ({ value: l.code, label: l.name }))}
+                onPick={(code) => run('spellcheck.setLanguage', { code, on: true })}
+                disabled={off}
+              />
+            )
+          )}
+        </Group>
+      )}
+      <CustomDictionaryGroup disabled={off} />
+    </>
+  )
+}
+
+/** One language the fields are checked in: its name, what its dictionary is doing, Remove. */
+function SpellcheckLanguageRow({
+  language,
+  disabled
+}: {
+  language: SpellcheckLanguage
+  disabled: boolean
+}): JSX.Element {
+  const detail = dictionaryDetail(language.status)
+  return (
+    <div
+      className="zen-v2-row zen-translate-control-row"
+      data-static=""
+      data-language={language.code}
+      aria-disabled={disabled || undefined}
+    >
+      <span className="min-w-0 flex-1 truncate">{language.name}</span>
+      {detail && (
+        <span
+          className={cn(
+            'zen-translate-caption shrink-0',
+            language.status === 'failed' && 'zen-translate-danger'
+          )}
+        >
+          {detail}
+        </span>
+      )}
+      <V2IconButton
+        icon={Trash2}
+        label={`Stop checking in ${language.name}`}
+        disabled={disabled}
+        onClick={() => run('spellcheck.setLanguage', { code: language.code, on: false })}
+      />
+    </div>
+  )
+}
+
+/** The words of the profile's custom dictionary, read once and again after every change. */
+function useCustomWords(): { words: string[] | null; refresh: () => void } {
+  const [words, setWords] = useState<string[] | null>(null)
+  const refresh = useCallback((): void => {
+    cmd('spellcheck.words', undefined)
+      .then((list) => setWords(Array.isArray(list) ? list : []))
+      .catch(() => setWords([]))
+  }, [])
+  useEffect(refresh, [refresh])
+  return { words, refresh }
+}
+
+/**
+ * Chrome's "Customize spell check": the words the checker never marks, added here or with a
+ * field's Add to Dictionary, each with a way to remove it, and a form (§9.12) to add one – a
+ * single word, refused with the field's own message otherwise, or when it is there already.
+ */
+function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element {
+  const { words, refresh } = useCustomWords()
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | undefined>(undefined)
+  const fieldId = useId()
+  const submit = (e: FormEvent): void => {
+    e.preventDefault()
+    const word = draft.trim()
+    if (!word) return
+    if (/\s/.test(word)) {
+      setError('Enter one word without spaces')
+      return
+    }
+    if (words?.some((w) => w.toLowerCase() === word.toLowerCase())) {
+      setError('This word is in the dictionary already')
+      return
+    }
+    cmd('spellcheck.addWord', { word })
+      .then((added) => {
+        if (!added) {
+          setError('This word could not be added')
+          return
+        }
+        setDraft('')
+        setError(undefined)
+        refresh()
+      })
+      .catch(() => setError('This word could not be added'))
+  }
+  return (
+    <Group
+      title="Custom dictionary"
+      description="Words the checker never marks. Add to Dictionary in a text field's menu puts a word here too."
+      card
+    >
+      {words !== null && words.length === 0 && <Empty>No words yet</Empty>}
+      {(words ?? []).map((word) => (
+        <div
+          key={word}
+          className="zen-v2-row zen-translate-control-row"
+          data-static=""
+          data-word={word}
+          aria-disabled={disabled || undefined}
+        >
+          <span className="min-w-0 flex-1 truncate">{word}</span>
+          <V2IconButton
+            icon={Trash2}
+            label={`Remove ${word} from the dictionary`}
+            disabled={disabled}
+            onClick={() => void cmd('spellcheck.removeWord', { word }).then(refresh, refresh)}
+          />
+        </div>
+      ))}
+      <form
+        className="zen-v2-row zen-translate-control-row zen-translate-add"
+        data-static=""
+        aria-disabled={disabled || undefined}
+        onSubmit={submit}
+      >
+        <V2FormField
+          id={fieldId}
+          label="Add a new word"
+          error={error}
+          className="min-w-0 flex-1"
+          actions={
+            <V2Button type="submit" disabled={disabled || draft.trim() === ''}>
+              Add
+            </V2Button>
+          }
+        >
+          {(aria) => (
+            <V2Field
+              {...aria}
+              value={draft}
+              placeholder="colour"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                if (error) setError(undefined)
+              }}
+            />
+          )}
+        </V2FormField>
+      </form>
+    </Group>
   )
 }
 
@@ -217,21 +462,29 @@ function AddRow({
   label,
   placeholder,
   options,
-  onPick
+  onPick,
+  disabled = false
 }: {
   label: string
   placeholder: string
   options: LanguageOption[]
   onPick: (value: string) => void
+  /** A dependent row whose parent is off (§9.30): the menulist reads at .4 and opens nothing. */
+  disabled?: boolean
 }): JSX.Element {
   return (
-    <div className="zen-v2-row zen-translate-control-row zen-translate-add" data-static="">
+    <div
+      className="zen-v2-row zen-translate-control-row zen-translate-add"
+      data-static=""
+      aria-disabled={disabled || undefined}
+    >
       <Menulist
         value={null}
         placeholder={placeholder}
         options={options}
         onChange={onPick}
         label={label}
+        disabled={disabled}
       />
     </div>
   )

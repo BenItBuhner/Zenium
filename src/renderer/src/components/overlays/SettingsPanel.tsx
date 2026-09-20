@@ -346,7 +346,7 @@ function LookSection({
         {!caps.pageControls && <PageZoomRow s={s} set={set} />}
       </Group>
       {!caps.pageControls && <SiteZoomsGroup s={s} />}
-      {caps.pageControls && <SitesGroups s={s} set={set} />}
+      {(caps.pageControls || caps.darkenSites) && <SitesGroups s={s} set={set} caps={caps} />}
       <AppIconGroup value={s.appIcon} platform={platform} onChange={(id) => set({ appIcon: id })} />
       <Group title="Bookmarks">
         <Row

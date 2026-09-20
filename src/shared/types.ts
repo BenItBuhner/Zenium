@@ -4188,6 +4188,11 @@ export interface Events {
    * actions (one row per enabled extension with an action; the desktop has the toolbar for it).
    */
   'extensions.open': void
+  /**
+   * Open Reader View's text preferences (size, font, theme, width) for a reader tab: the app
+   * menu's "Text Preferences…" – a popover under the address pill on a mouse, a sheet on a phone.
+   */
+  'reader.preferences': { tabId: string }
   /** The host's recogniser reports while a voice search runs (after `voice.start` answered `listening`). */
   'voice.event': VoiceEvent
   /** The host's camera reports while a scan runs (after `qr.start` answered `scanning`). */

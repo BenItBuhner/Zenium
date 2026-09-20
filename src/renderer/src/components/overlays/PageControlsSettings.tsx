@@ -1,6 +1,12 @@
 import type { JSX, ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
-import type { DesktopSiteDefault, PageControlsSettings, Settings, UIState } from '@shared/types'
+import type {
+  DesktopSiteDefault,
+  HostCapabilities,
+  PageControlsSettings,
+  Settings,
+  UIState
+} from '@shared/types'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
 import { run } from '@renderer/lib/api'
 import { Switch } from '../ui/switch'
@@ -15,7 +21,9 @@ import { Choice, Group, MENULIST_HEIGHT, Row } from './SettingsPrimitives'
  *
  * The desktop has zoom memory without the rest of the page controls: its default zoom is
  * Chrome's "Page zoom" menulist under Appearance (`PageZoomRow`), and the sites that were
- * zoomed away from it are listed under it (`SiteZoomsGroup`, shared with Accessibility).
+ * zoomed away from it are listed under it (`SiteZoomsGroup`, shared with Accessibility). It
+ * darkens pages too (`capabilities.darkenSites`), so `SitesGroups` shows the dark theme switch
+ * and its exceptions there without the desktop-site rows.
  */
 
 type SetSettings = (patch: Partial<Settings>) => void
@@ -68,47 +76,69 @@ export function SiteZoomsGroup({ s }: { s: Settings }): JSX.Element {
   )
 }
 
-export function SitesGroups({ s, set }: { s: Settings; set: SetSettings }): JSX.Element {
+/**
+ * The Sites group and its exceptions, by what the host does: the desktop-site default is the
+ * page-controls host's (Android's WebView asks for a layout), the dark theme for sites is any
+ * host that can darken pages (Chrome Android's "Auto-darken web content"; the desktop through
+ * Chromium's auto dark mode, CT-18). Each list shows only the exceptions of the rows above it,
+ * so a desktop profile with a darkened site from an Android device never lists a desktop-site
+ * exception it cannot change.
+ */
+export function SitesGroups({
+  s,
+  set,
+  caps
+}: {
+  s: Settings
+  set: SetSettings
+  caps: Pick<HostCapabilities, 'pageControls' | 'darkenSites'>
+}): JSX.Element {
   const pc = s.pageControls
   const patch = patcher(s, set)
-  const desktop = sorted(pc.desktopSites)
-  const darken = sorted(pc.darkenSiteExceptions)
+  const desktop = caps.pageControls ? sorted(pc.desktopSites) : []
+  const darken = caps.darkenSites ? sorted(pc.darkenSiteExceptions) : []
+  const creators = [
+    caps.pageControls && 'Desktop Site',
+    caps.darkenSites && 'Dark Theme for This Site'
+  ].filter((x): x is string => typeof x === 'string')
+  const remembered = `${creators.join(' and ')} in the menu ${creators.length > 1 ? 'remember' : 'remembers'} a site’s choice here.`
   return (
     <>
       <Group title="Sites">
-        <Row label="Desktop site">
-          <Choice<DesktopSiteDefault>
-            value={pc.desktopSite}
-            onChange={(v) => patch({ desktopSite: v })}
-            options={[
-              { value: 'auto', label: 'Automatic' },
-              { value: 'on', label: 'Always' },
-              { value: 'off', label: 'Never' }
-            ]}
-          />
-        </Row>
-        <Note>
-          Automatic asks sites for their desktop layout on large screens, or when a keyboard and
-          mouse are attached.
-        </Note>
-        <Row
-          label="Apply dark theme to sites"
-          hint="Sites without a dark theme get one while Zenium is dark."
-        >
-          <Switch
-            aria-label="Apply dark theme to sites"
-            checked={pc.darkenSites}
-            onCheckedChange={(v) => patch({ darkenSites: v })}
-          />
-        </Row>
+        {caps.pageControls && (
+          <>
+            <Row label="Desktop site">
+              <Choice<DesktopSiteDefault>
+                value={pc.desktopSite}
+                onChange={(v) => patch({ desktopSite: v })}
+                options={[
+                  { value: 'auto', label: 'Automatic' },
+                  { value: 'on', label: 'Always' },
+                  { value: 'off', label: 'Never' }
+                ]}
+              />
+            </Row>
+            <Note>
+              Automatic asks sites for their desktop layout on large screens, or when a keyboard and
+              mouse are attached.
+            </Note>
+          </>
+        )}
+        {caps.darkenSites && (
+          <Row
+            label="Apply dark theme to sites"
+            hint="Sites without a dark theme get one while Zenium is dark. Dark Theme for This Site in the menu turns it off for one site."
+          >
+            <Switch
+              aria-label="Apply dark theme to sites"
+              checked={pc.darkenSites}
+              onCheckedChange={(v) => patch({ darkenSites: v })}
+            />
+          </Row>
+        )}
       </Group>
       <Group title="Site exceptions">
-        {desktop.length + darken.length === 0 && (
-          <Empty>
-            No exceptions yet. Desktop Site and Dark Theme for This Site in the menu remember a
-            site&apos;s choice here.
-          </Empty>
-        )}
+        {desktop.length + darken.length === 0 && <Empty>No exceptions yet. {remembered}</Empty>}
         {desktop.map(([domain, on]) => (
           <SiteRow
             key={`desktop:${domain}`}

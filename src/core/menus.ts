@@ -2472,6 +2472,13 @@ export class Menus {
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
+        // Edge's Immersive Reader has "Text preferences" on its toolbar; here the item sits under
+        // Reader View while an article is open, and the chrome shows the popover (a mouse) or
+        // the sheet (a phone) that the reader page's own toolbar mirrors.
+        ...when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
+          label: 'Text Preferences…',
+          click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
+        }),
         ...when(this.browser.translate.available, {
           label: 'Translate Page…',
           enabled: Boolean(active) && this.browser.translate.canTranslate(active!.id),
