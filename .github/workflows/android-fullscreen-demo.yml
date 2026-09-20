@@ -26,8 +26,6 @@ name: Android fullscreen video demo
 # file only picks the driver.
 on:
   workflow_dispatch:
-    branches:
-      - cursor/android-fullscreen-capture-7f4a
 
 permissions:
   contents: read
