@@ -8,6 +8,7 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  platformOperations,
   workerSelf,
   type ScriptDocument,
   type ScriptElement,
@@ -514,7 +515,9 @@ describe('importScripts on the worker page', () => {
 describe("the worker page's self and globalThis answer as a worker's global", () => {
   /** A Window-shaped global: unforgeable getters, platform operations that check their receiver. */
   function blinkLikeGlobal(): Any {
-    const global: Any = {}
+    // EventTarget.prototype's operation sits on the chain, as in Blink; the Window's own on it.
+    const eventTarget: Any = {}
+    const global: Any = Object.create(eventTarget)
     // Blink's operations are not constructors (no `prototype`), as a shorthand method is not.
     const platform = (name: string): unknown =>
       ({
@@ -537,7 +540,7 @@ describe("the worker page's self and globalThis answer as a worker's global", ()
       },
       configurable: false
     })
-    global.addEventListener = platform('addEventListener')
+    eventTarget.addEventListener = platform('addEventListener')
     global.setTimeout = platform('setTimeout')
     global.fetch = platform('fetch')
     global.requestAnimationFrame = platform('requestAnimationFrame')
@@ -645,6 +648,65 @@ describe("the worker page's self and globalThis answer as a worker's global", ()
       'abcdefghijklmnopabcdefghijklmnop',
       Infinity
     ])
+  })
+
+  it("a script's wrapper of a platform operation runs on the global too, wherever it was installed", () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       // Sentry's browserApiErrors: EventTarget.prototype.addEventListener becomes a plain
+       // function (it has a prototype, as any does) that forwards this to the native, and its
+       // INP tracking then calls GLOBAL_OBJ.addEventListener(...).
+       const proto = Object.getPrototypeOf(self);
+       const nativeListen = proto.addEventListener;
+       proto.addEventListener = function (type, fn) { return 'wrapped:' + nativeListen.apply(this, [type, fn]); };
+       const listened = self.addEventListener('click', 'fn');
+       // Sentry's fill(WINDOW, 'setTimeout', ...): the Window's own operation, replaced through
+       // the proxy; the replacement forwards this to the native it took from the page.
+       const nativeTimer = window.setTimeout;
+       self.setTimeout = function (cb, ms) { return 'wrapped:' + nativeTimer.apply(this, [cb, ms]); };
+       const timed = self.setTimeout('cb', 7);
+       // The replacement landed on the page's global, where the bare identifier finds it.
+       const bare = window.setTimeout('bare', 1);
+       // A constructor the script defines on the global is not an operation: raw, constructible.
+       self.Thing = function Thing(v) { this.v = v; };
+       const built = new self.Thing(4).v;
+       [listened, timed, bare, self.setTimeout === self.setTimeout, built, self.Thing === window.Thing]`
+    )
+    expect(result).toEqual([
+      'wrapped:addEventListener(click,fn)',
+      'wrapped:setTimeout(cb,7)',
+      'wrapped:setTimeout(bare,1)',
+      true,
+      4,
+      true
+    ])
+  })
+
+  it('the operations snapshot names the platform functions, not constructors, accessors or Object.prototype', () => {
+    const global = blinkLikeGlobal()
+    const operations = platformOperations(global)
+    expect(operations.has('addEventListener')).toBe(true)
+    expect(operations.has('setTimeout')).toBe(true)
+    expect(operations.has('fetch')).toBe(true)
+    expect(operations.has('URL')).toBe(false)
+    expect(operations.has('document')).toBe(false)
+    expect(operations.has('location')).toBe(false)
+    expect(operations.has('hasOwnProperty')).toBe(false)
+    expect(operations.has('toString')).toBe(false)
+    // The snapshot runs no getter: location's throws for any receiver but the global, and a
+    // getter with a side effect would count.
+    let read = 0
+    Object.defineProperty(global, 'counted', {
+      get: () => {
+        read++
+        return () => 'x'
+      },
+      configurable: true
+    })
+    expect(platformOperations(global).has('counted')).toBe(false)
+    expect(read).toBe(0)
   })
 
   it('Object.assign, defineProperty, keys, prototype and delete go to the global; the guarded polyfills run as in a worker', () => {

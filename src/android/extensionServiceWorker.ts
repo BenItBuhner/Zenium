@@ -508,6 +508,31 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
 ])
 
 /**
+ * The keys of the global's operations: the function-valued data properties of the global and
+ * of its prototype chain short of `Object.prototype` that are not constructors (Blink gives an
+ * operation no `prototype`; `fetch`, `setTimeout` and `atob` sit on the Window itself, a
+ * [Global] interface, `addEventListener` on `EventTarget.prototype`). Accessors are not read:
+ * the snapshot must not run a getter. `Object.prototype`'s generics (`hasOwnProperty`,
+ * `toString`) take any receiver and are left out, so through the proxy they see the proxy.
+ */
+export function platformOperations(global: object): ReadonlySet<PropertyKey> {
+  const keys = new Set<PropertyKey>()
+  for (
+    let obj: object | null = global;
+    obj && obj !== Object.prototype;
+    obj = Object.getPrototypeOf(obj)
+  ) {
+    for (const key of Reflect.ownKeys(obj)) {
+      const descriptor = Object.getOwnPropertyDescriptor(obj, key)
+      const value: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined
+      if (typeof value === 'function' && !Object.prototype.hasOwnProperty.call(value, 'prototype'))
+        keys.add(key)
+    }
+  }
+  return keys
+}
+
+/**
  * The worker page's `self` and `globalThis`, as a worker script built for a real worker reads
  * and writes them.
  *
@@ -531,7 +556,13 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
  *   and `crypto` among them, want it), and a function that is not a constructor comes back
  *   bound to the global, so `self.addEventListener`, `self.fetch`, `self.setTimeout` run on
  *   the object Blink expects (a constructor constructs alike whatever the receiver, and its
- *   `prototype` must stay reachable, so it comes back as it is).
+ *   `prototype` must stay reachable, so it comes back as it is). The platform's operations
+ *   are told from constructors once, when the proxy is made: a key that names one stays bound
+ *   whatever function a script has put there since. Sentry's `browserApiErrors` wraps
+ *   `EventTarget.prototype.addEventListener` in a plain function that forwards `this` to the
+ *   native, then calls `GLOBAL_OBJ.addEventListener(…)`; the wrapper has a `prototype` as any
+ *   plain function does, and unbound it would hand the native this proxy, an Illegal invocation
+ *   that took MetaMask's and Malwarebytes' workers down.
  *
  * The proxy's target is an empty object, not the global: a proxy over the global itself would
  * be held to the global's own invariants, and refusing a write to a getter-only `window` is
@@ -540,13 +571,15 @@ export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey
  */
 export function workerSelf(global: object): object {
   const bound = new WeakMap<object, unknown>()
+  const operations = platformOperations(global)
   // The target: empty but for what the script defines of a worker's missing members.
   const held: Record<PropertyKey, unknown> = {}
   const holds = (key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(held, key)
   const ownHere = (key: PropertyKey): boolean => holds(key) || WINDOW_ONLY_MEMBERS.has(key)
   const forCall = (key: PropertyKey, value: unknown): unknown => {
     if (typeof value !== 'function') return value
-    if (Object.prototype.hasOwnProperty.call(value, 'prototype')) return value
+    if (!operations.has(key) && Object.prototype.hasOwnProperty.call(value, 'prototype'))
+      return value
     const own = Object.getOwnPropertyDescriptor(global, key)
     if (own && !own.configurable && !own.writable) return value
     let fn = bound.get(value)
