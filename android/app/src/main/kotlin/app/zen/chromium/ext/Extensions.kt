@@ -754,10 +754,14 @@ class Extensions(private val host: Host) {
                 run = { script -> tab.evaluateJavascript(script) { result -> reply(unwrap(result)) } }
             }
         }
+        // Evaluated in the main world for the extension's own scope (not a `world: "MAIN"`
+        // injection): the bootstrap gives it the `with` scope proxy, and the body must resolve its
+        // bare identifiers there, as a content script's group does.
+        val scoped = named && !wantMain
         val assemble = {
             ExtensionScripts.execScript(
                 token, id, args.str("kind", "js"), payload, args.strOrNull("code"), files,
-                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named
+                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named, scoped
             )
         }
         if (files.isEmpty()) {

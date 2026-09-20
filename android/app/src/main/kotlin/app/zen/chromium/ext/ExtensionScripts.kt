@@ -33,6 +33,7 @@ object ExtensionScripts {
     private const val GUARD_HEAD = "(function(){try{return {v:"
     private const val GUARD_TAIL = "}}catch(e){return {e:String(e&&e.message||e)}}})()"
     private const val EXEC_TAIL = "\n})"
+    private const val EXEC_TAIL_SCOPED = "\n}})"
 
     /** Between two injected files: a file ending in a line comment cannot swallow the next one. */
     private const val FILE_JOIN = "\n;\n"
@@ -101,9 +102,18 @@ object ExtensionScripts {
      * What the host evaluates in a tab for `scripting.executeScript` / `tabs.executeScript`: the
      * code becomes a function literal handed to the bootstrap's `__zenExtExec`, which runs it in
      * the extension's scope. `funcSource` + `args` (MV3 `func`) returns the function's value.
+     *
+     * `scoped`: the injection runs in the main world for the extension's `with` scope (a WebView
+     * without isolated worlds, or a document that predates the extension's world), so the body is
+     * a `with(window){…}` block as [appendGroupFunction] makes a content script's: the scope proxy
+     * is then where a bare identifier resolves as well as what `globalThis` names, and a file that
+     * writes `globalThis.litPropertyMetadata = …` then reads the bare `litPropertyMetadata` (Lit's
+     * reactive element, in Read&Write's toolbar) finds its own write. Without the block the bare
+     * name looked the page's global up and threw `litPropertyMetadata is not defined`. An
+     * isolated world, and a `world: "MAIN"` injection, run unscoped: their global is the scope.
      */
-    fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?): String =
-        execHead(token, extensionId, kind, payload) + execBody(code, funcSource, argsJson) + EXEC_TAIL
+    fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String =
+        execHead(token, extensionId, kind, payload, scoped) + execBody(code, funcSource, argsJson) + execTail(scoped)
 
     /**
      * A document without the extension's bootstrap (one the runtime could not reach: loaded
@@ -113,10 +123,12 @@ object ExtensionScripts {
      */
     const val NO_ACCESS = "Cannot access contents of the page. Extension manifest must request permission to access the respective host."
 
-    private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject): String =
+    private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean): String =
         "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
             "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
-            "function(window,self,globalThis,chrome,browser){\n"
+            "function(window,self,globalThis,chrome,browser){" + (if (scoped) "with(window){" else "") + "\n"
+
+    private fun execTail(scoped: Boolean): String = if (scoped) EXEC_TAIL_SCOPED else EXEC_TAIL
 
     private fun execBody(code: String?, funcSource: String?, argsJson: String?): String = when {
         funcSource != null -> "return (${funcSource}).apply(null,${argsJson ?: "[]"});"
@@ -153,12 +165,14 @@ object ExtensionScripts {
         funcSource: String?,
         argsJson: String?,
         prefix: String?,
-        named: Boolean
+        named: Boolean,
+        scoped: Boolean = false
     ): String {
-        val head = execHead(token, extensionId, kind, payload)
+        val head = execHead(token, extensionId, kind, payload, scoped)
         val body = execBody(code, funcSource, argsJson)
+        val tail = execTail(scoped)
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
-            files.sumOf { it.length().toInt() + FILE_JOIN.length } + EXEC_TAIL.length + GUARD_TAIL.length +
+            files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
             (if (named) SOURCE_URL_TAIL.length else 0)
         val sb = StringBuilder(capacity)
         if (prefix != null) sb.append(prefix).append('\n')
@@ -176,7 +190,7 @@ object ExtensionScripts {
                 }
             }
         }
-        sb.append(EXEC_TAIL).append(GUARD_TAIL)
+        sb.append(tail).append(GUARD_TAIL)
         if (named) sb.append(SOURCE_URL_TAIL)
         return sb.toString()
     }
