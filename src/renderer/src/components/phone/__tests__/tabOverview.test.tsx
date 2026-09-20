@@ -1399,6 +1399,68 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
   })
 
+  /*
+   * The last private tab closing returns the overview to the Tabs pane, picked or followed
+   * (Chrome's switcher); the explainer is still a pick away with none open.
+   */
+  it('returns to the Tabs pane when the last private tab closes with the Private pane picked; Private picked again is the explainer', () => {
+    const state = mixed()
+    render(state)
+    act(() => segment('private').click())
+    expect(privateTabsStore.get().pane).toBe('private')
+    expect(cellKeys()).toEqual(['p1', 'p2', NEW_TAB_CELL])
+
+    // One private tab closes: the pane stays, the other card remains.
+    render(
+      withPrivate(
+        stateOf(
+          [
+            tab('a', 'https://a.example/'),
+            tab('b', 'https://b.example/'),
+            privateTab('p2', 'https://two.example/')
+          ],
+          []
+        )
+      )
+    )
+    expect(selected('private')).toBe(true)
+    expect(cellKeys()).toEqual(['p2', NEW_TAB_CELL])
+
+    // The last one closes: back to the Tabs pane, the pick released to it.
+    render(withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], [])))
+    expect(privateTabsStore.get().pane).toBe('tabs')
+    expect(selected('tabs')).toBe(true)
+    expect(grid().dataset.pane).toBe('tabs')
+    expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).toBeNull()
+
+    // Private picked with none open: the explainer, as before.
+    act(() => segment('private').click())
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+    expect(selected('private')).toBe(true)
+  })
+
+  it('returns to the Tabs pane when the last private tab closes with the pane following the tab in view', () => {
+    const state = mixed()
+    state.spaces[0].activeTabId = 'p1'
+    render(state)
+    expect(privateTabsStore.get().pane).toBeNull()
+    expect(selected('private')).toBe(true)
+    // The core closes p1 and brings a regular tab into view; nothing is picked, so the pane follows.
+    render(withPrivate(stateOf([tab('a', 'https://a.example/'), tab('b', 'https://b.example/')], [])))
+    expect(privateTabsStore.get().pane).toBeNull()
+    expect(selected('tabs')).toBe(true)
+    expect(cellKeys()).toEqual(['a', 'b', NEW_TAB_CELL])
+  })
+
+  it('opening the overview on an empty private session with Private picked shows the explainer, not the Tabs pane', () => {
+    // No transition from some to none: the pick holds (a pick made before the overview came up).
+    act(() => privateTabsStore.set({ pane: 'private' }))
+    render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
+    expect(privateTabsStore.get().pane).toBe('private')
+    expect(host!.querySelector('[data-testid="overview-private-empty"]')).not.toBeNull()
+  })
+
   it("each pane's New Tab card asks for a tab of its own mode", () => {
     render(mixed())
     const asked = newTabRequests(() => {

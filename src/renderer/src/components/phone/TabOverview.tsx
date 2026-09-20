@@ -155,6 +155,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const groups = privatePane ? [] : groupsOf(state, space.id)
   const count = essentials.length + pinned.length + regular.length
 
+  // The last private tab closing ends the session, and the overview returns to the Tabs pane
+  // whether the Private pane was picked or followed (Chrome's switcher does the same); the
+  // empty explainer stays a pick away, for whoever picks Private with none open.
+  const privateCount = hasPrivate ? privateTabsOf(state).length : 0
+  const privateCountBefore = useRef(privateCount)
+  useEffect(() => {
+    const before = privateCountBefore.current
+    privateCountBefore.current = privateCount
+    if (before > 0 && privateCount === 0 && picked === 'private') pickOverviewPane('tabs')
+  }, [privateCount, picked])
+
   // While a card is dragged its stand-in sits in the slot under the finger, not where the tab
   // is: the grid shows the order the drop would make, and glides into it as the slot moves.
   const liftTabId = liftStore.use((s) => s.tabId)
