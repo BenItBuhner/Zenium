@@ -3967,7 +3967,9 @@
    * The bubble's list: flush with the popover's sides – the rows stand `--v2-ring-room` in from
    * them (the shared row's popover form, beside the primitive) and their text on the title
    * block's 16 (§5, box to box); rows touch. Its first row is the first thing under the title
-   * block, so the list leaves the ring's room above it as well, and 8 under the last row to the
+   * block, so the list leaves the ring's room above it as well – carved from the title block's
+   * bottom 16 the way the row's gutter gives the sideways room, so the title's text keeps its
+   * distance to the first row and the bubble its height – and 8 under the last row to the
    * footer's hairline. The footer under the hairline is one full-width row (§6 has no text-only
    * buttons): the popover's 32 row with the hover fill, its 15/400 label at the 16 gutter; the
    * popover's clipped corners round its bottom.
@@ -3976,6 +3978,9 @@
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+  .zen-dl-bubble .zen-bm-title-block {
+    padding-bottom: calc(16px - var(--v2-ring-room));
   }
   .zen-dl-bubble .zen-dl-list {
     padding: var(--v2-ring-room) 0 8px;

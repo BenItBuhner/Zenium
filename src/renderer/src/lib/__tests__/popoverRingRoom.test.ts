@@ -141,11 +141,16 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
     for (const [property] of declarations(ROW))
       expect(property).not.toMatch(/height|padding-block|padding-top|padding-bottom|margin-block/)
     // Top and bottom. The downloads list's first row is the first thing under the title block:
-    // the list leaves the room above it, and 8 under the last row to the footer's hairline.
+    // the list leaves the room above it, carved from the title block's bottom 16 – the title's
+    // text stays 16 from the first row, box to box, and the bubble keeps its height – and 8
+    // under the last row to the footer's hairline.
     const list = value('.zen-dl-bubble .zen-dl-list', 'padding').split(/\s+/)
     expect(list).toEqual(['var(--v2-ring-room)', '0', '8px'])
-    expect(resolve(list[0]!, ROOM)).toBeGreaterThanOrEqual(reach)
+    const room = resolve(list[0]!, ROOM)
+    expect(room).toBeGreaterThanOrEqual(reach)
     expect(px(list[2]!)).toBeGreaterThanOrEqual(reach)
+    const titleBottom = resolve(value('.zen-dl-bubble .zen-bm-title-block', 'padding-bottom'), ROOM)
+    expect(titleBottom + room).toBe(16)
     // The folder editor's action rows sit under a hairline with 4 and end 4 above the panel's
     // edge; tab search's first heading stands 4 under the title block (§9.20's 4 px insets).
     expect(px(value('.zen-group-editor-actions', 'padding-bottom'))).toBeGreaterThanOrEqual(reach)
