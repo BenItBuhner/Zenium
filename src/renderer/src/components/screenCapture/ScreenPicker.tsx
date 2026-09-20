@@ -71,6 +71,16 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
   const [audio, setAudio] = useState(true)
   // The keyboard's place in the pane's grid (roving tabindex), by source id.
   const [focused, setFocused] = useState<string | null>(null)
+  // The cards have scrolled under the segment (§9.7: its hairline shows then, not at rest).
+  const [scrolled, setScrolled] = useState(false)
+  const list = useRef<HTMLDivElement>(null)
+
+  // The list box is one element across the panes: a new pane starts at its top (the scroll
+  // back to 0 reports through onScroll, which puts the hairline away).
+  const switchPane = (id: PickerPane): void => {
+    setPane(id)
+    if (list.current) list.current.scrollTop = 0
+  }
 
   // The page's view hides under chrome overlays; its snapshot stands in while the picker is up –
   // and is the calling tab's own card picture.
@@ -136,7 +146,7 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
     if (next === null) return
     e.preventDefault()
     const id = PICKER_PANES[next]!.id
-    setPane(id)
+    switchPane(id)
     ref.current?.querySelector<HTMLElement>(`[role="tab"][data-pane="${id}"]`)?.focus()
   }
 
@@ -174,6 +184,7 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
         role="tablist"
         aria-label="What to share"
         className="zen-v2-segment zen-scpick-panes"
+        data-scrolled={scrolled || undefined}
         onKeyDown={onSegmentKey}
       >
         {PICKER_PANES.map((p) => (
@@ -186,18 +197,20 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
             aria-controls={`zen-scpick-pane-${p.id}`}
             tabIndex={pane === p.id ? 0 : -1}
             data-pane={p.id}
-            onClick={() => setPane(p.id)}
+            onClick={() => switchPane(p.id)}
           >
             {p.label}
           </button>
         ))}
       </div>
       <div
+        ref={list}
         id={`zen-scpick-pane-${pane}`}
         role="tabpanel"
         aria-labelledby={`zen-scpick-tab-${pane}`}
         className="zen-scpick-list"
         aria-busy={loading || undefined}
+        onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
         {loading ? (
           <div className="zen-scpick-state" data-busy="">

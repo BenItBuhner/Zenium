@@ -344,6 +344,30 @@ describe('ScreenPicker', () => {
     expect(el.querySelector('.zen-scpick-state')!.textContent).toBe('No screens to share')
   })
 
+  it('draws the segment’s hairline only while the cards scroll under it (§9.7), and a new pane starts at the top', () => {
+    const el = render(layer(stateWith([REQUEST])))
+    const segment = el.querySelector<HTMLElement>('[role="tablist"]')!
+    const pane = el.querySelector<HTMLElement>('[role="tabpanel"]')!
+    expect(segment.getAttribute('data-scrolled')).toBeNull()
+    act(() => {
+      pane.scrollTop = 120
+      pane.dispatchEvent(new Event('scroll'))
+    })
+    expect(segment.getAttribute('data-scrolled')).toBe('true')
+    act(() => {
+      pane.scrollTop = 0
+      pane.dispatchEvent(new Event('scroll'))
+    })
+    expect(segment.getAttribute('data-scrolled')).toBeNull()
+    // Switching panes puts the one list box back at its top.
+    act(() => {
+      pane.scrollTop = 80
+      pane.dispatchEvent(new Event('scroll'))
+    })
+    click(paneTab(el, 'window'))
+    expect(pane.scrollTop).toBe(0)
+  })
+
   it('offers "Also share system audio" on the screen pane only where the OS can and the page asked, on by default', () => {
     const withAudio = { ...REQUEST, audio: true, systemAudio: true }
     const el = render(layer(stateWith([withAudio])))
