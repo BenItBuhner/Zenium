@@ -261,8 +261,12 @@ export class TabManager {
       if (url === '' || url === BLANK_URL || url === snapshot.entries[index].url) {
         this.pendingTransition.set(tabId, 'restored')
         // The host's own serialisation of the stack rides along: the list is the one it describes.
+        // After a relaunch it is not in memory but in the tab's `navigation/` document, which
+        // hands it over for this very list only.
         const whole: NavigationSnapshot = { entries: snapshot.entries, index }
-        if (snapshot.hostState !== undefined) whole.hostState = snapshot.hostState
+        const hostState =
+          snapshot.hostState ?? this.browser.state.navigationState.hostStateFor(tabId, whole)
+        if (hostState !== undefined) whole.hostState = hostState
         void view.restoreNavigation(whole)
       } else {
         // Asked to go somewhere else meanwhile (typed into the pill while unloaded): the new
@@ -308,6 +312,8 @@ export class TabManager {
     const snapshot: NavigationSnapshot | null = view.navigationEntries() ?? null
     if (!snapshot || snapshot.entries.length === 0) return
     this.browser.state.tabNavigation.set(tabId, snapshot)
+    // The stack's host-state blob has a document of its own; it is brought up to date on a timer.
+    this.browser.state.navigationState.touch(tabId)
   }
 
   /** The stacks of every loaded page, read once more before the pages go (a graceful quit). */
@@ -1502,6 +1508,8 @@ export class TabManager {
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
     this.browser.state.tabNavigation.delete(tabId)
+    // Its host-state document stays only while a "Recently closed" entry holds the id.
+    this.browser.state.navigationState.touch(tabId)
     this.destroyView(tabId)
     this.browser.governor.onTabRemoved(tabId)
     this.browser.pages.onTabRemoved(tabId)
