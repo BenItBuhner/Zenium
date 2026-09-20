@@ -149,7 +149,8 @@ export class PageService {
   tabWindowFor(win: ZenWindow): ZenWindow | null {
     const host = this.hostWindowFor(win)
     if (!host.isPrivate) return host
-    const regular = this.browser.allWindows().filter((w) => !w.isPrivate && w.chrome !== 'popup')
+    // A regular window with the full chrome: a popup or an app window has no strip for the tab.
+    const regular = this.browser.allWindows().filter((w) => !w.isPrivate && w.chrome === 'full')
     return regular.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0] ?? null
   }
 

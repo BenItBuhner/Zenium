@@ -318,6 +318,22 @@ describe('standalone app windows (MW-23)', () => {
     expect(f.browser.allWindows()).toContain(opened)
   })
 
+  it('never lends itself to a page tab asked from a private window (a regular window or none)', () => {
+    const f = fixture()
+    const browserWin = f.browser.allWindows()[0]
+    const win = f.browser.openAppWindow(APP_URL)!
+    const priv = f.browser.createWindow({ kind: 'private', from: browserWin })
+    // The app window used last still is not a home for Settings: the regular window is.
+    win.lastFocusedAt = 3000
+    browserWin.lastFocusedAt = 2000
+    expect(f.browser.pages.tabWindowFor(priv)).toBe(browserWin)
+    expect(f.browser.pages.tabWindowFor(win)).toBe(browserWin)
+    // No regular window left: none rather than the app window (`open` makes a new one).
+    browserWin.onClosing()
+    browserWin.onClosed()
+    expect(f.browser.pages.tabWindowFor(priv)).toBeNull()
+  })
+
   it('cannot receive a dragged tab and closes with its page', async () => {
     const f = fixture()
     const browserWin = f.browser.allWindows()[0]
