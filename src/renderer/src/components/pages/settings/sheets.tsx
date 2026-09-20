@@ -1,5 +1,5 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
@@ -15,7 +15,7 @@ import type {
   SettingsRow,
   ValueRow
 } from './model'
-import { findRow } from './model'
+import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
 import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sheetContext'
 
@@ -252,6 +252,8 @@ function HostedSheet({
  * §9.13 on a phone: the options as 44 px radio rows, the current one marked (and, by the
  * chassis, focused as the sheet opens); a pick closes it. Exported for a form that keeps a
  * value row of its own (Clear browsing data's time range) and opens its picker over itself.
+ * Options under a heading (the search engine picker's "Recently visited") follow the ungrouped
+ * ones, each set under its §10.3 heading.
  */
 export function OptionsSheet({
   row,
@@ -273,17 +275,23 @@ export function OptionsSheet({
       sheetRef={sheet}
     >
       <div role="radiogroup" aria-label={row.label} className="zen-settings-sheet-rows">
-        {row.options.map((option) => (
-          <RadioOption
-            key={option.value}
-            label={option.label}
-            description={option.description}
-            checked={option.value === row.value}
-            onSelect={() => {
-              if (option.value !== row.value) row.onChange(option.value)
-              sheet.current?.dismiss()
-            }}
-          />
+        {optionGroups(row.options).map((group) => (
+          <Fragment key={group.heading ?? ''}>
+            {group.heading !== null && <h3 className="zen-settings-heading">{group.heading}</h3>}
+            {group.options.map((option) => (
+              <RadioOption
+                key={option.value}
+                label={option.label}
+                description={option.description}
+                leading={option.leading}
+                checked={option.value === row.value}
+                onSelect={() => {
+                  if (option.value !== row.value) row.onChange(option.value)
+                  sheet.current?.dismiss()
+                }}
+              />
+            ))}
+          </Fragment>
         ))}
       </div>
     </SettingsSheet>

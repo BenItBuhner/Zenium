@@ -54,6 +54,7 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_VOICE_EVENT,
@@ -92,11 +93,12 @@ const QR_EVENT_MARGIN_MS = 250
  * and quick checks need no tapping through the menus. A state is a query string (see
  * `parsePreviewSpec`): `idle`, `page=settings` (the Settings tab; `section=<id>` opens a section
  * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
- * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
- * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
- * opens the tab overview, `urlbar` the pill for editing), `group=<n>` (the active tab in a
- * group of n members made on the spot, so the group strip is up in the bar band; `then=` steps
- * run once the group has formed), `overlay=<kind>` (history, bookmarks,
+ * into view, `then=tap:<text>;type:<id>=<text>;back;overview;urlbar` takes steps on the open page
+ * in order: a tap on a row opens its sheet and a second tap stacks one, `type` fills a form's
+ * field, `back` closes the top sheet, `overview` opens the tab overview, `urlbar` the pill for
+ * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
+ * strip is up in the bar band; `then=` steps run once the group has formed), `overlay=<kind>`
+ * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
@@ -122,10 +124,13 @@ const QR_EVENT_MARGIN_MS = 250
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
  * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
  * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
- * `denied`, …; see `previewQrScript`) or `overview` (the tab overview open over the active
- * page, its cards with whatever pictures the stand-in host has of the tabs). `rules=<n>` on
- * any spec seeds n remembered site permissions for Settings › Security; `blocking=<variant>`
- * may accompany any spec too (see `seedBlocking`).
+ * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
+ * page, its cards with whatever pictures the stand-in host has of the tabs) or
+ * `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
+ * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
+ * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
+ * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
+ * spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -534,6 +539,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     // The grid mounts on the next render and its cards read their pictures then.
     openOverview(state)
     requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'urlbar') {
+    applyUrlbar(target, tab?.id ?? null, finish)
   } else {
     finish()
   }
@@ -1064,6 +1071,48 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
   }
 }
 
+/** How long the editor's first suggestions are waited for before the state goes ahead anyway. */
+const SUGGESTIONS_MS = 4000
+
+/**
+ * The pill's editor the way a tap on the pill opens it: search-ready over the page (`edit`,
+ * nothing typed: the header row with Share, Copy link and Edit; the clipboard row when the
+ * stand-in clipboard holds something), or over a new tab (`new-tab`, no header). `text` is then
+ * typed into the field as a keyboard would (the suggestions refresh, query rows grow their Refine
+ * arrow), the first suggestions are waited for, the steps pressed in order, and `finish` called.
+ */
+function applyUrlbar(
+  target: Extract<PreviewState, { kind: 'urlbar' }>,
+  tabId: string | null,
+  finish: () => void
+): void {
+  if (target.clip !== null) {
+    window.dispatchEvent(new CustomEvent(PREVIEW_CLIP_EVENT, { detail: target.clip }))
+  }
+  const mode = target.newTab || !tabId ? 'new-tab' : 'edit'
+  void openUrlbar(mode, mode === 'edit' ? tabId : null, { attached: true }).then(() => {
+    requestAnimationFrame(() => {
+      if (target.text) type(URLBAR_FIELD, target.text)
+      whenSuggested(() => steps(target.then ?? [], finish))
+    })
+  })
+}
+
+const URLBAR_FIELD = 'input[aria-label="Search or enter address"]'
+
+/** Runs `fn` once the editor lists a row (or the hint that there is none), or after {@link SUGGESTIONS_MS}. */
+function whenSuggested(fn: () => void, deadline = performance.now() + SUGGESTIONS_MS): void {
+  const listed = document.querySelector(
+    '.zen-omnibox-sheet [role="option"], [data-testid="urlbar-page-header"]'
+  )
+  if (listed || performance.now() > deadline) {
+    // A frame for the rows to lay out before a step presses one of their controls.
+    setTimeout(fn, 300)
+    return
+  }
+  setTimeout(() => whenSuggested(fn, deadline), 50)
+}
+
 /**
  * The certificate the host reports with a certificate error (`failLoad` in `views.ts`), so that
  * `error=<ERR_CERT_*>` shows the interstitial whole: the Advanced block lists these fields and
@@ -1147,6 +1196,16 @@ function takeStep(step: PreviewStep): void {
     case 'hold':
       hold(step.text)
       return
+    case 'type': {
+      // A finger in the field, the text, then a tap elsewhere: the field is left touched, so a
+      // form's validation has its say in the still.
+      const field = document.getElementById(step.id)
+      if (!(field instanceof HTMLInputElement)) return
+      field.focus()
+      type(`#${step.id}`, step.text)
+      field.blur()
+      return
+    }
     case 'back':
       // One system back, committed: the top sheet, or the section over the landing, goes.
       dispatchBackEvent('start', { edge: 'left' })

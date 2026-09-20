@@ -105,7 +105,8 @@ import type { QrStartOutcome } from '../shared/qrScan'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
-import { buildSearchUrl, matchKeyword } from '../shared/search'
+import { buildSearchUrl, matchKeyword, sanitizeSearchEngines } from '../shared/search'
+import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -261,6 +262,8 @@ export class Browser {
   readonly mediaSession: MediaSessionService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
+  /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
+  readonly searchEngines: SearchEngineService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -369,6 +372,7 @@ export class Browser {
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
     this.webNotifications = new WebNotificationService(this)
+    this.searchEngines = new SearchEngineService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -1922,6 +1926,15 @@ export class Browser {
         this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
       return
     }
+    if (message.type === 'opensearch') {
+      if (typeof message.url === 'string')
+        void this.searchEngines.discover(
+          tabId,
+          message.url,
+          typeof message.title === 'string' ? message.title : ''
+        )
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2354,6 +2367,11 @@ export class Browser {
         else if (confirmation) this.copyText(text, confirmation, win)
         else platform.clipboard.writeText(text)
       },
+      'clipboard.peek': () => this.searchEngines.peekClipboard(),
+      'clipboard.read': () => this.searchEngines.readClipboard(),
+      'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
+      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 
       'newtab.open': (_a, win) => this.openNewTab(win),
       'newtab.addShortcut': ({ title, url }) => this.newTab.addShortcut(title, url) ?? '',
@@ -2800,6 +2818,11 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'searchEngines') {
+        // The user's engines whole (a Settings row sends the edited list); the default is kept.
+        const keep =
+          typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
+        s.searchEngines = sanitizeSearchEngines(value, keep)
       } else if (key === 'privacy' && value && typeof value === 'object') {
         s.privacy = sanitizePrivacySettings({
           ...s.privacy,
@@ -2837,6 +2860,10 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
+    // A default the profile no longer has an engine for (removed, or named by a peer's build that
+    // knows more engines) falls back to the shipped default; suggestions keep working.
+    if (!this.state.searchEngines.some((e) => e.id === s.searchEngineId))
+      s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||

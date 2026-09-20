@@ -1,0 +1,110 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browsing",
+      "icon": "\ud83c\udf10",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_brew",
+        "tab_guide"
+      ],
+      "activeTabId": "tab_brew",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_brew",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18135/",
+      "title": "Brew notes",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_guide",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18135/guide.html",
+      "title": "Brewing guide",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "gestureHintDone": true,
+    "colorScheme": "light",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    },
+    "searchEngineId": "custom:brew-notes",
+    "searchEngines": [
+      {
+        "id": "custom:brew-notes",
+        "name": "Brew notes",
+        "searchUrl": "http://127.0.0.1:18135/search?q=%s",
+        "suggestUrl": "http://127.0.0.1:18135/suggest?q=%s",
+        "keyword": "@brew",
+        "glyph": "B",
+        "source": "custom",
+        "favicon": null
+      }
+    ]
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_brew"
+      },
+      "compact": false
+    }
+  ]
+}

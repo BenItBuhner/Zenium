@@ -60,7 +60,9 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
      * connection, so the body is never held in memory whole. Decoded as UTF-8 either way (the
      * chrome reads the spill file as `text/plain; charset=utf-8`), as the inline path always was.
      * A body over `maxBytes`, or one whose connection fails midway, leaves no file behind and
-     * fails the fetch (an [IOException]).
+     * fails the fetch (an [IOException]); the read stops within a buffer of the cap, inline or
+     * spilled, so a caller's small cap (an OpenSearch description's 64 KB) bounds the download
+     * itself and not only what is kept of it.
      */
     fun readBody(stream: InputStream, inlineLimit: Int = NET_INLINE_LIMIT, maxBytes: Long = NET_BODY_LIMIT): Body {
         val head = ByteArrayOutputStream()
@@ -69,6 +71,7 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
             val n = stream.read(buffer)
             if (n < 0) return Body.Inline(String(head.toByteArray(), Charsets.UTF_8))
             head.write(buffer, 0, n)
+            if (head.size() > maxBytes) throw IOException("the body exceeds $maxBytes bytes")
         }
         val token = newToken()
         val file = spillFile(token) ?: throw IllegalStateException("no spill directory")

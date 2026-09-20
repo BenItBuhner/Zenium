@@ -220,6 +220,7 @@ export const DEFAULT_SETTINGS: Settings = {
   unloadExcludedDomains: [],
   mutedHosts: [],
   searchEngineId: 'google',
+  searchEngines: [],
   searchSuggestions: true,
   showFullUrls: false,
   containerSpecificEssentials: true,

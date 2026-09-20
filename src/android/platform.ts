@@ -937,7 +937,16 @@ export class AndroidPlatform implements Platform {
       writeText: (text, sensitive) =>
         bridge.send('clipboard.writeText', { text, sensitive: sensitive === true }),
       writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url }),
-      clearText: (expected) => bridge.call('clipboard.clearText', { expected })
+      clearText: (expected) => bridge.call('clipboard.clearText', { expected }),
+      // The URL bar's clipboard row: `peek` reads the clip's description alone (no Android 12+
+      // toast), `read` its text once on the user's reveal or pick, `markUsed` remembers the clip
+      // the user opened so it is not offered again until the clipboard changes (ClipboardPeek.kt).
+      peek: async () => {
+        const kind = await bridge.call<string>('clipboard.peek', {})
+        return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
+      },
+      read: () => bridge.call<string>('clipboard.read', {}),
+      markUsed: () => bridge.send('clipboard.markUsed')
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
@@ -962,7 +971,13 @@ export class AndroidPlatform implements Platform {
           headers?: Record<string, string>
           /** The spilled body, when there is one; `text` is empty then. */
           body?: SpilledBody
-        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
+        }>('net.fetch', {
+          url,
+          headers: options.headers ?? {},
+          timeoutMs: options.timeoutMs ?? 0,
+          // Kotlin stops reading there and fails the fetch (`readBody`'s cap); 0 is its own limit.
+          maxBytes: options.maxBytes ?? 0
+        })
         let text = result.text
         if (result.body) {
           const release = (token: string): void => bridge.send('net.release', { token })

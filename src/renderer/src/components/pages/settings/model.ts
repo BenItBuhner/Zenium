@@ -36,6 +36,32 @@ export interface RowOption {
   label: string
   /** 13/69% under the option's label in the picker sheet. */
   description?: string
+  /** A 16 px glyph between the radio and the label (a search engine's favicon). */
+  leading?: ReactNode
+  /**
+   * A §10.3 heading the option sits under in the picker sheet ("Recently visited"): options
+   * without one come first, then each heading's options in the order the headings first appear.
+   */
+  group?: string
+}
+
+/** The picker sheet's option groups: the ungrouped options first (heading null), then each heading's. */
+export function optionGroups(
+  options: readonly RowOption[]
+): Array<{ heading: string | null; options: RowOption[] }> {
+  const groups: Array<{ heading: string | null; options: RowOption[] }> = [
+    { heading: null, options: [] }
+  ]
+  for (const option of options) {
+    const heading = option.group ?? null
+    let group = groups.find((g) => g.heading === heading)
+    if (!group) {
+      group = { heading, options: [] }
+      groups.push(group)
+    }
+    group.options.push(option)
+  }
+  return groups.filter((g) => g.options.length > 0)
 }
 
 /** A choice: the current option's label is the row's description; tapping opens the §9.13 sheet. */
@@ -189,7 +215,7 @@ export interface SearchHit {
 export function choice<T extends string>(
   row: Omit<ValueRow, 'kind' | 'value' | 'options' | 'onChange'> & {
     value: T
-    options: ReadonlyArray<{ value: T; label: string; description?: string }>
+    options: ReadonlyArray<RowOption & { value: T }>
     onChange: (value: T) => void
   }
 ): ValueRow {
