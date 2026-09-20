@@ -6,6 +6,7 @@ import {
   PRIVATE_CONTAINER_ID,
   type AutofillPrompt,
   type BookmarkNode,
+  type MediaState,
   type Space,
   type Tab,
   type UIState
@@ -670,6 +671,109 @@ describe('phone pill (PillContent)', () => {
     // The two chips are plain hidden spans in the pill's row (the favicon tile is inside one).
     const row = el.firstElementChild!
     expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(2)
+  })
+
+  // The Now playing chip (MW-16): the in-app player's entry, there while a tab holds the media
+  // session – the tab the OS controls show, this pill's or another's – and its popup is the
+  // media sheet.
+  describe('Now playing chip', () => {
+    const playing = (over: Partial<MediaState> = {}): MediaState => ({
+      tabId: 't1',
+      playing: true,
+      title: 'Nocturne',
+      session: true,
+      ...over
+    })
+    const withMedia = (t: Tab, media: MediaState[]): UIState => ({ ...state(t), media })
+
+    it('is absent without a session, even while a tab is audible', () => {
+      const el = render(
+        <PillContent
+          state={withMedia(page, [{ tabId: 't1', playing: true }])}
+          tab={page}
+          space={space}
+          interactive
+        />
+      )
+      expect(el.querySelector('[data-media]')).toBeNull()
+      expect(labels(focusable(el))).toEqual([
+        'Address, example.com',
+        'Site information',
+        'Connection is secure'
+      ])
+    })
+
+    it('comes after the lock as a chip whose popup is the media sheet, named by the state', () => {
+      const el = render(
+        <PillContent state={withMedia(page, [playing()])} tab={page} space={space} interactive />
+      )
+      const order = focusable(el)
+      expect(labels(order)).toEqual([
+        'Address, example.com',
+        'Site information',
+        'Connection is secure',
+        'Now playing'
+      ])
+      const chip = el.querySelector<HTMLElement>('[data-media]')!
+      expectChip(chip, 'Now playing')
+      expect(chip.hasAttribute('data-pill-chip')).toBe(true)
+      expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(chip.getAttribute('aria-expanded')).toBe('false')
+      expect(chip.getAttribute('data-state')).toBe('playing')
+      // In the accent while it plays, muted while paused – the translation glyph's two tones.
+      expect(chip.className).toContain('text-[var(--zen-accent)]')
+
+      act(() =>
+        root!.render(
+          <PillContent
+            state={withMedia(page, [playing({ playing: false })])}
+            tab={page}
+            space={space}
+            interactive
+          />
+        )
+      )
+      expectChip(chip, 'Media paused')
+      expect(chip.getAttribute('data-state')).toBe('paused')
+      expect(chip.className).toContain('opacity-50')
+      expect(chip.className).not.toContain('text-[var(--zen-accent)]')
+
+      // The sheet up: the chip reads expanded.
+      act(() => uiStore.set({ mediaSheet: 't1' }))
+      expect(chip.getAttribute('aria-expanded')).toBe('true')
+      act(() => uiStore.set({ mediaSheet: null }))
+      expect(chip.getAttribute('aria-expanded')).toBe('false')
+    })
+
+    it('stands on another tab’s pill too, for the session tab', () => {
+      // The session belongs to t2, gone from this pill's tab list unless it is there.
+      const session = playing({ tabId: 't2' })
+      const el = render(
+        <PillContent state={withMedia(page, [session])} tab={page} space={space} interactive />
+      )
+      expect(el.querySelector('[data-media]')).toBeNull()
+      const both = withMedia(page, [session])
+      both.tabs = { ...both.tabs, t2: { ...tab('https://music.example/'), id: 't2' } }
+      act(() => root!.render(<PillContent state={both} tab={page} space={space} interactive />))
+      expectChip(el.querySelector<HTMLElement>('[data-media]')!, 'Now playing')
+    })
+
+    it('is a hidden span on the ghost pill', () => {
+      const el = render(
+        <PillContent
+          state={withMedia(page, [playing()])}
+          tab={page}
+          space={space}
+          interactive={false}
+        />
+      )
+      expect(focusable(el).length).toBe(0)
+      expect(el.querySelectorAll('[aria-label]').length).toBe(0)
+      // A third hidden span beside the site icon's and the lock's, with no tap target on it.
+      expect(el.querySelector('[data-media]')).toBeNull()
+      const row = el.firstElementChild!
+      expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(3)
+    })
   })
 })
 

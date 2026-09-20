@@ -1448,10 +1448,25 @@ describe('the section model', () => {
     expect(clear.form?.title).toBe('Clear browsing data')
     expect(clear.form?.description).toContain('time range')
 
-    // Site settings: the catalogue this host honours (no notifications row in the WebView), each
-    // an item whose sheet holds the default as a value row; a type with one possible default is
-    // a fact.
-    expect(findRow(privacy.groups, 'sites:notifications')).toBeNull()
+    // Site settings: the catalogue this host honours, each an item whose sheet holds the default
+    // as a value row; a type with one possible default is a fact. Notifications are in it since
+    // the page-script `Notification` polyfill (#223, MW-05) made them a permission the Android
+    // host enforces, the row wired to the shared permission service as every other type is.
+    const notifications = row(privacy, 'sites:notifications')
+    expect(notifications).toMatchObject({
+      kind: 'item',
+      label: 'Notifications',
+      description: 'Sites can ask to send notifications'
+    })
+    const notificationsDefault = row(privacy, 'sites:notifications:default')
+    if (notificationsDefault.kind !== 'value') throw new Error('not a value row')
+    expect(notificationsDefault.value).toBe('ask')
+    expect(notificationsDefault.options.map((o) => o.label)).toEqual(['Ask', 'Block'])
+    notificationsDefault.onChange('deny')
+    expect(invoke).toHaveBeenCalledWith('permissions.setDefault', {
+      permission: 'notifications',
+      decision: 'deny'
+    })
     const location = row(privacy, 'sites:geolocation')
     expect(location).toMatchObject({
       kind: 'item',

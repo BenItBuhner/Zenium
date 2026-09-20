@@ -65,6 +65,13 @@ import java.util.concurrent.Executor
  * [onPictureInPictureModeChanged], which reports `media.pip` to the core (whose page lays the
  * video over the viewport for the small window) and pauses the video when the window was closed
  * rather than expanded, as Chrome's does.
+ *
+ * A session that is not a page's – a chrome player's, `source: "chrome"` (the read-aloud
+ * player, registered with the core's `registerSource`) – shows and behaves like a page's audio:
+ * the same metadata, playback state and notification, the foreground service while it plays,
+ * its buttons back as `media.action` on its tab; only the picture-in-picture paths skip it (no
+ * video: the window's params are those of no session while it holds the controls, `media.pip`
+ * is refused, Home enters nothing).
  */
 class MediaSessions(private val host: Host, private val io: Executor) {
     private val activity = host.activity
@@ -316,10 +323,10 @@ class MediaSessions(private val host: Host, private val io: Executor) {
 
     // --- picture-in-picture ----------------------------------------------------------------------
 
-    /** `media.pip`: the window into picture-in-picture for the video of `json`'s tab; answers whether it went. */
+    /** `media.pip`: the window into picture-in-picture for the video of `json`'s tab; answers whether it went (never for a chrome player). */
     fun enterPictureInPicture(json: JSONObject, reply: (Any?) -> Unit) {
         val info = MediaSessionInfo.parse(json)
-        if (info == null || !pictureInPictureSupported || destroyed) {
+        if (info == null || info.chrome || !pictureInPictureSupported || destroyed) {
             reply(false)
             return
         }
@@ -382,16 +389,23 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /**
      * Chrome's rule for going into the small window by itself when the user leaves: a video
      * playing fullscreen – by the page's own word ([MediaSessionInfo.fullscreen]) or the
-     * WebView's (the tab's element is in the host's fullscreen layer).
+     * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player.
      */
-    private fun autoEnter(info: MediaSessionInfo?): Boolean =
-        MediaControls.autoEnterPictureInPicture(info) ||
-            (info != null && info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
+    private fun autoEnter(info: MediaSessionInfo?): Boolean {
+        if (info == null || info.chrome) return false
+        return MediaControls.autoEnterPictureInPicture(info) ||
+            (info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
+    }
 
-    /** The activity's params, kept current with the session: the auto-enter rule and the window's actions. */
+    /**
+     * The activity's params, kept current with the session: the auto-enter rule and the window's
+     * actions. While a chrome player holds the controls they are those of no session (as after
+     * [clear]): no video to frame, and a page's auto-enter from before must not linger and pull
+     * the player's tab into the small window from Home.
+     */
     private fun updatePictureInPictureParams() {
         if (!pictureInPictureSupported || destroyed) return
-        val info = current
+        val info = current?.takeIf(MediaControls::pictureInPictureEligible)
         runCatching { activity.setPictureInPictureParams(paramsOf(info, autoEnter(info))) }
     }
 

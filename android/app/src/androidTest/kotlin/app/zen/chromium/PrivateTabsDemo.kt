@@ -1437,22 +1437,19 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
     }
 
     /**
-     * Back out of the URL bar if it is up. Unlike [closeUrlbar], which sends a back until the
-     * address pill reads, this reads the URL bar itself: on a tab with no page the pill has no
-     * address to read, and a back sent with no URL bar up reaches the tab's root – at a shortcut
-     * tab's root, back returns to the launcher and closes the tab (#117's caller rule).
+     * Back out of the URL bar if it is up, by the shared close (DemoHarness.closeUrlField): a back
+     * only against the chrome's own word that the bar is up, never a look for the address pill.
+     * On a tab with no page the pill has no address to read, and a back sent with no URL bar up
+     * reaches the tab's root – at a shortcut tab's root, back returns to the launcher and closes
+     * the tab (#117's caller rule). A page the close moved all the same goes on the failures by name.
      */
     private fun dismissUrlbar() {
-        repeat(3) {
-            if (!urlbarOpen()) return
-            back()
-            SystemClock.sleep(1_200)
+        val close = closeUrlField()
+        if (!close.ok) {
+            finding("the URL bar's close: ${close.describe()} ${verdict(false)}")
+            failures += "the URL bar's close: ${close.describe()}"
         }
-        if (urlbarOpen()) Log.w(tag, "the urlbar stayed open")
     }
-
-    /** The phone's URL bar is up: its field carries the search engine's glyph, labelled after it. */
-    private fun urlbarOpen(): Boolean = findNode { it.startsWith("Search engine:") } != null
 
     // --- the overview, through the chrome's DOM --------------------------------------------------
 

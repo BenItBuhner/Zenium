@@ -15,7 +15,7 @@ export type ContentDefault = ContentDecision | 'ask'
 /**
  * How a host honours the setting: `enforced` (the engine asks or obeys), `stored` (remembered
  * and listed, but nothing in the engine acts on it yet), `n-a` (the platform has no such
- * feature, e.g. web notifications in the Android WebView).
+ * feature, e.g. background sync in the Android WebView).
  */
 export type ContentSupport = 'enforced' | 'stored' | 'n-a'
 
@@ -91,8 +91,9 @@ export const CONTENT_SETTINGS: readonly ContentSetting[] = [
     choices: ['ask', 'deny'],
     promptLabel: 'send you notifications',
     allowOnce: false,
-    // The Android WebView has no Notification API.
-    support: { desktop: 'enforced', android: 'n-a' }
+    // The Android WebView has no Notification API of its own; the page script's polyfill asks
+    // through the same prompt and the host posts under the site's channel (WebNotifications.kt).
+    support: { desktop: 'enforced', android: 'enforced' }
   },
   {
     id: 'background-sync',
