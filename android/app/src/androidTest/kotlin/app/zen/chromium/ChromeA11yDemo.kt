@@ -438,19 +438,23 @@ class ChromeA11yDemo : DemoHarness(
             )
             val card = walk().firstOrNull { it.control && it.label.startsWith("Example Domain, tab 1 of 1") }
             expect("[private] the private card is the current one: '${card?.label}'", card?.label?.endsWith(", current") == true)
+            // The pane's slot fades over 120 ms, but the snapshot WebView on the software GPU took
+            // up to four seconds to draw and list the other pane (run 4: 81 frames skipped, the
+            // header switched at 1.4 s, the grid between 2.3 and 3.7 s, the driver's read at 2.8 s
+            // saw the private pane still up): the tree is waited for, and how long it took is written.
             if (touchTapLabel("Tabs")) {
-                SystemClock.sleep(1_500)
+                val switched = awaitPane("Tabs") { it.startsWith("Alpha, tab ") }
                 val tabs = walk().firstOrNull { it.control && it.label == "Tabs" }
                 expect(
-                    "[private] a finger on the segment's Tabs shows the regular pane: Tabs ${tabs?.states}, Alpha's card ${findNode { it.startsWith("Alpha, tab ") } != null}",
+                    "[private] a finger on the segment's Tabs shows the regular pane (${switched}): Tabs ${tabs?.states}, Alpha's card ${findNode { it.startsWith("Alpha, tab ") } != null}",
                     tabs?.states?.contains("selected") == true && findNode { it.startsWith("Alpha, tab ") } != null
                 )
                 snap("private-overview-tabs-pane")
                 if (touchTapLabel("Private")) {
-                    SystemClock.sleep(1_500)
+                    val back = awaitPane("Private") { it.startsWith("Example Domain, tab 1 of 1") }
                     val private = walk().firstOrNull { it.control && it.label == "Private" }
                     expect(
-                        "[private] and its Private brings the private pane back: Private ${private?.states}",
+                        "[private] and its Private brings the private pane back (${back}): Private ${private?.states}",
                         private?.states?.contains("selected") == true && findNode { it.startsWith("Example Domain, tab 1 of 1") } != null
                     )
                 } else {
@@ -470,6 +474,21 @@ class ChromeA11yDemo : DemoHarness(
                 fail("[private] the menu's $MENU_CLOSE_PRIVATE could not be touched")
             }
         }
+    }
+
+    /**
+     * Waits (up to 12 s) for the overview's segment to have switched to `pane`: its tab reads
+     * `selected` and a card of that pane (`card` on the label) is in the tree; then a moment for
+     * the fade. Returns what it saw and how long it took, for the finding.
+     */
+    private fun awaitPane(pane: String, card: (String) -> Boolean): String {
+        val start = SystemClock.uptimeMillis()
+        val settled = awaitChrome(12_000) {
+            findNode(card) != null && walk().any { it.control && it.label == pane && "selected" in it.states }
+        }
+        val took = SystemClock.uptimeMillis() - start
+        if (settled) SystemClock.sleep(600)
+        return if (settled) "the $pane pane's tree up after $took ms" else "no $pane pane in the tree within $took ms"
     }
 
     private fun privateActive(): Boolean =
@@ -1527,6 +1546,8 @@ class ChromeA11yDemo : DemoHarness(
         // WebView 113 says "heading 1" in the role description and leaves `isHeading` unset;
         // TalkBack reads either.
         if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && node.isHeading) || role?.startsWith("heading") == true) states += "heading"
+        // A name TalkBack speaks after the text (the snapshot WebView's aria-label on a toggle or popup button, [supplemental]).
+        supplemental(node)?.takeIf { it != label(node) }?.let { states += "supplemental=${quote(it)}" }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) node.stateDescription?.takeIf { it.isNotBlank() }?.let { states += "state=$it" }
         if (node.isAccessibilityFocused) states += "a11yFocused"
         return states
@@ -1537,11 +1558,38 @@ class ChromeA11yDemo : DemoHarness(
         return if (stop.role != null && !short.equals(stop.role, ignoreCase = true)) "$short ($stop.role)".replace("$stop.role", stop.role) else short
     }
 
+    /**
+     * What TalkBack reads first for a node: its content description, else its text, else its
+     * hint; else its supplemental description ([supplemental]) – the Chromium snapshot WebView
+     * (156) puts an `aria-label` there on a toggle button or a popup button, the text carrying
+     * the visible content (run 4's private job: the bar's Tabs read "1", its glyph's count, and
+     * the overview's More, an icon alone, read nothing and was no stop at all).
+     */
     private fun label(node: AccessibilityNodeInfo): String =
         node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
             ?: node.text?.toString()?.takeIf { it.isNotBlank() }
             ?: node.hintText?.toString()?.takeIf { it.isNotBlank() }
+            ?: supplemental(node)
             ?: ""
+
+    /**
+     * The node's supplemental description, which TalkBack speaks after the text: Android 16's
+     * `AccessibilityNodeInfo.getSupplementalDescription` (read reflectively – the app compiles
+     * against 35), below it androidx's compat key in the extras, where
+     * `AccessibilityNodeInfoCompat.setSupplementalDescription` puts it. Chromium's Android bridge
+     * (`BrowserAccessibilityAndroid::ComputeAndroidNameTo`, `kAccessibilityPopulateSupplementalDescriptionApi`
+     * on by default since 15x) hands a name from an attribute (`aria-label`) to this API on
+     * every role outside `ui::SupportsNamingWithChildContent` – a toggle button (`aria-pressed`)
+     * and a popup button (`aria-haspopup="menu"`) among them, a plain button, a tab or a switch
+     * not – and leaves the text to the visible content; WebView 113 puts the name in the text.
+     */
+    private fun supplemental(node: AccessibilityNodeInfo): String? {
+        node.extras.getCharSequence(SUPPLEMENTAL_KEY)?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+        if (Build.VERSION.SDK_INT < 36) return null
+        return runCatching {
+            AccessibilityNodeInfo::class.java.getMethod("getSupplementalDescription").invoke(node) as? CharSequence
+        }.getOrNull()?.toString()?.takeIf { it.isNotBlank() }
+    }
 
     private fun roleDescription(node: AccessibilityNodeInfo): String? =
         node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")?.toString()?.takeIf { it.isNotBlank() }
@@ -1621,16 +1669,27 @@ class ChromeA11yDemo : DemoHarness(
     /**
      * The bar's Tabs button for an audit: `Tabs (n)`, a toggle button pressed while the overview
      * is up, as WebView 113 and the preview host read its `aria-label` and `aria-pressed`. The
-     * Chromium snapshot WebView of the `private` job (156) read the same button as a
-     * ToggleButton named by its glyph's count alone ("1") with no pressed state, the DOM carrying
+     * Chromium snapshot WebView of the `private` job (156) reads the same button as a
+     * ToggleButton whose text is its glyph's count alone ("1") with no pressed state, the
+     * `aria-label` riding in the supplemental description ([supplemental]: Chromium's bridge
+     * hands a name from an attribute on a toggle button to that API), the DOM carrying
      * `aria-label="Tabs (1)"` and `aria-pressed="false"` all the same (checked on the preview
-     * host): the want takes what that WebView says, and the findings say so.
+     * host): the want takes what that WebView says, the name is looked for where it went, and the
+     * findings say so.
      */
     private fun tabsWant(scene: String, pressed: Boolean? = null): Want {
         val states = if (pressed == null) emptyList() else listOf("pressed=$pressed")
         val asCounted = walk().firstOrNull { it.control && it.cls.endsWith("ToggleButton") && it.label.isNotBlank() && it.label.all { c -> c.isDigit() } }
         if (asCounted != null && walk().none { it.control && it.label.startsWith("Tabs (") }) {
-            note("[$scene] the bar's Tabs button reads '${asCounted.label}' ${asCounted.states} on this WebView (${webViewPackage()}): its aria-label is 'Tabs (n)' and aria-pressed is set in the DOM, as WebView 113 and the preview host read them; the snapshot's own name computation, recorded")
+            val name = supplemental(asCounted.node)
+            note(
+                "[$scene] the bar's Tabs button reads '${asCounted.label}' ${asCounted.states} on this WebView (${webViewPackage()}), " +
+                    "its aria-label ${if (name != null) "'$name' in the supplemental description (TalkBack speaks it after the text)" else "in neither the text, the content description nor the supplemental description"}: " +
+                    "Chromium's Android bridge hands a name from an attribute on a toggle button to the supplemental-description API " +
+                    "(ComputeAndroidNameTo, the role outside SupportsNamingWithChildContent) and leaves the text to the visible content; " +
+                    "WebView 113 and the preview host read 'Tabs (n)' outright, and the DOM carries aria-label and aria-pressed either way"
+            )
+            expect("[$scene] the Tabs button's aria-label 'Tabs (n)' is in its node all the same (supplemental description ${quote(name.orEmpty())})", name?.startsWith("Tabs (") == true)
             return Want(asCounted.label, "ToggleButton")
         }
         return Want("Tabs (", "ToggleButton", states, prefix = true)
@@ -2178,6 +2237,8 @@ class ChromeA11yDemo : DemoHarness(
         const val TOLERANCE = 1.5
         /** Chromium's roles that are live regions (`ui::ToString` of the role: `role=status` reads `status`). */
         val LIVE_ROLES = setOf("status", "alert", "log", "marquee", "timer")
+        /** androidx's extras key for a supplemental description below Android 16 (`AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY`). */
+        const val SUPPLEMENTAL_KEY = "androidx.view.accessibility.AccessibilityNodeInfoCompat.SUPPLEMENTAL_DESCRIPTION_KEY"
         const val WALK_LIMIT = 5_000
         /** A WebView's class name in the tree – the view's, and Chromium's for the document under it. */
         const val WEBVIEW_CLASS = "android.webkit.WebView"
