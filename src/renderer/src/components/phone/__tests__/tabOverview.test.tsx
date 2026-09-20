@@ -31,7 +31,8 @@ const { privateTabsStore, resetOverviewPane } = await import('@renderer/lib/priv
 const { BAR_ITEMS, barContext, tabCount } = await import('../barItems')
 const { PRIVATE_CONTAINER_ID } = await import('@shared/types')
 const { clearDepartures, departStore } = await import('../departureStore')
-const { GROUP_HEADER, GROUP_PAD } = await import('../GroupCard')
+const { GROUP_PAD } = await import('../GroupCard')
+const { GROUP_HEADER } = await import('../groupCardHeader')
 /** Where a group's member rows sit: the title row, the inset, then a 130 card and its 12 gap. */
 const ROW_1 = GROUP_HEADER + 4
 const ROW_2 = ROW_1 + 142

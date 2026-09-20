@@ -8,6 +8,7 @@ import {
   textScaleStep,
   TWO_LINE_TITLE_ZOOM
 } from '../textScale'
+import { GROUP_HEADER, groupHeaderHeight } from '../../components/phone/groupCardHeader'
 import { CARD_HEADER, cardHeaderHeight } from '../../components/phone/overviewCardHeader'
 
 /**
@@ -89,5 +90,25 @@ describe('cardHeaderHeight', () => {
     const header = (zoom: number, lines: number): number => lines * 20 * zoom + 24
     for (const zoom of [1, 1.15, 1.3, 1.5, 1.8, 2])
       expect(cardHeaderHeight(zoom)).toBeCloseTo(header(zoom, zoom >= 1.5 ? 2 : 1), 6)
+  })
+})
+
+describe('groupHeaderHeight', () => {
+  it('is the 44 title row at the default size and grows from the 20 line, one line at every size', () => {
+    expect(groupHeaderHeight(1)).toBe(GROUP_HEADER)
+    expect(groupHeaderHeight(1.3)).toBe(50)
+    expect(groupHeaderHeight(1.8)).toBe(60)
+    expect(groupHeaderHeight(2)).toBe(64)
+    // What `--zen-overview-group-header` computes to in the stylesheet, so the collapse heights
+    // the card runs on its spring land on the row it draws.
+    for (const zoom of [1, 1.15, 1.3, 1.5, 1.8, 2])
+      expect(groupHeaderHeight(zoom)).toBeCloseTo(20 * zoom + 24, 6)
+  })
+
+  it('reads the scale in force when given no zoom', () => {
+    applyTextScale({ textZoom: 1.3 })
+    expect(groupHeaderHeight()).toBe(50)
+    applyTextScale(null)
+    expect(groupHeaderHeight()).toBe(GROUP_HEADER)
   })
 })

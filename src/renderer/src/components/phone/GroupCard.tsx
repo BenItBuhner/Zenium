@@ -11,14 +11,10 @@ import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
 import { departStore } from './departureStore'
+import { groupHeaderHeight } from './groupCardHeader'
 import { liftStore } from './useCardLift'
 import { useLongPress } from './useLongPress'
 
-/**
- * Height of a group card's title row – all a collapsed group shows. The row is itself the button
- * that folds the group, so it is the phone row's 44 (v2 §9.2, §9.21; A11Y-01's 44 target).
- */
-export const GROUP_HEADER = 44
 /** The icon folders get by default; a group made on the phone shows its colour instead. */
 export const DEFAULT_FOLDER_ICON = '📁'
 /** Inset of the member cards inside the group card: its radius is the card radius plus this. */
@@ -112,7 +108,7 @@ export function GroupCard({
     const anim = new SpringAnimation(
       SPRING_GENTLE,
       (h) => {
-        const height = Math.max(latest.current.dissolving ? 0 : GROUP_HEADER, h)
+        const height = Math.max(latest.current.dissolving ? 0 : groupHeaderHeight(), h)
         if (shellRef.current) shellRef.current.style.height = `${height}px`
         layoutAnimations.frame(key, height)
       },
@@ -127,7 +123,9 @@ export function GroupCard({
             shell.style.display = 'none'
             shell.removeAttribute(CELL_ATTR)
           } else {
-            shell.style.height = shell.dataset.collapsed ? `${GROUP_HEADER}px` : ''
+            // At rest the stylesheet holds the height – a collapsed card at its header's
+            // (`.zen-group[data-collapsed]`), so a text-size change while it stands reaches it.
+            shell.style.height = ''
             delete shell.dataset.clip
           }
         }
@@ -154,7 +152,8 @@ export function GroupCard({
     const body = bodyRef.current
     const anim = spring.current
     if (!shell || !body || !anim) return
-    const to = dissolving ? 0 : collapsed ? GROUP_HEADER : GROUP_HEADER + body.offsetHeight
+    const header = groupHeaderHeight()
+    const to = dissolving ? 0 : collapsed ? header : header + body.offsetHeight
     const run = (from: number, velocity: number): void => {
       layoutAnimations.start(key, from, to, !dissolving)
       shell.style.display = ''
@@ -166,9 +165,9 @@ export function GroupCard({
       mounted.current = true
       if (forming && !collapsed) {
         // Out of the row of cards it was made from: header and tint come at the end.
-        run(Math.max(GROUP_HEADER, body.offsetHeight - GROUP_PAD), 0)
+        run(Math.max(header, body.offsetHeight - GROUP_PAD), 0)
       } else {
-        shell.style.height = collapsed ? `${GROUP_HEADER}px` : ''
+        shell.style.height = ''
         settled.current = to
       }
       return
@@ -238,7 +237,6 @@ export function GroupCard({
         aria-label={groupCardLabel(folder.name, count)}
         aria-expanded={!collapsed}
         className="zen-group-header flex shrink-0 items-center gap-2 pl-3 pr-2"
-        style={{ height: GROUP_HEADER }}
         onClick={toggle}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') toggle()
@@ -287,8 +285,10 @@ export function GroupCard({
 /** What stands for the group in its header: its own icon, or a dot of its colour. */
 export function GroupBadge({ folder }: { folder: Folder }): JSX.Element {
   return folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? (
-    // A folder given its own icon on the desktop keeps it; the colour still tints the card.
-    <span className="w-4 shrink-0 text-center text-[14px] leading-none" aria-hidden>
+    // A folder given its own icon on the desktop keeps it; the colour still tints the card. The
+    // icon is a glyph, not text: it holds its 14 in the 16 box at every system font size
+    // (`.zen-group-badge`, A11Y-05 §4), where the WebView would zoom a character out of the box.
+    <span className="zen-group-badge w-4 shrink-0 text-center leading-none" aria-hidden>
       {folder.icon}
     </span>
   ) : (

@@ -639,7 +639,7 @@ export function PillContent({
           data-testid="media-chip"
           data-state={session.playing ? 'playing' : 'paused'}
           className={cn(
-            '-mx-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+            '-mx-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
             session.playing ? 'text-[var(--zen-accent)]' : 'opacity-50'
           )}
         >

@@ -370,13 +370,17 @@ describe('design language v2 tokens', () => {
     // line boxes so they grow with the system font size (§9.2, A11Y-05: `--v2-row`,
     // `--v2-row-two-line` and `--v2-menu-row` in the base block and again in the phone block,
     // four reads each), the tab card's title row `--zen-overview-card-header` derives from the
-    // small line box (§9.21, A11Y-05: once at rest, once as the two-line row from scale 1.5), and
-    // the two §9.29 family blocks map the tokens onto the control roles.
+    // small line box (§9.21, A11Y-05: once at rest, once as the two-line row from scale 1.5), the
+    // group card's title row `--zen-overview-group-header` from the same line box (one line at
+    // every size), and the two §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      8 + 4 + 8 + 2 + familyReads.reduce((a, b) => a + b, 0)
+      8 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
+    expect(inside).toMatch(
+      /--zen-overview-group-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/
+    )
     expect(inside).toMatch(
       /:root\[data-text-scale='larger'\] \{\n {2}--zen-overview-card-header: calc\(2 \* var\(--v2-line-small-box\) \+ 24px\)/
     )
@@ -947,9 +951,18 @@ describe('the fullscreen hint palette', () => {
     expect(TOAST_CARD.shadow).toBe(value(':root', lightBlockStart, '--v2-shadow-panel'))
     expect(`${TOAST_CARD.fontPx}px`).toBe(value(':root', lightBlockStart, '--v2-font-body'))
     expect(`${TOAST_CARD.linePx}px`).toBe(value(':root', lightBlockStart, '--v2-line-body'))
-    expect(`${TOAST_CARD.weight}`).toBe(value(':root', lightBlockStart, '--v2-weight-body'))
-    expect(`${TOAST_CARD.rowPx}px`).toBe(
-      value(":root[data-form-factor='phone']", lightStart, '--v2-row')
+    // The body weight and the phone row follow the system font size (A11Y-05, §4): the weight
+    // adds the bold-text adjustment, the row is the body line box (the line zoomed) plus 24. At
+    // the defaults – zoom 1, adjustment 0, where the page-drawn twin lives – they reduce to the
+    // twin's 400 and 44.
+    expect(value(':root', lightBlockStart, '--v2-weight-body')).toBe(
+      `min(900, calc(${TOAST_CARD.weight} + var(--zen-font-weight-adjustment)))`
+    )
+    expect(value(':root', lightBlockStart, '--v2-line-body-box')).toBe(
+      'calc(var(--v2-line-body) * var(--zen-text-zoom))'
+    )
+    expect(value(":root[data-form-factor='phone']", lightStart, '--v2-row')).toBe(
+      `calc(var(--v2-line-body-box) + ${TOAST_CARD.rowPx - TOAST_CARD.linePx}px)`
     )
     const insetBlock = css.lastIndexOf(':root {', css.indexOf('--zen-message-inset:'))
     expect(`${TOAST_CARD.insetPx}px`).toBe(value(':root', insetBlock, '--zen-message-inset'))

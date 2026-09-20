@@ -244,6 +244,10 @@
      default size, growing from its line box like the rows; two lines from scale 1.5 (§4 / §9.2:
      the two-line title rule above `@layer components`). */
   --zen-overview-card-header: calc(var(--v2-line-small-box) + 24px);
+  /* A group card's title row (§9.21, `GroupCard`): the 13 px name's 20 line plus 24, 44 at the
+     default size and one line at every size (a group's name never wraps); the card's collapse
+     heights read the same number as `groupHeaderHeight()`. */
+  --zen-overview-group-header: calc(var(--v2-line-small-box) + 24px);
 }
 :root[data-text-scale='larger'] {
   --zen-overview-card-header: calc(2 * var(--v2-line-small-box) + 24px);
@@ -2256,6 +2260,11 @@
   .zen-group[data-clip] {
     overflow: hidden;
   }
+  /* Collapsed at rest, the card is its header (the spring writes the height inline on the way
+     there and clears it once it has landed), so a text-size change while it stands reaches it. */
+  .zen-group[data-collapsed] {
+    height: var(--zen-overview-group-header);
+  }
   .zen-group[data-targeted] {
     box-shadow: 0 0 0 2px rgb(var(--zen-group-rgb) / 0.6);
   }
@@ -2266,7 +2275,9 @@
   .zen-group[data-chrome='off'] > .zen-group-header {
     opacity: 0;
   }
+  /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
   .zen-group-header {
+    height: var(--zen-overview-group-header);
     border-radius: calc(var(--zen-card-radius) + 6px);
     corner-shape: var(--zen-corner);
     transition:
@@ -2275,6 +2286,12 @@
   }
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
+  }
+  /* A group's own icon is a glyph (§4: glyphs hold while text scales): the WebView's text zoom
+     multiplies every font size, so the badge divides its 14 by the zoom first and lands on 14
+     at every system font size, inside its 16 box (run 2's overflow probe: +15 px at 1.8). */
+  .zen-group-badge {
+    font-size: calc(14px / var(--zen-text-zoom));
   }
   .zen-group-dot {
     background: rgb(var(--zen-group-rgb));
