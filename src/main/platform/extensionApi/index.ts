@@ -607,6 +607,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.load(loaded)
     this.alarms.load(ext.id)
     this.commands.load(loaded)
+    this.contextMenus.load(loaded)
     this.sidePanel.load(loaded)
     this.omnibox.load(loaded)
     this.searchProvider.load(loaded)

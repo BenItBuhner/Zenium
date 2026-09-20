@@ -4,6 +4,7 @@ import type { StoreIO } from '../../../core/platform'
 import { JsonStore } from '../../../core/store/JsonStore'
 import type { Alarm } from '../../../core/extensions/api/alarms'
 import type { ContentSettingRule } from '../../../core/extensions/api/contentSettings'
+import type { PersistedMenuItem } from '../../../core/extensions/api/contextMenus'
 import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { ScopedValues } from '../../../core/extensions/api/privacy'
 import type { StorageItems } from '../../../core/extensions/api/storage'
@@ -27,6 +28,11 @@ interface PersistedApi {
   proxy?: Record<string, ScopedValues>
   /** `chrome.contentSettings` rules per extension, by type name (regular scope only). */
   contentSettings?: Record<string, Record<string, ContentSettingRule[]>>
+  /**
+   * `chrome.contextMenus` items of extensions with a lazy background (Chrome's `MenuManager`
+   * storage): parents before children, restored when the extension loads.
+   */
+  contextMenus?: Record<string, PersistedMenuItem[]>
 }
 
 function emptyPersisted(): PersistedApi {
@@ -40,7 +46,8 @@ function emptyPersisted(): PersistedApi {
     sidePanelOnActionClick: {},
     privacy: {},
     proxy: {},
-    contentSettings: {}
+    contentSettings: {},
+    contextMenus: {}
   }
 }
 
@@ -167,6 +174,18 @@ export class ApiStore {
     this.save()
   }
 
+  /** The persisted menu items, unvalidated (`MenuRegistry.restore` validates). */
+  contextMenuItems(extensionId: string): unknown {
+    return this.data.contextMenus?.[extensionId] ?? []
+  }
+
+  setContextMenuItems(extensionId: string, items: PersistedMenuItem[]): void {
+    const all = this.data.contextMenus ?? (this.data.contextMenus = {})
+    if (items.length === 0) delete all[extensionId]
+    else all[extensionId] = items
+    this.save()
+  }
+
   /** The extension is gone for good: drop everything about it. */
   forget(extensionId: string): void {
     delete this.data.installed[extensionId]
@@ -178,6 +197,7 @@ export class ApiStore {
     delete this.data.privacy?.[extensionId]
     delete this.data.proxy?.[extensionId]
     delete this.data.contentSettings?.[extensionId]
+    delete this.data.contextMenus?.[extensionId]
     this.save()
     this.syncStores.get(extensionId)?.store.write({})
     this.setUserScripts(extensionId, null)
