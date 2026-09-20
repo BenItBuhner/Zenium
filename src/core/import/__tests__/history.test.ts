@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { HistoryService } from '../../history'
 import {
   chromiumHistoryVisits,
   chromiumTransition,
@@ -204,7 +205,49 @@ describe('dedupeVisits and the history sink', () => {
   it('finds the bulk API on the history service only once it exists (the feature check)', () => {
     expect(historyImportSink(null)).toBeNull()
     expect(historyImportSink({ visit: () => undefined })).toBeNull()
-    const sink = { importVisits: () => ({ added: 1, skipped: 0 }) }
+    const sink = { importVisits: () => ({ imported: 1, skipped: 0 }) }
     expect(historyImportSink(sink)).toBe(sink)
+  })
+
+  it('writes a Chromium History read into the real history service, stamped with its own times', () => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const now = Date.UTC(2026, 8, 20, 12)
+    const day = 24 * 60 * 60 * 1000
+    const db = memoryDatabase((native) => {
+      chromiumHistorySchema(native)
+      native.exec(`INSERT INTO urls (id, url, title, hidden, last_visit_time) VALUES
+        (1, 'https://a.example/', 'A', 0, 0), (2, 'https://b.example/', 'B', 0, 0)`)
+      native.exec(`INSERT INTO visits (url, visit_time, transition) VALUES
+        (1, ${webkit(now - 3 * day)}, ${0x10000000 | 1}),
+        (2, ${webkit(now - day)}, 0),
+        (1, ${webkit(now - 3 * day)}, 0)`)
+    })
+    const read = chromiumHistoryVisits(db, now)
+    const deduped = dedupeVisits(read.visits)
+    expect(deduped.duplicates).toBe(1)
+    const service = new HistoryService(
+      {
+        readSync: () => null,
+        write: async () => undefined,
+        writeSync: () => undefined
+      },
+      () => now
+    )
+    const sink = historyImportSink(service)
+    expect(sink).toBe(service)
+    expect(sink?.importVisits(deduped.visits, { source: 'chrome' })).toEqual({
+      imported: 2,
+      skipped: 0
+    })
+    expect(service.visits({ limit: 10 }).map((v) => [v.url, v.visitTime, v.transition])).toEqual([
+      ['https://b.example/', now - day, 'link'],
+      ['https://a.example/', now - 3 * day, 'typed']
+    ])
+    // The same batch again is all duplicates on the service's side.
+    expect(service.importVisits(deduped.visits, { source: 'chrome' })).toEqual({
+      imported: 0,
+      skipped: 2
+    })
+    vi.restoreAllMocks()
   })
 })

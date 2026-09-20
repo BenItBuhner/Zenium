@@ -320,8 +320,8 @@ export class ImportService {
     const deduped = dedupeVisits(read.visits)
     outcome.duplicates += deduped.duplicates
     if (deduped.visits.length === 0) return
-    const written = await sink.importVisits(deduped.visits, { source: source.browserName })
-    outcome.imported += written.added
+    const written = await sink.importVisits(deduped.visits, { source: source.browser })
+    outcome.imported += written.imported
     outcome.duplicates += written.skipped
   }
 

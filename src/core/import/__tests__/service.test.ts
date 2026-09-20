@@ -70,7 +70,7 @@ function harness(
     history.sink = {
       importVisits: (visits) => {
         history.written.push(...visits)
-        return { added: visits.length - 1, skipped: 1 }
+        return { imported: visits.length - 1, skipped: 1 }
       }
     }
   }
@@ -471,7 +471,7 @@ describe('ImportService: browser profiles', () => {
           release = r
         })
         h.history.written.push(...visits)
-        return { added: visits.length, skipped: 0 }
+        return { imported: visits.length, skipped: 0 }
       }
     }
     ;(h.service as unknown as { browser: { history: unknown } }).browser.history = h.history.sink

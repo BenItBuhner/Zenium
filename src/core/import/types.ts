@@ -1,6 +1,7 @@
 import type { HistoryTransition } from '../../shared/types'
 import type { NetscapeBookmark, NetscapeFolder, NetscapeItem } from '../../shared/netscape'
 import type { ImportRow } from '../credentials/store'
+import type { ImportedVisit as HistoryImportedVisit } from '../history'
 
 /**
  * The neutral shapes every importer produces, whatever browser it read. Bookmarks reuse the
@@ -18,8 +19,11 @@ export interface ImportedBookmarks {
   skipped: number
 }
 
-/** One page visit of another browser's history, ready for `history.importVisits`. */
-export interface ImportedVisit {
+/**
+ * One page visit of another browser's history, ready for `history.importVisits`: the history
+ * model's shape with the title (empty when the source had none) and the transition always set.
+ */
+export interface ImportedVisit extends HistoryImportedVisit {
   url: string
   title: string
   /** Milliseconds since the epoch. */
