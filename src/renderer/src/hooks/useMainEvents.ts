@@ -44,6 +44,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
+import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
 import { openTranslateSelection } from '@renderer/lib/translate'
@@ -185,6 +186,16 @@ export function useMainEvents(): void {
       onEvent('zoom.open', ({ tabId }) => {
         closeUrlbar()
         openZoom(tabId)
+      }),
+      onEvent('siteInfo.open', ({ tabId }) => {
+        // The app menu's Page info button: the site information sheet for the tab, as the pill's
+        // site chip opens it – with no chip to hang from or hand the focus back to, since the
+        // menu that asked has left by the time the core answers.
+        const state: UIState | null = browserStore.get().state
+        const tab = state?.tabs[tabId]
+        if (!tab) return
+        closeUrlbar()
+        void openSiteInfo(tab)
       }),
       onEvent('extensions.open', () => {
         closeUrlbar()

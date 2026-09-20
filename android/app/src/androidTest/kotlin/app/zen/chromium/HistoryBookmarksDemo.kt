@@ -468,9 +468,10 @@ class HistoryBookmarksDemo :
         shot("18-back-closed-panel")
         finding("back on the panel: panel gone ${verdict(!panelOpen(BOOKMARKS_SEARCH))}, the page's bar is back ${verdict(findByLabelPrefix(PILL_LABEL) != null)}")
 
-        // 9. The star saves the page; the toast offers Edit, which opens the editor on the new node.
+        // 9. The star (the icon row's, at the head of the menu) saves the page; the toast offers
+        // Edit, which opens the editor on the new node.
         val before = bookmarkCount()
-        openMenuItem(MENU_BOOKMARKS, MENU_STAR)
+        openMenuItem(MENU_STAR)
         await("Edit")
         SystemClock.sleep(1_000)
         shot("19-saved-toast")
@@ -690,7 +691,9 @@ class HistoryBookmarksDemo :
         private const val HISTORY_SEARCH = "Search history"
         private const val BOOKMARKS_SEARCH = "Search bookmarks"
 
-        // The app menu's entries (the engine's labels; the phone gets "Bookmark This Page").
+        // The app menu's entries (the engine's labels). The star is the icon row's button at the
+        // head of the phone's menu (TB-08 / TB-16), named "Bookmark This Page" on a page that is
+        // not bookmarked; it left the Bookmarks submenu when the row came.
         private const val MENU_HISTORY = "History"
         private const val MENU_BOOKMARKS = "Bookmarks"
         private const val MENU_BOOKMARKS_PANEL = "Show Bookmarks"

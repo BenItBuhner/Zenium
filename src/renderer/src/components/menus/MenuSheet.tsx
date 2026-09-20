@@ -1,12 +1,15 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
-import type { MenuDescriptor, MenuItemDescriptor } from '@shared/types'
+import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info, Star } from 'lucide-react'
+import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { isIconRow } from '@renderer/lib/menuIconRow'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
+import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { ReloadStopGlyph } from '../phone/BarGlyphs'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
@@ -111,37 +114,147 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
           nav.direction < 0 && 'zen-drawer-left'
         )}
       >
-        {groups.map((group, index) => (
-          <ul key={index} className="flex flex-col">
-            {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
-            {group.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  disabled={!item.enabled}
-                  className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
-                  onClick={() => {
-                    if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
-                    else sheet.current?.dismiss(() => pickMenuItem(item.id))
-                  }}
-                >
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                  {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
-                    <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} />
-                  )}
-                  {item.submenu && (
-                    <ChevronRight
-                      className="zen-sheet-item-secondary h-5 w-5 shrink-0"
-                      strokeWidth={1.75}
-                    />
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ))}
+        {groups.map((group, index) =>
+          isIconRow(group) ? (
+            <ul key={index} className="zen-menu-icon-row" aria-label="Page actions">
+              {group.map((item) => (
+                <li key={item.id} className="flex">
+                  <IconRowButton
+                    item={item}
+                    onPick={() => sheet.current?.dismiss(() => pickMenuItem(item.id))}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ul key={index} className="flex flex-col">
+              {index > 0 && <li aria-hidden className="zen-sheet-sep" />}
+              {group.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    disabled={!item.enabled}
+                    className={cn('zen-sheet-item', item.danger && 'text-[var(--zen-danger)]')}
+                    onClick={() => {
+                      if (item.submenu) setNav((n) => ({ path: [...n.path, item], direction: 1 }))
+                      else sheet.current?.dismiss(() => pickMenuItem(item.id))
+                    }}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {(item.type === 'checkbox' || item.type === 'radio') && item.checked && (
+                      <Check className="h-5 w-5 shrink-0" strokeWidth={1.75} />
+                    )}
+                    {item.submenu && (
+                      <ChevronRight
+                        className="zen-sheet-item-secondary h-5 w-5 shrink-0"
+                        strokeWidth={1.75}
+                      />
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
       </div>
     </BottomSheet>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The icon row (the phone app menu's first group; `lib/menuIconRow.ts` says which group)
+// ---------------------------------------------------------------------------
+
+/**
+ * One button of the row: the shared v2 icon button (§9.3: 44 × 44, a 20 px glyph, the press
+ * fill; disabled at .4, §9.30) named by the item's label (§9.22), drawing the glyph the core
+ * named. Picking it slides the sheet away and then runs the item, as a text row does.
+ *
+ * The star is the row's one stateful glyph: `checked` is the page's bookmark. A press on an
+ * unfilled star fills it at once, on the fill's spring, as the sheet starts to leave – the core
+ * saves the bookmark once the sheet is gone (`pickMenuItem` runs the item then), so the fill
+ * would otherwise land on a sheet nobody can see. A filled star opens the bookmark's editor
+ * (Chrome's flow) and stays filled.
+ */
+function IconRowButton({
+  item,
+  onPick
+}: {
+  item: MenuItemDescriptor
+  onPick: () => void
+}): JSX.Element {
+  const star = item.glyph === 'star'
+  const [filled, setFilled] = useState(item.checked)
+  return (
+    <button
+      type="button"
+      className="zen-v2-icon-button"
+      disabled={!item.enabled}
+      aria-label={item.label}
+      data-glyph={item.glyph}
+      data-filled={star ? filled : undefined}
+      onClick={() => {
+        if (star && !filled) setFilled(true)
+        onPick()
+      }}
+    >
+      {item.glyph === 'star' ? (
+        <StarGlyph filled={filled} />
+      ) : (
+        <MenuGlyphView glyph={item.glyph ?? 'info'} />
+      )}
+    </button>
+  )
+}
+
+/** The row's still glyphs, the bar's own drawings for the same actions (`barItems.tsx`). */
+function MenuGlyphView({ glyph }: { glyph: Exclude<MenuGlyph, 'star'> }): JSX.Element {
+  switch (glyph) {
+    case 'forward':
+      return <ArrowRight aria-hidden />
+    case 'download':
+      return <Download aria-hidden />
+    case 'info':
+      return <Info aria-hidden />
+    case 'reload':
+    case 'stop':
+      return <ReloadStopGlyph loading={glyph === 'stop'} />
+  }
+}
+
+/**
+ * The star with its fill: the outline, and over it a filled star whose opacity and scale one
+ * `SPRING_SNAPPY` spring writes per frame (design language v2 §11: transform and opacity only,
+ * one interruptible spring – a change of mind before it lands retargets the same motion; reduced
+ * motion jumps to the end). It opens at rest where the bookmark is, with no motion of its own.
+ */
+function StarGlyph({ filled }: { filled: boolean }): JSX.Element {
+  const fill = useRef<HTMLSpanElement>(null)
+  const spring = useRef<SpringAnimation | null>(null)
+  useEffect(() => {
+    const el = fill.current
+    if (!el) return
+    const paint = (x: number): void => {
+      el.style.opacity = String(Math.max(0, Math.min(1, x)))
+      el.style.transform = `scale(${0.6 + 0.4 * x})`
+    }
+    const to = filled ? 1 : 0
+    if (!spring.current) {
+      spring.current = new SpringAnimation(SPRING_SNAPPY, paint, paint)
+      paint(to)
+      spring.current.start(to, 0, to)
+    } else spring.current.retarget(to)
+  }, [filled])
+  useEffect(() => () => void spring.current?.stop(), [])
+  return (
+    <span className="zen-menu-star" aria-hidden>
+      <span>
+        <Star />
+      </span>
+      <span ref={fill} className="zen-menu-star-fill">
+        <Star fill="currentColor" />
+      </span>
+    </span>
   )
 }
 
