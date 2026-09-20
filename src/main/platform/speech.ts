@@ -1,6 +1,6 @@
 import type { SpeechHost, SpeechHostEvent, SpeechUtteranceOptions } from '../../core/platform'
 import type { EngineEvent, TtsVoice } from '../../core/extensions/api/tts'
-import type { ReadAloudVoice } from '../../shared/readAloud'
+import { sanitizeReadAloudRate, type ReadAloudVoice } from '../../shared/readAloud'
 import type { SpeechEngine } from './extensionApi/tts'
 
 /**
@@ -26,6 +26,14 @@ export class ElectronSpeechHost implements SpeechHost {
     return voices.map(voiceFromTts)
   }
 
+  /** The engine lists again (`speechSynthesis.getVoices()` anew) for a re-ask after an empty first answer. */
+  async refreshVoices(): Promise<ReadAloudVoice[]> {
+    const voices = this.engine.refreshVoices
+      ? await this.engine.refreshVoices()
+      : await this.engine.voices()
+    return voices.map(voiceFromTts)
+  }
+
   onVoicesChanged(listener: () => void): void {
     this.engine.onVoicesChanged(listener)
   }
@@ -37,7 +45,7 @@ export class ElectronSpeechHost implements SpeechHost {
     this.engine.speak(id, text, {
       ...(options.voiceId ? { voiceName: options.voiceId } : {}),
       ...(options.lang ? { lang: options.lang } : {}),
-      rate: options.rate
+      rate: sanitizeReadAloudRate(options.rate)
     })
   }
 
