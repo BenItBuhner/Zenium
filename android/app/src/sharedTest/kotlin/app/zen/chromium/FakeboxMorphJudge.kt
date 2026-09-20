@@ -679,11 +679,11 @@ object FakeboxMorph {
             val d = f.double
             val fault = when {
                 d == null || !f.doubleDrawn && pillLook(s) < 0.97f -> "scroll ${f.scroll.f()} (s ${s.p()}): no double drawn"
-                d != null && !d.box.near(expected, LINE_TOLERANCE) -> "scroll ${f.scroll.f()} (s ${s.p()}): drawn at ${d.box}, the line has $expected"
-                d != null && abs(d.radius - restRadius(g, s)) > 1.5f -> "scroll ${f.scroll.f()} (s ${s.p()}): radius ${d.radius.f()}, the line has ${restRadius(g, s).f()}"
+                !d.box.near(expected, LINE_TOLERANCE) -> "scroll ${f.scroll.f()} (s ${s.p()}): drawn at ${d.box}, the line has $expected"
+                abs(d.radius - restRadius(g, s)) > 1.5f -> "scroll ${f.scroll.f()} (s ${s.p()}): radius ${d.radius.f()}, the line has ${restRadius(g, s).f()}"
                 f.pageFieldDrawn -> "scroll ${f.scroll.f()}: the page's own field is drawn at ${f.pageField!!.opacity.p()} under the double"
                 abs(f.pill - pillLook(s)) > 0.05f -> "scroll ${f.scroll.f()} (s ${s.p()}): handover ${f.pill.p()}, expected ${pillLook(s).p()}"
-                d != null && abs(d.coverage - (1 - pillLook(s))) > 0.06f -> "scroll ${f.scroll.f()} (s ${s.p()}): the double covers ${d.coverage.p()}, expected ${(1 - pillLook(s)).p()}"
+                abs(d.coverage - (1 - pillLook(s))) > 0.06f -> "scroll ${f.scroll.f()} (s ${s.p()}): the double covers ${d.coverage.p()}, expected ${(1 - pillLook(s)).p()}"
                 f.pillSlot != null && f.pillSlot.away && abs(f.pillSlot.words - pillLook(s)) > 0.06f -> "scroll ${f.scroll.f()} (s ${s.p()}): the pill's words at ${f.pillSlot.words.p()}, expected ${pillLook(s).p()}"
                 else -> null
             }
