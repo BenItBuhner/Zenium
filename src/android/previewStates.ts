@@ -224,8 +224,14 @@ async function closeExtensionPage(): Promise<void> {
  */
 async function openExtensionPage(id: string, path: string): Promise<void> {
   const state = browserStore.get().state
-  const ext = state?.extensions.find((e) => e.id === id)
-  const name = ext?.name || id
+  // The page keeps the name its extension had – as a tab that outlived the extension's removal
+  // does (`extensions=removed`): the chrome's list no longer has it, the document still says it.
+  const known =
+    state?.extensions.find((e) => e.id === id) ??
+    (state ? extensionsFixture(state, 'installed', Date.now()).extensions : []).find(
+      (e) => e.id === id
+    )
+  const name = known?.name || id
   const url = `${EXTENSION_SCHEME}://${id}/${path}`
   const page: PreviewExtensionPage = { url, name, title: `${name} settings` }
   window.dispatchEvent(new CustomEvent(PREVIEW_EXTENSION_PAGE_EVENT, { detail: page }))
@@ -685,7 +691,8 @@ let extensionsSeed: (() => void) | null = null
  * state the core pushes while the spec stands, as the request state is. Variants: `installed`
  * (six extensions: two stores, an unpacked one on Manifest V2, one turned off, one that failed to
  * load, one whose error console holds errors and warnings; three of them enabled with an action,
- * one wearing a badge, so the Extensions sheet has rows), `empty` (the capability on, nothing
+ * one wearing a badge, so the Extensions sheet has rows), `removed` (the same less Dark Reader,
+ * for a tab on its options page that outlived its removal), `empty` (the capability on, nothing
  * installed) and `checking` (the update check running).
  */
 function seedExtensions(variant: string): void {
@@ -1048,7 +1055,8 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
   return {
     ...state,
     capabilities: { ...state.capabilities, extensions: true },
-    extensions,
+    // `removed`: Dark Reader is gone, as after its Remove – a tab on its options page outlives it.
+    extensions: variant === 'removed' ? extensions.filter((e) => e.id !== darkReader) : extensions,
     extensionUpdates: {
       lastCheckedAt: variant === 'empty' ? null : now - 2 * HOUR_MS,
       checking: variant === 'checking'
