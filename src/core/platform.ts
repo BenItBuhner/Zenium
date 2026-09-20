@@ -1951,6 +1951,11 @@ export interface SpeechHostEvent {
  */
 export interface SpeechHost {
   voices(): Promise<ReadAloudVoice[]>
+  /**
+   * Optional: ask the engine to list its voices again (a `readAloud.voices` re-ask after an empty
+   * first answer, a picker's refresh); hosts without it answer `voices()` again.
+   */
+  refreshVoices?(): Promise<ReadAloudVoice[]>
   onVoicesChanged(listener: () => void): void
   /** Speak one utterance now (any utterance in progress is replaced); events name `utteranceId`. */
   speak(utteranceId: string, text: string, options: SpeechUtteranceOptions): void

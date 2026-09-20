@@ -8,6 +8,14 @@ export type ReaderFont = 'serif' | 'sans' | 'mono'
 /** `auto` follows the browser's colour scheme (the page's `prefers-color-scheme`). */
 export type ReaderTheme = 'auto' | 'light' | 'sepia' | 'dark'
 export type ReaderWidth = 'narrow' | 'normal' | 'wide'
+/**
+ * Line focus (EDGE-13, Edge's Immersive Reader): a dimmed mask over everything but a band of
+ * this many lines, following the read-aloud sentence while it plays and the click / keyboard
+ * otherwise; 0 is off.
+ */
+export type ReaderLineFocus = 0 | 1 | 3 | 5
+/** Text spacing (EDGE-13): letter, word and line spacing together, in Edge's three steps. */
+export type ReaderSpacing = 'normal' | 'wide' | 'wider'
 
 export interface ReaderPreferences {
   /** Body text size in CSS px, one of `READER_FONT_SIZES`. */
@@ -15,6 +23,10 @@ export interface ReaderPreferences {
   font: ReaderFont
   theme: ReaderTheme
   width: ReaderWidth
+  lineFocus: ReaderLineFocus
+  spacing: ReaderSpacing
+  /** Syllable boundaries marked inside words (English heuristic; `readerExtras.ts`). */
+  syllables: boolean
 }
 
 /** The ladder the A− / A+ steps and the size slider walk. */
@@ -22,12 +34,17 @@ export const READER_FONT_SIZES: readonly number[] = [14, 15, 16, 17, 18, 20, 22,
 export const READER_FONTS: readonly ReaderFont[] = ['serif', 'sans', 'mono']
 export const READER_THEMES: readonly ReaderTheme[] = ['auto', 'light', 'sepia', 'dark']
 export const READER_WIDTHS: readonly ReaderWidth[] = ['narrow', 'normal', 'wide']
+export const READER_LINE_FOCUS: readonly ReaderLineFocus[] = [0, 1, 3, 5]
+export const READER_SPACINGS: readonly ReaderSpacing[] = ['normal', 'wide', 'wider']
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   fontSize: 18,
   font: 'serif',
   theme: 'auto',
-  width: 'normal'
+  width: 'normal',
+  lineFocus: 0,
+  spacing: 'normal',
+  syllables: false
 }
 
 /** Chrome's labels for the choices (the Reading mode side panel's menus). */
@@ -47,6 +64,17 @@ export const READER_WIDTH_LABELS: Record<ReaderWidth, string> = {
   normal: 'Standard',
   wide: 'Wide'
 }
+export const READER_LINE_FOCUS_LABELS: Record<ReaderLineFocus, string> = {
+  0: 'Off',
+  1: '1 line',
+  3: '3 lines',
+  5: '5 lines'
+}
+export const READER_SPACING_LABELS: Record<ReaderSpacing, string> = {
+  normal: 'Normal',
+  wide: 'Wide',
+  wider: 'Wider'
+}
 
 /** Stored preferences from any version (or a patch from a page) come out complete and valid. */
 export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
@@ -59,7 +87,14 @@ export function sanitizeReaderPreferences(raw: unknown): ReaderPreferences {
         : d.fontSize,
     font: READER_FONTS.includes(r.font as ReaderFont) ? (r.font as ReaderFont) : d.font,
     theme: READER_THEMES.includes(r.theme as ReaderTheme) ? (r.theme as ReaderTheme) : d.theme,
-    width: READER_WIDTHS.includes(r.width as ReaderWidth) ? (r.width as ReaderWidth) : d.width
+    width: READER_WIDTHS.includes(r.width as ReaderWidth) ? (r.width as ReaderWidth) : d.width,
+    lineFocus: READER_LINE_FOCUS.includes(r.lineFocus as ReaderLineFocus)
+      ? (r.lineFocus as ReaderLineFocus)
+      : d.lineFocus,
+    spacing: READER_SPACINGS.includes(r.spacing as ReaderSpacing)
+      ? (r.spacing as ReaderSpacing)
+      : d.spacing,
+    syllables: typeof r.syllables === 'boolean' ? r.syllables : d.syllables
   }
 }
 
@@ -76,6 +111,11 @@ export function readerPreferencesPatch(raw: unknown): Partial<ReaderPreferences>
   if (READER_FONTS.includes(r.font as ReaderFont)) patch.font = r.font as ReaderFont
   if (READER_THEMES.includes(r.theme as ReaderTheme)) patch.theme = r.theme as ReaderTheme
   if (READER_WIDTHS.includes(r.width as ReaderWidth)) patch.width = r.width as ReaderWidth
+  if (READER_LINE_FOCUS.includes(r.lineFocus as ReaderLineFocus))
+    patch.lineFocus = r.lineFocus as ReaderLineFocus
+  if (READER_SPACINGS.includes(r.spacing as ReaderSpacing))
+    patch.spacing = r.spacing as ReaderSpacing
+  if (typeof r.syllables === 'boolean') patch.syllables = r.syllables
   return Object.keys(patch).length > 0 ? patch : null
 }
 
