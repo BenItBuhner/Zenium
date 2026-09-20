@@ -1,7 +1,14 @@
 import type { Browser } from './browser'
 import type { SpeechHost, SpeechHostEvent, TabView } from './platform'
 import { sanitizeArticleHtml, type RawArticle } from './reader'
+import { siteOf } from './mediaSession'
 import { newId } from '../shared/ids'
+import type {
+  MediaSessionAction,
+  MediaSessionSource,
+  MediaSessionSourceAction,
+  MediaSessionSourceHandle
+} from '../shared/mediaSession'
 import {
   READ_ALOUD_HIGHLIGHT_CSS,
   READ_ALOUD_HIGHLIGHT_MODES,
@@ -29,6 +36,18 @@ import {
 /** How long the page script has to answer `readAloud.extract` before the start fails (`no-text`). */
 export const EXTRACT_TIMEOUT_MS = 8000
 
+/** The read-aloud player's id in the media session (`registerSource`; one session per id). */
+export const READ_ALOUD_SOURCE_ID = 'read-aloud'
+
+/** The controls the OS shows for the player (contract 2.5): sentence steps as tracks, no seeking. */
+export const READ_ALOUD_SOURCE_ACTIONS: ReadonlyArray<MediaSessionSourceAction> = [
+  'play',
+  'pause',
+  'stop',
+  'previoustrack',
+  'nexttrack'
+]
+
 /** The one session: its text, where it stands, and what it holds on the host. */
 interface Session {
   /** Bumps on every `start`; async steps compare it to know they are stale. */
@@ -50,6 +69,8 @@ interface Session {
   resumeFromStart: boolean
   /** The highlight stylesheet inserted into a web page (`removeInsertedCSS` on stop). */
   cssKey: Promise<string | null> | null
+  /** The player in the media session, from the first sentence spoken until `stop` or the tab goes. */
+  source: MediaSessionSourceHandle | null
 }
 
 interface PendingExtraction {
@@ -513,14 +534,17 @@ export class ReadAloudService {
     host.prepare(utteranceId, sentence.text, this.optionsFor(session, index))
   }
 
-  /** The last sentence is done: the state says so, the highlight clears, the OS controls let go. */
+  /**
+   * The last sentence is done: the state says so, the highlight clears, and the OS controls stay
+   * up in paused form (play starts the text over), until stop dismisses them.
+   */
   private end(session: Session): void {
     session.utteranceId = null
     session.prepared = null
     session.state.status = 'ended'
     session.state.word = null
     this.clearHighlight(session)
-    this.releaseSource(session)
+    this.syncSource(session)
     this.changed()
   }
 
@@ -746,16 +770,82 @@ export class ReadAloudService {
   }
 
   // ---------------------------------------------------------------------------
-  // The media session (bound in `syncSource` / `releaseSource`)
+  // The media session (contract 2.5)
   // ---------------------------------------------------------------------------
 
-  /** The source reflects the session: registered on the first play, updated on every status change. */
-  private syncSource(_session: Session): void {
-    // Bound to `MediaSessionService.registerSource` (contract 2.5).
+  /**
+   * The player in the OS controls and the in-app media list: registered with the first sentence
+   * spoken (a start that fails leaves nothing to control), updated on every status change after –
+   * paused, playing again, ended, an error – so the notification stays up in paused form with
+   * play taking it on (or over, after the end), as a page's does. `releaseSource` on stop and when
+   * the tab goes. A private tab's source shows no title or site: the engine blanks it.
+   */
+  private syncSource(session: Session): void {
+    const described = this.describeSource(session)
+    if (session.source) {
+      session.source.update(described)
+      return
+    }
+    if (!described.playing) return
+    const source: MediaSessionSource = {
+      id: READ_ALOUD_SOURCE_ID,
+      tabId: session.tabId,
+      ...described,
+      onAction: (action) => this.onSourceAction(session, action)
+    }
+    session.source = this.browser.mediaSession.registerSource(source)
   }
 
-  private releaseSource(_session: Session): void {
-    // Bound to `MediaSessionService.registerSource` (contract 2.5).
+  private releaseSource(session: Session): void {
+    const handle = session.source
+    session.source = null
+    handle?.release()
+  }
+
+  /** What the controls show: the text's title over the site being read (the reader's original page). */
+  private describeSource(session: Session): Omit<MediaSessionSource, 'id' | 'tabId' | 'onAction'> {
+    const url = this.browser.reader.isReaderUrl(session.url)
+      ? (this.browser.reader.originalUrl(session.url) ?? session.url)
+      : session.url
+    return {
+      title: session.state.title,
+      artist: siteOf(url),
+      artwork: null,
+      playing: session.state.status === 'playing',
+      actions: READ_ALOUD_SOURCE_ACTIONS,
+      position: null
+    }
+  }
+
+  /**
+   * An action from the OS controls, the in-app player or the host's focus loss: `play` resumes
+   * (retries after an error, starts over after the end), `pause` pauses – the focus loss's pause
+   * included, an ordinary pause with no auto-resume – the tracks step the sentences, `stop` ends.
+   */
+  private onSourceAction(session: Session, action: MediaSessionAction | 'toggle'): void {
+    if (this.session !== session) return
+    switch (action) {
+      case 'play':
+        this.resume()
+        return
+      case 'pause':
+        this.pause()
+        return
+      case 'toggle':
+        this.toggle()
+        return
+      case 'stop':
+        this.stop()
+        return
+      case 'nexttrack':
+        this.next()
+        return
+      case 'previoustrack':
+        this.previous()
+        return
+      default:
+        return
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -791,7 +881,8 @@ export class ReadAloudService {
       utteranceId: null,
       prepared: null,
       resumeFromStart: false,
-      cssKey: null
+      cssKey: null,
+      source: null
     }
   }
 

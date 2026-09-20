@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EXTRACT_TIMEOUT_MS, ReadAloudService, wordEnd } from '../readAloud'
+import {
+  EXTRACT_TIMEOUT_MS,
+  READ_ALOUD_SOURCE_ACTIONS,
+  READ_ALOUD_SOURCE_ID,
+  ReadAloudService,
+  wordEnd
+} from '../readAloud'
 import type { Browser } from '../browser'
 import type {
   PageHostMessage,
@@ -8,6 +14,7 @@ import type {
   SpeechUtteranceOptions
 } from '../platform'
 import type { ReaderArticle } from '../reader'
+import type { MediaSessionSource, MediaSessionSourceHandle } from '../../shared/mediaSession'
 import {
   sanitizeReadAloudSettings,
   type ReadAloudExtractedBlock,
@@ -128,6 +135,15 @@ interface FakeView {
   executeJavaScript(code: string): Promise<unknown>
 }
 
+/** A source as the media session engine would track it: what was registered, then every patch. */
+interface RegisteredSource {
+  source: MediaSessionSource
+  /** The source as it stands after the patches. */
+  state: Omit<MediaSessionSource, 'onAction'>
+  updates: Array<Parameters<MediaSessionSourceHandle['update']>[0]>
+  released: boolean
+}
+
 interface Harness {
   service: ReadAloudService
   host: FakeHost
@@ -138,6 +154,8 @@ interface Harness {
   commits: { persisted: number; volatile: number }
   translate: { source: string | null; preferred: string[] }
   readability: string | null
+  /** Every `registerSource` call, in order. */
+  sources: RegisteredSource[]
   addTab(id: string, url: string, title?: string): FakeView
   /** The extraction requests the page script would have seen for a tab. */
   extractRequests(tabId: string): ReadAloudExtractRequest[]
@@ -169,10 +187,36 @@ function harness(options: { host?: FakeHost | null } = {}): Harness {
     }
   }
   const h: Partial<Harness> & { readability: string | null } = { readability: null }
+  const sources: RegisteredSource[] = []
   const browser = {
     platform: {
       speech: host ?? undefined,
       readabilitySource: () => h.readability
+    },
+    mediaSession: {
+      registerSource: (source: MediaSessionSource): MediaSessionSourceHandle => {
+        const state = {
+          id: source.id,
+          tabId: source.tabId,
+          title: source.title,
+          artist: source.artist,
+          artwork: source.artwork,
+          playing: source.playing,
+          actions: source.actions,
+          position: source.position
+        }
+        const registered: RegisteredSource = { source, state, updates: [], released: false }
+        sources.push(registered)
+        return {
+          update: (patch) => {
+            registered.updates.push(patch)
+            registered.state = { ...registered.state, ...patch }
+          },
+          release: () => {
+            registered.released = true
+          }
+        }
+      }
     },
     tabs: {
       tab: (id: string) => tabs.get(id),
@@ -207,6 +251,7 @@ function harness(options: { host?: FakeHost | null } = {}): Harness {
     tabs,
     views,
     articles,
+    sources,
     settings: () => state.settings.readAloud,
     commits,
     translate,
@@ -823,6 +868,156 @@ describe('ReadAloudService', () => {
       h.service.onTabGone('t2')
       await started
       expect(h.service.uiState()).toBeNull()
+    })
+  })
+
+  describe('the media session (contract 2.5)', () => {
+    it('registers the player with the first sentence: the text’s title over the site, playing, the five controls', async () => {
+      h.addTab('t1', PAGE, 'Tab title')
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      expect(h.sources).toHaveLength(0)
+      h.answer('t1', [{ text: 'One. Two.' }], { title: 'Doc title' })
+      await started
+      expect(h.sources).toHaveLength(1)
+      expect(h.sources[0].state).toEqual({
+        id: READ_ALOUD_SOURCE_ID,
+        tabId: 't1',
+        title: 'Doc title',
+        artist: 'example.com',
+        artwork: null,
+        playing: true,
+        actions: ['play', 'pause', 'stop', 'previoustrack', 'nexttrack'],
+        position: null
+      })
+      expect(h.sources[0].state.actions).toBe(READ_ALOUD_SOURCE_ACTIONS)
+    })
+
+    it('a start that fails registers nothing', async () => {
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: '   ' }])
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-text' })
+      expect(h.sources).toHaveLength(0)
+    })
+
+    it('updates on every status change and stays up in paused form after the end; stop releases', async () => {
+      await playing(h)
+      const [registered] = h.sources
+      h.service.pause()
+      expect(registered.updates.at(-1)).toMatchObject({ playing: false })
+      h.service.resume()
+      expect(registered.updates.at(-1)).toMatchObject({ playing: true })
+      h.host.error('boom')
+      expect(registered.state.playing).toBe(false)
+      h.service.resume()
+      expect(registered.state.playing).toBe(true)
+      h.service.seek({ sentenceIndex: 5 })
+      h.host.end()
+      expect(h.service.uiState()!.status).toBe('ended')
+      expect(registered.released).toBe(false)
+      expect(registered.state.playing).toBe(false)
+      // The next sentence speaks under the same registration.
+      expect(h.sources).toHaveLength(1)
+      h.service.stop()
+      expect(registered.released).toBe(true)
+      expect(h.sources).toHaveLength(1)
+    })
+
+    it('the tab going releases the player; a second start registers anew', async () => {
+      await playing(h)
+      h.views.get('t1')!.destroyed = true
+      h.service.onTabGone('t1')
+      expect(h.sources[0].released).toBe(true)
+      await playing(h, 't2')
+      expect(h.sources).toHaveLength(2)
+      expect(h.sources[1].state).toMatchObject({ tabId: 't2', playing: true })
+      expect(h.sources[1].released).toBe(false)
+    })
+
+    it('a start on another tab releases the first player before the second registers', async () => {
+      await playing(h)
+      await playing(h, 't2')
+      expect(h.sources.map((s) => [s.state.tabId, s.released])).toEqual([
+        ['t1', true],
+        ['t2', false]
+      ])
+    })
+
+    it('the reader’s player names the original page’s site', async () => {
+      h.articles.set('a1', {
+        id: 'a1',
+        url: PAGE,
+        title: 'The article',
+        byline: null,
+        siteName: null,
+        excerpt: null,
+        content: '<p>Body one.</p>',
+        length: 9,
+        lang: 'en',
+        dir: null
+      })
+      h.addTab('t1', `zen://reader?id=a1&url=${encodeURIComponent(PAGE)}`)
+      await h.service.start({ tabId: 't1' })
+      expect(h.sources[0].state).toMatchObject({
+        title: 'The article',
+        artist: 'example.com',
+        playing: true
+      })
+    })
+
+    it('the controls’ actions drive the session: pause, play, the tracks, toggle and stop', async () => {
+      await playing(h)
+      const { source } = h.sources[0]
+      source.onAction('pause', {})
+      expect(h.service.uiState()!.status).toBe('paused')
+      expect(h.host.pauses).toBe(1)
+      source.onAction('play', {})
+      expect(h.service.uiState()!.status).toBe('playing')
+      source.onAction('nexttrack', {})
+      expect(h.service.uiState()!.sentenceIndex).toBe(1)
+      source.onAction('nexttrack', {})
+      expect(h.service.uiState()!.sentenceIndex).toBe(2)
+      source.onAction('previoustrack', {})
+      expect(h.service.uiState()!.sentenceIndex).toBe(1)
+      source.onAction('toggle', {})
+      expect(h.service.uiState()!.status).toBe('paused')
+      source.onAction('toggle', {})
+      expect(h.service.uiState()!.status).toBe('playing')
+      // Seeking is not offered; an action outside the set does nothing.
+      source.onAction('seekforward', { seekOffset: 10 })
+      expect(h.service.uiState()).toMatchObject({ status: 'playing', sentenceIndex: 1 })
+      source.onAction('stop', {})
+      expect(h.service.uiState()).toBeNull()
+      expect(h.sources[0].released).toBe(true)
+    })
+
+    it('play after the end starts the text over; a pause from the focus loss is an ordinary pause', async () => {
+      await playing(h)
+      const { source } = h.sources[0]
+      h.service.seek({ sentenceIndex: 5 })
+      h.host.end()
+      expect(h.service.uiState()!.status).toBe('ended')
+      source.onAction('play', {})
+      expect(h.service.uiState()).toMatchObject({ status: 'playing', sentenceIndex: 0 })
+      source.onAction('pause', {})
+      expect(h.service.uiState()!.status).toBe('paused')
+      // Nothing resumes it on its own: the user does.
+      h.host.emit(h.host.current.id, { type: 'start' })
+      expect(h.service.uiState()!.status).toBe('paused')
+    })
+
+    it('an action for a player whose session is over is ignored', async () => {
+      await playing(h)
+      const stale = h.sources[0].source
+      h.service.stop()
+      await playing(h, 't2')
+      stale.onAction('pause', {})
+      expect(h.service.uiState()).toMatchObject({ tabId: 't2', status: 'playing' })
+      stale.onAction('stop', {})
+      expect(h.service.uiState()).toMatchObject({ tabId: 't2', status: 'playing' })
     })
   })
 })
