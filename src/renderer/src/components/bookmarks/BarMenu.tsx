@@ -20,6 +20,7 @@ import {
 } from '@renderer/lib/portals'
 import { BookmarkIcon } from './BookmarkRow'
 import { besideOrigin, layoutRect, placeBeside, rowRect } from './panelGeometry'
+import { closedTo, focusAfterClose, focusAfterOpen, openedAt, type PathFocus } from './panelPath'
 import { nodeLabel } from './tree'
 import { HOLD_TO_OPEN_MS, type BarDropTarget } from './useBarDrag'
 
@@ -65,11 +66,8 @@ interface Placement {
  * keyboard opened), the row of folder `id` (the level under it closed), or the panel itself,
  * which hears the keys without highlighting a row (opened by the pointer, §9.22).
  */
-type FocusTarget = 'first' | 'panel' | { id: string }
-interface FocusWanted {
-  depth: number
-  target: FocusTarget
-}
+type FocusTarget = PathFocus['target'] | 'panel'
+type FocusWanted = PathFocus | { depth: number; target: 'panel' }
 
 /** Where a drop lands in a panel: beside a row, into a folder row, or at the end of the list. */
 type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
@@ -155,21 +153,20 @@ export function BarMenu({
   }))
   const onFocused = useCallback((): void => setFocusWanted(null), [])
 
+  // The moves through the cascade are `panelPath`'s (pure, tested there); `focus` says the
+  // keyboard made the move, so the row it calls for takes the focus once its level stands.
   const openLevel = useCallback(
     (depth: number, folderId: string, focus: boolean): void => {
-      setFocusWanted(focus ? { depth: depth + 1, target: 'first' } : null)
-      setPath((p) => (p[depth] === folderId ? p : [...p.slice(0, depth), folderId]))
+      setFocusWanted(focus ? focusAfterOpen(depth) : null)
+      setPath((p) => openedAt(p, depth, folderId))
     },
     [setPath]
   )
-  /** Close the levels deeper than `depth`; `focus` lands on the folder row that opened them. */
+  /** Close the levels deeper than `depth` (level `depth` stays); `focus` lands on the row that opened them. */
   const closeTo = useCallback(
     (depth: number, focus: boolean): void => {
-      const opener = path[depth - 1]
-      setFocusWanted(
-        focus && depth > 0 && opener ? { depth: depth - 1, target: { id: opener } } : null
-      )
-      setPath((p) => (p.length > depth ? p.slice(0, depth) : p))
+      setFocusWanted(focus ? focusAfterClose(path, depth) : null)
+      setPath((p) => closedTo(p, depth))
     },
     [path, setPath]
   )
@@ -255,7 +252,8 @@ export function BarMenu({
         break
       case 'ArrowLeft':
       case 'Backspace':
-        if (depth > 0) closeTo(depth, true)
+        // The level in focus goes; its folder row, one level up, takes the focus.
+        if (depth > 0) closeTo(depth - 1, true)
         else onClose({ focusAnchor: true })
         break
       case 'Enter':
