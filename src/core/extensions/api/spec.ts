@@ -13,6 +13,7 @@ import {
   CONTENT_SETTING_TYPES,
   CONTENT_SETTING_TYPE_NAMES
 } from './contentSettings'
+import { OFFSCREEN_PERMISSION, OFFSCREEN_REASON_CONSTANTS } from './offscreen'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
 import { PROXY_SETTING } from './proxy'
 import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
@@ -872,6 +873,20 @@ export const API_SPEC: ApiSpec = {
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
   // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
   // `getLayout` reports the side the strip docks on.
+  // Electron has the binding, but its `ExtensionHost` takes the browser down when the document
+  // touches media devices (`core/extensions/api/offscreen.ts`): the browser layer hosts the
+  // document itself and answers the namespace, the engine's copy replaced in place.
+  offscreen: {
+    methods: {
+      createDocument: { params: [object('parameters')] },
+      closeDocument: { params: [] },
+      hasDocument: { params: [] }
+    },
+    events: {},
+    constants: { Reason: OFFSCREEN_REASON_CONSTANTS },
+    manifestVersion: 3,
+    permissions: [OFFSCREEN_PERMISSION]
+  },
   sidePanel: {
     methods: {
       setOptions: { params: [object('options')] },

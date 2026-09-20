@@ -81,6 +81,8 @@ import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
+import { OffscreenApi } from './offscreen'
+import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
@@ -209,6 +211,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly systemStorage: SystemStorageApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly offscreen: OffscreenApi
   readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
@@ -272,6 +275,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
     this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
@@ -334,6 +338,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       'system.storage': this.systemStorage.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
+      offscreen: this.offscreen.handlers,
       debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
@@ -628,6 +633,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.offscreen.unload(ext.id)
     this.debugger.unload(ext.id)
     this.systemDisplay.unload()
     this.identity.unload(ext.id)
@@ -818,6 +824,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (this.views.tabIdForWebContents(wc) || this.model.popupForTabId(wc.id)) return 'tab'
     if (wc.getType() === 'backgroundPage') return 'background'
     if (this.sidePanel.hosts(wc)) return 'other'
+    if (this.offscreen.hosts(wc)) return 'offscreen'
     const popup = this.action.clickState(ctx.extensionId, ctx.window ?? this.lastWindow()).popup
     if (popup && hello.url.split('#')[0] === extensionUrl(ctx.extensionId, popup)) return 'popup'
     return ctx.window ? 'popup' : 'other'

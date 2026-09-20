@@ -39,7 +39,8 @@ export interface ShimHost {
 
 export interface ExtensionView {
   url: string
-  type: 'tab' | 'popup' | 'background' | 'options' | 'other'
+  /** `offscreen`: a document of `offscreen.createDocument` (the browser layer hosts it). */
+  type: 'tab' | 'popup' | 'background' | 'options' | 'offscreen' | 'other'
   tabId?: number
   windowId?: number
   /** True for the view the call comes from. */
