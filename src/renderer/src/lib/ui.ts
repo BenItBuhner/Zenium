@@ -266,6 +266,13 @@ export interface UiState {
    */
   zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /**
+   * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
+   * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
+   * on a phone. Opened by the chip, the app menu's "Text Preferences…" or the reader page's own
+   * toolbar; the page beneath is a picture that is taken again after every change.
+   */
+  readerPreferences: { tabId: string; anchor: Rect | null } | null
+  /**
    * A bookmark the manager should edit, or create (`id: null`) inside `parentId`; on phones the
    * editor sheet (the `bookmark.edit` event, the star toast's Edit).
    */
@@ -453,6 +460,7 @@ export const uiStore = createStore<UiState>(
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
+    readerPreferences: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
@@ -820,6 +828,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
@@ -874,6 +883,7 @@ export function invalidateSnapshot(): void {
     !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.readerPreferences &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
@@ -1465,6 +1475,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
+    ui.readerPreferences !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.siteDataConfirm !== null ||
@@ -1673,7 +1684,10 @@ export function closePrintPreview(): void {
  * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
  * translate selection popover, a menulist's list) count in `floatingChrome` and are the
  * extensions' counterpart's case
- * (`extensionChromeAloneOverContent`).
+ * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
+ * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
+ * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
+ * both stays undimmed.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
   const popover = ui.autofillPrompt === 'popover'
@@ -1681,6 +1695,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
+      ui.readerPreferences !== null ||
       ui.hoverCard.tabId !== null ||
       ui.downloadsOpen ||
       // Site information and the permission prompt are popovers on a mouse (no scrim, §9.5) and
@@ -1695,12 +1710,14 @@ export function panelAloneOverContent(ui: UiState): boolean {
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
+      readerPreferences: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
       siteInfoOpen: false,
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
       securityPromptOpen: false,
+      floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
@@ -1752,6 +1769,60 @@ export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
 }
+
+// ---------------------------------------------------------------------------
+// Reader View's text preferences over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * "Text Preferences…" for a reader tab (the pill's chip, the app menu, the page's toolbar): the
+ * surface comes up over a picture of the page, as the zoom bubble does, and the keyboard goes
+ * into it. `anchor` is the chip it hangs from on a mouse; without one the popover hangs under
+ * the frame's top edge. A second request for the tab whose surface is up puts it away (the
+ * chip's toggle).
+ */
+export async function openReaderPreferences(
+  tabId: string,
+  anchor: DOMRect | Rect | null = null
+): Promise<void> {
+  const open = uiStore.get().readerPreferences
+  if (open && open.tabId === tabId) return
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({
+    readerPreferences: {
+      tabId,
+      anchor: anchor
+        ? { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
+        : null
+    }
+  })
+}
+
+/**
+ * Put the surface away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the chip the popover hung from, §9.22).
+ */
+export function closeReaderPreferences(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().readerPreferences) return
+  uiStore.set({ readerPreferences: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+/**
+ * A preference changed while the surface is up: the reader page has taken it, so its picture
+ * is taken again after the page's next paint (the push and the repaint are asynchronous; the
+ * wait covers a frame or two on a phone's WebView).
+ */
+export function readerPreferencesChanged(tabId: string): void {
+  window.setTimeout(() => {
+    if (uiStore.get().readerPreferences?.tabId !== tabId) return
+    void refreshSnapshot(tabId)
+  }, READER_REPAINT_MS)
+}
+
+const READER_REPAINT_MS = 160
 
 /** The page changed under the chrome (a zoom step): its picture is taken again. */
 async function refreshSnapshot(tabId: string): Promise<void> {

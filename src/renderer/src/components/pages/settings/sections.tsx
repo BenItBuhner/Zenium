@@ -45,6 +45,7 @@ import { engineHost } from '@shared/search'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
 import { languageName } from '@shared/languageNames'
+import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
 import type { TranslatePreferences } from '@shared/translate'
 import { cmd, run } from '@renderer/lib/api'
 import {
@@ -196,7 +197,12 @@ function item(
   label: string,
   description: string | undefined,
   rows: SettingsRow[],
-  extra: { leading?: ReactNode; keywords?: readonly string[]; sheetDescription?: string } = {}
+  extra: {
+    leading?: ReactNode
+    keywords?: readonly string[]
+    sheetDescription?: string
+    disabled?: boolean
+  } = {}
 ): SettingsRow {
   return {
     kind: 'item',
@@ -205,6 +211,7 @@ function item(
     description,
     keywords: extra.keywords,
     leading: extra.leading,
+    disabled: extra.disabled,
     sheet: {
       title: label,
       description: extra.sheetDescription ?? description,
@@ -362,11 +369,12 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       ]
     })
   }
-  if (caps.pageControls) {
-    groups.push({
-      id: 'sites',
-      heading: 'Sites',
-      rows: [
+  // The desktop-site default is the page-controls host's; the dark theme for sites is any host
+  // that darkens pages (CT-18). Each exceptions list belongs to the row above it.
+  if (caps.pageControls || caps.darkenSites) {
+    const siteRows: SettingsRow[] = []
+    if (caps.pageControls)
+      siteRows.push(
         choice<DesktopSiteDefault>({
           id: 'desktop-site',
           label: 'Desktop site',
@@ -380,19 +388,23 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
             { value: 'off', label: 'Never' }
           ],
           onChange: (v) => patchControls({ desktopSite: v })
-        }),
-        {
-          kind: 'switch',
-          id: 'darken-sites',
-          label: 'Apply dark theme to sites',
-          description: 'Sites without a dark theme get one while Zenium is dark.',
-          checked: pc.darkenSites,
-          onChange: (v) => patchControls({ darkenSites: v })
-        }
-      ]
-    })
+        })
+      )
+    if (caps.darkenSites)
+      siteRows.push({
+        kind: 'switch',
+        id: 'darken-sites',
+        label: 'Apply dark theme to sites',
+        // One sentence: the 13/20 description clamps at two lines (§9.2), and where the menu's
+        // per-site choice goes is the Site exceptions group's description below.
+        description: 'Sites without a dark theme get one while Zenium is dark.',
+        keywords: ['dark mode', 'auto dark', 'darken', 'night'],
+        checked: pc.darkenSites,
+        onChange: (v) => patchControls({ darkenSites: v })
+      })
+    groups.push({ id: 'sites', heading: 'Sites', rows: siteRows })
     const exceptions: SettingsRow[] = [
-      ...sorted(pc.desktopSites).map(([domain, on]) =>
+      ...(caps.pageControls ? sorted(pc.desktopSites) : []).map(([domain, on]) =>
         item(`desktop-site:${domain}`, domain, on ? 'Desktop site on' : 'Desktop site off', [
           {
             kind: 'action',
@@ -403,7 +415,7 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
           }
         ])
       ),
-      ...sorted(pc.darkenSiteExceptions).map(([domain, on]) =>
+      ...(caps.darkenSites ? sorted(pc.darkenSiteExceptions) : []).map(([domain, on]) =>
         item(`darken:${domain}`, domain, on ? 'Dark theme on' : 'Dark theme off', [
           {
             kind: 'action',
@@ -415,11 +427,14 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
         ])
       )
     ]
+    const creators = [
+      caps.pageControls && 'Desktop Site',
+      caps.darkenSites && 'Dark Theme for This Site'
+    ].filter((x): x is string => typeof x === 'string')
     groups.push({
       id: 'site-exceptions',
       heading: 'Site exceptions',
-      description:
-        'Desktop Site and Dark Theme for This Site in the menu remember a site’s choice here.',
+      description: `${creators.join(' and ')} in the menu ${creators.length > 1 ? 'remember' : 'remembers'} a site’s choice here.`,
       rows: exceptions,
       empty: 'No exceptions yet'
     })
@@ -908,59 +923,139 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    ...sleepingTabsGroups(s, set)
+  )
+  return groups
+}
+
+/**
+ * Edge's ladder for "Put inactive tabs to sleep after" (Settings › System and performance), in
+ * minutes: 30 seconds to 12 hours. The engine stores the timeout in minutes down to a half.
+ */
+const SLEEP_TIMEOUTS: readonly number[] = [0.5, 1, 5, 15, 30, 60, 120, 180, 360, 720]
+
+/** "30 seconds", "5 minutes", "1 hour", "12 hours": the ladder's labels, and any stored value's. */
+export function sleepTimeoutLabel(minutes: number): string {
+  if (minutes < 1) return `${Math.round(minutes * 60)} seconds`
+  if (minutes < 60) return minutes === 1 ? '1 minute' : `${minutes} minutes`
+  const hours = minutes / 60
+  const shown = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, '')
+  return hours === 1 ? '1 hour' : `${shown} hours`
+}
+
+/**
+ * Sleeping tabs on a phone (CT-22), in Edge's words: the switch ("Save resources with sleeping
+ * tabs"), the timeout as a choice on Edge's ladder – a stored value off it (an older profile's
+ * 20 minutes) is listed in its place rather than shown as nothing – and the never-sleep sites
+ * as a managed list ("No sites yet" while it is empty, §9.17), each with Remove, and an Add sheet
+ * in a group of its own taking a site (a URL is cut down to its host). Every dependent row reads
+ * at .4 while the switch is off (§10.4). A sleeping tab fades
+ * in the tab overview and wakes when it is opened; memory pressure puts pages to sleep ahead of
+ * the timeout whatever the switch says.
+ */
+function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void): RowGroup[] {
+  const off = !s.unloadEnabled
+  const keywords = ['sleeping tabs', 'memory saver', 'discard', 'unload', 'inactive', 'battery']
+  const ladder = SLEEP_TIMEOUTS.includes(s.unloadTimeoutMinutes)
+    ? SLEEP_TIMEOUTS
+    : [...SLEEP_TIMEOUTS, s.unloadTimeoutMinutes].sort((a, b) => a - b)
+  const sites = [...s.unloadExcludedDomains].sort((a, b) => a.localeCompare(b))
+  const addSite = (raw: string): void => {
+    const host = raw
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0]
+      .split(':')[0]
+    if (!host || s.unloadExcludedDomains.includes(host)) return
+    set({ unloadExcludedDomains: [...s.unloadExcludedDomains, host] })
+  }
+  return [
     {
-      id: 'unloading',
-      heading: 'Tab unloading',
+      id: 'sleeping-tabs',
+      heading: 'Sleeping tabs',
+      description:
+        'Tabs you have not looked at for a while go to sleep to save memory and battery. A sleeping tab fades in the tab overview and wakes when you open it.',
       rows: [
         {
           kind: 'switch',
           id: 'unload-enabled',
-          label: 'Unload inactive tabs',
-          description: 'Frees memory by unloading tabs you have not used for a while.',
+          label: 'Save resources with sleeping tabs',
+          keywords,
           checked: s.unloadEnabled,
           onChange: (v) => set({ unloadEnabled: v })
         },
-        {
-          kind: 'field',
+        choice({
           id: 'unload-after',
-          label: 'Unload after',
+          label: 'Put inactive tabs to sleep after',
+          keywords,
           value: String(s.unloadTimeoutMinutes),
-          display: `${s.unloadTimeoutMinutes} minutes`,
-          input: 'number',
-          min: 1,
-          max: 1440,
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            const n = Number(value)
-            if (!Number.isInteger(n) || n < 1 || n > 1440)
-              return 'Enter a number of minutes from 1 to 1440'
-            set({ unloadTimeoutMinutes: n })
-            return undefined
-          }
-        },
+          disabled: off,
+          options: ladder.map((minutes) => ({
+            value: String(minutes),
+            label: sleepTimeoutLabel(minutes)
+          })),
+          onChange: (v) => set({ unloadTimeoutMinutes: Number(v) })
+        })
+      ]
+    },
+    {
+      id: 'never-sleep',
+      heading: 'Never put these sites to sleep',
+      description:
+        'Pages on these sites stay awake in the background – a chat, a player, a document you come back to.',
+      rows: sites.map((domain) =>
+        item(
+          `never-sleep:${domain}`,
+          domain,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `never-sleep:${domain}:remove`,
+              label: 'Remove',
+              description: 'Pages on the site go to sleep like any other.',
+              onPress: () =>
+                set({
+                  unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain)
+                })
+            }
+          ],
+          { keywords, disabled: off }
+        )
+      ),
+      // The list's own empty state (§9.17): one plain row where its sites would be, so the Add
+      // action below is a group of its own, as the spell-check languages' is.
+      empty: 'No sites yet'
+    },
+    {
+      id: 'never-sleep-add',
+      heading: null,
+      rows: [
         {
-          kind: 'field',
-          id: 'unload-excluded',
-          label: 'Never unload these domains',
-          value: s.unloadExcludedDomains.join(', '),
-          display: s.unloadExcludedDomains.length ? s.unloadExcludedDomains.join(', ') : 'None',
-          input: 'text',
-          placeholder: 'mail.google.com, notion.so',
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            set({
-              unloadExcludedDomains: value
-                .split(',')
-                .map((d) => d.trim().toLowerCase())
-                .filter(Boolean)
-            })
-            return undefined
+          kind: 'action',
+          id: 'never-sleep-add',
+          label: 'Add a site',
+          keywords,
+          disabled: off,
+          form: {
+            title: 'Never put this site to sleep',
+            render: (close) => (
+              <UrlForm
+                id="never-sleep-site"
+                label="Site"
+                placeholder="mail.example.com"
+                action="Add"
+                onSubmit={addSite}
+                close={close}
+              />
+            )
           }
         }
       ]
     }
-  )
-  return groups
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -1797,8 +1892,157 @@ function languagesSection({ state }: SectionContext): RowGroup[] {
           }
         }
       ]
+    },
+    ...spellcheckGroups(state)
+  ]
+}
+
+/** What a language's dictionary is doing, as its row's description; nothing while it is ready. */
+function dictionaryDetail(status: SpellcheckDictionaryStatus): string | undefined {
+  if (status === 'downloading') return 'Downloading dictionary…'
+  if (status === 'failed') return 'Dictionary download failed'
+  return undefined
+}
+
+/**
+ * Settings › Languages › Spell check on a phone, the desktop pane's `SpellcheckGroups` row for
+ * row (CT-07, CT-19). Android's WebView has no spellchecker of the browser's own – the system
+ * spell checker service chosen next to the keyboards checks its text fields – so on that host
+ * the group states the limit and leads to the keyboard settings (`spellcheck.openKeyboardSettings`).
+ * A host with a checker of its own gets the switch, the languages checked in as item rows – the
+ * dictionary's state as the description, Remove inside – and an Add sheet of the host's other
+ * dictionaries up to Chrome's five; with the switch off the list is the dependent group at .4
+ * (§10.4). A host whose checker follows the OS's languages shows where they are chosen instead.
+ * The custom dictionary stays on the desktop pane: no phone host checks spelling itself.
+ */
+function spellcheckGroups(state: UIState): RowGroup[] {
+  const status = state.spellcheck
+  const settings = state.settings.spellcheck
+  const keywords = ['spelling', 'spell check', 'dictionary', 'misspelt', 'autocorrect']
+  if (!status.available) {
+    return [
+      {
+        id: 'spellcheck',
+        heading: 'Spell check',
+        description:
+          'Text fields are checked by the spell checker of the keyboard in use. Its languages, and whether it marks or corrects words as you type, are chosen with the keyboard in the system settings.',
+        rows: [
+          {
+            kind: 'action',
+            id: 'spellcheck-keyboard',
+            label: 'Keyboard settings',
+            description: 'Open the system’s keyboard and spell checker settings.',
+            keywords,
+            leaves: 'external',
+            onPress: () => run('spellcheck.openKeyboardSettings', undefined)
+          }
+        ]
+      }
+    ]
+  }
+  const checked = status.languages.filter((l) => l.enabled)
+  const remaining = status.languages.filter((l) => !l.enabled)
+  const off = !settings.enabled
+  const groups: RowGroup[] = [
+    {
+      id: 'spellcheck',
+      heading: 'Spell check',
+      description:
+        'Misspelt words in text fields are underlined as you type; their menu offers corrections and Add to Dictionary.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'spellcheck-enabled',
+          label: 'Check the spelling of text fields',
+          keywords,
+          checked: settings.enabled,
+          onChange: (enabled) => run('spellcheck.setEnabled', { enabled })
+        }
+      ]
     }
   ]
+  if (status.systemLanguages) {
+    groups.push({
+      id: 'spellcheck-languages',
+      heading: 'Languages',
+      rows: [
+        {
+          kind: 'info',
+          id: 'spellcheck-system-languages',
+          label: 'Languages follow the system',
+          description:
+            'The system’s spell checker checks in the languages chosen for it in the system settings; a text field’s menu switches between them.',
+          keywords
+        }
+      ]
+    })
+    return groups
+  }
+  groups.push({
+    id: 'spellcheck-languages',
+    heading: 'Languages',
+    description: `Text fields are checked in up to ${SPELLCHECK_LANGUAGES_MAX} languages at a time. A dictionary is downloaded the first time a language is checked in and kept on this device.`,
+    rows: checked.map((language) =>
+      item(
+        `spellcheck-language:${language.code}`,
+        language.name,
+        dictionaryDetail(language.status),
+        [
+          {
+            kind: 'action',
+            id: `spellcheck-language:${language.code}:remove`,
+            label: 'Remove',
+            description: 'Text fields are no longer checked in this language.',
+            onPress: () => run('spellcheck.setLanguage', { code: language.code, on: false })
+          }
+        ],
+        { keywords: [language.code, ...keywords], disabled: off }
+      )
+    ),
+    empty: 'No languages yet'
+  })
+  if (checked.length >= SPELLCHECK_LANGUAGES_MAX) {
+    groups.push({
+      id: 'spellcheck-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'info',
+          id: 'spellcheck-limit',
+          label: `Up to ${SPELLCHECK_LANGUAGES_MAX} languages can be checked at a time`,
+          description: 'Remove one to add another.',
+          disabled: off
+        }
+      ]
+    })
+  } else if (remaining.length > 0) {
+    const options = remaining.map((l) => ({ value: l.code, label: l.name }))
+    groups.push({
+      id: 'spellcheck-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'spellcheck-add',
+          label: 'Add a language',
+          keywords,
+          disabled: off,
+          form: {
+            title: 'Add a language to check in',
+            render: (close) => (
+              <PickList
+                label="Add a language to check in"
+                options={options}
+                onPick={(code) => run('spellcheck.setLanguage', { code, on: true })}
+                close={close}
+              />
+            )
+          }
+        }
+      ]
+    })
+  }
+  return groups
 }
 
 // ---------------------------------------------------------------------------

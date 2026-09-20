@@ -11,6 +11,7 @@ import type {
   UIState
 } from '@shared/types'
 import type { Browser } from '@core/browser'
+import { READER_URL_PREFIX, type RawArticle } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
@@ -30,6 +31,7 @@ import {
   browserStore,
   closeMenu,
   closeOverlay,
+  closeReaderPreferences,
   closeTabsMenu,
   closeUrlbar,
   dismissBanner,
@@ -38,6 +40,7 @@ import {
   forgetToast,
   openExtensionsSheet,
   openOverlay,
+  openReaderPreferences,
   openTabsMenu,
   openUrlbar,
   openZoom,
@@ -182,6 +185,7 @@ function apply(browser: Browser, spec: string): void {
     closeTabsMenu()
     closeUrlbar()
     dismissOverview()
+    closeReaderPreferences({ keepFocus: true })
     uiStore.set({
       findOpen: false,
       findTabId: null,
@@ -397,6 +401,24 @@ async function leavePdf(): Promise<void> {
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
+/** The article `reader=` shows: a few paragraphs, a heading and a quote, enough to fill a phone. */
+const PREVIEW_ARTICLE: RawArticle = {
+  title: 'Why coffee tastes different at altitude',
+  byline: 'Ada Marlowe',
+  siteName: 'The Roastery Journal',
+  excerpt: 'Pressure, water and a slow boil: what changes in a cup a mile up.',
+  lang: 'en',
+  dir: 'ltr',
+  content: [
+    '<p>Water boils cooler the higher you climb: at a mile up it gives out near 95 °C, and a brew that leans on a rolling boil never quite gets there. The grounds sit in water a few degrees short of what the recipe assumed, and the cup comes out thinner, brighter, a little sour at the edges.</p>',
+    '<p>Roasters who work at altitude learn to lean the other way. A finer grind gives the water more surface to pull from; a longer steep makes up for the cooler pour. Neither is a fix so much as a trade – more body, but more of the bitter compounds that a hotter, shorter brew would have left behind.</p>',
+    '<h2>The pressure in the pot</h2>',
+    '<p>Espresso complicates the story. A machine holds its water at nine bars whatever the air outside is doing, so the extraction itself changes little. What changes is everything around it: the beans lose moisture faster in thin, dry air, and a bag opened on Monday tastes of Thursday by Wednesday.</p>',
+    '<blockquote><p>“We do not roast for the bean. We roast for the room it will be drunk in.”</p></blockquote>',
+    '<p>The oldest advice still holds. Taste as you go, and let the cup, not the recipe, have the last word.</p>'
+  ].join('\n')
+}
+
 const PREVIEW_GROUP_NAME = 'Research'
 /** Pages for the members a `group=<n>` state has to make when the space has too few tabs. */
 const PREVIEW_GROUP_PAGES = [
@@ -661,6 +683,34 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'pdf' && tab) {
     seed()
     reachPdf(tab, target, () => done(spec))
+  } else if (target.kind === 'reader' && tab && state) {
+    // Reader View is a web page's: a Settings tab left active by a previous state is not the one
+    // to read, so a site's tab in the space is made active first. The stand-in host cannot run
+    // Readability inside a site's frame: the article is handed to the reader the way the page
+    // script's result is, and the tab goes to zen://reader.
+    const isWeb = (t: Tab): boolean => /^https?:/.test(t.url)
+    const web = isWeb(tab)
+      ? tab
+      : (Object.values(state.tabs).find((t) => t.spaceId === tab.spaceId && isWeb(t)) ?? tab)
+    const activated = web.id === tab.id ? Promise.resolve() : cmd('tab.activate', { tabId: web.id })
+    void activated
+      .catch(() => undefined)
+      .then(() => {
+        browser.reader.open(web.id, PREVIEW_ARTICLE)
+        untilState(
+          (s) => Boolean(activeTab(s)?.url.startsWith(READER_URL_PREFIX)),
+          () => {
+            if (!target.preferences) {
+              afterFrames(2, finish)
+              return
+            }
+            // The page's document mounts and paints before the sheet takes its picture.
+            window.setTimeout(() => {
+              void openReaderPreferences(web.id).then(() => afterFrames(2, finish))
+            }, STEP_SETTLE_MS)
+          }
+        )
+      })
   } else if (target.kind === 'find' && tab) {
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.
