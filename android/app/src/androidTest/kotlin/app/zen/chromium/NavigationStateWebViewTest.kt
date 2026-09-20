@@ -29,10 +29,11 @@ import java.util.concurrent.TimeUnit
  * WebView (`restoreState`), which then has the same three entries with the same current one; the
  * same with an internal page (`loadDataWithBaseURL`, a `data:` item shown as `zen://…`) on top,
  * matched to the snapshot's entries off the lists alone and back as one document, its document
- * inside the state. And the refusals: a bundle that is not a WebView's (another host's, a
- * hand-made one) unmarshals but `restoreState` returns null for it; bytes that are not a bundle
- * at all never reach the WebView; a private tab's view has no state to give. The pages come from
- * `shouldInterceptRequest`, so nothing depends on the network. Runs on a device in the
+ * inside the state. And the refusals: a bundle that is not shaped like a WebView's state
+ * (another host's, a hand-made one, one naming Parcelables) never reaches the WebView; one
+ * shaped like a state but not holding one is refused by `restoreState`; bytes that are not a
+ * bundle at all never become one; a private tab's view has no state to give. The pages come
+ * from `shouldInterceptRequest`, so nothing depends on the network. Runs on a device in the
  * emulator workflow (`android-nav-snapshot-demo.yml` lists it in `DEMO_CLASS` ahead of
  * `NavSnapshotDemo`, in the same instrumentation run), so a failure here fails the recording.
  */
@@ -150,21 +151,43 @@ class NavigationStateWebViewTest {
         assertEquals(0, onMain { fresh.copyBackForwardList().currentIndex })
     }
 
+    /**
+     * A bundle that is ours by encoding (marshalled, behind the prefix) but not a WebView's
+     * state: one that is not shaped like one (two keys; one key of another kind; a Parcelable
+     * named in it; nothing in it) is refused by shape and never reaches the WebView; one shaped
+     * like a state but not holding one is the WebView's to refuse, and it does, leaving the
+     * list empty. What `saveState` writes has the shape.
+     */
     @Test
-    fun aForeignBundleIsRefusedByTheWebView() {
-        // Ours by shape (a marshalled bundle behind the prefix), but not a WebView's state.
-        val foreign = Bundle().apply {
+    fun aForeignBundleIsRefusedBeforeTheWebViewOrByIt() {
+        val twoKeys = Bundle().apply {
             putString("hello", "world")
             putInt("count", 3)
         }
-        val text = NavigationState.encodeHostState(NavigationState.marshall(foreign))
-        assertNotNull(text)
-        val bundle = NavigationState.bundleOf(NavigationState.decodeHostState(text)!!)
-        assertNotNull("it unmarshals: the refusal is the WebView's", bundle)
+        val aString = Bundle().apply { putString("state", "not bytes") }
+        val aParcelable = Bundle().apply { putBundle("state", Bundle().apply { putInt("inner", 1) }) }
+        for ((name, foreign) in listOf("two keys" to twoKeys, "a string" to aString, "a Parcelable" to aParcelable, "nothing" to Bundle())) {
+            assertFalse("$name is not a WebView state's shape", NavigationState.isWebViewState(foreign))
+            val text = NavigationState.encodeHostState(NavigationState.marshall(foreign))
+            assertNotNull(text)
+            assertNull("$name: refused before the WebView", NavigationState.bundleOf(NavigationState.decodeHostState(text)!!))
+        }
+
+        // The shape without the substance: one key, bytes that are no pickle of the WebView's.
+        val shaped = Bundle().apply { putByteArray("WEBVIEW_CHROMIUM_STATE", ByteArray(48) { (it * 13).toByte() }) }
+        assertTrue(NavigationState.isWebViewState(shaped))
+        val bundle = NavigationState.bundleOf(NavigationState.marshall(shaped))
+        assertNotNull("it has the shape: the refusal is the WebView's", bundle)
         val fresh = webView()
         val restored = onMain { fresh.restoreState(bundle!!) }
-        assertNull("restoreState returns null for a bundle that is not its own", restored)
+        assertNull("restoreState returns null for bytes that are not its own", restored)
         assertEquals(0, onMain { fresh.copyBackForwardList().size })
+
+        // And the real thing has the shape.
+        val source = webView()
+        load(source) { it.loadUrl(PAGES[0]) }
+        val saved = Bundle().also { b -> onMain { source.saveState(b) } }
+        assertTrue("saveState's bundle: one key, a byte array", NavigationState.isWebViewState(saved))
     }
 
     @Test

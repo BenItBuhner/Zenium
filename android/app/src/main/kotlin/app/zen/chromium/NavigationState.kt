@@ -18,9 +18,11 @@ import java.util.Base64
  *
  * `hostState` is `WebView.saveState`'s bundle marshalled with a `Parcel` and base64-encoded
  * behind [HOST_STATE_PREFIX]. It is written only by the host that reads it: a string without
- * the prefix (desktop's, a synced one, garbage) is never unmarshalled; one over [HOST_STATE_MAX]
- * is never sent (the core keeps the same bound, and a restore without it has the core load the
- * current entry); a private tab's is never produced. Nothing of its content is logged.
+ * the prefix (desktop's, a synced one, garbage) is never unmarshalled; a bundle that reads but
+ * is not shaped like a WebView's state never reaches `restoreState` ([isWebViewState]); one over
+ * [HOST_STATE_MAX] is never sent (the core keeps the same bound, and a restore without it has
+ * the core load the current entry); a private tab's is never produced. Nothing of its content
+ * is logged.
  *
  * The internal pages (`zen://…`, rendered by `loadDataWithBaseURL`) sit in the WebView's list
  * as `data:` URLs carrying their whole HTML; the snapshot's entries name them by the URL the
@@ -148,10 +150,11 @@ object NavigationState {
     }
 
     /**
-     * A bundle out of [marshall]'s bytes, or null when they do not read as one. The bytes came
-     * from the profile, so nothing about them is trusted: a length field that asks for more
-     * than there is fails inside the platform's reader, and that failure – whatever it is –
-     * only means there is no bundle.
+     * A WebView's state bundle out of [marshall]'s bytes, or null when they do not read as one.
+     * The bytes came from the profile, so nothing about them is trusted: a length field that
+     * asks for more than there is fails inside the platform's reader, and that failure –
+     * whatever it is – only means there is no bundle; a bundle that reads but is not shaped
+     * like a WebView's state ([isWebViewState]) is refused here, before the WebView sees it.
      */
     @Suppress("TooGenericExceptionCaught")
     fun bundleOf(bytes: ByteArray): Bundle? {
@@ -162,14 +165,29 @@ object NavigationState {
             parcel.setDataPosition(0)
             val bundle = parcel.readBundle(Bundle::class.java.classLoader) ?: return null
             // A bundle unparcels its map on first use: here, where a bad value is caught, rather
-            // than inside the WebView; one with nothing in it is no state either.
-            if (bundle.isEmpty) null else bundle
+            // than inside the WebView.
+            if (isWebViewState(bundle)) return bundle
+            Log.i(TAG, "hostState is not a WebView's state: ${bundle.size()} keys")
+            null
         } catch (e: Throwable) {
             Log.i(TAG, "hostState does not unmarshall: ${e.javaClass.simpleName}")
             null
         } finally {
             parcel.recycle()
         }
+    }
+
+    /**
+     * Whether `bundle` is shaped like what `saveState` writes: one key, its value a byte array
+     * (the WebView's opaque pickle; the key is the WebView's own). Anything else – nothing in it,
+     * more keys, a value of another kind, a Parcelable named in it – is not a state to hand to
+     * `restoreState`, whatever the WebView would make of it.
+     */
+    @Suppress("DEPRECATION")
+    fun isWebViewState(bundle: Bundle): Boolean {
+        if (bundle.size() != 1) return false
+        val key = bundle.keySet().firstOrNull() ?: return false
+        return bundle.get(key) is ByteArray
     }
 
     // --- restore and traversal ------------------------------------------------------------------
