@@ -271,6 +271,27 @@ export const DEFAULT_CONTAINER_ID = 'default'
 /** Pseudo container backing private windows: an in-memory session that is wiped when the last private window closes. */
 export const PRIVATE_CONTAINER_ID = 'private'
 
+/**
+ * Private browsing's device-local choices (`BrowserState.privateDevice`, the shape of
+ * `newTabDevice`: persisted with the profile, never synced). One so far: the phone host's
+ * "Lock private tabs when you leave Zenium" (INC-05 / SET-17), Chrome's "Lock Incognito tabs
+ * when you leave Chrome", which is per device there too – it names this device's screen lock.
+ */
+export interface PrivateDeviceState {
+  /** Private tabs are covered when the app returns from the background, until the device's screen lock is passed. */
+  lockOnLeave: boolean
+}
+
+export function emptyPrivateDevice(): PrivateDeviceState {
+  return { lockOnLeave: false }
+}
+
+/** `raw` as a `PrivateDeviceState`: whatever it lacks or misspells falls back to the defaults. */
+export function sanitizePrivateDevice(raw: unknown): PrivateDeviceState {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return { lockOnLeave: source.lockOnLeave === true }
+}
+
 // ---------------------------------------------------------------------------
 // Windows (Zen's window sync)
 // ---------------------------------------------------------------------------
@@ -2836,6 +2857,12 @@ export interface UIState {
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
   newTabHiddenHosts: string[]
   /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
+   * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
+   * memory (`lib/privateLock.ts`); the core only keeps the switch.
+   */
+  privateLockOnLeave: boolean
+  /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
    * picker for one (the phone's page reads the file itself and stores it through `set`).
    */
@@ -3188,6 +3215,12 @@ export interface Commands {
   'tab.newPrivate': { args: { url?: string }; result: string | null }
   /** Close every private tab (and so end the private session). */
   'tab.closePrivate': { args: void; result: void }
+  /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium (INC-05 / SET-17):
+   * this device's choice (`UIState.privateLockOnLeave`, `BrowserState.privateDevice`). The lock
+   * itself is the phone host's, in memory.
+   */
+  'private.setLockOnLeave': { args: { enabled: boolean }; result: void }
   'tab.closeOthers': { args: { tabId: string }; result: void }
   'tab.closeBelow': { args: { tabId: string }; result: void }
   'tab.closeAbove': { args: { tabId: string }; result: void }
