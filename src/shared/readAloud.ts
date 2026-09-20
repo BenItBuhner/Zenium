@@ -9,12 +9,7 @@
 export type ReadAloudSource = 'page' | 'reader' | 'selection'
 
 export type ReadAloudBlockKind =
-  | 'heading'
-  | 'paragraph'
-  | 'list-item'
-  | 'quote'
-  | 'caption'
-  | 'other'
+  'heading' | 'paragraph' | 'list-item' | 'quote' | 'caption' | 'other'
 
 /** One block of the text: a paragraph, a heading, a list item; `lang` when it differs from the document's. */
 export interface ReadAloudBlock {
@@ -142,10 +137,7 @@ export function sanitizeReadAloudSettings(raw: unknown): ReadAloudSettings {
 
 /** Where `readAloud.start` begins: the top, the selection, the reader article, or one sentence. */
 export type ReadAloudStartFrom =
-  | 'top'
-  | 'selection'
-  | 'reader'
-  | { blockId: string; sentenceIndex: number }
+  'top' | 'selection' | 'reader' | { blockId: string; sentenceIndex: number }
 
 /** What the `readAloud.voices` query answers: the list and the per-language default from it. */
 export interface ReadAloudVoicesResult {
@@ -743,7 +735,9 @@ export function decodeHtmlEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (whole, body: string) => {
     if (body[0] === '#') {
       const code =
-        body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
+        body[1] === 'x' || body[1] === 'X'
+          ? parseInt(body.slice(2), 16)
+          : parseInt(body.slice(1), 10)
       if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole
       try {
         return String.fromCodePoint(code)
@@ -860,9 +854,15 @@ export function blocksFromHtml(html: string, docLang: string): ReadAloudBlock[] 
       if (collector.currentTag === 'p') collector.close()
     }
     if (tag === 'li' && collector.currentTag === 'li') collector.close()
-    if ((tag === 'dt' || tag === 'dd') && (collector.currentTag === 'dt' || collector.currentTag === 'dd'))
+    if (
+      (tag === 'dt' || tag === 'dd') &&
+      (collector.currentTag === 'dt' || collector.currentTag === 'dd')
+    )
       collector.close()
-    if ((tag === 'td' || tag === 'th') && (collector.currentTag === 'td' || collector.currentTag === 'th'))
+    if (
+      (tag === 'td' || tag === 'th') &&
+      (collector.currentTag === 'td' || collector.currentTag === 'th')
+    )
       collector.close()
     if (tag === 'tr' && collector.currentTag !== 'tr') {
       if (collector.currentTag === 'td' || collector.currentTag === 'th') collector.close()
@@ -938,13 +938,17 @@ export interface ReadAloudExtraction {
   blocks: ReadAloudExtractedBlock[]
 }
 
-/** Browser → page: extract the text to read. `keep` names the elements Readability kept (paths), when the core ran it. */
+/**
+ * Browser → page: extract the text to read. `keep` carries the texts of the blocks Readability
+ * kept (the article's main content) when the page is readerable and the core ran it; the page
+ * script keeps the blocks of its own walk whose text matches, so the highlight has their nodes.
+ */
 export interface ReadAloudExtractRequest {
   type: 'readAloud'
   action: 'extract'
   requestId: string
   from: 'top' | 'selection'
-  keep?: number[][] | null
+  keep?: string[] | null
 }
 
 /**
@@ -994,7 +998,11 @@ export function readAloudExtractionOf(raw: unknown): ReadAloudExtraction | null 
       id: b.id,
       kind,
       text: b.text,
-      at: { path: at.path.slice(0, 64), run: Math.max(0, Math.floor(at.run)), offset: Math.max(0, Math.floor(at.offset)) }
+      at: {
+        path: at.path.slice(0, 64),
+        run: Math.max(0, Math.floor(at.run)),
+        offset: Math.max(0, Math.floor(at.offset))
+      }
     }
     const lang = normalizeLanguageTag(b.lang)
     if (lang) block.lang = lang

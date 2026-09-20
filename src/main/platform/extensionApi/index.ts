@@ -100,7 +100,7 @@ import { SystemStorageApi } from './systemStorage'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
-import { electronSpeechEngine } from './ttsBridge'
+import { sharedSpeechEngine } from './ttsBridge'
 import { UserScriptsApi } from './userScripts'
 import {
   ApiError,
@@ -303,7 +303,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
-    this.tts = new TtsApi(this, electronSpeechEngine())
+    this.tts = new TtsApi(this, sharedSpeechEngine())
     this.userScripts = new UserScriptsApi(this, this.webNavigation)
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },

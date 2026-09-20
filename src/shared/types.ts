@@ -27,6 +27,13 @@ import type { QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction, MediaSessionSourceKind } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
+import type {
+  ReadAloudHighlightMode,
+  ReadAloudSettings,
+  ReadAloudStartFrom,
+  ReadAloudState,
+  ReadAloudVoicesResult
+} from './readAloud'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFileInfo } from './share'
@@ -210,6 +217,12 @@ export interface HostCapabilities {
    * have no share target of the OS's own. Hosts with `share` use the system sheet instead.
    */
   shareSheet: boolean
+  /**
+   * The host has a speech engine (`Platform.speech`): pages and reader articles can be read
+   * aloud sentence by sentence (`readAloud.*`, `shared/readAloud.ts`). Off, the UIs hide their
+   * Listen / Read aloud entry points.
+   */
+  readAloud: boolean
 }
 
 export interface Rect {
@@ -1944,6 +1957,11 @@ export interface Settings {
   spellcheck: SpellcheckSettings
   /** Reader View's text size, font, colour theme and column width (`zen://reader`). */
   reader: ReaderPreferences
+  /**
+   * Read aloud: the speed, the voice per language and the highlight mode (`shared/readAloud.ts`).
+   * Absent in profiles from before it existed (`sanitizeReadAloudSettings` fills the defaults).
+   */
+  readAloud: ReadAloudSettings
 }
 
 // ---------------------------------------------------------------------------
@@ -2788,6 +2806,11 @@ export interface UIState {
   pageEnvironment: PageEnvironment
   /** Spell check on this host: its dictionaries and their state, or the Android limit. */
   spellcheck: SpellcheckStatus
+  /**
+   * Read aloud's one session (Chrome reads one page at a time): its tab, status, sentence and
+   * word, speed and voice (`shared/readAloud.ts`); null without a session.
+   */
+  readAloud: ReadAloudState | null
 }
 
 export interface FindResult {
@@ -3720,6 +3743,31 @@ export interface Commands {
   'boost.startZap': { args: { tabId: string }; result: void }
   'boost.stopZap': { args: { tabId: string }; result: void }
 
+  /**
+   * Read aloud (CT-12 / CT-13, `shared/readAloud.ts`): start reading a tab's page from the top,
+   * the selection, the reader article or one sentence – a start on another tab ends the first
+   * session (one session). The playback state is `UIState.readAloud`.
+   */
+  'readAloud.start': { args: { tabId: string; from?: ReadAloudStartFrom }; result: void }
+  /** Pause a playing session, resume a paused one, restart an ended one. */
+  'readAloud.toggle': { args: void; result: void }
+  'readAloud.pause': { args: void; result: void }
+  'readAloud.resume': { args: void; result: void }
+  /** End the session: speech stops, the highlight clears, the OS controls let go. */
+  'readAloud.stop': { args: void; result: void }
+  'readAloud.next': { args: void; result: void }
+  'readAloud.previous': { args: void; result: void }
+  'readAloud.seek': { args: { sentenceIndex: number }; result: void }
+  /** The speed (0.5–4, `READ_ALOUD_RATES`); saved, applied from the next sentence. */
+  'readAloud.setRate': { args: { rate: number }; result: void }
+  /**
+   * The voice for the session's language (`voiceByLanguage[lang]`); saved, applied from the next
+   * sentence. `lang` names the language without a session (a Settings picker).
+   */
+  'readAloud.setVoice': { args: { voiceId: string; lang?: string }; result: void }
+  'readAloud.setHighlight': { args: { mode: ReadAloudHighlightMode }; result: void }
+  /** The host's voices and the per-language default among them (the pickers). */
+  'readAloud.voices': { args: void; result: ReadAloudVoicesResult }
   'reader.toggle': { args: { tabId: string }; result: void }
   /** Change Reader View's text preferences; every open reader page follows at once. */
   'reader.setPreferences': { args: Partial<ReaderPreferences>; result: void }

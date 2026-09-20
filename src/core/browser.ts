@@ -66,6 +66,7 @@ import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
 import { MediaSessionService } from './mediaSession'
+import { ReadAloudService } from './readAloud'
 import { WebNotificationService } from './webNotifications'
 import { ScreenCaptureService } from './screenCapture'
 import { ShareService } from './share'
@@ -267,6 +268,8 @@ export class Browser {
   readonly webApps: WebAppService
   /** The pages' media as the OS controls and the in-app player see it (the Media Session). */
   readonly mediaSession: MediaSessionService
+  /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
+  readonly readAloud: ReadAloudService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
   /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
@@ -389,6 +392,7 @@ export class Browser {
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
+    this.readAloud = new ReadAloudService(this)
     this.webNotifications = new WebNotificationService(this)
     this.searchEngines = new SearchEngineService(this)
     this.screenCapture = new ScreenCaptureService(this)
@@ -422,7 +426,8 @@ export class Browser {
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
       translate: this.translate.uiState(),
-      spellcheck: this.spellcheck.uiState()
+      spellcheck: this.spellcheck.uiState(),
+      readAloud: this.readAloud.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -1057,6 +1062,7 @@ export class Browser {
   onPageReady(tabId: string): void {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
+    this.readAloud.onPageReady(tabId)
     this.translate.onPageReady(tabId)
     this.autofill.onPageReady(tabId)
   }
@@ -1072,6 +1078,7 @@ export class Browser {
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)
     this.geolocation.onNavigated(tabId, inPage)
+    this.readAloud.onNavigated(tabId, inPage)
     if (!inPage) {
       this.screenCapture.cancelForTab(tabId)
       this.shares.cancelForTab(tabId)
@@ -2105,6 +2112,10 @@ export class Browser {
       this.geolocation.handleMessage(tabId, message.geolocation)
       return
     }
+    if (message.type === 'readAloud') {
+      this.readAloud.handleMessage(tabId, message.readAloud)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2753,6 +2764,19 @@ export class Browser {
       'reader.toggle': ({ tabId }, win) => this.reader.toggle(tabId, win),
       'reader.setPreferences': (patch) => this.reader.setPreferences(patch),
 
+      'readAloud.start': ({ tabId, from }) => this.readAloud.start({ tabId, from }),
+      'readAloud.toggle': () => this.readAloud.toggle(),
+      'readAloud.pause': () => this.readAloud.pause(),
+      'readAloud.resume': () => this.readAloud.resume(),
+      'readAloud.stop': () => this.readAloud.stop(),
+      'readAloud.next': () => this.readAloud.next(),
+      'readAloud.previous': () => this.readAloud.previous(),
+      'readAloud.seek': ({ sentenceIndex }) => this.readAloud.seek({ sentenceIndex }),
+      'readAloud.setRate': ({ rate }) => this.readAloud.setRate({ rate }),
+      'readAloud.setVoice': ({ voiceId, lang }) => this.readAloud.setVoice({ voiceId, lang }),
+      'readAloud.setHighlight': ({ mode }) => this.readAloud.setHighlight({ mode }),
+      'readAloud.voices': () => this.readAloud.voicesResult(),
+
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
         if (!id || !state.model.folders[id]) {
@@ -2964,7 +2988,8 @@ export class Browser {
       privacy: JSON.stringify(s.privacy),
       autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
       spellcheck: JSON.stringify(s.spellcheck),
-      reader: JSON.stringify(s.reader)
+      reader: JSON.stringify(s.reader),
+      readAloud: JSON.stringify(s.readAloud)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -3091,6 +3116,7 @@ export class Browser {
       this.autofill.onSettingsChanged()
     if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
     if (before.reader !== JSON.stringify(s.reader)) this.reader.onPreferencesChanged()
+    if (before.readAloud !== JSON.stringify(s.readAloud)) this.readAloud.onSettingsChanged()
     this.state.commit()
   }
 
