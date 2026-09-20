@@ -8,6 +8,7 @@ import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
 import { QrScanLayer } from './components/qr/QrScanSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
+import { ExtensionsSheetLayer } from './components/phone/ExtensionsSheet'
 import { GroupEditorLayer } from './components/sidebar/GroupEditorBubble'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
 import { TabSearchLayer } from './components/tabsearch/TabSearchPopover'
@@ -31,6 +32,7 @@ export function Root(): JSX.Element {
       <TabSearchLayer />
       <GroupEditorLayer />
       <BarEditorLayer />
+      <ExtensionsSheetLayer />
       <DownloadBubbleLayer />
       <MenuLayer />
       <ExternalProtocolLayer />

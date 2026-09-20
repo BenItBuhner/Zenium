@@ -949,6 +949,37 @@
   [data-form-factor='phone'] .zen-ext-dialog-body {
     overflow: visible;
   }
+
+  /*
+   * The phone's Extensions sheet (`components/phone/ExtensionsSheet.tsx`, the app menu's row):
+   * the rows are the phone list's (`PhoneListRow`, phonePanels.css) with the badge trailing.
+   * The badge is the §9.19 pill at the badge's own geometry – 20 tall, 13/600, padding 0 8,
+   * tabular – in the extension's colours when it set them (inline), else the sheet's accent with
+   * its ink (a page surface, §9.29), as the toolbar badge takes the toolbar's. It sits in the
+   * row's trailing slot, which reaches (button − glyph) / 2 into the gutter for a 44 icon button;
+   * the badge is no button, so it gives that back and lands at the 16 the leading glyph keeps.
+   */
+  .zen-ext-phone-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    height: 20px;
+    min-width: 20px;
+    padding: 0 8px;
+    margin-right: calc((var(--v2-icon-button) - var(--v2-icon)) / 2);
+    border-radius: 9999px;
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The hold's menu sheet: Remove from Zenium in the danger ink, as a menu's destructive item. */
+  .zen-ext-action-menu .zen-sheet-item[data-danger] {
+    color: var(--v2-danger);
+  }
 }
 
 @keyframes zen-v2-fade {
