@@ -343,23 +343,20 @@ describe('render options', () => {
 })
 
 describe('job options', () => {
-  const page = { title: 'Invoice', url: 'https://shop.test/invoice/7' }
-
   it('is null for Save as PDF and for a selection with no pages', () => {
-    expect(printJobOptions(settings(), 3, page)).toBeNull()
+    expect(printJobOptions(settings(), 3)).toBeNull()
     expect(
       printJobOptions(
         settings({
           destination: { kind: 'printer', name: 'Office_HP' },
           pages: { mode: 'custom', custom: '9' }
         }),
-        3,
-        page
+        3
       )
     ).toBeNull()
   })
 
-  it('addresses the printer silently with every option in its own unit', () => {
+  it('leaves the printer its own business only: the layout is in the PDF the job carries', () => {
     const o = printJobOptions(
       settings({
         destination: { kind: 'printer', name: 'Office_HP' },
@@ -376,46 +373,32 @@ describe('job options', () => {
         headerFooter: true,
         background: true
       }),
-      5,
-      page
+      5
     )
     expect(o).toEqual({
-      silent: true,
       deviceName: 'Office_HP',
-      printBackground: true,
-      color: false,
-      landscape: true,
-      scaleFactor: 80,
       copies: 3,
       collate: false,
       duplexMode: 'shortEdge',
-      pageSize: { width: 210000, height: 297000 },
-      margins: { marginType: 'custom', top: 48, right: 96, bottom: 24, left: 0 },
-      pageRanges: [
-        { from: 0, to: 1 },
-        { from: 3, to: 3 }
-      ],
-      header: 'Invoice',
-      footer: 'https://shop.test/invoice/7'
+      color: false,
+      landscape: true,
+      pageSize: { width: 210000, height: 297000 }
     })
   })
 
-  it('maps the margin modes, one-sided jobs, and headers off', () => {
-    const base = settings({
-      destination: { kind: 'printer', name: 'Office_HP' },
-      headerFooter: false
-    })
-    const o = printJobOptions(base, 2, page)
-    expect(o?.margins).toEqual({ marginType: 'default' })
+  it('prints one-sided when two-sided is off, whatever edge is remembered', () => {
+    const o = printJobOptions(
+      settings({
+        destination: { kind: 'printer', name: 'Office_HP' },
+        twoSided: false,
+        duplexEdge: 'shortEdge'
+      }),
+      2
+    )
     expect(o?.duplexMode).toBe('simplex')
-    expect(o?.pageRanges).toEqual([])
-    expect(o && 'header' in o).toBe(false)
-    expect(
-      printJobOptions({ ...base, margins: { ...base.margins, mode: 'none' } }, 2, page)?.margins
-    ).toEqual({ marginType: 'none' })
-    expect(
-      printJobOptions({ ...base, margins: { ...base.margins, mode: 'minimum' } }, 2, page)?.margins
-    ).toEqual({ marginType: 'printableArea' })
+    expect(o?.color).toBe(true)
+    expect(o?.landscape).toBe(false)
+    expect(o?.pageSize).toEqual({ width: 215900, height: 279400 })
   })
 })
 

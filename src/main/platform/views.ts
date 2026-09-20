@@ -41,7 +41,7 @@ import {
 } from '../../shared/pageDialogIpc'
 import type { FormsCommand } from '../../shared/forms'
 import { defer } from '../../core/platform'
-import type { PdfRenderOptions, PrintJobOptions } from '../../shared/print'
+import type { PdfRenderOptions } from '../../shared/print'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -813,29 +813,6 @@ export class ElectronTabView implements TabView {
       preferCSSPageSize: options.preferCSSPageSize
     })
     return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-  }
-
-  /**
-   * The job: `print` with `silent`, the printer's device name and the rest of the options as
-   * `printJobOptions` shaped them (microns, a percentage, 0-based ranges, pixel margins). The
-   * callback's failure reason becomes the rejection.
-   */
-  printWith(options: PrintJobOptions): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const { header, footer, ...rest } = options
-      this.wc.print(
-        {
-          ...rest,
-          margins: options.margins as Electron.Margins,
-          ...(header !== undefined ? { header } : {}),
-          ...(footer !== undefined ? { footer } : {})
-        },
-        (success, failureReason) => {
-          if (success) resolve()
-          else reject(new Error(failureReason || 'The print job failed'))
-        }
-      )
-    })
   }
 
   async savePage(suggestedName: string): Promise<string | null> {

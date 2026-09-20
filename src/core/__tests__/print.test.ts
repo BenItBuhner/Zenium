@@ -42,8 +42,8 @@ interface Fixture {
   sent: { name: string; payload: unknown }[]
   /** `printToPDF` calls, with the options given. */
   renders: PdfRenderOptions[]
-  /** `printWith` calls. */
-  jobs: PrintJobOptions[]
+  /** `PrintingHost.print` calls: the document handed over and the job. */
+  jobs: { document: Uint8Array; job: PrintJobOptions }[]
   /** Plain `print()` calls (the system dialog). */
   systemPrints: number
   saved: { bytes: Uint8Array; defaultName: string }[]
@@ -62,7 +62,7 @@ function fixture(
 ): Fixture {
   const sent: Fixture['sent'] = []
   const renders: PdfRenderOptions[] = []
-  const jobs: PrintJobOptions[] = []
+  const jobs: Fixture['jobs'] = []
   const saved: Fixture['saved'] = []
   const io = opts.io ?? memoryIo()
   const preview = opts.preview ?? true
@@ -76,6 +76,10 @@ function fixture(
   })
   const printing: PrintingHost = {
     printers: async () => opts.printers ?? [LASER],
+    print: async (document, job) => {
+      jobs.push({ document, job })
+      if (opts.printFails) throw new Error(opts.printFails)
+    },
     savePdf: async (bytes, { defaultName }) => {
       saved.push({ bytes, defaultName })
       return opts.savePath === undefined ? '/home/u/Downloads/out.pdf' : opts.savePath
@@ -131,10 +135,6 @@ function fixture(
           printToPDF: async (options: PdfRenderOptions) => {
             renders.push(options)
             return new Uint8Array([0x25, 0x50, 0x44, 0x46, renders.length])
-          },
-          printWith: async (options: PrintJobOptions) => {
-            jobs.push(options)
-            if (opts.printFails) throw new Error(opts.printFails)
           }
         })
       }
@@ -298,7 +298,7 @@ describe('rendering the preview', () => {
 })
 
 describe('printing', () => {
-  it('sends the job to the printer silently, with the settings mapped to print’s options', async () => {
+  it('renders the pages picked to a PDF and hands it to the printer with the printer’s options', async () => {
     const f = fixture()
     const tab = openSite(f, 'https://example.test/report')
     tab.title = 'Quarterly report'
@@ -308,6 +308,7 @@ describe('printing', () => {
       pages: { mode: 'custom', custom: '2-3' },
       copies: 2,
       color: 'bw',
+      layout: 'landscape',
       twoSided: true,
       duplexEdge: 'shortEdge',
       margins: { mode: 'minimum', custom: defaultPrintSettings().margins.custom }
@@ -318,20 +319,56 @@ describe('printing', () => {
       pageCount: 4
     })
     expect(result).toEqual({ ok: true, action: 'printed' })
+    // The layout is the render's: Chrome prints the preview's PDF, so the printer cannot lay the
+    // page out again (and Electron's silent print would drop the pages picked).
+    expect(f.renders).toHaveLength(1)
+    expect(f.renders[0]).toMatchObject({
+      landscape: true,
+      pageRanges: '2-3',
+      margins: { top: 0, right: 0, bottom: 0, left: 0 },
+      displayHeaderFooter: true
+    })
     expect(f.jobs).toHaveLength(1)
-    expect(f.jobs[0]).toMatchObject({
-      silent: true,
+    expect(f.jobs[0].document).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46, 1]))
+    expect(f.jobs[0].job).toEqual({
       deviceName: 'Laser_1',
       copies: 2,
-      color: false,
+      collate: true,
       duplexMode: 'shortEdge',
-      pageRanges: [{ from: 1, to: 2 }],
-      margins: { marginType: 'printableArea' },
-      pageSize: { width: 215900, height: 279400 },
-      header: 'Quarterly report',
-      footer: 'https://example.test/report'
+      color: false,
+      landscape: true,
+      pageSize: { width: 215900, height: 279400 }
     })
     expect(f.browser.print.isOpen(tab.id)).toBe(false)
+  })
+
+  it('prints the render the preview shows when the settings have not moved, without rendering again', async () => {
+    const f = fixture()
+    const tab = openSite(f, 'https://example.test/report')
+    const settings: PrintSettings = {
+      ...defaultPrintSettings('en-US'),
+      destination: { kind: 'printer', name: 'Laser_1' }
+    }
+    const preview = await f.browser.print.preview(tab.id, settings, null)
+    expect(preview.ok).toBe(true)
+    expect(f.renders).toHaveLength(1)
+    const result = await f.browser.print.run(tab.id, settings, 3, f.win)
+    expect(result).toEqual({ ok: true, action: 'printed' })
+    expect(f.renders).toHaveLength(1)
+    expect(f.jobs[0].document).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46, 1]))
+    // What the printer owns (copies, two-sided) leaves the render alone; a change to the layout
+    // renders afresh, so the printer gets what the preview would show for it.
+    const tab2 = openSite(f, 'https://example.test/other')
+    await f.browser.print.preview(tab2.id, settings, null)
+    await f.browser.print.run(tab2.id, { ...settings, copies: 2, twoSided: true }, 3, f.win)
+    expect(f.renders).toHaveLength(2)
+    expect(f.jobs[1].document).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46, 2]))
+    const tab3 = openSite(f, 'https://example.test/third')
+    await f.browser.print.preview(tab3.id, settings, null)
+    await f.browser.print.run(tab3.id, { ...settings, layout: 'landscape' }, 3, f.win)
+    expect(f.renders).toHaveLength(4)
+    expect(f.renders[3].landscape).toBe(true)
+    expect(f.jobs[2].document).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46, 4]))
   })
 
   it('reports the engine’s failure in Chrome’s words', async () => {

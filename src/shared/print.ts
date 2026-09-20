@@ -4,7 +4,8 @@
  * margins, scale, two-sided, headers and footers and background graphics, with Chrome's wording
  * for every label and every validation message, the sticky settings Chrome remembers between
  * prints, and the two mappings the desktop host needs: the options `webContents.printToPDF`
- * renders the preview with and the options `webContents.print` sends the job to a printer with.
+ * renders the preview with and the options `webContents.print` sends that render to a printer
+ * with (Chrome prints the preview's PDF, and so does this).
  *
  * Pure data shared by the core (`core/print.ts`: sessions, sticky settings, the job), the
  * Electron host (which passes the mapped options straight through) and the renderer (the
@@ -618,102 +619,46 @@ export function pdfRenderOptions(
   }
 }
 
-/** A run for `webContents.print`, 0-based and inclusive. */
-export interface PrintJobRange {
-  from: number
-  to: number
-}
-
-/** Margins as `webContents.print` takes them: a type, with the sides in pixels when custom. */
-export interface PrintJobMargins {
-  marginType: 'default' | 'none' | 'printableArea' | 'custom'
-  top?: number
-  right?: number
-  bottom?: number
-  left?: number
-}
-
 /**
- * The options that send the page to a printer: `webContents.print`'s, host neutral. The page
- * size is in microns, the scale a percentage, the ranges 0-based, `header` and `footer` the
- * title and address Chromium's header and footer template shows (unset turns them off).
+ * The job that sends the rendered document to a printer: `webContents.print`'s options, host
+ * neutral, for the PDF the preview laid out (`pdfRenderOptions`). Chrome prints the preview's
+ * own PDF, and so does this: the pages picked, the paper, margins, scale, headers and footers
+ * and background graphics are in the file, page for page as the preview showed them. What is
+ * left is the printer's business – which one, how many copies, collated, two-sided and on which
+ * edge, in colour or not, and the paper to load, turned when the pages are.
  */
 export interface PrintJobOptions {
-  silent: true
   deviceName: string
-  printBackground: boolean
-  color: boolean
-  landscape: boolean
-  scaleFactor: number
   copies: number
   collate: boolean
   duplexMode: 'simplex' | 'longEdge' | 'shortEdge'
+  color: boolean
+  landscape: boolean
+  /** The paper in microns, portrait; `landscape` turns it. */
   pageSize: { width: number; height: number }
-  margins: PrintJobMargins
-  pageRanges: PrintJobRange[]
-  header?: string
-  footer?: string
-}
-
-/** CSS pixels per inch, the unit `webContents.print` takes custom margins in. */
-const PIXELS_PER_INCH = 96
-
-/** The margins a printer job carries for a mode. */
-export function jobMargins(margins: PrintSettings['margins']): PrintJobMargins {
-  switch (margins.mode) {
-    case 'default':
-      return { marginType: 'default' }
-    case 'none':
-      return { marginType: 'none' }
-    case 'minimum':
-      return { marginType: 'printableArea' }
-    case 'custom':
-      return {
-        marginType: 'custom',
-        top: Math.round(margins.custom.top * PIXELS_PER_INCH),
-        right: Math.round(margins.custom.right * PIXELS_PER_INCH),
-        bottom: Math.round(margins.custom.bottom * PIXELS_PER_INCH),
-        left: Math.round(margins.custom.left * PIXELS_PER_INCH)
-      }
-  }
 }
 
 /**
- * The options that print `settings` on the printer it names, for a document of `pageCount`
- * pages with `title` and `url` in its header and footer. Null for the PDF destination, which
- * is saved rather than printed, and for a selection that picks no page.
+ * The job that prints `settings` on the printer it names, for a document of `pageCount` pages.
+ * Null for the PDF destination, which is saved rather than printed, and for a selection that
+ * picks no page.
  */
 export function printJobOptions(
   settings: PrintSettings,
-  pageCount: number,
-  page: { title: string; url: string }
+  pageCount: number
 ): PrintJobOptions | null {
   if (settings.destination.kind !== 'printer') return null
-  const pages = pagesToPrint(settings.pages, pageCount)
-  if (pages.length === 0) return null
+  if (pagesToPrint(settings.pages, pageCount).length === 0) return null
   const paper = paperSizeById(settings.paperSize) ?? PAPER_SIZES[0]
-  const options: PrintJobOptions = {
-    silent: true,
+  return {
     deviceName: settings.destination.name,
-    printBackground: settings.background,
-    color: settings.color === 'color',
-    landscape: settings.layout === 'landscape',
-    scaleFactor: settings.scale.mode === 'custom' ? settings.scale.percent : 100,
     copies: settings.copies,
     collate: settings.collate,
     duplexMode: settings.twoSided ? settings.duplexEdge : 'simplex',
-    pageSize: { width: paper.widthMicrons, height: paper.heightMicrons },
-    margins: jobMargins(settings.margins),
-    pageRanges:
-      pages.length === pageCount
-        ? []
-        : collapsePages(pages).map((r) => ({ from: r.from - 1, to: r.to - 1 }))
+    color: settings.color === 'color',
+    landscape: settings.layout === 'landscape',
+    pageSize: { width: paper.widthMicrons, height: paper.heightMicrons }
   }
-  if (settings.headerFooter) {
-    options.header = page.title
-    options.footer = page.url
-  }
-  return options
 }
 
 // ---------------------------------------------------------------------------

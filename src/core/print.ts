@@ -8,8 +8,9 @@
  *    settings to open with – Chrome's sticky settings from the last print over the defaults;
  *  - `preview` renders the page to a PDF with the settings (`TabView.printToPDF`), which the
  *    chrome draws with pdf.js and learns the page count from;
- *  - `run` prints (`TabView.printWith`, silently: the preview asked everything) or saves the
- *    PDF where the user chooses (`PrintingHost.savePdf`), lists the file in Downloads as a saved
+ *  - `run` prints that PDF (`PrintingHost.print`, silently: the preview asked everything, and
+ *    the printer gets the pages exactly as the preview showed them, as Chrome's does) or saves
+ *    it where the user chooses (`PrintingHost.savePdf`), lists the file in Downloads as a saved
  *    page is, and remembers the sticky part of the settings for the next print.
  *
  * A host without the preview (`capabilities.printPreview` off: Android, whose print manager has
@@ -45,8 +46,11 @@ interface Persisted {
 /** A preview open for a tab. */
 interface Session {
   tabId: string
-  /** The last render, for a Save that follows without a change of settings. */
-  rendered: { settings: string; pdf: Uint8Array } | null
+  /**
+   * The last render, keyed by the render options it was made with (`pdfRenderOptions`), for the
+   * Print or Save that follows without a change to the layout.
+   */
+  rendered: { key: string; pdf: Uint8Array } | null
 }
 
 export class PrintService {
@@ -121,9 +125,10 @@ export class PrintService {
     if (pageCount !== null && pageCount > 0 && pagesToPrint(settings.pages, pageCount).length === 0)
       return { ok: false, error: PRINT_MESSAGES.noPages }
     try {
-      const pdf = await view.printToPDF(pdfRenderOptions(settings, pageCount))
+      const options = pdfRenderOptions(settings, pageCount)
+      const pdf = await view.printToPDF(options)
       const session = this.sessions.get(tabId) ?? { tabId, rendered: null }
-      session.rendered = { settings: JSON.stringify(settings), pdf }
+      session.rendered = { key: JSON.stringify(options), pdf }
       this.sessions.set(tabId, session)
       return { ok: true, pdf: base64Encode(pdf) }
     } catch (error) {
@@ -132,10 +137,13 @@ export class PrintService {
   }
 
   /**
-   * Print or Save with `settings` for a document of `pageCount` pages. A printer gets the job
-   * without another dialog; Save as PDF asks where to save (the page's title as the file name)
-   * and lists the file in Downloads. The sticky part of the settings is remembered either way –
-   * not when the save dialog is dismissed, as Chrome forgets a cancelled print.
+   * Print or Save with `settings` for a document of `pageCount` pages. Either way the document
+   * is the preview's PDF – the render on show when the settings have not moved since, else a
+   * fresh one – so the printer and the file get the pages exactly as previewed, as in Chrome. A
+   * printer gets the job without another dialog; Save as PDF asks where to save (the page's
+   * title as the file name) and lists the file in Downloads. The sticky part of the settings is
+   * remembered either way – not when the save dialog is dismissed, as Chrome forgets a cancelled
+   * print.
    */
   async run(
     tabId: string,
@@ -152,29 +160,27 @@ export class PrintService {
     const pages = pagesToPrint(settings.pages, pageCount)
     if (pages.length === 0) return { ok: false, error: PRINT_MESSAGES.noPages }
     const title = tab.title || view.getTitle() || ''
+    const failure =
+      settings.destination.kind === 'printer'
+        ? PRINT_MESSAGES.printFailed
+        : PRINT_MESSAGES.saveFailed
+    let pdf: Uint8Array
+    try {
+      pdf = await this.document(tabId, view, settings, pageCount)
+    } catch (error) {
+      return { ok: false, error: failureText(error, failure) }
+    }
     if (settings.destination.kind === 'printer') {
-      const options = printJobOptions(settings, pageCount, { title, url: tab.url })
-      if (!options || !view.printWith) return { ok: false, error: PRINT_MESSAGES.printFailed }
+      const job = printJobOptions(settings, pageCount)
+      if (!job) return { ok: false, error: PRINT_MESSAGES.printFailed }
       try {
-        await view.printWith(options)
+        await printing.print(pdf, job)
       } catch (error) {
         return { ok: false, error: failureText(error, PRINT_MESSAGES.printFailed) }
       }
       this.remember(settings)
       this.sessions.delete(tabId)
       return { ok: true, action: 'printed' }
-    }
-    // Save as PDF: the render the preview shows when the settings have not moved since, else a
-    // fresh one – the pages and paper of the file are the preview's.
-    let pdf: Uint8Array
-    try {
-      const rendered = this.sessions.get(tabId)?.rendered
-      pdf =
-        rendered && rendered.settings === JSON.stringify(settings) && view.printToPDF
-          ? rendered.pdf
-          : await this.render(view, settings, pageCount)
-    } catch (error) {
-      return { ok: false, error: failureText(error, PRINT_MESSAGES.saveFailed) }
     }
     let path: string | null
     try {
@@ -212,13 +218,22 @@ export class PrintService {
 
   // ---------------------------------------------------------------------------
 
-  private async render(
+  /**
+   * The document a Print or Save sends: the preview's render when it was made with the very
+   * render options these settings give (what the printer owns – copies, two-sided – changes no
+   * page), else the page rendered afresh with them.
+   */
+  private async document(
+    tabId: string,
     view: NonNullable<ReturnType<Browser['tabs']['view']>>,
     settings: PrintSettings,
     pageCount: number
   ): Promise<Uint8Array> {
-    if (!view.printToPDF) throw new Error(PRINT_MESSAGES.saveFailed)
-    return view.printToPDF(pdfRenderOptions(settings, pageCount))
+    const options = pdfRenderOptions(settings, pageCount)
+    const rendered = this.sessions.get(tabId)?.rendered
+    if (rendered && rendered.key === JSON.stringify(options)) return rendered.pdf
+    if (!view.printToPDF) throw new Error('The page cannot be rendered')
+    return view.printToPDF(options)
   }
 
   private async printers(): Promise<PrinterDescription[]> {

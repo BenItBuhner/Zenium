@@ -581,12 +581,6 @@ export interface TabView {
    * Hosts without it have no print preview (`capabilities.printPreview` off).
    */
   printToPDF?(options: PdfRenderOptions): Promise<Uint8Array>
-  /**
-   * Send the page to the printer the options name without asking anything more
-   * (`webContents.print` with `silent: true`; the preview asked everything). Resolves once the
-   * job is handed to the system; rejects with the engine's reason when it is not.
-   */
-  printWith?(options: PrintJobOptions): Promise<void>
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
@@ -1648,12 +1642,20 @@ export interface QrScanHost {
 
 /**
  * The host side of the print preview (`capabilities.printPreview`; `core/print.ts`): the
- * system's printers and the file Save as PDF writes. Rendering and the job itself are the tab's
- * (`TabView.printToPDF`, `TabView.printWith`), as the engine hangs them on the page.
+ * system's printers, the job that takes the rendered document to one, and the file Save as PDF
+ * writes. The render itself is the tab's (`TabView.printToPDF`), as the engine hangs it on the
+ * page.
  */
 export interface PrintingHost {
   /** The system's printers (`webContents.getPrintersAsync`), the default one flagged. */
   printers(): Promise<PrinterDescription[]>
+  /**
+   * Send `document` – the PDF the preview rendered, its pages laid out for the paper the job
+   * names – to the printer the job names, without asking anything more (the preview asked
+   * everything; Electron prints it silently from Chromium's PDF viewer, page for page). Resolves
+   * once the job is handed to the system; rejects with the engine's reason when it is not.
+   */
+  print(document: Uint8Array, job: PrintJobOptions): Promise<void>
   /**
    * Save as PDF: ask where to save – Chrome's save dialog, with `defaultName` filled in – and
    * write `bytes` there. Resolves with the file's path, or null when the dialog was dismissed.
