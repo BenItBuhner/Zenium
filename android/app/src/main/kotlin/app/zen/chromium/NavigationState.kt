@@ -23,9 +23,13 @@ import java.util.Base64
  * current entry); a private tab's is never produced. Nothing of its content is logged.
  *
  * The internal pages (`zen://…`, rendered by `loadDataWithBaseURL`) sit in the WebView's list
- * as `data:` URLs carrying their whole HTML; the snapshot names them by the URL the view showed
- * for them ([publicUrl]), which is what the core, the session store and the back list want, and
- * what keeps a 240 KB document out of `state.json` per entry.
+ * as `data:` URLs carrying their whole HTML; the snapshot's entries name them by the URL the
+ * view showed for them ([publicUrl]), which is what the core, the session store and the back
+ * list want, and what keeps the document out of the entries. Not out of `hostState`: `saveState`
+ * pickles every entry's URL, an internal page's document with it, so a stack holding a large
+ * one (the new tab page, an error page, a long reader page) is over [HOST_STATE_MAX] once
+ * encoded, no state goes out for it, and that tab restores URL-only – the core loads the
+ * current entry. A reader page of ordinary length fits.
  */
 object NavigationState {
     /** The longest `hostState` string that leaves the host (`sanitizeSnapshot` in the core keeps the same bound). */

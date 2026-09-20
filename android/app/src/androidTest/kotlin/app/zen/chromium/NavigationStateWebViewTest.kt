@@ -28,11 +28,13 @@ import java.util.concurrent.TimeUnit
  * ([NavigationState.decodeHostState], [NavigationState.bundleOf]) and restored into a fresh
  * WebView (`restoreState`), which then has the same three entries with the same current one; the
  * same with an internal page (`loadDataWithBaseURL`, a `data:` item shown as `zen://…`) on top,
- * matched to the snapshot's entries off the lists alone and back as one document. And
- * the refusals: a bundle that is not a WebView's (another host's, a hand-made one) unmarshals but
- * `restoreState` returns null for it; bytes that are not a bundle at all never reach the WebView;
- * a private tab's view has no state to give. The pages come from `shouldInterceptRequest`, so
- * nothing depends on the network. Runs alongside `NavSnapshotDemo` in the emulator workflow.
+ * matched to the snapshot's entries off the lists alone and back as one document, its document
+ * inside the state. And the refusals: a bundle that is not a WebView's (another host's, a
+ * hand-made one) unmarshals but `restoreState` returns null for it; bytes that are not a bundle
+ * at all never reach the WebView; a private tab's view has no state to give. The pages come from
+ * `shouldInterceptRequest`, so nothing depends on the network. Runs on a device in the
+ * emulator workflow (`android-nav-snapshot-demo.yml` lists it in `DEMO_CLASS` ahead of
+ * `NavSnapshotDemo`, in the same instrumentation run), so a failure here fails the recording.
  */
 @RunWith(AndroidJUnit4::class)
 class NavigationStateWebViewTest {
@@ -113,7 +115,10 @@ class NavigationStateWebViewTest {
         val hostState = onMain { NavigationState.hostStateOf(source, private = false) }
         assertNotNull("a list with an internal page on top has a state to give", hostState)
         assertTrue("within the cap: ${hostState!!.length} chars", hostState.length <= NavigationState.HOST_STATE_MAX)
-        Log.i(TAG, "hostState of a page and a reader page: ${hostState.length} chars")
+        // The document is inside the state (saveState pickles the entry's data: URL whole): what
+        // puts a stack with a large internal page over the cap, and has it restore URL-only.
+        assertTrue("the state carries the document: ${hostState.length} chars for a ${READER_HTML.length}-char page", hostState.length > READER_HTML.length)
+        Log.i(TAG, "hostState of a page and a reader page: ${hostState.length} chars (the reader document is ${READER_HTML.length})")
         val bundle = NavigationState.bundleOf(NavigationState.decodeHostState(hostState)!!)
         assertNotNull(bundle)
 
