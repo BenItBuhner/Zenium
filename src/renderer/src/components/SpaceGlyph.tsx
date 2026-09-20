@@ -33,10 +33,15 @@ export function SpaceGlyph({
   }
   // A swatch of the space's colour with a 1 px hairline of the ink at 20 % (a11y-30; design
   // language v2 §9.14): the hairline gives the colour an edge on a like-coloured window, where a
-  // ring drawn in the colour itself sat at 1.5:1, and keeps the dot a swatch, not a badge.
+  // ring drawn in the colour itself sat at 1.5:1, and keeps the dot a swatch, not a badge. With
+  // no colour to show (the strip's space header, the pickers) the dot is a ring of the ink.
   return (
     <span
-      className={cn('inline-block rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]', className)}
+      className={cn(
+        'inline-block rounded-full',
+        dotColor ? 'border border-[rgb(var(--zen-fg-rgb)/0.2)]' : 'border-2 border-[var(--zen-fg)]',
+        className
+      )}
       style={{ width: size * 0.7, height: size * 0.7, background: dotColor }}
       aria-hidden
     />
