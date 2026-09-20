@@ -43,15 +43,7 @@ class PdfViewerDemo : DemoHarness("pdf-viewer-demo-state.json", "services-print-
     }
 
     /** The page offering the file, and the file itself as a PDF response without a disposition. */
-    private fun routes(): Map<String, Pair<String, ByteArray>> = mapOf(
-        "/" to DemoServer.page(
-            PAGE_TITLE,
-            "<p>The week's tide tables for the estuary, as a PDF.</p>" +
-                "<p><a href=\"/tide-tables.pdf\">$LINK_TEXT</a></p>" +
-                "<p>A PDF the tab navigates to opens in Zenium's viewer, as in Chrome.</p>"
-        ),
-        "/tide-tables.pdf" to ("application/pdf" to DemoPdf.build(PDF_TITLE, PDF_PAGES, "$ORIGIN/"))
-    )
+    private fun routes(): Map<String, Pair<String, ByteArray>> = PdfViewerDemoSite.routes()
 
     /** The seeded tab points at the loopback page, so nothing in the run depends on the network. */
     override fun patchState(json: String): String = json.replace(PAGE_PLACEHOLDER, "$ORIGIN/")
@@ -267,30 +259,58 @@ class PdfViewerDemo : DemoHarness("pdf-viewer-demo-state.json", "services-print-
     }
 
     companion object {
-        private const val PORT = 18147
-        private const val ORIGIN = "http://127.0.0.1:$PORT"
-        /** Stands for the page's address in the seeded profile until the server has started. */
-        private const val PAGE_PLACEHOLDER = "http://pdf-viewer-demo.invalid/"
-        private const val PAGE_TITLE = "Tide tables"
-        private const val LINK_TEXT = "Tide tables for the week (PDF)"
-        private const val PDF_TITLE = "Tide tables, week 38"
-        private const val FIND_QUERY = "tide"
-        /** "tide" in the headings and lines below, case aside (the find is case-insensitive). */
-        private const val FIND_MIN_MATCHES = 6
-        private val PDF_PAGES = listOf(
-            "Tide tables" to listOf(
-                "The tide turns twice a day on this coast.",
-                "High tide at 06:12 and 18:40; low tide at 12:26.",
-                "Springs this week: the tide runs strongest at the narrows."
-            ),
-            "High water" to listOf(
-                "High water follows the moon by about fifty minutes a day.",
-                "Each tide is listed with its height in metres above datum."
-            ),
-            "Low water" to listOf(
-                "Low water uncovers the flats for two hours either side.",
-                "Check the tide before crossing to the island."
-            )
-        )
+        private const val PORT = PdfViewerDemoSite.PORT
+        private const val ORIGIN = PdfViewerDemoSite.ORIGIN
+        private const val PAGE_PLACEHOLDER = PdfViewerDemoSite.PAGE_PLACEHOLDER
+        private const val LINK_TEXT = PdfViewerDemoSite.LINK_TEXT
+        private const val PDF_TITLE = PdfViewerDemoSite.PDF_TITLE
+        private const val FIND_QUERY = PdfViewerDemoSite.FIND_QUERY
+        private const val FIND_MIN_MATCHES = PdfViewerDemoSite.FIND_MIN_MATCHES
+        private val PDF_PAGES = PdfViewerDemoSite.PDF_PAGES
     }
+}
+
+/**
+ * The site both PDF viewer demos serve from the loopback [DemoServer]: a page offering the
+ * week's tide tables, and the tables as a PDF response without a disposition (the engine's
+ * [PdfViewerDemo] drives the viewer through the core's commands, [PdfViewerUiDemo] through the
+ * chrome's controls; both assert on the same document).
+ */
+internal object PdfViewerDemoSite {
+    const val PORT = 18147
+    const val ORIGIN = "http://127.0.0.1:$PORT"
+    /** Stands for the page's address in the seeded profile until the server has started. */
+    const val PAGE_PLACEHOLDER = "http://pdf-viewer-demo.invalid/"
+    const val PAGE_TITLE = "Tide tables"
+    const val LINK_TEXT = "Tide tables for the week (PDF)"
+    const val PDF_TITLE = "Tide tables, week 38"
+    const val FIND_QUERY = "tide"
+    /** "tide" in the headings and lines below, case aside (the find is case-insensitive). */
+    const val FIND_MIN_MATCHES = 6
+    val PDF_PAGES = listOf(
+        "Tide tables" to listOf(
+            "The tide turns twice a day on this coast.",
+            "High tide at 06:12 and 18:40; low tide at 12:26.",
+            "Springs this week: the tide runs strongest at the narrows."
+        ),
+        "High water" to listOf(
+            "High water follows the moon by about fifty minutes a day.",
+            "Each tide is listed with its height in metres above datum."
+        ),
+        "Low water" to listOf(
+            "Low water uncovers the flats for two hours either side.",
+            "Check the tide before crossing to the island."
+        )
+    )
+
+    /** The page offering the file, and the file itself as a PDF response without a disposition. */
+    fun routes(): Map<String, Pair<String, ByteArray>> = mapOf(
+        "/" to DemoServer.page(
+            PAGE_TITLE,
+            "<p>The week's tide tables for the estuary, as a PDF.</p>" +
+                "<p><a href=\"/tide-tables.pdf\">$LINK_TEXT</a></p>" +
+                "<p>A PDF the tab navigates to opens in Zenium's viewer, as in Chrome.</p>"
+        ),
+        "/tide-tables.pdf" to ("application/pdf" to DemoPdf.build(PDF_TITLE, PDF_PAGES, "$ORIGIN/"))
+    )
 }
