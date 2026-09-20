@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Platform } from '../../core/platform'
 import type { Bridge } from '../bridge'
 import { AndroidPlatform, type BootInfo } from '../platform'
 
@@ -34,7 +35,7 @@ function fakeBridge(reply: unknown): {
 describe('Android file import (ID-23)', () => {
   it('has no other browser to read: the platform offers no importHost', () => {
     const { bridge } = fakeBridge([])
-    const platform = new AndroidPlatform(bridge, BOOT)
+    const platform: Platform = new AndroidPlatform(bridge, BOOT)
     expect(platform.importHost).toBeUndefined()
   })
 
