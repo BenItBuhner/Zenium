@@ -72,6 +72,22 @@ interface PageHost {
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
 
+    /**
+     * The state a fresh WebView rebuilds `tabId`'s back/forward list from changed: `hostState`
+     * as [NavigationState.hostStateOf] gives it, null when there is none to keep (a private tab,
+     * an empty list, one over the cap). Main thread, with every `historyChanged`; the browser
+     * window keeps the latest to answer the core's synchronous `view.navigationHostState` from
+     * the bridge thread, where the WebView cannot be asked. A custom tab has no core to answer.
+     */
+    fun navigationStateChanged(tabId: String, hostState: String?) {}
+
+    /**
+     * The view known as `viewId` (a popup's provisional id) is `tabId`'s from now on: whatever
+     * the window kept under the old id – the list its pushes filled, the state behind it – is not
+     * kept there any more; the view pushes both again under the new id right after.
+     */
+    fun viewBound(viewId: String, tabId: String) {}
+
     /** Something happened outside any one page: a download, a permission request, a popup. */
     fun hostEvent(name: String, payload: Any?)
 
