@@ -249,8 +249,13 @@ class PillChipFoldDemo : DemoHarness("pill-chip-fold-demo-state.json", "android-
         beat()
     }
 
-    /** `environment.textZoom` as the chrome heard it (1 when the host said nothing). */
-    private fun textZoomHeard(): Double = coreState().optJSONObject("pageEnvironment")?.optDouble("textZoom", 1.0) ?: 1.0
+    /**
+     * `environment.textZoom` as the chrome heard it, off the chrome root's `data-text-zoom`
+     * ("100", "130"…), which `applyTextScale` writes on every environment event for drivers (the
+     * core keeps `fontScale` alone in `pageEnvironment`); 1 when the root says nothing yet.
+     */
+    private fun textZoomHeard(): Double =
+        chromeValue("document.documentElement.dataset.textZoom||''").toIntOrNull()?.let { it / 100.0 } ?: 1.0
 
     private fun fontScaleHeard(): Double = coreState().optJSONObject("pageEnvironment")?.optDouble("fontScale", 1.0) ?: 1.0
 
