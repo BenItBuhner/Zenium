@@ -119,9 +119,12 @@ function PrintDialog({ tabId, state }: { tabId: string; state: UIState }): JSX.E
         />
         {/* The rows keep their height whatever the column holds (§9.21): a column taller than
             the dialog scrolls here, under the sticky title block and over the pinned footer,
-            rather than pressing its rows together. */}
+            rather than pressing its rows together. The scrollbar's gutter is reserved whether
+            or not the column overflows (as the pane's is), so the controls' right edge holds
+            at one x as rows appear – picking Custom in Pages does not step every menulist. */}
         <div
           className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1 [&>*]:shrink-0"
+          style={{ scrollbarGutter: 'stable' }}
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
           {form.session && <Options form={form} systemDialogKey={systemDialogKey} state={state} />}
