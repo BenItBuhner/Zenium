@@ -10,6 +10,7 @@ import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -68,6 +69,8 @@ export function DesktopSettings({
   // The vault's lists while Autofill is the open category (the phone page reads them the same
   // way); a search builds every category with the gate and the switches, not the entries.
   const autofill = useAutofillSettings(state, sectionId === 'autofill')
+  // The custom dictionary's words the same way, while Languages is the open category.
+  const dictionary = useDictionaryWords(sectionId === 'languages' && state.spellcheck.available)
   const ctx: SectionContext = {
     state,
     tab,
@@ -80,7 +83,8 @@ export function DesktopSettings({
       run('tab.activate', { tabId })
       void openOverlay('boosts', tabId)
     },
-    autofill
+    autofill,
+    dictionary
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

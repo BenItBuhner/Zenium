@@ -696,6 +696,71 @@ export function UrlForm({
 }
 
 /**
+ * Languages › Spell check › Custom dictionary › Add a new word (Chrome's "Customize spell
+ * check"): one word without spaces, refused with the field's own message otherwise, when it is
+ * there already, or when the host declines it; the sheet closes once the word is in.
+ */
+export function WordForm({
+  problem,
+  onAdd,
+  close
+}: {
+  /** Why the typed word cannot go in yet, or nothing (`wordProblem`). */
+  problem: (word: string) => string | undefined
+  onAdd: (word: string) => Promise<string | undefined>
+  close: () => void
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const word = value.trim()
+  const shown = error ?? (word ? (problem(word) ?? null) : null)
+  const ready = Boolean(word) && !shown && !busy
+  const submit = (): void => {
+    if (!ready) return
+    setBusy(true)
+    void onAdd(word)
+      .then((refusal) => {
+        if (refusal) setError(refusal)
+        else close()
+      })
+      .catch(() => setError('This word could not be added'))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <div className="zen-settings-form" data-testid="word-form">
+      <Field
+        id="dictionary-word"
+        label="Add a new word"
+        description={shown ? undefined : 'The checker never marks it.'}
+      >
+        <input
+          id="dictionary-word"
+          className="zen-settings-input zen-v2-field"
+          placeholder="colour"
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={shown ? true : undefined}
+          readOnly={busy}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            setError(null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
+        />
+        {shown && <ValidationMessage message={shown} />}
+      </Field>
+      <SheetActions action="Add" disabled={!ready} busy={busy} onCancel={close} onAction={submit} />
+    </div>
+  )
+}
+
+/**
  * The §9.12 form of a new tab page shortcut (Settings › New Tab › Add shortcut): a name and an
  * address, the address read as the URL bar reads typed text (`inputToUrl`), the button held
  * until it makes a URL – the desktop's inline form, as a sheet.

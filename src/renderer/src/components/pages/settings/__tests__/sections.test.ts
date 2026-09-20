@@ -48,6 +48,7 @@ const { allRows, currentOptionLabel, findRow, groupShows, optionGroups, rowText,
   await import('../model')
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
+const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
@@ -316,15 +317,18 @@ function blockingState(patch: Partial<UIState> = {}): UIState {
 }
 
 type AutofillData = Parameters<typeof buildSection>[1]['autofill']
+type DictionaryWords = Parameters<typeof buildSection>[1]['dictionary']
 
 /**
  * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
- * The vault reads idle (no lists, the gate idle) unless `autofill` brings some.
+ * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the custom
+ * dictionary has no words unless `dictionary` brings some.
  */
 function context(
   s: UIState = state(),
   pointer = false,
-  autofill: Partial<AutofillData> = {}
+  autofill: Partial<AutofillData> = {},
+  dictionary: Partial<DictionaryWords> = {}
 ): {
   ctx: Parameters<typeof buildSection>[1]
   patches: Partial<Settings>[]
@@ -344,7 +348,8 @@ function context(
       record.barEditor += 1
     },
     boost: (tabId) => boosted.push(tabId),
-    autofill: { ...idleAutofillSettings(), ...autofill }
+    autofill: { ...idleAutofillSettings(), ...autofill },
+    dictionary: { ...idleDictionaryWords(), ...dictionary }
   }
   return {
     ctx,
@@ -3078,10 +3083,12 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
       }
     })
     const languages = section('languages', s)
-    expect(languages.groups.map((g) => g.id).slice(-3)).toEqual([
+    expect(languages.groups.map((g) => g.id).slice(-5)).toEqual([
       'spellcheck',
       'spellcheck-languages',
-      'spellcheck-add'
+      'spellcheck-add',
+      'spellcheck-dictionary',
+      'spellcheck-add-word'
     ])
     const on = row(languages, 'spellcheck-enabled')
     if (on.kind !== 'switch') throw new Error('not a switch')
@@ -3146,6 +3153,78 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
     })
     expect(findRow(system.groups, 'spellcheck-language:de')).toBeNull()
     expect(system.groups.map((g) => g.id)).not.toContain('spellcheck-add')
+  })
+
+  it('lists the custom dictionary’s words with Remove and the Add a new word form on the desktop and tablet shells alone', () => {
+    const s = state({
+      spellcheck: {
+        available: true,
+        systemLanguages: false,
+        languages: [
+          { code: 'en-US', name: 'English (United States)', enabled: true, status: 'ready' }
+        ]
+      }
+    })
+    const removed: string[] = []
+    const c = context(
+      s,
+      false,
+      {},
+      {
+        words: ['Zenium', 'colour'],
+        remove: (word) => removed.push(word)
+      }
+    )
+    const def = PAGE.sections.find((x) => x.id === 'languages')!
+    const languages = buildSection(def, c.ctx)
+    const dictionary = languages.groups.find((g) => g.id === 'spellcheck-dictionary')
+    expect(dictionary?.heading).toBe('Custom dictionary')
+    expect(dictionary?.layouts).toEqual(['desktop', 'tablet'])
+    expect(dictionary?.rows.map((r) => [r.kind, r.label])).toEqual([
+      ['item', 'Zenium'],
+      ['item', 'colour']
+    ])
+    const remove = row(languages, 'spellcheck-word:colour:remove')
+    if (remove.kind !== 'action') throw new Error('not an action')
+    remove.onPress?.()
+    expect(removed).toEqual(['colour'])
+    const add = row(languages, 'spellcheck-add-word')
+    if (add.kind !== 'action') throw new Error('not an action')
+    expect(add.label).toBe('Add a new word')
+    expect(add.form?.title).toBe('Add a new word')
+    expect(add.disabled).toBeFalsy()
+
+    // No words read yet (another category is open, a search): the list waits, Add stands.
+    const waiting = buildSection(def, context(s).ctx)
+    expect(groupShows(waiting.groups.find((g) => g.id === 'spellcheck-dictionary')!)).toBe(false)
+    expect(findRow(waiting.groups, 'spellcheck-add-word')).not.toBeNull()
+    // Read and empty: the §9.17 line.
+    const none = buildSection(def, context(s, false, {}, { words: [] }).ctx)
+    expect(none.groups.find((g) => g.id === 'spellcheck-dictionary')?.empty).toBe('No words yet')
+
+    // Both groups are the desktop shell's: a phone builds neither, a desktop both.
+    const phone = buildSection(def, { ...c.ctx, formFactor: 'phone' })
+    expect(phone.groups.map((g) => g.id)).not.toContain('spellcheck-dictionary')
+    expect(phone.groups.map((g) => g.id)).not.toContain('spellcheck-add-word')
+    const desktop = buildSection(def, { ...c.ctx, formFactor: 'desktop' })
+    expect(findRow(desktop.groups, 'spellcheck-word:Zenium')).not.toBeNull()
+    expect(findRow(desktop.groups, 'spellcheck-add-word')).not.toBeNull()
+
+    // With the checker off, both follow the switch as its dependent.
+    const off = buildSection(
+      def,
+      context(
+        state(
+          { spellcheck: s.spellcheck },
+          { spellcheck: { ...DEFAULT_SETTINGS.spellcheck, enabled: false } }
+        ),
+        false,
+        {},
+        { words: ['Zenium'] }
+      ).ctx
+    )
+    expect(row(off, 'spellcheck-word:Zenium').disabled).toBe(true)
+    expect(row(off, 'spellcheck-add-word').disabled).toBe(true)
   })
 })
 
@@ -3227,5 +3306,46 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
     expect(list?.rows).toEqual([])
     expect(list?.empty).toBe('No sites yet')
     expect(row(tabs, 'never-sleep-add').label).toBe('Add a site')
+  })
+
+  it('is the phone shell’s: the desktop and tablet shells bind the same keys through Zen’s Tab unloading rows', () => {
+    const def = PAGE.sections.find((x) => x.id === 'tabs')!
+    const c = context(state({}, { unloadExcludedDomains: ['mail.example.com'] }))
+    const phone = buildSection(def, { ...c.ctx, formFactor: 'phone' })
+    expect(phone.groups.map((g) => g.id)).toEqual(
+      expect.arrayContaining(['sleeping-tabs', 'never-sleep', 'never-sleep-add'])
+    )
+    expect(phone.groups.map((g) => g.id)).not.toContain('unloading')
+
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const shell = buildSection(def, { ...c.ctx, formFactor: layout })
+      const ids = shell.groups.map((g) => g.id)
+      expect(ids).toContain('unloading')
+      expect(ids).not.toContain('sleeping-tabs')
+      expect(ids).not.toContain('never-sleep')
+      expect(ids).not.toContain('never-sleep-add')
+      const group = shell.groups.find((g) => g.id === 'unloading')
+      expect(group?.heading).toBe('Tab unloading')
+      expect(group?.rows.map((r) => [r.kind, r.label])).toEqual([
+        ['switch', 'Unload inactive tabs'],
+        ['field', 'Unload after'],
+        ['field', 'Never unload these domains']
+      ])
+      const on = row(shell, 'unloading-enabled')
+      if (on.kind !== 'switch') throw new Error('not a switch')
+      on.onChange(false)
+      expect(c.patches.at(-1)).toEqual({ unloadEnabled: false })
+      const after = row(shell, 'unloading-after')
+      if (after.kind !== 'field') throw new Error('not a field')
+      expect(after.display).toBe('20 minutes')
+      expect(after.onCommit('0')).toBe('Enter a number of minutes from 1 to 1440')
+      expect(after.onCommit('45')).toBeUndefined()
+      expect(c.patches.at(-1)).toEqual({ unloadTimeoutMinutes: 45 })
+      const excluded = row(shell, 'unloading-excluded')
+      if (excluded.kind !== 'field') throw new Error('not a field')
+      expect(excluded.value).toBe('mail.example.com')
+      excluded.onCommit('Mail.example.com, notion.so')
+      expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com', 'notion.so'] })
+    }
   })
 })

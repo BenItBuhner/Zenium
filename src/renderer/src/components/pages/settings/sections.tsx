@@ -92,6 +92,7 @@ import {
 } from '@renderer/lib/newTabSettings'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
+import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openOverlay } from '@renderer/lib/ui'
 import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
@@ -128,6 +129,7 @@ import {
   SyncSetupForm,
   UpdateStatusBlock,
   UrlForm,
+  WordForm,
   ZoomBlock
 } from './blocks'
 import { extensionsGroups } from './extensions'
@@ -191,6 +193,11 @@ export interface SectionContext {
    * vault to read (a test, the landing's search).
    */
   autofill: AutofillSettingsData
+  /**
+   * The profile's custom spell-check dictionary (Settings › Languages › Spell check) and what
+   * moves it (`useDictionaryWords`); `idleDictionaryWords()` where there is none to read.
+   */
+  dictionary: DictionaryWords
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -1163,6 +1170,61 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    // The same three keys twice over: Zen's "Tab unloading" rows on the desktop and tablet
+    // shells (the pane's wording, its fields), Edge's sleeping tabs on the phone (CT-22).
+    {
+      id: 'unloading',
+      heading: 'Tab unloading',
+      layouts: ['desktop', 'tablet'],
+      rows: [
+        {
+          kind: 'switch',
+          id: 'unloading-enabled',
+          label: 'Unload inactive tabs',
+          description: 'Frees memory by unloading tabs you have not used for a while.',
+          keywords: ['sleeping tabs', 'memory saver', 'discard', 'inactive'],
+          checked: s.unloadEnabled,
+          onChange: (v) => set({ unloadEnabled: v })
+        },
+        {
+          kind: 'field',
+          id: 'unloading-after',
+          label: 'Unload after',
+          value: String(s.unloadTimeoutMinutes),
+          display: `${s.unloadTimeoutMinutes} minutes`,
+          input: 'number',
+          min: 1,
+          max: 1440,
+          disabled: !s.unloadEnabled,
+          onCommit: (value) => {
+            const n = Number(value)
+            if (!Number.isInteger(n) || n < 1 || n > 1440)
+              return 'Enter a number of minutes from 1 to 1440'
+            set({ unloadTimeoutMinutes: n })
+            return undefined
+          }
+        },
+        {
+          kind: 'field',
+          id: 'unloading-excluded',
+          label: 'Never unload these domains',
+          value: s.unloadExcludedDomains.join(', '),
+          display: s.unloadExcludedDomains.length ? s.unloadExcludedDomains.join(', ') : 'None',
+          input: 'text',
+          placeholder: 'mail.google.com, notion.so',
+          disabled: !s.unloadEnabled,
+          onCommit: (value) => {
+            set({
+              unloadExcludedDomains: value
+                .split(',')
+                .map((d) => d.trim().toLowerCase())
+                .filter(Boolean)
+            })
+            return undefined
+          }
+        }
+      ]
+    },
     ...sleepingTabsGroups(s, set)
   )
   return groups
@@ -1191,7 +1253,8 @@ export function sleepTimeoutLabel(minutes: number): string {
  * in a group of its own taking a site (a URL is cut down to its host). Every dependent row reads
  * at .4 while the switch is off (§10.4). A sleeping tab fades
  * in the tab overview and wakes when it is opened; memory pressure puts pages to sleep ahead of
- * the timeout whatever the switch says.
+ * the timeout whatever the switch says. The phone shell's groups: the desktop and tablet shells
+ * bind the same keys through Zen's "Tab unloading" rows in `tabsSection`.
  */
 function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void): RowGroup[] {
   const off = !s.unloadEnabled
@@ -1215,6 +1278,7 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
     {
       id: 'sleeping-tabs',
       heading: 'Sleeping tabs',
+      layouts: ['phone'],
       description:
         'Tabs you have not looked at for a while go to sleep to save memory and battery. A sleeping tab fades in the tab overview and wakes when you open it.',
       rows: [
@@ -1243,6 +1307,7 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
     {
       id: 'never-sleep',
       heading: 'Never put these sites to sleep',
+      layouts: ['phone'],
       description:
         'Pages on these sites stay awake in the background – a chat, a player, a document you come back to.',
       rows: sites.map((domain) =>
@@ -1272,6 +1337,7 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
     {
       id: 'never-sleep-add',
       heading: null,
+      layouts: ['phone'],
       rows: [
         {
           kind: 'action',
@@ -2401,7 +2467,7 @@ function passkeysGroup({ passkeys }: AutofillSettingsData): RowGroup {
  * page) opening a sheet of the languages or models left to pick. The lists read the core's
  * translate state and write through its commands, so both platforms keep one set of rules.
  */
-function languagesSection({ state }: SectionContext): RowGroup[] {
+function languagesSection({ state, dictionary }: SectionContext): RowGroup[] {
   const t = state.translate
   const prefs = t.preferences
   // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
@@ -2631,7 +2697,7 @@ function languagesSection({ state }: SectionContext): RowGroup[] {
         }
       ]
     },
-    ...spellcheckGroups(state)
+    ...spellcheckGroups(state, dictionary)
   ]
 }
 
@@ -2651,9 +2717,11 @@ function dictionaryDetail(status: SpellcheckDictionaryStatus): string | undefine
  * dictionary's state as the description, Remove inside – and an Add sheet of the host's other
  * dictionaries up to Chrome's five; with the switch off the list is the dependent group at .4
  * (§10.4). A host whose checker follows the OS's languages shows where they are chosen instead.
- * The custom dictionary stays on the desktop pane: no phone host checks spelling itself.
+ * The custom dictionary (Chrome's "Customize spell check": the words the checker never marks,
+ * each with Remove inside, and the Add a new word form) follows on the desktop and tablet
+ * shells, whose host checks spelling itself; no phone host does.
  */
-function spellcheckGroups(state: UIState): RowGroup[] {
+function spellcheckGroups(state: UIState, dictionary: DictionaryWords): RowGroup[] {
   const status = state.spellcheck
   const settings = state.settings.spellcheck
   const keywords = ['spelling', 'spell check', 'dictionary', 'misspelt', 'autocorrect']
@@ -2780,7 +2848,75 @@ function spellcheckGroups(state: UIState): RowGroup[] {
       ]
     })
   }
+  groups.push(...customDictionaryGroups(dictionary, off, keywords))
   return groups
+}
+
+/**
+ * Chrome's "Customize spell check" as two groups: the words the checker never marks – added
+ * here or with a text field's Add to Dictionary – each an item whose sheet holds Remove, and
+ * the Add a new word action with its §9.12 form (`WordForm`). Nothing is drawn while the words
+ * have not arrived; both groups follow the spell check switch as its dependent (§10.4).
+ */
+function customDictionaryGroups(
+  dictionary: DictionaryWords,
+  off: boolean,
+  keywords: readonly string[]
+): RowGroup[] {
+  const words = dictionary.words
+  const layouts: FormFactor[] = ['desktop', 'tablet']
+  return [
+    {
+      id: 'spellcheck-dictionary',
+      heading: 'Custom dictionary',
+      description:
+        'Words the checker never marks. Add to Dictionary in a text field’s menu puts a word here too.',
+      layouts,
+      rows: (words ?? []).map((word) =>
+        item(
+          `spellcheck-word:${word}`,
+          word,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `spellcheck-word:${word}:remove`,
+              label: 'Remove',
+              description: 'The checker marks this word again.',
+              onPress: () => dictionary.remove(word)
+            }
+          ],
+          { keywords: ['custom dictionary', 'word', ...keywords], disabled: off }
+        )
+      ),
+      empty: words === null ? undefined : 'No words yet'
+    },
+    {
+      id: 'spellcheck-add-word',
+      heading: null,
+      layouts,
+      rows: [
+        {
+          kind: 'action',
+          id: 'spellcheck-add-word',
+          label: 'Add a new word',
+          description: 'One word the checker never marks.',
+          keywords: ['custom dictionary', 'customize spell check', ...keywords],
+          disabled: off,
+          form: {
+            title: 'Add a new word',
+            render: (close) => (
+              <WordForm
+                problem={(word) => wordProblem(word, words)}
+                onAdd={dictionary.add}
+                close={close}
+              />
+            )
+          }
+        }
+      ]
+    }
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -3603,6 +3739,11 @@ const SYNC_SCOPE_LABELS: ReadonlyArray<{
   { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices' },
   { key: 'containers', label: 'Containers' },
   { key: 'bookmarks', label: 'Bookmarks' },
+  {
+    key: 'passwords',
+    label: 'Passwords',
+    hint: 'Saved passwords and passkey records, encrypted with your sync passphrase'
+  },
   { key: 'settings', label: 'Settings' },
   { key: 'shortcuts', label: 'Keyboard shortcuts' },
   { key: 'boosts', label: 'Boosts' }
@@ -3611,9 +3752,10 @@ const SYNC_SCOPE_LABELS: ReadonlyArray<{
 /**
  * Zen 1.22's "Sync your Spaces across devices" through a folder a cloud drive or Syncthing
  * keeps in sync, encrypted on this device first. Not set up: the explanation and the one action
- * whose dialog is the setup form. Set up: the status with Sync now, a merge question while the
- * folder held data already, this device's name, the other devices, what to sync, and the two
- * ways off – confirmed, the second destructive.
+ * whose dialog is the setup form. Set up: the status with Sync now (or, while the folder cannot
+ * be reached, the way to choose one again – ID-08's unmounted drive), a merge question while
+ * the folder held data already, this device's name, the other devices, what to sync, and the
+ * two ways off – confirmed, the second destructive.
  */
 function syncSection({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
@@ -3621,7 +3763,7 @@ function syncSection({ state }: SectionContext): RowGroup[] {
     id: 'sync',
     heading: 'Sync across devices',
     description:
-      'Keep your Spaces, folders, pinned tabs, Essentials and settings the same on every computer. Pick a folder that is already synced between your devices (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is encrypted on this device before it is written – the folder only ever holds ciphertext.',
+      'Keep your Spaces, folders, pinned tabs, Essentials, bookmarks, passwords and settings the same on every device, including your phone. Pick a folder that is already synced between your devices (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is encrypted on this device before it is written – the folder only ever holds ciphertext.',
     rows: []
   }
   if (!sync.enabled) {
@@ -3651,7 +3793,7 @@ function syncSection({ state }: SectionContext): RowGroup[] {
         : sync.lastSyncAt
           ? `Last synced ${relativeTime(sync.lastSyncAt)}`
           : 'Waiting for the first sync',
-      description: sync.lastError ?? sync.folder ?? undefined,
+      description: sync.lastError ?? sync.folderName ?? sync.folder ?? undefined,
       keywords: ['status', 'folder', 'error'],
       trailing: sync.lastError ? (
         <CircleAlert
@@ -3660,16 +3802,32 @@ function syncSection({ state }: SectionContext): RowGroup[] {
         />
       ) : undefined
     },
-    {
-      kind: 'action',
-      id: 'sync-now',
-      label: 'Sync now',
-      description: 'Write this device’s changes to the folder and read the other devices’.',
-      button: 'Sync now',
-      busy: sync.syncing,
-      disabled: sync.pendingMerge,
-      onPress: () => run('sync.now', undefined)
-    }
+    sync.folderLost
+      ? {
+          // The folder went away (an unmounted drive, a revoked tree): the status line says so and
+          // this takes the user to a folder again; nothing syncs until then.
+          kind: 'action',
+          id: 'sync-choose-folder',
+          label: 'Choose the sync folder again',
+          description: 'The folder cannot be reached. Pick it, or another your devices share.',
+          keywords: ['folder', 'lost', 'unmounted', 'choose'],
+          button: 'Choose…',
+          disabled: sync.syncing,
+          onPress: () =>
+            void cmd('sync.chooseFolder', undefined).then(
+              (folder) => folder && run('sync.setFolder', { folder })
+            )
+        }
+      : {
+          kind: 'action',
+          id: 'sync-now',
+          label: 'Sync now',
+          description: 'Write this device’s changes to the folder and read the other devices’.',
+          button: 'Sync now',
+          busy: sync.syncing,
+          disabled: sync.pendingMerge,
+          onPress: () => run('sync.now', undefined)
+        }
   )
   const groups: RowGroup[] = [intro]
   if (sync.pendingMerge) {
