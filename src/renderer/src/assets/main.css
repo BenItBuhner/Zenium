@@ -3179,12 +3179,20 @@
    * the dialogs dim only the content frame and the manager is a page. Chips and the star sit on
    * the window and take the window fills; everything on a panel takes the text fills.
    */
+  /*
+   * The bar (§9.29 window family, §9.3): a 32 row of 28 chips – the toolbar buttons' height –
+   * with 4 under them to the content frame, the chips 4 apart and 4 in from the bar's ends. The
+   * chips draw in the theme's ink at the sidebar's text size (§4: chrome text at 400) with 16
+   * glyphs at the toolbar stroke and 8 of padding either side, hover in the window fill over
+   * 120 ms, and the one whose panel is open keeps the pressed fill through `aria-expanded`
+   * (§9.20). Every distance is box to box (§5).
+   */
   .zen-bm-bar {
     display: flex;
     align-items: center;
-    height: 30px;
+    height: 32px;
     gap: 4px;
-    padding: 0 2px 4px;
+    padding: 0 4px 4px;
   }
   .zen-bm-strip {
     position: relative;
@@ -3192,8 +3200,8 @@
     min-width: 0;
     flex: 1;
     align-items: center;
-    gap: 6px;
-    height: 26px;
+    gap: 4px;
+    height: 28px;
     overflow: hidden;
   }
   .zen-bm-chip {
@@ -3202,24 +3210,30 @@
     flex-shrink: 0;
     align-items: center;
     gap: 6px;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
     color: var(--zen-fg);
-    font-size: 12.5px;
+    font-size: var(--zen-sidebar-font);
     font-weight: 400;
+    line-height: 20px;
     white-space: nowrap;
     outline: none;
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
+  .zen-bm-chip-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
   .zen-bm-chip:hover {
     background: var(--v2-window-fill);
   }
-  /* The chip whose popover is open keeps its pressed fill (§9.20). */
+  /* The chip whose panel is open keeps its pressed fill (§9.20), said by `aria-expanded`. */
   .zen-bm-chip:active,
-  .zen-bm-chip[data-open='true'] {
+  .zen-bm-chip[aria-expanded='true'] {
     background: var(--v2-window-fill-hover);
   }
   /*
@@ -3231,10 +3245,10 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
-  /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
+  /* Drop-into target (§9.4, #215): keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
     background: var(--v2-window-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
+    box-shadow: inset 0 0 0 2px var(--zen-accent);
   }
   .zen-bm-chip[data-lifted='true'] {
     visibility: hidden;
@@ -3247,12 +3261,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The overflow chevron, and a bookmark without a name: the icon alone (Chrome). */
+  /* A bookmark without a name: the icon alone (Chrome), 28 square. */
   .zen-bm-chip[data-icon-only='true'] {
     padding: 0 6px;
   }
   .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
     display: none;
+  }
+  /*
+   * The overflow » (§9.3): the toolbar button, at the chips' radius rather than the toolbar's 9
+   * and in the window fills the chips take; lit with the pressed fill while its panel is open.
+   */
+  .zen-bm-overflow {
+    border-radius: 6px;
+  }
+  .zen-bm-overflow:hover:not(:disabled) {
+    background: var(--v2-window-fill);
+  }
+  .zen-bm-overflow:active:not(:disabled),
+  .zen-bm-overflow[aria-expanded='true'] {
+    background: var(--v2-window-fill-hover);
+    opacity: 1;
+    transform: none;
   }
   /*
    * What travels under the pointer: lifted to level 2, scale(1.02) at 90%. The drag hooks place
@@ -3285,18 +3315,27 @@
     background: var(--v2-fill);
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
+  /*
+   * The empty bar's hint (#226): a sentence in the window family's deemphasised ink – the
+   * theme's foreground at 69%, which `data-surface="window"` resolves per theme (§9.29) – at
+   * the chips' size, standing where the first chip's text would.
+   */
   .zen-bm-empty {
     padding: 0 8px;
-    color: var(--v2-text-deemphasized);
-    font-size: 12.5px;
+    color: var(--v2-control-text-deemphasized);
+    font-size: var(--zen-sidebar-font);
+    line-height: 20px;
     white-space: nowrap;
   }
 
-  /* Insertion caret: a 2px accent line, radius 1, 8px short of either end. */
+  /*
+   * Insertion caret (§9.4): a 2px line in the surface's accent – the theme's on the bar, the
+   * page's in a panel – radius 1, 8px short of either end.
+   */
   .zen-bm-insert {
     position: absolute;
     pointer-events: none;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     border-radius: 1px;
     transition: opacity 100ms var(--zen-ease);
   }

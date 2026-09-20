@@ -28,14 +28,22 @@ export interface RowProps {
   onRenamed: (node: BookmarkNode, title: string) => void
 }
 
+/**
+ * A bookmark's glyph: its favicon, else the globe; a folder's the folder. `strokeWidth` is the
+ * surface's: the bookmarks bar draws its 16 glyphs at the toolbar stroke (v2 draft §9.3,
+ * `TOOLBAR_STROKE`) while the manager's page rows keep the icon's default.
+ */
 export function BookmarkIcon({
   node,
-  className
+  className,
+  strokeWidth
 }: {
   node: BookmarkNode
   className?: string
+  strokeWidth?: number
 }): JSX.Element {
-  if (node.type === 'folder') return <Folder className={cn('opacity-70', className)} />
+  if (node.type === 'folder')
+    return <Folder className={cn('opacity-70', className)} strokeWidth={strokeWidth} />
   if (node.favicon)
     return (
       <img
@@ -46,7 +54,7 @@ export function BookmarkIcon({
         className={cn('rounded-[3px]', className)}
       />
     )
-  return <Globe className={cn('opacity-50', className)} />
+  return <Globe className={cn('opacity-50', className)} strokeWidth={strokeWidth} />
 }
 
 /** One line of the manager's list: a bookmark or a folder, its URL or size under the name. */

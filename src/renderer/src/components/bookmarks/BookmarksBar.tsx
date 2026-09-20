@@ -1,6 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronsRight } from 'lucide-react'
 import type { BookmarkNode, Rect, Tab, UIState } from '@shared/types'
 import { BOOKMARKS_BAR_ID, MOBILE_BOOKMARKS_ID, OTHER_BOOKMARKS_ID } from '@shared/bookmarks'
 import { cmd, run } from '@renderer/lib/api'
@@ -11,6 +11,7 @@ import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
 import { ChromePortal, toRect } from '@renderer/lib/portals'
 import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { BarMenu, type BarMenuRoot } from './BarMenu'
 import { BookmarkIcon } from './BookmarkRow'
 import { ChipMotion } from './chipMotion'
@@ -183,12 +184,18 @@ export function BookmarksBar({
   // Dragging a chip
   // ---------------------------------------------------------------------------
 
+  // A chip drag resting on a folder chip opens its panel; resting on a folder row inside an open
+  // panel is the panel's own spring-open (`BarMenu` cascades a level beside it), not a new root.
   const onHoldFolder = useCallback(
     (folderId: string | null): void => {
-      if (folderId) openMenu(folderId)
-      else closeMenu()
+      if (!folderId) closeMenu()
+      else if (
+        items.slice(0, visibleCount).some((n) => n.id === folderId) ||
+        pinned.some((n) => n.id === folderId)
+      )
+        openMenu(folderId)
     },
-    [closeMenu, openMenu]
+    [closeMenu, items, openMenu, pinned, visibleCount]
   )
   const { drag, target, startDrag, ghostRef, justDragged } = useBarDrag({
     tree,
@@ -479,7 +486,6 @@ export function BookmarksBar({
             data-bm-chip={node.type}
             data-bm-anchor={node.type === 'folder' ? true : undefined}
             data-overflow={i >= visibleCount}
-            data-open={menu?.anchorId === node.id}
             data-lifted={liftedId === node.id}
             data-target={dropFolderId === node.id}
             data-icon-only={node.type === 'url' && !node.title ? true : undefined}
@@ -513,7 +519,7 @@ export function BookmarksBar({
             }}
             onContextMenu={(e) => contextMenu(e, node)}
           >
-            <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
+            <BookmarkIcon node={node} className="zen-bm-chip-icon" strokeWidth={TOOLBAR_STROKE} />
             <span className="zen-bm-chip-label">{nodeLabel(node)}</span>
             {tabDrag && i < visibleCount && (
               <TabDropZones node={node} index={i} barId={BOOKMARKS_BAR_ID} />
@@ -526,23 +532,22 @@ export function BookmarksBar({
             aria-hidden
             className="zen-bm-insert"
             data-axis="x"
-            style={{ top: 3, height: 20 }}
+            style={{ top: 4, height: 20 }}
           />
         )}
       </div>
       {hidden.length > 0 && (
+        // Chrome's » (§9.3): a toolbar button at the chips' radius, lit while its panel is open.
         <button
           ref={attach}
           type="button"
           data-bm-id={OVERFLOW_ANCHOR}
           data-bm-anchor
-          data-open={menu?.anchorId === OVERFLOW_ANCHOR}
-          data-icon-only
           tabIndex={focusIndex === visibleCount ? 0 : -1}
           aria-label={`${hidden.length} more ${hidden.length === 1 ? 'bookmark' : 'bookmarks'}`}
           aria-haspopup="menu"
           aria-expanded={menu?.anchorId === OVERFLOW_ANCHOR}
-          className="zen-bm-chip px-1.5"
+          className="zen-toolbar-button zen-bm-overflow"
           onFocus={() => setFocusId(OVERFLOW_ANCHOR)}
           onPointerEnter={() => {
             if (menu && menu.anchorId !== OVERFLOW_ANCHOR && !drag) openMenu(OVERFLOW_ANCHOR)
@@ -550,7 +555,7 @@ export function BookmarksBar({
           onKeyDown={onStripKeyDown}
           onClick={() => toggleMenu(OVERFLOW_ANCHOR)}
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronsRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
         </button>
       )}
       {pinned.map((node) => (
@@ -560,7 +565,6 @@ export function BookmarksBar({
           type="button"
           data-bm-id={node.id}
           data-bm-anchor
-          data-open={menu?.anchorId === node.id}
           data-target={dropFolderId === node.id}
           tabIndex={-1}
           aria-haspopup="menu"
@@ -581,7 +585,7 @@ export function BookmarksBar({
             })
           }}
         >
-          <BookmarkIcon node={node} className="h-4 w-4 shrink-0" />
+          <BookmarkIcon node={node} className="zen-bm-chip-icon" strokeWidth={TOOLBAR_STROKE} />
           <span className="zen-bm-chip-label">{nodeLabel(node)}</span>
           {tabDrag && <span data-drop={`bookmark:${node.id}:`} className="absolute inset-0 z-10" />}
         </button>
@@ -610,7 +614,11 @@ export function BookmarksBar({
             data-into={target?.kind === 'folder'}
             style={{ width: drag.width, height: drag.height }}
           >
-            <BookmarkIcon node={drag.node} className="h-4 w-4 shrink-0" />
+            <BookmarkIcon
+              node={drag.node}
+              className="zen-bm-chip-icon"
+              strokeWidth={TOOLBAR_STROKE}
+            />
             <span className="zen-bm-chip-label">{nodeLabel(drag.node)}</span>
           </div>
         </ChromePortal>
