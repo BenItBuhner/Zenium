@@ -32,14 +32,8 @@
     "urlbarBehavior": "float-typing",
     "phoneBarPosition": "bottom",
     "phoneBar": {
-      "left": [
-        "back"
-      ],
-      "right": [
-        "new-tab",
-        "tabs",
-        "menu"
-      ]
+      "left": ["back"],
+      "right": ["new-tab", "tabs", "menu"]
     },
     "pullToRefresh": true,
     "hideToolbarOnScroll": true,
@@ -268,9 +262,7 @@
         "windowId": null
       }
     },
-    "essentialTabIds": [
-      "tab_fixtureess"
-    ],
+    "essentialTabIds": ["tab_fixtureess"],
     "spaces": [
       {
         "id": "space_fixture01",
@@ -278,10 +270,7 @@
         "icon": "💼",
         "containerId": "work",
         "theme": null,
-        "tabIds": [
-          "tab_fixturepin",
-          "tab_fixturereg"
-        ],
+        "tabIds": ["tab_fixturepin", "tab_fixturereg"],
         "activeTabId": null,
         "pinnedCollapsed": false
       }

@@ -1,9 +1,7 @@
-import { scryptSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import type { BookmarkNode, Boost, KeyBinding, Settings, SyncScope } from '../../../shared/types'
 import type { Model } from '../../model'
-import { fromBase64, toBase64 } from '../../credentials/crypto'
-import { SCRYPT_PARAMS, decryptJson, deriveKey, passphraseBytes } from '../crypto'
+import { decryptJson, deriveKey } from '../crypto'
 import { collectLocal, diffLocal, hashData, type MetaMap, type SyncRecord } from '../records'
 import { sha1Hex } from '../sha1'
 import { parseDeviceFile, serializeDeviceFile } from '../transport'
@@ -48,28 +46,19 @@ const goldenFixture = golden as unknown as GoldenFixture
 
 const hex = (bytes: Uint8Array): string =>
   [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+const unhex = (text: string): Uint8Array =>
+  new Uint8Array(text.match(/../g)!.map((pair) => parseInt(pair, 16)))
 
 describe('device files written before the move', () => {
   it('derive the same key from the passphrase with scrypt-js as node:crypto did', async () => {
+    // `keyHex` was produced by node's scryptSync in the pre-move engine; scrypt-js must agree
+    // bit for bit (`main/sync/__tests__/crossHost.test.ts` re-derives it with node live).
     const key = await deriveKey(legacyFixture.passphrase, legacyFixture.salt)
     expect(hex(key)).toBe(legacyFixture.keyHex)
-    // And node itself still agrees with the recorded key (the fixture is not stale).
-    const node = scryptSync(
-      passphraseBytes(legacyFixture.passphrase),
-      fromBase64(legacyFixture.salt),
-      SCRYPT_PARAMS.dkLen,
-      {
-        N: SCRYPT_PARAMS.N,
-        r: SCRYPT_PARAMS.r,
-        p: SCRYPT_PARAMS.p,
-        maxmem: 128 * SCRYPT_PARAMS.N * SCRYPT_PARAMS.r * 2
-      }
-    )
-    expect(hex(new Uint8Array(node))).toBe(legacyFixture.keyHex)
   }, 60_000)
 
   it('decrypt over Web Crypto to the exact payload the old engine encrypted', async () => {
-    const key = fromBase64(toBase64(Buffer.from(legacyFixture.keyHex, 'hex')))
+    const key = unhex(legacyFixture.keyHex)
     const payload = await decryptJson<{ v: 1; records: SyncRecord[] }>(
       key,
       legacyFixture.deviceFile.envelope
@@ -126,8 +115,7 @@ describe('the moved engine on a fixed record set', () => {
 })
 
 describe('sha1 (pure TypeScript, synchronous)', () => {
-  it('matches the known vectors and node:crypto on arbitrary text', async () => {
-    const { createHash } = await import('node:crypto')
+  it('matches the known vectors and Web Crypto on arbitrary text', async () => {
     expect(sha1Hex('')).toBe('da39a3ee5e6b4b0d3255bfef95601890afd80709')
     expect(sha1Hex('abc')).toBe('a9993e364706816aba3e25717850c26c9cd0d89d')
     expect(sha1Hex('The quick brown fox jumps over the lazy dog')).toBe(
@@ -141,7 +129,8 @@ describe('sha1 (pure TypeScript, synchronous)', () => {
       '💼 émoji and ünïcode ✓',
       JSON.stringify(goldenFixture.settings)
     ]) {
-      expect(sha1Hex(text)).toBe(createHash('sha1').update(text, 'utf8').digest('hex'))
+      const digest = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(text))
+      expect(sha1Hex(text)).toBe(hex(new Uint8Array(digest)))
     }
   })
 })

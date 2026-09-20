@@ -230,7 +230,8 @@ export class SyncEngine implements SyncHost {
       // Keep this device's data: stamp every local record as freshly edited (so it beats the
       // cloud copy) and tombstone records that only exist remotely.
       const now = Date.now()
-      for (const [id, { type }] of local) meta[id] = { type, hash: '', modified: now, deleted: false }
+      for (const [id, { type }] of local)
+        meta[id] = { type, hash: '', modified: now, deleted: false }
       for (const [id, r] of remote) {
         if (local.has(id) || r.deleted) continue
         if (r.type === 'credential' || !inScope(r, this.data.scope)) continue

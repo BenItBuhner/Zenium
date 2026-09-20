@@ -127,9 +127,12 @@ class SyncFolderTest {
         assertEquals("two", folder.read("README.txt"))
         assertEquals(listOf("README.txt"), tree.names(tree.dirId()!!))
         // The text landed in a temporary document, the old one went, the temporary one took its name.
-        val second = tree.log.drop(tree.log.indexOf("write README.txt") + 1)
-        assertTrue(second.toString(), second.any { it.startsWith("create README.txt.tmp-") })
+        val creates = tree.log.withIndex().filter { it.value.startsWith("create README.txt.tmp-") }.map { it.index }
+        assertEquals(tree.log.toString(), 2, creates.size)
+        val second = tree.log.drop(creates[1])
+        assertTrue(second.toString(), second[1].startsWith("write README.txt.tmp-"))
         assertTrue(second.toString(), second.indexOf("delete README.txt") < second.indexOf("rename README.txt"))
+        assertEquals(second.toString(), "rename README.txt", second.last())
         assertEquals("two", folder.read("README.txt"))
     }
 

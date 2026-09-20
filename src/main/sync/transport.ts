@@ -1,11 +1,7 @@
 import { promises as fs, existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import type { SyncTransport } from '../../core/platform'
-import {
-  LEGACY_SYNC_DIR_NAME,
-  SYNC_DIR_NAME,
-  SyncFolderLostError
-} from '../../core/sync/transport'
+import { LEGACY_SYNC_DIR_NAME, SYNC_DIR_NAME, SyncFolderLostError } from '../../core/sync/transport'
 import { moveLegacyDirectory } from '../platform/legacyPaths'
 
 export { SYNC_DIR_NAME, LEGACY_SYNC_DIR_NAME }
