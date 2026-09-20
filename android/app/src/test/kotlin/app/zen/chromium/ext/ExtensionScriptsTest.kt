@@ -99,6 +99,30 @@ class ExtensionScriptsTest {
     }
 
     @Test
+    fun `an injection into the extension's with scope is a with block, as a content script's group is`() {
+        val id = "abcdefghijklmnopabcdefghijklmnop"
+        // A Lit-built file: the write goes to globalThis, the read is the bare name; both must be the scope's.
+        val lit = "globalThis.litPropertyMetadata = new WeakMap(); litPropertyMetadata.get(1)"
+        val scoped = ExtensionScripts.exec("tok", id, "js", JSONObject(), lit, null, null, scoped = true)
+        assertTrue(scoped.contains("function(window,self,globalThis,chrome,browser){with(window){\n$lit\n}})"))
+        val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "() => litPropertyMetadata", "[]", scoped = true)
+        assertTrue(func.contains("{with(window){\nreturn (() => litPropertyMetadata).apply(null,[]);\n}})"))
+        // Unscoped (an isolated world, a MAIN-world injection): the bare function body.
+        val plain = ExtensionScripts.exec("tok", id, "js", JSONObject("""{"world":"MAIN"}"""), lit, null, null)
+        assertTrue(plain.contains("function(window,self,globalThis,chrome,browser){\n$lit\n})"))
+        assertFalse(plain.contains("with(window)"))
+        // The streamed form composes the same text, with a file in place of the code.
+        val dir = createTempDir("ext-scripts-scoped")
+        try {
+            val file = File(dir, "lit.js").apply { writeText(lit) }
+            val streamed = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(file), null, null, null, true, scoped = true)
+            assertEquals(ExtensionScripts.named(ExtensionScripts.guarded(scoped)), streamed)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `execScript streams the extension's files into one guarded, named script equal to the old composition`() {
         val dir = createTempDir("ext-scripts")
         try {

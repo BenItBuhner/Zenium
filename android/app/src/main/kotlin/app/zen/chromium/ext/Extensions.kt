@@ -350,7 +350,11 @@ class Extensions(private val host: Host) {
                 val id = args.str("id")
                 val path = args.str("path")
                 io.execute {
-                    val text = runCatching { fileFor(id, path)?.takeIf { it.isFile }?.readText() }.getOrNull()
+                    // Never a multi-megabyte answer: quoting one took the browser process's heap
+                    // (ExtensionFiles.BRIDGE_TEXT_LIMIT); the runtime streams such files itself.
+                    val file = fileFor(id, path)
+                    val text = ExtensionFiles.bridgeText(file)
+                    if (text == null && file?.isFile == true) Log.w(TAG, "ext.readFile $id $path: ${file.length()} bytes is too large for a bridge answer")
                     main.post { reply(text) }
                 }
             }
@@ -750,10 +754,14 @@ class Extensions(private val host: Host) {
                 run = { script -> tab.evaluateJavascript(script) { result -> reply(unwrap(result)) } }
             }
         }
+        // Evaluated in the main world for the extension's own scope (not a `world: "MAIN"`
+        // injection): the bootstrap gives it the `with` scope proxy, and the body must resolve its
+        // bare identifiers there, as a content script's group does.
+        val scoped = named && !wantMain
         val assemble = {
             ExtensionScripts.execScript(
                 token, id, args.str("kind", "js"), payload, args.strOrNull("code"), files,
-                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named
+                args.strOrNull("funcSource"), args.optJSONArray("args")?.toString(), prefix, named, scoped
             )
         }
         if (files.isEmpty()) {

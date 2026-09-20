@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.os.Parcel
 import android.util.Log
 import android.webkit.WebView
+import app.zen.chromium.ext.ExtensionUrls
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
@@ -209,7 +210,10 @@ object NavigationState {
         if (entries.isEmpty() || items.size != entries.size || currentIndex != index) return false
         return items.indices.all { i ->
             val item = items[i]
-            !item.isNullOrEmpty() && (item == entries[i] || standsInForInternal(item, entries[i]))
+            // An extension page's item is the served origin the WebView loaded; the entry names
+            // it as Chrome spells it (or as the served origin, in a snapshot from before the
+            // entries were presented): one page either way.
+            !item.isNullOrEmpty() && (ExtensionUrls.present(item) == ExtensionUrls.present(entries[i]) || standsInForInternal(item, entries[i]))
         }
     }
 
@@ -258,14 +262,16 @@ object NavigationState {
     fun isDocumentPlaceholder(url: String): Boolean = url.startsWith("data:") && url.endsWith(",")
 
     /**
-     * The URL the snapshot names an entry by: the entry's own, unless it is a `data:` item with
-     * a `name` (the `zen://` URL the view showed it as, by position). A `data:` URL nobody has a
-     * name for is kept while it is a page's own and short (one the user opened as such), and is
-     * [BLANK_URL] when it is an internal page's placeholder ([isDocumentPlaceholder]) or too long
-     * to carry in every snapshot of the tab.
+     * The URL the snapshot names an entry by: the entry's own – an extension page's as Chrome
+     * spells it (`chrome-extension://<id>/...`, the tab's URL in the core's model; the item
+     * carries the served origin the WebView loaded, [ExtensionUrls.present]) – unless it is a
+     * `data:` item with a `name` (the `zen://` URL the view showed it as, by position). A `data:`
+     * URL nobody has a name for is kept while it is a page's own and short (one the user opened
+     * as such), and is [BLANK_URL] when it is an internal page's placeholder
+     * ([isDocumentPlaceholder]) or too long to carry in every snapshot of the tab.
      */
     fun publicUrl(entryUrl: String, name: String?): String {
-        if (!entryUrl.startsWith("data:")) return entryUrl
+        if (!entryUrl.startsWith("data:")) return ExtensionUrls.present(entryUrl)
         if (name != null) return name
         return if (isDocumentPlaceholder(entryUrl) || entryUrl.length > DATA_URL_KEEP_MAX) BLANK_URL else entryUrl
     }

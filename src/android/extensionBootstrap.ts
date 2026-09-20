@@ -37,6 +37,7 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  workerSelf,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
 } from './extensionServiceWorker'
@@ -439,6 +440,17 @@ declare const __zenExtBoot: Boot
     })
 
     if (context === 'background' && workerScript) {
+      // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
+      // or `document` until the script polyfills them, and its polyfills take); the page's own
+      // `self` is [Replaceable] and `globalThis` writable, so both can be redefined.
+      const workerGlobal = workerSelf(pageWindow)
+      for (const name of ['self', 'globalThis']) {
+        Object.defineProperty(pageWindow, name, {
+          value: workerGlobal,
+          configurable: true,
+          writable: true
+        })
+      }
       // Service-worker globals the MV3 script expects; `importScripts` is synchronous by
       // contract, so it is a synchronous XHR to the extension origin and a classic script
       // element of this page (the generated background page carries no CSP that would refuse it).

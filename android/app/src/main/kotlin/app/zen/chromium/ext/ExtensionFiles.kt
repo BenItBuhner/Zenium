@@ -190,6 +190,26 @@ class ExtensionFiles(val root: File) {
             return target
         }
 
+        /**
+         * The most bytes of an extension file the bridge will answer as one text
+         * (`ext.readFile`). A bridge answer is a Java string quoted into a JavaScript literal and
+         * handed to `evaluateJavascript`, three copies of the text in the browser process's heap
+         * at once: AdGuard's 21 MB base filter took the process down that way (round 4). Files
+         * this size and above reach the runtime through the asset loader instead
+         * (`extensionStoreIo.ts` readInstalledFile), which streams them.
+         */
+        const val BRIDGE_TEXT_LIMIT = 4L * 1024 * 1024
+
+        /**
+         * The text of an extension file for a bridge answer, or null when there is no such file
+         * or it is too large to answer that way ([BRIDGE_TEXT_LIMIT]).
+         */
+        fun bridgeText(file: File?): String? {
+            if (file == null || !file.isFile) return null
+            if (file.length() >= BRIDGE_TEXT_LIMIT) return null
+            return runCatching { file.readText() }.getOrNull()
+        }
+
         private fun stagingToken(): String {
             val bytes = ByteArray(8).also(random::nextBytes)
             return "${System.currentTimeMillis().toString(36)}-${bytes.joinToString("") { "%02x".format(it) }}"

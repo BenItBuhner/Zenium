@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { languageCodeOf, offscreenUrl } from '../extensionApi'
-import { pickMessages, type ExtRequestEvent } from '../extensionRuntime'
+import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
   type Harness,
@@ -1696,6 +1696,59 @@ describe('AndroidExtensionRuntime: chrome.system.storage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
+  it('reads as the system\u2019s settings that no extension controls, and takes only that value', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['proxy', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    // The shim routes a ChromeSetting's calls as `(setting, details)`.
+    expect(
+      (await call(h, 'bg1', 'proxy', 'get', ['settings', { incognito: false }])).result
+    ).toEqual({
+      value: { mode: 'system' },
+      levelOfControl: 'not_controllable'
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'system' }, scope: 'regular' }
+      ])
+    ).toMatchObject({ ok: true })
+    expect((await call(h, 'bg1', 'proxy', 'clear', ['settings', { scope: 'regular' }])).ok).toBe(
+      true
+    )
+    // A PAC script (what VeePN, NordVPN and Browsec set) has no application on the WebView: the
+    // call fails, so the extension shows its error instead of believing it is connected.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'pac_script', pacScript: { data: 'function FindProxyForURL() {}' } } }
+      ])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('not controllable on Zenium for Android')
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        {
+          value: {
+            mode: 'fixed_servers',
+            rules: { singleProxy: { host: 'p.example', port: 3128 } }
+          }
+        }
+      ])
+    ).toMatchObject({ ok: false, error: expect.stringContaining('not controllable') })
+    // Chrome's own checks come first: a config Chrome refuses is refused with Chrome's message.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', ['settings', { value: { mode: 'nonsense' } }])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('value.mode')
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: popups and options', () => {
   it('opens the manifest popup as a sheet, or raises action.onClicked when there is none', async () => {
     const h = harness()
@@ -1958,5 +2011,87 @@ describe('pickMessages', () => {
     expect(pickMessages(locales, 'de-AT', 'en')?.name.message).toBe('Deutsch')
     expect(pickMessages(locales, 'fr-FR', 'en')?.name.message).toBe('English')
     expect(pickMessages({}, 'fr-FR', 'en')).toBeNull()
+  })
+})
+
+describe("AndroidExtensionRuntime: an extension's files come through the store's asset loader", () => {
+  /** A store behind the runtime whose install directory holds `files` (package-relative). */
+  function storeWithFiles(h: Harness, files: Record<string, string>): string[] {
+    const reads: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      readInstalledFile: async (dir, relative) => {
+        reads.push(`${dir}|${relative}`)
+        const text = files[relative]
+        return text === undefined ? null : new TextEncoder().encode(text)
+      }
+    }
+    return reads
+  }
+
+  it('reads a static ruleset by the record directory, never as one bridge answer', async () => {
+    const h = harness()
+    const rules = JSON.stringify([
+      { id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }
+    ])
+    // The bridge would answer too, with something else: the store is the source.
+    h.kt.files.set(`${ID}/filters/base.json`, '[]')
+    const reads = storeWithFiles(h, { 'filters/base.json': rules })
+    await h.runtime.attach(
+      record(
+        h,
+        {},
+        manifest({
+          permissions: ['declarativeNetRequest'],
+          declarative_net_request: {
+            rule_resources: [{ id: 'base', enabled: true, path: '/filters/./base.json' }]
+          }
+        })
+      )
+    )
+    await h.runtime.dnr.whenSynced(ID)
+    expect(reads).toEqual([`${PATH}|filters/base.json`])
+    expect(h.kt.calledWith('ext.readFile')).toEqual([])
+    // The store's file, not the bridge's empty one, is the ruleset in the engine.
+    expect(h.engine.summary(`ext:${ID}:static:base`)).toMatchObject({
+      source: 'dnr',
+      enabled: true,
+      ruleCount: 1
+    })
+  })
+
+  it("a stylesheet's file is read the same way, and a path leaving the package is no file", async () => {
+    const h = harness()
+    storeWithFiles(h, { 'styles/dark.css': 'body{background:#000}' })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['scripting'] })))
+    backgroundUp(h, 'bg1')
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    const ok = await call(h, 'bg1', 'scripting', 'insertCSS', [
+      { target: { tabId }, files: ['styles/dark.css'] }
+    ])
+    expect(ok.error).toBeUndefined()
+    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({
+      kind: 'css',
+      payload: { id: 'styles/dark.css', code: 'body{background:#000}' }
+    })
+    const escape = await call(h, 'bg1', 'scripting', 'insertCSS', [
+      { target: { tabId }, files: ['../other/secret.css'] }
+    ])
+    expect(escape.error).toMatch(/Could not load file/)
+    expect(h.kt.calledWith('ext.readFile')).toEqual([])
+  })
+
+  it('packageRelativePath resolves a files entry as Chrome does', () => {
+    expect(packageRelativePath('/css/a.css')).toBe('css/a.css')
+    expect(packageRelativePath('./css//a.css')).toBe('css/a.css')
+    expect(packageRelativePath('a.css')).toBe('a.css')
+    expect(packageRelativePath('')).toBeNull()
+    expect(packageRelativePath('/')).toBeNull()
+    expect(packageRelativePath('../x.css')).toBeNull()
+    expect(packageRelativePath('css/../../x.css')).toBeNull()
   })
 })

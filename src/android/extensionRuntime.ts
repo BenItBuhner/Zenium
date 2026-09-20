@@ -279,6 +279,23 @@ export interface RuntimeStoreLink {
    * `IsExtensionIdle`): the moment a staged update lands (`ExtensionRuntimeHooks.delaysUpdate`).
    */
   idle?(id: string): void
+  /**
+   * A file of an installed version by the record's directory and a package-relative path,
+   * streamed through the chrome's asset loader (`AndroidExtensionStoreIo.readInstalledFile`);
+   * null when it is not there.
+   */
+  readInstalledFile?(dir: string, relative: string): Promise<Uint8Array | null>
+}
+
+/**
+ * A path inside an extension package as Chrome resolves a `files` entry: relative to the root,
+ * a leading slash allowed, `.` segments dropped; null when it is empty or names a parent (`..`),
+ * which Chrome refuses ("Could not load file") and which would reach past the package here.
+ */
+export function packageRelativePath(path: string): string | null {
+  const segments = path.split('/').filter((s) => s !== '' && s !== '.')
+  if (segments.length === 0 || segments.includes('..')) return null
+  return segments.join('/')
 }
 
 export interface AndroidExtensionRuntimeOptions {
@@ -1013,9 +1030,24 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return new Map(Object.values(tabs.model.tabs).map((tab) => [tab.id, tabs.isPrivate(tab)]))
   }
 
-  readFile(id: string, path: string): Promise<string | null> {
-    if (!path) return Promise.resolve(null)
-    return this.bridge.call<string | null>('ext.readFile', { id, path })
+  /**
+   * A file of the extension as text (a static ruleset, a stylesheet to insert) by its
+   * manifest-relative path; null when it is not there, or the path leaves the package. The bytes
+   * come through the store's asset loader, which streams them from the install directory: a
+   * ruleset runs to tens of MB (AdGuard's base filter is 21 MB), and one such file quoted into a
+   * single bridge answer took the Java heap with it. The bridge's `ext.readFile` stays for a
+   * runtime with no store behind it.
+   */
+  async readFile(id: string, path: string): Promise<string | null> {
+    const relative = packageRelativePath(path)
+    if (relative === null) return null
+    const store = this.store
+    const dir = this.extensions.get(id)?.record.path ?? store?.record(id)?.path
+    if (store?.readInstalledFile && dir) {
+      const bytes = await store.readInstalledFile(dir, relative)
+      return bytes === null ? null : new TextDecoder().decode(bytes)
+    }
+    return this.bridge.call<string | null>('ext.readFile', { id, path: relative })
   }
 
   async detectTextLanguage(text: string): Promise<DetectedLanguage> {

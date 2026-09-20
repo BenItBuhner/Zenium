@@ -439,6 +439,222 @@ export function importScriptsFor(options: ImportScriptsOptions): (...urls: strin
   }
 }
 
+/**
+ * Members a `Window` has and a `ServiceWorkerGlobalScope` has not, as seen through the worker
+ * page's `self` and `globalThis`: absent until the script itself defines them. The ones worker
+ * scripts and their libraries test for or polyfill (`window`, `document`, `localStorage`, the
+ * frame tree), and the page-only schedulers a hidden page never runs (`requestAnimationFrame`).
+ * Constructors (`DOMParser`, `XMLHttpRequest`, `Image`) are left visible: they are writable, a
+ * polyfill replaces them, and the real ones work on the page.
+ */
+export const WINDOW_ONLY_MEMBERS: ReadonlySet<PropertyKey> = new Set<PropertyKey>([
+  'window',
+  'document',
+  'localStorage',
+  'sessionStorage',
+  'history',
+  'frames',
+  'parent',
+  'top',
+  'opener',
+  'frameElement',
+  'customElements',
+  'screen',
+  'visualViewport',
+  'speechSynthesis',
+  'external',
+  'menubar',
+  'toolbar',
+  'locationbar',
+  'personalbar',
+  'scrollbars',
+  'statusbar',
+  'alert',
+  'confirm',
+  'prompt',
+  'print',
+  'open',
+  'find',
+  'stop',
+  'focus',
+  'blur',
+  'getComputedStyle',
+  'getSelection',
+  'matchMedia',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'moveBy',
+  'moveTo',
+  'resizeBy',
+  'resizeTo',
+  'scroll',
+  'scrollBy',
+  'scrollTo',
+  'innerWidth',
+  'innerHeight',
+  'outerWidth',
+  'outerHeight',
+  'screenX',
+  'screenY',
+  'screenLeft',
+  'screenTop',
+  'scrollX',
+  'scrollY',
+  'pageXOffset',
+  'pageYOffset',
+  'devicePixelRatio'
+])
+
+/**
+ * The keys of the global's operations: the function-valued data properties of the global and
+ * of its prototype chain short of `Object.prototype` that are not constructors (Blink gives an
+ * operation no `prototype`; `fetch`, `setTimeout` and `atob` sit on the Window itself, a
+ * [Global] interface, `addEventListener` on `EventTarget.prototype`). Accessors are not read:
+ * the snapshot must not run a getter. `Object.prototype`'s generics (`hasOwnProperty`,
+ * `toString`) take any receiver and are left out, so through the proxy they see the proxy.
+ */
+export function platformOperations(global: object): ReadonlySet<PropertyKey> {
+  const keys = new Set<PropertyKey>()
+  for (
+    let obj: object | null = global;
+    obj && obj !== Object.prototype;
+    obj = Object.getPrototypeOf(obj)
+  ) {
+    for (const key of Reflect.ownKeys(obj)) {
+      const descriptor = Object.getOwnPropertyDescriptor(obj, key)
+      const value: unknown = descriptor && 'value' in descriptor ? descriptor.value : undefined
+      if (typeof value === 'function' && !Object.prototype.hasOwnProperty.call(value, 'prototype'))
+        keys.add(key)
+    }
+  }
+  return keys
+}
+
+/**
+ * The worker page's `self` and `globalThis`, as a worker script built for a real worker reads
+ * and writes them.
+ *
+ * A worker has no `window`, `document` or `localStorage`, so bundlers and the scripts polyfill
+ * them onto the global: `self.window = self` opens Google Docs Offline's worker and both Avira
+ * workers (Closure and browserify prologues), `self.localStorage = new LocalStorage()` Capital
+ * One Shopping's, `globalThis.document = { visibilityState: 'hidden', … }` Online Security's
+ * (Sentry's `GLOBAL_OBJ`); NordPass tells a background from a page by `!globalThis.document`.
+ * On the page that stands in for the worker those are the global's unforgeable getters, a
+ * strict-mode write to a getter-only property is a TypeError, and the scripts died on that
+ * line, before a single listener was registered; the test read a page. `self` is [Replaceable]
+ * and `globalThis` writable in Chrome's IDL, so both become this proxy, which answers as a
+ * worker's global does:
+ *
+ * - `WINDOW_ONLY_MEMBERS` are absent (`undefined`, not `in`) until the script defines them,
+ *   and what it defines is kept here and read back from here; the page's own `window`,
+ *   `document` and schedulers are untouched.
+ * - A write the global refuses (a getter-only property, `navigator` say) is kept here too,
+ *   instead of the TypeError a Window throws and a worker never would for its own polyfill.
+ * - Everything else goes to the global, with the global as receiver (its getters, `location`
+ *   and `crypto` among them, want it), and a function that is not a constructor comes back
+ *   bound to the global, so `self.addEventListener`, `self.fetch`, `self.setTimeout` run on
+ *   the object Blink expects (a constructor constructs alike whatever the receiver, and its
+ *   `prototype` must stay reachable, so it comes back as it is). The platform's operations
+ *   are told from constructors once, when the proxy is made: a key that names one stays bound
+ *   whatever function a script has put there since. Sentry's `browserApiErrors` wraps
+ *   `EventTarget.prototype.addEventListener` in a plain function that forwards `this` to the
+ *   native, then calls `GLOBAL_OBJ.addEventListener(…)`; the wrapper has a `prototype` as any
+ *   plain function does, and unbound it would hand the native this proxy, an Illegal invocation
+ *   that took MetaMask's and Malwarebytes' workers down.
+ *
+ * The proxy's target is an empty object, not the global: a proxy over the global itself would
+ * be held to the global's own invariants, and refusing a write to a getter-only `window` is
+ * one of them. Bare identifiers (`typeof document`, `window.x`) still resolve on the page's
+ * global; only what a script reaches through `self` or `globalThis` is a worker's.
+ */
+export function workerSelf(global: object): object {
+  const bound = new WeakMap<object, unknown>()
+  const operations = platformOperations(global)
+  // The target: empty but for what the script defines of a worker's missing members.
+  const held: Record<PropertyKey, unknown> = {}
+  const holds = (key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(held, key)
+  const ownHere = (key: PropertyKey): boolean => holds(key) || WINDOW_ONLY_MEMBERS.has(key)
+  const forCall = (key: PropertyKey, value: unknown): unknown => {
+    if (typeof value !== 'function') return value
+    if (!operations.has(key) && Object.prototype.hasOwnProperty.call(value, 'prototype'))
+      return value
+    const own = Object.getOwnPropertyDescriptor(global, key)
+    if (own && !own.configurable && !own.writable) return value
+    let fn = bound.get(value)
+    if (!fn) {
+      fn = (value as (...args: unknown[]) => unknown).bind(global)
+      bound.set(value, fn)
+    }
+    return fn
+  }
+  /** A getter-only property of the global (a Window's readonly attribute): the write is kept here. */
+  const refusedByGlobal = (key: PropertyKey): boolean => {
+    let obj: object | null = global
+    while (obj) {
+      const descriptor = Object.getOwnPropertyDescriptor(obj, key)
+      if (descriptor) return 'get' in descriptor && typeof descriptor.set !== 'function'
+      obj = Object.getPrototypeOf(obj)
+    }
+    return false
+  }
+  const proxy: object = new Proxy(held, {
+    get(target, key) {
+      if (key === 'self' || key === 'globalThis') return proxy
+      if (holds(key)) return Reflect.get(target, key, proxy)
+      if (WINDOW_ONLY_MEMBERS.has(key)) return undefined
+      return forCall(key, Reflect.get(global, key, global))
+    },
+    set(target, key, value) {
+      if (ownHere(key) || refusedByGlobal(key)) return Reflect.set(target, key, value, target)
+      return Reflect.set(global, key, value, global)
+    },
+    has(_target, key) {
+      if (holds(key)) return true
+      if (WINDOW_ONLY_MEMBERS.has(key)) return false
+      return Reflect.has(global, key)
+    },
+    deleteProperty(target, key) {
+      if (holds(key)) return Reflect.deleteProperty(target, key)
+      if (WINDOW_ONLY_MEMBERS.has(key)) return true
+      return Reflect.deleteProperty(global, key)
+    },
+    defineProperty(target, key, descriptor) {
+      if (ownHere(key) || refusedByGlobal(key))
+        return Reflect.defineProperty(target, key, descriptor)
+      const ok = Reflect.defineProperty(global, key, descriptor)
+      // The proxy may only report a property non-configurable when its target holds one too.
+      if (ok && descriptor.configurable === false) Reflect.defineProperty(target, key, descriptor)
+      return ok
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (holds(key)) return Reflect.getOwnPropertyDescriptor(target, key)
+      if (WINDOW_ONLY_MEMBERS.has(key)) return undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(global, key)
+      if (!descriptor) return undefined
+      // The global's unforgeable properties are non-configurable; the target holds no such
+      // property (unless a script defined one through the proxy, the branch above), and the
+      // proxy may not report one it does not hold.
+      return { ...descriptor, configurable: true }
+    },
+    ownKeys(target) {
+      // The global's keys but a worker's missing members, and whatever the target holds that
+      // the global does not (the invariant: every own key of the target is reported).
+      const keys = Reflect.ownKeys(global).filter((key) => !WINDOW_ONLY_MEMBERS.has(key))
+      const missing = Reflect.ownKeys(target).filter((key) => !keys.includes(key))
+      return missing.length ? [...keys, ...missing] : keys
+    },
+    getPrototypeOf() {
+      return Reflect.getPrototypeOf(global)
+    },
+    preventExtensions() {
+      return false
+    }
+  })
+  return proxy
+}
+
 interface WorkerOptions {
   origin: string
   /** The worker script's URL: `self.location`, `serviceWorker.scriptURL`, the lifecycle marker. */

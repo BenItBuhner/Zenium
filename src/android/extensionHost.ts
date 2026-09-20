@@ -13,7 +13,11 @@ import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
 import { parseCrxHeader } from '@core/extensions/crx'
-import { ExtensionErrorRing } from '@core/extensions/errorConsole'
+import {
+  ExtensionErrorRing,
+  engineBelowMinimumReport,
+  type ExtensionErrorReport
+} from '@core/extensions/errorConsole'
 import {
   checkForUpdates,
   installFromCrx,
@@ -37,7 +41,11 @@ import {
   type InstallConfirmation
 } from '@core/extensions/hostStore'
 import { isManagedPath } from '@core/extensions/installLayout'
-import { stripJsonComments } from '@core/extensions/manifest'
+import {
+  parseVersion,
+  satisfiesMinimumChromeVersion,
+  stripJsonComments
+} from '@core/extensions/manifest'
 import {
   newWarnings,
   permissionWarningLines,
@@ -103,6 +111,17 @@ export function storeChromiumVersion(
     if (a !== b) return a > b ? padVersion(match[1]) : floor
   }
   return floor
+}
+
+/**
+ * The Chromium version of the engine itself, the WebView that renders pages and runs content
+ * scripts (`Chrome/113.0.5672.136` in its user agent), padded to four components; null when the
+ * user agent names none. Distinct from [storeChromiumVersion]: the platform the extension
+ * installs against is Zenium's emulated one, the engine under it may be older.
+ */
+export function engineChromiumVersion(userAgent: string): string | null {
+  const match = /Chrome\/(\d+(?:\.\d+){0,3})/.exec(userAgent)
+  return match ? padVersion(match[1]) : null
 }
 
 function padVersion(version: string): string {
@@ -173,15 +192,25 @@ const NO_UPDATE_INFO: UpdateInfo = {
 
 /** What the host remembers about an installed version besides its record. */
 interface Details {
-  manifest: PermissionWarningSource & IconManifest & { name?: string; description?: string }
+  manifest: PermissionWarningSource &
+    IconManifest & { name?: string; description?: string; minimum_chrome_version?: string }
   icon: string | null
 }
 
 export interface AndroidExtensionsOptions {
   /** The runtime that runs extensions; the default keeps installs as files and records. */
   hooks?: ExtensionRuntimeHooks
-  /** Full Chromium version for store requests (see `storeChromiumVersion`). */
+  /**
+   * Full Chromium version for store requests and the version a package's
+   * `minimum_chrome_version` is held against at install (see `storeChromiumVersion`).
+   */
   chromiumVersion?: string
+  /**
+   * The WebView's own Chromium version (`engineChromiumVersion` of the user agent by default),
+   * or null when unknown: an attached extension whose `minimum_chrome_version` is above it gets
+   * a warning on its error console, since the pages it touches run on that older engine.
+   */
+  engineChromiumVersion?: string | null
   /** UI locale for manifest localisation (`navigator.language` by default). */
   locale?: string | null
   now?: () => number
@@ -207,6 +236,7 @@ export class AndroidExtensions implements ExtensionHost {
   private readonly store: JsonStore<ExtensionRegistry>
   private readonly hooks: ExtensionRuntimeHooks
   private readonly chromiumVersion: string
+  private readonly engineVersion: string | null
   private readonly locale: string | null
   private readonly now: () => number
   private readonly timers: Required<
@@ -266,9 +296,12 @@ export class AndroidExtensions implements ExtensionHost {
   ) {
     this.prompts = new ChromePrompts(browser)
     this.hooks = options.hooks ?? noRuntimeHooks
-    this.chromiumVersion =
-      options.chromiumVersion ??
-      storeChromiumVersion(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+    const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
+    this.chromiumVersion = options.chromiumVersion ?? storeChromiumVersion(userAgent)
+    this.engineVersion =
+      options.engineChromiumVersion !== undefined
+        ? options.engineChromiumVersion
+        : engineChromiumVersion(userAgent)
     this.locale =
       options.locale !== undefined
         ? options.locale
@@ -297,6 +330,15 @@ export class AndroidExtensions implements ExtensionHost {
   /** `files/zen/extensions`, absolute. */
   get root(): string {
     return this.io.root
+  }
+
+  /**
+   * A file of an installed version (`RuntimeStoreLink.readInstalledFile`): the runtime's
+   * rulesets and stylesheets come this way, streamed by the asset loader rather than quoted
+   * into a bridge answer.
+   */
+  readInstalledFile(dir: string, relative: string): Promise<Uint8Array | null> {
+    return this.io.readInstalledFile(dir, relative)
   }
 
   async start(): Promise<void> {
@@ -378,7 +420,37 @@ export class AndroidExtensions implements ExtensionHost {
       this.attached.add(record.id)
     } catch (error) {
       this.attachFailed(record, (error as Error).message)
+      return
     }
+    // Not awaited: the manifest may come from disk, and the start must not wait on a warning.
+    void this.warnEngineBelowMinimum(record)
+  }
+
+  /**
+   * A running extension whose `minimum_chrome_version` the WebView does not meet: one warning
+   * on its console per attach (the ring folds repeats), as the install itself went ahead
+   * against Zenium's platform version. Nothing when the engine's version is unknown.
+   */
+  private async warnEngineBelowMinimum(record: ExtensionRecord): Promise<void> {
+    const engine = this.engineVersion
+    if (!engine) return
+    const minimum = (await this.installedManifest(record)).minimum_chrome_version
+    if (typeof minimum !== 'string' || !parseVersion(minimum)) return
+    if (satisfiesMinimumChromeVersion({ minimum_chrome_version: minimum }, engine)) return
+    // The record may have gone or been replaced while the manifest was read.
+    if (this.record(record.id)?.path !== record.path) return
+    this.report(record.id, engineBelowMinimumReport(record.id, minimum, engine))
+    this.browser.state.commitVolatile()
+  }
+
+  /** A line on an extension's error console (`ExtensionInfo.errors`). */
+  private report(id: string, report: ExtensionErrorReport): void {
+    let ring = this.console.get(id)
+    if (!ring) {
+      ring = new ExtensionErrorRing()
+      this.console.set(id, ring)
+    }
+    ring.push(report, Date.now())
   }
 
   /**
@@ -402,21 +474,13 @@ export class AndroidExtensions implements ExtensionHost {
 
   private attachFailed(record: ExtensionRecord, message: string): void {
     this.errors.set(record.id, message)
-    let ring = this.console.get(record.id)
-    if (!ring) {
-      ring = new ExtensionErrorRing()
-      this.console.set(record.id, ring)
-    }
-    ring.push(
-      {
-        level: 'error',
-        source: 'load',
-        message,
-        url: `chrome-extension://${record.id}/manifest.json`,
-        context: record.path
-      },
-      Date.now()
-    )
+    this.report(record.id, {
+      level: 'error',
+      source: 'load',
+      message,
+      url: `chrome-extension://${record.id}/manifest.json`,
+      context: record.path
+    })
   }
 
   private async detach(id: string): Promise<void> {
@@ -551,7 +615,10 @@ export class AndroidExtensions implements ExtensionHost {
     try {
       bytes = await this.io.readHandle(handle)
       const name = packageFileName(handle.name, bytes)
-      const { pkg, kind } = await packageFromFile(name, bytes, { locale: this.locale })
+      const { pkg, kind } = await packageFromFile(name, bytes, {
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       console.log(
         `[zen] extensions: read ${name} as ${pkg.id} ${pkg.version} (${kind}, ${pkg.files.length} files, ${bytes.length} bytes, ${elapsed(started, this.now())})`
       )
@@ -647,7 +714,11 @@ export class AndroidExtensions implements ExtensionHost {
     )
     const downloaded = this.now()
     try {
-      const pkg = await installFromCrx(download.bytes, { expectedId: id, locale: this.locale })
+      const pkg = await installFromCrx(download.bytes, {
+        expectedId: id,
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       const skipped = download.skipped
         .map((s) => ` (${storeLabel(s.store)}: HTTP ${s.status})`)
         .join('')
@@ -1316,7 +1387,11 @@ export class AndroidExtensions implements ExtensionHost {
       bytes: await downloadUpdate(fetch, update)
     }))
     try {
-      const pkg = await installFromCrx(bytes, { expectedId: record.id, locale: this.locale })
+      const pkg = await installFromCrx(bytes, {
+        expectedId: record.id,
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       console.log(
         `[zen] extensions: downloaded update ${record.id} ${record.version} -> ${pkg.version} (${bytes.length} bytes, sha256 ${update.sha256 ? 'verified' : 'not announced'}) in ${elapsed(started, this.now())}`
       )
@@ -1474,15 +1549,13 @@ export class AndroidExtensions implements ExtensionHost {
   }
 
   /** The manifest the installed version was approved with: from memory, from disk, or the record. */
-  private async installedManifest(record: ExtensionRecord): Promise<PermissionWarningSource> {
+  private async installedManifest(record: ExtensionRecord): Promise<Details['manifest']> {
     const known = this.details.get(record.id)
     if (known) return known.manifest
     const raw = await this.io.readInstalledFile(record.path, 'manifest.json').catch(() => null)
     if (raw) {
       try {
-        return JSON.parse(
-          stripJsonComments(new TextDecoder().decode(raw))
-        ) as PermissionWarningSource
+        return JSON.parse(stripJsonComments(new TextDecoder().decode(raw))) as Details['manifest']
       } catch {
         /* fall through to the record */
       }
