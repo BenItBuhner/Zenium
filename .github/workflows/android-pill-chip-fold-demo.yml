@@ -25,6 +25,12 @@ on:
           - dark
           - light
         default: dark
+  # TEMPORARY (W3-14): the run trigger for the PR's branch; removed once the run is in. Only a
+  # push whose head commit says `[fold-run]` records (the budget is one run and one retry), so
+  # the pushes between them cost nothing.
+  push:
+    branches:
+      - cursor/android-pill-chip-fold-7488
 
 permissions:
   contents: read
@@ -36,6 +42,7 @@ concurrency:
 jobs:
   record:
     name: Pill chip fold demo
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fold-run]')
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
