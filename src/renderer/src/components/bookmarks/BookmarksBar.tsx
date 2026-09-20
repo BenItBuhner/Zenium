@@ -593,6 +593,8 @@ export function BookmarksBar({
 
       {menu && menuRoot && (
         <BarMenu
+          // One panel per chip: a hand-off to another chip starts its cascade and its focus afresh.
+          key={menu.anchorId}
           tree={tree}
           root={menuRoot}
           anchor={menu.anchor}
