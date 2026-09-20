@@ -5,10 +5,13 @@ import {
   collectLocal,
   defaultScope,
   diffLocal,
+  frozenRecords,
   hashData,
+  inScope,
   metaFromRemote,
   newestByRecord,
   readBookmarkData,
+  readCredentialData,
   stableStringify,
   winningRemote,
   type BookmarkData,
@@ -398,5 +401,220 @@ describe('bookmark records', () => {
       ])
     )
     expect(winners.map((r) => r.id)).toEqual(['bm_leaf'])
+  })
+})
+
+describe('credential records (ID-09)', () => {
+  const login = {
+    id: 'cred_login1',
+    origin: 'https://example.com',
+    url: 'https://example.com/login',
+    username: 'ada',
+    password: 's3cret',
+    realm: null,
+    notes: '',
+    createdAt: 100,
+    updatedAt: 200,
+    lastUsedAt: null
+  }
+  const passkey = {
+    id: 'passkey_1',
+    rpId: 'example.com',
+    rpName: 'Example',
+    userName: 'ada',
+    userDisplayName: 'Ada',
+    credentialId: 'cred-1',
+    origin: 'https://example.com',
+    createdAt: 300,
+    lastUsedAt: 400
+  }
+
+  it('collectLocal emits one record per login and per passkey, under the store ids', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [passkey] }
+    const out = collectLocal(src, defaultScope())
+    expect(out.get('cred_login1')).toEqual({
+      type: 'credential',
+      data: {
+        kind: 'login',
+        origin: 'https://example.com',
+        url: 'https://example.com/login',
+        username: 'ada',
+        password: 's3cret',
+        realm: null,
+        notes: '',
+        createdAt: 100,
+        updatedAt: 200,
+        lastUsedAt: null
+      }
+    })
+    expect(out.get('passkey_1')).toEqual({
+      type: 'credential',
+      data: {
+        kind: 'passkey',
+        rpId: 'example.com',
+        rpName: 'Example',
+        userName: 'ada',
+        userDisplayName: 'Ada',
+        credentialId: 'cred-1',
+        origin: 'https://example.com',
+        createdAt: 300,
+        lastUsedAt: 400
+      }
+    })
+    // The passkey's record carries no key material: there is none in the store to carry.
+    expect(Object.keys(out.get('passkey_1')!.data as object)).not.toContain('privateKey')
+  })
+
+  it('the passwords toggle (default on) and a locked vault leave credentials out', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [passkey] }
+    expect(defaultScope().passwords).toBe(true)
+    expect(collectLocal(src, { ...defaultScope(), passwords: false }).has('cred_login1')).toBe(
+      false
+    )
+    src.credentials = null
+    expect(collectLocal(src, defaultScope()).has('cred_login1')).toBe(false)
+    delete src.credentials
+    expect(collectLocal(src, defaultScope()).has('cred_login1')).toBe(false)
+  })
+
+  it('inScope gates credential records on the passwords toggle both ways', () => {
+    const record: SyncRecord = {
+      id: 'cred_login1',
+      type: 'credential',
+      modified: 1,
+      deleted: false,
+      data: { kind: 'login' }
+    }
+    expect(inScope(record, defaultScope())).toBe(true)
+    expect(inScope(record, { ...defaultScope(), passwords: false })).toBe(false)
+    expect(
+      inScope({ ...record, deleted: true, data: null }, { ...defaultScope(), passwords: false })
+    ).toBe(false)
+  })
+
+  it('readCredentialData accepts both kinds, repairs missing fields and rejects garbage', () => {
+    expect(
+      readCredentialData({ kind: 'login', origin: 'https://a.example', password: 'x' })
+    ).toEqual({
+      kind: 'login',
+      origin: 'https://a.example',
+      url: '',
+      username: '',
+      password: 'x',
+      realm: null,
+      notes: '',
+      createdAt: 0,
+      updatedAt: 0,
+      lastUsedAt: null
+    })
+    expect(readCredentialData({ kind: 'passkey', rpId: 'a.example', lastUsedAt: 5 })).toMatchObject(
+      {
+        kind: 'passkey',
+        rpId: 'a.example',
+        credentialId: '',
+        lastUsedAt: 5
+      }
+    )
+    expect(readCredentialData({ kind: 'login', origin: 'https://a.example' })).toBeNull()
+    expect(readCredentialData({ kind: 'passkey' })).toBeNull()
+    expect(readCredentialData({ kind: 'totp', secret: 'x' })).toBeNull()
+    expect(readCredentialData(null)).toBeNull()
+    expect(readCredentialData('login')).toBeNull()
+  })
+
+  it('merges by id, last writer wins per entry, deletions travel as tombstones', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [] }
+    const local = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    const remoteNewer: SyncRecord = {
+      id: 'cred_login1',
+      type: 'credential',
+      modified: 2000,
+      deleted: false,
+      data: {
+        ...(local.records.find((r) => r.id === 'cred_login1')!.data as object),
+        password: 'new'
+      }
+    }
+    const remoteOther: SyncRecord = {
+      id: 'cred_login2',
+      type: 'credential',
+      modified: 5,
+      deleted: false,
+      data: { kind: 'login', origin: 'https://b.example', password: 'y' }
+    }
+    const remoteGone: SyncRecord = {
+      id: 'cred_login3',
+      type: 'credential',
+      modified: 5,
+      deleted: true,
+      data: null
+    }
+    const winners = winningRemote(
+      local.meta,
+      newestByRecord([[remoteNewer, remoteOther, remoteGone], [{ ...remoteNewer, modified: 1500 }]])
+    )
+    expect(winners.map((r) => r.id).sort()).toEqual(['cred_login1', 'cred_login2'])
+    expect(
+      (winners.find((r) => r.id === 'cred_login1')!.data as { password: string }).password
+    ).toBe('new')
+    // A local edit later than the remote copy wins the tie-break by time, not by device.
+    src.credentials = { logins: [{ ...login, password: 'mine', updatedAt: 3000 }], passkeys: [] }
+    const edited = diffLocal(local.meta, collectLocal(src, defaultScope()), 3000)
+    expect(edited.meta.cred_login1.modified).toBe(3000)
+    expect(winningRemote(edited.meta, new Map([['cred_login1', remoteNewer]]))).toEqual([])
+    // Deleting locally produces a tombstone that beats the remote copy.
+    src.credentials = { logins: [], passkeys: [] }
+    const removed = diffLocal(edited.meta, collectLocal(src, defaultScope()), 4000)
+    expect(removed.records.find((r) => r.id === 'cred_login1')).toMatchObject({
+      type: 'credential',
+      deleted: true,
+      modified: 4000
+    })
+  })
+
+  it('frozenRecords: toggling passwords off or locking the vault never tombstones an entry', () => {
+    const src = sources()
+    src.credentials = { logins: [login], passkeys: [passkey] }
+    const on = diffLocal({}, collectLocal(src, defaultScope()), 1000)
+    expect(on.meta.cred_login1).toBeDefined()
+
+    const off = { ...defaultScope(), passwords: false }
+    const held = diffLocal(
+      on.meta,
+      collectLocal(src, off),
+      2000,
+      undefined,
+      frozenRecords(src, off, on.meta)
+    )
+    expect(held.changed).toBe(false)
+    expect(held.meta.cred_login1).toEqual(on.meta.cred_login1)
+    expect(held.meta.passkey_1).toEqual(on.meta.passkey_1)
+    expect(held.records.some((r) => r.type === 'credential')).toBe(false)
+
+    src.credentials = null
+    const locked = diffLocal(
+      on.meta,
+      collectLocal(src, defaultScope()),
+      3000,
+      undefined,
+      frozenRecords(src, defaultScope(), on.meta)
+    )
+    expect(locked.changed).toBe(false)
+    expect(locked.meta.cred_login1).toEqual(on.meta.cred_login1)
+    expect(locked.records.some((r) => r.type === 'credential')).toBe(false)
+
+    // Without the freeze the same absence would be a deletion – the guard is what keeps it out.
+    const naive = diffLocal(on.meta, collectLocal(src, defaultScope()), 3000)
+    expect(naive.records.find((r) => r.id === 'cred_login1')?.deleted).toBe(true)
+  })
+
+  it('hashes credential data key-order independently like every other record', () => {
+    const a = hashData({ kind: 'login', origin: 'o', password: 'p' })
+    const b = hashData({ password: 'p', origin: 'o', kind: 'login' })
+    expect(a).toBe(b)
+    expect(a).toMatch(/^[0-9a-f]{40}$/)
   })
 })

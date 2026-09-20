@@ -285,7 +285,10 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     id: 'sync',
     label: 'Sync',
     keywords: ['devices', 'folder', 'passphrase'],
-    requires: 'sync'
+    requires: 'sync',
+    // The engine runs on the phone (ID-08) but its Settings builder is the UI PR's: until it
+    // lands the category stays off the phone landing rather than opening on an empty page.
+    layouts: ['desktop', 'tablet']
   },
   {
     id: 'accessibility',

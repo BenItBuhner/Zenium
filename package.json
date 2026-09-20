@@ -51,6 +51,7 @@
     "nayuki-qr-code-generator": "1.8.0",
     "pdfjs-dist": "^6.3.289",
     "radix-ui": "^1.6.7",
+    "scrypt-js": "3.0.1",
     "tailwind-merge": "^3.7.0",
     "tweetnacl": "^1.0.3"
   },
