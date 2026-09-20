@@ -1888,7 +1888,9 @@ describe('the chrome switch in the stylesheet', () => {
         s === '*' ||
         s.startsWith('.zen-overview') ||
         s.startsWith('.zen-group') ||
-        s.startsWith('.zen-v2-segment')
+        s.startsWith('.zen-v2-segment') ||
+        s.startsWith('.zen-pill-well') ||
+        s.endsWith('.zen-window')
     )
   )
   const forSelector = (selector: string, reduced: boolean): CssRule[] =>
@@ -2005,5 +2007,15 @@ describe('the chrome switch in the stylesheet', () => {
     expect(declared('.zen-v2-segment', 'background')).toBeUndefined()
     expect(declared('.zen-v2-segment', 'min-height')).toBe('var(--v2-row)')
     expect(declared(tab, 'font-weight')).toBe('var(--v2-weight-heading)')
+  })
+
+  it('nothing on the phone tweens a theme token per element: the blend is the one colour animation (v2 §11.5)', () => {
+    // The two fills in the theme's ink that used to re-tween each frame of the blend and trail it.
+    expect(declared('.zen-pill-well', 'background')).toContain('--zen-fg-rgb')
+    expect(declared('.zen-pill-well', 'transition')).toBeUndefined()
+    expect(declared('.zen-overview-new', 'background')).toContain('--zen-fg-rgb')
+    expect(declared('.zen-overview-new', 'transition')).toBeUndefined()
+    // The phone window's own background transition is off (the desktop keeps its 600 ms).
+    expect(declared(":root[data-form-factor='phone'] .zen-window", 'transition')).toBe('none')
   })
 })

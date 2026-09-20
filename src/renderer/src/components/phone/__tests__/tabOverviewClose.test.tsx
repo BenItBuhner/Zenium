@@ -356,12 +356,12 @@ describe('the header menu', () => {
     expect(commands()).toEqual([])
   })
 
-  it('with no closed tabs and only pinned tabs both rows are off', async () => {
+  it('with no closed tabs and only pinned tabs both rows are off, their counts kept at zero (§9.17)', async () => {
     show(stateOf([tab('p', 'https://pinned.example/', { pinned: true })]))
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Recently Closed', true],
-      ['Close All Tabs', true]
+      ['Recently Closed (0)', true],
+      ['Close All Tabs (0)', true]
     ])
   })
 })
@@ -640,12 +640,12 @@ describe('on a host with private tabs', () => {
     expect(of('session.recentlyClosed')).toEqual([])
   })
 
-  it('with no private tab open the row stays, greyed (§9.17)', async () => {
+  it('with no private tab open the row stays, greyed, its count at zero (§9.17)', async () => {
     show(withPrivate(stateOf([tab('a', 'https://a.example/')])))
     act(() => segment('private').click())
     await openMenu()
     expect(sheetRows().map((r) => [r.textContent?.trim(), r.hasAttribute('disabled')])).toEqual([
-      ['Close Private Tabs', true]
+      ['Close Private Tabs (0)', true]
     ])
   })
 })

@@ -966,7 +966,8 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
  * The header's menu: the recently closed list (matrix TAB-22, TAB-23) and "Close All Tabs" (TAB-06);
  * "Close other tabs" stays on a card's own menu, where it names the card it keeps. The rows are
  * menu items, so Title Case (v2 §9.1; the card menus' rows from #94/#147 take the rule in a
- * follow-up); a row with nothing to act on keeps no count and is disabled, never hidden (§9.17).
+ * follow-up); a row with nothing to act on keeps its count, at zero ("Recently Closed (0)"), and
+ * is disabled at .4, never hidden (§9.17).
  * The private pane's menu is the one row "Close Private Tabs", named as the app menu names it:
  * no recently closed list applies there (Chrome's Incognito switcher has no Recent tabs either),
  * so the row is not there, not greyed – §9.17's rule is for a count of zero.
@@ -991,12 +992,12 @@ function OverviewMenuSheet({
   onRecentlyClosed: () => void
   onCloseAll: () => void
 }): JSX.Element {
-  const counted = (label: string): string => (open > 0 ? `${label} (${open})` : label)
+  const counted = (label: string, n: number): string => `${label} (${n})`
   const actions: SheetAction[] = privateTabs
     ? [
         {
           id: 'close-all',
-          label: counted('Close Private Tabs'),
+          label: counted('Close Private Tabs', open),
           destructive: true,
           disabled: open === 0,
           onPick: onCloseAll
@@ -1005,13 +1006,13 @@ function OverviewMenuSheet({
     : [
         {
           id: 'recently-closed',
-          label: closed > 0 ? `Recently Closed (${closed})` : 'Recently Closed',
+          label: counted('Recently Closed', closed),
           disabled: closed === 0,
           onPick: onRecentlyClosed
         },
         {
           id: 'close-all',
-          label: counted('Close All Tabs'),
+          label: counted('Close All Tabs', open),
           destructive: true,
           disabled: open === 0,
           onPick: onCloseAll

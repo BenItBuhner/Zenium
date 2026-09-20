@@ -1705,11 +1705,14 @@
   .zen-phone-bar-lifted .zen-group-strip {
     pointer-events: none;
   }
-  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  /*
+   * The slot an address pill left behind while it is being carried: a shallow well. Its tint
+   * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
+   * (v2 §11.5, nothing tweens per element on the phone), and the target tint is a cut.
+   */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);
     box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
-    transition: background 160ms var(--zen-ease);
   }
   .zen-pill-well-target {
     background: rgb(var(--zen-fg-rgb) / 0.09);
@@ -1958,10 +1961,14 @@
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
+  /*
+   * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
+   * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
+   * as the other cards' pressed states are.
+   */
   .zen-overview-new {
     border-radius: var(--zen-card-radius);
     background: rgb(var(--zen-fg-rgb) / 0.06);
-    transition: background 140ms var(--zen-ease);
   }
   .zen-overview-new:active {
     background: rgb(var(--zen-fg-rgb) / 0.12);
