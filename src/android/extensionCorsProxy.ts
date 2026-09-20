@@ -1,4 +1,5 @@
 import { matchesAnyPattern } from '@core/extensions/api/matchPattern'
+import { toServedUrl } from '@core/extensions/runtime/extensionUrls'
 
 /**
  * The page side of the CORS proxy (`CorsProxy.kt`). Chrome lets an extension page fetch any host
@@ -57,8 +58,15 @@ function installFetch(win: Window & typeof globalThis, options: CorsProxyOptions
   const native: FetchFn = win.fetch
   if (typeof native !== 'function') return
   const patched: FetchFn = async function fetch(input, init) {
+    // The extension's own file under Chrome's spelling (`chrome-extension://<id>/x.json`, the
+    // way an extension page's URL is presented to it) loads from the served origin.
+    const asked = urlOf(win, input)
+    const served = toServedUrl(asked)
+    if (served !== asked)
+      input =
+        typeof input === 'string' || input instanceof URL ? served : new win.Request(served, input)
     // Decide on the URL alone first: building a Request from a Request takes its body over.
-    if (!proxiesUrl(urlOf(win, input), options)) return native.call(win, input, init)
+    if (!proxiesUrl(served, options)) return native.call(win, input, init)
     const request = new win.Request(input, init)
     const headers = new win.Headers(request.headers)
     if (request.credentials === 'include') headers.set(CREDENTIALS_HEADER, 'include')
@@ -125,6 +133,11 @@ function installXhr(win: Window & typeof globalThis, options: CorsProxyOptions):
       absolute = new win.URL(String(url), win.location.href).href
     } catch {
       absolute = ''
+    }
+    const served = toServedUrl(absolute)
+    if (served !== absolute) {
+      absolute = served
+      url = served
     }
     states.set(this, {
       method: String(method).toUpperCase(),

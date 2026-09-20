@@ -196,9 +196,10 @@ describe('tabs.sendMessage', () => {
 
     router.handle('options', { t: 'msg', id: 1, target: {}, data: { handler: 'initializeFrame' } })
     const [deliver] = take('bg')
+    // The page names itself as Chrome spells it; `origin` is the one its `location` reads.
     expect(deliver.sender).toEqual({
       id: EXT,
-      url: pageUrl,
+      url: `chrome-extension://${EXT}/pages/options.html`,
       origin: `https://${EXT}.ext.zenium.invalid`,
       tab: { id: 1, url: 'https://page.example/' },
       frameId: 0,

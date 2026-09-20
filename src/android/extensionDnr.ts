@@ -384,11 +384,12 @@ export class AndroidDeclarativeNetRequest {
         const report = await this.translator.sync(
           entry.state.translateInput(rank < 0 ? undefined : rank)
         )
-        // The Kotlin engine decides in `shouldInterceptRequest`, before any response exists, so
-        // `Rules.kt` leaves rules with response header conditions out of its compiled sets.
+        // Rules with response header conditions are decided at the Kotlin engine's header stage:
+        // a document they could match is relayed and decided against its real response headers
+        // (`blocking/HeaderStage.kt`); every other request is decided in `shouldInterceptRequest`.
         if (report.headerConditioned.length > 0) {
           console.info(
-            `[zen] declarativeNetRequest ${extensionId}: ${report.headerConditioned.length} rule(s) with response header conditions are left out on Android`
+            `[zen] declarativeNetRequest ${extensionId}: ${report.headerConditioned.length} rule(s) with response header conditions decide at the header stage on Android`
           )
         }
       })

@@ -79,7 +79,11 @@ import {
 } from './extensionDnr'
 import { notificationEvent, type ShownNotification } from './extensionNotifications'
 import { AndroidWebNavigation, navigationReport, type DerivedEvent } from './extensionWebNavigation'
-import { AndroidExtensions, type AndroidExtensionsOptions } from './extensionHost'
+import {
+  AndroidExtensions,
+  type AndroidExtensionsOptions,
+  type RequestUpdateCheckAnswer
+} from './extensionHost'
 import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
@@ -259,12 +263,16 @@ function accessKey(record: ExtensionRecord): string {
   return `${record.allowFileAccess === true}/${record.allowPrivate === true}`
 }
 
-/** The store, as far as the runtime needs it (`runtime.reload`, `management.uninstallSelf`). */
+/**
+ * The store, as far as the runtime needs it (`runtime.reload`, `runtime.requestUpdateCheck`,
+ * `management.uninstallSelf`).
+ */
 export interface RuntimeStoreLink {
   record(id: string): ExtensionRecord | undefined
   records(): readonly ExtensionRecord[]
   reload(id: string): Promise<void>
   remove(id: string): Promise<void>
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer>
 }
 
 export interface AndroidExtensionRuntimeOptions {
@@ -1168,6 +1176,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   async reload(id: string): Promise<void> {
     if (this.store) await this.store.reload(id)
+  }
+
+  /** Without a store there is no updater, and an updater with nothing to install says `no_update`. */
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer> {
+    return this.store ? this.store.requestUpdateCheck(id) : Promise.resolve({ status: 'no_update' })
   }
 
   async uninstall(id: string): Promise<void> {

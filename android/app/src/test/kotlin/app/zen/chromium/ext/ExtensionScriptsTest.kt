@@ -88,7 +88,9 @@ class ExtensionScriptsTest {
     @Test
     fun `executeScript wrapper turns func plus args into a call and code into a body`() {
         val withFunc = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject("""{"world":"MAIN"}"""), null, "(a, b) => a + b", "[1,2]")
-        assertTrue(withFunc.startsWith("""__zenExtExec("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser){"""))
+        // A document without the bootstrap answers with Chrome's refusal, not a TypeError about the bridge.
+        assertTrue(withFunc.startsWith("""(typeof __zenExtExec==="function"?__zenExtExec:function(){throw new Error("${ExtensionScripts.NO_ACCESS}")})("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser){"""))
+        assertTrue(ExtensionScripts.NO_ACCESS.startsWith("Cannot access contents of the page."))
         assertTrue(withFunc.contains("return ((a, b) => a + b).apply(null,[1,2]);"))
         val withCode = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject(), "document.title", null, null)
         assertTrue(withCode.contains("{\ndocument.title\n})"))
@@ -134,5 +136,22 @@ class ExtensionScriptsTest {
         assertEquals("image/svg+xml", ExtensionScripts.mimeType("icons/x.SVG"))
         assertEquals("application/wasm", ExtensionScripts.mimeType("a.wasm"))
         assertEquals("application/octet-stream", ExtensionScripts.mimeType("noext"))
+    }
+
+    /** The module bracket for one-realm WebViews, in the shape `extensionModuleChrome.test.ts` pins for the bootstrap's side. */
+    @Test
+    fun moduleChromeWrapBracketsTheTextWithoutMovingItsLines() {
+        val id = "oldceeleldhonbafppcapldpdifcinji"
+        val text = "import x from \"./x.js\";\nexport const y = x + 1;\n//# sourceMappingURL=content.js.map"
+        val wrapped = ExtensionScripts.moduleChromeWrap(text, id)
+        assertTrue(wrapped.startsWith("globalThis.__zenExtModule&&globalThis.__zenExtModule(\"$id\");import x from"))
+        assertTrue(wrapped.endsWith("\n;globalThis.__zenExtModuleEnd&&globalThis.__zenExtModuleEnd(\"$id\");"))
+        val lines = wrapped.lines()
+        assertEquals(text.lines().size + 1, lines.size)
+        assertEquals(text.lines().drop(1), lines.drop(1).dropLast(1))
+        assertTrue(ExtensionScripts.isScriptPath("content.js"))
+        assertTrue(ExtensionScripts.isScriptPath("chunks/a.MJS"))
+        assertFalse(ExtensionScripts.isScriptPath("content.json"))
+        assertFalse(ExtensionScripts.isScriptPath("styles.css"))
     }
 }
