@@ -30,7 +30,9 @@ const {
   resetLiveArrival
 } = await import('../pillChips')
 type PillChipModel = ReturnType<typeof phonePillChips>[number]
+const { SiteInfoLayer } = await import('../../siteinfo/SiteInfoSheet')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
+const { viewportStore } = await import('@renderer/lib/formFactor')
 const { siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
@@ -572,5 +574,125 @@ describe('ChipRun cross-fades a set change in place (§11.4)', () => {
     act(() => root!.render(<ChipRun chips={[media!]} interactive={false} />))
     expect(ghostOf(el)).toBeNull()
     expect(fades).toEqual([])
+  })
+})
+
+/*
+ * The other half, rendered for real: the site-information sheet on the chassis, the chips'
+ * rows at the top of its root level – the same names, states and actions the chips had, as
+ * TalkBack will read them ("Requests blocked, 5") and as a finger will take them.
+ */
+describe('the site-information sheet lists the chips as rows', () => {
+  const initialViewport = viewportStore.get()
+  const heights = {
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight'),
+    offsetHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+  }
+  beforeEach(() => {
+    // happy-dom lays nothing out: the layer 800 tall, the sheet's content 300, as the media
+    // sheet's test has it – the chassis measures its detents from these.
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 300
+    })
+  })
+  afterEach(() => {
+    viewportStore.set(initialViewport)
+    for (const [name, descriptor] of Object.entries(heights)) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+    uiStore.set({ siteInfoOpen: false, mediaSheet: null, overlay: 'none' })
+    siteInfoStore.set({ tabId: null, anchor: null })
+  })
+
+  /** The sheet up for `t1` on a phone, its first reading of the site answered (with nothing). */
+  async function open(s: UIState): Promise<HTMLElement> {
+    // The store's other readers (the back gesture's root action) want the sidebar's collections too.
+    browserStore.set({ state: { ...s, folders: {}, essentialTabIds: [], glance: null } as UIState })
+    // A phone, set after the browser state: the viewport re-derives itself from the window on
+    // every snapshot, and happy-dom's window is a desktop's.
+    viewportStore.set({ ...viewportStore.get(), coarse: true, hover: false, formFactor: 'phone' })
+    uiStore.set({ siteInfoOpen: true })
+    siteInfoStore.set({ tabId: 't1', anchor: null, revision: 0 })
+    const el = render(<SiteInfoLayer />)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    return el
+  }
+  const group = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-testid="siteinfo-pill-chips"]')
+  const rows = (): HTMLButtonElement[] =>
+    Array.from(group()?.querySelectorAll<HTMLButtonElement>('button.zen-sheet-item') ?? [])
+  const row = (label: string): HTMLButtonElement | undefined =>
+    rows().find((r) => r.getAttribute('aria-label')?.startsWith(label))
+  const commands = (): string[] => invoke.mock.calls.map(([name]) => name)
+
+  it('puts the shield with its count and the translate offer first on the root level, over a hairline, each a chassis row named by its state', async () => {
+    await open(offered(state(counted)))
+    expect(group()).not.toBeNull()
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
+      'Requests blocked, 5',
+      'Translate this page, German to English'
+    ])
+    // The chip's own words and formatting on the row: the count as the value, the pair on offer
+    // in the bar's words.
+    expect(row('Requests blocked')!.querySelector('.zen-sheet-item-value')?.textContent).toBe('5')
+    expect(row('Translate this page')!.querySelector('.zen-sheet-item-value')?.textContent).toBe(
+      'German to English'
+    )
+    expect(group()!.querySelector('.zen-sheet-sep')).not.toBeNull()
+    // Above the sheet's own rows: Connection is the first of those.
+    const items = Array.from(document.querySelectorAll<HTMLElement>('.zen-sheet .zen-sheet-item'))
+    const connection = items.findIndex((el) =>
+      el.getAttribute('aria-label')?.startsWith('Connection')
+    )
+    expect(connection).toBeGreaterThan(-1)
+    expect(items.indexOf(row('Requests blocked')!)).toBeLessThan(connection)
+    expect(items.indexOf(row('Translate this page')!)).toBeLessThan(connection)
+    // No heading over them: the rows name themselves.
+    expect(group()!.querySelector('.zen-sheet-heading')).toBeNull()
+  })
+
+  it('the translate row still offers – the bar is raised and the sheet leaves for it', async () => {
+    await open(offered(state(counted)))
+    act(() => row('Translate this page')!.click())
+    await vi.waitFor(() => expect(commands()).toContain('translate.offer'))
+    const [, args] = invoke.mock.calls.find(([name]) => name === 'translate.offer')!
+    expect(args).toMatchObject({ tabId: 't1' })
+    await vi.waitFor(() => expect(uiStore.get().siteInfoOpen).toBe(false))
+  })
+
+  it('the shield’s row leads on to Settings › Privacy and security, where the lists and the site exceptions are', async () => {
+    await open(offered(state(counted)))
+    act(() => row('Requests blocked')!.click())
+    await vi.waitFor(() => expect(commands()).toContain('page.open'))
+    const [, args] = invoke.mock.calls.find(([name]) => name === 'page.open')!
+    expect(args).toMatchObject({ id: 'settings', section: 'privacy' })
+  })
+
+  it('lists the shield alone on a quiet page with no offer, its count 0; nothing on an internal page', async () => {
+    await open(state(page))
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual(['Requests blocked, 0'])
+    act(() => root?.unmount())
+    host?.remove()
+    const settings = tab('zen://settings')
+    await open(state(settings))
+    expect(group()).toBeNull()
+  })
+
+  it('does not list the media chip while it has the pill’s slot: the shield and the offer alone (its waiting row is the model’s case above)', async () => {
+    await open(playing(offered(state(counted))))
+    expect(rows().map((r) => r.getAttribute('aria-label'))).toEqual([
+      'Requests blocked, 5',
+      'Translate this page, German to English'
+    ])
   })
 })
