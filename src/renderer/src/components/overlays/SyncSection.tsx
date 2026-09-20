@@ -159,28 +159,6 @@ function Connected({ state }: { state: UIState }): JSX.Element {
           </div>
         </div>
       )}
-      {sync.folderLost && (
-        <div className="zen-squircle flex flex-col gap-3 rounded-xl border border-red-500/50 bg-red-500/10 p-4">
-          <div className="text-[13.5px] font-medium">The sync folder is no longer accessible</div>
-          <p className="text-[12.5px] text-[var(--zen-muted)]">
-            The drive may be unmounted or the folder moved. Choose it again to keep syncing – your
-            passphrase and this device&apos;s data stay as they are.
-          </p>
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              disabled={sync.syncing}
-              onClick={() =>
-                void cmd('sync.chooseFolder', undefined).then(
-                  (folder) => folder && run('sync.setFolder', { folder })
-                )
-              }
-            >
-              <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Choose folder…
-            </Button>
-          </div>
-        </div>
-      )}
       <section className="zen-squircle overflow-hidden rounded-xl border border-[var(--zen-border)]">
         <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -195,22 +173,39 @@ function Connected({ state }: { state: UIState }): JSX.Element {
               className="truncate text-[11.5px] text-[var(--zen-muted)]"
               title={sync.folder ?? ''}
             >
-              {sync.lastError && !sync.folderLost ? (
+              {sync.lastError ? (
                 <span className="text-red-500">{sync.lastError}</span>
               ) : (
                 (sync.folderName ?? sync.folder)
               )}
             </div>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={sync.syncing || sync.pendingMerge || sync.folderLost}
-            onClick={() => run('sync.now', undefined)}
-          >
-            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
-            now
-          </Button>
+          {sync.folderLost ? (
+            // The folder went away (unmounted drive, revoked tree): the error line above says so and
+            // the initial-choice button takes the user to a folder again; nothing to sync until then.
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={sync.syncing}
+              onClick={() =>
+                void cmd('sync.chooseFolder', undefined).then(
+                  (folder) => folder && run('sync.setFolder', { folder })
+                )
+              }
+            >
+              <FolderOpen className="mr-1.5 h-3.5 w-3.5" /> Choose…
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={sync.syncing || sync.pendingMerge}
+              onClick={() => run('sync.now', undefined)}
+            >
+              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${sync.syncing ? 'zen-spin' : ''}`} /> Sync
+              now
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-3 border-b border-[var(--zen-border)] px-4 py-3">
           <Label htmlFor="sync-device-name" className="w-28 shrink-0">
