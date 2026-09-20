@@ -11,6 +11,7 @@ import {
   noPanelForTab,
   noPanelForWindow,
   noTab,
+  normalizeCloseOptions,
   normalizeGetOptions,
   normalizeOpenOptions,
   normalizePanelBehavior,
@@ -73,6 +74,11 @@ describe('sidePanel argument checks', () => {
     expect(() => normalizeOpenOptions(undefined)).toThrow(ERROR_NO_TARGET)
     expect(normalizeOpenOptions({ windowId: -2 })).toEqual({ windowId: -2 })
     expect(normalizeOpenOptions({ tabId: 9, windowId: 1 })).toEqual({ tabId: 9, windowId: 1 })
+  })
+
+  it('close takes the same target pair as open', () => {
+    expect(() => normalizeCloseOptions({})).toThrow(ERROR_NO_TARGET)
+    expect(normalizeCloseOptions({ tabId: 3 })).toEqual({ tabId: 3 })
   })
 
   it('reads the manifest default path', () => {
@@ -157,6 +163,8 @@ interface Harness {
   commits: number
   activated: string[]
   opened: string[]
+  /** `onOpened` / `onClosed` deliveries: extension id, event, the info. */
+  dispatched: [string, string, unknown][]
   behaviorStore: Record<string, boolean>
   load: (id: string, perms: string[], manifest?: Record<string, unknown>) => LoadedExtension
   unload: (id: string) => void
@@ -182,6 +190,7 @@ function harness(): Harness {
   const views: FakeView[] = []
   const activated: string[] = []
   const opened: string[] = []
+  const dispatched: [string, string, unknown][] = []
   const behaviorStore: Record<string, boolean> = {}
   const loaded = new Map<string, LoadedExtension>()
   const grants: Record<string, string[]> = {}
@@ -233,6 +242,9 @@ function harness(): Harness {
     },
     loaded: (id: string) => loaded.get(id),
     grants: (id: string) => ({ permissions: grants[id] ?? [], origins: [] }),
+    dispatch: (id: string, _namespace: string, event: string, args: unknown[]) => {
+      dispatched.push([id, event, args[0]])
+    },
     commitUi: () => {
       state.commits += 1
     }
@@ -308,6 +320,7 @@ function harness(): Harness {
     },
     activated,
     opened,
+    dispatched,
     behaviorStore,
     load,
     unload: (id) => {
@@ -591,5 +604,94 @@ describe('chrome.sidePanel: the panel per window', () => {
       path: 'panel.html',
       enabled: true
     })
+  })
+})
+
+describe('chrome.sidePanel: close, getLayout and the onOpened / onClosed events', () => {
+  it('announces the page shown and the page closed, with the window id', () => {
+    const h = harness()
+    h.addTab('t1')
+    h.load(EXT_A, ['sidePanel'])
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    expect(h.dispatched).toEqual([[EXT_A, 'onOpened', { path: 'panel.html', windowId: WINDOW_ID }]])
+    h.call(EXT_A, 'close', { windowId: WINDOW_ID })
+    expect(h.dispatched.at(-1)).toEqual([
+      EXT_A,
+      'onClosed',
+      { path: 'panel.html', windowId: WINDOW_ID }
+    ])
+    expect(h.api.showing(h.win)).toBeNull()
+    // Closed already: a no-op, nothing more announced.
+    h.call(EXT_A, 'close', { windowId: WINDOW_ID })
+    expect(h.dispatched).toHaveLength(2)
+  })
+
+  it('names the tab for a tab-specific panel and closes it by tab', () => {
+    const h = harness()
+    h.addTab('t1')
+    h.load(EXT_A, ['sidePanel'])
+    h.call(EXT_A, 'setOptions', { tabId: 100, path: 'tab.html' })
+    h.call(EXT_A, 'open', { tabId: 100 })
+    expect(h.dispatched).toEqual([
+      [EXT_A, 'onOpened', { path: 'tab.html', windowId: WINDOW_ID, tabId: 100 }]
+    ])
+    h.call(EXT_A, 'close', { tabId: 100 })
+    expect(h.dispatched.at(-1)).toEqual([
+      EXT_A,
+      'onClosed',
+      { path: 'tab.html', windowId: WINDOW_ID, tabId: 100 }
+    ])
+    expect(h.api.showing(h.win)).toBeNull()
+  })
+
+  it('close({tabId}) refuses when only the global panel shows on that tab, as Chrome 145 does', () => {
+    const h = harness()
+    h.addTab('t1')
+    h.load(EXT_A, ['sidePanel'])
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    expect(() => h.call(EXT_A, 'close', { tabId: 100 })).toThrow(noPanelForTab(100))
+    expect(h.api.showing(h.win)).toBe(EXT_A)
+    expect(() => h.call(EXT_A, 'close', { tabId: 999 })).toThrow(noTab(999))
+  })
+
+  it('another extension taking the panel closes the first; a tab without a page closes too', () => {
+    const h = harness()
+    h.addTab('t1')
+    h.addTab('t2')
+    h.load(EXT_A, ['sidePanel'])
+    h.load(EXT_B, ['sidePanel'])
+    h.call(EXT_A, 'open', { windowId: WINDOW_ID })
+    h.call(EXT_B, 'open', { windowId: WINDOW_ID })
+    expect(h.dispatched.map(([id, event]) => [id.slice(0, 1), event])).toEqual([
+      ['a', 'onOpened'],
+      ['a', 'onClosed'],
+      ['b', 'onOpened']
+    ])
+    // B's panel is off on t2: switching there collapses it, and B hears onClosed; back on t1
+    // it opens again.
+    h.call(EXT_B, 'setOptions', { tabId: 101, enabled: false })
+    h.activate('t2')
+    h.api.refresh()
+    expect(h.dispatched.at(-1)).toEqual([
+      EXT_B,
+      'onClosed',
+      { path: 'panel.html', windowId: WINDOW_ID }
+    ])
+    h.activate('t1')
+    h.api.refresh()
+    expect(h.dispatched.at(-1)).toEqual([
+      EXT_B,
+      'onOpened',
+      { path: 'panel.html', windowId: WINDOW_ID }
+    ])
+  })
+
+  it('getLayout says which side the strip docks on and needs the permission', () => {
+    const h = harness()
+    h.load(EXT_A, ['sidePanel'])
+    h.load(EXT_B, [])
+    expect(h.call(EXT_A, 'getLayout')).toEqual({ side: 'right' })
+    expect(() => h.call(EXT_B, 'getLayout')).toThrow(ERROR_NO_PERMISSION)
+    expect(() => h.call(EXT_B, 'close', { windowId: WINDOW_ID })).toThrow(ERROR_NO_PERMISSION)
   })
 })

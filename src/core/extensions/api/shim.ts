@@ -256,18 +256,36 @@ export function installExtensionApi(
   }
 
   /** The namespace object on a root, created when the engine has none. */
+  /**
+   * The object at `name` under `root`, made when missing; a dotted name (`system.display`) is a
+   * path of namespaces, each made the same way (`chrome.system` holds `display`).
+   */
   function namespaceOn(root: Any, name: string): Any {
-    let ns: Any
-    try {
-      ns = root[name]
-    } catch {
-      ns = undefined
+    let holder = root
+    for (const part of name.split('.')) {
+      let ns: Any
+      try {
+        ns = holder[part]
+      } catch {
+        ns = undefined
+      }
+      if (!ns || typeof ns !== 'object') {
+        ns = {}
+        define(holder, part, ns)
+      }
+      holder = ns
     }
-    if (!ns || typeof ns !== 'object') {
-      ns = {}
-      define(root, name, ns)
+    return holder
+  }
+
+  /** The value at a dotted path under `root`, or undefined anywhere along the way. */
+  function memberAt(root: Any, name: string): unknown {
+    let value: Any = root
+    for (const part of name.split('.')) {
+      if (!isObject(value)) return undefined
+      value = value[part]
     }
-    return ns
+    return value
   }
 
   function matchesType(value: unknown, type: ParamType): boolean {
@@ -473,6 +491,9 @@ export function installExtensionApi(
   ): (...raw: unknown[]) => unknown {
     return function (...raw: unknown[]): unknown {
       const callback = takeCallback(raw)
+      if (inert.error !== undefined) {
+        return settle(qualified, Promise.reject(new Error(inert.error)), callback)
+      }
       let value = inert.value
       if (inert.id) {
         const first: unknown = raw[0]
@@ -804,6 +825,11 @@ export function installExtensionApi(
     const out: Record<string, unknown> = {}
     if (raw.cancel === true) out.cancel = true
     if (typeof raw.redirectUrl === 'string') out.redirectUrl = raw.redirectUrl
+    if (isObject(raw.authCredentials)) {
+      const { username, password } = raw.authCredentials
+      if (typeof username === 'string' && typeof password === 'string')
+        out.authCredentials = { username, password }
+    }
     for (const key of ['requestHeaders', 'responseHeaders']) {
       const list = raw[key]
       if (!Array.isArray(list)) continue
@@ -971,25 +997,53 @@ export function installExtensionApi(
 
   /**
    * A `types.ChromeSetting`: `get` / `set` / `clear` route as `<namespace>.<method>(object,
-   * setting, details)` and `onChange` is an event the host fires under the setting's full name.
+   * setting, details)` (or `(setting, details)` for a setting that is a member of the namespace
+   * itself, `object` null) and `onChange` is an event the host fires under the setting's full
+   * name.
    */
-  function chromeSetting(namespace: string, object: string, setting: string): object {
+  function chromeSetting(namespace: string, object: string | null, setting: string): object {
     const result: Record<string, unknown> = {}
+    const path = object === null ? [setting] : [object, setting]
     for (const method of ['get', 'set', 'clear']) {
       const qualified = `types.ChromeSetting.${method}(object details, optional function callback)`
       define(result, method, function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
-        return settle(qualified, invoke(namespace, method, [object, setting, details]), callback)
+        return settle(qualified, invoke(namespace, method, [...path, details]), callback)
       })
     }
     define(
       result,
       'onChange',
-      createEvent(`${namespace}.${object}.${setting}.onChange`, undefined, {
+      createEvent(`${namespace}.${path.join('.')}.onChange`, undefined, {
         nativeDelivers: false
       })
     )
+    return result
+  }
+
+  /**
+   * A `contentSettings.ContentSetting`: `get` / `set` / `clear` take details and route as
+   * `<namespace>.<method>(type, details)`; `getResourceIdentifiers` takes only the callback.
+   * No event: Chrome's has none.
+   */
+  function contentSetting(namespace: string, type: string): object {
+    const result: Record<string, unknown> = {}
+    for (const method of ['get', 'set', 'clear']) {
+      const qualified = `contentSettings.ContentSetting.${method}(object details, optional function callback)`
+      define(result, method, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
+        return settle(qualified, invoke(namespace, method, [type, details]), callback)
+      })
+    }
+    const identifiers =
+      'contentSettings.ContentSetting.getResourceIdentifiers(optional function callback)'
+    define(result, 'getResourceIdentifiers', function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      normalizeArgs(identifiers, raw, [])
+      return settle(identifiers, invoke(namespace, 'getResourceIdentifiers', [type]), callback)
+    })
     return result
   }
 
@@ -1263,7 +1317,7 @@ export function installExtensionApi(
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
     if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
-    return isObject(safely(() => roots[0][namespace]))
+    return isObject(safely(() => memberAt(roots[0], namespace)))
   }
 
   /** Permission-gated events (`runtime.onUserScriptMessage`) exist for extensions declaring one. */
@@ -1350,6 +1404,14 @@ export function installExtensionApi(
         const value = chromeSetting(namespace, object, setting)
         for (const holder of holders) define(holder, setting, value)
       }
+    }
+    for (const setting of nsSpec.ownSettings ?? []) {
+      const value = chromeSetting(namespace, null, setting)
+      for (const target of targets) define(target, setting, value)
+    }
+    for (const type of nsSpec.contentSettings ?? []) {
+      const value = contentSetting(namespace, type)
+      for (const target of targets) define(target, type, value)
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {

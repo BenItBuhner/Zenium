@@ -550,7 +550,7 @@ export class ElectronPlatform implements Platform {
     })
     this.sessions.get(DEFAULT_CONTAINER_ID)
     this.registerIpc(browser)
-    attachSecurityHandlers(browser, this.views)
+    attachSecurityHandlers(browser, this.views, extensionApi.webRequest)
     configurePlatformAuthenticators(__ZENIUM_APPLE_TEAM_ID__)
     browser.start(options)
     // The engine has its persisted rule sets now: the ones of extensions removed or disabled

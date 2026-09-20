@@ -8,7 +8,14 @@
  * defined when the engine does not already provide them (Electron's implementation of those
  * works), everything else replaces the engine's inert binding in place.
  */
+import {
+  CONTENT_SETTING_METHODS,
+  CONTENT_SETTING_TYPES,
+  CONTENT_SETTING_TYPE_NAMES
+} from './contentSettings'
 import { PRIVACY_METHODS, PRIVACY_SETTING_NAMES } from './privacy'
+import { PROXY_SETTING } from './proxy'
+import { SYSTEM_DISPLAY_PERMISSION } from './systemDisplay'
 import { USER_SCRIPTS_UNAVAILABLE_ERROR } from './userScripts'
 
 export type ParamType = 'integer' | 'number' | 'string' | 'boolean' | 'object' | 'array' | 'any'
@@ -29,10 +36,11 @@ export interface MethodSpec {
    * browser without per-site cookie partitions), so an extension that touches it runs on.
    * `value` goes to the callback or promise; `id` answers with the caller's own id (a string
    * first argument or `createProperties.id`) or a generated one of that type; `sync` also returns
-   * the id synchronously. Turning one into a routed call is deleting the flag and adding the
-   * host handler.
+   * the id synchronously; `error` fails the call instead (`runtime.lastError` for a callback, a
+   * rejection for a promise), the way Chrome reports a service that is off. Turning one into a
+   * routed call is deleting the flag and adding the host handler.
    */
-  inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean }
+  inert?: { value?: unknown; id?: 'number' | 'string'; sync?: boolean; error?: string }
 }
 
 export interface EventSpec {
@@ -96,6 +104,19 @@ export interface NamespaceSpec {
    */
   settings?: Readonly<Record<string, readonly string[]>>
   /**
+   * `proxy`: `types.ChromeSetting`s that are members of the namespace itself (`proxy.settings`),
+   * routed as `<namespace>.<method>(setting, details)`; the host fires
+   * `<namespace>.<setting>.onChange`. The engine's inert copy of the member is replaced.
+   */
+  ownSettings?: readonly string[]
+  /**
+   * `contentSettings`: `contentSettings.ContentSetting`s that are members of the namespace
+   * (`contentSettings.cookies`, `contentSettings.javascript`, …), each with `get` / `set` /
+   * `clear` / `getResourceIdentifiers` and no event, routed as `<namespace>.<method>(type,
+   * details)`.
+   */
+  contentSettings?: readonly string[]
+  /**
    * `userScripts`: Chrome hides the namespace behind a per-extension toggle ("Allow user
    * scripts"). While `ShimOptions.toggles[key]` is false, reading `chrome.<namespace>` throws
    * `error` (extensions feature-detect it with `try { chrome.userScripts } catch {}`); the host
@@ -129,6 +150,24 @@ const ACTION_METHODS: Record<string, MethodSpec> = {
   isEnabled: { params: [integer('tabId', true)] },
   getUserSettings: { params: [] },
   openPopup: { params: [object('options', true)] }
+}
+
+/** Chrome's names for the value enums of `contentSettings` where they differ from the type's. */
+const CONTENT_SETTING_ENUM_NAMES: Readonly<Record<string, string>> = {
+  unsandboxedPlugins: 'PpapiBrokerContentSetting',
+  automaticDownloads: 'MultipleAutomaticDownloadsContentSetting'
+}
+
+/** `contentSettings.CookiesContentSetting = { ALLOW, BLOCK, SESSION_ONLY }` and the like. */
+function contentSettingEnums(): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {}
+  for (const type of CONTENT_SETTING_TYPES) {
+    const name =
+      CONTENT_SETTING_ENUM_NAMES[type.name] ??
+      `${type.name[0].toUpperCase()}${type.name.slice(1)}ContentSetting`
+    out[name] = Object.fromEntries(type.values.map((value) => [value.toUpperCase(), value]))
+  }
+  return out
 }
 
 export const API_SPEC: ApiSpec = {
@@ -687,6 +726,37 @@ export const API_SPEC: ApiSpec = {
     events: {},
     permissions: ['topSites']
   },
+  // The engine makes the namespace but has no display provider behind it (every call fails with
+  // "System display API is not available."): `getInfo` answers from the browser's screens as
+  // Chrome does on Windows, macOS and Linux, `getDisplayLayout` is empty there, and the functions
+  // Chrome restricts to ChromeOS fail with its error. `onDisplayChanged` follows the screens.
+  'system.display': {
+    methods: {
+      getInfo: { params: [object('flags', true)] },
+      getDisplayLayout: { params: [] },
+      setDisplayProperties: { params: [string('id'), object('info')] },
+      setDisplayLayout: { params: [{ name: 'layouts', type: 'array' }] },
+      enableUnifiedDesktop: { params: [boolean('enabled')] },
+      overscanCalibrationStart: { params: [string('id')] },
+      overscanCalibrationAdjust: { params: [string('id'), object('delta')] },
+      overscanCalibrationReset: { params: [string('id')] },
+      overscanCalibrationComplete: { params: [string('id')] },
+      showNativeTouchCalibration: { params: [string('id')] },
+      startCustomTouchCalibration: { params: [string('id')] },
+      completeCustomTouchCalibration: {
+        params: [{ name: 'pairs', type: 'object' }, object('bounds')]
+      },
+      clearTouchCalibration: { params: [string('id')] },
+      setMirrorMode: { params: [object('info')] }
+    },
+    events: { onDisplayChanged: {} },
+    constants: {
+      ActiveState: { ACTIVE: 'active', INACTIVE: 'inactive' },
+      LayoutPosition: { TOP: 'top', RIGHT: 'right', BOTTOM: 'bottom', LEFT: 'left' },
+      MirrorMode: { OFF: 'off', NORMAL: 'normal', MIXED: 'mixed' }
+    },
+    permissions: [SYSTEM_DISPLAY_PERMISSION]
+  },
   // The keyword comes from the manifest; the URL bar asks through `onInputChanged(text, suggest)`.
   omnibox: {
     methods: {
@@ -725,16 +795,79 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['identity']
   },
-  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab rules.
+  // Per-site content settings as rules of an extension (patterns, a value, a scope), one
+  // `ContentSetting` object per type; the rules rank above the user's own answers in the
+  // permission store, as Chrome's extension provider does. The enum constants are Chrome's
+  // (`Scope`, and one `<Type>ContentSetting` per type with its values).
+  contentSettings: {
+    methods: {},
+    events: {},
+    contentSettings: CONTENT_SETTING_TYPE_NAMES,
+    constants: {
+      Scope: { REGULAR: 'regular', INCOGNITO_SESSION_ONLY: 'incognito_session_only' },
+      ...contentSettingEnums()
+    },
+    permissions: ['contentSettings']
+  },
+  // A DevTools protocol session on a tab over the engine's per-page debugger: Chrome's rules on
+  // who may attach to what, one extension per tab, `onEvent` for the protocol's notifications
+  // (with the `sessionId` of a flattened child target), `onDetach` when the tab goes or the
+  // session is taken away. Chrome's "is debugging this browser" bar has no counterpart yet.
+  debugger: {
+    methods: {
+      attach: { params: [object('target'), string('requiredVersion')] },
+      detach: { params: [object('target')] },
+      sendCommand: {
+        params: [object('target'), string('method'), object('commandParams', true)]
+      },
+      getTargets: { params: [] }
+    },
+    events: { onEvent: {}, onDetach: {} },
+    constants: {
+      DetachReason: { TARGET_CLOSED: 'target_closed', CANCELED_BY_USER: 'canceled_by_user' },
+      TargetInfoType: {
+        PAGE: 'page',
+        BACKGROUND_PAGE: 'background_page',
+        WORKER: 'worker',
+        OTHER: 'other'
+      }
+    },
+    permissions: ['debugger']
+  },
+  // Firebase Cloud Messaging through Chrome's own device channel (Chrome's GCM client registers
+  // the browser with Google under Chrome's credentials), which no other browser has: the
+  // namespace is the shape Chrome shows a profile with GCM off. `register`, `unregister` and
+  // `send` fail with Chrome's `GCM_DISABLED`; the events exist and never fire (Read&Write
+  // registers `onMessage` at start-up and runs on).
+  gcm: {
+    methods: {
+      register: {
+        params: [{ name: 'senderIds', type: 'array' }],
+        inert: { error: 'GCM_DISABLED' }
+      },
+      unregister: { params: [], inert: { error: 'GCM_DISABLED' } },
+      send: { params: [object('message')], inert: { error: 'GCM_DISABLED' } }
+    },
+    events: { onMessage: {}, onMessagesDeleted: {}, onSendError: {} },
+    constants: { MAX_MESSAGE_SIZE: 4096 },
+    shape: true,
+    permissions: ['gcm']
+  },
+  // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab
+  // rules. `onOpened` / `onClosed` (Chrome 140 / 142) follow the view showing and going away;
+  // `getLayout` reports the side the strip docks on.
   sidePanel: {
     methods: {
       setOptions: { params: [object('options')] },
       getOptions: { params: [object('options', true)] },
       setPanelBehavior: { params: [object('behavior')] },
       getPanelBehavior: { params: [] },
-      open: { params: [object('options')] }
+      open: { params: [object('options')] },
+      close: { params: [object('options')] },
+      getLayout: { params: [] }
     },
-    events: {},
+    events: { onOpened: {}, onClosed: {} },
+    constants: { Side: { LEFT: 'left', RIGHT: 'right' } },
     permissions: ['sidePanel']
   },
   // Electron has the binding, but the session's own `webRequest` hook (the blocking engine's)
@@ -742,7 +875,8 @@ export const API_SPEC: ApiSpec = {
   // listeners over the same hook (`main/platform/webRequest.ts`): registrations go to the host
   // through the internal `addListener` / `removeListener` calls, deliveries come back addressed
   // to the listener, and a blocking listener's return value travels back as the answer.
-  // `onAuthRequired` exists for extensions that probe it; nothing fires it (no session hook).
+  // `onAuthRequired` runs off the engine's `login` event instead (a challenge is not a hook of
+  // the session pipeline); its blocking answer carries `authCredentials` or `cancel`.
   webRequest: {
     methods: {
       handlerBehaviorChanged: { params: [], inert: {} }
@@ -838,6 +972,33 @@ export const API_SPEC: ApiSpec = {
     },
     permissions: ['privacy'],
     settings: PRIVACY_SETTING_NAMES
+  },
+  // Electron's binding defines `proxy.settings` but its calls reject ("Access to extension API
+  // denied.": Chrome's preference service is not part of the engine). The setting lives in the
+  // host (`core/extensions/api/proxy.ts` has Chrome's checks and the config's canonical form,
+  // the precedence rules are `privacy`'s) and is applied to the sessions through Electron's
+  // `setProxy`; `onProxyError` reports a configuration the sessions refused.
+  proxy: {
+    methods: {},
+    events: { onProxyError: {} },
+    constants: {
+      Mode: {
+        DIRECT: 'direct',
+        AUTO_DETECT: 'auto_detect',
+        PAC_SCRIPT: 'pac_script',
+        FIXED_SERVERS: 'fixed_servers',
+        SYSTEM: 'system'
+      },
+      Scheme: {
+        HTTP: 'http',
+        HTTPS: 'https',
+        QUIC: 'quic',
+        SOCKS4: 'socks4',
+        SOCKS5: 'socks5'
+      }
+    },
+    permissions: ['proxy'],
+    ownSettings: [PROXY_SETTING]
   },
   // Site storage and the cache through the engine's sessions, history and downloads through the models.
   browsingData: {
@@ -951,6 +1112,19 @@ export const WEB_REQUEST_INTERNAL_METHODS = ['addListener', 'removeListener'] as
  * not members of `chrome.privacy`, but routed like one (with the setting's names first).
  */
 export const PRIVACY_INTERNAL_METHODS = PRIVACY_METHODS
+
+/**
+ * The calls the shim makes on behalf of `proxy.settings`' `get` / `set` / `clear`: not members
+ * of `chrome.proxy`, but routed like one (with the setting's name first).
+ */
+export const PROXY_INTERNAL_METHODS = PRIVACY_METHODS
+
+/**
+ * The calls the shim makes on behalf of a `contentSettings.<type>` object's `get` / `set` /
+ * `clear` / `getResourceIdentifiers`: not members of `chrome.contentSettings`, but routed like
+ * one (with the type's name first).
+ */
+export const CONTENT_SETTINGS_INTERNAL_METHODS = CONTENT_SETTING_METHODS
 
 /**
  * The call the shim makes on behalf of `tabs.sendMessage` for an extension holding
