@@ -11,8 +11,10 @@ import {
   type RefObject
 } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { PdfFitMode } from '@shared/pdfViewerProtocol'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from '../phone/PhoneSheet'
+import { PdfZoomSheet } from '../pdf/PdfSheets'
 import { viewportStore } from '@renderer/lib/formFactor'
 import {
   FrameDialogHost,
@@ -872,6 +874,46 @@ describe('focus lands in a sheet held for the page’s cover (§9.22, regression
     await hold.resolve()
     act(() => frames.run(60))
     expect(active()).toBe(byText('Fit to width'))
+    expect(sheet.contains(active())).toBe(true)
+  })
+
+  it("the PDF viewer's zoom picker (PdfZoomSheet, #247's follow-up): the zoom in force takes the focus as the sheet opens, a fit or a preset", async () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone' })
+    // The real picker (`pdf-zoom`, PdfSheets.tsx) on `focus="checked"`: the row of the zoom the
+    // viewer reports is checked and focused through the wait for the cover and once the sheet
+    // shows – the dialog itself never holds it, as it did on `focus="dialog"`.
+    const zoomSheet = (zoom: number, fit: PdfFitMode | null): ReactElement => (
+      <>
+        <FrameDialogHost frame />
+        <PdfZoomSheet zoom={zoom} fit={fit} onPick={() => {}} onClose={() => {}} />
+      </>
+    )
+    const checkedRow = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[role="radiogroup"] [role="radio"][aria-checked="true"]')
+    let hold = holdCover()
+    render(zoomSheet(1, 'page'))
+    let sheet = sheets()[0]
+    expect(sheet.style.opacity).toBe('0')
+    expect(checkedRow()).toBe(byText('Fit to page'))
+    expect(active()).toBe(byText('Fit to page'))
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(sheet.style.opacity).toBe('1')
+    expect(active()).toBe(byText('Fit to page'))
+    expect(active()).not.toBe(sheet.closest('[role="dialog"]'))
+    if (root) act(() => root!.unmount())
+    root = null
+
+    // A preset in force with no fit: its row, not the first.
+    opener.focus()
+    hold = holdCover()
+    render(zoomSheet(1.5, null))
+    sheet = sheets()[0]
+    expect(checkedRow()).toBe(byText('150%'))
+    expect(active()).toBe(byText('150%'))
+    await hold.resolve()
+    act(() => frames.run(60))
+    expect(active()).toBe(byText('150%'))
     expect(sheet.contains(active())).toBe(true)
   })
 })

@@ -752,26 +752,13 @@ textarea.zen-v2-field {
   overflow-wrap: anywhere;
 }
 /*
- * A row holding a control (§9.21): the row is the control plus 8 – 36 around a 28 icon button,
- * 40 around a 32 menulist – and the 4 above and below are its own padding, so adjacent buttons
- * sit 8 apart. The text and a leading glyph keep their 6 by carrying the other 2 themselves, so
- * two-line rows stay 52 beside rows without controls.
+ * A row holding a control (§9.21) – the menulist row, the entries' icon buttons – takes its
+ * height from the shared row (§9.34): a two-line row holds its 32 menulist or 28 icon buttons
+ * inside its two lines on the row pad (52 beside rows without controls, the control centred);
+ * a one-line one carries the primitive's `data-control` and is the control plus 8 (40 / 36),
+ * the 4 above and below the row's own padding, so adjacent buttons sit 8 apart. Nothing here
+ * restates either.
  */
-.zen-v2-af-pane-row:has(> .zen-v2-af-pane-actions) {
-  min-height: max(var(--v2-row), calc(var(--v2-icon-button) + 8px));
-  padding-block: 4px;
-}
-.zen-v2-af-pane-row:has(> .zen-v2-menulist) {
-  min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
-  padding-block: 4px;
-}
-.zen-v2-af-pane-row:has(> .zen-v2-af-pane-actions) > .zen-v2-af-pane-text,
-.zen-v2-af-pane-row:has(> .zen-v2-menulist) > .zen-v2-af-pane-text {
-  margin-block: 2px;
-}
-.zen-v2-af-pane-row:has(> .zen-v2-af-pane-actions) > .zen-v2-af-row-icon {
-  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon)) / 2);
-}
 /* Trailing icon buttons (§9.18): centred on the row, 4 apart. */
 .zen-v2-af-pane-actions {
   display: flex;
@@ -786,15 +773,15 @@ textarea.zen-v2-field {
 /*
  * Three text lines (the description wrapped, `data-wrapped`): the control centres on the
  * label's line instead of the row (§9.18) – its top (line − control) / 2 above the first line's
- * top, which the text's own 2 puts 2 under the row's padding edge.
+ * top, which sits on the row's padding edge.
  */
 .zen-v2-af-pane-row[data-wrapped] > .zen-v2-af-pane-actions {
   align-self: flex-start;
-  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon-button)) / 2);
 }
 .zen-v2-af-pane-row[data-wrapped] > .zen-v2-menulist {
   align-self: flex-start;
-  margin-top: calc(2px + (var(--v2-line-body) - var(--v2-control)) / 2);
+  margin-top: calc((var(--v2-line-body) - var(--v2-control)) / 2);
 }
 /* The empty state in a card (§9.17): one plain static row, the sentence at 15 and 69% where a label would be. */
 .zen-v2-af-pane-empty {
