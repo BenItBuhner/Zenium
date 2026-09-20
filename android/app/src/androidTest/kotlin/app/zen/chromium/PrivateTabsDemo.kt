@@ -188,9 +188,17 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         SystemClock.sleep(1_500)
         val privateBefore = cookieOf(private1)
         expect("the regular tab's cookie is invisible in the private tab", privateBefore.isEmpty())
-        expect("the pill says Private on the private page (9.19)", waitFor("Private", 6_000) != null)
+        // The private markers on a page (9.19): the private theme on the whole chrome (dark scheme,
+        // the private window background) and the mask glyph in the pill's leading slot, which is
+        // the site-information chip; no "Private" badge.
+        expect("the chrome stays on the private theme on the private page (9.19)", host.themeDark && chromeScheme() == "dark")
+        expect("the pill's leading slot is the mask glyph on the private page (9.19)", awaitPillMask())
+        expect("the pill carries no Private badge (9.19)", findByLabel("Private") == null && jsString("(function(){return document.querySelector('.zen-v2-badge')?'badge':''})()") == "")
         shot("05-private-no-cookie")
-        finding("private tab on the site: document.cookie '$privateBefore', private jar '${privateJar()}', default jar '${defaultJar()}'")
+        finding(
+            "private tab on the site: document.cookie '$privateBefore', private jar '${privateJar()}', default jar '${defaultJar()}'; " +
+                "chrome scheme ${chromeScheme()}, window background ${windowBackground()}, pill mask ${pillMaskShown()}"
+        )
 
         // 4. A cookie baked in the private tab stays in the private jar.
         tapPage(private1, "#bake")
@@ -512,6 +520,22 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
     private fun windowBackground(): String = onMain {
         val drawable = activity.window.decorView.background
         if (drawable is android.graphics.drawable.ColorDrawable) String.format("#%06x", drawable.color and 0xffffff) else drawable?.toString() ?: "none"
+    }
+
+    /** The colour scheme the chrome's root carries (`data-theme`): `dark` on the private theme. */
+    private fun chromeScheme(): String = jsString("document.documentElement.dataset.theme||''")
+
+    /** Whether the pill's leading slot is the mask glyph (the private marker on a private tab, 9.19). */
+    private fun pillMaskShown(): Boolean =
+        jsString("(function(){return document.querySelector('[data-site-info][data-private-mark] svg.lucide-venetian-mask')?'mask':''})()") == "mask"
+
+    private fun awaitPillMask(timeoutMs: Long = 6_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (pillMaskShown()) return true
+            SystemClock.sleep(200)
+        }
+        return pillMaskShown()
     }
 
     private fun manifestShortcuts() =
