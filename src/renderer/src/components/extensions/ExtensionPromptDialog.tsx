@@ -213,6 +213,7 @@ function SheetPrompt({ prompt }: { prompt: ExtensionPromptRequest }): JSX.Elemen
       ref={sheet}
       className="zen-ext-prompt-sheet"
       handleLabel="Resize"
+      label={copy.title}
       onDismissed={() => {
         // Dragged or flung away without a choice: that is a no.
         if (!answered.current) {

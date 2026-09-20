@@ -264,7 +264,7 @@ function BlockedPopupsPopover({
         >
           {/* The glyph sits on the title's line (§9.23): (line − glyph) / 2 below its top. */}
           <AppWindow
-            className={cn(GLYPH, 'mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)]')}
+            className={cn(GLYPH, 'mt-[calc((var(--v2-line-heading-box)-var(--v2-icon))/2)]')}
             aria-hidden
           />
           <div className="min-w-0 flex-1">

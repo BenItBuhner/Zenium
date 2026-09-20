@@ -70,6 +70,11 @@ interface Props {
   fadeEdges?: boolean
   /** The id of the element that names the dialog (its title), for `aria-labelledby`. */
   labelledBy?: string
+  /**
+   * The dialog's name where no element on it says it (a menu sheet with no title row): TalkBack
+   * announces a dialog by its name as it opens, and an unnamed one is "dialog" and nothing more.
+   */
+  label?: string
   className?: string
   /**
    * Rendered inside a `FrameDialogHost` (lib/portals.tsx): the layer fills the host's box
@@ -180,6 +185,7 @@ export function BottomSheet({
   handleLabel = 'Resize sheet',
   fadeEdges = true,
   labelledBy,
+  label,
   className,
   hosted = false,
   fitContent = false
@@ -825,6 +831,7 @@ export function BottomSheet({
         ref={sheetRef}
         role="dialog"
         aria-labelledby={labelledBy}
+        aria-label={labelledBy ? undefined : label}
         tabIndex={-1}
         className={cn(
           'zen-sheet zen-sheet-detents absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[520px] flex-col',

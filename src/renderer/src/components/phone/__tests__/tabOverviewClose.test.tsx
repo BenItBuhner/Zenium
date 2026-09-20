@@ -521,7 +521,7 @@ describe('Recently closed', () => {
 describe('closing one card', () => {
   it('by X: the card departs, the close goes at once, and the toast that follows the filing undoes it', async () => {
     show(three())
-    const close = document.querySelector<HTMLElement>('[data-cell="b"] [aria-label="Close tab"]')!
+    const close = document.querySelector<HTMLElement>('[data-cell="b"] [aria-label^="Close "]')!
     act(() => close.click())
     // Immediate: the command is out and the card is on its way; no toast until the core files it.
     expect(commands()).toEqual([['tab.close', { tabId: 'b' }]])
@@ -539,9 +539,7 @@ describe('closing one card', () => {
 
   it('a blank tab never visited closes with no toast: there is nothing to bring back', async () => {
     show(stateOf([tab('a', 'https://a.example/'), tab('blank', BLANK_URL)]))
-    const close = document.querySelector<HTMLElement>(
-      '[data-cell="blank"] [aria-label="Close tab"]'
-    )!
+    const close = document.querySelector<HTMLElement>('[data-cell="blank"] [aria-label^="Close "]')!
     act(() => close.click())
     expect(commands()).toEqual([['tab.close', { tabId: 'blank' }]])
     await act(async () => {

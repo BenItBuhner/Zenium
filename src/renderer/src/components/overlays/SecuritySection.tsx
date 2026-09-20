@@ -133,7 +133,7 @@ function StaticRow({
         <span
           className={cn(
             'flex shrink-0 items-center gap-3',
-            wrapped && 'mt-[calc((var(--v2-line-body)-var(--v2-control))/2)] self-start'
+            wrapped && 'mt-[calc((var(--v2-line-body-box)-var(--v2-control))/2)] self-start'
           )}
         >
           {children}
