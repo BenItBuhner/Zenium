@@ -204,7 +204,7 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
         onChange={form.pickGroup}
         readOnly={busy}
         autoFocus
-        controlClassName="w-[180px]"
+        controlClassName="zen-import-control"
       />
       {group && group.profiles.length > 1 && (
         <ChoiceRow<string>
@@ -217,7 +217,7 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
           }))}
           onChange={form.pickProfile}
           readOnly={busy}
-          controlClassName="w-[180px]"
+          controlClassName="zen-import-control"
         />
       )}
       {group && group.profiles.length === 1 && source?.email && (
