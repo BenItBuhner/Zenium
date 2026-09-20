@@ -7,7 +7,7 @@ import type { TranslateTabState } from '@shared/translate'
 import type { Tab, UIState } from '@shared/types'
 import { isWebPageUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
-import { chipCount, siteBlockingState } from '@renderer/lib/blockingUi'
+import { chipCount, requests, siteBlockingState } from '@renderer/lib/blockingUi'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
 import { openSettings } from '@renderer/lib/pages'
@@ -159,7 +159,7 @@ export function phonePillChips(
       const spoken =
         siteState === 'blocking'
           ? count > 0
-            ? `${count} ${count === 1 ? 'request' : 'requests'} blocked`
+            ? `${requests(count)} blocked`
             : ''
           : siteState === 'excepted'
             ? 'Blocking off for this site'
