@@ -302,39 +302,91 @@ class MediaUiDemo : MediaDemoBase("services-android-media-android-ui") {
             shot("17-settings-notifications-blocked")
             beat()
         }
-        // The page's word: a fresh notify page reads `Notification.permission` as denied. The
-        // polyfill's status comes from the browser a moment after the script installs (the
-        // page's title, written at once, still says default), so the live value is read.
-        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/notify?after=block"}""")
+        // The sheets go the way they came (back, one at a time) before the tab changes: a sheet
+        // left standing across a tab switch is not what a user does with one.
+        leaveNotificationsSheets()
+        coreInvoke("tab.close", """{"tabId":$settingsTab,"force":true}""")
+        SystemClock.sleep(1_000)
+
+        // The page's word: a fresh notify page reads `Notification.permission` as denied.
+        permissionReads("denied", "Block", "18-notify-page-denied")
+
+        // Ask put back through the same rows: Settings again, the Notifications row, its sheet's
+        // Default behaviour, the picker's Ask under a finger; then the page reads default again.
+        val again = coreInvoke("page.open", """{"id":"settings","section":"privacy"}""")
+        if (waitFor("Safety check", 20_000) != null &&
+            touchRowExpecting("Notifications", "the Notifications sheet is up again", 10_000) { rowNode("Default behaviour") != null }
+        ) {
+            SystemClock.sleep(1_500)
+            // The Ask option carries its "Default" description, so its node reads "Ask Default"
+            // to the tree (Block, with none, reads Block alone): the row shapes find and touch it.
+            if (touchRowExpecting("Default behaviour", "the picker shows the Ask option", 8_000) { rowNode("Ask") != null }) {
+                touchRowExpecting("Ask", "the core's default for notifications reads ask again", 8_000) { defaultFor("notifications") == "ask" }
+                note("  after Ask: default=${defaultFor("notifications")}; row \"${rowText("Default behaviour")}\"")
+            }
+            SystemClock.sleep(1_000)
+            shot("19-settings-notifications-ask-again")
+            beat()
+            leaveNotificationsSheets()
+        }
+        if (defaultFor("notifications") != "ask") {
+            coreInvoke("permissions.setDefault", """{"permission":"notifications","decision":"ask"}""")
+            note("  Ask put back through the core (default=${defaultFor("notifications")})")
+        }
+        coreInvoke("tab.close", """{"tabId":$again,"force":true}""")
+        SystemClock.sleep(1_000)
+        permissionReads("default", "Ask", "20-notify-page-default-again")
+    }
+
+    /**
+     * A fresh notify page on the demo tab reads `Notification.permission` as `expected` under
+     * the default `under`. The polyfill's status comes from the browser a moment after the
+     * script installs (the page's title, written at once, still says default), so the live value
+     * is read, and written into the page's state for the still.
+     */
+    private fun permissionReads(expected: String, under: String, still: String) {
+        coreInvoke("tab.navigate", """{"tabId":"$TAB","input":"${server.origin}/notify?under=${under.lowercase()}"}""")
         coreInvoke("tab.activate", """{"tabId":"$TAB"}""")
         waitTitle(TAB, 15_000) { it.startsWith("NT|") }
-        val denied = poll(8_000) { pageJs("Notification.permission") == "\"denied\"" }
-        note("  the page under Block: Notification.permission reads ${pageJs("Notification.permission")} (title at load: ${title()})")
-        if (!denied) touchFault("the page did not read Notification.permission as denied under the Block default (reads ${pageJs("Notification.permission")})")
-        pageJs("document.title = document.title.replace(/permission:[a-z]+/, 'permission:' + Notification.permission)")
+        val read = poll(8_000) { pageJs("Notification.permission") == "\"$expected\"" }
+        note("  the page under $under: Notification.permission reads ${pageJs("Notification.permission")} (title at load: ${title()})")
+        if (!read) touchFault("the page did not read Notification.permission as $expected under the $under default (reads ${pageJs("Notification.permission")})")
+        pageJs(
+            "document.title = document.title.replace(/permission:[a-z]+/, 'permission:' + Notification.permission);" +
+                "document.getElementById('state').textContent = document.title.split('|').join('\\n')"
+        )
         SystemClock.sleep(1_000)
-        shot("18-notify-page-denied")
+        shot(still)
         beat()
-        // Ask put back through the same rows (the Notifications sheet again, its picker's Ask
-        // under a finger), so the profile leaves as it came.
-        coreInvoke("tab.activate", """{"tabId":$settingsTab}""")
-        SystemClock.sleep(1_500)
-        if (rowNode("Default behaviour") == null) {
-            touchRowExpecting("Notifications", "the Notifications sheet is up again", 10_000) { rowNode("Default behaviour") != null }
-            SystemClock.sleep(1_000)
+    }
+
+    /** Back out of the picker (when up) and the Notifications sheet, waiting for each to be gone. */
+    private fun leaveNotificationsSheets() {
+        if (findByLabel("Block") != null && rowNode("Ask") != null) {
+            backUntil("the picker is gone and the Default behaviour row is back") {
+                findByLabel("Block") == null && rowNode("Default behaviour")?.isClickable == true
+            }
         }
-        if (rowNode("Default behaviour") != null && touchRowExpecting("Default behaviour", "the picker shows the Ask option", 8_000) { findByLabel("Ask") != null }) {
-            touchTapLabelExpecting("Ask", "the core's default for notifications reads ask again", timeoutMs = 8_000) { defaultFor("notifications") == "ask" }
-            note("  after Ask: default=${defaultFor("notifications")}; row \"${rowText("Default behaviour")}\"")
-        } else {
-            coreInvoke("permissions.setDefault", """{"permission":"notifications","decision":"ask"}""")
-            note("  the Notifications sheet could not be reopened; Ask put back through the core (default=${defaultFor("notifications")})")
+        if (rowNode("Default behaviour") != null) {
+            backUntil("the Notifications sheet is gone and the catalogue's row is back") {
+                rowNode("Default behaviour") == null && rowNode("Notifications")?.isClickable == true
+            }
         }
-        SystemClock.sleep(1_000)
-        shot("19-settings-notifications-ask-again")
-        beat()
-        coreInvoke("tab.close", """{"tabId":$settingsTab,"force":true}""")
-        SystemClock.sleep(1_500)
+    }
+
+    /**
+     * One system back on a sheet, then up to `timeoutMs` for `took` – what the tree shows once
+     * the sheet has gone – to hold; a second back sent on a sleep would land on a sheet still
+     * leaving (the emulator's software renderer paints a dismissal seconds late).
+     */
+    private fun backUntil(effect: String, timeoutMs: Long = 12_000, took: () -> Boolean): Boolean {
+        back()
+        if (poll(timeoutMs, took)) {
+            SystemClock.sleep(600)
+            return true
+        }
+        note("  after back: not $effect within $timeoutMs ms")
+        return false
     }
 
     /** The core's default for a site setting (`UIState.permissionDefaults`), "" when none is set. */
