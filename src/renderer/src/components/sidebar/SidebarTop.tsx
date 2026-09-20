@@ -59,7 +59,9 @@ import { PillChip } from '../urlbar/PillChip'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { MediaHubButton } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { mediaHubVisible } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -499,12 +501,17 @@ export function NavRow({
           </span>
         </div>
       )}
+      <MediaHubButton state={state} />
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The downloads button joins the fixed set while it is in the row.
-        fixedButtons={FIXED_BUTTONS + (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)}
+        // The media and downloads buttons join the fixed set while they are in the row.
+        fixedButtons={
+          FIXED_BUTTONS +
+          (mediaHubVisible(state) ? 1 : 0) +
+          (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)
+        }
         compact={compact}
       />
       <button

@@ -2,6 +2,7 @@ import React, { type JSX } from 'react'
 import { App } from './App'
 import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
+import { MediaHubLayer } from './components/media/MediaHubPopover'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
@@ -34,6 +35,7 @@ export function Root(): JSX.Element {
       <BarEditorLayer />
       <ExtensionsSheetLayer />
       <DownloadBubbleLayer />
+      <MediaHubLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
       <VoiceSearchLayer />

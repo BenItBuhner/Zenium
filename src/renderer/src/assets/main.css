@@ -5058,6 +5058,125 @@
   .zen-scpick-audio > .zen-v2-checkbox {
     margin: 0;
   }
+
+  /*
+   * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
+   * controls) as a §9.20 popover at 400 under the toolbar row. The body runs from the title
+   * block's 16 (§9.23) with one player per tab, parted by §9.7's hairline in the gutter, each at
+   * the 16 gutter with 12 between its parts: the now-playing line – the artwork as a 56 tile at
+   * the inner radius (a note glyph on the fill without one) beside the title at 15/600 and the
+   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
+   * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
+   * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
+   * (§4) so 0:09 → 0:10 moves nothing), then the transport – previous, back, play / pause, on,
+   * next as §9.3 icon buttons at 8 apart, centred, the middle one's glyph solid as the row's one
+   * emphasis, the way Chrome's controls draw it (as the phone's `.zen-media-*` sheet does), the
+   * track buttons disabled at .4 (§9.30) until the page handles them. The toolbar button wears
+   * a 6 accent dot at its corner while anything plays.
+   */
+  .zen-mhub-body {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 4px;
+  }
+  .zen-mhub-player {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 12px;
+  }
+  .zen-mhub-player + .zen-mhub-player {
+    padding-top: 16px;
+    border-top: 1px solid var(--v2-border);
+  }
+  .zen-mhub-now {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .zen-mhub-art {
+    display: flex;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-fill);
+    object-fit: cover;
+  }
+  .zen-mhub-art-empty {
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-mhub-art-empty > svg {
+    width: 24px;
+    height: 24px;
+    stroke-width: 1.5;
+  }
+  /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
+  .zen-mhub-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    border-radius: var(--v2-radius-inner);
+    color: var(--v2-text);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-mhub-text:active {
+    background: var(--v2-fill);
+  }
+  @media (hover: hover) {
+    .zen-mhub-text:hover {
+      background: var(--v2-fill);
+    }
+  }
+  .zen-mhub-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-mhub-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-seek {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-mhub-time {
+    flex-shrink: 0;
+    min-width: 5ch;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-time:last-child {
+    text-align: right;
+  }
+  .zen-mhub-transport {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .zen-mhub-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--v2-accent);
+  }
 }
 
 @layer components {
