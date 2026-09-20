@@ -163,9 +163,11 @@ function firstControl(root: HTMLElement): HTMLElement | null {
 
 /**
  * One width for every control the column's rows trail (§9.13, as Chrome's column): 160, the
- * 400 form's two fifths, on the menulists and the Copies field alike, so their edges line up.
+ * 400 form's two fifths, on the menulists and the numeric fields alike, so their edges line up.
+ * A modifier beside the primitives' rules (`main.css`, §9.34): the unlayered `.zen-v2-menulist`
+ * and `.zen-v2-field` set their own width, which a width utility would lose to.
  */
-const CONTROL_WIDTH = 'w-40'
+const CONTROL_WIDTH = 'zen-print-control'
 
 /** The column's rows: Chrome's settings, in its order, with the disclosure over the rest. */
 function Options({
@@ -240,19 +242,18 @@ function Options({
             label={PRINT_LABELS.copies}
             control
             trailing={
-              <div className={CONTROL_WIDTH}>
-                <Field
-                  value={texts.copies}
-                  inputMode="numeric"
-                  readOnly={busy}
-                  aria-label={PRINT_LABELS.copies}
-                  aria-invalid={errors.copies ? true : undefined}
-                  aria-describedby={errors.copies ? 'print-copies-error' : undefined}
-                  onChange={(e) => form.setCopiesText(e.currentTarget.value)}
-                  onKeyDown={submitOnEnter}
-                  data-testid="print-copies"
-                />
-              </div>
+              <Field
+                className={CONTROL_WIDTH}
+                value={texts.copies}
+                inputMode="numeric"
+                readOnly={busy}
+                aria-label={PRINT_LABELS.copies}
+                aria-invalid={errors.copies ? true : undefined}
+                aria-describedby={errors.copies ? 'print-copies-error' : undefined}
+                onChange={(e) => form.setCopiesText(e.currentTarget.value)}
+                onKeyDown={submitOnEnter}
+                data-testid="print-copies"
+              />
             }
           />
           {errors.copies && <ErrorLine id="print-copies-error">{errors.copies}</ErrorLine>}
@@ -340,20 +341,19 @@ function Options({
             >
               {(id, describedBy) => (
                 <div className="flex items-center gap-2">
-                  <div className="w-24">
-                    <Field
-                      id={id}
-                      value={texts.scale}
-                      inputMode="numeric"
-                      readOnly={busy}
-                      aria-label={`${PRINT_LABELS.scale} (%)`}
-                      aria-invalid={errors.scale ? true : undefined}
-                      aria-describedby={describedBy}
-                      onChange={(e) => form.setScaleText(e.currentTarget.value)}
-                      onKeyDown={submitOnEnter}
-                      data-testid="print-scale"
-                    />
-                  </div>
+                  <Field
+                    id={id}
+                    className={CONTROL_WIDTH}
+                    value={texts.scale}
+                    inputMode="numeric"
+                    readOnly={busy}
+                    aria-label={`${PRINT_LABELS.scale} (%)`}
+                    aria-invalid={errors.scale ? true : undefined}
+                    aria-describedby={describedBy}
+                    onChange={(e) => form.setScaleText(e.currentTarget.value)}
+                    onKeyDown={submitOnEnter}
+                    data-testid="print-scale"
+                  />
                   <span className="text-[15px] leading-5 text-[var(--v2-text-deemphasized)]">
                     %
                   </span>

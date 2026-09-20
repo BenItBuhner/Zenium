@@ -6026,6 +6026,16 @@
   line-height: var(--v2-line-body);
   transition: background 120ms var(--zen-ease);
 }
+/*
+ * The print preview's option column (§9.13, §9.34: a modifier beside the primitives, not a copy
+ * of them): one width for every menulist and numeric field its rows trail – 160, two fifths of
+ * the 400 form – so the values line up as in Chrome's column. The menulist and the field each
+ * set their own width above, which a width utility on the element would lose to.
+ */
+.zen-v2-menulist.zen-print-control,
+.zen-v2-field.zen-print-control {
+  width: 160px;
+}
 .zen-v2-menulist[data-placeholder] {
   color: var(--v2-text-deemphasized);
 }

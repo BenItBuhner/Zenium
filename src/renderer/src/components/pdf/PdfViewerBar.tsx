@@ -123,11 +123,12 @@ export function PdfViewerBar({ state, tabId }: { state: UIState; tabId: string }
                 onClick={() => setSheet('goto')}
               >
                 {ready ? (
-                  <>
+                  // One label (the button's gap is for a glyph beside a label, not inside one).
+                  <span className="flex items-center">
                     <span>{page}</span>
                     <span className="px-1 text-[var(--v2-text-deemphasized)]">/</span>
                     <span>{pageCount}</span>
-                  </>
+                  </span>
                 ) : (
                   <span className="text-[var(--v2-text-deemphasized)]">Loading…</span>
                 )}

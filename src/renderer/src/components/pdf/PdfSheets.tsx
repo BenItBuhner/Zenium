@@ -16,7 +16,6 @@ import {
 import { cn } from '@renderer/lib/utils'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { PhoneSheet } from '../phone/PhoneSheet'
-import { V2_GLYPH } from '../v2/controls'
 
 /**
  * The PDF viewer bar's sheets (`PdfViewerBar.tsx`), each a `PhoneSheet` on the hosted chassis:
@@ -389,7 +388,7 @@ export function PdfPasswordSheet({
               className="flex items-start gap-2 text-[13px] leading-5 text-[var(--v2-danger)]"
             >
               <CircleAlert
-                className={cn(V2_GLYPH, 'mt-[calc((var(--v2-line-body)-var(--v2-icon))/2)]')}
+                className="mt-0.5 h-4 w-4 shrink-0 [stroke-width:var(--v2-icon-stroke)]"
                 aria-hidden
               />
               <span>Incorrect password, try again</span>
