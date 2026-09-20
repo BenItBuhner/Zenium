@@ -29,10 +29,12 @@ import java.util.concurrent.TimeUnit
  *     rest stays the favicon, the host and the one site-information glyph: no reader chip.
  *  2. The app menu's Text Preferences… (the phone's way in): the §9.13 sheet with the read-aloud
  *     row first, the four picker rows, then the extras – Text spacing, Line focus, Lines in
- *     focus, Syllables. Real touches: Line focus on (the document's `data-line-focus` reads 3
- *     and the page script's masks are in the document), Syllables on (`data-syllables`, the
- *     marks in the text), Lines in focus from 3 to 5 lines through its picker sheet (§9.13: the
- *     pick closes the sheet by itself), Text spacing to Wider (`data-spacing`).
+ *     focus, Syllables. The sheet opens at its peek, where the last rows sit below the fold; a
+ *     finger pulls it to its expanded detent by its handle first (as the app menu is pulled).
+ *     Real touches: Line focus on (the document's `data-line-focus` reads 3 and the page
+ *     script's masks are in the document), Syllables on (`data-syllables`, the marks in the
+ *     text), Lines in focus from 3 to 5 lines through its menulist's picker sheet (§9.13: the
+ *     pick closes the sheet by itself), Text spacing to Wider (`data-spacing`) the same way.
  *  3. A phone read of the reader article: a real touch on the sheet's Listen to this article
  *     starts a session with `source: reader` (the sheet leaves; the player docks under the
  *     document); the engine speaks the reader document's sentences with the sentence highlight
@@ -127,7 +129,13 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         val mounted = poll(15_000) { readerProbe().optString("title").isNotEmpty() }
         val probe = readerProbe()
         finding("  the reader document: $probe")
-        check("the reader document renders the title, the byline and the reading time", mounted && probe.optString("title").startsWith("The lighthouse keeper") && probe.optBoolean("byline") && probe.optBoolean("readingTime"))
+        // The article's <title> is "The lighthouse keeper's almanac: a long night of tides, …" and its
+        // <h1> only the part before the colon, so the reader core's Readability title heuristic
+        // (no heading reads the whole title; the part after the last colon has three words or
+        // more) titles the document with the part after the colon – the engine's behaviour, as
+        // in Firefox's Reader View; either is the article's title here.
+        val title = probe.optString("title")
+        check("the reader document renders the title, the byline and the reading time", mounted && (title.startsWith("The lighthouse keeper") || title.startsWith("a long night of tides")) && probe.optBoolean("byline") && probe.optBoolean("readingTime"))
         check("the document carries no toolbar of its own (§10.1)", mounted && !probe.optBoolean("toolbar"))
         val pill = pillProbe()
         finding("  the pill at rest: $pill")
@@ -161,34 +169,43 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         var probe = readerProbe()
         finding("  after Line focus: switch ${switchState("Line focus")}; document $probe")
         check("Line focus on: settings.reader.lineFocus 3, the document's data-line-focus 3 and the page script's masks in it", switchState("Line focus") == "true" && probe.optString("lineFocus") == "3" && probe.optInt("masks") >= 2)
-        // Syllables on.
-        touchTapLabelExpecting("Syllables", "the reader document carries data-syllables", timeoutMs = 6_000, prefix = true) { readerProbe().optString("syllables") == "true" }
+        // Syllables on: the last row. The sheet was pulled to its expanded detent when it opened
+        // (openSheet), where the nine rows fit the screen; when the tree still has the row below
+        // the fold (the emulator's tree lags the pull), it is scrolled into view through the tree
+        // first and the finger goes in after – the claim stays with the touch.
+        val syllablesOn = { readerProbe().optString("syllables") == "true" }
+        if (revealPrefix("Syllables")) touchTapLabelExpecting("Syllables", "the reader document carries data-syllables", timeoutMs = 6_000, prefix = true, took = syllablesOn)
+        else finding("  no row on screen reads Syllables")
         probe = readerProbe()
         finding("  after Syllables: switch ${switchState("Syllables")}; document $probe")
         check("Syllables on: the document's data-syllables true and the page script's marks in the text", switchState("Syllables") == "true" && probe.optString("syllables") == "true" && probe.optInt("marks") > 0)
         snap("preferences-sheet-extras-on")
         beat()
-        // Lines in focus: 3 -> 5 through its picker sheet.
-        val picker = touchTapLabelExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000, prefix = false, findTimeoutMs = 8_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
+        // Lines in focus: 3 -> 5 through its picker sheet. A §9.13 control-panel row's tap target
+        // is its control – the 40 menulist reading the value ("3 lines") – not the row's label.
+        revealPrefix("Lines in focus")
+        val picker = touchControlExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
         if (picker) {
             SystemClock.sleep(800)
             snap("lines-in-focus-picker")
             touchTapLabelExpecting("5 lines", "the document's data-line-focus reads 5 and the picker closed", timeoutMs = 6_000) { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
             probe = readerProbe()
-            finding("  after 5 lines: document $probe; picker gone=${rowNode("1 line") == null}; row reads ${rowText("Lines in focus")}")
+            finding("  after 5 lines: document $probe; picker gone=${rowNode("1 line") == null}; the menulist reads ${menulistValue("Lines in focus")}")
             check("5 lines: the pick closes the picker on its own (§9.13) and the document's band is five lines", probe.optString("lineFocus") == "5" && rowNode("1 line") == null)
         } else {
-            check("the Lines in focus row opens its picker", false)
+            check("the Lines in focus menulist opens its picker", false)
         }
-        // Text spacing: Normal -> Wider (Column width has a "Wide" of its own; "Wider" is spacing's alone).
-        val spacing = touchTapLabelExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
+        // Text spacing: Normal -> Wider through its menulist (Column width has a "Wide" of its own;
+        // "Wider" is spacing's alone).
+        revealPrefix("Text spacing")
+        val spacing = touchControlExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
         if (spacing) {
             touchTapLabelExpecting("Wider", "the document's data-spacing reads wider", timeoutMs = 6_000) { readerProbe().optString("spacing") == "wider" }
             probe = readerProbe()
             finding("  after Wider: document $probe")
             check("Text spacing Wider: the document's data-spacing wider (the stylesheet's letter, word and line spacing)", probe.optString("spacing") == "wider")
         } else {
-            check("the Text spacing row opens its picker", false)
+            check("the Text spacing menulist opens its picker", false)
         }
         snap("preferences-sheet-wider-five-lines")
         beat()
@@ -298,8 +315,86 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         if (!up) touchFault("a touch on Text Preferences… opened no sheet")
         check("a real touch on Text Preferences… opens the sheet", up)
         SystemClock.sleep(1_000)
+        // The sheet opens at its peek, where the extras' rows sit below the fold and out of a
+        // finger's reach (the first run: no node for Syllables, Lines in focus clipped at the
+        // screen's bottom edge): pulled to its expanded detent by its handle, the way the app
+        // menu is (DemoHarness.openMenuItem), the nine rows fit the screen.
+        if (up) findByLabel(SHEET_HANDLE_LABEL)?.let { handle ->
+            Finger().apply {
+                down(handle.exactCenterX(), handle.exactCenterY())
+                moveBy(0f, -0.4f * height, 130)
+                up()
+            }
+            SystemClock.sleep(2_000)
+        }
         return up
     }
+
+    /**
+     * Scroll the row whose text starts with `label` into view through the tree
+     * (ACTION_SHOW_ON_SCREEN, as [reveal] does for an exact label; a switch row's text runs its
+     * label and description together), so the finger that follows has bounds on screen to land
+     * in. False when no node reads it.
+     */
+    private fun revealPrefix(label: String): Boolean {
+        val node = findNode { it == label || it.startsWith(label) } ?: return false
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_200)
+        return true
+    }
+
+    /**
+     * A real touch on the control of the §9.13 row labelled `label` – the 40 menulist, a button
+     * whose accessible name is the row's label (`V2Menulist`'s `aria-label`) – then up to
+     * `timeoutMs` for `took`, as [touchTapLabelExpecting]. The row's label span reads the same
+     * text and comes first in the tree (the first run's finger landed on it, and a label opens
+     * nothing), so the finger goes to the clickable node reading the label; when the tree offers
+     * none, to the menulist's rect as the chrome's DOM lays it out (OmniboxDemo's fallback).
+     * False, with a [touchFault], when the touch went in and `took` never held; false and a
+     * finding when there was nothing to touch.
+     */
+    private fun touchControlExpecting(label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
+        val reads = { node: AccessibilityNodeInfo ->
+            val text = (node.text ?: node.contentDescription)?.toString()
+            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label,"))
+        }
+        val control = findNodeWhere { node -> node.isClickable && reads(node) }
+        val point = if (control != null) {
+            touchTapPoint(control)
+        } else {
+            menulistDomRect(label)?.let { rect ->
+                touchPoint(rect)?.also { Finger().tap(it.x, it.y) }
+            }
+        }
+        if (point == null) {
+            finding("  nothing to touch for the $label control (tree node: ${control != null}; DOM rect: ${menulistDomRect(label)})")
+            return false
+        }
+        Log.i(tag, "touch at ${point.x},${point.y} on the $label control (${if (control != null) "tree" else "DOM rect"})")
+        if (poll(timeoutMs, took)) return true
+        touchFault("a touch on the $label control did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /** The menulist in the row labelled `label`, as the chrome's DOM lays it out, in screen px; null when there is none. */
+    private fun menulistDomRect(label: String): Rect? {
+        val text = jsonString(chromeJs(
+            "(function(){var rows=Array.from(document.querySelectorAll('[data-reader-prefs-rows] .zen-v2-row'));" +
+                "var r=rows.find(function(e){var l=e.querySelector('.truncate');return l&&(l.textContent||'').trim()===${JSONObject.quote(label)}});" +
+                "var m=r&&r.querySelector('.zen-v2-menulist');if(!m)return '';var b=m.getBoundingClientRect();" +
+                "return [b.left,b.top,b.right,b.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
+        ))
+        val px = text.split(',').map { it.toIntOrNull() ?: return null }
+        if (px.size != 4) return null
+        return Rect(px[0], px[1], px[2], px[3])
+    }
+
+    /** What the menulist in the row labelled `label` reads, from the chrome's document. */
+    private fun menulistValue(label: String): String = jsonString(chromeJs(
+        "(function(){var rows=Array.from(document.querySelectorAll('[data-reader-prefs-rows] .zen-v2-row'));" +
+            "var r=rows.find(function(e){var l=e.querySelector('.truncate');return l&&(l.textContent||'').trim()===${JSONObject.quote(label)}});" +
+            "var m=r&&r.querySelector('.zen-v2-menulist');return m?(m.textContent||'').trim():''})()"
+    ))
 
     /** The sheet's row labels in order, from the chrome's own document. */
     private fun sheetRows(): List<String> {
@@ -327,8 +422,6 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
     private fun switchRow(label: String): AccessibilityNodeInfo? = findNodeWhere { node ->
         node.isCheckable && ((node.text ?: node.contentDescription)?.toString()?.startsWith(label) == true)
     }
-
-    private fun rowText(label: String): String = rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
 
     /** The row (or control) reading `label`: the clickable node reading it alone or with a description after it. */
     private fun rowNode(label: String): AccessibilityNodeInfo? {
@@ -462,5 +555,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", "services-reader-
         private const val TAB = "tab_demo"
         /** The player's `role=region` label (`ReadAloudPanel`). */
         private const val PANEL_LABEL = "Read aloud"
+        /** The Text preferences sheet's handle (`ReaderPreferencesSheet`'s `handleLabel`). */
+        private const val SHEET_HANDLE_LABEL = "Resize text preferences"
     }
 }
