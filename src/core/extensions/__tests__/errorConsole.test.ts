@@ -5,6 +5,7 @@ import {
   ExtensionErrorRing,
   attributePageMessage,
   consoleLevel,
+  engineBelowMinimumReport,
   extensionIdOfUrl,
   isEmbedderLine,
   manifestIssueReport,
@@ -248,6 +249,23 @@ describe('manifestIssueReport', () => {
     })
     expect(manifestIssueReport(ID, { path: '', message: 'Not an object' }, 'error').message).toBe(
       'Not an object'
+    )
+  })
+})
+
+describe('engineBelowMinimumReport', () => {
+  it('warns against manifest.json with the minimum and the engine, by major version', () => {
+    expect(engineBelowMinimumReport(ID, '120', '113.0.5672.136')).toEqual({
+      level: 'warning',
+      source: 'load',
+      message:
+        "Requires Chrome 120 or newer; this device's WebView is Chrome 113, so pages and content scripts may miss features the extension expects",
+      url: `chrome-extension://${ID}/manifest.json`,
+      line: null,
+      context: null
+    })
+    expect(engineBelowMinimumReport(ID, '128.0.0.0', '113.0.0.0').message).toContain(
+      'Requires Chrome 128.0.0.0 or newer'
     )
   })
 })

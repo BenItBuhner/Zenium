@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 
 class ExtensionFilesTest {
@@ -273,6 +274,29 @@ class ExtensionFilesTest {
             assertTrue(e.message!!.contains("CRC"))
         }
         assertFalse(File(root, ID).exists())
+    }
+
+    // --- bridge answers --------------------------------------------------------------------------
+
+    @Test
+    fun bridgeTextAnswersASmallFileAndNeverAMultiMegabyteOne() {
+        base.mkdirs()
+        val small = File(base, "rules.json").apply { writeText("""[{"id":1}]""") }
+        assertEquals("""[{"id":1}]""", ExtensionFiles.bridgeText(small))
+        assertEquals(null, ExtensionFiles.bridgeText(null))
+        assertEquals(null, ExtensionFiles.bridgeText(File(base, "missing.json")))
+        assertEquals(null, ExtensionFiles.bridgeText(base))
+        val large = File(base, "base.json")
+        FileOutputStream(large).use { out ->
+            val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+            var written = 0L
+            while (written < ExtensionFiles.BRIDGE_TEXT_LIMIT) {
+                out.write(chunk)
+                written += chunk.size
+            }
+        }
+        assertTrue(large.length() >= ExtensionFiles.BRIDGE_TEXT_LIMIT)
+        assertEquals("a file at the limit is not quoted into a bridge answer", null, ExtensionFiles.bridgeText(large))
     }
 
     companion object {

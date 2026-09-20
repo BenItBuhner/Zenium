@@ -1,0 +1,488 @@
+{
+  "note": "The fixed local record set (pre-move collectLocal + diffLocal at 04bb7748): settings snapshot, model, bookmarks, boosts; `plaintext` is the payload JSON the engine must reproduce byte for byte, `hashes` the sha1 hashData of every record.",
+  "now": 1758300000000,
+  "scope": {
+    "spaces": true,
+    "folders": true,
+    "pinnedTabs": true,
+    "essentials": true,
+    "openTabs": true,
+    "containers": true,
+    "bookmarks": true,
+    "settings": true,
+    "shortcuts": true,
+    "boosts": true
+  },
+  "settings": {
+    "colorScheme": "system",
+    "appIcon": "indigo",
+    "toolbarLayout": "single",
+    "sidebarSide": "left",
+    "sidebarWidth": 240,
+    "sidebarExpanded": true,
+    "sidebarExpandOnHover": false,
+    "borderless": false,
+    "windowMaterial": "none",
+    "compactMode": {
+      "enabled": false,
+      "hideSidebar": true,
+      "hideToolbar": false,
+      "sidebarPersistent": false
+    },
+    "urlbarBehavior": "float-typing",
+    "phoneBarPosition": "bottom",
+    "phoneBar": {
+      "left": ["back"],
+      "right": ["new-tab", "tabs", "menu"]
+    },
+    "pullToRefresh": true,
+    "hideToolbarOnScroll": true,
+    "glanceEnabled": true,
+    "glanceTrigger": "alt",
+    "pinnedCloseBehavior": "reset-unload-switch",
+    "pinnedResetOnStartup": false,
+    "thirdPartyOnPinned": "new-tab",
+    "unloadEnabled": true,
+    "unloadTimeoutMinutes": 20,
+    "unloadExcludedDomains": [],
+    "mutedHosts": [],
+    "searchEngineId": "google",
+    "searchEngines": [],
+    "searchSuggestions": true,
+    "showFullUrls": false,
+    "containerSpecificEssentials": true,
+    "essentialsMax": 12,
+    "newTabPosition": "end",
+    "restoreSession": true,
+    "warnOnCloseWindow": true,
+    "confirmCloseAll": true,
+    "crashRestore": "ask",
+    "askWhereToSave": false,
+    "onboardingDone": false,
+    "showTabSeparator": true,
+    "ctrlTabCyclesWithinSection": false,
+    "spaceRouting": {},
+    "windowSync": "all",
+    "resources": {
+      "enabled": true,
+      "enforcement": "strict",
+      "memoryMb": 0,
+      "memoryPercent": 35,
+      "cpuPercent": 50,
+      "gpuMemoryMb": 0,
+      "gpuMode": "auto",
+      "freezeAfterMinutes": 5,
+      "idleFreezeMinutes": 10,
+      "maxLoadedTabs": 24,
+      "maxConcurrentLoads": 3,
+      "batteryFactor": 0.7,
+      "protectPinned": false,
+      "protectEssentials": false,
+      "protectAudible": true,
+      "process": {
+        "rendererProcessLimit": 0,
+        "rendererHeapMb": 0,
+        "lowEndDeviceMode": false,
+        "disableSpareRenderer": true,
+        "disableBackForwardCache": true,
+        "disablePrerender": true,
+        "rasterThreads": 0,
+        "v8OptimizeForSize": false
+      }
+    },
+    "agents": {
+      "enabled": false,
+      "port": 41735,
+      "lan": false,
+      "approveNewAgents": true,
+      "approvedNames": [],
+      "defaultMode": "foreground",
+      "allowScripts": false,
+      "showCursor": true
+    },
+    "updates": {
+      "autoCheck": true,
+      "autoDownload": true,
+      "channel": "stable"
+    },
+    "externalProtocols": {},
+    "passwords": {
+      "offerToSave": true,
+      "reauthGraceSeconds": 60,
+      "autoSignIn": false,
+      "androidProvider": "system",
+      "clipboardClearSeconds": 60
+    },
+    "autofill": {
+      "addresses": true,
+      "cards": true
+    },
+    "defaultBrowserPromo": {
+      "sessions": 0,
+      "promptedAt": null,
+      "dismissals": 0,
+      "done": false,
+      "bannerAt": null
+    },
+    "defaultBrowserPromptDismissed": null,
+    "blocking": {
+      "level": "balanced",
+      "lists": {},
+      "customLists": [],
+      "userFilters": "",
+      "autoUpdate": true
+    },
+    "pageControls": {
+      "desktopSite": "auto",
+      "desktopSites": {},
+      "darkenSites": false,
+      "darkenSiteExceptions": {},
+      "zoom": 1,
+      "zoomIncludesOsFontSize": true,
+      "siteZooms": {},
+      "forceZoom": false
+    },
+    "bookmarksBar": "newtab",
+    "shortcutPreset": "chrome",
+    "privacy": {
+      "safeBrowsingEnabled": true,
+      "safeBrowsingApiKey": "",
+      "httpsOnly": "ask",
+      "secureDnsMode": "automatic",
+      "secureDnsProvider": "cloudflare",
+      "secureDnsCustomUrl": "",
+      "thirdPartyCookies": "block-private",
+      "thirdPartyCookiesPrivate": "default",
+      "thirdPartyCookieExceptions": [],
+      "gpc": false,
+      "dnt": false
+    },
+    "newTab": {
+      "enabled": true,
+      "mode": "most-visited",
+      "preset": "focused",
+      "modules": {
+        "searchBox": true,
+        "shortcuts": true,
+        "wallpaper": false,
+        "feed": false,
+        "greeting": false
+      },
+      "background": "space"
+    },
+    "gestureHintDone": false,
+    "spellcheck": {
+      "enabled": true,
+      "languages": []
+    },
+    "reader": {
+      "fontSize": 18,
+      "font": "serif",
+      "theme": "auto",
+      "width": "normal"
+    },
+    "readAloud": {
+      "rate": 1,
+      "voiceByLanguage": {},
+      "highlight": "both"
+    }
+  },
+  "shortcutOverrides": {
+    "tab.new": null
+  },
+  "model": {
+    "tabs": {
+      "tab_fixturepin": {
+        "id": "tab_fixturepin",
+        "spaceId": "space_fixture01",
+        "containerId": "work",
+        "url": "https://github.com/",
+        "pinnedUrl": null,
+        "title": "github.com",
+        "customTitle": null,
+        "customIcon": null,
+        "favicon": null,
+        "pinned": true,
+        "essential": false,
+        "folderId": null,
+        "muted": false,
+        "discarded": true,
+        "loading": false,
+        "audible": false,
+        "canGoBack": false,
+        "canGoForward": false,
+        "createdAt": 1758300000000,
+        "lastActiveAt": 1758300000000,
+        "windowId": null
+      },
+      "tab_fixturereg": {
+        "id": "tab_fixturereg",
+        "spaceId": "space_fixture01",
+        "containerId": "work",
+        "url": "https://x.test/",
+        "pinnedUrl": null,
+        "title": "x.test",
+        "customTitle": null,
+        "customIcon": null,
+        "favicon": null,
+        "pinned": false,
+        "essential": false,
+        "folderId": null,
+        "muted": false,
+        "discarded": true,
+        "loading": false,
+        "audible": false,
+        "canGoBack": false,
+        "canGoForward": false,
+        "createdAt": 1758300000000,
+        "lastActiveAt": 1758300000000,
+        "windowId": null
+      },
+      "tab_fixtureess": {
+        "id": "tab_fixtureess",
+        "spaceId": null,
+        "containerId": "default",
+        "url": "https://mail.test/",
+        "pinnedUrl": null,
+        "title": "mail.test",
+        "customTitle": null,
+        "customIcon": null,
+        "favicon": null,
+        "pinned": false,
+        "essential": true,
+        "folderId": null,
+        "muted": false,
+        "discarded": true,
+        "loading": false,
+        "audible": false,
+        "canGoBack": false,
+        "canGoForward": false,
+        "createdAt": 1758300000000,
+        "lastActiveAt": 1758300000000,
+        "windowId": null
+      }
+    },
+    "essentialTabIds": ["tab_fixtureess"],
+    "spaces": [
+      {
+        "id": "space_fixture01",
+        "name": "Work",
+        "icon": "💼",
+        "containerId": "work",
+        "theme": null,
+        "tabIds": ["tab_fixturepin", "tab_fixturereg"],
+        "activeTabId": null,
+        "pinnedCollapsed": false
+      }
+    ],
+    "activeSpaceId": "space_fixture01",
+    "containers": [
+      {
+        "id": "default",
+        "name": "No Container",
+        "color": "toolbar",
+        "icon": "circle"
+      },
+      {
+        "id": "personal",
+        "name": "Personal",
+        "color": "blue",
+        "icon": "fingerprint"
+      },
+      {
+        "id": "work",
+        "name": "Work",
+        "color": "orange",
+        "icon": "briefcase"
+      },
+      {
+        "id": "banking",
+        "name": "Banking",
+        "color": "green",
+        "icon": "dollar"
+      },
+      {
+        "id": "shopping",
+        "name": "Shopping",
+        "color": "pink",
+        "icon": "cart"
+      }
+    ],
+    "folders": {
+      "folder_fixture01": {
+        "id": "folder_fixture01",
+        "spaceId": "space_fixture01",
+        "name": "Reading",
+        "icon": "📚",
+        "collapsed": false
+      }
+    },
+    "splitGroups": {},
+    "localSpaces": {}
+  },
+  "bookmarks": [
+    {
+      "id": "1",
+      "parentId": null,
+      "index": 0,
+      "type": "folder",
+      "title": "Bookmarks bar"
+    },
+    {
+      "id": "2",
+      "parentId": null,
+      "index": 1,
+      "type": "folder",
+      "title": "Other bookmarks"
+    },
+    {
+      "id": "3",
+      "parentId": null,
+      "index": 2,
+      "type": "folder",
+      "title": "Mobile bookmarks"
+    },
+    {
+      "id": "bookmark_fixture01",
+      "parentId": "1",
+      "index": 0,
+      "type": "url",
+      "title": "Example",
+      "url": "https://example.com/",
+      "favicon": null,
+      "dateAdded": 1758299999000
+    }
+  ],
+  "boosts": [
+    {
+      "domain": "example.com",
+      "css": "body{color:red}",
+      "js": "",
+      "enabled": true
+    }
+  ],
+  "plaintext": "{\"v\":1,\"records\":[{\"id\":\"space_fixture01\",\"type\":\"space\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Work\",\"icon\":\"💼\",\"containerId\":\"work\",\"theme\":null,\"pinnedCollapsed\":false}},{\"id\":\"order:spaces\",\"type\":\"order\",\"modified\":0,\"deleted\":false,\"data\":{\"ids\":[\"space_fixture01\"]}},{\"id\":\"folder_fixture01\",\"type\":\"folder\",\"modified\":0,\"deleted\":false,\"data\":{\"spaceId\":\"space_fixture01\",\"name\":\"Reading\",\"icon\":\"📚\",\"collapsed\":false}},{\"id\":\"tab_fixturepin\",\"type\":\"tab\",\"modified\":0,\"deleted\":false,\"data\":{\"url\":\"https://github.com/\",\"pinnedUrl\":null,\"title\":\"github.com\",\"customTitle\":null,\"customIcon\":null,\"favicon\":null,\"pinned\":true,\"essential\":false,\"spaceId\":\"space_fixture01\",\"folderId\":null,\"containerId\":\"work\",\"muted\":false}},{\"id\":\"tab_fixturereg\",\"type\":\"tab\",\"modified\":0,\"deleted\":false,\"data\":{\"url\":\"https://x.test/\",\"pinnedUrl\":null,\"title\":\"x.test\",\"customTitle\":null,\"customIcon\":null,\"favicon\":null,\"pinned\":false,\"essential\":false,\"spaceId\":\"space_fixture01\",\"folderId\":null,\"containerId\":\"work\",\"muted\":false}},{\"id\":\"tab_fixtureess\",\"type\":\"tab\",\"modified\":0,\"deleted\":false,\"data\":{\"url\":\"https://mail.test/\",\"pinnedUrl\":null,\"title\":\"mail.test\",\"customTitle\":null,\"customIcon\":null,\"favicon\":null,\"pinned\":false,\"essential\":true,\"spaceId\":null,\"folderId\":null,\"containerId\":\"default\",\"muted\":false}},{\"id\":\"order:essentials\",\"type\":\"order\",\"modified\":0,\"deleted\":false,\"data\":{\"ids\":[\"tab_fixtureess\"]}},{\"id\":\"order:tabs:space_fixture01\",\"type\":\"order\",\"modified\":0,\"deleted\":false,\"data\":{\"pinned\":[\"tab_fixturepin\"],\"regular\":[\"tab_fixturereg\"]}},{\"id\":\"personal\",\"type\":\"container\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Personal\",\"color\":\"blue\",\"icon\":\"fingerprint\"}},{\"id\":\"work\",\"type\":\"container\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Work\",\"color\":\"orange\",\"icon\":\"briefcase\"}},{\"id\":\"banking\",\"type\":\"container\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Banking\",\"color\":\"green\",\"icon\":\"dollar\"}},{\"id\":\"shopping\",\"type\":\"container\",\"modified\":0,\"deleted\":false,\"data\":{\"name\":\"Shopping\",\"color\":\"pink\",\"icon\":\"cart\"}},{\"id\":\"order:containers\",\"type\":\"order\",\"modified\":0,\"deleted\":false,\"data\":{\"ids\":[\"personal\",\"work\",\"banking\",\"shopping\"]}},{\"id\":\"bookmark_fixture01\",\"type\":\"bookmark\",\"modified\":0,\"deleted\":false,\"data\":{\"parentId\":\"1\",\"index\":0,\"type\":\"url\",\"title\":\"Example\",\"dateAdded\":1758299999000,\"url\":\"https://example.com/\"}},{\"id\":\"settings\",\"type\":\"settings\",\"modified\":0,\"deleted\":false,\"data\":{\"colorScheme\":\"system\",\"appIcon\":\"indigo\",\"toolbarLayout\":\"single\",\"sidebarSide\":\"left\",\"sidebarWidth\":240,\"sidebarExpanded\":true,\"sidebarExpandOnHover\":false,\"borderless\":false,\"windowMaterial\":\"none\",\"compactMode\":{\"enabled\":false,\"hideSidebar\":true,\"hideToolbar\":false,\"sidebarPersistent\":false},\"urlbarBehavior\":\"float-typing\",\"phoneBarPosition\":\"bottom\",\"phoneBar\":{\"left\":[\"back\"],\"right\":[\"new-tab\",\"tabs\",\"menu\"]},\"pullToRefresh\":true,\"hideToolbarOnScroll\":true,\"glanceEnabled\":true,\"glanceTrigger\":\"alt\",\"pinnedCloseBehavior\":\"reset-unload-switch\",\"pinnedResetOnStartup\":false,\"thirdPartyOnPinned\":\"new-tab\",\"unloadEnabled\":true,\"unloadTimeoutMinutes\":20,\"unloadExcludedDomains\":[],\"mutedHosts\":[],\"searchEngineId\":\"google\",\"searchEngines\":[],\"searchSuggestions\":true,\"showFullUrls\":false,\"containerSpecificEssentials\":true,\"essentialsMax\":12,\"newTabPosition\":\"end\",\"restoreSession\":true,\"warnOnCloseWindow\":true,\"confirmCloseAll\":true,\"crashRestore\":\"ask\",\"askWhereToSave\":false,\"showTabSeparator\":true,\"ctrlTabCyclesWithinSection\":false,\"spaceRouting\":{},\"windowSync\":\"all\",\"resources\":{\"enabled\":true,\"enforcement\":\"strict\",\"memoryMb\":0,\"memoryPercent\":35,\"cpuPercent\":50,\"gpuMemoryMb\":0,\"gpuMode\":\"auto\",\"freezeAfterMinutes\":5,\"idleFreezeMinutes\":10,\"maxLoadedTabs\":24,\"maxConcurrentLoads\":3,\"batteryFactor\":0.7,\"protectPinned\":false,\"protectEssentials\":false,\"protectAudible\":true,\"process\":{\"rendererProcessLimit\":0,\"rendererHeapMb\":0,\"lowEndDeviceMode\":false,\"disableSpareRenderer\":true,\"disableBackForwardCache\":true,\"disablePrerender\":true,\"rasterThreads\":0,\"v8OptimizeForSize\":false}},\"agents\":{\"enabled\":false,\"port\":41735,\"lan\":false,\"approveNewAgents\":true,\"approvedNames\":[],\"defaultMode\":\"foreground\",\"allowScripts\":false,\"showCursor\":true},\"updates\":{\"autoCheck\":true,\"autoDownload\":true,\"channel\":\"stable\"},\"externalProtocols\":{},\"passwords\":{\"offerToSave\":true,\"reauthGraceSeconds\":60,\"autoSignIn\":false,\"androidProvider\":\"system\",\"clipboardClearSeconds\":60},\"autofill\":{\"addresses\":true,\"cards\":true},\"defaultBrowserPromo\":{\"sessions\":0,\"promptedAt\":null,\"dismissals\":0,\"done\":false,\"bannerAt\":null},\"defaultBrowserPromptDismissed\":null,\"blocking\":{\"level\":\"balanced\",\"lists\":{},\"customLists\":[],\"userFilters\":\"\",\"autoUpdate\":true},\"pageControls\":{\"desktopSite\":\"auto\",\"desktopSites\":{},\"darkenSites\":false,\"darkenSiteExceptions\":{},\"zoom\":1,\"zoomIncludesOsFontSize\":true,\"siteZooms\":{},\"forceZoom\":false},\"bookmarksBar\":\"newtab\",\"shortcutPreset\":\"chrome\",\"privacy\":{\"safeBrowsingEnabled\":true,\"safeBrowsingApiKey\":\"\",\"httpsOnly\":\"ask\",\"secureDnsMode\":\"automatic\",\"secureDnsProvider\":\"cloudflare\",\"secureDnsCustomUrl\":\"\",\"thirdPartyCookies\":\"block-private\",\"thirdPartyCookiesPrivate\":\"default\",\"thirdPartyCookieExceptions\":[],\"gpc\":false,\"dnt\":false},\"newTab\":{\"enabled\":true,\"mode\":\"most-visited\",\"preset\":\"focused\",\"modules\":{\"searchBox\":true,\"shortcuts\":true,\"wallpaper\":false,\"feed\":false,\"greeting\":false},\"background\":\"space\"},\"gestureHintDone\":false,\"spellcheck\":{\"enabled\":true,\"languages\":[]},\"reader\":{\"fontSize\":18,\"font\":\"serif\",\"theme\":\"auto\",\"width\":\"normal\"},\"readAloud\":{\"rate\":1,\"voiceByLanguage\":{},\"highlight\":\"both\"}}},{\"id\":\"shortcuts\",\"type\":\"shortcuts\",\"modified\":0,\"deleted\":false,\"data\":{\"overrides\":{\"tab.new\":null}}},{\"id\":\"boost:example.com\",\"type\":\"boost\",\"modified\":0,\"deleted\":false,\"data\":{\"domain\":\"example.com\",\"css\":\"body{color:red}\",\"js\":\"\",\"enabled\":true}}]}",
+  "hashes": {
+    "space_fixture01": "fa788590e2d9dfc3393bcb65f36cb624e8c0e04e",
+    "order:spaces": "05d48db200eea1983a4297cea9f7298d873bb02f",
+    "folder_fixture01": "94c61df57b871a3fbf6fba28a4581d208a492736",
+    "tab_fixturepin": "318e89f7cfcfb5657605e8edebb215309d363a6a",
+    "tab_fixturereg": "62bca6e5c36f7b13507f1b6a81e523c0f595efaf",
+    "tab_fixtureess": "96c5ab69d0d2cf566affd5bf1be5f38368a5b5f5",
+    "order:essentials": "a7c84219b2784c284dd4989f91ad03a6fdc696fb",
+    "order:tabs:space_fixture01": "c1d6a95250945629b53562d9765961354c12e147",
+    "personal": "a4c6495673af861e3db26a33b933e793c0c14e4e",
+    "work": "0052d63f2fada42f097b193ae61e4f5e00f8738d",
+    "banking": "1e018a820b79a2e39d3bb7f2c7d0b91ebf8dba5d",
+    "shopping": "e28354df030e4043a2c03ebebadd787b1767b437",
+    "order:containers": "d9ef22455506bf81e8a1c1df235c5ddcaeb05ae4",
+    "bookmark_fixture01": "09d6b5aa43c298d86bc5cbea1bee1f4d23949f65",
+    "settings": "98f5aad482aebdd33f648c3473c8ffb3a85666e8",
+    "shortcuts": "49ebffc1937660926ccd0258377afe5c5df658e2",
+    "boost:example.com": "7d773b29ef031e7963ba8c0a081a25a4161a6dfb"
+  },
+  "meta": {
+    "space_fixture01": {
+      "type": "space",
+      "hash": "fa788590e2d9dfc3393bcb65f36cb624e8c0e04e",
+      "modified": 0,
+      "deleted": false
+    },
+    "order:spaces": {
+      "type": "order",
+      "hash": "05d48db200eea1983a4297cea9f7298d873bb02f",
+      "modified": 0,
+      "deleted": false
+    },
+    "folder_fixture01": {
+      "type": "folder",
+      "hash": "94c61df57b871a3fbf6fba28a4581d208a492736",
+      "modified": 0,
+      "deleted": false
+    },
+    "tab_fixturepin": {
+      "type": "tab",
+      "hash": "318e89f7cfcfb5657605e8edebb215309d363a6a",
+      "modified": 0,
+      "deleted": false
+    },
+    "tab_fixturereg": {
+      "type": "tab",
+      "hash": "62bca6e5c36f7b13507f1b6a81e523c0f595efaf",
+      "modified": 0,
+      "deleted": false
+    },
+    "tab_fixtureess": {
+      "type": "tab",
+      "hash": "96c5ab69d0d2cf566affd5bf1be5f38368a5b5f5",
+      "modified": 0,
+      "deleted": false
+    },
+    "order:essentials": {
+      "type": "order",
+      "hash": "a7c84219b2784c284dd4989f91ad03a6fdc696fb",
+      "modified": 0,
+      "deleted": false
+    },
+    "order:tabs:space_fixture01": {
+      "type": "order",
+      "hash": "c1d6a95250945629b53562d9765961354c12e147",
+      "modified": 0,
+      "deleted": false
+    },
+    "personal": {
+      "type": "container",
+      "hash": "a4c6495673af861e3db26a33b933e793c0c14e4e",
+      "modified": 0,
+      "deleted": false
+    },
+    "work": {
+      "type": "container",
+      "hash": "0052d63f2fada42f097b193ae61e4f5e00f8738d",
+      "modified": 0,
+      "deleted": false
+    },
+    "banking": {
+      "type": "container",
+      "hash": "1e018a820b79a2e39d3bb7f2c7d0b91ebf8dba5d",
+      "modified": 0,
+      "deleted": false
+    },
+    "shopping": {
+      "type": "container",
+      "hash": "e28354df030e4043a2c03ebebadd787b1767b437",
+      "modified": 0,
+      "deleted": false
+    },
+    "order:containers": {
+      "type": "order",
+      "hash": "d9ef22455506bf81e8a1c1df235c5ddcaeb05ae4",
+      "modified": 0,
+      "deleted": false
+    },
+    "bookmark_fixture01": {
+      "type": "bookmark",
+      "hash": "09d6b5aa43c298d86bc5cbea1bee1f4d23949f65",
+      "modified": 0,
+      "deleted": false
+    },
+    "settings": {
+      "type": "settings",
+      "hash": "98f5aad482aebdd33f648c3473c8ffb3a85666e8",
+      "modified": 0,
+      "deleted": false
+    },
+    "shortcuts": {
+      "type": "shortcuts",
+      "hash": "49ebffc1937660926ccd0258377afe5c5df658e2",
+      "modified": 0,
+      "deleted": false
+    },
+    "boost:example.com": {
+      "type": "boost",
+      "hash": "7d773b29ef031e7963ba8c0a081a25a4161a6dfb",
+      "modified": 0,
+      "deleted": false
+    }
+  }
+}

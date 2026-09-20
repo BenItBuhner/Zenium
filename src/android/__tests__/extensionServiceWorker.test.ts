@@ -8,6 +8,8 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  platformOperations,
+  workerSelf,
   type ScriptDocument,
   type ScriptElement,
   type ServiceWorkerEndpoint,
@@ -507,5 +509,233 @@ describe('importScripts on the worker page', () => {
     expect(() => importScripts('https://evil.example/x.js')).toThrow(/not on the extension origin/)
     expect(() => importScripts('missing.js')).toThrow(/missing\.js failed \(404\)/)
     expect(d.ran).toEqual([])
+  })
+})
+
+describe("the worker page's self and globalThis answer as a worker's global", () => {
+  /** A Window-shaped global: unforgeable getters, platform operations that check their receiver. */
+  function blinkLikeGlobal(): Any {
+    // EventTarget.prototype's operation sits on the chain, as in Blink; the Window's own on it.
+    const eventTarget: Any = {}
+    const global: Any = Object.create(eventTarget)
+    // Blink's operations are not constructors (no `prototype`), as a shorthand method is not.
+    const platform = (name: string): unknown =>
+      ({
+        [name](this: unknown, ...args: unknown[]): string {
+          if (this !== global) throw new TypeError('Illegal invocation')
+          return `${name}(${args.join(',')})`
+        }
+      })[name]
+    const unforgeable = (name: string, value: () => unknown): void => {
+      Object.defineProperty(global, name, { get: value, configurable: false, enumerable: true })
+    }
+    unforgeable('window', () => global)
+    unforgeable('document', () => ({ nodeType: 9, visibilityState: 'visible' }))
+    unforgeable('localStorage', () => ({ getItem: () => 'page' }))
+    unforgeable('navigator', () => ({ userAgent: 'page' }))
+    Object.defineProperty(global, 'location', {
+      get() {
+        if (this !== global) throw new TypeError('Illegal invocation')
+        return { href: SCRIPT }
+      },
+      configurable: false
+    })
+    eventTarget.addEventListener = platform('addEventListener')
+    global.setTimeout = platform('setTimeout')
+    global.fetch = platform('fetch')
+    global.requestAnimationFrame = platform('requestAnimationFrame')
+    global.URL = class FakeURL {
+      href: string
+      constructor(href: string) {
+        this.href = href
+      }
+    }
+    global.chrome = { runtime: { id: 'abcdefghijklmnopabcdefghijklmnop' } }
+    global.Infinity = Infinity
+    Object.defineProperty(global, 'Infinity', { writable: false, configurable: false })
+    return global
+  }
+
+  function run(global: Any, code: string): unknown {
+    const self = workerSelf(global)
+    const context = vm.createContext({ self, window: global, TypeError, Object, Reflect })
+    return vm.runInContext(code, context)
+  }
+
+  it('a strict-mode self.window = self is kept and read back, and the page stays intact', () => {
+    const global = blinkLikeGlobal()
+    // What the page would do: a getter-only property refuses the write.
+    expect(() => {
+      'use strict'
+      global.window = global
+    }).toThrow(TypeError)
+    const result = run(
+      global,
+      `'use strict';
+       const before = [self.window, 'window' in self];
+       self.window = self;
+       self.Prefs = { a: 1 };
+       [before, self.window === self, self.self === self, self.globalThis === self, typeof window.Prefs, 'window' in self]`
+    )
+    expect(result).toEqual([[undefined, false], true, true, true, 'object', true])
+    // The page's own `window` is untouched; the script's global reached the page.
+    expect(global.window).toBe(global)
+    expect(global.Prefs).toEqual({ a: 1 })
+  })
+
+  it("a worker's missing members are absent until the script polyfills them, and the polyfills take", () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       // Capital One Shopping's worker: a localStorage over chrome.storage.
+       const absent = [self.localStorage, self.document, self.requestAnimationFrame, 'document' in self, 'localStorage' in self];
+       self.localStorage = { getItem: (k) => 'shim:' + k };
+       // Online Security's worker: Sentry's GLOBAL_OBJ is globalThis, and its document shim goes there.
+       self.globalThis.document = { visibilityState: 'hidden', addEventListener: () => {} };
+       // NordPass's worker tells a background from a page by the document it has not.
+       const nordpass = (() => { const g = self.globalThis; return !g.document || g.window === g; })();
+       [absent, self.localStorage.getItem('k'), self.document.visibilityState, 'document' in self, nordpass, Object.keys(self).includes('document'), Object.keys(self).includes('localStorage')]`
+    )
+    expect(result).toEqual([
+      [undefined, undefined, undefined, false, false],
+      'shim:k',
+      'hidden',
+      true,
+      false,
+      true,
+      true
+    ])
+    // The page keeps its own document and storage.
+    expect((global.document as { visibilityState: string }).visibilityState).toBe('visible')
+    expect((global.localStorage as { getItem(k: string): string }).getItem('k')).toBe('page')
+  })
+
+  it('a write the global refuses is kept, a delete of a missing member is a no-op, and the page is not touched', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       const nav = self.navigator.userAgent;
+       self.navigator = { userAgent: 'shim' };
+       const deleted = delete self.document;
+       const descriptor = Object.getOwnPropertyDescriptor(self, 'document');
+       [nav, self.navigator.userAgent, deleted, descriptor, Reflect.has(self, 'navigator')]`
+    )
+    expect(result).toEqual(['page', 'shim', true, undefined, true])
+    expect((global.navigator as { userAgent: string }).userAgent).toBe('page')
+  })
+
+  it('platform methods run on the global, getters see it, constructors and identity hold', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       const listen = self.addEventListener('message', 'fn');
+       const timer = self.setTimeout('cb', 5);
+       const same = self.fetch === self.fetch && self.addEventListener !== undefined;
+       const url = new self.URL('https://a.example/').href;
+       const proto = self.URL.prototype !== undefined;
+       [listen, timer, same, url, proto, self.location.href, self.chrome.runtime.id, self.Infinity]`
+    )
+    expect(result).toEqual([
+      'addEventListener(message,fn)',
+      'setTimeout(cb,5)',
+      true,
+      'https://a.example/',
+      true,
+      SCRIPT,
+      'abcdefghijklmnopabcdefghijklmnop',
+      Infinity
+    ])
+  })
+
+  it("a script's wrapper of a platform operation runs on the global too, wherever it was installed", () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       // Sentry's browserApiErrors: EventTarget.prototype.addEventListener becomes a plain
+       // function (it has a prototype, as any does) that forwards this to the native, and its
+       // INP tracking then calls GLOBAL_OBJ.addEventListener(...).
+       const proto = Object.getPrototypeOf(self);
+       const nativeListen = proto.addEventListener;
+       proto.addEventListener = function (type, fn) { return 'wrapped:' + nativeListen.apply(this, [type, fn]); };
+       const listened = self.addEventListener('click', 'fn');
+       // Sentry's fill(WINDOW, 'setTimeout', ...): the Window's own operation, replaced through
+       // the proxy; the replacement forwards this to the native it took from the page.
+       const nativeTimer = window.setTimeout;
+       self.setTimeout = function (cb, ms) { return 'wrapped:' + nativeTimer.apply(this, [cb, ms]); };
+       const timed = self.setTimeout('cb', 7);
+       // The replacement landed on the page's global, where the bare identifier finds it.
+       const bare = window.setTimeout('bare', 1);
+       // A constructor the script defines on the global is not an operation: raw, constructible.
+       self.Thing = function Thing(v) { this.v = v; };
+       const built = new self.Thing(4).v;
+       [listened, timed, bare, self.setTimeout === self.setTimeout, built, self.Thing === window.Thing]`
+    )
+    expect(result).toEqual([
+      'wrapped:addEventListener(click,fn)',
+      'wrapped:setTimeout(cb,7)',
+      'wrapped:setTimeout(bare,1)',
+      true,
+      4,
+      true
+    ])
+  })
+
+  it('the operations snapshot names the platform functions, not constructors, accessors or Object.prototype', () => {
+    const global = blinkLikeGlobal()
+    const operations = platformOperations(global)
+    expect(operations.has('addEventListener')).toBe(true)
+    expect(operations.has('setTimeout')).toBe(true)
+    expect(operations.has('fetch')).toBe(true)
+    expect(operations.has('URL')).toBe(false)
+    expect(operations.has('document')).toBe(false)
+    expect(operations.has('location')).toBe(false)
+    expect(operations.has('hasOwnProperty')).toBe(false)
+    expect(operations.has('toString')).toBe(false)
+    // The snapshot runs no getter: location's throws for any receiver but the global, and a
+    // getter with a side effect would count.
+    let read = 0
+    Object.defineProperty(global, 'counted', {
+      get: () => {
+        read++
+        return () => 'x'
+      },
+      configurable: true
+    })
+    expect(platformOperations(global).has('counted')).toBe(false)
+    expect(read).toBe(0)
+  })
+
+  it('Object.assign, defineProperty, keys, prototype and delete go to the global; the guarded polyfills run as in a worker', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       Object.assign(self, { Prefs: { a: 1 }, info: 'x' });
+       Object.defineProperty(self, 'frozen', { value: 3, configurable: false, writable: false, enumerable: true });
+       // Read&Write's and MetaMask's guarded polyfills: the bare identifier is the page's, the
+       // reflective test is the worker's, and the polyfill takes.
+       if (typeof window === 'undefined') self.window = self;
+       if (!Reflect.has(self, 'window')) self.window = self;
+       const keys = Object.keys(self).filter((k) => ['Prefs', 'info', 'frozen', 'chrome', 'window'].includes(k)).sort();
+       const own = Object.getOwnPropertyDescriptor(self, 'frozen');
+       delete self.info;
+       [keys, own.configurable, own.value, self.window === self, 'info' in self, Object.getPrototypeOf(self) === Object.getPrototypeOf(window)]`
+    )
+    expect(result).toEqual([
+      ['Prefs', 'chrome', 'frozen', 'info', 'window'],
+      false,
+      3,
+      true,
+      false,
+      true
+    ])
+    expect(global.Prefs).toEqual({ a: 1 })
+    expect(global.frozen).toBe(3)
+    expect(global.info).toBeUndefined()
+    expect(global.window).toBe(global)
   })
 })

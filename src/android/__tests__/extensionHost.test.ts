@@ -21,6 +21,7 @@ import {
   REQUEST_UPDATE_CHECK_THROTTLE_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_CHECK_STARTUP_DELAY_MS,
+  engineChromiumVersion,
   idForUnpackedPath,
   packageFileName,
   storeChromiumVersion
@@ -226,7 +227,13 @@ interface Harness {
   registry: () => { version: number; extensions: ExtensionRecord[]; lastUpdateCheck: number | null }
 }
 
-function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): Harness {
+function harness(
+  options: {
+    registry?: string
+    nativeConfirm?: boolean
+    engineChromiumVersion?: string | null
+  } = {}
+): Harness {
   const kt = new FakeKotlinStore()
   const files = new Map<string, string>()
   if (options.registry) files.set('extensions.json', options.registry)
@@ -273,6 +280,7 @@ function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): 
   const ext = new AndroidExtensions(browser, kt.io(), {
     hooks: runtime,
     chromiumVersion: '152.0.0.0',
+    engineChromiumVersion: options.engineChromiumVersion ?? null,
     locale: null,
     now: () => clock.now,
     setTimeout: (fn, ms) => {
@@ -1577,6 +1585,96 @@ describe('the version the stores are told about', () => {
     expect(storeChromiumVersion('Chrome/153')).toBe('153.0.0.0')
     expect(storeChromiumVersion('Node.js/22')).toBe('152.0.0.0')
     expect(storeChromiumVersion('Chrome/113', '100.0.0.0')).toBe('113.0.0.0')
+  })
+})
+
+describe("the engine's own version", () => {
+  it('is the WebView Chromium of the user agent, padded, or null without one', () => {
+    expect(
+      engineChromiumVersion(
+        'Mozilla/5.0 (Linux; Android 14) Chrome/113.0.5672.136 Mobile Safari/537.36'
+      )
+    ).toBe('113.0.5672.136')
+    expect(engineChromiumVersion('Chrome/156')).toBe('156.0.0.0')
+    expect(engineChromiumVersion('Node.js/22')).toBeNull()
+    expect(engineChromiumVersion('')).toBeNull()
+  })
+})
+
+describe('minimum_chrome_version', () => {
+  let needs120: Uint8Array
+  let needs153: Uint8Array
+  beforeAll(async () => {
+    needs120 = await buildCrx({
+      zip: sampleExtensionZip({ name: 'Sample', version: '1.0.0', minimum_chrome_version: '120' }),
+      rsaKeys: [key]
+    })
+    needs153 = await buildCrx({
+      zip: sampleExtensionZip({ name: 'Sample', version: '1.0.0', minimum_chrome_version: '153' }),
+      rsaKeys: [key]
+    })
+  })
+
+  it("refuses a store package above Zenium's platform version, as Chrome refuses one above its own", async () => {
+    const h = harness({ engineChromiumVersion: '113.0.5672.136' })
+    await storeFront(h.kt, { cws: needs153 })
+    await h.ext.installFromStore(ID, null, WIN)
+    expect(h.ext.list()).toEqual([])
+    expect(h.prompts).toEqual([])
+    expect(h.kt.installed.size).toBe(0)
+    expect(h.toasts).toEqual([
+      {
+        message:
+          'Could not install extension: This extension requires Chrome 153 or newer; Zenium is Chrome 152.0.0.0',
+        kind: 'error'
+      }
+    ])
+    // A picked file is held to the same version.
+    await h.ext.installHandle(h.kt.hold('sample.crx', needs153), WIN)
+    expect(h.toasts.at(-1)?.message).toBe(
+      'Could not install sample.crx: This extension requires Chrome 153 or newer; Zenium is Chrome 152.0.0.0'
+    )
+    expect(h.kt.packages.size).toBe(0)
+  })
+
+  it("installs one above the WebView's version but within the platform's, with a warning on its console", async () => {
+    const h = harness({ engineChromiumVersion: '113.0.5672.136' })
+    await storeFront(h.kt, { cws: needs120 })
+    await h.ext.installFromStore(ID, null)
+    await settle()
+    expect(h.runtime.events).toEqual([`attach ${ID} 1.0.0`])
+    const [info] = h.ext.list()
+    expect(info.error).toBeNull()
+    expect(info.errors).toHaveLength(1)
+    expect(info.errors[0]).toMatchObject({
+      level: 'warning',
+      source: 'load',
+      message:
+        "Requires Chrome 120 or newer; this device's WebView is Chrome 113, so pages and content scripts may miss features the extension expects",
+      url: `chrome-extension://${ID}/manifest.json`,
+      count: 1
+    })
+    // The next start attaches it again: the same line, folded, not a second row.
+    const next = harness({
+      registry: JSON.stringify(h.registry()),
+      engineChromiumVersion: '113.0.5672.136'
+    })
+    for (const [dir, request] of h.kt.installed) next.kt.installed.set(dir, request)
+    await next.ext.start()
+    await settle()
+    const errors = next.ext.list()[0].errors
+    expect(errors).toHaveLength(1)
+    expect(errors[0].message).toContain('Requires Chrome 120 or newer')
+  })
+
+  it('says nothing when the WebView meets the minimum, or its version is unknown', async () => {
+    for (const engine of ['156.0.7300.0', '120.0.0.0', null]) {
+      const h = harness({ engineChromiumVersion: engine })
+      await storeFront(h.kt, { cws: needs120 })
+      await h.ext.installFromStore(ID, null)
+      await settle()
+      expect(h.ext.list()[0].errors).toEqual([])
+    }
   })
 })
 

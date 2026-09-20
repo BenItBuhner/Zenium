@@ -1502,7 +1502,11 @@ export interface PopupFrame {
   radius: number
 }
 
-/** Cross-device sync through a shared folder; Electron only for now. */
+/**
+ * Cross-device sync through a shared folder, as the chrome's `sync.*` commands see it. The
+ * core's `sync/engine.ts` implements it on top of a host's `SyncPlatformHost`; hosts without
+ * one get the built-in stand-in (`NoSync`).
+ */
 export interface SyncHost {
   start(): void
   status(): SyncStatus
@@ -1513,10 +1517,59 @@ export interface SyncHost {
   ): Promise<void>
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
+  /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */
+  setFolder(folder: string, win: ZenWindow): Promise<void>
   syncNow(): Promise<void>
   confirmMerge(merge: boolean): Promise<void>
   disconnect(wipeRemote: boolean): void
   flushSync(): void
+}
+
+/**
+ * The bytes of a sync folder: text documents by name inside the folder's `zenium-sync`
+ * directory (`core/sync/transport.ts` has the full contract and the shared helpers).
+ */
+export interface SyncTransport {
+  list(): Promise<string[]>
+  read(name: string): Promise<string | null>
+  write(name: string, text: string): Promise<void>
+  remove(name: string): Promise<void>
+  removeAll(): Promise<void>
+  watch?(onChange: () => void): () => void
+}
+
+/** A host's own scrypt (Node's native one is quicker than the shared JavaScript implementation). */
+export type SyncScryptFn = (
+  passphrase: Uint8Array,
+  salt: Uint8Array,
+  params: { N: number; r: number; p: number; dkLen: number }
+) => Promise<Uint8Array>
+
+/**
+ * What the platform-neutral sync engine needs from a host: a folder picker, a name for this
+ * device, and a transport for the folder the user picked. The passphrase prompt, the merge
+ * question and every other piece of UI are the chrome's.
+ */
+export interface SyncPlatformHost {
+  /**
+   * The platform's folder picker: an absolute path on desktop, a persisted document-tree URI
+   * on Android (opaque to the core), or null when the user dismissed it.
+   */
+  chooseFolder(win: ZenWindow): Promise<string | null>
+  /** The folder as the user knows it (the path itself; a tree's display name), for the status. */
+  folderName?(folder: string): Promise<string>
+  /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
+  deviceNameDefault(): string
+  createTransport(folder: string): SyncTransport
+  /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
+  scrypt?: SyncScryptFn
+  /**
+   * How often the engine re-reads the folder on its own; the default (45 s) suits a desktop
+   * whose transport also watches. 0 leaves polling to the transport's `watch`.
+   */
+  pollMs?: number
+  /** False while the app is in the background: the poll skips its turn (Android, no service). */
+  foreground?(): boolean
 }
 
 /**
@@ -2071,10 +2124,11 @@ export interface Platform {
   readonly shareSheet?: ShareSheetHost
   /** A network location source's inputs (the Wi-Fi networks in range) for hosts whose engine has no location provider. */
   readonly geolocation?: GeolocationHost
+  /** The folder picker, device name and folder transport behind cross-device sync (`capabilities.sync`). */
+  readonly sync?: SyncPlatformHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
-  createSync?(browser: Browser): SyncHost
   createAgentTransport?(browser: Browser): AgentTransport
   createUpdateHost?(browser: Browser): UpdateHost
 }

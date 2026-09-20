@@ -171,6 +171,30 @@ class NavigationStateTest {
     }
 
     @Test
+    fun anExtensionPageIsNamedAsChromeSpellsItAndMatchedInEitherSpelling() {
+        // The WebView loads an extension's page from its served origin; the snapshot – the
+        // tab's URL in the core's model, the back list, the session file – names it as Chrome
+        // does, the spelling `navigated` carries since the commit event was presented too.
+        val id = "ddkjiahejlhfcafbddmgiahcphecmpfh"
+        val served = "https://$id.ext.zenium.invalid/dashboard.html?tab=1#x"
+        val chrome = "chrome-extension://$id/dashboard.html?tab=1#x"
+        val items = listOf(NavigationState.Item("https://a.example/", "A", null), NavigationState.Item(served, "Dashboard", served))
+        val snapshot = NavigationState.snapshotJson(items, 1)
+        val entry = snapshot.getJSONArray("entries").getJSONObject(1)
+        assertEquals(chrome, entry.getString("url"))
+        // The original URL is the same page in the same spelling, and so says nothing.
+        assertFalse(entry.has("originalUrl"))
+        // A restored list holds the served item; a snapshot names it Chrome's way (this
+        // release's), or the served way (a session file from before): the same page.
+        val restored = listOf("https://a.example/", served)
+        assertTrue(NavigationState.restoredMatches(restored, 1, listOf("https://a.example/", chrome), 1))
+        assertTrue(NavigationState.restoredMatches(restored, 1, listOf("https://a.example/", served), 1))
+        assertFalse(NavigationState.restoredMatches(restored, 1, listOf("https://a.example/", "chrome-extension://$id/options.html"), 1))
+        // A page on a host that only looks like the served origin is no extension page.
+        assertEquals("https://$id.ext.zenium.invalid.evil.example/", NavigationState.publicUrl("https://$id.ext.zenium.invalid.evil.example/", null))
+    }
+
+    @Test
     fun aDataItemStandsInForAnInternalEntryOrTheBlankOne() {
         assertTrue(NavigationState.standsInForInternal("data:text/html,x", "zen://history"))
         assertTrue(NavigationState.standsInForInternal("data:text/html,x", NavigationState.BLANK_URL))

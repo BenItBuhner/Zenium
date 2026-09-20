@@ -89,6 +89,7 @@ import {
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
 import { AndroidNewTabBackground } from './newTabBackground'
+import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
@@ -139,7 +140,8 @@ export function androidCapabilities({
     windows: false,
     extensions,
     resourceGovernor: false,
-    sync: false,
+    // The engine runs in the chrome over a Storage Access Framework folder (`sync.ts`, ID-08).
+    sync: true,
     print: true,
     // The system print flow (`PrintRelay.kt`) has its own preview; no PDF rendering in the WebView.
     printPreview: false,
@@ -308,6 +310,8 @@ export interface BootInfo {
   voiceSearch?: boolean
   /** The device has a back camera to scan QR codes with (`QrScan.kt`). */
   qrScan?: boolean
+  /** `Build.MODEL`: what sync calls this device until the user renames it (absent in old hosts). */
+  deviceModel?: string
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
   /**
@@ -875,6 +879,8 @@ export class AndroidPlatform implements Platform {
   readonly privateSession: PrivateSessionHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
+  /** Cross-device sync over a Storage Access Framework folder (`sync.ts`; the engine is the core's). */
+  readonly sync: AndroidSyncHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -916,6 +922,7 @@ export class AndroidPlatform implements Platform {
     this.bootEnvironment = boot.environment ?? null
     this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
+    this.sync = new AndroidSyncHost(bridge, boot.deviceModel ?? '')
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
@@ -1240,6 +1247,8 @@ export class AndroidPlatform implements Platform {
         if (focused) window.dispatchEvent(new Event('zen-resume'))
         // Back from the system settings, the autofill service may be another one (or none).
         if (focused) this.autofill.refresh()
+        // Sync polls only in front; a resume is its cue to look at the folder again.
+        this.sync.signal.setFocused(focused)
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()

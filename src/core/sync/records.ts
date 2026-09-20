@@ -1,12 +1,13 @@
-import { createHash } from 'node:crypto'
 import type {
   BookmarkNode,
   BookmarkNodeType,
   Boost,
   Container,
+  Credential,
   Folder,
   FolderColor,
   KeyBinding,
+  PasskeyEntry,
   Settings,
   Space,
   SpaceTheme,
@@ -15,7 +16,8 @@ import type {
 } from '../../shared/types'
 import { DEFAULT_CONTAINER_ID } from '../../shared/types'
 import { OTHER_BOOKMARKS_ID, isBookmarkRoot } from '../../shared/bookmarks'
-import type { Model } from '../../core/model'
+import type { Model } from '../model'
+import { sha1Hex } from './sha1'
 
 /**
  * Sync records: the unit of cross-device replication. Every syncable entity is flattened into
@@ -34,6 +36,8 @@ export type RecordType =
   | 'boost'
   /** Ordering of spaces / containers / essentials / a space's tabs, separate from their content. */
   | 'order'
+  /** One entry of the credential store: a saved login, or a passkey's public record (ID-09). */
+  | 'credential'
 
 export interface SyncRecord {
   id: string
@@ -178,6 +182,86 @@ export interface ShortcutsData {
 export const SETTINGS_RECORD_ID = 'settings'
 export const SHORTCUTS_RECORD_ID = 'shortcuts'
 
+/**
+ * A saved login as Chrome's password sync carries it: the whole entry, secret included, under
+ * the folder's end-to-end key. The record id is the entry's id, so the same login edited on two
+ * devices merges last-writer-wins per entry and a deletion travels as the record's tombstone.
+ */
+export interface LoginCredentialData {
+  kind: 'login'
+  origin: string
+  url: string
+  username: string
+  password: string
+  realm: string | null
+  notes: string
+  createdAt: number
+  updatedAt: number
+  lastUsedAt: number | null
+}
+
+/**
+ * A passkey's public record: relying party, account names, credential id, origin. This is all
+ * the store holds and all that can travel – the private key lives in the platform authenticator
+ * (Windows Hello, Touch ID, Android's credential manager) and never leaves the device, so a
+ * synced passkey shows up in the other device's list but signing in there needs the passkey
+ * created (or synced by the OS's own provider) on that device.
+ */
+export interface PasskeyCredentialData {
+  kind: 'passkey'
+  rpId: string
+  rpName: string
+  userName: string
+  userDisplayName: string
+  credentialId: string
+  origin: string
+  createdAt: number
+  lastUsedAt: number | null
+}
+
+export type CredentialData = LoginCredentialData | PasskeyCredentialData
+
+/** Read a credential record from another device; null for garbage or an unknown kind. */
+export function readCredentialData(data: unknown): CredentialData | null {
+  if (!data || typeof data !== 'object') return null
+  const r = data as Record<string, unknown>
+  const str = (key: string): string => (typeof r[key] === 'string' ? (r[key] as string) : '')
+  const num = (key: string, fallback: number): number =>
+    typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : fallback
+  const nullableNum = (key: string): number | null =>
+    typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : null
+  if (r.kind === 'login') {
+    if (!str('origin') || !str('password')) return null
+    return {
+      kind: 'login',
+      origin: str('origin'),
+      url: str('url'),
+      username: str('username'),
+      password: str('password'),
+      realm: typeof r.realm === 'string' ? r.realm : null,
+      notes: str('notes'),
+      createdAt: num('createdAt', 0),
+      updatedAt: num('updatedAt', 0),
+      lastUsedAt: nullableNum('lastUsedAt')
+    }
+  }
+  if (r.kind === 'passkey') {
+    if (!str('rpId')) return null
+    return {
+      kind: 'passkey',
+      rpId: str('rpId'),
+      rpName: str('rpName'),
+      userName: str('userName'),
+      userDisplayName: str('userDisplayName'),
+      credentialId: str('credentialId'),
+      origin: str('origin'),
+      createdAt: num('createdAt', 0),
+      lastUsedAt: nullableNum('lastUsedAt')
+    }
+  }
+  return null
+}
+
 export function defaultScope(): SyncScope {
   return {
     spaces: true,
@@ -189,7 +273,64 @@ export function defaultScope(): SyncScope {
     bookmarks: true,
     settings: true,
     shortcuts: true,
-    boosts: true
+    boosts: true,
+    passwords: true
+  }
+}
+
+/** Every type on: what a device holds in total, whatever it currently chooses to sync. */
+export function fullScope(): SyncScope {
+  return {
+    spaces: true,
+    folders: true,
+    pinnedTabs: true,
+    essentials: true,
+    openTabs: true,
+    containers: true,
+    bookmarks: true,
+    settings: true,
+    shortcuts: true,
+    boosts: true,
+    passwords: true
+  }
+}
+
+/**
+ * Whether a record another device published is wanted under `scope` (Chrome's per-type
+ * toggles work both ways: a type turned off is neither sent nor received). Tab records are
+ * read by section; a tab tombstone carries no data and is taken while any tab section syncs.
+ */
+export function inScope(record: SyncRecord, scope: SyncScope): boolean {
+  switch (record.type) {
+    case 'space':
+      return scope.spaces
+    case 'folder':
+      return scope.folders
+    case 'container':
+      return scope.containers
+    case 'bookmark':
+      return scope.bookmarks
+    case 'settings':
+      return scope.settings
+    case 'shortcuts':
+      return scope.shortcuts
+    case 'boost':
+      return scope.boosts
+    case 'credential':
+      return scope.passwords
+    case 'tab': {
+      if (record.deleted || !record.data || typeof record.data !== 'object')
+        return scope.pinnedTabs || scope.essentials || scope.openTabs
+      const data = record.data as Partial<TabData>
+      if (data.essential) return scope.essentials
+      if (data.pinned) return scope.pinnedTabs
+      return scope.openTabs
+    }
+    case 'order':
+      if (record.id === ORDER_SPACES) return scope.spaces
+      if (record.id === ORDER_CONTAINERS) return scope.containers
+      if (record.id === ORDER_ESSENTIALS) return scope.essentials
+      return scope.pinnedTabs || scope.openTabs
   }
 }
 
@@ -210,7 +351,13 @@ function sortKeys(value: unknown): unknown {
 }
 
 export function hashData(data: unknown): string {
-  return createHash('sha1').update(stableStringify(data)).digest('hex')
+  return sha1Hex(stableStringify(data))
+}
+
+/** The credential store's entries while it is unlocked. */
+export interface CredentialSources {
+  logins: Credential[]
+  passkeys: PasskeyEntry[]
 }
 
 export interface LocalSources {
@@ -219,6 +366,11 @@ export interface LocalSources {
   shortcutOverrides: Record<string, KeyBinding | null>
   bookmarks: BookmarkNode[]
   boosts: Boost[]
+  /**
+   * The credential store's entries, or null while the vault is locked (or absent): its records
+   * are then neither published nor tombstoned (`diffLocal`'s `frozen`) until it opens again.
+   */
+  credentials?: CredentialSources | null
 }
 
 /** Snapshot of everything in scope as `{ id → { type, data } }`. */
@@ -341,7 +493,58 @@ export function collectLocal(
   if (scope.boosts) {
     for (const b of src.boosts) out.set(`boost:${b.domain}`, { type: 'boost', data: b })
   }
+  if (scope.passwords && src.credentials) {
+    for (const c of src.credentials.logins) {
+      const data: LoginCredentialData = {
+        kind: 'login',
+        origin: c.origin,
+        url: c.url,
+        username: c.username,
+        password: c.password,
+        realm: c.realm,
+        notes: c.notes,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        lastUsedAt: c.lastUsedAt
+      }
+      out.set(c.id, { type: 'credential', data })
+    }
+    for (const p of src.credentials.passkeys) {
+      const data: PasskeyCredentialData = {
+        kind: 'passkey',
+        rpId: p.rpId,
+        rpName: p.rpName,
+        userName: p.userName,
+        userDisplayName: p.userDisplayName,
+        credentialId: p.credentialId,
+        origin: p.origin,
+        createdAt: p.createdAt,
+        lastUsedAt: p.lastUsedAt
+      }
+      out.set(p.id, { type: 'credential', data })
+    }
+  }
   return out
+}
+
+/**
+ * Records a device holds but does not sync right now: everything the full scope would collect
+ * that `scope` leaves out, plus (while the vault is locked) whatever credential records the last
+ * sync knew. `diffLocal` keeps their metadata as it was instead of tombstoning them, so turning a
+ * type off – or a locked vault – never deletes the other devices' copies (Chrome's toggles only
+ * stop syncing a type).
+ */
+export function frozenRecords(
+  src: LocalSources,
+  scope: SyncScope,
+  previous: MetaMap
+): (id: string, prev: RecordMeta) => boolean {
+  const synced = collectLocal(src, scope)
+  const held = new Set<string>()
+  for (const id of collectLocal(src, fullScope()).keys()) if (!synced.has(id)) held.add(id)
+  const vaultLocked = !src.credentials
+  void previous
+  return (id, prev) => held.has(id) || (vaultLocked && prev.type === 'credential')
 }
 
 export interface DiffResult {
@@ -357,12 +560,16 @@ export interface DiffResult {
  * Records seen for the first time get `modified = 0`: they still replicate to devices that lack
  * them, but a copy that already exists elsewhere wins – so joining a sync folder merges *into*
  * the existing data instead of a fresh device overwriting everyone's settings and ordering.
+ *
+ * A record absent from `current` for which `frozen` answers true is held rather than deleted:
+ * its metadata stays as it was and it is left out of the published set (see `frozenRecords`).
  */
 export function diffLocal(
   previous: MetaMap,
   current: Map<string, { type: RecordType; data: unknown }>,
   now: number,
-  tombstoneTtlMs = 30 * 24 * 60 * 60 * 1000
+  tombstoneTtlMs = 30 * 24 * 60 * 60 * 1000,
+  frozen: (id: string, prev: RecordMeta) => boolean = () => false
 ): DiffResult {
   const meta: MetaMap = {}
   const records: SyncRecord[] = []
@@ -384,6 +591,10 @@ export function diffLocal(
       if (now - prev.modified > tombstoneTtlMs) continue
       meta[id] = prev
       records.push({ id, type: prev.type, modified: prev.modified, deleted: true, data: null })
+      continue
+    }
+    if (frozen(id, prev)) {
+      meta[id] = prev
       continue
     }
     changed = true

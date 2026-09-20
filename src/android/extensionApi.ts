@@ -35,6 +35,7 @@ import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
+import { answerProxySetting } from './extensionProxy'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -584,6 +585,10 @@ export class ExtensionApi {
         )
           throw new Error(SYSTEM_STORAGE_NO_PERMISSION_ERROR)
         return answerSystemStorage(method, args)
+      case 'proxy':
+        // `proxy.settings`, a ChromeSetting: the system's value, not controllable on the WebView
+        // (`extensionProxy.ts`); the calls come from extensions that declared the permission.
+        return answerProxySetting(method, args)
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true
