@@ -328,7 +328,7 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
   const tabId = state ? (activeTab(state)?.id ?? null) : null
   // The dialog holds its first paint until the page's picture is in place, then takes focus.
   const [active, setActive] = useState(false)
-  // "Make default" taken: the strip is gone with the dialog, so focus goes to the page instead.
+  // "Make default" taken: the strip goes with the dialog, so focus goes to the page instead.
   const chosen = useRef(false)
   // What had focus when the dialog was asked for – the strip's button – or nothing of the chrome's.
   const [opener] = useState<HTMLElement | null>(() =>
@@ -336,6 +336,9 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
       ? document.activeElement
       : null
   )
+  // Where `usePopover` gives the focus back as the dialog goes: the opener, or nowhere once the
+  // choice is made (the strip is on its way out then, and the page takes the focus).
+  const returnTo = useRef<HTMLElement | null>(opener)
 
   useEffect(() => {
     let gone = false
@@ -352,8 +355,9 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
       gone = true
       if (uiStore.get().defaultBrowserPrompt) uiStore.set({ defaultBrowserPrompt: false })
       invalidateSnapshot()
-      // `usePopover` has put focus back on the opener by now; when there is none to go back to
-      // (the strip went with the choice, or the page had focus), the page takes it.
+      // `usePopover` gives the focus back to the opener – once the chrome is back from the
+      // host's hold, which stands through the panel's exit; when there is none to go back to
+      // (the strip went with the choice, or the page had the focus), the page takes it.
       if (chosen.current || !opener?.isConnected) returnFocusToPage()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, for the tab it opened on
@@ -365,6 +369,7 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
   const accept = (): void => {
     if (chosen.current) return
     chosen.current = true
+    returnTo.current = null
     void requestDefaultBrowser(source)
     if (source === 'banner' && state) dismissDefaultBrowserBanner(state)
     close()
@@ -373,7 +378,8 @@ function AskDialog({ source }: { source: DefaultBrowserRequestSource }): JSX.Ele
   usePopover(ref, {
     onClose: close,
     active,
-    initial: (root) => root.querySelector<HTMLElement>('[data-accept]')
+    initial: (root) => root.querySelector<HTMLElement>('[data-accept]'),
+    returnTo
   })
   const platform = state?.platform ?? 'linux'
   return (
