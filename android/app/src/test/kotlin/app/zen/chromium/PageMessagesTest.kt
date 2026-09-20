@@ -50,6 +50,23 @@ class PageMessagesTest {
     }
 
     @Test
+    fun aFrameIsHeardOnItsOwnFullscreenAlone() {
+        // An embed's document (a YouTube iframe) is the one that sees its video go fullscreen,
+        // and its size; the main document sees the <iframe>, 0 x 0.
+        val fullscreen = routePageMessage(message("type" to "fullscreen", "active" to true, "videoWidth" to 1280, "videoHeight" to 720), token)
+        assertTrue(fullscreen.heardFrom(isMainFrame = false))
+        assertTrue(fullscreen.heardFrom(isMainFrame = true))
+        // Everything else a frame says – its hello (the reply channel is the main document's), its
+        // DOMContentLoaded, its forwarded messages – is not the page's.
+        for (type in listOf("hello", "domReady", "media", "evalResult")) {
+            val route = routePageMessage(message("type" to type, "id" to 1), token)
+            assertFalse("a frame's '$type' is dropped", route.heardFrom(isMainFrame = false))
+            assertTrue("the main document's '$type' is heard", route.heardFrom(isMainFrame = true))
+        }
+        assertFalse(PageMessageRoute.Ignore.heardFrom(isMainFrame = false))
+    }
+
+    @Test
     fun anythingElseGoesToTheCoreWithoutTheToken() {
         val route = routePageMessage(message("type" to "media", "playing" to true), token)
         assertTrue(route is PageMessageRoute.Forward)

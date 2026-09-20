@@ -91,7 +91,7 @@ import {
   type ExtRequestEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
-import { onFullscreenVideo } from './fullscreenHint'
+import { onFullscreenEntered } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
 import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
@@ -523,10 +523,11 @@ export interface HostEventPayloads {
   /** "Close all private tabs" pressed on the private session's notification (`PrivateSession.kt`). */
   'private.closeAll': Record<string, never>
   /**
-   * A page's video went fullscreen with its natural size known (`Host.fullscreenVideo`, the
-   * moment the screen turns for a landscape one): the first-time exit hint's cue (GN-20).
+   * A page's element went fullscreen: the engine's view is up in the fullscreen layer
+   * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike. The first-time exit
+   * hint's cue (GN-20); the video's size, which turns the screen, stays the host's own.
    */
-  'fullscreen.video': { tabId: string; width: number; height: number }
+  'fullscreen.entered': { tabId: string }
   /**
    * A toast the host raises itself on the chrome's message cards (v2 §9.33), where it cannot
    * go through the core's own (`Browser.toast` has no action): the file chooser's camera
@@ -1570,13 +1571,13 @@ export class AndroidPlatform implements Platform {
       case 'private.closeAll':
         browser.tabs.closePrivateTabs(this.window)
         return
-      case 'fullscreen.video': {
-        const p = payload as Partial<HostEventPayloads['fullscreen.video']>
+      case 'fullscreen.entered': {
+        const p = payload as Partial<HostEventPayloads['fullscreen.entered']>
         if (typeof p.tabId !== 'string') return
         const tabId = p.tabId
         // The chrome is under the fullscreen layer: the hint is drawn in the page's top layer
         // (`shared/pageHint.ts`), as the desktop's fullscreen hints are.
-        onFullscreenVideo({
+        onFullscreenEntered({
           settings: () => browser.state.settings,
           dark: () => browser.darkScheme(),
           markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),

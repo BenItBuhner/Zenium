@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { FULLSCREEN_EXIT_HINT, TOAST_SHOW_MS, type PageHint } from '@shared/fullscreenHint'
-import { fullscreenHintDue, onFullscreenVideo, type FullscreenHintIo } from '../fullscreenHint'
+import { fullscreenHintDue, onFullscreenEntered, type FullscreenHintIo } from '../fullscreenHint'
 
 /*
- * GN-20: the first time a video goes fullscreen the phone shows how to leave, once ever, keyed
+ * GN-20: the first time a page goes fullscreen (a video's, a canvas's or an embed's alike – every
+ * fullscreen is left the same way) the phone shows how to leave, once ever, keyed
  * in settings as the gesture hint (FRE-07) is.
  */
 
@@ -36,21 +37,21 @@ describe('the first-time fullscreen exit hint (GN-20)', () => {
 
   it("shows once, in Chrome's words, as the chrome's toast drawn in the page", () => {
     const rec = io(false, true)
-    expect(onFullscreenVideo(rec)).toBe(true)
+    expect(onFullscreenEntered(rec)).toBe(true)
     expect(rec.marked).toBe(1)
     expect(rec.posted).toEqual([
       { text: FULLSCREEN_EXIT_HINT, exit: null, duration: TOAST_SHOW_MS, dark: true, kind: 'toast' }
     ])
     expect(FULLSCREEN_EXIT_HINT).toBe('Swipe down or press back to exit full screen')
     // The second video: the record was written as the first went up, nothing more.
-    expect(onFullscreenVideo(rec)).toBe(false)
+    expect(onFullscreenEntered(rec)).toBe(false)
     expect(rec.posted).toHaveLength(1)
     expect(rec.marked).toBe(1)
   })
 
   it('shows nothing once the record says it was shown', () => {
     const rec = io(true)
-    expect(onFullscreenVideo(rec)).toBe(false)
+    expect(onFullscreenEntered(rec)).toBe(false)
     expect(rec.posted).toEqual([])
     expect(rec.marked).toBe(0)
   })
@@ -70,7 +71,7 @@ describe('the first-time fullscreen exit hint (GN-20)', () => {
         posted.push(hint)
       }
     }
-    onFullscreenVideo(rec)
+    onFullscreenEntered(rec)
     expect(markedBeforePost).toBe(true)
     expect(posted[0]?.dark).toBe(false)
   })

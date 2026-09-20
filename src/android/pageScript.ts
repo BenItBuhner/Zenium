@@ -211,8 +211,11 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     reportBlockedPopups: true,
     // A page's OpenSearch description makes it a "Recently visited" engine in Settings > Search.
     discoverSearchEngines: true,
-    // A fullscreen video's size turns the screen (Host.kt, MED-01); top frame and frames alike,
-    // since the video may be an embed's (its frame's document is the one in fullscreen).
+    // A fullscreen video's size turns the screen (Host.kt, MED-01). This script runs in the top
+    // document and in every frame, and each reports its own fullscreen: an embed's video goes
+    // fullscreen from its frame's document, the one that knows the size, while the top document
+    // sees only the <iframe>. The view lets a frame's fullscreen report through alone
+    // (TabWebView.onPageMessage); the host weighs it against the top document's.
     reportFullscreen: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
     // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint

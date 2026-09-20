@@ -305,5 +305,32 @@ export function installHint(onHint: (listener: (hint: PageHint | null) => void) 
     else showBubble(el, hint)
   }
 
+  /**
+   * The top layer paints in order of entry, so an element entering fullscreen after the hint
+   * was shown would stand over it. The phone's hint is cued by the engine's view going up
+   * (`Host.enterFullscreen`), which the page's own `fullscreenchange` may trail: a standing
+   * hint is raised again as the element arrives – a manual popover hidden and shown lands on
+   * top, its inline styles (the motion under way) untouched.
+   */
+  const raise = (): void => {
+    const el = current
+    if (!el || !el.isConnected || !inFullscreen()) return
+    if (!('hidePopover' in el && 'showPopover' in el)) return
+    try {
+      el.hidePopover()
+      el.showPopover()
+    } catch {
+      /* a document that cannot show popovers keeps the fixed element */
+    }
+  }
+  document.addEventListener('fullscreenchange', raise, true)
+  document.addEventListener('webkitfullscreenchange', raise, true)
+
   onHint((hint) => (hint ? show(hint) : remove()))
+}
+
+/** Whether the document has a fullscreen element, under either name the engines have given it. */
+function inFullscreen(): boolean {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null }
+  return (doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null) !== null
 }

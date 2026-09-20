@@ -2,13 +2,14 @@ import { fullscreenExitHint, type PageHint } from '@shared/fullscreenHint'
 import type { Settings } from '@shared/types'
 
 /*
- * The first-time exit hint for a video in fullscreen (GN-20): the host reports a fullscreen
- * video (`fullscreen.video`, the moment it turns the screen for it, `Host.kt`) and, the first
- * time ever, the chrome answers with the toast – drawn in the page's top layer by the page
- * script (`shared/pageHint.ts`), since the chrome itself is under the fullscreen layer – and
- * records the showing in `settings.fullscreenHintDone`, as the gesture hint (FRE-07) records
- * its own. The record is written before the hint is posted, so a second report inside the
- * settings' round trip cannot show it twice.
+ * The first-time exit hint for a page in fullscreen (GN-20): the host reports the engine's
+ * fullscreen view going up (`fullscreen.entered`, `Host.enterFullscreen` – a video's, a canvas's
+ * or an embed's alike, since every fullscreen is left the same way) and, the first time ever,
+ * the chrome answers with the toast – drawn in the page's top layer by the page script
+ * (`shared/pageHint.ts`), since the chrome itself is under the fullscreen layer – and records
+ * the showing in `settings.fullscreenHintDone`, as the gesture hint (FRE-07) records its own.
+ * The record is written before the hint is posted, so a second report inside the settings'
+ * round trip cannot show it twice.
  */
 
 /** Whether the hint is still owed: it has not had its showing. */
@@ -26,8 +27,8 @@ export interface FullscreenHintIo {
   post(hint: PageHint): void
 }
 
-/** A video went fullscreen: the hint goes up if it is still owed. Returns whether it did. */
-export function onFullscreenVideo(io: FullscreenHintIo): boolean {
+/** A page went fullscreen: the hint goes up if it is still owed. Returns whether it did. */
+export function onFullscreenEntered(io: FullscreenHintIo): boolean {
   if (!fullscreenHintDue(io.settings())) return false
   io.markShown()
   io.post(fullscreenExitHint(io.dark()))

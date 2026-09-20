@@ -488,8 +488,7 @@ class TabWebView(
         if (host.pageScript.isEmpty()) return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(this, PAGE_BRIDGE, setOf("*")) { _, message, _, isMainFrame, proxy ->
-                if (!isMainFrame) return@addWebMessageListener
-                onPageMessage(message, proxy)
+                onPageMessage(message, proxy, isMainFrame)
             }
         } else {
             addJavascriptInterface(LegacyPageBridge(), PAGE_BRIDGE)
@@ -555,8 +554,18 @@ class TabWebView(
         }
     }
 
-    private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?) {
-        when (val route = routePageMessage(message.data, host.pageToken)) {
+    /**
+     * A message from the page script in one of the tab's frames. The script runs in every frame,
+     * but the main document alone speaks for the tab, save for a frame's own fullscreen
+     * ([PageMessageRoute.heardFrom]): an embed's video goes fullscreen from its frame's document,
+     * the one that knows the video's size. The host weighs a frame's report against the main
+     * frame's ([PageHost.fullscreenVideo]). The legacy bridge (no frame on its messages) is
+     * taken as the main frame's, as it always was.
+     */
+    private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?, isMainFrame: Boolean = true) {
+        val route = routePageMessage(message.data, host.pageToken)
+        if (!route.heardFrom(isMainFrame)) return
+        when (route) {
             PageMessageRoute.Ignore -> return
             PageMessageRoute.Hello -> {
                 replyProxy = proxy
@@ -565,7 +574,8 @@ class TabWebView(
             // The settled value of a Promise an evaluate() script returned (see evaluate()).
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
-            is PageMessageRoute.Fullscreen -> host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight)
+            is PageMessageRoute.Fullscreen ->
+                host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
             is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
         }
     }

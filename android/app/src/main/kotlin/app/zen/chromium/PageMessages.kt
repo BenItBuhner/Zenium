@@ -30,6 +30,15 @@ sealed class PageMessageRoute {
 
     /** Anything else goes to the core as a `pageMessage` view event, without the token. */
     data class Forward(val message: JSONObject) : PageMessageRoute()
+
+    /**
+     * Whether the view acts on this message from the frame it came from. The main document
+     * speaks for the tab; a frame's hello, `domReady` or forwarded message is not the page's and
+     * is dropped. A frame's own [Fullscreen] is heard: an embed's video (a YouTube iframe) goes
+     * fullscreen from its frame's document, the one that knows the video's size, while the main
+     * document sees only the `<iframe>`, without one.
+     */
+    fun heardFrom(isMainFrame: Boolean): Boolean = isMainFrame || this is Fullscreen
 }
 
 /** Route a page-script message carrying `token` (a per-session secret pages cannot know). */

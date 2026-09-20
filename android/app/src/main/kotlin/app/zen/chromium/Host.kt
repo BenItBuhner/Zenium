@@ -161,14 +161,16 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val fullscreenView: View? get() = fullscreenLayer.getChildAt(0)
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     /**
-     * The fullscreen video's natural size as its page last reported it ([fullscreenVideo]), and
-     * the tab it is in: the screen turns by it (MED-01). The page's `fullscreenchange` follows the
-     * engine's `onShowCustomView`, so the report usually finds [fullscreenTab] set and turns the
-     * screen at once; kept here for the other order, and dropped when the page says fullscreen
-     * ended.
+     * The fullscreen video's natural size as its page last reported it ([fullscreenVideo]), the
+     * tab it is in, and whether one of the page's frames (an embed's document) reported it rather
+     * than the main document: the screen turns by it (MED-01). The page's `fullscreenchange`
+     * follows the engine's `onShowCustomView`, so the report usually finds [fullscreenTab] set
+     * and turns the screen at once; kept here for the other order, and dropped when the page says
+     * fullscreen ended or the fullscreen exits ([exitFullscreen]).
      */
     private var fullscreenVideoTab: TabWebView? = null
     private var fullscreenVideoSize: Pair<Int, Int>? = null
+    private var fullscreenVideoFromFrame = false
     /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
     private var fullscreenOrientationHeld = false
     override var immersive = false
@@ -720,7 +722,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
         // The page's size report came ahead of the engine's view: the screen turns now.
-        if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(tab, width, height) }
+        if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
+        // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
+        // canvas's or an embed's as much as a video's, so the cue is the layer's, not the size's.
+        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId))
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -736,6 +741,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         fullscreenTab = null
+        // The size was this fullscreen's. A navigation, a renderer crash or a close ends fullscreen
+        // without the page's `active: false`; a size kept past that would turn the tab's next
+        // fullscreen before its own report and hold a destroyed view.
+        if (fullscreenVideoTab === tab) clearFullscreenVideo()
         if (!immersive) setSystemBarsHidden(false)
         // Out of fullscreen while the window is the small one: the tab's own view takes it over.
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
@@ -752,25 +761,39 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * describes the playing element, which a video going fullscreen before its first play is
      * not). A landscape video turns the activity to `SENSOR_LANDSCAPE`, rotation lock or not,
      * as Chrome's orientation lock does; a portrait or square one, or an element without a
-     * video, turns nothing ([FullscreenOrientation]). The chrome hears of the video
-     * (`fullscreen.video`) for the first-time exit hint (GN-20).
+     * video, turns nothing ([FullscreenOrientation]).
+     *
+     * The main document's report stands for the tab. A frame's (an embed's document, the one
+     * that knows its video's size where the main document sees the `<iframe>` alone, 0 × 0) is
+     * taken only for the fullscreen under way, and only while the main document has named no
+     * video of its own: a frame that lies about a video can at most turn a screen that is
+     * already fullscreen on an element without one. Its `active: false` says nothing the main
+     * document's `fullscreenchange` does not say too.
      */
-    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int) {
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
         if (!active) {
-            if (fullscreenVideoTab === tab) {
-                fullscreenVideoTab = null
-                fullscreenVideoSize = null
-            }
+            if (mainFrame && fullscreenVideoTab === tab) clearFullscreenVideo()
             return
         }
         // No video, or a size not known yet (the script reports again at loadedmetadata).
         if (videoWidth <= 0 || videoHeight <= 0) return
+        if (!mainFrame) {
+            if (fullscreenTab !== tab) return
+            if (fullscreenVideoTab === tab && fullscreenVideoSize != null && !fullscreenVideoFromFrame) return
+        }
         fullscreenVideoTab = tab
         fullscreenVideoSize = videoWidth to videoHeight
-        if (fullscreenTab === tab) turnForVideo(tab, videoWidth, videoHeight)
+        fullscreenVideoFromFrame = !mainFrame
+        if (fullscreenTab === tab) turnForVideo(videoWidth, videoHeight)
     }
 
-    private fun turnForVideo(tab: TabWebView, videoWidth: Int, videoHeight: Int) {
+    private fun clearFullscreenVideo() {
+        fullscreenVideoTab = null
+        fullscreenVideoSize = null
+        fullscreenVideoFromFrame = false
+    }
+
+    private fun turnForVideo(videoWidth: Int, videoHeight: Int) {
         val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
         if (orientation == FullscreenOrientation.RELEASED) {
             releaseFullscreenOrientation()
@@ -778,7 +801,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             fullscreenOrientationHeld = true
             activity.requestedOrientation = orientation
         }
-        chrome.hostEvent("fullscreen.video", json("tabId" to tab.tabId, "width" to videoWidth, "height" to videoHeight))
     }
 
     private fun releaseFullscreenOrientation() {
