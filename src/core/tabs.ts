@@ -1675,14 +1675,32 @@ export class TabManager {
     this.browser.session.reopenClosed(win)
   }
 
-  closeOthers(tabId: string, win: ZenWindow = this.windowFor(tabId)): void {
+  /**
+   * What Close Tabs Above / Below / Other Tabs would close from this row (tabs-25, BUG-013): the
+   * space's regular tabs shown in the window, in the strip's order. Pinned and Essentials tabs
+   * are exempt from all three (Chrome exempts pinned tabs from "Close other tabs"), so from a
+   * pinned or essential row every regular tab lies below and none above. The menu greys an
+   * item this leaves empty.
+   */
+  closeScope(tabId: string, which: 'above' | 'below' | 'others', win?: ZenWindow): string[] {
     const tab = this.tab(tabId)
-    if (!tab || tab.essential) return
-    const space = getSpace(this.model, tab.spaceId) ?? win.activeSpace()
-    for (const id of [...space.tabIds]) {
+    if (!tab) return []
+    const source = win ?? this.windowFor(tabId)
+    const space = getSpace(this.model, tab.spaceId) ?? source.activeSpace()
+    const regular = space.tabIds.filter((id) => {
       const t = this.tab(id)
-      if (t && id !== tabId && !t.pinned && tabVisibleIn(t, win.id)) this.closeTab(id, false, win)
-    }
+      return t && !t.pinned && !t.essential && tabVisibleIn(t, source.id)
+    })
+    if (which === 'others') return regular.filter((id) => id !== tabId)
+    const idx = regular.indexOf(tabId)
+    if (idx === -1) return tab.pinned || tab.essential ? (which === 'below' ? regular : []) : []
+    return which === 'below' ? regular.slice(idx + 1) : regular.slice(0, idx)
+  }
+
+  closeOthers(tabId: string, win: ZenWindow = this.windowFor(tabId)): void {
+    const victims = this.closeScope(tabId, 'others', win)
+    if (victims.length === 0) return
+    for (const id of victims) this.closeTab(id, false, win)
     this.activateTab(tabId, win)
   }
 
@@ -1695,18 +1713,8 @@ export class TabManager {
   }
 
   private closeRelative(tabId: string, direction: 'above' | 'below', win?: ZenWindow): void {
-    const tab = this.tab(tabId)
-    if (!tab || tab.essential) return
     const source = win ?? this.windowFor(tabId)
-    const space = getSpace(this.model, tab.spaceId) ?? source.activeSpace()
-    const ids = space.tabIds.filter((id) => {
-      const t = this.tab(id)
-      return t && t.pinned === tab.pinned && tabVisibleIn(t, source.id)
-    })
-    const idx = ids.indexOf(tabId)
-    if (idx === -1) return
-    const victims = direction === 'below' ? ids.slice(idx + 1) : ids.slice(0, idx)
-    for (const id of victims) this.closeTab(id, true, source)
+    for (const id of this.closeScope(tabId, direction, source)) this.closeTab(id, false, source)
   }
 
   /** Zen's "Clear tabs" button / Ctrl+Shift+K: close every unpinned tab in the space. */
