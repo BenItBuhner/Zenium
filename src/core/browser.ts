@@ -1468,10 +1468,7 @@ export class Browser {
    */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (
-      !tab ||
-      !(isWebPageUrl(tab.url) || extensionPageOf(tab.url) || this.pages.isPageTab(tab))
-    ) {
+    if (!tab || !(isWebPageUrl(tab.url) || extensionPageOf(tab.url) || this.pages.isPageTab(tab))) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }

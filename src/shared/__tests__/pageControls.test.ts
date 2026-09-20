@@ -74,6 +74,11 @@ describe('per-site maps', () => {
     expect(siteKey('zen://settings')).toBeNull()
     expect(siteKey('about:blank')).toBeNull()
     expect(siteKey('file:///tmp/x.html')).toBeNull()
+    // An extension's page is the chrome's own, in either form the address takes: the Android
+    // runtime's emulated origin is no site to remember a zoom or a desktop-site choice for.
+    const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
+    expect(siteKey(`chrome-extension://${id}/options.html`)).toBeNull()
+    expect(siteKey(`https://${id}.ext.zenium.invalid/options.html`)).toBeNull()
   })
 
   it('drops a value equal to the default, so lists only hold real exceptions', () => {
