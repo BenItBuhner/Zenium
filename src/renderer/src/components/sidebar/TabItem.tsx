@@ -28,6 +28,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
+import { walkRows } from './rowKeys'
 
 interface Props {
   tab: Tab
@@ -163,19 +164,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       run('tab.activate', { tabId: tab.id })
       return
     }
-    const walk: Record<string, (rows: HTMLElement[], at: number) => HTMLElement | undefined> = {
-      ArrowDown: (rows, at) => rows[at + 1],
-      ArrowUp: (rows, at) => rows[at - 1],
-      Home: (rows) => rows[0],
-      End: (rows) => rows[rows.length - 1]
-    }
-    const to = walk[e.key]
-    if (!to) return
-    e.preventDefault()
-    const scroller = row.closest<HTMLElement>('[data-tab-scroller]')
-    if (!scroller) return
-    const rows = [...scroller.querySelectorAll<HTMLElement>('.zen-tab[data-tab-id]')]
-    to(rows, rows.indexOf(row))?.focus()
+    if (walkRows(row, e.key)) e.preventDefault()
   }
 
   return (

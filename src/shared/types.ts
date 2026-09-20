@@ -1629,6 +1629,13 @@ export interface NewTabPageState {
   backgroundImage: string | null
   /** The host can open an image file picker. */
   canPickImage: boolean
+  /**
+   * A private window's page only: the "Block third-party cookies" switch (Chrome's Incognito
+   * new-tab toggle), `PrivacyStatus.privateThirdPartyCookies` – `blocked` is its position,
+   * `locked` that Settings blocks them in every window, so it is on and disabled. Absent on a
+   * regular page; inert for anything else that reads the state.
+   */
+  privateThirdPartyCookies?: { blocked: boolean; locked: boolean }
 }
 
 /**
@@ -1666,6 +1673,11 @@ export type NewTabPageAction =
     }
   /** The Customize button: Settings opens on its New Tab section. */
   | { type: 'customize' }
+  /**
+   * The private page's "Block third-party cookies" switch was flipped: `privacy.thirdPartyCookiesPrivate`
+   * becomes `block` (on) or `allow` (off) – never `default` – and changes private windows only.
+   */
+  | { type: 'set-private-third-party-cookies'; blocked: boolean }
 
 /**
  * What the browser tells a new tab page besides its state: a menu item picked in the chrome
@@ -2766,6 +2778,8 @@ export interface Commands {
       pinned?: boolean
       essential?: boolean
       afterTabId?: string
+      /** The folder (tab group) the new tab belongs to; one of the space's folders. */
+      folderId?: string
     }
     result: string
   }
@@ -2846,6 +2860,16 @@ export interface Commands {
   'tab.moveToNewWindow': { args: { tabId: string }; result: void }
   /** Restore the newest recently closed entry (a window entry as a whole window). */
   'tab.reopenClosed': { args: void; result: void }
+  /**
+   * The tabs this window's tab search (Ctrl+Shift+A) lists: every tab of every window that
+   * shares the window's privacy, most recently active first. The renderer matches and ranks them.
+   */
+  'tab.searchCandidates': { args: void; result: TabSearchCandidate[] }
+  /**
+   * Switch to a tab from tab search: in this window when it can show it, else in the window that
+   * does (a blank or private window's own tab), which is brought to the front.
+   */
+  'tab.switchTo': { args: { tabId: string }; result: void }
   /** The tab's back/forward stack for the long-press list on the back / forward buttons. */
   'tab.navigationEntries': { args: { tabId: string }; result: NavigationSnapshot }
   'tab.goToIndex': { args: { tabId: string; index: number }; result: void }
@@ -2920,6 +2944,11 @@ export interface Commands {
   }
   'folder.delete': { args: { folderId: string; unpack: boolean }; result: void }
   'folder.contextMenu': { args: { folderId: string }; result: void }
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder, active, in the
+   * folder's space and the container of its last member. Resolves with the new tab's id.
+   */
+  'folder.newTab': { args: { folderId: string }; result: string }
   'newtab.contextMenu': { args: void; result: void }
   /** Long-press on a phone new tab page tile: pin / unpin, remove, open in a new tab. */
   'newtab.tileContextMenu': { args: { url: string; title: string }; result: void }
@@ -3769,6 +3798,11 @@ export interface Events {
    */
   'menu.app': void
   /**
+   * Ctrl+Shift+A (or the menu item) asked for tab search: the chrome opens the popover from the
+   * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
+   */
+  'tabsearch.open': void
+  /**
    * The user zoomed a page (keyboard, Ctrl+wheel, the menu, the bubble's own controls): the
    * chrome shows the zoom bubble for the tab. `factor` is the page's effective zoom; `siteKey`
    * the site the factor is remembered for, null for a page that zooms on its own.
@@ -3808,6 +3842,13 @@ export interface Events {
    */
   'tab.dragOver': TabDragOver | null
   'folder.startRename': { folderId: string }
+  /**
+   * Show the folder's editor (tabs-13): Chrome opens its group editor bubble when a group is
+   * made from the tab menu and from the group header's own menu. The desktop chrome opens the
+   * bubble beside the folder's header row; the phone, whose group sheet holds the colours, starts
+   * the inline rename on the group card.
+   */
+  'folder.edit': { folderId: string }
   /** Open the pinned-URL editor for a pinned/essential tab. */
   'tab.editPinnedUrl': { tabId: string }
   /** Open the emoji/icon picker for a tab. */
@@ -3992,3 +4033,29 @@ export interface ClosedEntrySummary {
 
 /** The pre-visit-model name; new code uses `ClosedTabEntry`. */
 export type ClosedTab = ClosedTabEntry
+
+/**
+ * One tab the tab search popover can switch to (tabs-17): what its row shows and what the
+ * renderer matches on. `windowLabel` names the other window a tab lives in (a blank or private
+ * window's own tab, named by its active tab as the "Move Tab to Another Window" submenu names
+ * windows); null for a tab this window shows itself.
+ */
+export interface TabSearchCandidate {
+  id: string
+  /** The user's name for the tab when it has one, else the page's title. */
+  title: string
+  url: string
+  favicon: string | null
+  /** The user's emoji for the tab ("Change Icon…"), shown in place of the favicon. */
+  customIcon: string | null
+  containerId: string
+  windowLabel: string | null
+  /** The tab this window (or the window the tab lives in) shows right now. */
+  active: boolean
+  /** Playing sound (or muted while it would): the "Audio and video" section. */
+  audible: boolean
+  muted: boolean
+  loading: boolean
+  discarded: boolean
+  lastActiveAt: number
+}
