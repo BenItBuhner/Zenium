@@ -1,0 +1,62 @@
+name: Android bar star, Listen reads on, fullscreen gone-tab demo
+
+# Records three small pieces of the phone chrome on one boot, each under a real finger (see
+# BarStarListenOnDemo): the bar's optional Bookmark star following the menu star (outlined
+# "Bookmark", a touch saves the page with the fill on the shared spring and the Saved toast's
+# Edit, filled "Edit Bookmark" whose touch opens the editor and removes nothing; the star in
+# light and dark with the bar at the bottom and at the top), Listen from the selection toolbar
+# reading on past the selected sentence (readAloud.start from: 'selection-on'; the player's
+# position and the page's highlight past the selection, the engine handed the selection first),
+# and a page that closes its own tab while a clip is fullscreen (the chrome's return falling
+# through to its 120 ms fade within 300 ms of its fullscreen state clearing, not at the landing
+# timeout; the timestamps on record). The driver writes `bar-star-listen-on-findings.txt` with a
+# PASS or FAIL per check and fails when any did. The image stays the shared default (Google
+# APIs, API 34): the speech engine is there, and with the fullscreen hint counted as shown
+# nothing needs the `popover` its WebView predates. Dispatch-only, like the other demos: it
+# takes about eight minutes. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+  # TEMPORARY: one run per push of the working branch while the demo is recorded; removed before merge.
+  push:
+    branches:
+      - cursor/android-bar-star-listen-on-v2-6f1c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-bar-star-listen-on-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Bar star, Listen reads on, fullscreen gone-tab demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BarStarListenOnDemo
+        DEMO_DIR=bar-star-listen-on-demo
+        DEMO_OUT=artifacts/android-bar-star-listen-on-demo
+        DEMO_VIDEO=android-bar-star-listen-on-demo.mp4
+      artifact-name: android-bar-star-listen-on-demo
+      artifact-path: artifacts/android-bar-star-listen-on-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Bar star, Listen reads on, fullscreen gone-tab demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BarStarListenOnDemo
+        DEMO_DIR=bar-star-listen-on-demo
+        DEMO_OUT=artifacts/android-bar-star-listen-on-demo
+        DEMO_VIDEO=android-bar-star-listen-on-demo.mp4
+      artifact-name: android-bar-star-listen-on-demo-second-boot
+      artifact-path: artifacts/android-bar-star-listen-on-demo/

@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium fullscreen gone-tab demo</title>
+<style>
+  html, body { margin: 0; min-height: 100%; font-family: sans-serif; background: #fff; color: #15141a; }
+  @media (prefers-color-scheme: dark) { html, body { background: #121212; color: #e6e6e6; } }
+  h1 { font-size: 20px; margin: 0; padding: 16px 20px 4px; }
+  p.lead { margin: 0; padding: 0 20px 8px; font-size: 14px; line-height: 1.35; color: #5a5866; }
+  .big { display: block; box-sizing: border-box; width: calc(100% - 40px); margin: 8px 20px; height: 56px;
+    font-size: 20px; font-weight: 600; border: 0; border-radius: 14px; background: #1b4332; color: #fff;
+    text-align: center; line-height: 56px; -webkit-tap-highlight-color: transparent; }
+  .big:active { filter: brightness(1.2); }
+  video { display: block; box-sizing: border-box; margin: 8px 20px; width: 40%; aspect-ratio: 9 / 16;
+    max-height: 200px; background: #000; border-radius: 8px; }
+  pre#state { margin: 0; padding: 12px 20px; font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>A video that closes its own tab</h1>
+<p class="lead">The button plays the clip fullscreen; a moment into the fullscreen the page closes its tab with window.close(), the way a player popup or a finished install page does.</p>
+<video id="port" src="/port.webm" loop playsinline preload="auto"></video>
+<button id="fs-close" class="big">Play fullscreen, then close this tab</button>
+<pre id="state"></pre>
+<script>
+(function () {
+  // Everything the page sees goes into its title as `GT|key:value|key:value`, which the demo
+  // driver reads from the browser core's state (and through evaluateJavascript). `hl` is the
+  // tab's history length: Blink lets a script close a top-level window only while it is on its
+  // first document (one entry), so the driver knows up front whether the close can take.
+  var state = { fs: 0, state: 'paused', hl: history.length, closing: 0, refused: 0 };
+  var render = function () {
+    var parts = ['GT'];
+    Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
+    var title = parts.join('|');
+    document.title = title;
+    document.getElementById('state').textContent = title.split('|').join('\n');
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var video = $('port');
+  ['play', 'playing', 'pause', 'ended', 'loadedmetadata'].forEach(function (name) {
+    video.addEventListener(name, function () {
+      state.state = (!video.paused && !video.ended) ? 'playing' : 'paused';
+      render();
+    });
+  });
+  var requestFullscreen = function (el) {
+    var request = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen;
+    if (!request) return;
+    try {
+      var r = request.call(el);
+      if (r && r.catch) r.catch(function (e) { state.err = String(e && e.name || e); render(); });
+    } catch (e) { state.err = String(e && e.name || e); render(); }
+  };
+  $('fs-close').addEventListener('click', function () {
+    // The tap is the user gesture both need (mediaPlaybackRequiresUserGesture, the Fullscreen API).
+    var played = video.play();
+    if (played && played.catch) played.catch(function (e) { state.err = String(e && e.name || e); render(); });
+    requestFullscreen(video);
+  });
+  // How long the fullscreen stands before the page closes its tab: long enough for the driver's
+  // still of the fullscreen and for the chrome to have left the screen entirely.
+  var CLOSE_AFTER_MS = 3000;
+  var closeTimer = null;
+  var onFullscreenChange = function () {
+    var el = document.fullscreenElement || document.webkitFullscreenElement;
+    state.fs = el ? 1 : 0;
+    render();
+    if (el && closeTimer === null) {
+      closeTimer = setTimeout(function () {
+        state.closing = 1;
+        render();
+        // A beacon just before the close: the driver's server sees the request and stamps the
+        // moment the page asked to go (a fetch could be cancelled with the document; a beacon
+        // is meant to outlive it).
+        try { navigator.sendBeacon('/closing', 'closing'); } catch (e) {}
+        window.close();
+        // Still here half a second on: Blink refused the close (a window a script may not
+        // close); the driver reads it off the title rather than waiting for a tab that stays.
+        setTimeout(function () { state.refused = 1; render(); }, 500);
+      }, CLOSE_AFTER_MS);
+    }
+  };
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+  render();
+})();
+</script>
+</body>
+</html>
