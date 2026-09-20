@@ -59,6 +59,24 @@ class BarHideScrollFilterTest {
     }
 
     @Test
+    fun aPageShorterThanItsViewportKeepsItsBar() {
+        // A page that does not scroll reports no scroll, so nothing arrives here at all; one that
+        // scrolls by less than the bar's travel (a short page a few lines over) is held from its
+        // first px to its end, whatever the finger does: the bar stays, and all of the page is
+        // reachable under it (v2 draft 11.5: the band stays shown on a page shorter than its viewport).
+        val f = filter()
+        f.down(finger)
+        assertEquals(Verdict.HELD, f.page(0, 12, 30, fingerY = finger - 12f))
+        assertEquals(Verdict.HELD, f.page(12, 42, 0, fingerY = finger - 42f))
+        assertFalse(f.hiding)
+        // Back up (the finger's, reported: a bar at its edge has nothing to come back by) and
+        // down again within the same finger: still no hide.
+        assertEquals(Verdict.REPORT, f.page(42, 10, 32, fingerY = finger - 10f))
+        assertEquals(Verdict.HELD, f.page(10, 42, 0, fingerY = finger - 42f))
+        assertFalse(f.hiding)
+    }
+
+    @Test
     fun aBarAlreadyOffItsEdgeFollowsTheScrollWhateverIsLeft() {
         // A finger landing mid-spring, the bar 30 px off: the page is laid out tall already.
         val f = filter()

@@ -323,6 +323,65 @@ describe('the published hide progress', () => {
     expectAgreement()
   })
 
+  it('the overview (the gesture stage over the page) brings a hidden bar back and keeps it while it is open (§11.5)', () => {
+    scroll([60])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    settle()
+    expect(uiStore.get().barHidden).toBe(true)
+    // The stage stands in for the live page (the tab overview, the tab-switch cards): a cover
+    // over a bottom-docked bar, so the bar is in place at once under the stage's arrival.
+    uiStore.set({ stageActive: true })
+    expect(barHideStore.get().allowed).toBe(false)
+    expect(rootVar()).toBe(0)
+    expect(uiStore.get().barHidden).toBe(false)
+    expectAgreement()
+    scroll([30])
+    expect(rootVar()).toBe(0)
+    uiStore.set({ stageActive: false })
+    expect(barHideStore.get().allowed).toBe(true)
+    expectAgreement()
+  })
+
+  it('under reduced motion the finger still moves the bar one to one, and the snap is a cut (§11.3)', () => {
+    const matchMedia = vi.fn((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+    vi.stubGlobal('matchMedia', matchMedia)
+    // Down the page 24, back up 6, one to one at each step.
+    dispatchBarScroll('t1', 'start', null)
+    for (const delta of [12, 12, -6]) {
+      now += 100
+      dispatchBarScroll('t1', 'move', { delta, time: now })
+    }
+    expect(rootVar()).toBeCloseTo(18 / 48, 3)
+    expect(barHideStore.get().phase).toBe('dragging')
+    expectAgreement()
+    // The release, short of the commit line and drifting back: no frames are queued for a
+    // spring; the bar is at its shown rest at once.
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(frames).toHaveLength(0)
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest' })
+    expect(rootVar()).toBe(0)
+    expectAgreement()
+    // Out past the commit line and released: the cut lands hidden, and the boolean flips with it.
+    scroll([12, 12])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(frames).toHaveLength(0)
+    expect(barHideStore.get()).toMatchObject({ progress: 1, phase: 'rest' })
+    expect(uiStore.get().barHidden).toBe(true)
+    expectAgreement()
+  })
+
   it('stays put on the new tab page and with the setting off', () => {
     browserStore.set({ state: state('bottom', 'zen://newtab') })
     expect(barHideStore.get().allowed).toBe(false)
