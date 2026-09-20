@@ -105,8 +105,9 @@ function escapeHtml(s: string): string {
 /**
  * The viewer's document. The pages are drawn by the viewer script into `#pages`; the chrome's
  * own colours are not available to a document, so the shell keeps Chrome's viewer grey behind
- * the pages in both schemes. Pinch zoom is the viewer's (`touch-action` keeps the engine's
- * away), a single finger scrolls as on any page.
+ * the pages in both schemes (the light scheme's grey first, for a WebView without
+ * `light-dark()`). Pinch zoom is the viewer's (`touch-action` keeps the engine's away), a
+ * single finger scrolls as on any page.
  */
 export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): string {
   const config = JSON.stringify({
@@ -117,8 +118,8 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   })
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(doc.name)}</title><style>
   :root { color-scheme: light dark; }
-  html, body { margin: 0; min-height: 100%; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: light-dark(#1e1e24, #f0f0f5); }
+  html, body { margin: 0; min-height: 100%; background: #525659; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f0f0f5; color: light-dark(#1e1e24, #f0f0f5); }
   #pages { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 8px 24px; box-sizing: border-box; width: max-content; min-width: 100%; transform-origin: 0 0; }
   .zen-pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 4px #0006; overflow: hidden; }
   .zen-pdf-page > canvas { display: block; width: 100%; height: 100%; }
@@ -127,6 +128,7 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name'>): st
   .zen-pdf-hit.current { background: #ff980099; outline: 1px solid #ff9800; }
   .zen-pdf-link { position: absolute; display: block; pointer-events: auto; }
   .zen-pdf-status { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 32px; color: #f0f0f5; }
+  .zen-pdf-status[hidden] { display: none; }
   .zen-pdf-status p { max-width: 420px; line-height: 1.5; margin: 0; }
 </style><script>window.__zeniumPdfDocument=${config}</script></head>
 <body><div id="pages"></div><div id="status" class="zen-pdf-status"><p>Loading…</p></div>

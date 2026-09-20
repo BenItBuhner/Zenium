@@ -64,20 +64,22 @@ export interface PageBand {
 }
 
 /**
- * The page in view, 1-based, as Chrome's page indicator counts it: the page under the middle of
- * the window, else the one showing the most of itself; 0 without pages.
+ * The page in view, 1-based, as Chrome's page indicator counts it (pdfium's most visible page):
+ * the page showing the largest share of itself, the earlier one when several show as much – so
+ * a jump to a page that fits whole names that page, whatever the pages after it show; 0
+ * without pages.
  */
 export function pageInView(bands: readonly PageBand[], viewportHeight: number): number {
   if (bands.length === 0) return 0
-  const middle = viewportHeight / 2
   let best = 0
-  let bestVisible = -1
+  let bestShare = -1
   for (let i = 0; i < bands.length; i++) {
     const band = bands[i]
-    if (band.top <= middle && band.bottom > middle) return i + 1
+    const height = Math.max(1, band.bottom - band.top)
     const visible = Math.min(band.bottom, viewportHeight) - Math.max(band.top, 0)
-    if (visible > bestVisible) {
-      bestVisible = visible
+    const share = Math.max(0, visible) / height
+    if (share > bestShare + 1e-6) {
+      bestShare = share
       best = i
     }
   }

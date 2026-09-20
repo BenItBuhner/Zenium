@@ -1,5 +1,6 @@
-import { cpSync, mkdirSync } from 'fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import { transformSync } from 'esbuild'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -57,7 +58,8 @@ const PDF_ASSETS_DIR = resolve('android/app/src/main/assets/pdf')
  * The parts of pdf.js the viewer needs beside its own script: the worker, and the data the
  * worker asks for as documents need it (CJK character maps, the fourteen standard fonts,
  * the JPEG 2000 / JBIG2 / colour-management decoders as WebAssembly, the default ICC profile).
- * Copied from the package once the viewer bundle is written.
+ * Copied from the package once the viewer bundle is written. The worker runs on a global of
+ * its own, so it gets the viewer's polyfills (`pdfViewerPolyfills.ts`) written ahead of it.
  */
 function pdfViewerFiles(): Plugin {
   const dist = resolve('node_modules/pdfjs-dist')
@@ -66,10 +68,12 @@ function pdfViewerFiles(): Plugin {
     apply: 'build',
     closeBundle() {
       mkdirSync(PDF_ASSETS_DIR, { recursive: true })
-      cpSync(
-        resolve(dist, 'legacy/build/pdf.worker.min.mjs'),
-        resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs')
-      )
+      const polyfills = transformSync(
+        readFileSync(resolve('src/android/pdfViewerPolyfills.ts'), 'utf8'),
+        { loader: 'ts', target: 'es2020', minify: true }
+      ).code
+      const worker = readFileSync(resolve(dist, 'legacy/build/pdf.worker.min.mjs'), 'utf8')
+      writeFileSync(resolve(PDF_ASSETS_DIR, 'pdf.worker.mjs'), `${polyfills}\n${worker}`)
       for (const dir of ['cmaps', 'standard_fonts', 'wasm', 'iccs'])
         cpSync(resolve(dist, dir), resolve(PDF_ASSETS_DIR, dir), { recursive: true })
     }

@@ -79,17 +79,25 @@ export const PDF_ZOOM_STEPS: readonly number[] = [
 export const PDF_MIN_ZOOM = PDF_ZOOM_STEPS[0]
 export const PDF_MAX_ZOOM = PDF_ZOOM_STEPS[PDF_ZOOM_STEPS.length - 1]
 
-/** The preset `steps` away from `zoom` (the nearest preset counts as the current one). */
+/**
+ * The preset `steps` away from `zoom`, as Chrome's zoom in and out move: one step reaches the
+ * first preset past `zoom` in its direction, so a zoom between two presets (a fit) lands on the
+ * neighbouring one; a zoom as good as on a preset counts as there.
+ */
 export function steppedZoom(zoom: number, steps: number): number {
-  let nearest = 0
-  for (let i = 1; i < PDF_ZOOM_STEPS.length; i++) {
-    if (Math.abs(PDF_ZOOM_STEPS[i] - zoom) < Math.abs(PDF_ZOOM_STEPS[nearest] - zoom)) nearest = i
+  if (steps === 0) return zoom
+  const tolerance = 1e-3
+  let index: number
+  if (steps > 0) {
+    index = PDF_ZOOM_STEPS.findIndex((preset) => preset > zoom + tolerance)
+    if (index < 0) index = PDF_ZOOM_STEPS.length
+    index += steps - 1
+  } else {
+    index = PDF_ZOOM_STEPS.length - 1
+    while (index >= 0 && PDF_ZOOM_STEPS[index] >= zoom - tolerance) index--
+    index += steps + 1
   }
-  // Between two presets a step moves to the next one in the direction asked, not past it.
-  if (steps > 0 && PDF_ZOOM_STEPS[nearest] < zoom - 1e-6) nearest += 1
-  if (steps < 0 && PDF_ZOOM_STEPS[nearest] > zoom + 1e-6) nearest -= 1
-  const index = Math.min(PDF_ZOOM_STEPS.length - 1, Math.max(0, nearest + steps))
-  return PDF_ZOOM_STEPS[index]
+  return PDF_ZOOM_STEPS[Math.min(PDF_ZOOM_STEPS.length - 1, Math.max(0, index))]
 }
 
 /** The JavaScript that hands `command` to the viewer document; true when the document took it. */

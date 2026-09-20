@@ -9,6 +9,8 @@
  * the viewer stands from the reports this posts on its window (`pdfViewerProtocol.ts`; the page
  * script relays them) and drives it through `window.__zeniumPdf.command`.
  */
+// First: what pdf.js expects of an engine older WebViews (Chromium 113 on the emulator) lack.
+import './pdfViewerPolyfills'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentProxy, PDFPageProxy, PageViewport, RenderTask } from 'pdfjs-dist'
 import type { TextItem } from 'pdfjs-dist/types/src/display/api'
@@ -252,7 +254,7 @@ class Viewer {
 
   private fitted(mode: PdfFitMode): number {
     const sizes = this.slots.map((s) => this.rotatedSize(s))
-    return fitZoom(mode, sizes, { width: window.innerWidth, height: window.innerHeight })
+    return fitZoom(mode, sizes, viewportSize())
   }
 
   private sizeElement(slot: PageSlot): void {
@@ -287,12 +289,13 @@ class Viewer {
   private onViewportMoved(): void {
     if (!this.doc || this.pinching) return
     const bands = this.bands()
-    const inView = pageInView(bands, window.innerHeight)
+    const { height } = viewportSize()
+    const inView = pageInView(bands, height)
     if (inView !== this.current) {
       this.current = inView
       this.report()
     }
-    const { render, keep } = pagesToRender(bands, window.innerHeight)
+    const { render, keep } = pagesToRender(bands, height)
     for (const slot of this.slots) {
       if (render.has(slot.index)) void this.draw(slot)
       else if (!keep.has(slot.index)) this.release(slot)
@@ -376,7 +379,7 @@ class Viewer {
       this.report()
       return
     }
-    const centre = focus?.centre ?? { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    const centre = focus?.centre ?? middleOf(viewportSize())
     const point = focus?.point ?? { x: window.scrollX + centre.x, y: window.scrollY + centre.y }
     this.zoom = zoom
     if (!keepFit) this.fit = null
@@ -753,6 +756,23 @@ class Viewer {
 function sizeOf(page: PDFPageProxy): PageSize {
   const viewport = page.getViewport({ scale: 1 })
   return { width: viewport.width, height: viewport.height }
+}
+
+/**
+ * The layout viewport in CSS pixels: what the pages are fitted to and what "in view" is
+ * measured against. The engine's own pinch zoom is off (the shell's `touch-action`), so it is
+ * the area on screen; `innerWidth` would follow a visual viewport an emulated engine scales.
+ */
+function viewportSize(): { width: number; height: number } {
+  const root = document.documentElement
+  return {
+    width: root.clientWidth || window.innerWidth,
+    height: root.clientHeight || window.innerHeight
+  }
+}
+
+function middleOf(size: { width: number; height: number }): { x: number; y: number } {
+  return { x: size.width / 2, y: size.height / 2 }
 }
 
 /** A rectangle in the page's user space → its two corners in viewport pixels (pdf.js 6 dropped `convertToViewportRectangle`). */
