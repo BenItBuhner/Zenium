@@ -5133,7 +5133,7 @@
   }
   .zen-scpick-state {
     display: flex;
-    min-height: var(--v2-line-body);
+    min-height: var(--v2-line-body-box);
     align-items: center;
     margin-top: 16px;
     color: var(--v2-text-deemphasized);
