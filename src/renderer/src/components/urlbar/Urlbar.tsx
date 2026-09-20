@@ -664,8 +664,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
               onKeyDown={onKeyDown}
               onCompositionStart={() => (composing.current = true)}
               onCompositionEnd={() => (composing.current = false)}
+              // The placeholder is the field's name (A11Y-01): this WebView reads a text field's
+              // label and its placeholder both, so a label saying the same words was heard twice.
               placeholder={placeholder}
-              aria-label="Search or enter address"
               data-testid="urlbar-input"
               spellCheck={false}
               autoComplete="off"

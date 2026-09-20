@@ -453,7 +453,7 @@ describe('the card and group menus', () => {
   it("a held group's rows are menu items in Title Case, the count with its unit", () => {
     render(grouped())
     // A right click is the hold, for the mouse (`useLongPress`): the header opens its sheet.
-    const header = document.querySelector<HTMLElement>('[aria-label="Group Research"]')!
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })
@@ -470,7 +470,7 @@ describe('the card and group menus', () => {
         tab('a', 'https://a.example/')
       ])
     )
-    const header = document.querySelector<HTMLElement>('[aria-label="Group Research"]')!
+    const header = document.querySelector<HTMLElement>('[aria-label^="Research, tab group"]')!
     act(() => {
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
     })

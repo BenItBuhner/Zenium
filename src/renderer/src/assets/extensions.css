@@ -233,7 +233,7 @@
   }
   .zen-v2-row-lead {
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-v2-row-lead.lucide,

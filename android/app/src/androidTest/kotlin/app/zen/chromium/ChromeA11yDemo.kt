@@ -245,7 +245,7 @@ class ChromeA11yDemo : DemoHarness(
                 Want("Share", "Button"),
                 Want("Copy link", "Button"),
                 Want("Edit", "Button"),
-                Want("Search or enter address", "EditText", listOf("editable"))
+                Want("Search or enter address", "EditText", listOf("editable"), prefix = true)
             )
         )
         instrumentation.sendStringSync(QUERY)
@@ -261,9 +261,9 @@ class ChromeA11yDemo : DemoHarness(
                 Want("Clear", "Button")
             )
         )
-        val rows = walk().filter { it.control && it.label.startsWith(QUERY) }
+        val rows = suggestionRows()
         expect("the suggestion rows are at least 44 tall (${rows.map { dp(it.bounds.height()) }})", rows.isNotEmpty() && rows.all { dp(it.bounds.height()) >= 44 - TOLERANCE })
-        closeUrlbar2()
+        closeField()
     }
 
     /** The overview: segment, cards with place and count, their close buttons, the group's header, the header menu; then a card closed for the toast. */
@@ -275,8 +275,10 @@ class ChromeA11yDemo : DemoHarness(
             listOf(
                 Want("Spaces", "Button"),
                 Want("More", "Button", listOf("expanded=false")),
-                Want("Tabs", "Tab", listOf("selected")),
-                Want("Private", "Tab"),
+                // The Tabs / Private segment draws only where the WebView has multi-profile
+                // (`capabilities.privateTabs`); WebView 113 on the CI image has not.
+                Want("Tabs", "Tab", listOf("selected"), optional = true),
+                Want("Private", "Tab", optional = true),
                 Want("Research, tab group, 3 tabs", "Button", listOf("expanded=true")),
                 Want("Alpha, tab ", "Button", prefix = true),
                 Want("Close Alpha", "Button"),
@@ -364,7 +366,7 @@ class ChromeA11yDemo : DemoHarness(
             listOf(
                 Want(MENU_HANDLE_LABEL, "Button"),
                 Want("New Tab", "Button"),
-                Want("New Private Tab", "Button"),
+                Want("New Private Tab", "Button", optional = true),
                 Want("Bookmarks", "Button"),
                 Want("History", "Button"),
                 Want("Downloads", "Button")
@@ -393,7 +395,7 @@ class ChromeA11yDemo : DemoHarness(
         audit(
             "settings",
             listOf(
-                Want("Find in Settings", "EditText", listOf("editable")),
+                Want("Find in Settings", "EditText", listOf("editable"), prefix = true),
                 Want("Look and Feel", "Button"),
                 Want("Tab Management", "Button"),
                 Want("Accessibility", "Button", optional = true),
@@ -439,13 +441,13 @@ class ChromeA11yDemo : DemoHarness(
             fail("History did not open from the menu")
             return
         }
-        awaitNode(10_000) { it == "Search history" }
+        awaitNode(10_000) { it.startsWith("Search history") }
         SystemClock.sleep(1_500)
         audit(
             "history",
             listOf(
                 Want("Close", "Button"),
-                Want("Search history", "EditText", listOf("editable")),
+                Want("Search history", "EditText", listOf("editable"), prefix = true),
                 Want("Clear history", "Button"),
                 Want("Remove from history", "Button")
             )
@@ -461,14 +463,14 @@ class ChromeA11yDemo : DemoHarness(
             fail("Bookmarks did not open from the menu")
             return
         }
-        awaitNode(10_000) { it == "Search bookmarks" }
+        awaitNode(10_000) { it.startsWith("Search bookmarks") }
         SystemClock.sleep(1_500)
         audit(
             "bookmarks",
             listOf(
                 Want("More bookmark actions", "Button", optional = true),
                 Want("Close", "Button"),
-                Want("Search bookmarks", "EditText", listOf("editable")),
+                Want("Search bookmarks", "EditText", listOf("editable"), prefix = true),
                 Want("Coffee - Wikipedia", "Button"),
                 Want("More options for Coffee - Wikipedia", "Button")
             )
@@ -486,7 +488,7 @@ class ChromeA11yDemo : DemoHarness(
         audit(
             "find",
             listOf(
-                Want("Find in page", "EditText", listOf("editable")),
+                Want("Find in page", "EditText", listOf("editable"), prefix = true),
                 Want("Previous match", "Button"),
                 Want("Next match", "Button"),
                 Want("Close find bar", "Button")
@@ -507,7 +509,7 @@ class ChromeA11yDemo : DemoHarness(
             listOf(
                 Want("Close", "Button"),
                 Want("Zoom out", "Button"),
-                Want("Zoom", "SeekBar"),
+                Want("Zoom", "SeekBar", contains = true),
                 Want("Zoom in", "Button"),
                 Want("Reset", "Button", listOf("disabled"))
             )
@@ -590,11 +592,15 @@ class ChromeA11yDemo : DemoHarness(
             awaitNode(10_000) { it == "Look and Feel" }
             SystemClock.sleep(1_500)
             val row = bounds("Look and Feel")
-            val search = findNode { it == "Find in Settings" || it.startsWith("Find in Settings") }?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
+            val search = findNode { it.startsWith("Find in Settings") }?.let { Rect().also { r -> it.getBoundsInScreen(r) } }
+            val searchCss = domHeight("input[placeholder=\"Find in Settings\"]")
+            val rowCss = domHeight("[data-page] nav button, [data-page] nav a")
             val wantRow = 20 * factor + 24
-            finding("  [$label] Settings row ${row?.let { sz(it) }} (line box ${20 * factor} + 24 = $wantRow), search field ${search?.let { sz(it) }}")
+            finding("  [$label] Settings row ${row?.let { sz(it) }} (CSS $rowCss; line box ${20 * factor} + 24 = $wantRow), search field ${search?.let { sz(it) }} (CSS $searchCss)")
+            // The tree's bounds are the box's enclosing device pixels (a 40 CSS px box reads 41 or
+            // 42 dp at density 1.75); the CSS height is the design's measure, the tree's the target.
             expect("[$label] a Settings row is its line box plus 24 (${row?.let { dp(it.height()) }} vs $wantRow)", row != null && abs(dp(row.height()) - wantRow) <= 2.5)
-            expect("[$label] the search field holds --v2-control 40", search != null && abs(dp(search.height()) - 40) <= TOLERANCE)
+            expect("[$label] the search field holds --v2-control 40 (CSS $searchCss; tree ${search?.let { dp(it.height()) }})", search != null && dp(search.height()) >= 40 - TOLERANCE && (searchCss == null || abs(searchCss - 40) <= 0.5))
             overflowCheck(label, "settings")
             snap("$label-settings")
             clearChrome()
@@ -607,12 +613,12 @@ class ChromeA11yDemo : DemoHarness(
             instrumentation.sendStringSync(QUERY)
             awaitNode(10_000) { it.startsWith(QUERY) }
             SystemClock.sleep(1_500)
-            val rows = walk().filter { it.control && it.label.startsWith(QUERY) }
+            val rows = suggestionRows()
             finding("  [$label] suggestion rows ${rows.map { dp(it.bounds.height()) }} (line box ${20 * factor} + 24)")
             expect("[$label] suggestion rows grow from the line box", rows.isNotEmpty() && rows.all { dp(it.bounds.height()) >= 20 * factor + 24 - 2.5 })
             overflowCheck(label, "omnibox")
             snap("$label-omnibox")
-            closeUrlbar2()
+            closeField()
         }
         // 4. The overview.
         if (openOverview()) {
@@ -707,9 +713,14 @@ class ChromeA11yDemo : DemoHarness(
         val role: String,
         val states: List<String> = emptyList(),
         val prefix: Boolean = false,
-        val optional: Boolean = false
+        val optional: Boolean = false,
+        val contains: Boolean = false
     ) {
-        fun matches(stop: Stop): Boolean = if (prefix) stop.label.startsWith(name) else stop.label == name
+        fun matches(stop: Stop): Boolean = when {
+            contains -> stop.label.contains(name)
+            prefix -> stop.label.startsWith(name)
+            else -> stop.label == name
+        }
     }
 
     /** One node TalkBack would stop at: a control (actionable with a label) or context (a heading, a dialog, a live region). */
@@ -752,6 +763,14 @@ class ChromeA11yDemo : DemoHarness(
         controlsAudited += controls
         controlsAt44 += at44
         controlsAt40 += at40
+        // A text field's name is said once: this WebView reads a field's label and its placeholder
+        // both, so a label repeating the placeholder was heard twice (run 1: "Find in page Find in
+        // page"); the placeholder alone names the phone's fields now.
+        for (field in stops.filter { it.control && it.cls.endsWith("EditText") }) {
+            val words = field.label.trim()
+            val doubled = words.length % 2 == 1 && words.substring(0, words.length / 2) == words.substring(words.length / 2 + 1) && words[words.length / 2] == ' '
+            expect("[$scene] the field '${words.take(40)}' is named once", !doubled)
+        }
         finding("  [$scene] ${stops.size} stops, $controls controls: $at44 at 44 or more, $at40 at their 40 (or 28) floor, ${under.size} under")
         expect("[$scene] every control meets its target floor (${under.joinToString("; ").ifBlank { "all do" }})", under.isEmpty())
         var cursor = -1
@@ -791,8 +810,18 @@ class ChromeA11yDemo : DemoHarness(
         val stops = ArrayList<Stop>()
         var visited = 0
         var index = 0
-        fun visit(node: AccessibilityNodeInfo, depth: Int) {
+        fun visit(node: AccessibilityNodeInfo, depth: Int, inChrome: Boolean) {
             if (++visited > WALK_LIMIT) return
+            // A page's WebView is a sibling of the chrome's in the window (Host.kt: the chrome at
+            // the bottom of the stack, the tabs' views above it); its content is the page's, not
+            // the chrome's, and TalkBack walks it on its own. Only the chrome is audited here:
+            // the chrome's view carries the id, and the document Chromium puts under it (the
+            // same class name, no id) is inside it, as an iframe of the chrome's would be.
+            var inside = inChrome
+            if (node.className?.toString() == WEBVIEW_CLASS) {
+                if (isChromeWebView(node)) inside = true
+                else if (!inChrome) return
+            }
             val label = label(node)
             if (label.isNotBlank() && node.isVisibleToUser) {
                 val control = actionable(node)
@@ -804,11 +833,15 @@ class ChromeA11yDemo : DemoHarness(
                     stops += Stop(if (control) ++index else 0, depth, label, node.className?.toString().orEmpty(), role, states, bounds, control, node)
                 }
             }
-            for (i in 0 until node.childCount) node.getChild(i)?.let { visit(it, depth + 1) }
+            for (i in 0 until node.childCount) node.getChild(i)?.let { visit(it, depth + 1, inside) }
         }
-        visit(root, 0)
+        visit(root, 0, false)
         return stops
     }
+
+    /** The chrome's WebView carries `R.id.zen_chrome` (`ChromeWebView.kt`); the tabs' views carry no id. */
+    private fun isChromeWebView(node: AccessibilityNodeInfo): Boolean =
+        node.viewIdResourceName?.endsWith(":id/zen_chrome") == true
 
     private fun actionable(node: AccessibilityNodeInfo): Boolean {
         val cls = node.className?.toString().orEmpty()
@@ -820,7 +853,11 @@ class ChromeA11yDemo : DemoHarness(
         val states = ArrayList<String>()
         val cls = node.className?.toString().orEmpty()
         if (!node.isEnabled) states += "disabled"
-        if (node.isCheckable) states += (if (cls.endsWith("ToggleButton")) "pressed=" else "checked=") + node.isChecked
+        // Chromium exposes both a switch (`role="switch"`) and a pressed button (`aria-pressed`)
+        // as an android.widget.ToggleButton; the role description tells them apart, and TalkBack
+        // says "On / Off" for the switch and "pressed / not pressed" for the button.
+        val role = roleDescription(node)
+        if (node.isCheckable) states += (if (cls.endsWith("ToggleButton") && role != "switch") "pressed=" else "checked=") + node.isChecked
         if (node.isSelected) states += "selected"
         val actions = node.actionList.map { it.id }
         if (AccessibilityAction.ACTION_COLLAPSE.id in actions) states += "expanded=true"
@@ -832,7 +869,9 @@ class ChromeA11yDemo : DemoHarness(
             View.ACCESSIBILITY_LIVE_REGION_POLITE -> states += "live=polite"
             View.ACCESSIBILITY_LIVE_REGION_ASSERTIVE -> states += "live=assertive"
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && node.isHeading) states += "heading"
+        // WebView 113 says "heading 1" in the role description and leaves `isHeading` unset;
+        // TalkBack reads either.
+        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && node.isHeading) || role?.startsWith("heading") == true) states += "heading"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) node.stateDescription?.takeIf { it.isNotBlank() }?.let { states += "state=$it" }
         if (node.isAccessibilityFocused) states += "a11yFocused"
         return states
@@ -891,15 +930,20 @@ class ChromeA11yDemo : DemoHarness(
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
-    /** Back closes the field (the keyboard first when it is up), checked on the chrome's own state, never blind. */
-    private fun closeUrlbar2() {
-        repeat(3) {
-            if (!urlbarOpen()) return
-            back()
-            if (awaitChrome(5_000) { !urlbarOpen() }) return
-        }
-        if (urlbarOpen()) Log.w(tag, "the urlbar stayed open")
+    /** The field closes by the chrome's state through the harness ([closeUrlField]); a lost page is a finding, not a derailment. */
+    private fun closeField() {
+        val outcome = closeUrlField()
+        if (!outcome.closed) fail("the URL field did not close: ${outcome.reason}")
+        else if (!outcome.pageKept) note("closing the URL field lost the page: ${outcome.reason}")
     }
+
+    /** The omnibox's suggestion rows for [QUERY]: the list's options, not the field that holds the typed text. */
+    private fun suggestionRows(): List<Stop> =
+        walk().filter { it.control && !it.cls.endsWith("EditText") && it.label.startsWith(QUERY) }
+
+    /** An element's CSS height in the chrome (the design's px), null when it is not on screen. */
+    private fun domHeight(selector: String): Double? =
+        chromeValue("(function(){var e=document.querySelector(${JSONObject.quote(selector)});return e?e.getBoundingClientRect().height:''})()").toDoubleOrNull()
 
     private fun openOverview(): Boolean {
         clearChrome()
@@ -949,7 +993,7 @@ class ChromeA11yDemo : DemoHarness(
      * navigate the page or leave the app), then the Settings tab left to its opener.
      */
     private fun clearChrome() {
-        closeUrlbar2()
+        closeField()
         if (overviewOpen()) {
             back()
             awaitChrome(6_000) { !overviewOpen() }
@@ -986,9 +1030,6 @@ class ChromeA11yDemo : DemoHarness(
 
     private fun settingsTabActive(): Boolean =
         runCatching { activeCoreTab()?.optString("url").orEmpty().startsWith("zen://settings") }.getOrDefault(false)
-
-    private fun urlbarOpen(): Boolean =
-        chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
 
     private fun overviewOpen(): Boolean =
         chromeJs("((((window.__zenStores||{}).stage||{get:function(){return {}}}).get()||{}).overview||{}).phase!=='closed'") == "true"
@@ -1249,6 +1290,8 @@ class ChromeA11yDemo : DemoHarness(
         /** How far a node's bounds may fall short of a floor (rounding of CSS px to device px). */
         const val TOLERANCE = 1.5
         const val WALK_LIMIT = 5_000
+        /** A WebView's class name in the tree – the view's, and Chromium's for the document under it. */
+        const val WEBVIEW_CLASS = "android.webkit.WebView"
         const val TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
         const val TALKBACK_SERVICE = "$TALKBACK_PACKAGE/$TALKBACK_PACKAGE.TalkBackService"
         /** `--v2-control` text buttons (§9.11 / §9.33) and a prompt's actions: 40 tall by design, not 44. */

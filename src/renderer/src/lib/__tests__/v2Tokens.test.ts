@@ -365,20 +365,33 @@ describe('design language v2 tokens', () => {
     // Inside: the ring, selection and the selected-row fill (light and dark) derive from the
     // accent, the shared focus-ring rule reads the ring, the chassis scrim alias `--zen-scrim`
     // reads the v2 scrim (§9.28), the row padding `--v2-row-pad` derives from the row and the
-    // body line (§9.34, two reads), the rows derive from the line boxes so they grow with the
-    // system font size (§9.2, A11Y-05: `--v2-row`, `--v2-row-two-line` and `--v2-menu-row` in
-    // the base block and again in the phone block, four reads each), and the two §9.29 family
-    // blocks map the tokens onto the control roles.
+    // body line box (§9.34, two reads), the four `-box` line tokens read the four line tokens
+    // (A11Y-05: what a line box measures at the text zoom, four reads), the rows derive from the
+    // line boxes so they grow with the system font size (§9.2, A11Y-05: `--v2-row`,
+    // `--v2-row-two-line` and `--v2-menu-row` in the base block and again in the phone block,
+    // four reads each), the tab card's title row `--zen-overview-card-header` derives from the
+    // small line box (§9.21, A11Y-05: once at rest, once as the two-line row from scale 1.5), and
+    // the two §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      8 + 8 + familyReads.reduce((a, b) => a + b, 0)
+      8 + 4 + 8 + 2 + familyReads.reduce((a, b) => a + b, 0)
     )
-    expect(inside).toMatch(/--v2-row-pad: calc\(\(var\(--v2-row\) - var\(--v2-line-body\)\) \/ 2\)/)
-    // The line boxes are the text zoom's only readers among the tokens: text grows inside a
-    // growing line; controls, glyphs and distances stay in px literals.
-    expect(inside).toMatch(/--v2-line-body: calc\(20px \* var\(--zen-text-zoom\)\)/)
-    expect(inside).toMatch(/--v2-row: calc\(var\(--v2-line-body\) \+ 12px\)/)
-    expect(inside).toMatch(/--v2-row: calc\(var\(--v2-line-body\) \+ 24px\)/)
+    expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
+    expect(inside).toMatch(
+      /:root\[data-text-scale='larger'\] \{\n {2}--zen-overview-card-header: calc\(2 \* var\(--v2-line-small-box\) \+ 24px\)/
+    )
+    expect(inside).toMatch(
+      /--v2-row-pad: calc\(\(var\(--v2-row\) - var\(--v2-line-body-box\)\) \/ 2\)/
+    )
+    // The line tokens are px literals for `line-height`, which Blink zooms with the text itself;
+    // their `-box` twins carry the zoom for the box model, and are the text zoom's only readers
+    // among the tokens: controls, glyphs and distances stay in px literals.
+    expect(inside).toMatch(/--v2-line-body: 20px;/)
+    expect(inside).toMatch(
+      /--v2-line-body-box: calc\(var\(--v2-line-body\) \* var\(--zen-text-zoom\)\)/
+    )
+    expect(inside).toMatch(/--v2-row: calc\(var\(--v2-line-body-box\) \+ 12px\)/)
+    expect(inside).toMatch(/--v2-row: calc\(var\(--v2-line-body-box\) \+ 24px\)/)
     expect(inside).toMatch(/--v2-control: 40px/)
     expect(inside).toMatch(/--v2-icon-button: 44px/)
     expect(inside).not.toMatch(/--v2-(control|icon-button|icon|checkbox):[^;]*--zen-text-zoom/)
@@ -982,5 +995,54 @@ describe('live counts (§4)', () => {
       '.zen-v2-blocked-chip'
     ])
       expect(block(selector), selector).toMatch(/^ {2}font-variant-numeric: tabular-nums;$/m)
+  })
+})
+
+describe('the system font size above the default (§4 / §9.2, A11Y-05)', () => {
+  const start = css.indexOf('/*\n * The system font size above the default (A11Y-05')
+  const end = css.indexOf('@layer components {', start)
+  const rules = css.slice(start, end)
+
+  it('lets a row label wrap to a second line before its ellipsis only while the root says the text is scaled', () => {
+    expect(start).toBeGreaterThan(0)
+    // Every label rule is keyed on `data-text-scale`, which `applyTextScale` sets above scale 1
+    // alone, so at the default size the stylesheet computes as before.
+    for (const line of rules.split('\n').filter((l) => /^[:.]/.test(l)))
+      expect(line, line).toMatch(/^:root\[data-text-scale(?:='larger')?\]/)
+    const labels = rules.slice(0, rules.indexOf('display: -webkit-box'))
+    for (const label of ['.zen-list-title', '.zen-settings-label', '.zen-settings-category-label'])
+      expect(labels).toContain(`:root[data-text-scale] ${label}`)
+    expect(labels).toMatch(
+      /:root\[data-text-scale\]\s+:is\(\.zen-v2-row, \.zen-sheet-item, \.zen-quick-menu-item, \.zen-bar-row\)\s+> \.truncate/
+    )
+    expect(rules).toMatch(/-webkit-line-clamp: 2;/)
+    // Suggestion rows stay one line at every scale, as Chrome's do.
+    expect(rules).not.toContain('zen-omnibox-row')
+    // The fixed-height rows take their height as a floor so the second line has room.
+    expect(rules).toMatch(
+      /:root\[data-text-scale\] \.zen-sheet-item \{\n {2}height: auto;\n {2}min-height: var\(--v2-row\);\n {2}padding-block: var\(--v2-row-pad\);/
+    )
+  })
+
+  it('gives a tab card’s title two lines from scale 1.5 alone, on the same line box the row grows by', () => {
+    const title = rules.slice(
+      rules.indexOf(":root[data-text-scale='larger'] .zen-overview-card-title {")
+    )
+    expect(title).toMatch(/line-height: var\(--v2-line-small\);/)
+    expect(title).toMatch(/-webkit-line-clamp: 2;/)
+    expect(rules).not.toMatch(/:root\[data-text-scale\][^\n]*zen-overview-card-title/)
+    expect(block('.zen-overview-card-header')).toMatch(/height: var\(--zen-overview-card-header\);/)
+  })
+
+  it('clamps the bold-text weights at 900', () => {
+    for (const [token, base] of [
+      ['--v2-weight-body', 400],
+      ['--v2-weight-button', 500],
+      ['--v2-weight-heading', 600]
+    ] as const)
+      expect(css).toContain(
+        `${token}: min(900, calc(${base} + var(--zen-font-weight-adjustment)));`
+      )
+    expect(css).toContain('font-weight: min(900, calc(700 + var(--zen-font-weight-adjustment)));')
   })
 })

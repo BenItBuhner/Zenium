@@ -54,7 +54,8 @@ import { CloseAllSheet } from './CloseAllSheet'
 import { Departures } from './Departures'
 import { clearDepartures, depart, rectOf } from './departureStore'
 import { DEFAULT_FOLDER_ICON, GroupCard } from './GroupCard'
-import { CARD_HEADER, CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
+import { CARD_RADIUS, CardBody, OverviewCard } from './OverviewCard'
+import { cardHeaderHeight } from './overviewCardHeader'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
@@ -903,7 +904,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
         >
           <div
             className="relative flex shrink-0 items-center gap-2 overflow-hidden pl-3 pr-1"
-            style={{ height: CARD_HEADER * p, opacity: p }}
+            style={{ height: cardHeaderHeight() * p, opacity: p }}
           >
             {heroActive && (
               <div
@@ -912,7 +913,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
               />
             )}
             <Favicon tab={hero} size={16} className="relative" />
-            <span className="relative min-w-0 flex-1 truncate text-[13px] font-medium">
+            <span className="zen-overview-card-title relative min-w-0 flex-1 truncate text-[13px] font-medium">
               {tabTitle(hero)}
             </span>
           </div>

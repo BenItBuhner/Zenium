@@ -203,32 +203,50 @@
   --v2-font-heading: 17px;
   --v2-font-body: 15px;
   --v2-font-small: 13px;
-  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20, each at the text zoom. */
-  --v2-line-title: calc(28px * var(--zen-text-zoom));
-  --v2-line-heading: calc(22px * var(--zen-text-zoom));
-  --v2-line-body: calc(20px * var(--zen-text-zoom));
+  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. These are for
+     `line-height` only: Blink multiplies a `line-height` length by the text zoom itself, as it
+     does `font-size`, so the line box grows with the text without the token carrying the factor
+     (a token that did was zoomed twice on the device: a 50 row measured 60 at 1.3). */
+  --v2-line-title: 28px;
+  --v2-line-heading: 22px;
+  --v2-line-body: 20px;
   /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
-  --v2-line-small: calc(20px * var(--zen-text-zoom));
-  --v2-weight-body: calc(400 + var(--zen-font-weight-adjustment));
-  --v2-weight-button: calc(500 + var(--zen-font-weight-adjustment));
-  --v2-weight-heading: calc(600 + var(--zen-font-weight-adjustment));
+  --v2-line-small: 20px;
+  /* The same line boxes as the box model sees them – for `min-height`, `margin`, `padding` and
+     the row tokens, which Blink does not zoom: what the line box measures at the text zoom. */
+  --v2-line-title-box: calc(var(--v2-line-title) * var(--zen-text-zoom));
+  --v2-line-heading-box: calc(var(--v2-line-heading) * var(--zen-text-zoom));
+  --v2-line-body-box: calc(var(--v2-line-body) * var(--zen-text-zoom));
+  --v2-line-small-box: calc(var(--v2-line-small) * var(--zen-text-zoom));
+  /* The bold-text setting adds its 300 to every weight, clamped at 900 (§4: 400 → 700, 500 → 800,
+     600 → 900, and a 700 holds at 900). */
+  --v2-weight-body: min(900, calc(400 + var(--zen-font-weight-adjustment)));
+  --v2-weight-button: min(900, calc(500 + var(--zen-font-weight-adjustment)));
+  --v2-weight-heading: min(900, calc(600 + var(--zen-font-weight-adjustment)));
   /* Density (§5, §9.2–9.3): rows and controls; phones override below. A row is its body line
      plus the row padding on both sides (§9.2: 20 + 12 = 32, two lines 20 + 20 + 12 = 52), so it
      grows from its line box at a larger text size while the control heights hold. */
-  --v2-row: calc(var(--v2-line-body) + 12px);
-  --v2-row-two-line: calc(var(--v2-line-body) + var(--v2-line-small) + 12px);
+  --v2-row: calc(var(--v2-line-body-box) + 12px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 12px);
   /* A row's vertical padding (§9.34): what is left of the row around its body line, halved – 6
      on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
-  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
+  --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body-box)) / 2);
   --v2-control: 32px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
-  --v2-menu-row: calc(var(--v2-line-body) + 11px);
+  --v2-menu-row: calc(var(--v2-line-body-box) + 11px);
   --v2-icon-button: 28px;
   --v2-icon: 16px;
   --v2-icon-stroke: 1.5;
   --v2-card-padding: 16px;
   --v2-content-max: 664px;
+  /* A tab card's title row (§9.21, `OverviewCard`): the 13 px title's 20 line plus 24, 44 at the
+     default size, growing from its line box like the rows; two lines from scale 1.5 (§4 / §9.2:
+     the two-line title rule above `@layer components`). */
+  --zen-overview-card-header: calc(var(--v2-line-small-box) + 24px);
+}
+:root[data-text-scale='larger'] {
+  --zen-overview-card-header: calc(2 * var(--v2-line-small-box) + 24px);
 }
 :root[data-theme='dark'] {
   --v2-page: #1c1b22;
@@ -262,11 +280,11 @@
 }
 /* Phones scale hit targets, not the vocabulary (§5, §9.3); rows are the line box plus 24. */
 :root[data-form-factor='phone'] {
-  --v2-row: calc(var(--v2-line-body) + 24px);
-  --v2-row-two-line: calc(var(--v2-line-body) + var(--v2-line-small) + 24px);
+  --v2-row: calc(var(--v2-line-body-box) + 24px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 24px);
   --v2-control: 40px;
   --v2-checkbox: 20px;
-  --v2-menu-row: calc(var(--v2-line-body) + 24px);
+  --v2-menu-row: calc(var(--v2-line-body-box) + 24px);
   --v2-icon-button: 44px;
   --v2-icon: 20px;
   --v2-icon-stroke: 1.75;
@@ -451,7 +469,7 @@
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  height: var(--v2-line-small);
+  height: var(--v2-line-small-box);
   padding: 0 8px;
   border-radius: 999px;
   background: var(--v2-control-fill, var(--v2-fill));
@@ -809,7 +827,56 @@
   font-weight: var(--v2-weight-heading);
 }
 :root[data-bold-text='true'] .font-bold {
-  font-weight: calc(700 + var(--zen-font-weight-adjustment));
+  font-weight: min(900, calc(700 + var(--zen-font-weight-adjustment)));
+}
+
+/*
+ * The system font size above the default (A11Y-05; v2 §4 / §9.2, the ruling on #237): a row's
+ * label is written to fit one line at scale 1, and above it (`data-text-scale`, `lib/textScale.ts`)
+ * it may wrap to a second line before its ellipsis, the row growing from its line box – a setting
+ * turned on to read must not cut the words it enlarged. Descriptions keep their two lines; the
+ * omnibox's suggestion rows stay one line at every scale, as Chrome's do. The rows a sheet or the
+ * quick menu draws at a fixed height take that height as a floor here, so the second line has
+ * room. Unlayered so it wins over `truncate`; `data-text-scale` is only ever set above scale 1,
+ * so at rest nothing here applies.
+ */
+:root[data-text-scale]
+  :is(.zen-v2-row, .zen-sheet-item, .zen-quick-menu-item, .zen-bar-row)
+  > .truncate,
+:root[data-text-scale] .zen-list-title,
+:root[data-text-scale] .zen-settings-label,
+:root[data-text-scale] .zen-settings-category-label {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+:root[data-text-scale] .zen-sheet-item {
+  height: auto;
+  min-height: var(--v2-row);
+  padding-block: var(--v2-row-pad);
+}
+:root[data-text-scale] .zen-quick-menu-item {
+  height: auto;
+  min-height: var(--v2-menu-row);
+  padding-block: calc((var(--v2-menu-row) - var(--v2-line-body-box)) / 2);
+}
+/*
+ * A tab card's title (§9.21, the same ruling): one line to 1.3, where about nine characters still
+ * read; two lines from 1.5 (`data-text-scale='larger'`), the card's title row growing by a line
+ * (`--zen-overview-card-header`, below) and the picture giving the room.
+ */
+:root[data-text-scale='larger'] .zen-overview-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  line-height: var(--v2-line-small);
+  /* A one-word title (a host, "Settings") breaks across the two lines rather than ending in an
+     ellipsis after four characters: what the two lines are for. */
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 @layer components {
@@ -1505,7 +1572,7 @@
    * on desktop), so a toast with nothing but its text is exactly a row tall.
    */
   .zen-message {
-    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body)) / 2 - 4px);
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-body-box)) / 2 - 4px);
     position: relative;
     display: flex;
     align-items: center;
@@ -1547,7 +1614,7 @@
   }
   /* The desktop sidebar's toast: the small type, a 28 button, in the sidebar's own column. */
   .zen-message-compact {
-    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small)) / 2 - 4px);
+    --zen-message-text-inset: calc((var(--v2-row) - var(--v2-line-small-box)) / 2 - 4px);
     padding: 3px 4px 3px 10px;
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
@@ -1677,7 +1744,7 @@
   }
   .zen-banner-title .zen-message-glyph {
     align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   /* A description wraps to at most two lines, then ellipsis (§9.2). */
   .zen-banner-detail {
@@ -2097,6 +2164,10 @@
   }
   .zen-overview-card:active {
     transform: scale(0.975);
+  }
+  /* The title row (§9.21): 44 at the default text size, growing from its line box (A11Y-05). */
+  .zen-overview-card-header {
+    height: var(--zen-overview-card-header);
   }
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
@@ -3661,7 +3732,7 @@
     flex-shrink: 0;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-bm-row-title {
     overflow: hidden;
@@ -4068,7 +4139,7 @@
     justify-content: center;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-dl-row-text {
@@ -4457,7 +4528,7 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-firstrun-row-glyph > svg {
     width: 100%;
@@ -4482,7 +4553,7 @@
     min-height: var(--v2-row);
     align-items: center;
     gap: 12px;
-    padding: calc((var(--v2-row) - var(--v2-line-body)) / 2) 16px;
+    padding: calc((var(--v2-row) - var(--v2-line-body-box)) / 2) 16px;
     color: inherit;
     text-align: left;
     font-size: var(--v2-font-body);
@@ -4498,7 +4569,7 @@
     height: var(--v2-checkbox);
     flex-shrink: 0;
     align-self: flex-start;
-    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.45);
     border-radius: 9999px;
     transition:
@@ -4597,7 +4668,7 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-downloads-text {
@@ -5837,6 +5908,20 @@
   height: 44px;
   border-radius: 8px;
 }
+/*
+ * A tab card's close lies over the card's corner from outside its clip (a sibling of the card's
+ * button, A11Y-01), so its outer corner is the card's and its pressed fill never shows past it.
+ */
+:root[data-form-factor='phone'] .zen-overview-card-close {
+  border-top-right-radius: var(--zen-card-radius);
+  /* Centred on the title row: at the default size the row is the button's 44 and this is 0; at a
+     larger text size the row grows and the 44 box holds (A11Y-05). */
+  top: calc((var(--zen-overview-card-header) - 44px) / 2);
+}
+/* Off the card's corner once the row has grown, the box takes its own §9.3 corner. */
+:root[data-form-factor='phone'][data-text-scale] .zen-overview-card-close {
+  border-top-right-radius: 8px;
+}
 :root[data-pointer='coarse'] .zen-tab {
   height: 42px;
   border-radius: 11px;
@@ -6096,7 +6181,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   stroke-width: var(--v2-icon-stroke);
 }
 .zen-omnibox-page-title {
@@ -6153,7 +6238,7 @@
    the line box as the system font size grows (A11Y-05) – the body line plus 24, like `--v2-row`
    on a phone, on any coarse pointer. */
 :root[data-pointer='coarse'] .zen-suggestion {
-  min-height: calc(var(--v2-line-body) + 24px);
+  min-height: calc(var(--v2-line-body-box) + 24px);
 }
 
 /* ---------------------------------------------------------------------------
@@ -6533,7 +6618,7 @@
   height: var(--v2-checkbox);
   flex-shrink: 0;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
   border: 1px solid rgb(var(--v2-text-rgb) / 0.45);
   border-radius: 50%;
   background: var(--v2-page);
@@ -6567,7 +6652,7 @@
   flex-shrink: 0;
   width: var(--v2-checkbox);
   height: var(--v2-checkbox);
-  margin: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2) 0 0;
+  margin: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2) 0 0;
   border: 1px solid rgb(var(--v2-text-rgb) / 0.3);
   border-radius: var(--v2-radius-checkbox);
   background: var(--v2-page);
@@ -7052,7 +7137,7 @@
   align-items: center;
   justify-content: center;
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
 }
 .zen-settings-leading > svg,
 .zen-settings-glyph {
@@ -7117,7 +7202,7 @@
  */
 .zen-settings-row[data-lines='3'] > .zen-settings-trailing {
   align-self: flex-start;
-  min-height: var(--v2-line-body);
+  min-height: var(--v2-line-body-box);
   margin-top: var(--zen-settings-label-top, 0px);
 }
 /* A detail row's summary (§10.4): what its sheet holds, 13 at 69 % on the trailing side, before the chevron. */
@@ -7865,7 +7950,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin: calc((var(--v2-line-heading) - var(--v2-icon)) / 2) -4px 0 0;
+  margin: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2) -4px 0 0;
   stroke-width: var(--v2-icon-stroke);
 }
 /*
@@ -7961,12 +8046,12 @@
   margin-block: calc(var(--v2-row-pad) - 4px);
 }
 .zen-privacy-row:has(> .zen-privacy-row-actions) > .zen-v2-checkbox {
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-checkbox)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
 }
 /* Three text lines (the description wrapped): the controls centre on the label's line instead. */
 .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions {
   align-self: flex-start;
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-icon-button)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
 }
 /*
  * A form field in a card (§9.12, §9.21): its label above it, 15/400 on the 20 px line, 4 px to
@@ -8039,7 +8124,7 @@
   width: var(--v2-icon);
   height: var(--v2-icon);
   flex-shrink: 0;
-  margin-top: calc((var(--v2-line-small) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-small-box) - var(--v2-icon)) / 2);
   stroke-width: var(--v2-icon-stroke);
 }
 /*
@@ -8127,7 +8212,7 @@
   margin-block: calc(var(--v2-row-pad) - 4px);
 }
 .zen-privacy-row[data-wrapped] > .zen-privacy-row-actions:has(> .zen-protection-menulist) {
-  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body) - var(--v2-control)) / 2);
+  margin-top: calc(var(--v2-row-pad) - 4px + (var(--v2-line-body-box) - var(--v2-control)) / 2);
 }
 .zen-protection-menulist {
   min-width: 220px;
@@ -8173,7 +8258,7 @@
   height: var(--v2-icon);
   flex-shrink: 0;
   align-self: flex-start;
-  margin: calc((var(--v2-line-heading) - var(--v2-icon)) / 2) -4px 0 0;
+  margin: calc((var(--v2-line-heading-box) - var(--v2-icon)) / 2) -4px 0 0;
   stroke-width: var(--v2-icon-stroke);
 }
 .zen-protection-card-title-text {
@@ -8242,7 +8327,7 @@
 }
 .zen-protection-action-row[data-wrapped] > svg {
   align-self: flex-start;
-  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
 }
 /* The pane's two buttons outside the `zen-v2-` prefix take the shared ring (§1, §9.6) as it is. */
 .zen-protection-radio:focus-visible,
@@ -8325,7 +8410,7 @@
     flex-shrink: 0;
     width: var(--v2-icon);
     height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-default-browser-description {
     font-size: var(--v2-font-small);
@@ -8394,7 +8479,7 @@
     display: inline-flex;
     align-items: center;
     flex-shrink: 0;
-    height: var(--v2-line-small);
+    height: var(--v2-line-small-box);
     padding: 0 8px;
     border-radius: 999px;
     background: var(--v2-fill);

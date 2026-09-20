@@ -326,7 +326,7 @@ function Header({
   return (
     <div className="zen-bm-title-block flex items-start gap-2">
       <span
-        className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0"
+        className="mt-[calc((var(--v2-line-heading-box)-var(--v2-icon))/2)] flex shrink-0"
         aria-hidden
       >
         {icon}
@@ -348,7 +348,7 @@ function Notice({ children }: { children: ReactNode }): JSX.Element {
       <TriangleAlert
         className={cn(
           GLYPH,
-          'mt-[calc((var(--v2-line-small)-var(--v2-icon))/2)] text-[var(--v2-warn)]'
+          'mt-[calc((var(--v2-line-small-box)-var(--v2-icon))/2)] text-[var(--v2-warn)]'
         )}
         aria-hidden
       />

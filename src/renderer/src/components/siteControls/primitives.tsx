@@ -568,7 +568,7 @@ export function TitleBlock({
         <h2 id={id}>
           {glyph && (
             <span
-              className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0 self-start"
+              className="mt-[calc((var(--v2-line-heading-box)-var(--v2-icon))/2)] flex shrink-0 self-start"
               aria-hidden
             >
               {glyph}
@@ -590,7 +590,7 @@ export function TitleBlock({
     >
       {glyph && (
         <span
-          className="mt-[calc((var(--v2-line-heading)-var(--v2-icon))/2)] flex shrink-0"
+          className="mt-[calc((var(--v2-line-heading-box)-var(--v2-icon))/2)] flex shrink-0"
           aria-hidden
         >
           {glyph}
@@ -905,7 +905,7 @@ export function ListRow({
     <>
       {leading && (
         <span
-          className="mt-[calc((var(--v2-line-body)-var(--v2-icon))/2)] flex shrink-0 self-start"
+          className="mt-[calc((var(--v2-line-body-box)-var(--v2-icon))/2)] flex shrink-0 self-start"
           aria-hidden
         >
           {leading}

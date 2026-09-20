@@ -129,12 +129,12 @@
     align-self: flex-start;
     align-items: center;
     justify-content: center;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
   .zen-list-lead[data-checkbox='true'] {
     width: var(--v2-checkbox);
     height: var(--v2-checkbox);
-    margin-top: calc((var(--v2-line-body) - var(--v2-checkbox)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
   }
   .zen-list-favicon {
     width: 100%;

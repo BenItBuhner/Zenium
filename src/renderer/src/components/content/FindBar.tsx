@@ -152,7 +152,9 @@ export function FindBar({
           ref={inputRef}
           value={text}
           placeholder="Find in page"
-          aria-label="Find in page"
+          // On the phone the placeholder names the field (A11Y-01): the WebView reads a text
+          // field's label and its placeholder both, so the same words were heard twice.
+          aria-label={phone ? undefined : 'Find in page'}
           data-testid="find-input"
           inputMode="search"
           enterKeyHint="search"

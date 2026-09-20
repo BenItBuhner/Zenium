@@ -2,11 +2,15 @@
  * The preview host's stand-in for the chrome WebView's `textZoom` (`ChromeTextScale.kt`): a
  * desktop browser has no text zoom, so the font sizes the stylesheets declare are multiplied at
  * the rule – `font-size: 15px` becomes `calc(15px * 1.3)` – which is what the WebView's zoom does
- * to a computed font size. What the zoom leaves alone is left alone here too: lengths in every
- * other property (`em` and `rem` resolve against the unzoomed size in Blink), a relative size
- * (`em`, `%`, `smaller`) that inherits an already multiplied parent, and the keyword sizes. Rules
- * on the root are skipped so `rem` keeps its base. Inline `style` sizes are not rewritten – the
- * WebView zooms them, the preview does not – and a `font` shorthand is read through its longhand.
+ * to a computed font size; a `line-height` length is multiplied the same way, since Blink's
+ * `ConvertLineHeight` applies the frame's text zoom to a fixed line height as it does to the font
+ * size (a unitless or relative line height follows the zoomed font on its own). What the zoom
+ * leaves alone is left alone here too: lengths in every other property (`em` and `rem` resolve
+ * against the unzoomed size in Blink), a relative size (`em`, `%`, `smaller`) that inherits an
+ * already multiplied parent, and the keyword sizes. Rules on the root are skipped so `rem` keeps
+ * its base. Inline `style` sizes are not rewritten – the WebView zooms them, the preview does not –
+ * and a `font` shorthand is read through its longhand. (Tailwind's `leading-*` utilities declare
+ * `line-height` itself beside `--tw-leading`; the declaration is the one multiplied.)
  *
  * Applied to every stylesheet in the document and again to the ones the dev server adds or
  * replaces afterwards (HMR), so a capture at `?fontScale=1.3` needs no reload dance.
@@ -34,13 +38,14 @@ function zoomRule(rule: CSSRule, zoom: number): void {
   if (rule instanceof CSSStyleRule) {
     const style = rule.style
     if (style.getPropertyValue(MARK) || rootSelector(rule.selectorText)) return
-    const size = style.getPropertyValue('font-size')
-    const zoomed = zoomedFontSize(size, zoom)
-    if (zoomed) {
-      const priority = style.getPropertyPriority('font-size')
-      style.setProperty('font-size', zoomed, priority)
-      style.setProperty(MARK, String(zoom))
+    let touched = false
+    for (const property of ['font-size', 'line-height']) {
+      const zoomed = zoomedFontSize(style.getPropertyValue(property), zoom)
+      if (!zoomed) continue
+      style.setProperty(property, zoomed, style.getPropertyPriority(property))
+      touched = true
     }
+    if (touched) style.setProperty(MARK, String(zoom))
     // Nested rules (CSS nesting) live on the style rule itself.
     zoomRules((rule as CSSStyleRule & { cssRules?: CSSRuleList }).cssRules, zoom)
     return
@@ -74,8 +79,8 @@ function zoomDocument(zoom: number): void {
 }
 
 /**
- * Multiply every declared font size in the document by `zoom` (1 does nothing), now and as
- * stylesheets arrive. Called once by the preview bridge with the `?fontScale=` (or `?textZoom=`)
+ * Multiply every declared font size and fixed line height in the document by `zoom` (1 does
+ * nothing), now and as stylesheets arrive. Called once by the preview bridge with the `?fontScale=` (or `?textZoom=`)
  * the capture asked for.
  */
 export function emulateTextZoom(zoom: number): void {

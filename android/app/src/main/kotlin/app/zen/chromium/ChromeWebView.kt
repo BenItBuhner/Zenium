@@ -40,6 +40,9 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
     private val whenReady = ArrayList<() -> Unit>()
 
     init {
+        // Named in the view hierarchy (`R.id.zen_chrome`) so the accessibility tree tells the
+        // chrome's WebView from the tabs' (`viewIdResourceName`); nothing reads it otherwise.
+        id = R.id.zen_chrome
         settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true

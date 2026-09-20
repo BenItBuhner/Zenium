@@ -739,7 +739,7 @@ describe('phone pill (PillContent)', () => {
       )
       expect(el.querySelector('[data-media]')).toBeNull()
       expect(labels(focusable(el))).toEqual([
-        'Address, example.com',
+        'Address, example.com, Connection is secure',
         'Site information',
         'Connection is secure'
       ])
@@ -751,7 +751,7 @@ describe('phone pill (PillContent)', () => {
       )
       const order = focusable(el)
       expect(labels(order)).toEqual([
-        'Address, example.com',
+        'Address, example.com, Connection is secure',
         'Site information',
         'Connection is secure',
         'Now playing'

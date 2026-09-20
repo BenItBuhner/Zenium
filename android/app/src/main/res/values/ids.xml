@@ -3,4 +3,7 @@
     <!-- The menu group of Zenium's items in a page's text-selection action mode (SelectionToolbar.kt):
          a group of the app's own, so the WebView's rebuilds of its groups leave it alone. -->
     <item name="zen_selection_group" type="id" />
+    <!-- The chrome's WebView (ChromeWebView.kt), so an accessibility service – TalkBack's audit
+         driver among them – tells the chrome's tree from a page's: the tabs' views carry no id. -->
+    <item name="zen_chrome" type="id" />
 </resources>
