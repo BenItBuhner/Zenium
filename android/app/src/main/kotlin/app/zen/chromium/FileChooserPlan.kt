@@ -6,7 +6,8 @@ import java.io.File
  * What the file chooser offers for a page's `<input type=file>` (OS-22), decided from the input's
  * accept types and its `capture` attribute after Chrome's `SelectFileDialog`: an input taking
  * images gets the camera beside the files, one taking videos the camcorder, one taking anything
- * (no accept, `*​/*`, an extension nobody knows, or images and videos together) both; an input
+ * (no accept, the every-type wildcard [ALL_TYPES], an extension nobody knows, or images and
+ * videos together) both; an input
  * taking neither (a PDF, a spreadsheet) gets the files alone. `capture` on an input that takes
  * images only – or videos only – skips the picker and goes straight to the camera (or the
  * camcorder), as Chrome's `captureImage()` path does; with a wider accept list the attribute
@@ -14,7 +15,7 @@ import java.io.File
  * [BrowserActivity.showFileChooser] builds the intents from it.
  */
 data class FileChooserPlan(
-    /** The picker's type: `image/*`, `video/*`, or `*​/*` for a picker over every type. */
+    /** The picker's type: [ALL_IMAGE_TYPES], [ALL_VIDEO_TYPES], or [ALL_TYPES] for a picker over every type. */
     val pickerType: String,
     /** The accept types as MIME types (extensions resolved), for the picker's `EXTRA_MIME_TYPES`; empty for no restriction. */
     val mimeTypes: List<String>,
