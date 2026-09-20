@@ -458,6 +458,45 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(bytes.result).toBe(Buffer.byteLength('a1b"two"'))
   })
 
+  it("raises the area's own onChanged (storage.local.onChanged) beside storage.onChanged, and wakes a worker that listens on it alone, as Google Dictionary's does", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    // The worker listens on the area event only; a page on both; the content script on the area.
+    backgroundUp(h, 'bg1', ['storage.local.onChanged'])
+    hello(h, 'page1', 'page')
+    message(h, 'page1', { t: 'listen', event: 'storage.onChanged', on: true })
+    message(h, 'page1', { t: 'listen', event: 'storage.sync.onChanged', on: true })
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'doc1.n.abcdefgh', { t: 'listen', event: 'storage.session.onChanged', on: true })
+    // The options page's migration flag, written with a key whose value is undefined (dropped).
+    const set = await call(h, 'page1', 'storage', 'set', ['local', { 'storage-migrated': true }])
+    expect(set.ok).toBe(true)
+    const area = events(h, 'bg1', 'storage.local.onChanged')
+    expect(area).toHaveLength(1)
+    expect(area[0].args).toEqual([{ 'storage-migrated': { newValue: true } }])
+    expect(events(h, 'bg1', 'storage.onChanged')).toHaveLength(0)
+    // The page hears the generic event with the area name, not local's own (not listened for).
+    expect(events(h, 'page1', 'storage.onChanged')).toHaveLength(1)
+    expect(events(h, 'page1', 'storage.local.onChanged')).toHaveLength(0)
+    await call(h, 'bg1', 'storage', 'set', ['sync', { theme: 'dark' }])
+    const sync = events(h, 'page1', 'storage.sync.onChanged')
+    expect(sync).toHaveLength(1)
+    expect(sync[0].args).toEqual([{ theme: { newValue: 'dark' } }])
+    // A closed area's own event stays with the trusted contexts, as the generic one does.
+    await call(h, 'bg1', 'storage', 'set', ['session', { s: 1 }])
+    expect(events(h, 'doc1.n.abcdefgh', 'storage.session.onChanged')).toHaveLength(0)
+    // The stopped worker persisted the area listener: the next local change wakes it for it.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    await call(h, 'page1', 'storage', 'set', ['local', { options: { language: 'en' } }])
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2', ['storage.local.onChanged'])
+    const woken = events(h, 'bg2', 'storage.local.onChanged')
+    expect(woken).toHaveLength(1)
+    expect(woken[0].args).toEqual([{ options: { newValue: { language: 'en' } } }])
+  })
+
   it('enforces the sync quota and keeps the session area from content scripts until allowed', async () => {
     const h = harness()
     await h.runtime.attach(record(h))

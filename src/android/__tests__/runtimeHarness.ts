@@ -590,7 +590,11 @@ export async function call(
 }
 
 export function events(h: Harness, ep: string, key: string): Record<string, unknown>[] {
-  const [ns, name] = key.split('.')
+  // The event name follows the last dot: `storage.local.onChanged` is `onChanged` of the
+  // `storage.local` namespace, as the shim spells an area's own event.
+  const dot = key.lastIndexOf('.')
+  const ns = key.slice(0, dot)
+  const name = key.slice(dot + 1)
   return h.kt.to(ep).filter((m) => m.t === 'event' && m.ns === ns && m.name === name)
 }
 

@@ -2042,8 +2042,14 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       // A closed area's changes stay with the trusted contexts.
       const hears = (e: Endpoint): boolean =>
         open || (e.context !== 'content' && e.context !== 'userScript')
-      if (Object.keys(changes).length > 0)
+      if (Object.keys(changes).length > 0) {
         this.emit(id, 'storage', 'onChanged', [changes, area], hears)
+        // Chrome raises the area's own event too (`chrome.storage.local.onChanged(changes)`), and
+        // a worker that listens on that one alone is woken for it. Google Dictionary's worker
+        // waits on `storage.local.onChanged` for its options page's `storage-migrated` flag
+        // before it writes its defaults; nothing it does works until then.
+        this.emit(id, `storage.${area}`, 'onChanged', [changes], hears)
+      }
     }
     const readOnly = (): never => {
       throw new Error('This is a read-only store.')
