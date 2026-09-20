@@ -32,14 +32,40 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
+      # Private browsing (ID-07) runs on a WebView profile of its own (Profiles.kt), which needs
+      # WebViewFeature.MULTI_PROFILE, and the API 34 image's WebView 113 does not have it (the
+      # core then offers no private tabs), and its media / notification behaviour is years behind
+      # the engine this targets. So, like the private tabs demo, the demo runs on an AOSP image
+      # with a Chromium snapshot SystemWebView.apk swapped in (android-webview-swap.sh), booted
+      # -writable-system; swiftshader_indirect because swangle draws a frame every few seconds
+      # with the snapshot WebView (the extension runtime demo's measurement) and only crashes the
+      # google_apis image, not this one.
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       # The shared driver picks the demo from its environment (see the script's header).
       script-env: |
         DEMO_CLASS=app.zen.chromium.MediaDemo
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=services-android-media-android-run.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The `AndroidDesktop_x64` snapshot ships com.android.webview with x86_64 native code (the
+      # plain `Android` snapshot is armeabi-v7a only and cannot be dlopen'ed on an x86_64 emulator).
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
       artifact-name: android-media-demo
       artifact-path: artifacts/android-media-demo/
+      timeout-minutes: 60
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
   # never when the driver failed: a run is then spent on the demo rather than on the runner.
@@ -50,10 +76,26 @@ jobs:
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
       script-env: |
         DEMO_CLASS=app.zen.chromium.MediaDemo
         DEMO_DIR=media-demo
         DEMO_OUT=artifacts/android-media-demo
         DEMO_VIDEO=services-android-media-android-run.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
       artifact-name: android-media-demo-second-boot
       artifact-path: artifacts/android-media-demo/
+      timeout-minutes: 60

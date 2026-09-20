@@ -13,6 +13,7 @@ import android.graphics.PointF
 import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
@@ -128,15 +129,23 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
         note("\n1. background audio: a page playing a track -> the media notification (MW-07, MW-17, MW-16)")
         shot("01-audio-page")
         beat()
-        note("  before play: media notification ${describe(activeNotification(MediaPlaybackService.NOTIFICATION_ID))}; session ${describeSession()}")
+        // Metadata alone brings no controls up (Chrome's rule: the notification comes with the first playback).
+        val early = activeNotification(MediaPlaybackService.NOTIFICATION_ID)
+        note("  before play (the page set its Media Session metadata already): media notification ${describe(early)}; session ${describeSession()}")
+        if (early != null) touchFault("a media notification stood before anything played")
         tapPageButton("play", "Play track", "the page reports the track playing", 15_000) { field("state") == "playing" }
         val sbn = awaitNotification(MediaPlaybackService.NOTIFICATION_ID, 15_000)
         note("  media notification: ${describe(sbn)}")
-        note("  foreground service: ${MediaPlaybackService.inForeground}; audio focus held: ${host.media.hasAudioFocus}")
+        // The page stays playing: the engine's own audio focus request is the only one in this
+        // process (a second one from the host would take the focus and pause the page).
+        val stillPlaying = poll(3_000) { field("state") != "playing" }.not()
+        note("  three seconds on: state=${field("state")} t=${field("t")} (kept playing: $stillPlaying)")
+        if (!stillPlaying) touchFault("the track did not stay playing after the play (page: ${title()})")
+        note("  foreground service: ${MediaPlaybackService.inForeground}; audio focus: ${audioFocus()}")
         note("  session: ${describeSession()}")
         note("  core media state: ${mediaState(TAB)}")
         if (sbn == null) touchFault("no media notification came up for the playing track")
-        SystemClock.sleep(1_500)
+        SystemClock.sleep(1_000)
         shot("02-audio-playing")
         beat()
 
@@ -180,11 +189,17 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
         note("\n2. the lock screen: the screen goes off with the track playing; its controls stand on the lock screen (MW-07)")
         val keyguard = app.getSystemService(KeyguardManager::class.java)
         val power = app.getSystemService(PowerManager::class.java)
+        ensurePlaying()
+        // The emulator boots with its lock screen disabled (ro.lockscreen.disable.default); a
+        // phone has one, so the step turns it on (swipe, no credential) and off again after.
+        note("  lock screen enabled for the step: ${shell("locksettings set-disabled false").trim()}")
         val tBefore = field("t")?.toIntOrNull() ?: -1
         key(KeyEvent.KEYCODE_SLEEP)
         SystemClock.sleep(5_000)
         val tDark = field("t")?.toIntOrNull() ?: -1
-        note("  screen off: interactive=${power.isInteractive}; position $tBefore -> $tDark (the track went on: ${tDark > tBefore}); state=${field("state")}")
+        val wentOn = tDark > tBefore && field("state") == "playing"
+        note("  screen off: interactive=${power.isInteractive}; position $tBefore -> $tDark (the track went on: $wentOn); state=${field("state")}; audio focus: ${audioFocus()}")
+        if (!wentOn) touchFault("the track did not go on with the screen off (position $tBefore -> $tDark, state=${field("state")})")
         key(KeyEvent.KEYCODE_WAKEUP)
         SystemClock.sleep(3_000)
         val locked = keyguard.isKeyguardLocked
@@ -203,13 +218,61 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
                 } else {
                     touchInWindows("Play", "the lock screen's Play plays the page") { field("state") == "playing" }
                 }
+            } else {
+                touchFault("the lock screen showed no media controls for the playing track")
             }
             unlock(keyguard)
+        } else {
+            note("  no lock screen came up on wake (the device setting, not the app's); its controls could not be tried")
         }
+        shell("locksettings set-disabled true")
         ensureForeground()
         SystemClock.sleep(1_500)
         note("  back in the app: ${describeTab(TAB)}; keyguard locked=${keyguard.isKeyguardLocked}")
         shot("07-back-from-lock-screen")
+    }
+
+    /** The track playing before a step that needs it so (a media key when it is not: the session's own route). */
+    private fun ensurePlaying() {
+        if (field("state") == "playing") return
+        mediaKeyExpecting(KeyEvent.KEYCODE_MEDIA_PLAY, "plays the page for the step") { field("state") == "playing" }
+    }
+
+    /** `adb shell` from inside the instrumentation (UiAutomation's shell): the command's output. */
+    private fun shell(command: String): String = runCatching {
+        val fd = ui.executeShellCommand(command)
+        ParcelFileDescriptor.AutoCloseInputStream(fd).use { it.readBytes().toString(Charsets.UTF_8) }
+    }.getOrElse { "shell failed: $it" }
+
+    /**
+     * Who holds the system's audio focus, from `dumpsys audio`'s focus stack: the engine's
+     * `AudioFocusDelegate` while a page plays (with its usage), nothing once the media stops.
+     */
+    private fun audioFocus(): String {
+        val dump = shell("dumpsys audio")
+        val start = dump.indexOf("Audio Focus stack entries")
+        if (start < 0) return "no focus stack in dumpsys audio"
+        val entries = dump.substring(start).lineSequence().drop(1).takeWhile { it.isNotBlank() }
+            .map { line ->
+                val pack = Regex("pack: (\\S+)").find(line)?.groupValues?.get(1) ?: "?"
+                val client = Regex("client: (\\S+)").find(line)?.groupValues?.get(1)?.let(::focusClient) ?: "?"
+                val gain = Regex("gain: (\\S+)").find(line)?.groupValues?.get(1) ?: "?"
+                val usage = Regex("usage=(\\S+)").find(line)?.groupValues?.get(1) ?: "?"
+                "$pack $client $gain $usage"
+            }.toList()
+        return if (entries.isEmpty()) "held by nobody" else "held by ${entries.joinToString("; ")}"
+    }
+
+    /** The listener's class out of a focus client id (`android.media.AudioManager@<hex><listener class>@<hex>`). */
+    private fun focusClient(token: String): String {
+        val parts = token.split('@')
+        if (parts.size < 3) return token
+        val glued = parts[parts.size - 2]
+        val dot = glued.indexOf('.')
+        if (dot < 0) return glued
+        var from = dot
+        while (from > 0 && glued[from - 1].isLetter()) from--
+        return glued.substring(from)
     }
 
     /** A swipe up on the (insecure) keyguard; the activity asks for its dismissal when the swipe did not take. */
@@ -248,7 +311,8 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
         tapPageButton("play", "Play video", "the page reports the video playing", 15_000) { field("state") == "playing" }
         SystemClock.sleep(2_000)
         note("  playing: ${title()}; session ${describeSession()}")
-        note("  notification: ${describe(activeNotification(MediaPlaybackService.NOTIFICATION_ID))}")
+        note("  notification: ${describe(activeNotification(MediaPlaybackService.NOTIFICATION_ID))}; audio focus: ${audioFocus()}")
+        if (field("state") != "playing") touchFault("the video did not stay playing (page: ${title()})")
         shot("09-video-playing")
         beat()
 
@@ -264,21 +328,15 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
             )
             shot("10-pip-window")
             beat()
-            // The window's own controls: a tap on the window shows its menu, whose Pause is the session's.
+            // The window's own controls: a tap on the window shows its menu, whose Pause / Play is the session's.
             if (win != null) {
-                Finger().tap(win.exactCenterX(), win.exactCenterY())
-                val pause = awaitInWindows(6_000) { it == "Pause" }
-                note("  pip menu: ${if (pause != null) "Pause at ${bounds(pause)}" else "no Pause in any window"}")
-                if (pause == null) dumpWindows("pip menu")
-                shot("11-pip-menu")
-                if (pause != null) {
-                    touchInWindows("Pause", "the small window's Pause pauses the video") { field("state") == "paused" }
+                if (field("state") == "playing") {
+                    touchPipMenu(win, "Pause", "the small window's Pause pauses the video", shotBefore = "11-pip-menu") { field("state") == "paused" }
                     SystemClock.sleep(1_500)
                     shot("12-pip-paused")
-                    if (awaitInWindows(3_000) { it == "Play" } == null) {
-                        Finger().tap(win.exactCenterX(), win.exactCenterY())
-                    }
-                    touchInWindows("Play", "the small window's Play plays the video again") { field("state") == "playing" }
+                    touchPipMenu(win, "Play", "the small window's Play plays the video again") { field("state") == "playing" }
+                } else {
+                    touchPipMenu(win, "Play", "the small window's Play plays the video", shotBefore = "11-pip-menu") { field("state") == "playing" }
                 }
             } else {
                 dumpWindows("pip window")
@@ -300,12 +358,18 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
             field("fs") == "1" || host.fullscreenTab?.tabId == TAB
         }
         SystemClock.sleep(2_500)
+        if (field("state") != "playing") {
+            note("  the video is not playing fullscreen (state=${field("state")}); a media key plays it for the auto-enter")
+            ensurePlaying()
+            SystemClock.sleep(1_000)
+        }
         note("  fullscreen: page fs=${field("fs")} host fullscreenTab=${host.fullscreenTab?.tabId} state=${field("state")}")
         shot("14-video-fullscreen")
         beat()
+        val playingFullscreen = field("state") == "playing" && (field("fs") == "1" || host.fullscreenTab?.tabId == TAB)
         ui.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
         val auto = awaitPip(true, 10_000)
-        note("  Home with the video playing fullscreen -> picture-in-picture by itself: $auto")
+        note("  Home with the video playing fullscreen (${if (playingFullscreen) "it was" else "it was NOT: state=${field("state")} fs=${field("fs")}"}) -> picture-in-picture by itself: $auto")
         if (!auto) touchFault("Home with the video playing fullscreen did not enter picture-in-picture")
         SystemClock.sleep(3_000)
         val win = appWindowBounds()
@@ -315,16 +379,9 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
         // Closed with its X rather than expanded: the video pauses, as Chrome's does.
         var closed = false
         if (auto && win != null) {
-            Finger().tap(win.exactCenterX(), win.exactCenterY())
-            val close = awaitInWindows(6_000) { it == "Close" }
-            if (close != null) {
-                closed = touchInWindows("Close", "the window closes and the video pauses", timeoutMs = 10_000) { !inPip() && field("state") == "paused" }
-                SystemClock.sleep(1_500)
-                note("  after Close: in pip=${inPip()} state=${field("state")} notification ${describe(activeNotification(MediaPlaybackService.NOTIFICATION_ID))}")
-            } else {
-                note("  no Close button in the pip menu")
-                dumpWindows("pip menu (close)")
-            }
+            closed = touchPipMenu(win, "Close", "the window closes and the video pauses", timeoutMs = 10_000) { !inPip() && field("state") == "paused" }
+            SystemClock.sleep(1_500)
+            note("  after Close: in pip=${inPip()} state=${field("state")} notification ${describe(activeNotification(MediaPlaybackService.NOTIFICATION_ID))}")
         }
         if (closed) {
             // The app is stopped behind the launcher now: the media notification's tap is the way back, as for a user.
@@ -499,14 +556,14 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
         SystemClock.sleep(1_000)
         tapPageButton("play", "Play track", "the page plays", 15_000) { field("state") == "playing" }
         val sbn = awaitNotification(MediaPlaybackService.NOTIFICATION_ID, 10_000)
-        note("  playing again: notification ${describe(sbn)}; foreground=${MediaPlaybackService.inForeground}; focus=${host.media.hasAudioFocus}")
         SystemClock.sleep(1_500)
+        note("  playing again: notification ${describe(sbn)}; foreground=${MediaPlaybackService.inForeground}; state=${field("state")}; audio focus: ${audioFocus()}")
         shot("28-audio-before-close")
         beat()
         coreInvoke("tab.close", """{"tabId":"$TAB","force":true}""")
         val gone = poll(10_000) { activeNotification(MediaPlaybackService.NOTIFICATION_ID) == null }
         SystemClock.sleep(1_000)
-        note("  tab closed: notification gone=$gone; session=${describeSession()}; host session=${host.media.current?.tabId}; foreground=${MediaPlaybackService.inForeground}; focus=${host.media.hasAudioFocus}")
+        note("  tab closed: notification gone=$gone; session=${describeSession()}; host session=${host.media.current?.tabId}; foreground=${MediaPlaybackService.inForeground}; audio focus: ${audioFocus()}")
         if (!gone) touchFault("the media notification stayed up after its tab closed")
         SystemClock.sleep(2_000)
         shot("29-after-tab-close")
@@ -616,25 +673,25 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     }
 
     /**
-     * A real finger on the page's button `id` (labelled `label`; the accessibility tree's node
-     * when it carries one, the element's box on screen otherwise), then up to `timeoutMs` for
-     * `took` – the step's claim, named by `effect`. A touch that went in and did nothing is a
-     * touch fault; the recording goes on.
+     * A real finger on the page's button `id` (labelled `label`), then up to `timeoutMs` for
+     * `took` – the step's claim, named by `effect`. The element's own box on screen leads (its
+     * `getBoundingClientRect` scaled into the view): the WebView's accessibility node for a page
+     * button reports stale or offset bounds on the emulator's WebView, so it is only the fallback
+     * when the page has no such element. A touch that went in and did nothing is a touch fault;
+     * the recording goes on. A finger is a user gesture, so a play behind
+     * `mediaPlaybackRequiresUserGesture` starts here.
      */
     private fun tapPageButton(id: String, label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
-        var point: PointF? = null
-        val node = awaitNode(4_000) { it == label }
-        if (node != null) point = touchTapPoint(node)
+        var point = pageElementRect(id)?.let { touchPoint(it) }?.also { Finger().tap(it.x, it.y) }
         if (point == null) {
-            val rect = pageElementRect(id) ?: run {
-                note("  no '$label' to touch: not in the tree, and the page has no element '$id'")
+            val node = awaitNode(4_000) { it == label } ?: run {
+                note("  no '$label' to touch: the page has no element '$id' and nothing in the tree reads it")
                 return false
             }
-            point = touchPoint(rect) ?: run {
-                note("  '$label' at $rect is outside the touchable window")
+            point = touchTapPoint(node) ?: run {
+                note("  '$label' has no bounds a finger can reach")
                 return false
             }
-            Finger().tap(point.x, point.y)
         }
         if (poll(timeoutMs, took)) {
             note("  finger on '$label' at ${point.x.toInt()},${point.y.toInt()}: $effect")
@@ -817,6 +874,51 @@ class MediaDemo : DemoHarness("media-demo-state.json", "services-android-media-a
     }
 
     private fun awaitPip(active: Boolean, timeoutMs: Long): Boolean = poll(timeoutMs) { inPip() == active }
+
+    /**
+     * The small window's menu (SystemUI's, over the window: the session's actions, Close and the
+     * expand button) under a finger's tap on the window, and the node reading `label` in it. The
+     * menu hides itself after a few seconds, so the look is short and the tap is tried twice; the
+     * windows on screen go to the notes when the menu never showed the label.
+     */
+    private fun openPipMenu(win: Rect, label: String): AccessibilityNodeInfo? {
+        for (attempt in 1..2) {
+            Finger().tap(win.exactCenterX(), win.exactCenterY())
+            val node = awaitInWindows(3_000) { it == label }
+            if (node != null) return node
+            if (attempt == 1) {
+                dumpWindows("pip menu after tap $attempt, looking for '$label'")
+                SystemClock.sleep(4_000)
+            }
+        }
+        return null
+    }
+
+    /**
+     * A real finger on the small window's menu button `label` (the menu opened by [openPipMenu]
+     * and the button touched at once, before the menu hides itself), then up to `timeoutMs` for
+     * `took`, the step's claim named by `effect`; `shotBefore` names a still of the open menu.
+     */
+    private fun touchPipMenu(win: Rect, label: String, effect: String, timeoutMs: Long = 8_000, shotBefore: String? = null, took: () -> Boolean): Boolean {
+        val node = openPipMenu(win, label) ?: run {
+            note("  the small window's menu never showed '$label' (two taps on the window)")
+            touchFault("the picture-in-picture window's menu never showed '$label'")
+            return false
+        }
+        note("  pip menu: '$label' at ${bounds(node)}")
+        if (shotBefore != null) shot(shotBefore)
+        val point = touchTapPoint(node) ?: run {
+            note("  '$label' has no bounds a finger can reach")
+            return false
+        }
+        if (poll(timeoutMs, took)) {
+            note("  finger on the small window's '$label' at ${point.x.toInt()},${point.y.toInt()}: $effect")
+            return true
+        }
+        touchFault("a touch on the small window's '$label' did not take: not $effect within $timeoutMs ms")
+        note("  TOUCH FAULT: the small window's '$label' did not $effect (page: ${title()})")
+        return false
+    }
 
     /** The app's window on screen (the small one while in picture-in-picture), or null. */
     private fun appWindowBounds(): Rect? {

@@ -15,9 +15,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.graphics.drawable.Icon
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -53,9 +50,12 @@ import java.util.concurrent.Executor
  * lock screen or the headset, a seek on the bar – goes back to the core as `media.action`, and
  * the tab's page carries it out (`MediaSessionService.act`).
  *
- * Audio focus is the browser's: requested when a session plays, given up when it ends; another
- * app taking it pauses the page (and, for a moment's loss – a navigation prompt, a notification
- * sound – resumes it after, or has it duck), as Chrome's `AudioFocusDelegate` does.
+ * Audio focus is the engine's: the WebView's content layer (`org.chromium.content.browser
+ * .AudioFocusDelegate`, the same code Chrome runs) requests it when a page's media starts and
+ * answers its loss – another app's music pauses the page for good, a call or an assistant pauses
+ * it for the moment and resumes it after, a navigation prompt has it duck. Nothing here requests
+ * focus of its own: a second request from this process would take the focus from the engine's
+ * listener, which then pauses the very page the session shows (the first emulator run did).
  *
  * Picture-in-picture is the activity's window: `media.pip` asks for it with the video's aspect
  * ratio and play / pause (and previous / next when the page handles them) as the window's
@@ -71,7 +71,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     private val context: Context = activity.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val manager = NotificationManagerCompat.from(context)
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val session = MediaSessionCompat(context, "zenium")
 
     /** The session as the core last described it; null when the controls are down. */
@@ -79,10 +78,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         private set
     private var artwork: Bitmap? = null
     private var artworkUrl: String? = null
-    private var focusRequest: AudioFocusRequest? = null
-    /** Another app took the focus for a moment and the page was paused for it: it plays again when the focus returns. */
-    private var pausedByFocusLoss = false
-    private var ducked = false
     private var destroyed = false
 
     /** The tab whose page the window shows as picture-in-picture, once the system said it does. */
@@ -94,9 +89,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /** Whether this device has picture-in-picture at all (Android TV and some Go devices do not). */
     val pictureInPictureSupported: Boolean =
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
-
-    /** The browser holds the audio focus right now (a session is playing and the system granted it). */
-    val hasAudioFocus: Boolean get() = focusRequest != null
 
     /** The session as the system sees it (its metadata and playback state), for diagnostics and the demos. */
     val controller: MediaControllerCompat get() = session.controller
@@ -128,36 +120,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         }
     }
 
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        if (destroyed) return@OnAudioFocusChangeListener
-        when (change) {
-            // Another app took the audio for good (its own music): the page pauses and stays paused.
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                pausedByFocusLoss = false
-                duck(false)
-                if (current?.playing == true) act(MediaControl.PAUSE)
-                abandonFocus()
-            }
-            // For a moment (a call, an assistant): paused now, played again when the focus returns.
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                duck(false)
-                if (current?.playing == true) {
-                    pausedByFocusLoss = true
-                    act(MediaControl.PAUSE)
-                }
-            }
-            // A short sound over the media (a navigation prompt): quieter meanwhile.
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> duck(true)
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                duck(false)
-                if (pausedByFocusLoss) {
-                    pausedByFocusLoss = false
-                    act(MediaControl.PLAY)
-                }
-            }
-        }
-    }
-
     init {
         ContextCompat.registerReceiver(context, receiver, IntentFilter(ACTION_CONTROL), ContextCompat.RECEIVER_NOT_EXPORTED)
         session.setCallback(callback, main)
@@ -181,10 +143,6 @@ class MediaSessions(private val host: Host, private val io: Executor) {
             artworkUrl = null
         }
         if (!info.private) loadArtwork(info)
-        if (info.playing) {
-            pausedByFocusLoss = false
-            requestFocus()
-        }
         publish(info)
         updatePictureInPictureParams()
     }
@@ -195,13 +153,10 @@ class MediaSessions(private val host: Host, private val io: Executor) {
         current = null
         artwork = null
         artworkUrl = null
-        pausedByFocusLoss = false
-        ducked = false
         MediaPlaybackService.background(keepNotification = false)
         manager.cancel(MediaPlaybackService.NOTIFICATION_ID)
         if (session.isActive) session.isActive = false
         session.setPlaybackState(PlaybackStateCompat.Builder().setState(PlaybackStateCompat.STATE_NONE, 0L, 0f).build())
-        abandonFocus()
         if (had) updatePictureInPictureParams()
     }
 
@@ -231,41 +186,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /** A control pressed (on the notification, the lock screen, a headset, the picture-in-picture window): the core's page carries it out. */
     private fun act(control: MediaControl) {
         val tabId = current?.tabId ?: return
-        if (control == MediaControl.PLAY) pausedByFocusLoss = false
         host.hostEvent("media.action", MediaControls.payload(tabId, control))
-    }
-
-    private fun duck(on: Boolean) {
-        if (ducked == on) return
-        ducked = on
-        val tabId = current?.tabId ?: return
-        host.hostEvent("media.action", json("tabId" to tabId, "action" to "duck", "on" to on))
-    }
-
-    // --- audio focus -----------------------------------------------------------------------------
-
-    private fun requestFocus() {
-        if (focusRequest != null) return
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(if (current?.video == true) AudioAttributes.CONTENT_TYPE_MOVIE else AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            .setOnAudioFocusChangeListener(focusListener, main)
-            .setWillPauseWhenDucked(false)
-            .build()
-        val result = runCatching { audioManager.requestAudioFocus(request) }.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
-        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusRequest = request
-        // Refused (a call in progress holds the audio): the page waits, as Chrome's would.
-        else if (result == AudioManager.AUDIOFOCUS_REQUEST_FAILED) act(MediaControl.PAUSE)
-    }
-
-    private fun abandonFocus() {
-        val request = focusRequest ?: return
-        focusRequest = null
-        runCatching { audioManager.abandonAudioFocusRequest(request) }
     }
 
     // --- what the system sees ----------------------------------------------------------------------

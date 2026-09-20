@@ -114,10 +114,12 @@ export const EMPTY_MEDIA_REPORT: MediaReport = {
 }
 
 /**
- * Browser → page: an action from the OS controls, the in-app player or a host policy (audio
- * focus). `toggle` plays or pauses whichever applies; `duck` lowers the volume (or restores it)
- * while another app speaks over the media; `fill` lays the playing video over the whole viewport
- * (or puts it back) while the host shows the page's window as a picture-in-picture of that video.
+ * Browser → page: an action from the OS controls, the in-app player or a host policy. `toggle`
+ * plays or pauses whichever applies; `duck` lowers the volume (or restores it) while another app
+ * speaks over the media – for a host whose engine leaves audio focus to it (the WebView's and
+ * Electron's Chromium answer focus changes themselves, so neither sends it); `fill` lays the
+ * playing video over the whole viewport (or puts it back) while the host shows the page's window
+ * as a picture-in-picture of that video.
  */
 export interface MediaSessionHostMessage {
   type: 'mediaSession'

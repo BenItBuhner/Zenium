@@ -185,6 +185,25 @@ describe('MediaSessionService', () => {
     expect(h.service.sessionTab).toBe('t1')
   })
 
+  it('shows no controls for metadata alone until the page has played, as Chrome does', () => {
+    const paused = report({
+      playing: false,
+      position: { duration: 240, position: 0, playbackRate: 1 },
+      metadata: { title: 'Track', artist: 'Band', album: '', artwork: [] }
+    })
+    play(h, 't1', paused)
+    expect(h.service.sessionTab).toBeNull()
+    expect(h.updates).toEqual([])
+    // The chrome's list still knows the page has media (its metadata), just no session.
+    expect(h.service.refresh().find((m) => m.tabId === 't1')?.title).toBe('Track')
+    play(h, 't1', { ...paused, playing: true })
+    expect(h.service.sessionTab).toBe('t1')
+    // Paused after playing, the session stays up in paused form.
+    play(h, 't1', paused)
+    expect(h.service.sessionTab).toBe('t1')
+    expect(h.updates.at(-1)!.playing).toBe(false)
+  })
+
   it('prefers the page that started playing most recently when several play', () => {
     play(h, 't1')
     h.now.value += 1000

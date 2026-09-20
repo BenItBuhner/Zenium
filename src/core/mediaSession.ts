@@ -123,7 +123,9 @@ export class MediaSessionService {
 
   /**
    * The tab whose media the OS controls show: the one playing (the most recently started when
-   * several are), else the one that played last – unless the user dismissed it – else none.
+   * several are), else the one that played last – unless the user dismissed it – else none. A
+   * page that set `navigator.mediaSession.metadata` but never played gets no controls, as in
+   * Chrome, where the notification comes up with the first playback.
    */
   private pickSession(): string | null {
     let playing: [string, TabReport] | null = null
@@ -133,7 +135,7 @@ export class MediaSessionService {
       if (!sessionWorthy(tracked.report)) continue
       if (reportIsPlaying(tracked.report)) {
         if (!playing || tracked.startedAt > playing[1].startedAt) playing = entry
-      } else if (!this.dismissed.has(tabId)) {
+      } else if (!this.dismissed.has(tabId) && tracked.startedAt > 0) {
         if (!paused || tracked.at > paused[1].at) paused = entry
       }
     }
@@ -144,7 +146,7 @@ export class MediaSessionService {
       !this.dismissed.has(this.sessionTabId)
     ) {
       const current = this.reports.get(this.sessionTabId)!
-      if (sessionWorthy(current.report)) return this.sessionTabId
+      if (sessionWorthy(current.report) && current.startedAt > 0) return this.sessionTabId
     }
     return paused ? paused[0] : null
   }
