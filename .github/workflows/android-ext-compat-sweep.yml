@@ -10,6 +10,11 @@ name: Android extension compatibility sweep
 # only: the two run for about two hours each. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
+  # TEMPORARY: the real capture of an extension's options page open as a tab on the emulator
+  # (Vimium's options, uBlock Origin Lite's dashboard) for the extension-page tab chrome of this
+  # branch, since gh cannot dispatch from the agent; removed before the branch is returned.
+  push:
+    branches: [cursor/ext-page-tabs-phone-actions-4435]
   workflow_dispatch:
     inputs:
       only:
@@ -35,7 +40,7 @@ jobs:
       artifact-name: android-ext-compat-sweep
       artifact-path: artifacts/android-ext-compat-sweep/
       script-env: |
-        SWEEP_ONLY=${{ inputs.only }}
+        SWEEP_ONLY=${{ inputs.only || 'dbepggeogbaibhgnhhndojpepiihcmeb,ddkjiahejlhfcafbddmgiahcphecmpfh' }}
       timeout-minutes: 210
 
   # The same sweep on a Chromium snapshot SystemWebView.apk swapped onto an AOSP image (see
@@ -53,7 +58,7 @@ jobs:
       script-env: |
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
-        SWEEP_ONLY=${{ inputs.only }}
+        SWEEP_ONLY=${{ inputs.only || 'dbepggeogbaibhgnhhndojpepiihcmeb,ddkjiahejlhfcafbddmgiahcphecmpfh' }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
