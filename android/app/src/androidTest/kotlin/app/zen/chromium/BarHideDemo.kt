@@ -80,6 +80,11 @@ import kotlin.math.roundToInt
  * default, or `dark`) picks the colour scheme; screenshots land as `bar-hide-<theme>-*.png`.
  * See [DemoHarness] for the plumbing and [PullToRefreshDemo] for the Settings moves this one
  * shares.
+ *
+ * The jank record ([measureFrames], `frames.jsonl`): at each dock, step 1's drag is the
+ * `bar-hide-scroll-<edge>` scene (`gesture`: the scroll under the finger with the bar following)
+ * and step 2's release the `bar-hide-snap-home-<edge>` scene (`spring`: the snap home). The
+ * budget's gate (`jankGate`, soft unless the workflow says hard) reports or fails them.
  */
 @RunWith(AndroidJUnit4::class)
 class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "bar-hide-demo") {
@@ -171,10 +176,14 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         finding("[$edge] shown: hide ${hideValue()}, page $shownPage px, frame $shownFrame px")
 
         // 1. A long drag down the page: the bar goes with the scroll and is off before the finger
-        //    lifts; at rest the page has its band.
+        //    lifts; at rest the page has its band. The drag is the jank record's `gesture` scene
+        //    (DemoHarness.measureFrames): the frames of the scroll under the finger with the bar
+        //    following, read before the hold's still and the chrome's value.
         Finger().apply {
-            down(pageX, pageY)
-            moveBy(0f, -LONG * density, 700)
+            measureFrames("bar-hide-scroll-$edge", JankBudget.Kind.GESTURE) {
+                down(pageX, pageY)
+                moveBy(0f, -LONG * density, 700)
+            }
             hold(700)
             val held = hideNumber()
             check("$edge: the bar is off under the finger after a ${LONG.roundToInt()} dp drag down the page", held >= 0.98, "hide $held")
@@ -211,7 +220,10 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         }
 
         // 2. A short drag back up the page: the bar comes back one to one under the finger, and a
-        //    slow release from under half way snaps it home.
+        //    slow release from under half way snaps it home. The release is the jank record's
+        //    `spring` scene: the finger lifts and the snap runs its course inside the block
+        //    (SPRING_SNAPPY lands in about 300 ms; the block waits [SNAP_MS], and a frame nothing
+        //    moves in is no frame), the chrome's value is read after it.
         framesSettled()
         Finger().apply {
             down(pageX, pageY)
@@ -220,7 +232,11 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             val held = hideNumber()
             check("$edge: a ${SHORT_BACK.roundToInt()} dp drag up the page brings the bar part of the way back under the finger", held in 0.02..0.6, "hide $held")
             shot("$edge-04-coming-back")
-            up()
+            awaitShots()
+            measureFrames("bar-hide-snap-home-$edge", JankBudget.Kind.SPRING) {
+                up()
+                SystemClock.sleep(SNAP_MS)
+            }
         }
         check("$edge: the bar rests shown after the release from under half way", awaitHide(SETTLE_MS) { it <= 0.005 }, "hide ${hideValue()}")
         check("$edge: the root drops data-bar-hidden at the shown rest", awaitRest(false), "barHidden ${barHiddenAtRest()}")
@@ -1134,6 +1150,13 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         /** How long the short drags take; the low mid-way one, shorter, takes [MID_LOW_MS]. */
         private const val SHORT_MS = 1_500L
         private const val MID_LOW_MS = 1_200L
+        /**
+         * How long the measured release ([measureFrames]' `spring` scene) waits for the snap home:
+         * SPRING_SNAPPY (stiffness 420, damping 40) is within a hundredth of its end in about 300
+         * ms on a phone; on the emulator's 200 to 300 ms frames the same spring takes a few frames
+         * more. Frames after the landing are not rendered, so a wait past it costs the reading nothing.
+         */
+        private const val SNAP_MS = 1_200L
         /** Inside the inner scroller: well past the slop, well short of the box's own end. */
         private const val INNER_DRAG = 120f
         /** Near the page's end: more than the half travel left, so the page reaches its end under the finger and the rest overscrolls. */

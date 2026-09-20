@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
@@ -39,7 +40,9 @@ import kotlin.math.roundToInt
  *  - the driver writes `record` once its warm-up is done and waits for `recording`, which the
  *    workflow creates after starting `screenrecord`;
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
- *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
+ *  - screenshots land next to them as `<shotPrefix>-<name>.png`;
+ *  - the frame statistics of every scene the driver measured ([measureFrames]) land there too, as
+ *    `frames.jsonl` (one JSON line per scene) and `frames.txt` (the tables), with the raw dumps.
  *
  * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run). A demo
  * that is the second act of another – the process was stopped between them (`am force-stop`
@@ -126,9 +129,14 @@ abstract class DemoHarness(
         File(out, "done").writeText("done\n")
         SystemClock.sleep(4_000)
         Log.i(tag, "done")
+        val faults = ArrayList<String>()
         if (touchFaults.isNotEmpty()) {
-            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+            faults += "${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}"
         }
+        if (jankFaults.isNotEmpty()) {
+            faults += "${jankFaults.size} scene(s) over the jank budget under a hard gate:\n" + jankFaults.joinToString("\n")
+        }
+        if (faults.isNotEmpty()) throw AssertionError(faults.joinToString("\n"))
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -938,6 +946,122 @@ abstract class DemoHarness(
         return true
     }
 
+    // --- frames: the jank budget gate ------------------------------------------------------------
+    //
+    // The performance program's rule (perf-program.md): no phone gesture or spring regresses
+    // silently again. Every driver measures its scenes through [measureFrames], the one helper,
+    // so the numbers of every run are read the same way and land in the same two places: the
+    // run's findings (`frames.jsonl`, one JSON object per scene, and `frames.txt`, the same as
+    // tables) and the driver's log (the table, `FRAMES` lines). The shared workflow renders the
+    // record into the job summary and hands it on as its `jank-report` output; the release
+    // dry-run shows main's latest table.
+    //
+    // What is measured: HWUI's own frame statistics for the app's process, as `dumpsys gfxinfo
+    // <package> framestats` reports them – `dumpsys gfxinfo <package> reset` before the scene,
+    // the scene's real-touch gesture inside the block, the dump after it – read by [FrameStats]
+    // (sharedTest, tested on the JVM): the frames rendered and the janky ones by HWUI's rule,
+    // the 50th / 90th / 95th / 99th percentile frame times, and from the CSV of the last frames
+    // each stage's time (input, animation, layout, draw, sync, the render thread's draw commands,
+    // the swap, the GPU) so the long stage of every long frame is named and the stage most often
+    // long is the scene's `dominant`. The `<package>` is the app's applicationId
+    // (`io.github.benitbuhner.zenium.debug` for the debug build the drivers run against; the
+    // Kotlin package `app.zen.chromium` names no process), read off the context.
+    //
+    // The budget: [JankBudget], one place for the numbers, a budget per scene kind (`gesture`,
+    // `spring`, `open`): the janky share and the 95th percentile the scene may reach on the
+    // shared recipe. The gate is [jankGate]: SOFT (the default: every scene is reported, nothing
+    // fails) or HARD (`-e jankGate hard`, from the driver script's `JANK_GATE` environment and
+    // the workflows' `jank-gate` input): a scene over its budget is then a jank fault, and like a
+    // touch fault it fails the run once the recording is done ([runDemo]) with the scene's table
+    // in the message – the scene is the claim that failed, the rest of the sequence still runs.
+    //
+    // The emulator caveat, for every reading of these numbers: the hosted runner has no GPU, so
+    // `-gpu swangle` (ANGLE over SwiftShader) renders every frame on the CPU. That inflates the
+    // render thread's `commands` and `swap` stages (the composite) many times over against a
+    // phone and stretches most frames past their deadline, so a janky share of 40 percent here is
+    // the recipe, not the chrome. The gate compares on ONE recipe: its thresholds are recipe-
+    // relative – the fixed chrome's numbers on this recipe plus headroom – and what it catches is
+    // a change against that baseline, never an absolute frame time. The main-thread stages
+    // (`delay`, `input`, `animation`, `layout`, `draw`) are representative all the same, and a
+    // scene whose long stage moves from `commands` to `layout` or `draw` says the chrome did work
+    // in the frame it should not have.
+    //
+    // One line of `frames.jsonl` (schema `v` 1; keys in this order; ms are HWUI's whole ms for the
+    // percentiles, decimals for the stages):
+    //   {"v":1,"scene":"bar-hide-scroll-bottom","kind":"gesture","gate":"soft",
+    //    "at":"2026-09-20T21:00:00Z","durationMs":2400,
+    //    "frames":83,"janky":41,"jankyShare":0.494,"jankyLegacy":45,"p50":16,"p90":48,"p95":61,"p99":120,
+    //    "reasons":{"Missed Vsync":3,"High input latency":0,"Slow UI thread":12,"Slow bitmap uploads":0,
+    //               "Slow issue draw commands":30,"Frame deadline missed":41,"Frame deadline missed (legacy)":45},
+    //    "sampled":80,"skipped":3,"long":39,
+    //    "stageMs":{"delay":{"mean":1.2,"max":9.8,"long":0},"input":{...},"animation":{...},"layout":{...},
+    //               "draw":{...},"sync":{...},"commands":{...},"swap":{...},"gpu":{...}},
+    //    "dominant":"commands",
+    //    "budget":{"jankyShare":1,"p95":5000,"provisional":true},"verdict":"within","breaches":[],"enforced":false}
+    // `frames`, `janky` and the percentiles are the summary's (every frame since the reset);
+    // `sampled`, `skipped`, `long`, `stageMs` and `dominant` are read off the CSV's last frames
+    // (about 120); `jankyLegacy` is -1 before Android 12; `dominant` is null with no long frame;
+    // `verdict` is `within` or `over`, `breaches` names what was over, `enforced` says the gate
+    // made it a fault.
+
+    /**
+     * The gate this run measures under: the `jankGate` instrumentation argument (`soft` or
+     * `hard`), soft when absent or unreadable. The driver script passes `JANK_GATE` through.
+     */
+    protected val jankGate: JankBudget.Gate =
+        JankBudget.Gate.parse(InstrumentationRegistry.getArguments().getString(JANK_GATE_ARGUMENT))
+
+    /** Every scene measured so far, in order; for a driver that wants to write them down itself. */
+    protected val scenes: List<FrameStats.Scene> get() = measuredScenes
+    private val measuredScenes = ArrayList<FrameStats.Scene>()
+
+    /** The scenes over budget under a hard gate, each with its table; [runDemo] fails on them at the end. */
+    private val jankFaults = ArrayList<String>()
+
+    /**
+     * Measure the frames of one scene: reset HWUI's statistics for the app, run `block` – the
+     * scene's gesture by real touch, with whatever wait the scene's motion needs to land (a
+     * release's spring is frames too; a block that lifts the finger and returns at once measures
+     * the drag alone) – and read the statistics after it. `scene` names the scene in the record
+     * (`<what>-<where>`, stable across runs, since the summary and the release table key on it);
+     * `kind` picks the budget ([JankBudget.Kind]: a finger-driven `GESTURE`, the default; a
+     * release's `SPRING`; a surface's `OPEN`). The [FrameStats.Scene] is written down (one line
+     * of `frames.jsonl`, its table in `frames.txt` and the log) and returned for the driver's own
+     * claims; under a hard gate a scene over its budget is a jank fault. A block that throws
+     * measures nothing: the exception is the driver's.
+     *
+     * Nothing else should run in the block: a screenshot ([shot]) or a read of the chrome
+     * ([chromeJs]) inside it is work the app did not do for the user and shows in the frames.
+     * Take the still before or after, and read the chrome's value after.
+     */
+    protected fun measureFrames(scene: String, kind: JankBudget.Kind = JankBudget.Kind.GESTURE, block: () -> Unit): FrameStats.Scene {
+        val pkg = app.packageName
+        shellCommand("dumpsys gfxinfo $pkg reset")
+        val startedAt = System.currentTimeMillis()
+        val t0 = SystemClock.uptimeMillis()
+        block()
+        val durationMs = SystemClock.uptimeMillis() - t0
+        val text = shellCommand("dumpsys gfxinfo $pkg framestats")
+        val dump = FrameStats.parse(text)
+        if (dump.summary == null) Log.w(tag, "no HWUI summary for $pkg in the dump of scene $scene (${text.length} chars)")
+        val result = FrameStats.scene(scene, kind, jankGate, startedAt, durationMs, dump)
+        measuredScenes += result
+        File(out, FRAMES_RECORD).appendText(result.toJson() + "\n")
+        File(out, FRAMES_TABLES).appendText(result.table() + "\n\n")
+        // The raw dump beside the reading, for a second opinion (the parser is fed such a dump on the JVM).
+        File(out, "framestats-$scene.txt").writeText(text)
+        for (line in result.table().lines()) Log.i(tag, "FRAMES $line")
+        if (result.enforced) {
+            Log.e(tag, "JANK FAULT: scene $scene is over its budget under a hard gate")
+            jankFaults += result.table()
+        }
+        return result
+    }
+
+    /** Run a shell command with the instrumentation's shell permissions; its whole output. */
+    protected fun shellCommand(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand(command)).use { it.bufferedReader().readText() }
+
     // --- the chrome's bridge ---------------------------------------------------------------------
 
     /** Evaluate in the chrome WebView; the raw JSON-encoded result ("" when it never answered). */
@@ -1177,6 +1301,11 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+        /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
+        const val JANK_GATE_ARGUMENT = "jankGate"
+        /** The frames record in the run's findings: one JSON line per measured scene, and the tables. */
+        const val FRAMES_RECORD = "frames.jsonl"
+        const val FRAMES_TABLES = "frames.txt"
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L

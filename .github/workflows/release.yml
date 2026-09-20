@@ -417,6 +417,10 @@ jobs:
     needs: [prepare, desktop, android, macos-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      # The Android frame statistics below are read off other runs' artifacts.
+      actions: read
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -467,6 +471,18 @@ jobs:
             echo
             cat release/notes.md
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Android frame statistics on main
+        # The phone chrome's jank table as main last measured it (the newest green Android demo
+        # runs' `jank-report-*` artifacts, read through the API: seconds, against the ten minutes
+        # an emulator scene of the release's own would cost), so the numbers stand next to every
+        # release. A pull request's dry run shows its own head's numbers when main has none yet.
+        # Never fails the release: what cannot be read is a line in the summary.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FALLBACK_BRANCH: ${{ github.head_ref }}
+        run: |
+          node .github/scripts/android-jank-report.mjs main --branch main --fallback-branch "$FALLBACK_BRANCH" \
+            >> "$GITHUB_STEP_SUMMARY" || echo "::warning::the Android frame statistics could not be rendered"
       - uses: actions/upload-artifact@v7
         with:
           name: release-bundle
