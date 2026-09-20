@@ -216,7 +216,6 @@ function seedFirefox(
   if (options.running) host.symlink(`${FIREFOX_PROFILE}/lock`)
 }
 
-
 describe('ImportService: browser profiles', () => {
   it('imports bookmarks, history and passwords from a Chrome profile, reading databases from a temp copy', async () => {
     const h = harness()
