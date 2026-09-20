@@ -365,6 +365,11 @@ export interface UiState {
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
   /**
+   * Phone layout: the media sheet (the in-app player for the tab whose media the OS controls
+   * show, MW-16) is up, opened from the pill's Now playing chip; the tab it opened on.
+   */
+  mediaSheet: string | null
+  /**
    * The selection the core asked the chrome to translate: the selection popover (desktop) or
    * sheet (phone) is up for it. A request only – the surface holds the page's capture and the
    * keyboard itself while it is up (`useFloatingChrome`, counted in `floatingChrome`).
@@ -487,6 +492,7 @@ export const uiStore = createStore<UiState>(
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     install: null,
+    mediaSheet: null,
     translateSelection: null,
     tabSearch: null,
     groupEditor: null,
@@ -1078,6 +1084,26 @@ export function closeInstallSheet(tabId: string): void {
   returnFocusToPage()
 }
 
+/**
+ * The media sheet (phone): the in-app player for `tabId`'s media, over a capture of the page
+ * like every sheet in the frame's host. Opened from the pill's Now playing chip. The picture is
+ * the active tab's – the tab on screen, which the media's tab need not be (the chip shows on
+ * whichever pill is up) – so the recede holds what the user sees and `snapshotTabId` names the
+ * view the host hides; the sheet's content stays the media's tab.
+ */
+export async function openMediaSheet(tabId: string, activeTabId: string | null): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ mediaSheet: tabId, drawerOpen: false })
+}
+
+export function closeMediaSheet(): void {
+  if (uiStore.get().mediaSheet === null) return
+  uiStore.set({ mediaSheet: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
 export async function openUrlbar(
   mode: UrlbarOpenMode,
   activeTabId: string | null,
@@ -1462,6 +1488,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
+    ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
     ui.autofillPrompt !== null ||
     ui.stageActive ||

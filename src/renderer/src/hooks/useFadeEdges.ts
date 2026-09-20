@@ -1,12 +1,16 @@
 import { useCallback, type RefCallback } from 'react'
 
 export type FadeAxis = 'x' | 'y' | 'auto'
+/** Which edges fade: both, or the end alone (a header marks the start with a hairline instead). */
+export type FadeEdges = 'both' | 'end'
 
 export interface FadeEdgesOptions {
   /** Scroll axis to fade; `auto` follows whichever direction overflows. */
   axis?: FadeAxis
   /** Depth of a fade in px. */
   size?: number
+  /** The edges that fade (both by default). */
+  edges?: FadeEdges
 }
 
 /**
@@ -15,24 +19,31 @@ export interface FadeEdgesOptions {
  * scrolled, the bottom one goes away at the end (left and right for a row). The fade is a
  * `mask-image` on the container itself, so it needs no gradient overlay and works over opaque
  * and translucent backgrounds alike; the depth of each edge is a registered custom property, so
- * it eases in and out. Attach the returned ref to the element that scrolls; the styles live under
- * `[data-fade-axis]` in main.css.
+ * it eases in and out. A container under a sticky header that marks scrolled-under content with
+ * a hairline (v2 §9.7) fades its end edge only (`edges: 'end'`). Attach the returned ref to the
+ * element that scrolls; the styles live under `[data-fade-axis]` in main.css.
  */
 export function useFadeEdges<T extends HTMLElement>({
   axis = 'auto',
-  size = 16
+  size = 16,
+  edges = 'both'
 }: FadeEdgesOptions = {}): RefCallback<T> {
   return useCallback(
     (el: T | null) => {
       if (!el) return
-      return attachFadeEdges(el, axis, size)
+      return attachFadeEdges(el, axis, size, edges)
     },
-    [axis, size]
+    [axis, size, edges]
   )
 }
 
 /** Keep `el`'s fade variables in step with its scroll position; returns the teardown. */
-export function attachFadeEdges(el: HTMLElement, axis: FadeAxis, size: number): () => void {
+export function attachFadeEdges(
+  el: HTMLElement,
+  axis: FadeAxis,
+  size: number,
+  edges: FadeEdges = 'both'
+): () => void {
   let frame: number | null = null
   const update = (): void => {
     frame = null
@@ -42,7 +53,7 @@ export function attachFadeEdges(el: HTMLElement, axis: FadeAxis, size: number): 
     // A reversed scroller (`column-reverse`, an RTL row) counts from its far end: 0 is the end
     // and positions run negative, so measure from the start like every other container.
     const scroll = isReversed(el, vertical) ? extent + raw : raw
-    const start = extent > 1 && scroll > 1 ? size : 0
+    const start = edges === 'both' && extent > 1 && scroll > 1 ? size : 0
     const end = extent > 1 && scroll < extent - 1 ? size : 0
     el.dataset.fadeAxis = vertical ? 'y' : 'x'
     el.style.setProperty('--zen-fade-start', `${start}px`)

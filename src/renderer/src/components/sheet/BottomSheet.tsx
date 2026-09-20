@@ -63,8 +63,9 @@ interface Props {
   /** Accessible name of the handle. */
   handleLabel?: string
   /**
-   * Fade the body's scroll edges (the default). A sheet that marks scrolled content with a line
-   * under its header instead (`data-scrolled` on the sheet) turns this off.
+   * Fade the body's bottom edge while more content lies past it (the default). The header's
+   * edge never fades: every sheet marks content scrolled under its header with the hairline
+   * (`data-scrolled` on the sheet, v2 §9.7), not a fade. `false` turns the bottom fade off too.
    */
   fadeEdges?: boolean
   /** The id of the element that names the dialog (its title), for `aria-labelledby`. */
@@ -189,7 +190,8 @@ export function BottomSheet({
   const scrollRef = useRef<HTMLDivElement>(null)
   const gripRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  // The bottom edge only: the header's hairline (`data-scrolled`) marks scrolled-under content (§9.7).
+  const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'y', edges: 'end' })
   /**
    * The body's ref, one for the life of the sheet. A ref that changes identity is detached and
    * attached again on every render, and `attachFadeEdges` observes the body afresh each time
