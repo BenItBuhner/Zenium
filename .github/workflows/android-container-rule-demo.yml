@@ -1,0 +1,102 @@
+name: Android container rule demo
+
+# Records PR #232's container rule on the phone on a hardware-accelerated Android emulator: an
+# internal page (Settings) asked from a private tab opens as a regular-container tab that still
+# remembers the private tab as its opener. The scene: a private tab from the app menu (#223's
+# session card posted, FLAG_SECURE on), Settings from the menu with the private tab in front
+# (default container, the private opener, the private tab untouched, one Settings tab), the
+# system's Back at the landing returning to the private tab and closing Settings, Settings again
+# and the private tab closed from the Tabs button's quick menu with Settings left open (the
+# session ends: the card gone, the private profile wiped, FLAG_SECURE off, Settings still there),
+# and `zenium://settings/privacy` typed into a fresh private tab's pill moving the one regular
+# Settings tab to Privacy. Findings in android-container-rule-findings.txt; a check that fails
+# fails the run.
+#
+# The engine: private tabs run on a WebView profile of their own, which needs
+# WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not have it, so the demo
+# runs on an AOSP image with a Chromium snapshot SystemWebView.apk swapped in, under
+# swiftshader_indirect – the private tabs demo's recipe (its header has the measurements). The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file picks the
+# driver and the engine. A scratch workflow of the phone review of PR #232: it is not part of
+# that PR and goes with its branch.
+on:
+  workflow_dispatch:
+  # The one dispatch of the review scene, on the scratch branch alone; removed after the run.
+  push:
+    branches:
+      - cursor/pr232-phone-scene-ead3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-container-rule-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: container rule demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ContainerRuleDemo
+        DEMO_DIR=container-rule-demo
+        DEMO_OUT=artifacts/android-container-rule-demo
+        DEMO_VIDEO=android-container-rule-demo.mp4
+        DEMO_THEME=light
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-container-rule-demo
+      artifact-path: artifacts/android-container-rule-demo/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: container rule demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.ContainerRuleDemo
+        DEMO_DIR=container-rule-demo
+        DEMO_OUT=artifacts/android-container-rule-demo
+        DEMO_VIDEO=android-container-rule-demo.mp4
+        DEMO_THEME=light
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-container-rule-demo-second-boot
+      artifact-path: artifacts/android-container-rule-demo/
+      timeout-minutes: 60
