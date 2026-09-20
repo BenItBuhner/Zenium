@@ -406,18 +406,23 @@ function highlightApi(doc: Document): HighlightApi | null {
  * changes (the extras' syllable marks split its text nodes; a mutation drops the cache).
  */
 let readerBlocksCache: { article: Element; blocks: DomBlock[] } | null = null
-let readerObserver: MutationObserver | null = null
+let readerObserved: { article: Element; observer: MutationObserver } | null = null
 
 export function readerBlocks(article: Element, lang: string): DomBlock[] {
   if (readerBlocksCache && readerBlocksCache.article === article) return readerBlocksCache.blocks
   const blocks = walkBlocks(article, lang)
   readerBlocksCache = { article, blocks }
-  const view = article.ownerDocument.defaultView
-  if (!readerObserver && view && typeof view.MutationObserver === 'function') {
-    readerObserver = new view.MutationObserver(() => {
-      readerBlocksCache = null
-    })
-    readerObserver.observe(article, { childList: true, characterData: true, subtree: true })
+  if (readerObserved?.article !== article) {
+    readerObserved?.observer.disconnect()
+    readerObserved = null
+    const view = article.ownerDocument.defaultView
+    if (view && typeof view.MutationObserver === 'function') {
+      const observer = new view.MutationObserver(() => {
+        readerBlocksCache = null
+      })
+      observer.observe(article, { childList: true, characterData: true, subtree: true })
+      readerObserved = { article, observer }
+    }
   }
   return blocks
 }
