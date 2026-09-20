@@ -6,6 +6,13 @@ import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
 import { pdfReportOf } from '@shared/pdfViewerProtocol'
+import {
+  blocksFromHtml,
+  type ReadAloudExtractRequest,
+  type ReadAloudExtraction,
+  type ReadAloudVoice
+} from '@shared/readAloud'
+import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
 import { createPreviewDownloads } from './previewDownloads'
 import { previewPdfVariantOf } from './previewPdf'
@@ -392,6 +399,84 @@ export function createPreviewBridge(): NativeBridge {
       voiceRun++
     }
   }
+  // The stand-in text-to-speech engine behind the core's `SpeechHost` (`speech.*`): the voices
+  // are PREVIEW_VOICES, and an utterance "plays" as timed events – `start`, one `word` per word
+  // at the rate's pace, `end` – so the read-aloud player's controls work here as they do on a
+  // device (the pause is a stop; play speaks the sentence again). `stop` silences the run. The
+  // script (`?readAloud=<status>`, or a preview state's PREVIEW_READ_ALOUD_EVENT) bends the
+  // engine towards a state a still needs: `loading` never lists its voices (the core waits on
+  // them, the player's busy state), `error` lists none (the core's `no-voice`), `ended` ends
+  // every utterance at once (the core walks to the text's end). A script change is a voices
+  // change to the core (`speech.voicesChanged`), so the list it cached from the last state is
+  // dropped and the next start asks the engine again.
+  let readAloudScript = params.get('readAloud') ?? 'playing'
+  const voicesChanged = (): void => hostGlobal().hostEvent('speech.voicesChanged', 'null')
+  window.addEventListener(PREVIEW_READ_ALOUD_EVENT, (e) => {
+    readAloudScript = (e as CustomEvent<string>).detail
+    voicesChanged()
+  })
+  let speechRun = 0
+  const speech = {
+    voices: (): Promise<ReadAloudVoice[]> => {
+      if (readAloudScript === 'loading') return new Promise<ReadAloudVoice[]>(() => undefined)
+      if (readAloudScript === 'error') {
+        // The core gives a voiceless host a grace period for its list to arrive (a real engine
+        // still binding); an engine that says its voices changed and lists none again ends it.
+        window.setTimeout(voicesChanged, 60)
+        return Promise.resolve([])
+      }
+      return Promise.resolve(PREVIEW_VOICES)
+    },
+    speak: (utteranceId: string, text: string, rate: number, queue: 'flush' | 'add'): void => {
+      // No queue in the stand-in: the next utterance goes when it is asked for.
+      if (queue === 'add') return
+      const run = ++speechRun
+      const emit = (event: Record<string, unknown>): void => {
+        if (speechRun === run)
+          hostGlobal().hostEvent('speech.event', JSON.stringify({ utteranceId, ...event }))
+      }
+      let at = 80
+      window.setTimeout(() => emit({ type: 'start' }), at)
+      if (readAloudScript === 'ended') {
+        window.setTimeout(() => emit({ type: 'end' }), at + 40)
+        return
+      }
+      const pace = 280 / Math.max(0.5, Math.min(4, rate || 1))
+      for (const match of text.matchAll(/\S+/g)) {
+        at += pace
+        const charIndex = match.index ?? 0
+        const length = match[0].length
+        window.setTimeout(() => emit({ type: 'word', charIndex, length }), at)
+      }
+      window.setTimeout(() => emit({ type: 'end' }), at + pace)
+    },
+    stop: (): void => {
+      speechRun++
+    }
+  }
+  // The stand-in page's answer to the core's `readAloud.extract` (the real page script's, on a
+  // device): the stand-in article as blocks, a frame later, each placed at a path the stand-in
+  // never resolves (the highlight is the page script's paint; the chrome shows none here).
+  const answerReadAloudExtract = (tabId: string, message: unknown): boolean => {
+    const request = message as Partial<ReadAloudExtractRequest> | null
+    if (!request || request.type !== 'readAloud' || request.action !== 'extract') return false
+    const requestId = request.requestId
+    if (typeof requestId !== 'string') return false
+    window.setTimeout(() => {
+      const lang = PREVIEW_ARTICLE.lang ?? 'en'
+      const extraction: ReadAloudExtraction = {
+        requestId,
+        title: PREVIEW_ARTICLE.title ?? '',
+        lang,
+        blocks: blocksFromHtml(PREVIEW_ARTICLE.content ?? '', lang).map((block, index) => ({
+          ...block,
+          at: { path: [1, index], run: 0, offset: 0 }
+        }))
+      }
+      viewEvent(tabId, 'pageMessage', { type: 'readAloud', readAloud: extraction })
+    }, 40)
+    return true
+  }
   // `?qr=<script>` picks what the stand-in camera does (`previewQrScript`): the camera buttons
   // show, and a start plays the script's events back to the chrome's scan sheet – a drawn still
   // stands in for the live preview, which only a device can lay over the sheet. A preview state
@@ -463,6 +548,7 @@ export function createPreviewBridge(): NativeBridge {
       pinShortcuts: true,
       voiceSearch: true,
       qrScan: true,
+      readAloud: true,
       files,
       downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
@@ -604,7 +690,9 @@ export function createPreviewBridge(): NativeBridge {
       reloads.delete(String(tabId))
       viewEvent(String(tabId), 'stopLoading', navState(frame))
     },
-    'view.postMessage': () => undefined,
+    'view.postMessage': ({ tabId, message }) => {
+      answerReadAloudExtract(String(tabId), message)
+    },
     // The launcher's dialog stands in for itself: a pin is accepted a moment later.
     'shortcut.pin': ({ id }) => {
       setTimeout(() => host().hostEvent('shortcut.pinned', JSON.stringify({ id })), 700)
@@ -889,6 +977,15 @@ export function createPreviewBridge(): NativeBridge {
     'voice.start': () => voice.start(),
     'voice.cancel': () => voice.cancel(),
     'voice.openSettings': () => console.info('[zen preview] app settings (microphone)'),
+    'speech.voices': () => speech.voices(),
+    'speech.speak': ({ utteranceId, text, rate, queue }) =>
+      speech.speak(
+        String(utteranceId),
+        String(text ?? ''),
+        Number(rate) || 1,
+        queue === 'add' ? 'add' : 'flush'
+      ),
+    'speech.stop': () => speech.stop(),
     'app.openPrivateDnsSettings': () => console.info('[zen preview] private DNS settings'),
     'qr.start': () => qr.start(),
     'qr.cancel': () => qr.cancel(),
@@ -1211,6 +1308,73 @@ export function extensionPageDocument(page: PreviewExtensionPage): string {
 /** A preview state picks the stand-in recogniser's script: the event's detail is the script's name. */
 export const PREVIEW_VOICE_EVENT = 'zen-preview-voice'
 
+/**
+ * The stand-in text-to-speech engine's voices (`speech.voices`), shaped and named as
+ * `ReadAloud.kt` reports Google's (`ReadAloudLogic.voices`): `id` the engine's voice name, the
+ * row's name the locale as the device's language spells it, numbered in rank order where the
+ * locale has more than one voice and plain where it has one; the engine's default first, then by
+ * quality; a few languages so the picker's "Other languages" group shows; one network voice.
+ */
+export const PREVIEW_VOICES: ReadAloudVoice[] = [
+  {
+    id: 'en-gb-x-gba-local',
+    name: 'English (United Kingdom) 1',
+    lang: 'en-GB',
+    local: true,
+    quality: 'high',
+    default: true
+  },
+  {
+    id: 'en-gb-x-rjs-local',
+    name: 'English (United Kingdom) 2',
+    lang: 'en-GB',
+    local: true,
+    quality: 'normal'
+  },
+  {
+    id: 'en-us-x-iom-local',
+    name: 'English (United States) 1',
+    lang: 'en-US',
+    local: true,
+    quality: 'high'
+  },
+  {
+    id: 'en-us-x-tpd-network',
+    name: 'English (United States) 2',
+    lang: 'en-US',
+    local: false,
+    quality: 'high'
+  },
+  {
+    id: 'en-au-x-aua-local',
+    name: 'English (Australia)',
+    lang: 'en-AU',
+    local: true,
+    quality: 'normal'
+  },
+  {
+    id: 'de-de-x-deb-local',
+    name: 'German (Germany)',
+    lang: 'de-DE',
+    local: true,
+    quality: 'high'
+  },
+  {
+    id: 'fr-fr-x-frb-local',
+    name: 'French (France)',
+    lang: 'fr-FR',
+    local: true,
+    quality: 'normal'
+  },
+  {
+    id: 'es-es-x-eea-local',
+    name: 'Spanish (Spain)',
+    lang: 'es-ES',
+    local: true,
+    quality: 'normal'
+  }
+]
+
 /** What the stand-in recogniser does for `?voice=<name>`: the start's answer, then its events in order with the pause before each. */
 export interface PreviewVoiceScript {
   outcome: VoiceStartOutcome
@@ -1277,6 +1441,33 @@ export function previewVoiceScript(name: string): PreviewVoiceScript {
 
 /** A preview state picks the stand-in camera's script: the event's detail is the script's name. */
 export const PREVIEW_QR_EVENT = 'zen-preview-qr'
+
+/**
+ * A preview state picks the stand-in speech engine's script (`readAloud=<status>`): the event's
+ * detail is the status the still wants (`playing`, `paused`, `loading`, `ended`, `error`).
+ */
+export const PREVIEW_READ_ALOUD_EVENT = 'zen-preview-read-aloud'
+
+/**
+ * The article `reader=` shows and `readAloud=` reads: a few paragraphs, a heading and a quote,
+ * enough to fill a phone; the stand-in page answers the core's `readAloud.extract` with it.
+ */
+export const PREVIEW_ARTICLE: RawArticle = {
+  title: 'Why coffee tastes different at altitude',
+  byline: 'Ada Marlowe',
+  siteName: 'The Roastery Journal',
+  excerpt: 'Pressure, water and a slow boil: what changes in a cup a mile up.',
+  lang: 'en',
+  dir: 'ltr',
+  content: [
+    '<p>Water boils cooler the higher you climb: at a mile up it gives out near 95 °C, and a brew that leans on a rolling boil never quite gets there. The grounds sit in water a few degrees short of what the recipe assumed, and the cup comes out thinner, brighter, a little sour at the edges.</p>',
+    '<p>Roasters who work at altitude learn to lean the other way. A finer grind gives the water more surface to pull from; a longer steep makes up for the cooler pour. Neither is a fix so much as a trade – more body, but more of the bitter compounds that a hotter, shorter brew would have left behind.</p>',
+    '<h2>The pressure in the pot</h2>',
+    '<p>Espresso complicates the story. A machine holds its water at nine bars whatever the air outside is doing, so the extraction itself changes little. What changes is everything around it: the beans lose moisture faster in thin, dry air, and a bag opened on Monday tastes of Thursday by Wednesday.</p>',
+    '<blockquote><p>“We do not roast for the bean. We roast for the room it will be drunk in.”</p></blockquote>',
+    '<p>The oldest advice still holds. Taste as you go, and let the cup, not the recipe, have the last word.</p>'
+  ].join('\n')
+}
 
 /** What the stand-in camera does for `?qr=<name>`: the start's answer, then its events in order with the pause before each. */
 export interface PreviewQrScript {

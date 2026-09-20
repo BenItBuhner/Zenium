@@ -20,6 +20,7 @@ import type {
   MenuPopupOptions,
   Platform,
   ShortcutHost,
+  SpeechHost,
   SpellcheckHost,
   StoreIO,
   TabView,
@@ -200,6 +201,8 @@ interface HarnessOptions {
   confirm?: boolean
   /** Documents already in the store when the browser starts (`webapps.json`, …). */
   files?: Record<string, string>
+  /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
+  speech?: boolean
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -309,7 +312,18 @@ function harness(
         }
       : {}),
     ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
-    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {})
+    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {}),
+    ...(opts.speech
+      ? {
+          speech: stub<SpeechHost>({
+            voices: () => Promise.resolve([]),
+            onVoicesChanged: () => undefined,
+            onEvent: () => undefined,
+            speak: () => undefined,
+            stop: () => undefined
+          })
+        }
+      : {})
   }
   const browser = new Browser(platform)
   browser.start()
@@ -457,6 +471,39 @@ describe('the app menu', () => {
       // The chrome draws the surface: a popover under the pill on a mouse, a sheet on a phone.
       expect(h.sent).toContain('reader.preferences')
     }
+  })
+
+  it('offers Listen to This Page on a phone with a speech engine, under Reader View and gated as it is', async () => {
+    // No engine, no item; the desktop's turn is the services program's (the reader's own controls).
+    expect(appMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).not.toContain(
+      'Listen to This Page'
+    )
+    expect(appMenu(pageHarness({ ...DESKTOP, readAloud: true }, { speech: true }))).not.toContain(
+      'Listen to This Page'
+    )
+    const h = pageHarness({ ...ANDROID, readAloud: true }, { formFactor: 'phone', speech: true })
+    const menu = appMenu(h)
+    expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
+    // The reader core's readability signal gates it exactly as it gates Reader View.
+    expect(item(h.items(), 'Reader View').enabled).toBe(false)
+    expect(item(h.items(), 'Listen to This Page').enabled).toBe(false)
+    h.browser.tabs.tab(h.tabId)!.readerable = true
+    appMenu(h)
+    expect(item(h.items(), 'Reader View').enabled).toBe(true)
+    expect(item(h.items(), 'Listen to This Page').enabled).toBe(true)
+    // The click starts the core's session on the tab, which asks the page script for the text.
+    h.viewCalls.length = 0
+    h.click('Listen to This Page')
+    await settle()
+    expect(h.browser.readAloud.uiState()?.tabId).toBe(h.tabId)
+    expect(
+      h.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"top"')
+      )
+    ).toBe(true)
   })
 
   it('on a phone drops what only a desktop window can use', () => {
@@ -1582,6 +1629,48 @@ describe('the selection toolbar', () => {
     )
     expect(h.browser.menus.selectionToolbar(h.tabId, '   ')).toEqual([])
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
+  })
+
+  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection', async () => {
+    expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
+      []
+    )
+    const h = pageHarness({ ...ANDROID, readAloud: true }, { ...PHONE, speech: true })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
+      { id: 'search', title: 'Search Google' },
+      { id: 'share', title: 'Share' },
+      { id: 'readAloud', title: 'Listen' }
+    ])
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”',
+      'Share…',
+      'Listen'
+    ])
+    // Without an engine the menu has no such item either. (The item is worded "Listen", the app
+    // menu's verb, so that beside Google's process-text "Read aloud" the pair reads as two things.)
+    expect(
+      pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
+    ).not.toContain('Listen')
+    // Nor does the desktop's right-click menu with one: its read aloud is the services program's
+    // own UI, and the item would start the phone's docked player in the desktop frame.
+    const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
+    expect(desktop.browser.readAloud.available).toBe(true)
+    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Listen')
+    // The touch starts the core's one session from the selection: the page script is asked for
+    // the selection's text (the model reads the selection alone, as Chrome does).
+    h.viewCalls.length = 0
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'readAloud', 'quantum foam')).toBe(true)
+    await settle()
+    expect(h.browser.readAloud.uiState()).toMatchObject({ tabId: h.tabId, source: 'selection' })
+    expect(
+      h.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"selection"')
+      )
+    ).toBe(true)
   })
 
   it('takes at most SELECTION_TEXT_MAX characters of a host selection', () => {

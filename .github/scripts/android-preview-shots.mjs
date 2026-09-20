@@ -23,7 +23,8 @@
 //                      for editing), `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
-//                      (`&show=<text>` scrolls an item into view) or `menu=tabs` (the Tabs
+//                      (`&show=<text>` scrolls an item into view; `&article` marks the page an
+//                      article, for the items an article enables) or `menu=tabs` (the Tabs
 //                      button's quick menu), `prompt=<permission>` (the permission prompt
 //                      sheet), `private=<surface>` (`newtab`: a private tab on its new tab page,
 //                      `page`: on a page (`&url=<page>`), `overview`: the overview on its Private
@@ -34,7 +35,10 @@
 //                      of its states; `&then=tap:More` opens the overview's header menu on the
 //                      pane, `;tap:Close Private Tabs (1)` after it the question), `find=<text>`,
 //                      `pull=<n>`,
-//                      `zoom=<factor>` (the page zoom sheet), `error=<code>&url=<failed url>`
+//                      `zoom=<factor>` (the page zoom sheet), `readAloud=<status>` (read
+//                      aloud's docked player with the model scripted to `playing`, `paused`,
+//                      `loading`, `ended` or `error`; `&rate=<n>` sets the speed chip, `&voices`
+//                      opens the voice picker), `error=<code>&url=<failed url>`
 //                      (the zen://error page; see `previewSpec.ts`), `overview` (the tab
 //                      overview over the active page) or the messages and the load
 //                      bar: `toast=<text>&action=<label>` (`&kind=error`), `banners=<n>`,

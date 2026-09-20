@@ -56,6 +56,21 @@ export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] a
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
 
 /**
+ * The read-aloud player's scripted states (`readAloud=<status>`): the model's `ReadAloudStatus`
+ * values a docked player shows – `playing` (the default), `paused`, `loading` (the engine
+ * preparing: the play control busy), `ended` (the last sentence read) and `error` (no voice for
+ * the text's language); `idle` has no panel, so it is not one.
+ */
+export const PREVIEW_READ_ALOUD_STATUSES = [
+  'playing',
+  'paused',
+  'loading',
+  'ended',
+  'error'
+] as const
+export type PreviewReadAloudStatus = (typeof PREVIEW_READ_ALOUD_STATUSES)[number]
+
+/**
  * The private-tab surfaces a preview state may show (`private=<surface>`): a private tab on its
  * new tab page (`newtab`; `new` is the same, as #135 first spelt it) or on a page (`page`;
  * `url=<page>` names it, example.com by default; `private=<url>` is that page as well), the tab
@@ -197,6 +212,12 @@ export type PreviewState =
       menu: PreviewMenu
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
+      /**
+       * The active page reads as an article first (`article`): the stand-in host cannot run the
+       * readability probe inside a site's frame, so the items an article enables (Reader View,
+       * Listen to This Page) are shown enabled by marking the tab readerable, as the probe would.
+       */
+      article?: boolean
     }
   | {
       /** One of the chrome's own sheets, open over the active page; `then` steps are taken on it. */
@@ -253,6 +274,17 @@ export type PreviewState =
       /** The page zoom sheet, the active tab's site at `factor` (null: as it is). */
       kind: 'zoom'
       factor: number | null
+    }
+  | {
+      /**
+       * Read aloud's docked player on the active tab with the model's state scripted (a stand-in
+       * article's title, sentence 9 of 42), at `status`; `rate` on the speed chip; `voices` opens
+       * the voice picker sheet over it.
+       */
+      kind: 'readAloud'
+      status: PreviewReadAloudStatus
+      rate: number
+      voices: boolean
     }
   | {
       /** The active tab in Reader View on a stand-in article; `preferences` opens its text sheet. */
@@ -384,7 +416,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
- * button's quick menu (with `show=<text>` to scroll an item into view), `sheet=<name>` for one
+ * button's quick menu (with `show=<text>` to scroll an item into view; `article` marks the
+ * active page an article, so the items an article enables show enabled), `sheet=<name>` for one
  * of PREVIEW_SHEETS, the chrome's own sheets (the Extensions sheet the app menu's row opens;
  * `then=<steps>` takes steps on it: `tap:<row>` is the row's tap, `hold:<row>` its long press),
  * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
@@ -402,7 +435,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * (`pull=refresh` pulls past it and lets go), `barhide=<n>` for the phone bar held n percent
  * of the way off its edge by a scroll (`barhide=hidden` scrolls it off and lets go, so it rests
  * hidden), `zoom=<factor>` for the page zoom sheet with the
- * active tab's site at that factor (`zoom=` opens it as it is), `reader=article` for the active
+ * active tab's site at that factor (`zoom=` opens it as it is), `readAloud=<status>` for read
+ * aloud's docked player on the active tab with the model's state scripted at one of
+ * PREVIEW_READ_ALOUD_STATUSES (`readAloud=` is `playing`; `rate=<n>` sets the speed chip,
+ * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
  * sheet over it), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
@@ -428,11 +464,11 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `extension-page`, that over `group`, `group` over `overlay`, `overlay` over `menu`, `menu`
  * over `sheet`, `sheet` over the permission `prompt`, that over `private`, `private` over
  * `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along), `find` over
- * `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `reader`, `reader` over
- * `error`, `error` over the messages, the messages over `webapp`, `webapp` over `media`,
- * `media` over `download`, `download` over `popups`, `popups` over the security `prompt`,
- * that over `voice`, `voice` over `overview`, and `overview` over `urlbar`. A leading `#`
- * (the URL hash as read) is ignored.
+ * `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`, `readAloud`
+ * over `reader`, `reader` over `error`, `error` over the messages, the messages over `webapp`,
+ * `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups` over the
+ * security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over `urlbar`.
+ * A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -484,6 +520,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
     }
     const show = params.get('show')
     if (show) state.show = show
+    if (params.has('article')) state.article = true
     return state
   }
   const sheet = params.get('sheet')
@@ -540,6 +577,18 @@ export function parsePreviewSpec(spec: string): PreviewState {
   if (zoom !== null) {
     const factor = parseFloat(zoom)
     return { kind: 'zoom', factor: Number.isFinite(factor) && factor > 0 ? factor : null }
+  }
+  const readAloud = params.get('readAloud')
+  if (readAloud !== null) {
+    const rate = Number(params.get('rate'))
+    return {
+      kind: 'readAloud',
+      status: (PREVIEW_READ_ALOUD_STATUSES as readonly string[]).includes(readAloud)
+        ? (readAloud as PreviewReadAloudStatus)
+        : 'playing',
+      rate: Number.isFinite(rate) && rate >= 0.5 && rate <= 4 ? rate : 1,
+      voices: params.has('voices')
+    }
   }
   const reader = params.get('reader')
   if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }

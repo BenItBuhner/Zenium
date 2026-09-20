@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  The read-aloud demo's article (ReadAloudDemo.kt). Services' model (#246) reads the paragraphs
+  below sentence by sentence through the core's page script, which also paints the highlight; the
+  first sentence is long enough at 1x for the driver's pause step to fall inside it. The title is
+  the player's header line (ellipsized on a phone) and the media notification's; the paragraphs
+  make the page an article to the reader core's readability probe (isProbablyReaderable: enough
+  text in paragraphs), which is what gates Listen to This Page.
+-->
+<title>The lighthouse keeper's almanac: a long night of tides, lamps and the slow arithmetic of the sea</title>
+<style>
+  body { margin: 0; padding: 24px 20px 120px; font: 17px/1.55 Georgia, "Times New Roman", serif; color: #1f2328; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e6e6e6; background: #121212; } }
+  h1 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; }
+  .by { font: 13px/1.4 system-ui, sans-serif; opacity: .65; margin-bottom: 22px; }
+  p { margin: 0 0 16px; }
+  #word { background: rgba(255, 213, 79, .35); border-radius: 3px; padding: 0 2px; }
+</style>
+</head>
+<body>
+<article>
+  <h1>The lighthouse keeper's almanac</h1>
+  <div class="by">Zenium read-aloud demo · seven paragraphs, about nine hundred words</div>
+  <p>Every evening at a quarter past the hour the keeper climbed the one hundred and twelve steps to the lamp room, wound the clockwork that turned the lens, and wrote the state of the sea in a ledger that had belonged to his father. The ledger did not care for adjectives. It wanted the height of the tide in feet and tenths, the direction of the wind, whether the ferry had crossed, and how many of the harbour lights had come up before full dark.</p>
+  <p>He had learned early that the sea keeps its own <span id="word">arithmetic</span>. A spring tide arrives a little later each day, by about fifty minutes, so that a high water at noon on Monday is a high water near one on Tuesday, and the keeper who trusts yesterday's table walks down to a slipway already under water. The almanac on the shelf gave the times to the minute, but the almanac had been printed in a city three hundred miles away, and the bay had its own opinions about when the water should turn.</p>
+  <p>The lamp itself was simple. A wick, a reservoir of oil, a brass chimney and the great lens that gathered the flame and threw it twenty miles across the water. What was not simple was keeping it lit through a night of wind, when the draught pulled the flame sideways and the glass smoked and had to be wiped with a cloth kept warm inside his coat. He timed the wiping between the flashes so that no ship would see the light falter, and he counted under his breath the way a musician counts a rest.</p>
+  <p>Ships that passed in the night left him nothing but a wake and, sometimes, a bell. He came to know them by the interval of their engines carried across the water, the slow heavy beat of the collier and the quicker note of the mail boat, and he wrote those down too, though the ledger had no column for them. Years later a clerk from the harbour board would find the margins full of small notes about engines and think them the private code of a lonely man, which in a sense they were.</p>
+  <p>Weather came in from the south-west with a warning of about six hours. First the swell lengthened and the gulls came inland to sit in rows on the wall. Then the barometer, a fine instrument with a face the size of a dinner plate, began the long fall that meant a night without sleep. He would carry extra oil up the stairs before the rain started, check the lightning rod, and set the kettle on the small stove in the watch room so there would be tea at two in the morning, when the worst of it usually arrived.</p>
+  <p>On calm nights he read. The library boat came once a month and left a crate of whatever the town had finished with, so his education was a matter of chance: a year of Russian novels, a winter of botany, a summer given over entirely to the memoirs of a general he had never heard of. He read the way the lamp turned, steadily, a fixed number of pages between each look at the sea, and he could tell you afterwards not what a book had said but what the weather had been doing while he read it.</p>
+  <p>When the light was automated he stayed on for a season to teach the machine his habits, or so he liked to say. The truth was that the machine needed no teaching and the harbour board needed a signature on a form. He signed it in the lamp room, at a quarter past the hour, with the lens turning above him and the ferry crossing below, and he wrote in the ledger, in the column for the state of the sea, one word that his father would have struck out: <span id="tail">calm</span>.</p>
+</article>
+</body>
+</html>
