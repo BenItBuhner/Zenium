@@ -473,7 +473,7 @@ describe('the app menu', () => {
     // the row's Download Page is the phone's one save entry, so no 'Save Page As…' row (TB-08).
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
       'Forward',
-      'Bookmark This Page',
+      'Bookmark',
       'Download Page',
       'Page Info',
       'Reload',
@@ -642,7 +642,7 @@ describe("the phone menu's icon row", () => {
     const h = phone()
     expect(h.row().map((item) => [item.label, item.glyph])).toEqual([
       ['Forward', 'forward'],
-      ['Bookmark This Page', 'star'],
+      ['Bookmark', 'star'],
       ['Download Page', 'download'],
       ['Page Info', 'info'],
       ['Reload', 'reload']
@@ -691,7 +691,7 @@ describe("the phone menu's icon row", () => {
     const h = phone()
     const star = (): MenuItemTemplate => h.row()[1]
     expect(star()).toMatchObject({
-      label: 'Bookmark This Page',
+      label: 'Bookmark',
       checked: false,
       enabled: true
     })
@@ -721,7 +721,7 @@ describe("the phone menu's icon row", () => {
     ])
     // A blank tab has nothing to bookmark.
     const blank = phone('zen://blank')
-    expect(blank.row()[1]).toMatchObject({ label: 'Bookmark This Page', enabled: false })
+    expect(blank.row()[1]).toMatchObject({ label: 'Bookmark', enabled: false })
   })
 
   it('Download Page saves a web page through page.savePage and is off elsewhere; it is the phone menu’s one save entry', () => {

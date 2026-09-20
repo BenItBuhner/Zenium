@@ -113,7 +113,7 @@ function appMenu(
     items: [
       item('menu_1_1', 'Forward', { glyph: 'forward', enabled: patch.forward ?? false }),
       // The star is a plain item whose `checked` is the fill (a stateful glyph, not a checkbox).
-      item('menu_1_2', patch.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page', {
+      item('menu_1_2', patch.bookmarked ? 'Edit Bookmark' : 'Bookmark', {
         glyph: 'star',
         checked: patch.bookmarked ?? false
       }),
@@ -205,7 +205,7 @@ describe('the icon row', () => {
     expect(row()!.parentElement!.firstElementChild).toBe(row())
     expect(buttons().map((b) => b.getAttribute('aria-label'))).toEqual([
       'Forward',
-      'Bookmark This Page',
+      'Bookmark',
       'Download Page',
       'Page Info',
       'Reload'
@@ -226,7 +226,7 @@ describe('the icon row', () => {
     }
     expect(button('Forward').disabled).toBe(true)
     expect(button('Page Info').disabled).toBe(true)
-    expect(button('Bookmark This Page').disabled).toBe(false)
+    expect(button('Bookmark').disabled).toBe(false)
     expect(button('Download Page').disabled).toBe(false)
     expect(button('Reload').disabled).toBe(false)
     // The glyphs are drawn, not named twice: no text inside the buttons for a reader to read.
@@ -284,7 +284,7 @@ describe('the icon row', () => {
 describe('the star', () => {
   it('opens unfilled on a page that is not bookmarked and fills on the press, on one spring to the end, as the sheet leaves; the core’s save follows once the sheet is gone', async () => {
     await show(appMenu({ bookmarked: false }))
-    const star = button('Bookmark This Page')
+    const star = button('Bookmark')
     expect(star.dataset.filled).toBe('false')
     expect(fillOpacity()).toBe(0)
     expect(fillScale()).toBeCloseTo(0.6)
@@ -351,14 +351,14 @@ describe('the star', () => {
     })
     await show(appMenu({ bookmarked: false }))
     expect(fillOpacity()).toBe(0)
-    click(button('Bookmark This Page'))
+    click(button('Bookmark'))
     expect(fillOpacity()).toBe(1)
     expect(fillScale()).toBeCloseTo(1)
   })
 
   it('the fill runs on transform and opacity alone (§11: nothing else per frame)', async () => {
     await show(appMenu({ bookmarked: false }))
-    click(button('Bookmark This Page'))
+    click(button('Bookmark'))
     frame()
     frame()
     const style = starFill().getAttribute('style') ?? ''
@@ -383,7 +383,7 @@ describe('on a mouse (the popover)', () => {
     const labels = [...document.querySelectorAll<HTMLElement>('button')].map((b) => b.textContent)
     expect(labels).toEqual([
       'Forward',
-      'Bookmark This Page',
+      'Bookmark',
       'Download Page',
       'Page Info',
       'Reload',

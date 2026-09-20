@@ -480,9 +480,10 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         /** How late the slow page's script answers: long enough to open the menu and touch Stop. */
         private const val SLOW_MS = 9_000L
 
-        // The row's labels (v2 §9.1 Title Case for menu items; the star reads by the page's state).
+        // The row's labels (v2 §9.1 Title Case for menu items; the star reads by the page's state,
+        // §9.13's words: "Bookmark" outlined, "Edit Bookmark" filled).
         private const val LABEL_FORWARD = "Forward"
-        private const val LABEL_STAR = "Bookmark This Page"
+        private const val LABEL_STAR = "Bookmark"
         private const val LABEL_EDIT = "Edit Bookmark"
         private const val LABEL_DOWNLOAD = "Download Page"
         private const val LABEL_INFO = "Page Info"

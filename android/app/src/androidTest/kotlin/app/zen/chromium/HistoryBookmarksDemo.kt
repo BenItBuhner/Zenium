@@ -692,12 +692,12 @@ class HistoryBookmarksDemo :
         private const val BOOKMARKS_SEARCH = "Search bookmarks"
 
         // The app menu's entries (the engine's labels). The star is the icon row's button at the
-        // head of the phone's menu (TB-08 / TB-16), named "Bookmark This Page" on a page that is
-        // not bookmarked; it left the Bookmarks submenu when the row came.
+        // head of the phone's menu (TB-08 / TB-16), named "Bookmark" on a page that is not
+        // bookmarked (v2 §9.13, Chrome's word); it left the Bookmarks submenu when the row came.
         private const val MENU_HISTORY = "History"
         private const val MENU_BOOKMARKS = "Bookmarks"
         private const val MENU_BOOKMARKS_PANEL = "Show Bookmarks"
-        private const val MENU_STAR = "Bookmark This Page"
+        private const val MENU_STAR = "Bookmark"
 
         /** The loopback pages, in the order the warm-up visits them (the first is the seeded tab's). */
         private val PAGES = listOf(
