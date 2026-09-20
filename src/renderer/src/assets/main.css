@@ -5926,6 +5926,18 @@
   border-radius: 8px;
 }
 /*
+ * The bar's buttons sit on the 36 pitch their 32 boxes had (v2 §9.3 as amended by the lead's L1
+ * ruling on #237): the 44 box is laid over a 32 margin box, so neighbours overlap by 8 the way
+ * the pill's chips overlap on their 28, and the band keeps its room for the pill – 252 wide with
+ * the host's 198 px on the 412 phone at scale 1, where 44 boxes in flow would have taken 48 of
+ * it. The pressed fill still draws the whole 44 and the tree reports the 44 bounds; the glyphs
+ * stay where they were. The editor's preview draws the same buttons and measures this margin
+ * box, so it lays out on the same pitch (`BarPreview`).
+ */
+:root[data-form-factor='phone'] [data-bar-item] {
+  margin-inline: -6px;
+}
+/*
  * A tab card's close lies over the card's corner from outside its clip (a sibling of the card's
  * button, A11Y-01), so its outer corner is the card's and its pressed fill never shows past it.
  */

@@ -1047,6 +1047,18 @@ describe('the system font size above the default (§4 / §9.2, A11Y-05)', () => 
     expect(block('.zen-overview-card-header')).toMatch(/height: var\(--zen-overview-card-header\);/)
   })
 
+  it('lays the bar’s 44 boxes on the 36 pitch their 32 boxes had, the pill keeping its room (§9.3, the lead’s L1 ruling)', () => {
+    // The phone's icon button is the 44 box; the bar's controls overlap by 8 through their
+    // margins, as the pill's chips do on their 28, so the pill stays 252 wide on the 412 phone.
+    const box = block(":root[data-form-factor='phone'] .zen-toolbar-button")
+    expect(box).toMatch(/width: 44px;\s*height: 44px;/)
+    const room = css.indexOf(":root[data-form-factor='phone'] [data-bar-item] {")
+    expect(room).toBeGreaterThanOrEqual(0)
+    expect(css.slice(room, css.indexOf('\n}', room))).toMatch(/margin-inline: -6px;/)
+    expect(layered(room, css)).toBe(false)
+    expect(44 - 2 * 6 + 4).toBe(36)
+  })
+
   it('clamps the bold-text weights at 900', () => {
     for (const [token, base] of [
       ['--v2-weight-body', 400],
