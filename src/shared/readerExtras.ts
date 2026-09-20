@@ -368,6 +368,19 @@ export class LineFocus {
     if (this.active) this.place()
   }
 
+  /**
+   * The document's typography changed under the band (text spacing, size, font or column
+   * width from the preferences): the line height it was measured with is stale, so a band
+   * anchored by a click takes the article's line height again and every band is placed again.
+   * Without it a five-line band set at normal spacing stayed four lines tall at wider spacing
+   * until the next scroll (the Android record).
+   */
+  relayout(): void {
+    if (!this.active) return
+    if (this.anchor) this.anchor = { lineTop: this.anchor.lineTop, lineHeight: this.defaultLineHeight() }
+    this.place()
+  }
+
   /** The band's edges in view coordinates (for tests and the proof); null when off. */
   band(): { top: number; bottom: number } | null {
     if (!this.masks) return null
@@ -566,6 +579,12 @@ export class LineFocus {
 // Installation
 // ---------------------------------------------------------------------------
 
+/** The root attributes that are the extras' own (a change to any other is a typography change). */
+const EXTRAS_ATTRIBUTES: ReadonlySet<string> = new Set([
+  READER_LINE_FOCUS_ATTRIBUTE,
+  READER_SYLLABLES_ATTRIBUTE
+])
+
 /** The extras' state as the reader root's attributes say it. */
 export function extrasOf(root: Element): { lineFocus: ReaderLineFocus; syllables: boolean } {
   const raw = Number(root.getAttribute(READER_LINE_FOCUS_ATTRIBUTE))
@@ -605,10 +624,13 @@ export function installReaderExtras(doc: Document): ReaderExtras | null {
   }
   const view = doc.defaultView
   if (view && typeof view.MutationObserver === 'function') {
-    new view.MutationObserver(apply).observe(root, {
-      attributes: true,
-      attributeFilter: [READER_LINE_FOCUS_ATTRIBUTE, READER_SYLLABLES_ATTRIBUTE]
-    })
+    // Every attribute of the root, not just the extras' two: the reader script renders each
+    // preference there (the theme, font, size, width and spacing), and the ones that change the
+    // text's line height move the band's lines under it.
+    new view.MutationObserver((records) => {
+      apply()
+      if (records.some((r) => !EXTRAS_ATTRIBUTES.has(r.attributeName ?? ''))) lineFocus.relayout()
+    }).observe(root, { attributes: true })
   }
   onReadAloudSentence((range) => lineFocus.follow(range))
   apply()
