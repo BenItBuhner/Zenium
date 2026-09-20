@@ -4792,10 +4792,99 @@
   }
 }
 
-/* A v2 sheet's header marks scrolled-under content with a hairline, not a fade (draft 9.7). */
-.zen-install-sheet .zen-sheet-scroll[data-fade-axis] {
-  -webkit-mask-image: none;
-  mask-image: none;
+@layer components {
+  /*
+   * The media sheet (`phone/MediaSheet.tsx`, MW-16: the in-app player the pill's Now playing
+   * chip opens) on the sheet chassis, which owns the surface, grip and 48 header (`.zen-sheet`,
+   * v2 §6, §9.16): only what this sheet adds. The composition is the media notification's – the
+   * artwork as a 56 tile (a note glyph on the card fill without one) beside the title and the
+   * artist · site line – then the §10.4 slider row for the position (the zoom row's track and
+   * thumb, `.zen-zoom-slider`, between the 44 px seek buttons, the times above it in
+   * `tabular-nums` (§4) so 0:09 → 0:10 moves nothing) and the transport row: previous, play /
+   * pause, next as §9.3 icon buttons – the same box, the middle one's glyph solid as its one
+   * emphasis, the way Chrome's global media controls draw it – the track buttons disabled at .4
+   * (§9.30) while the page handles neither.
+   */
+  /*
+   * The body carries no side padding of its own (§9.25: one gutter of 16, nothing nests a
+   * second): the `ListRow`s and the separator run edge to edge on the primitive's 16, the
+   * now-playing block and the transport take the 16 themselves, and the seek row hangs its 44
+   * step buttons 12 into it so their 20 glyphs sit on the line (the downloads sheet's
+   * arithmetic). 3 on top: 16 under the header's title line (§9.7).
+   */
+  .zen-media-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    /* No top padding of its own: the 48 header already holds §9.7's 16 below the title line (§9.16). */
+    padding: 0;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-media-now {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+  }
+  .zen-media-art {
+    display: flex;
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: var(--v2-radius-card);
+    background: var(--v2-card);
+    object-fit: cover;
+  }
+  .zen-media-art-empty {
+    border: 1px solid var(--v2-card-border);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-media-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-media-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  /*
+   * The seek row: its 44 step buttons hang 12 into the gutter, so their boxes sit at 4 from the
+   * sheet's edge and the 20 glyphs on the 16 line (§9.25); the times above the track start and
+   * end where the track does (44 + 4 in from the buttons' edge).
+   */
+  .zen-media-seek {
+    display: flex;
+    flex-direction: column;
+    margin: 0 4px;
+  }
+  .zen-media-times {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 calc(var(--v2-icon-button) + 4px);
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--v2-line-small);
+  }
+  .zen-media-seek-row {
+    display: flex;
+    min-height: var(--v2-row);
+    align-items: center;
+    gap: 4px;
+  }
+  .zen-media-transport {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 0 16px;
+  }
 }
 
 /*
@@ -7882,7 +7971,8 @@
  * carrying no zen-v2- class – and a 28 px touch target around the 20 px disc (the whole 40 px
  * row moves it as well, Radix taking the press anywhere on the root). The Settings tab's Default
  * zoom row (`.zen-settings-zoom-stepper`, pages/settings/blocks.tsx) is the same slider row and
- * shares these rules, its ring in the page's tone since it sits on --v2-page.
+ * shares these rules, its ring in the page's tone since it sits on --v2-page; so is the media
+ * sheet's seek row (`phone/MediaSheet.tsx`), the position between its two seek buttons.
  */
 .zen-zoom-slider {
   height: var(--v2-control);

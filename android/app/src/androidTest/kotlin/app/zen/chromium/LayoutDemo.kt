@@ -148,7 +148,10 @@ class LayoutDemo : DemoHarness("layout-demo-state.json", "layout", "layout-demo"
         if (waitFor(CLEAR_LABEL, 6_000) != null) {
             SystemClock.sleep(2_000)
             shot("11-omnibox-long-start")
-            back()
+            // The shared close (by the chrome's state), not a back on the tree's word: the field
+            // takes the keyboard's back first, and a back past a closed field goes to the page.
+            val close = closeUrlField()
+            if (!close.ok) problems += "the omnibox's close: ${close.describe()}"
             SystemClock.sleep(1_500)
         }
 

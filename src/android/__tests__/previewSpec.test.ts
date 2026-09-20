@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PREVIEW_MEDIA,
   PREVIEW_OVERLAYS,
   PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
@@ -394,6 +395,39 @@ describe('parsePreviewSpec', () => {
       expand: true
     })
     expect(parsePreviewSpec('overlay=downloads')).not.toHaveProperty('expand')
+  })
+
+  it('has the page report media by variant, the in-app player opened on request', () => {
+    for (const variant of PREVIEW_MEDIA) {
+      expect(parsePreviewSpec(`media=${variant}`)).toEqual({
+        kind: 'media',
+        variant,
+        player: false
+      })
+      expect(parsePreviewSpec(`media=${variant}&player`)).toEqual({
+        kind: 'media',
+        variant,
+        player: true
+      })
+    }
+    expect(parsePreviewSpec('media=podcast')).toEqual({ kind: 'idle' })
+    // `sheet=` names the chrome's own sheets, so beside `media=` a bare `sheet` opens nothing;
+    // a named one wins over the media, as the precedence has it.
+    expect(parsePreviewSpec('media=audio&sheet')).toEqual({
+      kind: 'media',
+      variant: 'audio',
+      player: false
+    })
+    expect(parsePreviewSpec('media=audio&sheet=extensions')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    // An "Add to Home screen" surface wins over it; it wins over a transfer.
+    expect(parsePreviewSpec('webapp=banner&media=audio')).toEqual({
+      kind: 'webapp',
+      surface: 'banner'
+    })
+    expect(parsePreviewSpec('media=video&download=a.bin').kind).toBe('media')
   })
 
   it('describes a transfer for the stand-in downloader, with sensible defaults', () => {

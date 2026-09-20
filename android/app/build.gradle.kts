@@ -193,8 +193,10 @@ android {
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin")
-    sourceSets["test"].java.srcDirs("src/test/kotlin")
-    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin")
+    // src/sharedTest holds the demo harness's pure decisions (HarnessLogic.kt): one source, run on
+    // the JVM by the unit tests and on the device by the instrumentation, never part of the app.
+    sourceSets["test"].java.srcDirs("src/test/kotlin", "src/sharedTest/kotlin")
+    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin", "src/sharedTest/kotlin")
     // The preview host's demo web app (icon, screenshots) doubles as the Add to Home screen demo's
     // page assets, served by the driver's own loopback server; one copy, never part of the app.
     sourceSets["androidTest"].assets.srcDirs("src/androidTest/assets", "../../src/android/preview-assets")

@@ -46,6 +46,8 @@ const OWN_SCRIM_CONSUMERS = [
   'components/overlays/passwords/shared.tsx',
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
+  // The media sheet the pill's Now playing chip opens (MW-16).
+  'components/phone/MediaSheet.tsx',
   'components/phone/PhoneSheet.tsx',
   // Reader View's text preferences sheet (CT-20): the hosted `BottomSheet` with the size stepper,
   // the font, the colour theme and the column width.

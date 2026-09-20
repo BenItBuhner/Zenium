@@ -135,6 +135,41 @@ describe('BottomSheet on the recede chassis', () => {
     expect(sheets()[0].style.transform).toContain('scale(var(--zen-layer-scale, 1))')
   })
 
+  it('marks content scrolled under the header with the hairline, never a fade; the bottom edge keeps its fade (§9.7)', async () => {
+    render(<BottomSheet onDismissed={() => undefined}>rows</BottomSheet>)
+    await settle()
+    const sheet = sheets()[0]
+    const body = sheet.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    // A body of 900 in a 300 box, scrolled 100: content lies past both edges.
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 900 })
+    let top = 0
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v
+      }
+    })
+    act(() => {
+      body.scrollTop = 100
+      body.dispatchEvent(new Event('scroll'))
+    })
+    frames.run(1)
+    expect(sheet.getAttribute('data-scrolled')).toBe('true')
+    expect(body.dataset.fadeAxis).toBe('y')
+    expect(body.style.getPropertyValue('--zen-fade-start')).toBe('0px')
+    expect(body.style.getPropertyValue('--zen-fade-end')).toBe('16px')
+    // Back at the top: the hairline goes; the bottom fade stays while content lies past it.
+    act(() => {
+      body.scrollTop = 0
+      body.dispatchEvent(new Event('scroll'))
+    })
+    frames.run(1)
+    expect(sheet.hasAttribute('data-scrolled')).toBe(false)
+    expect(body.style.getPropertyValue('--zen-fade-start')).toBe('0px')
+    expect(body.style.getPropertyValue('--zen-fade-end')).toBe('16px')
+  })
+
   it('a press on the scrim dismisses on pointerdown, the recede reverses on the same spring, and the layer leaves the stack', async () => {
     const onDismissed = vi.fn()
     render(<BottomSheet onDismissed={onDismissed}>rows</BottomSheet>)
