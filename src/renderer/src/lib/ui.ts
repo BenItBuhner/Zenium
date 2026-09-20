@@ -244,6 +244,8 @@ export interface UiState {
   securityPromptOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
+  /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
+  screenPickerOpen: boolean
   /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
   windowPromptOpen: boolean
   /**
@@ -462,6 +464,7 @@ export const uiStore = createStore<UiState>(
     blockedPopupsPanel: null,
     securityPromptOpen: false,
     pageDialogOpen: false,
+    screenPickerOpen: false,
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
@@ -823,6 +826,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -880,6 +884,7 @@ export function invalidateSnapshot(): void {
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -1491,6 +1496,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
+    ui.screenPickerOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||

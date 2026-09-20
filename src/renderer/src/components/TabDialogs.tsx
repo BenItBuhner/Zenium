@@ -30,6 +30,7 @@ import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
 import { PrintPreviewDialog } from './print/PrintPreviewDialog'
 import { MediaLayer } from './phone/MediaSheet'
+import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
 import { ShareLayer } from './share/SharePopover'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
@@ -55,7 +56,8 @@ const TAB_ICONS = [
  * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
  * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
- * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
+ * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
+ * a page's `getDisplayMedia` waits on, the page's own dialogs
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
  * Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the Clear
@@ -125,6 +127,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <InstallLayer state={state} />
       {phone && <MediaLayer state={state} />}
       <InstallDialogLayer state={state} />
+      <ScreenPickerLayer state={state} />
       <ShareLayer state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
