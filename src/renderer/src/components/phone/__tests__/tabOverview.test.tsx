@@ -1457,6 +1457,31 @@ describe('the private pane', () => {
     expect(cellKeys()).toEqual(['pinned', `group:${GROUP}`, 'm1', 'm2', NEW_TAB_CELL])
   })
 
+  it('a Settings tab opened from a private tab sits on the Tabs pane with the regular surface (#232: a page tab never takes the private container)', async () => {
+    const { privateSurfaceActive } = await import('@renderer/lib/privateTabs')
+    // What the core makes of Settings asked from p1 since #232: a default-container tab that
+    // remembers the private tab as its opener, in front.
+    const settings = tab('settings', SETTINGS_URL, { title: 'Settings', openerTabId: 'p1' })
+    const state = withPrivate(
+      stateOf(
+        [settings, privateTab('p1', 'https://one.example/'), tab('a', 'https://a.example/')],
+        []
+      )
+    )
+    // The surface is the regular one while Settings is in view: no private theme, no guard
+    // (`privateSurfaceActive` is what `useTheme` and the Android host read), and the overview
+    // opens on the Tabs pane – its card among the regular ones, never on the Private pane.
+    expect(privateSurfaceActive(state, false)).toBe(false)
+    render(state)
+    expect(privateTabsStore.get().pane).toBeNull()
+    expect(selected('tabs')).toBe(true)
+    expect(grid().dataset.pane).toBe('tabs')
+    expect(cellKeys()).toEqual(['settings', 'a', NEW_TAB_CELL])
+    expect(privateSurfaceActive(state, true)).toBe(false)
+    act(() => segment('private').click())
+    expect(cellKeys()).toEqual(['p1', NEW_TAB_CELL])
+  })
+
   it('with no private tab the private pane is the explainer, whose button asks for a private tab', () => {
     render(withPrivate(stateOf([tab('a', 'https://a.example/')], [])))
     act(() => segment('private').click())
