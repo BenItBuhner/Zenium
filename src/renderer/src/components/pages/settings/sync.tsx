@@ -1,0 +1,239 @@
+import { FolderX } from 'lucide-react'
+import type { SyncStatus } from '@shared/types'
+import { cmd, run } from '@renderer/lib/api'
+import { downloadFolderLabel } from '@renderer/lib/downloadText'
+import { SYNC_COPY, SYNC_SCOPES, syncSetupStore, syncStatusLine } from '@renderer/lib/syncSetup'
+import { relativeTime } from '@renderer/lib/utils'
+import type { RowGroup, SettingsRow } from './model'
+import type { SectionContext } from './sections'
+import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncForms'
+
+/**
+ * Settings › Sync on a phone (design language v2 §10.3–10.4; ID-08's UI), the desktop pane
+ * (`overlays/SyncSection.tsx`) in its row form, reading `state.sync` and running the same
+ * `sync.*` commands. Before setup: the folder row (the system folder picker, the chosen tree's
+ * name as the description), the device name and Turn on sync, whose sheet is the passphrase
+ * form (§9.23 title block in Chrome's words, two secret fields, §9.30 busy while the key is
+ * derived and the folder read); What you sync in Chrome's order follows, so a device can leave a
+ * type out before its first push. Connected: Sync now with the status line as its description,
+ * the merge question as a sheet while the first sync waits on it, the §9.17 / §9.33 message row
+ * when the folder is lost (ink and a tinted glyph, no card) over the folder row that chooses it
+ * again, the device name, the other devices with their last-seen time, the toggles, and Turn off
+ * sync – a §9.23 prompt whose one choice, removing this device's file from the folder, is a
+ * checkbox row submitted with the action.
+ */
+export function syncGroups({ state }: SectionContext): RowGroup[] {
+  const sync = state.sync
+  return sync.enabled ? connectedGroups(sync) : setupGroups(sync)
+}
+
+// ---------------------------------------------------------------------------
+// Before setup
+// ---------------------------------------------------------------------------
+
+function setupGroups(sync: SyncStatus): RowGroup[] {
+  const pending = syncSetupStore.get().folder
+  return [
+    {
+      id: 'sync-setup',
+      heading: 'Set up sync',
+      description: SYNC_COPY.intro,
+      rows: [
+        {
+          kind: 'action',
+          id: 'sync-folder',
+          label: SYNC_COPY.folder,
+          description: pending ? downloadFolderLabel(pending) : SYNC_COPY.folderUnset,
+          keywords: FOLDER_KEYWORDS,
+          onPress: () => {
+            // A dismissed picker keeps the draft as it is.
+            void cmd('sync.chooseFolder', undefined).then((folder) => {
+              if (folder) syncSetupStore.set({ folder })
+            })
+          }
+        },
+        deviceNameRow(sync),
+        {
+          kind: 'action',
+          id: 'sync-turn-on',
+          label: SYNC_COPY.turnOn,
+          description: pending ? SYNC_COPY.turnOnHint : SYNC_COPY.turnOnNeedsFolder,
+          keywords: ['set up', 'enable', 'passphrase', 'encrypt'],
+          // Nothing to set up without a folder: laid out at 40 %, not pressable (§10.4).
+          disabled: pending === null,
+          form: {
+            title: SYNC_COPY.passphraseTitle,
+            description: SYNC_COPY.passphraseDescription,
+            render: (close) =>
+              pending ? (
+                <SyncPassphraseForm
+                  folder={pending}
+                  deviceName={sync.deviceName}
+                  scope={sync.scope}
+                  close={close}
+                />
+              ) : null
+          }
+        }
+      ]
+    },
+    scopeGroup(sync)
+  ]
+}
+
+const FOLDER_KEYWORDS = [
+  'folder',
+  'cloud drive',
+  'dropbox',
+  'google drive',
+  'onedrive',
+  'nextcloud',
+  'syncthing'
+] as const
+
+// ---------------------------------------------------------------------------
+// Connected
+// ---------------------------------------------------------------------------
+
+function connectedGroups(sync: SyncStatus): RowGroup[] {
+  const status: SettingsRow[] = []
+  if (sync.folderLost) {
+    // The §9.17 / §9.33 message row: the state's glyph in the danger ink on the label's line,
+    // the way out as the description in the same ink, and nothing to press – the folder row
+    // under it is the follow-up (§9.17: a group's next row is its action).
+    status.push({
+      kind: 'info',
+      id: 'sync-folder-lost',
+      label: SYNC_COPY.folderLost,
+      description: SYNC_COPY.folderLostHint,
+      tone: 'danger',
+      keywords: ['error', 'lost', 'revoked'],
+      leading: <FolderX className="zen-settings-glyph zen-settings-danger" aria-hidden="true" />
+    })
+  }
+  if (sync.pendingMerge) {
+    status.push({
+      kind: 'action',
+      id: 'sync-merge',
+      label: SYNC_COPY.mergeRow,
+      description: SYNC_COPY.mergeRowHint,
+      keywords: ['merge', 'first sync', 'replace', 'combine'],
+      form: {
+        title: SYNC_COPY.mergeTitle,
+        description: SYNC_COPY.mergeDescription,
+        render: (close) => <SyncMergeForm close={close} />
+      }
+    })
+  }
+  // The error the engine keeps is the folder-lost sentence while the folder is lost: the row
+  // above says it, so the status line does not say it twice.
+  const error = sync.folderLost ? null : sync.lastError
+  status.push({
+    kind: 'action',
+    id: 'sync-now',
+    label: SYNC_COPY.syncNow,
+    description: error ?? syncStatusLine(sync),
+    tone: error ? 'danger' : undefined,
+    keywords: ['last synced', 'status', 'refresh'],
+    busy: sync.syncing,
+    // Nothing to sync to until the folder is chosen again or the merge is answered.
+    disabled: sync.folderLost || sync.pendingMerge,
+    onPress: () => run('sync.now', undefined)
+  })
+  return [
+    { id: 'sync-status', heading: 'Status', rows: status },
+    {
+      id: 'sync-where',
+      heading: 'Folder and device',
+      rows: [
+        {
+          kind: 'action',
+          id: 'sync-folder',
+          label: SYNC_COPY.folder,
+          description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
+          keywords: FOLDER_KEYWORDS,
+          onPress: () => {
+            void cmd('sync.chooseFolder', undefined).then((folder) => {
+              if (folder) run('sync.setFolder', { folder })
+            })
+          }
+        },
+        deviceNameRow(sync)
+      ]
+    },
+    {
+      id: 'sync-devices',
+      heading: SYNC_COPY.devices,
+      aside: sync.devices.length > 0 ? sync.devices.length.toLocaleString() : undefined,
+      rows: [...sync.devices]
+        .sort((a, b) => b.lastSeen - a.lastSeen)
+        .map((device) => ({
+          kind: 'info',
+          id: `sync-device:${device.id}`,
+          label: device.name,
+          keywords: ['device', 'last seen'],
+          // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
+          trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
+        })),
+      empty: SYNC_COPY.noDevices
+    },
+    scopeGroup(sync),
+    {
+      id: 'sync-off',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'sync-disconnect',
+          label: SYNC_COPY.turnOff,
+          description: SYNC_COPY.turnOffHint,
+          keywords: ['disconnect', 'stop', 'remove', 'wipe'],
+          destructive: true,
+          form: {
+            title: SYNC_COPY.turnOffTitle,
+            description: SYNC_COPY.turnOffDescription,
+            render: (close) => <SyncDisconnectForm close={close} />
+          }
+        }
+      ]
+    }
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Shared rows
+// ---------------------------------------------------------------------------
+
+/** "This device": the name other devices list; the engine keeps it before and after setup. */
+function deviceNameRow(sync: SyncStatus): SettingsRow {
+  return {
+    kind: 'field',
+    id: 'sync-device-name',
+    label: SYNC_COPY.device,
+    description: SYNC_COPY.deviceHint,
+    keywords: ['device name', 'rename'],
+    value: sync.deviceName,
+    input: 'text',
+    onCommit: (value) => {
+      if (value.trim() !== sync.deviceName) run('sync.setDeviceName', { name: value })
+      return undefined
+    }
+  }
+}
+
+/** What you sync: one switch per data type, in Chrome's order (`SYNC_SCOPES`). */
+function scopeGroup(sync: SyncStatus): RowGroup {
+  return {
+    id: 'sync-scope',
+    heading: SYNC_COPY.scope,
+    rows: SYNC_SCOPES.map(({ key, label, hint }) => ({
+      kind: 'switch',
+      id: `sync-scope:${key}`,
+      label,
+      description: hint,
+      keywords: ['sync', 'data type'],
+      checked: sync.scope[key],
+      onChange: (checked) => run('sync.setScope', { [key]: checked })
+    }))
+  }
+}

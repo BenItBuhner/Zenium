@@ -16,6 +16,7 @@ import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { SettingsBody } from '../../overlays/SettingsPanel'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -102,6 +103,9 @@ function PhoneSettings({
   // The vault's lists are fetched while Settings › Autofill is the section shown; the landing's
   // search builds the section with none (its switches and choices match, its entries do not).
   const autofill = useAutofillSettings(state, current?.id === 'autofill')
+  // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
+  // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
+  syncSetupStore.use((s) => s.folder)
   const ctx: SectionContext = {
     state,
     tab,

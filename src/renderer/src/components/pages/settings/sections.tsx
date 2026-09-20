@@ -108,6 +108,7 @@ import {
 } from './blocks'
 import { extensionsGroups } from './extensions'
 import { choice, type RowGroup, type SectionModel, type SettingsRow } from './model'
+import { syncGroups } from './sync'
 import {
   cookiesGroups,
   httpsOnlyGroups,
@@ -183,6 +184,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   agents: agentsSection,
   passwords: passwordsSection,
   security: securitySection,
+  sync: syncSection,
   updates: updatesSection,
   about: aboutSection
 }
@@ -2402,6 +2404,14 @@ function modsSection({ state }: SectionContext): RowGroup[] {
 
 function extensionsSection(ctx: SectionContext): RowGroup[] {
   return extensionsGroups(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// Sync
+// ---------------------------------------------------------------------------
+
+function syncSection(ctx: SectionContext): RowGroup[] {
+  return syncGroups(ctx)
 }
 
 // ---------------------------------------------------------------------------
