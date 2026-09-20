@@ -13,15 +13,10 @@ import {
   SkipForward
 } from 'lucide-react'
 import type { MediaState, UIState } from '@shared/types'
+import { useMediaSeek } from '@renderer/hooks/useMediaSeek'
 import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
-import {
-  extrapolatePosition,
-  formatMediaTime,
-  handlesAction,
-  mediaDetail,
-  mediaOf
-} from '@renderer/lib/media'
+import { formatMediaTime, handlesAction, mediaDetail, mediaOf } from '@renderer/lib/media'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeMediaSheet, uiStore } from '@renderer/lib/ui'
@@ -32,12 +27,8 @@ import { Slider } from '../ui/slider'
 import { V2_GLYPH } from '../v2/controls'
 
 const TITLE_ID = 'zen-media-title'
-/** How often the position display moves on while the media plays. */
-const TICK_MS = 250
 /** The step of the seek buttons, Chrome's default for `seekbackward` / `seekforward`. */
 const SEEK_STEP_S = 10
-/** The slider's resolution: a tenth of a second, so a scrub lands where the finger is. */
-const SCRUB_STEP_S = 0.1
 
 /** The media sheet while its request stands, in the frame dialog host `TabDialogs` mounts. */
 export function MediaLayer({ state }: { state: UIState }): JSX.Element | null {
@@ -181,44 +172,10 @@ function NowPlaying({
  * target until the page reports the new position. Absent for a stream without a duration.
  */
 function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
-  const duration = media.position?.duration ?? 0
-  const [now, setNow] = useState(() => Date.now())
-  /** The thumb under the finger (seconds), or null while it rests. */
-  const [scrub, setScrub] = useState<number | null>(null)
-  /** A seek sent, with the report it was sent against; shown until the page's report moves on. */
-  const [pending, setPending] = useState<{ at: number; positionAt: number | undefined } | null>(
-    null
-  )
-  /**
-   * Where the finger last put the thumb. Radix commits the value it last *rendered*, and a
-   * pointer move is a continuous update React may not have drawn when the finger lifts (a slow
-   * renderer holds a frame of moves back), so the seek goes where the finger last was, not
-   * where the thumb was last painted.
-   */
-  const slid = useRef<number | null>(null)
-  /** A key's step commits first and reports its change after; that change is no scrub. */
-  const committed = useRef<number | null>(null)
-
-  // The clock ticks only while the media plays and no finger scrubs; the first tick comes a
-  // quarter second after playback resumes, and until then a stale `now` shows the reported
-  // position itself (the extrapolation never runs backwards).
-  useEffect(() => {
-    if (!media.playing || scrub !== null) return
-    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS)
-    return () => window.clearInterval(timer)
-  }, [media.playing, scrub])
-
+  // The row's state – the clock, the scrub, the seek held until the page answers, the Radix
+  // commit workaround – is the hook's, shared with the desktop hub's row.
+  const { duration, shown, seekTo, slider } = useMediaSeek(media)
   if (!(duration > 0)) return null
-  const live = extrapolatePosition(media, now)
-  // A seek stands on screen while the page has not answered it (a new report answers it).
-  const held = pending && pending.positionAt === media.positionAt ? pending.at : null
-  const shown = scrub ?? held ?? live
-
-  const seekTo = (at: number): void => {
-    const target = Math.min(duration, Math.max(0, at))
-    setPending({ at: target, positionAt: media.positionAt })
-    run('media.action', { tabId: media.tabId, action: 'seekto', seekTime: target })
-  }
 
   return (
     <div className="zen-media-seek" data-testid="media-seek">
@@ -241,28 +198,8 @@ function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
           className="zen-zoom-slider min-w-0 flex-1"
           aria-label="Position"
           aria-valuetext={`${formatMediaTime(shown)} of ${formatMediaTime(duration)}`}
-          min={0}
-          max={duration}
-          step={SCRUB_STEP_S}
-          value={[Math.min(duration, shown)]}
           data-testid="media-position"
-          onValueChange={([at]) => {
-            if (at === undefined) return
-            if (at === committed.current) {
-              committed.current = null
-              return
-            }
-            slid.current = at
-            setScrub(at)
-          }}
-          onValueCommit={([at]) => {
-            const target = slid.current ?? at
-            slid.current = null
-            setScrub(null)
-            if (target === undefined) return
-            committed.current = target
-            seekTo(target)
-          }}
+          {...slider}
         />
         <button
           type="button"

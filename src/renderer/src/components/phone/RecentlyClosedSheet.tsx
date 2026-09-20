@@ -41,7 +41,8 @@ export function RecentlyClosedSheet({
   return (
     <PhoneSheet
       name="overview-recently-closed"
-      title="Recently closed"
+      // A list sheet: the centred 48 header (§9.16).
+      title={{ pose: 'header', text: 'Recently closed' }}
       focus="dialog"
       onClose={onClose}
       sheetRef={sheet}

@@ -308,6 +308,7 @@
  */
 :root[data-theme='dark'] .zen-v2-button[data-primary]:focus-visible,
 :root[data-theme='dark'] .zen-v2-checkbox:checked:focus-visible,
+:root[data-theme='dark'] .zen-v2-checkbox[aria-checked='true']:focus-visible,
 :root[data-theme='dark'] .zen-v2-switch[aria-checked='true']:focus-visible,
 :root[data-theme='dark'] .zen-v2-radio[aria-checked='true']:focus-visible {
   outline-offset: 0;
@@ -805,7 +806,7 @@
   }
   /*
    * On a phone the window family changes colour by the one blend of the resolved tokens over
-   * 240 ms (design language v2 §11.5, `useTheme`): the window reads the tokens as the blend
+   * 240 ms (design language v2 §11.6, `useTheme`): the window reads the tokens as the blend
    * writes them, and nothing tweens per element – no transition of its own, which would trail
    * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
    */
@@ -875,6 +876,37 @@
   }
   .zen-toolbar-button:disabled {
     opacity: 0.3;
+  }
+
+  /*
+   * A web app's standalone window (`app/AppTitleBar.tsx`, MW-23): its one row of chrome is the
+   * toolbar row's height on the window surface – the app's 16 icon and the title in the window
+   * ink at the sidebar's size and the body weight (§4: chrome text at 400, as a sidebar tab's
+   * title; hierarchy by size, not weight), 8 apart, 12 in from the leading edge (Chrome's app
+   * frame puts them where its tab strip would start) – with the menu button and the window's
+   * buttons trailing at the toolbar's 4. The row drags the window; the buttons take the pointer.
+   */
+  .zen-app-titlebar {
+    display: flex;
+    height: 40px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 0 12px;
+    color: var(--zen-fg);
+  }
+  .zen-app-titlebar-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: var(--v2-radius-control);
+    object-fit: cover;
+  }
+  .zen-app-titlebar-title {
+    min-width: 0;
+    flex: 1;
+    font-size: var(--zen-sidebar-font);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-small);
   }
 
   .zen-tab {
@@ -1180,7 +1212,7 @@
   }
   /*
    * On a phone the host's dialogs are sheets, and the host is on the sheet chassis (v2 draft
-   * §11.1, §11.5, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
+   * §11.1, §11.7, `useSheetChassis` in lib/portals.tsx): its scrim is the sheet scrim at the
    * sheet's progress and the slot slides its whole height in across the frame's bottom edge on
    * the sheet spring (a 9.23 sheet, not the desktop dialog's 24 px pop), both written per frame
    * with the page's recede; the panels' own pop does not run on top of the slide. Under another
@@ -1777,7 +1809,7 @@
   /*
    * The slot an address pill left behind while it is being carried: a shallow well. Its tint
    * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
-   * (v2 §11.5, nothing tweens per element on the phone), and the target tint is a cut.
+   * (v2 §11.6, nothing tweens per element on the phone), and the target tint is a cut.
    */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);
@@ -2044,7 +2076,7 @@
   }
   /*
    * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
-   * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
+   * the token (v2 §11.6, nothing tweens per element on the phone); the pressed fill is a cut,
    * as the other cards' pressed states are.
    */
   .zen-overview-new {
@@ -2351,7 +2383,7 @@
    * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
    * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
    * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
-   * while the window surfaces blend to the pane's theme (§11.5). The Tabs | Private segment above
+   * while the window surfaces blend to the pane's theme (§11.6). The Tabs | Private segment above
    * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
    * of the sheet), in the window family through the overview's `data-surface="window"`.
    */
@@ -2551,6 +2583,37 @@
     height: 1px;
     margin: 8px 16px;
     background: var(--v2-border);
+  }
+  /*
+   * The phone app menu's icon row (TB-08; v2 §9.3): Chrome's Forward, star, Download, Page info
+   * and Reload / Stop as the sheet's first group – five shared `.zen-v2-icon-button`s (44 × 44,
+   * 20 px glyphs at stroke 1.75, radius 8, the press fill, .4 when disabled) spread across the
+   * sheet's width with the outer boxes on the 16 gutter (§9.25), one row tall. The star's fill is
+   * a second, filled star over the outline whose opacity and scale the fill spring writes per
+   * frame (§11); the glyphs read their sizes from the tokens, as the button's own do.
+   */
+  .zen-menu-icon-row {
+    display: flex;
+    height: var(--v2-row);
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+  }
+  .zen-menu-icon-row svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-menu-star {
+    position: relative;
+    display: flex;
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+  }
+  .zen-menu-star > span {
+    position: absolute;
+    inset: 0;
+    display: flex;
   }
   .zen-sheet-item-two-line {
     height: auto;
@@ -3183,20 +3246,17 @@
    * The tab search popover (components/tabsearch/TabSearchPopover.tsx; tabs-17): the shared
    * `.zen-bm-popover` chrome and title block, the shared `.zen-v2-field` under the title, the
    * shared `.zen-v2-row` for every tab. Only what those do not say lives here: the section
-   * heading's beat (12 above, 4 below, the first 4 under the title block – the rows are two
-   * lines tall, so the Settings groups' 20 would read as a gap), the selected row (the
-   * keyboard's, the pointer's) in the row's own press fill, the query's matches in the heading
-   * weight with no highlight fill, the trailing glyphs in the deemphasised ink, and the close
-   * button shown for the selected row and when it has the focus alone, as Chrome shows its X.
+   * heading's ink (the shared `.zen-v2-heading` in the deemphasised ink; its beat – 12 above, 4
+   * below, the first 4 under the title block, since the rows are two lines tall and the Settings
+   * groups' 20 would read as a gap – is the unlayered modifier after the bookmark chrome's
+   * block, beside the primitive), the selected row (the keyboard's, the pointer's) in the row's
+   * own press fill, the query's matches in the heading weight with no highlight fill, the
+   * trailing glyphs in the deemphasised ink, and the close button shown for the selected row and
+   * when it has the focus alone, as Chrome shows its X.
    */
   .zen-tab-search-heading {
     flex-shrink: 0;
-    margin: 12px 0 4px;
-    padding: 0 16px;
     color: var(--v2-text-deemphasized);
-  }
-  .zen-tab-search-heading:first-child {
-    margin-top: 4px;
   }
   .zen-tab-search-row {
     flex-shrink: 0;
@@ -3847,6 +3907,19 @@
 .zen-bm-page > header > h2 {
   font-size: 22px;
   letter-spacing: -0.014em;
+}
+/*
+ * The tab search popover's section headings (components/tabsearch/TabSearchPopover.tsx) on the
+ * shared `.zen-v2-heading`: a popover's list of two-line rows takes a tighter beat than the
+ * primitive's 20 / 4 – 12 above, 4 below, the first 4 under the title block. A modifier on the
+ * primitive by specificity, unlayered as the primitive is (§9.34); the ink is in the layered
+ * block above.
+ */
+.zen-v2-heading.zen-tab-search-heading {
+  margin: 12px 0 4px;
+}
+.zen-v2-heading.zen-tab-search-heading:first-child {
+  margin-top: 4px;
 }
 
 @layer components {
@@ -4806,6 +4879,334 @@
     width: 100%;
     object-fit: cover;
   }
+  /*
+   * The desktop's install dialog (`install/InstallDialog.tsx`): a `--v2-dialog` whose title block
+   * brings its own 16 to the body (§9.23), so the body has none above, the dialog's 16 gutter to
+   * the sides, 16 between its parts (§9.7) and none below – the §9.11 footer's 16 above is that
+   * gap, hugging and right-aligned at the 8 gap, 16 to the edge. The body scrolls should the
+   * shots and a long description outgrow the frame; the footer stays.
+   */
+  .zen-install-dialog-body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 16px;
+    padding: 0 16px;
+    overflow-y: auto;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-install-dialog-footer {
+    display: flex;
+    flex-shrink: 0;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+  }
+
+  /*
+   * The desktop's share popover (`share/SharePopover.tsx`, §9.20 at 320): only what the popover
+   * chrome, the title block and the shared row do not say. The body runs from the title block's
+   * 16 (§9.23): the preview at the 16 gutter – what is shared as 15/600 clamped to two lines
+   * over its link or text at 13 at 69% on one – then the QR's symbol centred 16 below inside the
+   * card's border and radius (§6's card edge; its white and black are the symbol's own, in the
+   * SVG: a scanner's contrast, not the chrome's), then the targets as rows edge to edge: no
+   * line between the preview and the list (§9.7, no hairline at rest), the gap does it – 10 to
+   * the first row's box, 16 to its label through the row's 6 – and 4 under the last row's fill.
+   */
+  .zen-share-body {
+    display: flex;
+    flex-direction: column;
+  }
+  .zen-share-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 16px;
+  }
+  .zen-share-preview-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-share-preview-detail {
+    overflow: hidden;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-share-glyph {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .zen-share-qr {
+    display: flex;
+    justify-content: center;
+    margin: 16px 16px 0;
+  }
+  .zen-share-qr svg {
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--v2-card-border);
+    border-radius: var(--v2-radius-card);
+  }
+  .zen-share-targets {
+    display: flex;
+    flex-direction: column;
+    margin-top: 10px;
+    padding: 0 0 4px;
+  }
+}
+
+/*
+ * What a share target's row adds to the shared v2 row (§9.34: a variant is a modifier on the
+ * primitive, unlayered beside it, never a copy): the §9.2 two-line floor for a target with a
+ * detail line.
+ */
+.zen-v2-row.zen-share-row-two {
+  min-height: var(--v2-row-two-line);
+}
+
+@layer components {
+  /*
+   * The screen-capture picker (`screenCapture/ScreenPicker.tsx`, MW-19): a `--v2-dialog` at 480
+   * (§9.20's table width, room for two cards across). The title block brings its 16 (§9.23);
+   * the shared segment follows at the 16 gutter and is the pane's sticky header: no line under
+   * it at rest, §9.7's hairline once the cards scroll under it (the border is there transparent
+   * so nothing moves when it shows). The pane is a fixed box – 16 padding, two rows of cards
+   * tall – so switching panes moves nothing, and scrolls past two rows. A pane with nothing to
+   * offer says so in §9.17's one line, 15 at 69%, top-anchored with its line 32 under the
+   * segment (the pane's 16 and 16 of its own; never centred in the free height) and left-aligned
+   * at the pane's gutter like a row's label; while the OS's list is out the §9.30 spinner takes
+   * the same place on that line, one anchor for both. A card is the image radio (§9.34: the 2 px
+   * accent outline outside its edge) at 4 padding with the picture in a 16:9 box – letterboxed on
+   * the fill, its radius the card's less the 4 padding, concentric – and the 13 caption under it,
+   * the cards 8 apart as the other image-radio grids (§9.14, §10.4); the only screen is one card
+   * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
+   * checkbox leads it, its box centred on the line rather than on a row's first text line.
+   */
+  .zen-scpick-panes {
+    border-bottom: 1px solid transparent;
+    transition: border-color 120ms var(--zen-ease);
+  }
+  .zen-scpick-panes[data-scrolled='true'] {
+    border-color: var(--v2-border);
+  }
+  .zen-scpick-list {
+    display: flex;
+    height: 348px;
+    min-height: 96px;
+    flex-direction: column;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .zen-scpick-state {
+    display: flex;
+    min-height: var(--v2-line-body);
+    align-items: center;
+    margin-top: 16px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+  .zen-scpick-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    align-content: start;
+  }
+  .zen-scpick-grid[data-columns='1'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .zen-scpick-tile {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px;
+    color: var(--v2-text);
+    text-align: left;
+  }
+  .zen-scpick-thumb {
+    display: grid;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: calc(var(--v2-radius-card) - 4px);
+    background: var(--v2-fill);
+    color: var(--v2-text-deemphasized);
+    place-items: center;
+  }
+  .zen-scpick-thumb > img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  /* A tab's picture is its page from the top, as the tab strip's cards show it. */
+  .zen-scpick-thumb[data-kind='tab'] > img {
+    object-fit: cover;
+    object-position: top;
+  }
+  .zen-scpick-thumb > svg {
+    width: 32px;
+    height: 32px;
+    stroke-width: 1.5;
+  }
+  .zen-scpick-caption {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-scpick-icon {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+    stroke-width: var(--v2-icon-stroke);
+  }
+  .zen-scpick-footer {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+  }
+  .zen-scpick-audio {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+  }
+}
+
+/*
+ * The system-audio box is the shared checkbox (§9.34) centred on the footer's one line, so the
+ * primitive's offset to a row's first text line goes; unlayered, or the primitive's own margin
+ * would beat it.
+ */
+.zen-scpick-audio > .zen-v2-checkbox {
+  margin: 0;
+}
+
+@layer components {
+  /*
+   * The desktop's media hub (`media/MediaHubPopover.tsx`, MW-16: Chrome's global media
+   * controls) as a §9.20 popover at 400 under the toolbar row. It opens on its cards with no
+   * title block, like a menu (§9.7: the cards name themselves; the hub's name is the toolbar
+   * button's), so the body carries the popover's own 16 above the first player (§9.20's
+   * padding; 16 under the last one as well), one player per tab, parted by air alone – 28 from
+   * one's transport to the next one's artwork, no line – each at the 16 gutter with 12 between
+   * its parts:
+   * the now-playing line – the artwork as the players' one 56 tile (`.zen-media-art`, the phone
+   * sheet's rule below: the card radius on the card fill, the card hairline and the §9.3 glyph
+   * when there is no picture) beside the title at 15/600 and the
+   * artist · site line at 13 at 69%, the pair a button to the tab with the row's press fill,
+   * picture-in-picture trailing as a §9.3 icon button – then §10.4's slider row for the position
+   * (the zoom row's track and thumb, `.zen-zoom-slider`, the times at its ends in `tabular-nums`
+   * (§4) so 0:09 → 0:10 moves nothing), then the transport – previous, back, play / pause, on,
+   * next as §9.3 icon buttons at 8 apart, centred, the middle one's glyph solid as the row's one
+   * emphasis, the way Chrome's controls draw it (as the phone's `.zen-media-*` sheet does), the
+   * track buttons disabled at .4 (§9.30) until the page handles them. The toolbar button wears
+   * a 6 accent dot at its corner while anything plays.
+   */
+  .zen-mhub-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 0 4px;
+  }
+  .zen-mhub-player {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 12px;
+  }
+  .zen-mhub-player + .zen-mhub-player {
+    padding-top: 16px;
+  }
+  .zen-mhub-now {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  /* The title pair is the way to the tab: a button the text's size, its press fill 4 out. */
+  .zen-mhub-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    border-radius: var(--v2-radius-inner);
+    color: var(--v2-text);
+    text-align: left;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-mhub-text:active {
+    background: var(--v2-fill);
+  }
+  @media (hover: hover) {
+    .zen-mhub-text:hover {
+      background: var(--v2-fill);
+    }
+  }
+  .zen-mhub-name {
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-body);
+  }
+  .zen-mhub-detail {
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-seek {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .zen-mhub-time {
+    flex-shrink: 0;
+    min-width: 5ch;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-small);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--v2-line-small);
+  }
+  .zen-mhub-time:last-child {
+    text-align: right;
+  }
+  .zen-mhub-transport {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .zen-mhub-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--v2-accent);
+  }
 }
 
 @layer components {
@@ -4843,6 +5244,11 @@
     gap: 16px;
     padding: 0 16px;
   }
+  /*
+   * The artwork tile – one rule for both in-app players, the phone sheet's and the desktop hub's
+   * (`media/MediaHubPopover.tsx`): 56 at the card radius on the card fill, the picture covering
+   * it; without one, the card hairline and the §9.3 row glyph (20 on the phone, 16 on desktop).
+   */
   .zen-media-art {
     display: flex;
     width: 56px;
@@ -4910,37 +5316,30 @@
 .zen-sheet[data-dragging='true'] .zen-ntp-customize .zen-v2-row:active {
   background: transparent;
 }
+/*
+ * The customise sheet's sections keep the shared heading's beat (`.zen-v2-heading`, the
+ * unlayered primitive in the Settings tab's block: 20 above and 4 below, section 10.3, the
+ * whole separation between groups – no gap between sections); the one thing this sheet says is
+ * that its first heading sits 8 under the sheet's header. Unlayered beside the primitive, as
+ * section 9.34 asks of a modifier: a layered exception would lose to it whatever its specificity.
+ */
+.zen-v2-section:first-child > .zen-v2-heading {
+  margin-top: 8px;
+}
 
 @layer components {
   /*
    * v2 controls (design language v2 draft, sections 2, 3, 6 and 10.4) inside the phone sheet
-   * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): the group heading
-   * and its section, the description, the control row. Built from the `--v2-*` tokens alone.
-   * Type: hierarchy by size, weights 400 and 600 only.
+   * chassis (`.zen-sheet` above, which is the v2 surface, header and grabber): the description
+   * and the control row. Built from the `--v2-*` tokens alone. Type: hierarchy by size, weights
+   * 400 and 600 only.
    *
-   * The row, the switch, the plain radio and the image radio card are the shared primitives
-   * (section 9.34: `.zen-v2-row`, `.zen-v2-switch`, `.zen-v2-radio`, `.zen-v2-card-radio`, one
-   * unlayered rule each in the Settings tab's block further down – the row padded by the
-   * `--v2-row-pad` token, 12 on a phone); the customise sheet mints none of its own. The heading
-   * is this sheet's (section 9.34: the first surface to land a primitive owns its rule).
+   * The row, the heading, the switch, the plain radio and the image radio card are the shared
+   * primitives (section 9.34: `.zen-v2-row`, `.zen-v2-heading`, `.zen-v2-switch`, `.zen-v2-radio`,
+   * `.zen-v2-card-radio`, one unlayered rule each in the Settings tab's block further down – the
+   * row padded by the `--v2-row-pad` token, 12 on a phone; the heading with its 20 / 4 beat);
+   * the customise sheet mints none of its own.
    */
-  .zen-v2-heading {
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-body);
-  }
-  /*
-   * A group of rows in a sheet keeps the Settings pages' beat (section 10.3): its heading has 20
-   * above and 4 below, and the heading with its air is the whole separation between groups – no
-   * gap between sections. The first heading sits 8 under the sheet's header.
-   */
-  .zen-v2-section > .zen-v2-heading {
-    margin: 20px 0 4px;
-    padding: 0 16px;
-  }
-  .zen-v2-section:first-child > .zen-v2-heading {
-    margin-top: 8px;
-  }
   .zen-v2-description {
     font-size: var(--v2-font-small);
     line-height: var(--v2-line-small);
@@ -5732,6 +6131,19 @@
   transition: background 120ms var(--zen-ease);
 }
 /*
+ * A one-line row holding a control (§9.21): the larger of the row's base and the control plus 8,
+ * the 4 above and below being the row's own padding, not a list gap – 40 around a 32 menulist,
+ * field or button on a mouse and 48 around a 40 one on a phone, 36 / 52 around the icon
+ * buttons, the base `min-height` above still holding a row whose control is shorter than its
+ * line (pr-228 nit 2: `--v2-row-pad` around a control measured 44 / 64). The row carries
+ * `data-control` (`ListRow control`, siteControls/primitives.tsx) only while it is one line:
+ * a two-line row (52 / 64, §9.2) already holds a 32 / 40 control inside its lines on the row
+ * pad and takes no mark.
+ */
+.zen-v2-row[data-control] {
+  padding-block: 4px;
+}
+/*
  * The static row (§9.34): a row that is not a target – a permission warning, a Source value, an
  * "It can:" list, a version line – keeps the primitive for its geometry (height, padding,
  * `--v2-row-pad`, where its text and glyphs sit) and carries `data-static`, which turns off the
@@ -5772,7 +6184,22 @@
 .zen-v2-field:focus-visible {
   border-color: var(--v2-accent);
 }
+/*
+ * Invalid (§9.12): the danger border, and the ring's token re-inked so that, focused, the
+ * invalid state wins over the ring. A text field's ring is the inset one (§1: −2 on text
+ * fields, where an outside ring would clip), which in dark lies over the 1 px danger border and
+ * hid it; the ring takes the danger ink itself (§1: status ink is shared by both families;
+ * §9.12: the validation reads in `--v2-danger`), its 2 px, offset and shape the shared ring's,
+ * so the field reads invalid focused or not, in light and in dark – Firefox's in-content fields
+ * colour the focus outline the same way (`:user-invalid:focus-visible`). The token rather than
+ * an `outline-color` rule: every form of the ring reads `var(--v2-ring)` – the base layer's,
+ * the shared `zen-v2-` ring and its coarse-pointer form (§1 above) – so one declaration reaches
+ * them all at the invalid rule's own weight, the way the chrome re-inks a shared rule
+ * (`[data-surface] { --v2-control-accent: … }` above); the field is always a leaf input, so
+ * nothing inherits the override.
+ */
 .zen-v2-field[aria-invalid='true'] {
+  --v2-ring: var(--v2-danger);
   border-color: var(--v2-danger);
 }
 /* Disabled is one number on the whole control (§9.30), as `.zen-v2-button:disabled` above. */
@@ -6009,9 +6436,12 @@
 
 /*
  * The shared plain radio (§9.34, §9.14): the checkbox-sized circle (16 on a mouse, 20 on a
- * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. In a row it
- * aligns with the first text line, not the row's centre (§9.2); its state is `aria-checked` on
- * itself or on the row that is the radio.
+ * phone), a hairline at 45 %, checked = an accent ring round a 6 px page-colour dot. The ring is
+ * an inset shadow, which is drawn inside the 1 px border: its spread is what is left of the box
+ * inside the border and around the dot, halved – (box − 2 − 6) / 2, 4 on a mouse and 6 on a
+ * phone – so the dot measures 6 on both (the #235 ruling; (box − 6) / 2 left a 4 px dot). In a
+ * row it aligns with the first text line, not the row's centre (§9.2); its state is
+ * `aria-checked` on itself or on the row that is the radio.
  */
 .zen-v2-radio {
   display: inline-flex;
@@ -6031,7 +6461,7 @@
 .zen-v2-radio[aria-checked='true'],
 [aria-checked='true'] > .zen-v2-radio {
   border-color: var(--v2-accent);
-  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 6px) / 2) var(--v2-accent);
+  box-shadow: inset 0 0 0 calc((var(--v2-checkbox) - 2px - 6px) / 2) var(--v2-accent);
 }
 
 /*
@@ -6043,7 +6473,10 @@
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
  * so it does not compound to .16; the row says `aria-disabled`, which keeps the row primitive's
  * hover and press fill off it. Those two rules sit here, unlayered, because a layered exception
- * would lose to the unlayered `:disabled` above it.
+ * would lose to the unlayered `:disabled` above it. Besides the `<input>` read by `:checked`, the
+ * class styles a `role="checkbox"` span by `[aria-checked]` – on itself or on the row that is
+ * the checkbox for assistive technology and so cannot host a real input – as `.zen-v2-radio`
+ * does (§9.34).
  */
 .zen-v2-checkbox {
   appearance: none;
@@ -6065,11 +6498,15 @@
     background: var(--v2-fill);
   }
 }
-.zen-v2-checkbox:checked {
+.zen-v2-checkbox:checked,
+.zen-v2-checkbox[aria-checked='true'],
+[aria-checked='true'] > .zen-v2-checkbox {
   background: var(--v2-accent);
   border-color: var(--v2-accent);
 }
-.zen-v2-checkbox:checked::after {
+.zen-v2-checkbox:checked::after,
+.zen-v2-checkbox[aria-checked='true']::after,
+[aria-checked='true'] > .zen-v2-checkbox::after {
   content: '';
   width: calc(var(--v2-checkbox) - 4px);
   height: calc(var(--v2-checkbox) - 4px);
@@ -6386,8 +6823,28 @@
 }
 
 /*
- * Groups (§10.3): a 15/600 heading with 20 above and 4 below; the first sits 8 under the bar. A
- * heading block that carries a description ends 8 above its first row instead (§9.27).
+ * The shared group heading (§9.34, §9.26, §9.27, §10.3): 15/600 on the body line, sentence case,
+ * in the surface's ink, its text at the 16 gutter, with the phone beat that is the whole
+ * separation between groups – 20 above and 4 to its first row's box (heading text to the row's
+ * label reads 14–16 once the row's own 12 is added; the desktop's 8 to the box through a row's 6
+ * is the same rule, §9.27, the lead's #201 ruling). One unlayered rule that every consumer reads
+ * – the Settings tab's groups, the customise sheet's sections, the phone panels' day groups, a
+ * popover's list – so the beat is stated once; a surface whose heading sits differently (the
+ * first under a header at 8, a popover's tighter list) says so in an unlayered modifier beside
+ * the primitive by specificity, never a copy of the numbers. Nothing here about layout: a
+ * heading that carries an aside lays it out in its modifier.
+ */
+.zen-v2-heading {
+  margin: 20px 0 4px;
+  padding: 0 16px;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+}
+
+/*
+ * Groups (§10.3): the shared heading with its aside on the same line; the first sits 8 under the
+ * bar. A heading block that carries a description ends 8 above its first row instead (§9.27).
  */
 .zen-settings-groups {
   display: flex;
@@ -6397,16 +6854,12 @@
   display: flex;
   flex-direction: column;
 }
-.zen-settings-heading {
+/* What the Settings heading adds to the primitive: the aside laid out at the heading's gutter end. */
+.zen-v2-heading.zen-settings-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin: 20px 0 4px;
-  padding: 0 16px;
-  font-size: var(--v2-font-body);
-  font-weight: var(--v2-weight-heading);
-  line-height: var(--v2-line-body);
 }
 /* The heading's aside (§10.3): a count or size at the gutter on the heading's line, 13 at 69 %, tabular. */
 .zen-settings-heading-aside {
@@ -6417,7 +6870,7 @@
   font-variant-numeric: tabular-nums;
   line-height: var(--v2-line-small);
 }
-.zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
+.zen-settings-body > .zen-settings-group:first-child > .zen-v2-heading.zen-settings-heading {
   margin-top: 8px;
 }
 /* A live count in a description ("6 lists, 116,161 filters") is tabular (§4): it moves nothing when it changes. */
@@ -8217,12 +8670,16 @@
   .zen-v2-radio[aria-checked='true'],
   [aria-checked='true'] > .zen-v2-radio,
   .zen-v2-checkbox:checked,
+  .zen-v2-checkbox[aria-checked='true'],
+  [aria-checked='true'] > .zen-v2-checkbox,
   .zen-app-icon[aria-checked='true'] {
     border-color: Highlight;
     background-color: Highlight;
     color: HighlightText;
   }
-  .zen-v2-checkbox:checked::after {
+  .zen-v2-checkbox:checked::after,
+  .zen-v2-checkbox[aria-checked='true']::after,
+  [aria-checked='true'] > .zen-v2-checkbox::after {
     background-color: HighlightText;
   }
   .zen-v2-card-radio[aria-checked='true']:not(:focus-visible) {

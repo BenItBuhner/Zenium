@@ -176,8 +176,10 @@ function PromoSheet({ due, onGone }: PromoProps): JSX.Element {
   return (
     <PhoneSheet
       name="default-browser"
-      title={TITLE}
-      prompt={{
+      // A prompt: the title block (§9.23) – the paragraph is the title's description.
+      title={{
+        pose: 'block',
+        text: TITLE,
         icon: <Globe className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description: BODY
       }}

@@ -9,10 +9,20 @@ import type {
 } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
+import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, toAccelerator } from '../shared/shortcuts'
-import { displayUrl, getDomain, inputToUrl, isNavigableUrl } from '../shared/url'
+import {
+  BLANK_URL,
+  NEW_TAB_URL,
+  displayUrl,
+  getDomain,
+  inputToUrl,
+  isNavigableUrl,
+  isWebPageUrl
+} from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
+  type AppWindowInfo,
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
@@ -2287,18 +2297,17 @@ export class Menus {
     const anchor = options.anchor
       ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
       : undefined
-    const { pageControls } = this.browser
-    /** Where Reset Zoom goes: the default zoom for a web page, 100 percent for any other page. */
-    const defaultZoom =
-      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
-    /** The factor the user set (before the system font size), so Reset compares like with like. */
-    const zoomSet = active
-      ? pageControls.remembersZoom(active)
-        ? pageControls.siteZoomOf(active)
-        : active.zoom
-      : 1
+    // A web app's standalone window has Chrome's web-app menu, not the browser's.
+    if (win.chrome === 'app' && win.app) {
+      this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
+      return
+    }
     this.popup(
       [
+        // Chrome's icon row heads the phone's menu (TB-08): Forward, the star, Download page,
+        // Page info and Reload / Stop, which the chrome draws as a row of icon buttons from each
+        // item's glyph. The desktop's native menu has no such row and is unchanged.
+        ...when(phone, ...this.phoneIconRow(active, win), { type: 'separator' }),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
         // switcher searches on its own.
@@ -2351,21 +2360,14 @@ export class Menus {
         {
           label: 'Bookmarks',
           submenu: [
-            // The phone has its star flow (a toast with Edit, the editor for a page that is
-            // bookmarked already); desktop keeps the toggle, whose star bubble names and files it.
-            phone
-              ? {
-                  label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page',
-                  action: 'bookmark.add',
-                  enabled: Boolean(active && !active.url.startsWith('zen://')),
-                  click: () => active && this.browser.starTab(active.id, win)
-                }
-              : {
-                  label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
-                  action: 'bookmark.add',
-                  enabled: Boolean(active && !active.url.startsWith('zen://')),
-                  click: () => active && this.browser.toggleBookmark(active.id, win)
-                },
+            // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
+            // the desktop keeps the toggle here, whose star bubble names and files it.
+            ...desktop({
+              label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+              action: 'bookmark.add',
+              enabled: Boolean(active && !active.url.startsWith('zen://')),
+              click: () => active && this.browser.toggleBookmark(active.id, win)
+            }),
             {
               label: 'Bookmark All Tabs…',
               action: 'bookmark.allTabs',
@@ -2435,29 +2437,7 @@ export class Menus {
         // Chrome's zoom row (- / percentage / +): a native menu has no inline controls, so the
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
-        ...when(!caps.pageControls, {
-          label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
-          submenu: [
-            {
-              label: 'Zoom In',
-              action: 'zoom.in',
-              enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
-              click: () => active && tabs.adjustZoom(active.id, 1)
-            },
-            {
-              label: 'Zoom Out',
-              action: 'zoom.out',
-              enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
-              click: () => active && tabs.adjustZoom(active.id, -1)
-            },
-            {
-              label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
-              action: 'zoom.reset',
-              enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
-              click: () => active && tabs.resetZoom(active.id)
-            }
-          ]
-        }),
+        ...when(!caps.pageControls, this.zoomSubmenu(active)),
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
@@ -2503,13 +2483,15 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
         }),
-        {
+        // The phone's save is the icon row's Download Page (TB-08, `phoneIconRow`), the one entry
+        // Chrome's menu has for it; the desktop keeps the text item.
+        ...desktop({
           label: 'Save Page As…',
           action: 'page.savePage',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
-        },
+        }),
         {
           label: 'Take Screenshot',
           action: 'page.screenshot',
@@ -2577,6 +2559,197 @@ export class Menus {
       'app',
       { ...anchor, keyboard: options.keyboard }
     )
+  }
+
+  /**
+   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, the bookmark
+   * star, Download page, Page info and Reload / Stop, each an item with a `glyph` the chrome draws
+   * as a 44 px icon button (design language v2 §9.3) named by its label. Every button runs what
+   * the bar's own button for it runs – the row consumes the core's commands and adds none – and a
+   * button whose action has nowhere to go (Forward on the last entry, Download off the web) is
+   * disabled rather than dropped (§9.30), so the row keeps its shape from one opening to the next.
+   */
+  private phoneIconRow(active: Tab | undefined, win: ZenWindow): Template {
+    const { tabs } = this.browser
+    return [
+      {
+        label: 'Forward',
+        glyph: 'forward',
+        action: 'nav.forward',
+        enabled: Boolean(active?.canGoForward),
+        click: () => active && tabs.goForward(active.id)
+      },
+      // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
+      // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
+      // editor. `checked` is the fill; the label says which of the two a press does (§9.13's
+      // words, Chrome's: "Bookmark" outlined, "Edit Bookmark" filled). A plain item, not a
+      // checkbox (a stateful glyph, not a toggle): a press never unchecks it, and the mouse
+      // popover would otherwise mark a checked action row.
+      {
+        label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark',
+        glyph: 'star',
+        action: 'bookmark.add',
+        checked: Boolean(active?.bookmarked),
+        enabled: Boolean(active) && this.browser.bookmarkable(active!.url),
+        click: () => active && this.browser.starTab(active.id, win)
+      },
+      // Chrome's Download keeps the page for later; `page.savePage` is the core's way (the host
+      // writes an archive into Downloads and files it there). A page of the web only.
+      {
+        label: 'Download Page',
+        glyph: 'download',
+        action: 'page.savePage',
+        enabled: Boolean(active) && isWebPageUrl(active!.url),
+        click: () =>
+          active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
+      },
+      // Page info: the site information sheet the pill's site chip opens (the chrome's; the core
+      // asks for it as it asks for the zoom sheet). None for a blank or new tab, which have no
+      // page, nor for a registered internal page (Settings), which has no site (§10.1).
+      {
+        label: 'Page Info',
+        glyph: 'info',
+        enabled: Boolean(active) && hasSiteInfo(active!),
+        click: () => active && this.browser.emit('siteInfo.open', { tabId: active.id }, win)
+      },
+      // Reload and Stop share the last slot, as they share the bar's button: Stop while the page
+      // loads, Reload otherwise. The menu is a picture of the moment it opened, like any menu.
+      active?.loading
+        ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
+        : {
+            label: 'Reload',
+            glyph: 'reload',
+            action: 'nav.reload',
+            enabled: Boolean(active),
+            click: () => active && tabs.reload(active.id)
+          }
+    ]
+  }
+
+  /**
+   * The zoom submenu of the desktop menus: its label carries the live percentage, its Reset
+   * says where it goes – the default zoom for a web page, 100 percent for any other page – and
+   * each step is greyed at the range's end. The factor compared is the one the user set (before
+   * the system font size), so Reset compares like with like.
+   */
+  private zoomSubmenu(active: Tab | undefined): MenuItemTemplate {
+    const { pageControls, tabs } = this.browser
+    const defaultZoom =
+      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
+    const zoomSet = active
+      ? pageControls.remembersZoom(active)
+        ? pageControls.siteZoomOf(active)
+        : active.zoom
+      : 1
+    return {
+      label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
+      submenu: [
+        {
+          label: 'Zoom In',
+          action: 'zoom.in',
+          enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
+          click: () => active && tabs.adjustZoom(active.id, 1)
+        },
+        {
+          label: 'Zoom Out',
+          action: 'zoom.out',
+          enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
+          click: () => active && tabs.adjustZoom(active.id, -1)
+        },
+        {
+          label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
+          action: 'zoom.reset',
+          enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
+          click: () => active && tabs.resetZoom(active.id)
+        }
+      ]
+    }
+  }
+
+  /**
+   * The "⋯" menu of a web app's standalone window (MW-23; Chrome's web-app menu, from the title
+   * bar's button): Copy URL and Open in Zenium – the page in a tab of the browser window behind
+   * the app, where an out-of-scope link goes –, the zoom submenu, Find in Page and Print, and
+   * Uninstall for a window an installed app owns, behind the host's confirmation (Chrome asks
+   * too); the app's windows close with the record. Nothing of the browser's: no tabs, spaces,
+   * windows, library or settings – the window is the app's.
+   */
+  private showWebAppMenu(
+    win: ZenWindow,
+    app: AppWindowInfo,
+    active: Tab | undefined,
+    anchor: MenuAnchor
+  ): void {
+    const { state, tabs } = this.browser
+    const caps = state.capabilities
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    this.popup(
+      [
+        {
+          label: 'Copy URL',
+          action: 'tab.copyUrl',
+          enabled: Boolean(active),
+          click: () => active && tabs.copyUrl(active.id)
+        },
+        {
+          label: 'Open in Zenium',
+          enabled: Boolean(active),
+          click: () => {
+            if (!active) return
+            const target = this.browser.browserWindowFor(win)
+            tabs.createTab({ url: active.url, active: true }, target)
+            target.host.show()
+            target.host.focus()
+          }
+        },
+        { type: 'separator' },
+        this.zoomSubmenu(active),
+        { type: 'separator' },
+        {
+          label: 'Find in Page…',
+          action: 'find.open',
+          enabled: Boolean(active),
+          click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
+        },
+        // Zenium's preview (CT-06), as the browser's menu opens it; the engine's own flow where a
+        // host has no preview.
+        ...when(caps.print, {
+          label: 'Print…',
+          action: 'page.printPreview',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
+        }),
+        ...when(app.appId !== null, { type: 'separator' } as MenuItemTemplate, {
+          label: `Uninstall ${app.name}…`,
+          click: () => void this.uninstallApp(app, win)
+        })
+      ],
+      win,
+      'app',
+      anchor
+    )
+  }
+
+  /** The menu's Uninstall: the host's confirmation first, then the record and its launcher go. */
+  private async uninstallApp(app: AppWindowInfo, win: ZenWindow): Promise<void> {
+    if (app.appId === null) return
+    let ok = false
+    try {
+      ok = await this.browser.platform.dialogs.confirm(
+        {
+          message: `Uninstall ${app.name}?`,
+          detail: `${app.name} and its launcher will be removed from this computer. Its windows close.`,
+          okLabel: 'Uninstall',
+          cancelLabel: 'Cancel',
+          danger: true
+        },
+        win
+      )
+    } catch {
+      ok = false
+    }
+    if (ok) await this.browser.webApps.uninstall(app.appId)
   }
 
   /**
@@ -2748,6 +2921,16 @@ export function joinGroups(groups: MenuItemTemplate[][]): MenuItemTemplate[] {
 /** URLs a "Save … As…" can fetch into a file (the engine downloads these schemes). */
 export function isDownloadable(url: string): boolean {
   return /^(https?|ftp|file|blob|data):/i.test(url)
+}
+
+/**
+ * A tab the chrome's site information sheet has something to say about – the pill's site chip's
+ * rule: no registered internal page (Settings, which has no site, design language v2 §10.1), and
+ * no blank or new tab, which have no page at all. Every other document – a site, an error page
+ * standing in for one, an extension's page, a local file – gets the sheet.
+ */
+export function hasSiteInfo(tab: Pick<Tab, 'url'>): boolean {
+  return internalPageOf(tab.url) === null && tab.url !== BLANK_URL && tab.url !== NEW_TAB_URL
 }
 
 /**

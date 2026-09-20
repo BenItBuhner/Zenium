@@ -52,12 +52,14 @@ const INSTALL_PROMPT: WebAppInstallPrompt = {
 }
 
 describe('the install sheet', () => {
-  it('opens for a Home-screen prompt and not for a desktop one, whose dialog is still to land', async () => {
-    // A desktop prompt (a chrome that registered the install surface on a host with windows would
-    // be one) shows nothing here: the phone's sheet is not the desktop's dialog.
+  it('opens for a Home-screen prompt and for a desktop one alike, over the page with the chrome focused', async () => {
+    // One store entry serves both chromes: the phone's `InstallLayer` shows a sheet for it, the
+    // desktop's `InstallDialogLayer` a dialog – each on its own host only.
     await openInstallSheet({ ...INSTALL_PROMPT, surface: 'desktop' })
-    expect(idle().install).toBeNull()
-    expect(run).not.toHaveBeenCalled()
+    expect(idle().install?.surface).toBe('desktop')
+    expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
+    uiStore.set({ install: null })
+    vi.mocked(run).mockClear()
     await openInstallSheet(INSTALL_PROMPT)
     expect(idle().install?.tabId).toBe('t1')
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)

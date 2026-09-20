@@ -1,10 +1,13 @@
 import type { MediaState, UIState } from '@shared/types'
+import { extrapolatePosition as extrapolateReport } from '@shared/mediaSession'
 import { displayHost } from '@shared/url'
 
 /**
- * What the in-app player (the pill's Now playing chip and the media sheet, MW-16) reads from
- * `UIState.media`: the session – the one tab whose media the OS controls show, as the core
- * picked it – and the numbers the sheet draws from a report that is a moment old.
+ * What the in-app players (MW-16: the pill's Now playing chip and the media sheet on the phone,
+ * the toolbar button and the media hub on the desktop) read from `UIState.media`: the session –
+ * the one tab whose media the OS controls show, as the core picked it – and the numbers a player
+ * draws from a report that is a moment old. The desktop hub's own pieces (the players' order,
+ * the button's label, the open state) are `lib/mediaHub.ts`'s.
  */
 
 /** The tab whose media the OS controls show, or null while nothing plays or played. */
@@ -21,15 +24,15 @@ export function mediaOf(state: UIState, tabId: string): MediaState | null {
 /**
  * Where playback stands at `now` (epoch ms): the reported position carried forward at the
  * playback rate for the time since the report while the media plays, held where it was while
- * it is paused, never past the duration (a stream without one reports 0 and is not clamped).
+ * it is paused, never past the duration (a stream without one reports 0 and is not clamped) –
+ * the shared Media Session module's rule, the one the core's OS controls move by, so the in-app
+ * players and the OS agree; 0 without a position, the report as it stands without its time.
  */
 export function extrapolatePosition(media: MediaState, now: number): number {
   const position = media.position
   if (!position) return 0
-  if (!media.playing || media.positionAt === undefined) return Math.max(0, position.position)
-  const elapsed = Math.max(0, (now - media.positionAt) / 1000) * (position.playbackRate || 1)
-  const at = position.position + elapsed
-  return position.duration > 0 ? Math.min(position.duration, Math.max(0, at)) : Math.max(0, at)
+  if (media.positionAt === undefined) return Math.max(0, position.position)
+  return extrapolateReport(position, media.playing, media.positionAt, now)
 }
 
 /** `m:ss`, or `h:mm:ss` from an hour on, as the media notification and Chrome's controls write times. */

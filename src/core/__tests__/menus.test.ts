@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   FormFactor,
   HostCapabilities,
@@ -14,6 +14,7 @@ import { Browser } from '../browser'
 import type {
   AppHost,
   ClipboardHost,
+  DialogHost,
   MenuHost,
   MenuItemTemplate,
   MenuPopupOptions,
@@ -30,6 +31,7 @@ import type {
 import type { ZenWindow } from '../window'
 import type { ChromeContextParams, PageContextParams } from '../platform'
 import {
+  hasSiteInfo,
   isDownloadable,
   joinGroups,
   linkCopyItem,
@@ -38,6 +40,7 @@ import {
   SELECTION_TEXT_MAX,
   selectionUrl
 } from '../menus'
+import { serialiseMenu } from '../rendererMenus'
 
 /**
  * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
@@ -139,8 +142,7 @@ const ANDROID: HostCapabilities = {
   readAloud: false
 }
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -194,6 +196,10 @@ interface HarnessOptions {
   spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
   /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
   shortcuts?: boolean
+  /** What the host's confirmation dialog answers (absent: the stub's nothing, read as No). */
+  confirm?: boolean
+  /** Documents already in the store when the browser starts (`webapps.json`, …). */
+  files?: Record<string, string>
 }
 
 /** The languages the fake spellchecker was last told to check in. */
@@ -267,7 +273,7 @@ function harness(
   const platform: Platform = {
     info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
     capabilities,
-    io: memoryIo(),
+    io: memoryIo({ ...opts.files }),
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -283,7 +289,9 @@ function harness(
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
     menus,
-    dialogs: stub(),
+    dialogs: stub<DialogHost>(
+      opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
+    ),
     clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
     shell: stub(),
     net: stub(),
@@ -466,15 +474,22 @@ describe('the app menu', () => {
       expect(menu).not.toContain(label)
   })
 
-  it('on a phone keeps the page and library items in their desktop order', () => {
+  it('on a phone opens on the icon row and keeps the page and library items in their desktop order', () => {
+    // The star moved from the Bookmarks submenu into the row (TB-16): one bookmark entry; and
+    // the row's Download Page is the phone's one save entry, so no 'Save Page As…' row (TB-08).
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload',
+      '-',
       'New Tab',
       'New Private Tab',
       'Close Private Tabs',
       'New Space…',
       '-',
       'Bookmarks',
-      'Bookmarks > Bookmark This Page',
       'Bookmarks > Bookmark All Tabs…',
       'Bookmarks > -',
       'Bookmarks > Show Bookmarks',
@@ -492,7 +507,6 @@ describe('the app menu', () => {
       'Reader View',
       'Share…',
       'Print…',
-      'Save Page As…',
       'Take Screenshot',
       'Capture Full Page',
       'Desktop Site',
@@ -563,9 +577,10 @@ describe('the app menu', () => {
   })
 
   it('offers the install item only to a window whose chrome has an install surface up', () => {
-    // A desktop host that writes launchers: the engine can install, but the desktop's install
-    // dialog is UI work to come, so until a chrome registers one (`ui.surface`) the menu offers
-    // no way into a prompt nothing would show.
+    // A desktop host that writes launchers: the engine can install, but the item is a way into
+    // the chrome's install dialog, so until the chrome registers one (`ui.surface`, as the
+    // desktop's InstallDialogLayer does on mount) the menu offers no way into a prompt nothing
+    // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
     expect(appMenu(h)).not.toContain('Create shortcut…')
@@ -575,6 +590,93 @@ describe('the app menu', () => {
     expect(appMenu(h)).not.toContain('Create shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
+  })
+
+  describe("a web app's standalone window", () => {
+    /** An installed app on record, so its window is the app's (`appId`) and can be uninstalled. */
+    const NOTES = JSON.stringify({
+      version: 1,
+      pinned: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          startUrl: 'https://notes.example/',
+          scope: 'https://notes.example/',
+          pinnedAt: 1,
+          icon: null,
+          bounds: null
+        }
+      ],
+      engagement: {}
+    })
+    const WEB_APP_MENU = [
+      'Copy URL',
+      'Open in Zenium',
+      '-',
+      'Zoom (100%)',
+      'Zoom (100%) > Zoom In',
+      'Zoom (100%) > Zoom Out',
+      'Zoom (100%) > Reset Zoom (100%)',
+      '-',
+      'Find in Page…',
+      'Print…'
+    ]
+
+    it("has Chrome's web-app menu from its title bar's button, not the browser's", () => {
+      const h = harness(DESKTOP, { files: { 'webapps.json': NOTES } })
+      const app = h.browser.openAppWindow('https://notes.example/today')!
+      h.browser.handleCommand(app, 'app.menu', { anchor: { x: 10, y: 20, width: 28, height: 28 } })
+      expect(labels(h.shown())).toEqual([...WEB_APP_MENU, '-', 'Uninstall Notes…'])
+      // From the button the menu hangs off its bottom edge, as the browser's does.
+      expect(h.where()).toMatchObject({ source: 'app', x: 10, y: 48 })
+      // The browser window keeps its own menu.
+      expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('offers no Uninstall for a window no installed app owns, and no Print where the host cannot', () => {
+      const h = harness({ ...DESKTOP, print: false })
+      const app = h.browser.openAppWindow('https://plain.example/page')!
+      expect(app.app?.appId).toBeNull()
+      h.browser.handleCommand(app, 'app.menu', {})
+      expect(labels(h.shown())).toEqual(WEB_APP_MENU.filter((l) => l !== 'Print…'))
+    })
+
+    it('Open in Zenium puts the page in a tab of the browser window behind the app', () => {
+      const h = harness(DESKTOP)
+      const app = h.browser.openAppWindow('https://plain.example/page', { from: h.win })!
+      const before = h.browser.tabs.activeSpaceFor(h.win).tabIds.length
+      h.browser.handleCommand(app, 'app.menu', {})
+      h.shown()
+        .find((item) => item.label === 'Open in Zenium')
+        ?.click?.()
+      expect(h.browser.tabs.activeSpaceFor(h.win).tabIds.length).toBe(before + 1)
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://plain.example/page')
+      // The app window keeps its page.
+      expect(h.browser.tabs.activeTabFor(app)?.url).toBe('https://plain.example/page')
+    })
+
+    it('Uninstall asks first; a Yes removes the record and closes the app’s windows, a No keeps both', async () => {
+      const no = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: false })
+      const kept = no.browser.openAppWindow('https://notes.example/')!
+      no.browser.handleCommand(kept, 'app.menu', {})
+      no.shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(no.browser.webApps.pinnedFor('https://notes.example/')?.name).toBe('Notes')
+      expect(kept.alive).toBe(true)
+
+      const yes = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: true })
+      const gone = yes.browser.openAppWindow('https://notes.example/')!
+      yes.browser.handleCommand(gone, 'app.menu', {})
+      yes
+        .shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(yes.browser.webApps.pinnedFor('https://notes.example/')).toBeNull()
+      expect(gone.closeApproved).toBe(true)
+    })
   })
 
   it('closes the page group with the page controls where the host has them', () => {
@@ -604,6 +706,163 @@ describe('the app menu', () => {
     expect(appMenu(h)).not.toContain('Quit')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'tablet' })
     expect(appMenu(h)).toContain('Keyboard Shortcuts')
+  })
+})
+
+/** Every item of a template, submenus included. */
+function allItems(items: MenuItemTemplate[]): MenuItemTemplate[] {
+  return items.flatMap((item) => [item, ...(item.submenu ? allItems(item.submenu) : [])])
+}
+
+describe("the phone menu's icon row", () => {
+  /** A phone with one loaded web page, its menu open; `row` is the menu's first group. */
+  function phone(url = PAGE_URL): PageHarness & { row: () => MenuItemTemplate[] } {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    if (url !== PAGE_URL) h.browser.tabs.tab(h.tabId)!.url = url
+    return {
+      ...h,
+      row: () => {
+        appMenu(h)
+        const items = h.shown()
+        return items.slice(
+          0,
+          items.findIndex((item) => item.type === 'separator')
+        )
+      }
+    }
+  }
+
+  it("is Chrome's five, in Chrome's order, each naming its glyph, and heads the phone menu alone", () => {
+    const h = phone()
+    expect(h.row().map((item) => [item.label, item.glyph])).toEqual([
+      ['Forward', 'forward'],
+      ['Bookmark', 'star'],
+      ['Download Page', 'download'],
+      ['Page Info', 'info'],
+      ['Reload', 'reload']
+    ])
+    // The row is the phone layout's: the desktop's native menu and the tablet's carry no glyph
+    // anywhere, and their templates are what they were.
+    for (const layout of [
+      harness(DESKTOP),
+      harness(DESKTOP, 'tablet'),
+      harness(ANDROID, 'tablet')
+    ]) {
+      appMenu(layout)
+      expect(allItems(layout.shown()).every((item) => item.glyph === undefined)).toBe(true)
+    }
+    // Rows of text below the row carry none either.
+    appMenu(h)
+    expect(allItems(h.shown().slice(6)).every((item) => item.glyph === undefined)).toBe(true)
+  })
+
+  it('serialises the glyph for the chrome and leaves every other descriptor as it was', () => {
+    const { items } = serialiseMenu(
+      [
+        { label: 'Forward', glyph: 'forward', enabled: false },
+        { type: 'separator' },
+        { label: 'New Tab', click: () => undefined }
+      ],
+      'm'
+    )
+    expect(items[0]).toMatchObject({ label: 'Forward', glyph: 'forward', enabled: false })
+    expect('glyph' in items[1]).toBe(false)
+    expect('glyph' in items[2]).toBe(false)
+  })
+
+  it('has Forward disabled with no forward entry and stepping forward with one (§9.30: greyed, not gone)', () => {
+    const h = phone()
+    const forward = (): MenuItemTemplate => h.row()[0]
+    expect(forward()).toMatchObject({ label: 'Forward', enabled: false })
+    h.browser.tabs.tab(h.tabId)!.canGoForward = true
+    expect(forward()).toMatchObject({ enabled: true })
+    const go = vi.spyOn(h.browser.tabs, 'goForward').mockImplementation(() => undefined)
+    forward().click?.()
+    expect(go).toHaveBeenCalledWith(h.tabId)
+  })
+
+  it("the star is the page's bookmark: unfilled and saving on a new page, filled and editing on a bookmarked one, off a page that takes no bookmark", () => {
+    const h = phone()
+    const star = (): MenuItemTemplate => h.row()[1]
+    expect(star()).toMatchObject({
+      label: 'Bookmark',
+      checked: false,
+      enabled: true
+    })
+    // A stateful glyph, not a toggle (§9.13): a plain item whose `checked` is the fill – never a
+    // checkbox, which the mouse popover would tick. The chrome gets `checked` either way.
+    expect(star().type).toBeUndefined()
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: false })
+    const flow = vi.spyOn(h.browser, 'starTab')
+    star().click?.()
+    expect(flow).toHaveBeenCalledWith(h.tabId, h.win)
+    // The star flow saved the page: the row's star is filled now and a press edits.
+    expect(h.browser.tabs.tab(h.tabId)!.bookmarked).toBe(true)
+    expect(star()).toMatchObject({ label: 'Edit Bookmark', checked: true, enabled: true })
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: true })
+    // The bookmarks submenu has no second entry for it on the phone.
+    appMenu(h)
+    const bookmarks = h.shown().find((item) => item.label === 'Bookmarks')
+    expect(bookmarks?.submenu?.map((item) => item.label ?? '-')).toEqual([
+      'Bookmark All Tabs…',
+      '-',
+      'Show Bookmarks',
+      '-',
+      'Import Bookmarks…',
+      'Export Bookmarks…'
+    ])
+    // A blank tab has nothing to bookmark.
+    const blank = phone('zen://blank')
+    expect(blank.row()[1]).toMatchObject({ label: 'Bookmark', enabled: false })
+  })
+
+  it('Download Page saves a web page through page.savePage and is off elsewhere; it is the phone menu’s one save entry', () => {
+    const h = phone()
+    expect(h.row()[2]).toMatchObject({ label: 'Download Page', glyph: 'download', enabled: true })
+    const run = vi.spyOn(h.browser.actions, 'run').mockImplementation(() => undefined)
+    h.row()[2].click?.()
+    expect(run).toHaveBeenCalledWith('page.savePage', { sourceTabId: h.tabId, win: h.win })
+    expect(phone('zen://settings').row()[2]).toMatchObject({ enabled: false })
+    expect(phone('zen://blank').row()[2]).toMatchObject({ enabled: false })
+    // Chrome's phone menu saves through the icon alone: the text row is the desktop's, so the
+    // same command is not offered twice (once gated to the web, once not).
+    appMenu(h)
+    expect(allItems(h.shown()).filter((item) => item.action === 'page.savePage')).toHaveLength(1)
+    expect(appMenu(h)).not.toContain('Save Page As…')
+    expect(appMenu(harness(DESKTOP))).toContain('Save Page As…')
+    expect(appMenu(harness(ANDROID, 'tablet'))).toContain('Save Page As…')
+  })
+
+  it('Page Info asks the chrome for the site information sheet, and is off where there is no site', () => {
+    const h = phone()
+    expect(h.row()[3]).toMatchObject({ label: 'Page Info', glyph: 'info', enabled: true })
+    h.sent.length = 0
+    h.row()[3].click?.()
+    expect(h.sent).toEqual(['siteInfo.open'])
+    // No site: a blank or new tab, a registered internal page; a site's error page keeps it.
+    expect(phone('zen://blank').row()[3]).toMatchObject({ enabled: false })
+    expect(phone('zen://newtab').row()[3]).toMatchObject({ enabled: false })
+    expect(phone('zen://settings/privacy').row()[3]).toMatchObject({ enabled: false })
+    expect(hasSiteInfo({ url: 'zen://error?url=https%3A%2F%2Fexample.com' })).toBe(true)
+    expect(hasSiteInfo({ url: 'file:///sdcard/page.html' })).toBe(true)
+    expect(hasSiteInfo({ url: 'zen://settings' })).toBe(false)
+  })
+
+  it('Reload is Stop while the page loads, each running its own command', () => {
+    const h = phone()
+    const last = (): MenuItemTemplate => h.row()[4]
+    expect(last()).toMatchObject({ label: 'Reload', glyph: 'reload', enabled: true })
+    const reload = vi.spyOn(h.browser.tabs, 'reload').mockImplementation(() => undefined)
+    last().click?.()
+    expect(reload).toHaveBeenCalledWith(h.tabId)
+    h.browser.tabs.tab(h.tabId)!.loading = true
+    expect(last()).toMatchObject({ label: 'Stop', glyph: 'stop' })
+    const stop = vi.spyOn(h.browser.tabs, 'stop').mockImplementation(() => undefined)
+    last().click?.()
+    expect(stop).toHaveBeenCalledWith(h.tabId)
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })
 
