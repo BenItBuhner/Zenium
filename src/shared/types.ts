@@ -3431,7 +3431,19 @@ export interface Commands {
     result: void
   }
 
-  'urlbar.suggest': { args: { query: string; tabId: string | null }; result: Suggestion[] }
+  'urlbar.suggest': {
+    args: {
+      query: string
+      tabId: string | null
+      /**
+       * The bar is in keyword or search mode for this engine (tab-to-search, Ctrl+K, the `?`
+       * prefix; omnibox-08, -26): `query` is what to search, never an address, and the rows are
+       * that engine's – no address, history, bookmark or tab rows.
+       */
+      engineId?: string
+    }
+    result: Suggestion[]
+  }
   'urlbar.submit': {
     args: {
       input: string

@@ -49,6 +49,19 @@ export const RELEVANCE = {
   history: 880
 } as const
 
+/** The "Recent searches" section of zero-suggest (omnibox-20). */
+export const RECENT_SEARCHES_GROUP = 'Recent searches'
+/** Remembered searches shown on focus at most (Chrome shows up to eight zero-suggest rows). */
+export const RECENT_SEARCHES_MAX = 8
+
+export interface SuggestOptions {
+  /**
+   * The bar is in keyword or search mode for this engine (tab-to-search, Ctrl+K, `?`): the
+   * query is search terms for it – no address, history, bookmark, tab or command rows.
+   */
+  engineId?: string
+}
+
 /** Rows shown at most; Chrome's desktop popup holds eight, Zenium's field is taller. */
 export const MAX_ROWS = 10
 const REMOTE_TIMEOUT_MS = 900
@@ -75,16 +88,24 @@ export class SuggestionService {
   async suggest(
     rawQuery: string,
     currentTabId: string | null,
-    win: ZenWindow = this.browser.focusedWindow()
+    win: ZenWindow = this.browser.focusedWindow(),
+    opts: SuggestOptions = {}
   ): Promise<Suggestion[]> {
-    const query = rawQuery.trim()
+    let query = rawQuery.trim()
     const state = this.browser.state
     const engines = state.searchEngines
     const defaultEngine = state.defaultSearchEngine()
     const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
 
-    if (!query) return isPrivate ? [] : await this.emptyState()
+    // Search mode (omnibox-26): the bar's engine, or Chrome's legacy `?` prefix in the text.
+    let modeEngine = opts.engineId ? engines.find((e) => e.id === opts.engineId) : undefined
+    if (!modeEngine && query.startsWith('?') && !matchKeyword(rawQuery.trimStart(), engines)) {
+      modeEngine = defaultEngine
+      query = query.slice(1).trim()
+    }
+
+    if (!query) return isPrivate || modeEngine ? [] : await this.emptyState(wantsHistory)
 
     // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
     // rows are what the extension suggests, nothing else (Chrome's keyword mode).
@@ -116,11 +137,19 @@ export class SuggestionService {
     const signal = controller.signal
 
     // `@ddg ` with nothing after it is already keyword mode: the trailing space counts here.
-    const keyword = matchKeyword(rawQuery.trimStart(), engines)
-    if (keyword?.kind === 'scope') return this.scopeResults(keyword, query, currentTabId, win)
+    const textKeyword = modeEngine ? null : matchKeyword(rawQuery.trimStart(), engines)
+    if (textKeyword?.kind === 'scope')
+      return this.scopeResults(textKeyword, query, currentTabId, win)
+    // Search mode is keyword mode for the bar's engine, the field holding the terms alone.
+    const keyword: KeywordMatch | null =
+      textKeyword ??
+      (modeEngine
+        ? { kind: 'engine', engine: modeEngine, keyword: modeEngine.keyword, query }
+        : null)
     const engine = keyword?.engine ?? defaultEngine
     const searchTerms = keyword ? keyword.query : query
-    const searchFill = (term: string): string => (keyword ? `${keyword.keyword} ${term}` : term)
+    const searchFill = (term: string): string =>
+      textKeyword ? `${textKeyword.keyword} ${term}` : term
 
     const rows: Ranked[] = []
 
