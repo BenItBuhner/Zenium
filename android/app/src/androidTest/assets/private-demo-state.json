@@ -73,6 +73,9 @@
   "settings": {
     "onboardingDone": true,
     "colorScheme": "light",
+    "defaultBrowserPromo": {
+      "done": true
+    },
     "privacy": {
       "httpsOnly": "off"
     },

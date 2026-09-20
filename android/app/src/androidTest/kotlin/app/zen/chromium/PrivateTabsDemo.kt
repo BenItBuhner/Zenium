@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.accessibilityservice.AccessibilityService
 import android.app.Activity
+import android.app.Application
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.graphics.Bitmap
@@ -9,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Base64
@@ -26,6 +28,7 @@ import org.json.JSONTokener
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -60,6 +63,11 @@ import java.util.concurrent.TimeUnit
  * The recorder sees the private surface only because `PrivateBrowsing.captureForRecording` is on
  * for the run (a debug-build override): FLAG_SECURE would black the recording out, as it does
  * Recents. The guard's own steps drop the override for one look each and put it back.
+ *
+ * The seeded profile has the default-browser campaign over (`defaultBrowserPromo.done`): the run
+ * starts the app three times (the launch, the relaunch, the cold shortcut), and the third session
+ * is the one the "Make Zenium your default browser" sheet is due in (`shared/defaultBrowser.ts`),
+ * which would stand over the shortcut's private new tab page and take the fingers meant for it.
  */
 @RunWith(AndroidJUnit4::class)
 class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "private-demo") {
@@ -264,18 +272,25 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         SystemClock.sleep(1_200)
         finding("after the Private segment: pane '${pane()}', cards ${cards()}")
 
-        // 7. The last private card's close ends the session: the profile is wiped (INC-04), the
-        //    pane shows its explainer, and the regular tab comes back with its cookie.
+        // 7. The last private card's close ends the session: the profile is wiped (INC-04) and the
+        //    overview returns to the Tabs pane (as Chrome's switcher does when the last incognito
+        //    tab goes); the empty Private pane's explainer is a pick away (TAB-03); the regular
+        //    tab comes back with its cookie.
         val close = chromeRect(closeButton(private1))
         expect("the private card has its close button", close != null)
         close?.let { Finger().tap(it.exactCenterX(), it.exactCenterY()) }
         expect("a finger on the card's close closes the last private tab", awaitNoPrivateTabs())
         val wiped = awaitPrivateWiped()
         expect("the private profile is wiped when the last private tab closes (INC-04)", wiped)
-        finding("\nafter the last close: private profile ${privateProfileState()}, default jar '${defaultJar()}'")
+        expect("the last private tab closing returns the overview to the Tabs pane", awaitPane("tabs"))
         SystemClock.sleep(1_500)
-        shot("10-private-empty-explainer")
-        expect("the empty Private pane explains itself (TAB-03)", waitFor(EMPTY_TITLE, 6_000) != null)
+        shot("10-overview-back-on-tabs")
+        finding("\nafter the last close: pane '${pane()}', cards ${cards()}, private profile ${privateProfileState()}, default jar '${defaultJar()}'")
+        tapSegment("private")
+        expect("the empty Private pane explains itself (TAB-03)", awaitPane("private") && waitFor(EMPTY_TITLE, 6_000) != null)
+        SystemClock.sleep(1_200)
+        shot("11-private-empty-explainer")
+        finding("after picking Private with none open: pane '${pane()}', cards ${cards()}")
         tapSegment("tabs")
         awaitPane("tabs")
         SystemClock.sleep(1_000)
@@ -284,14 +299,14 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         settle()
         expect("the chrome is back on the space theme", !host.themeDark && !host.privateSurface)
         expect("the regular tab keeps its cookie across the private session", cookieOf(REGULAR_TAB) == regular)
-        shot("11-regular-restored")
+        shot("12-regular-restored")
         finding("back on the regular tab: chrome dark ${host.themeDark}, private surface ${host.privateSurface}, document.cookie '${cookieOf(REGULAR_TAB)}'")
 
         // 8. The Tabs button's quick menu (INC-01): a finger on New Private Tab; the next private
         //    tab finds the jar empty, which is the wipe of step 7 seen from a page.
         holdTabsButton()
         expect("a hold on Tabs opens its quick menu", waitFor(MENU_NEW_PRIVATE, 5_000) != null)
-        shot("12-tabs-quick-menu")
+        shot("13-tabs-quick-menu")
         touchTapLabelExpecting(MENU_NEW_PRIVATE, "a private tab is active", timeoutMs = 10_000) { privateActive() }
         expect("the quick menu's New Private Tab opens a private tab", privateActive())
         val private2 = activeCoreTab()?.optString("id").orEmpty()
@@ -300,7 +315,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         SystemClock.sleep(1_500)
         val next = cookieOf(private2)
         expect("the next private tab finds no cookie: the last close wiped the jar", next.isEmpty())
-        shot("13-next-private-no-cookie")
+        shot("14-next-private-no-cookie")
         finding("\nnext private tab $private2: profile '${profileName(private2)}', document.cookie '$next', private jar '${privateJar()}'")
         tapPage(private2, "#bake")
         val privateCookie2 = awaitCookie(private2) { it.isNotEmpty() }
@@ -315,7 +330,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         relaunch()
         expect("the wipe at boot leaves no private cookie", awaitPrivateWiped())
         expect("no private tab is restored after the relaunch", !anyPrivateTab())
-        shot("14-relaunched")
+        shot("15-relaunched")
         finding("after the relaunch (a new activity and host, the core booted anew): private profile ${privateProfileState()}, private tabs restored ${anyPrivateTab()}")
 
         // 10. The launcher's static shortcut from a COLD start (INC-01). The browser's task is
@@ -343,13 +358,17 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         val intent = shortcut?.intent?.let { Intent(it) }
             ?: Intent(PrivateBrowsing.ACTION_NEW_TAB).setClassName(app.packageName, LauncherIconActivity::class.java.name)
         val hostBeforeCold = host
+        val activityBeforeCold = activity
         onMain { activity.finishAndRemoveTask() }
         awaitDestroyed()
         finding("\nthe browser's task removed for the cold start: activity destroyed ${onMain { activity.isDestroyed }}; firing the shortcut as the launcher does")
         SystemClock.sleep(1_500)
         val cold = fireShortcut(intent, awaitMainMs = 20_000)
         expect("the shortcut's intent lands on the trampoline", cold.trampoline != null)
-        expect("a cold start through the shortcut creates one MainActivity", cold.created is MainActivity)
+        expect(
+            "a cold start through the shortcut creates one MainActivity, and it is the one in front",
+            cold.created is MainActivity && cold.created !== activityBeforeCold && (cold.fronted == null || cold.fronted === cold.created)
+        )
         (cold.created as? MainActivity)?.let { activity = it }
         expect("the new activity brings a host of its own: the core boots anew", host !== hostBeforeCold)
         expect("the chrome comes up in the new activity", awaitChromeUp())
@@ -367,10 +386,10 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
             "dumpsys after the cold start: one MainActivity and no LauncherIconActivity",
             coldRecords["MainActivity"] == 1 && (coldRecords["LauncherIconActivity"] ?: 0) == 0
         )
-        shot("15-shortcut-cold-start")
+        shot("16-shortcut-cold-start")
         finding(
             "after the cold start through the shortcut: trampoline created ${cold.trampoline != null} (destroyed ${cold.trampoline?.let { onMain { it.isDestroyed } }}), " +
-                "MainActivity created ${cold.created != null} (${cold.mainStarts} start(s) relayed), new host ${host !== hostBeforeCold}, private tabs $privateAfterCold, " +
+                "MainActivity created ${cold.created != null} and in front ${cold.fronted === cold.created} (${cold.mainStarts} start(s) relayed), new host ${host !== hostBeforeCold}, private tabs $privateAfterCold, " +
                 "active '$private3' url '${coldTab?.optString("url")}' fromIntent ${coldTab?.optBoolean("fromIntent")}, chrome dark ${host.themeDark}, " +
                 "private surface ${host.privateSurface}, activity records $coldRecords"
         )
@@ -378,7 +397,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         SystemClock.sleep(1_500)
         val afterBoot = cookieOf(private3)
         expect("the private tab after the boot wipe finds no cookie", afterBoot.isEmpty())
-        shot("16-boot-wiped")
+        shot("17-boot-wiped")
         finding("shortcut's private tab $private3: profile '${profileName(private3)}', document.cookie '$afterBoot', default jar '${defaultJar()}'")
 
         // 11. Close Private Tabs from the menu ends the session; the chrome blends back.
@@ -389,7 +408,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         settle()
         expect("the chrome is back on the space theme after the session", !host.themeDark && !host.privateSurface)
         expect("the private profile is wiped after the session", awaitPrivateWiped())
-        shot("17-session-ended")
+        shot("18-session-ended")
         finding("\nafter Close Private Tabs: private tabs ${anyPrivateTab()}, chrome dark ${host.themeDark}, private profile ${privateProfileState()}, default jar '${defaultJar()}'")
 
         // 12. The shortcut WARM: Zenium in the background on a regular tab (Home), then the
@@ -404,10 +423,13 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         expect("Home puts Zenium in the background", awaitFront(ours = false))
         finding("\nZenium in the background on '$regularBefore': in front '${frontPackage()}', window focus ${onMain { activity.hasWindowFocus() }}")
         SystemClock.sleep(1_500)
-        val warm = fireShortcut(intent, awaitMainMs = 4_000)
+        val warm = fireShortcut(intent, awaitMainMs = 6_000)
         val warmOpened = awaitPrivateActive(15_000)
         expect("the shortcut's intent lands on the trampoline", warm.trampoline != null)
-        expect("the warm shortcut creates no MainActivity: the running one takes the action", warm.created == null)
+        expect(
+            "the warm shortcut creates no MainActivity: the running one comes to the front for the action",
+            warm.created == null && (warm.fronted == null || warm.fronted === activityBefore)
+        )
         expect(
             "the same activity and host, neither destroyed (no relaunch)",
             activity === activityBefore && host === hostBefore && !onMain { activity.isDestroyed }
@@ -429,10 +451,11 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
             "dumpsys after the warm shortcut: one MainActivity and no LauncherIconActivity",
             warmRecords["MainActivity"] == 1 && (warmRecords["LauncherIconActivity"] ?: 0) == 0
         )
-        shot("18-shortcut-warm")
+        shot("19-shortcut-warm")
         finding(
             "after the warm shortcut: trampoline created ${warm.trampoline != null} (destroyed ${warm.trampoline?.let { onMain { it.isDestroyed } }}), " +
-                "MainActivity created ${warm.created != null} (${warm.mainStarts} start(s) relayed), same activity ${activity === activityBefore}, same host ${host === hostBefore}, " +
+                "MainActivity created ${warm.created != null}, the running one resumed for it ${warm.fronted === activityBefore} (${warm.mainStarts} start(s) relayed), " +
+                "same activity ${activity === activityBefore}, same host ${host === hostBefore}, " +
                 "new intent ${onMain { activity.intent } !== intentBefore}, in front '${frontPackage()}', private tabs $privateAfterWarm, active '$private4' url '${warmTab?.optString("url")}' " +
                 "fromIntent ${warmTab?.optBoolean("fromIntent")}, activity records $warmRecords"
         )
@@ -451,12 +474,12 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         expect("the engine's flags block third-party cookies in private tabs", awaitEngineBlocks(true))
         expect("the regular tabs keep the global mode: not blocked there", !host.privacy.flags.blocksThirdPartyCookiesIn(false))
         SystemClock.sleep(1_200)
-        shot("19-cookie-switch-on")
+        shot("20-cookie-switch-on")
         finding("after the first touch: ${cookieSwitchState(private4)}")
         expect("a second finger turns it off: allowed, the setting allow", touchCookieSwitch() && awaitCookieSwitch(blocked = false, mode = "allow"))
         expect("the engine's flags allow them in private tabs again", awaitEngineBlocks(false))
         SystemClock.sleep(1_200)
-        shot("20-cookie-switch-off")
+        shot("21-cookie-switch-off")
         finding("after the second touch: ${cookieSwitchState(private4)}")
 
         // 14. Back at the shortcut tab's root: a tab another app sent (fromIntent) returns the user
@@ -473,7 +496,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         expect("the tab the user was on before the shortcut is active again", awaitActiveTab(regularBefore))
         expect("the session ends with the tab: the private profile is wiped", awaitPrivateWiped())
         SystemClock.sleep(1_000)
-        shot("21-back-to-launcher")
+        shot("22-back-to-launcher")
         finding(
             "\nafter back at the shortcut tab's root: in front '${frontPackage()}', private tabs ${anyPrivateTab()}, active tab '${activeCoreTab()?.optString("id")}', " +
                 "activity destroyed ${onMain { activity.isDestroyed }}, private profile ${privateProfileState()}"
@@ -486,7 +509,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
             "the chrome is back on the space theme, on the tab it left",
             !host.themeDark && !host.privateSurface && activeCoreTab()?.optString("id") == regularBefore
         )
-        shot("22-resumed-regular")
+        shot("23-resumed-regular")
         finding("Zenium back in front: same activity ${activity === activityBefore}, active tab '${activeCoreTab()?.optString("id")}', chrome dark ${host.themeDark}")
 
         // 15. A sheet over a private page with the guard up for real (the recording override off):
@@ -520,7 +543,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         val cover = coverImage()
         val recede = recedeValue()
         val coverSize = cover?.let { "${it.width}x${it.height}" }
-        cover?.let { saveStill("23-sheet-cover-under-guard", it) }
+        cover?.let { saveStill("24-sheet-cover-under-guard", it) }
         val coverBlack = cover?.let { blackFraction(it) }
         expect("the sheet stands on a cover of the page", cover != null)
         expect("the cover is the page, not black", coverBlack != null && coverBlack < 0.5f)
@@ -529,13 +552,13 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
             "\nsheet over a private page under FLAG_SECURE (guard ${verdict(guardedForSheet)}): view.snapshot " +
                 (if (directSize != null) "$directSize, ${((directBlack ?: 0f) * 100).toInt()}% black" else "none") +
                 "; the sheet's cover " +
-                (if (coverSize != null) "$coverSize, ${((coverBlack ?: 0f) * 100).toInt()}% black (private-23-sheet-cover-under-guard.png is the cover itself)" else "none") +
+                (if (coverSize != null) "$coverSize, ${((coverBlack ?: 0f) * 100).toInt()}% black (private-24-sheet-cover-under-guard.png is the cover itself)" else "none") +
                 ", --zen-recede $recede"
         )
         PrivateBrowsing.captureForRecording = true
         onMain { host.setPrivateSurface(host.privateSurface) }
         SystemClock.sleep(1_000)
-        shot("24-sheet-over-private-page")
+        shot("25-sheet-over-private-page")
         back()
         waitForGone(MENU_HANDLE_LABEL)
         SystemClock.sleep(1_000)
@@ -744,32 +767,57 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
 
     /**
      * What one firing of the shortcut started: `trampoline` is the LauncherIconActivity the
-     * intent landed on, `created` a MainActivity the system made for the relayed action (a cold
-     * start) – null when the running one took it through onNewIntent (warm) – and `mainStarts`
-     * how many times something in this process asked to start MainActivity (the trampoline's
-     * relay, in either case).
+     * intent landed on; `created` the MainActivity the system made for the relayed action (a cold
+     * start), null when the running one took it through onNewIntent (warm); `fronted` the
+     * MainActivity that came to the front for it, the created one or the running one; and
+     * `mainStarts` how many times something in this process asked to start MainActivity (the
+     * trampoline's relay, in either case).
      */
-    private class ShortcutLaunch(val trampoline: Activity?, val created: Activity?, val mainStarts: Int)
+    private class ShortcutLaunch(val trampoline: Activity?, val created: Activity?, val fronted: Activity?, val mainStarts: Int)
 
     /**
      * Fire `template` as the launcher fires a manifest shortcut – the system stamps its intent
-     * with CLEAR_TASK and TASK_ON_HOME (ShortcutParser) – and watch what it starts through
-     * activity monitors: a monitor learns of an activity's creation (`postPerformCreate`), so a
-     * created MainActivity is the sign of a cold start and none within `awaitMainMs` of a warm one.
+     * with CLEAR_TASK and TASK_ON_HOME (ShortcutParser) – and watch what it starts. Creations are
+     * read off the application's lifecycle callbacks (`onActivityCreated` fires for a creation and
+     * nothing else): a MainActivity created is the sign of a cold start, none within `awaitMainMs`
+     * of a warm one. An activity monitor tells the rest – `Instrumentation` matches monitors on an
+     * activity's creation and on each of its resumes alike, so what it hands back is the
+     * MainActivity that came to the front for the action, new or running, and its hits count the
+     * starts this process asked for.
      */
     private fun fireShortcut(template: Intent, awaitMainMs: Long): ShortcutLaunch {
         val mains = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
-        val trampolines = instrumentation.addMonitor(LauncherIconActivity::class.java.name, null, false)
+        val created = CopyOnWriteArrayList<Activity>()
+        val trampolines = CopyOnWriteArrayList<Activity>()
+        val creations = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(a: Activity, savedInstanceState: Bundle?) {
+                when (a) {
+                    is MainActivity -> created += a
+                    is LauncherIconActivity -> trampolines += a
+                }
+            }
+            override fun onActivityStarted(a: Activity) {}
+            override fun onActivityResumed(a: Activity) {}
+            override fun onActivityPaused(a: Activity) {}
+            override fun onActivityStopped(a: Activity) {}
+            override fun onActivitySaveInstanceState(a: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(a: Activity) {}
+        }
+        val application = app.applicationContext as Application
+        application.registerActivityLifecycleCallbacks(creations)
         try {
             app.startActivity(
                 Intent(template).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_TASK_ON_HOME)
             )
-            val trampoline = trampolines.waitForActivityWithTimeout(10_000)
-            val created = mains.waitForActivityWithTimeout(awaitMainMs)
-            return ShortcutLaunch(trampoline, created, mains.hits)
+            val trampolineBy = SystemClock.uptimeMillis() + 10_000
+            while (trampolines.isEmpty() && SystemClock.uptimeMillis() < trampolineBy) SystemClock.sleep(100)
+            // The callback runs in onCreate, before the monitor's match of the creation: a created
+            // MainActivity is in `created` by the time the monitor hands it back.
+            val fronted = mains.waitForActivityWithTimeout(awaitMainMs)
+            return ShortcutLaunch(trampolines.firstOrNull(), created.firstOrNull(), fronted, mains.hits)
         } finally {
+            application.unregisterActivityLifecycleCallbacks(creations)
             instrumentation.removeMonitor(mains)
-            instrumentation.removeMonitor(trampolines)
         }
     }
 
@@ -794,8 +842,15 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         return up
     }
 
-    /** The pill's bounds by either of its labels (an address, or the empty tab's prompt); null when neither is on screen. */
-    private fun pillShown(): Rect? = findByLabelPrefix(PILL_LABEL) ?: findByLabel(EMPTY_PILL_LABEL)
+    /**
+     * The pill's bounds by either of its labels (an address, or the empty tab's prompt), in the
+     * bar's band at the bottom of the window – the private new tab page's own field reads the
+     * same words higher up; null when the pill is not on screen.
+     */
+    private fun pillShown(): Rect? =
+        findNodes { it == PILL_LABEL || it.startsWith("$PILL_LABEL,") || it == EMPTY_PILL_LABEL }
+            .map { node -> Rect().also { node.getBoundsInScreen(it) } }
+            .firstOrNull { it.top > height * 0.6 }
 
     private fun refindPill() {
         pillShown()?.takeIf { it.width() > 100 * density }?.let { found ->
@@ -1042,7 +1097,7 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
      * Go; the core's navigate command stands in when the page never arrives that way.
      */
     private fun navigateByTyping(tabId: String, url: String) {
-        val target = findByLabelPrefix(PILL_LABEL) ?: pill
+        val target = pillShown() ?: pill
         Finger().tap(target.exactCenterX(), target.exactCenterY())
         val deadline = SystemClock.uptimeMillis() + 6_000
         while (findNode { it.startsWith("Search engine:") } == null && SystemClock.uptimeMillis() < deadline) {
@@ -1054,12 +1109,30 @@ class PrivateTabsDemo : DemoHarness("private-demo-state.json", "private", "priva
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
         if (!awaitLoaded(tabId, url, 15_000)) {
             finding("typing $url did not land in $tabId; navigating through the core instead")
-            closeUrlbar()
+            dismissUrlbar()
             coreInvoke("tab.navigate", json("tabId" to tabId, "input" to url).toString())
             awaitLoaded(tabId, url)
         }
-        closeUrlbar()
+        dismissUrlbar()
     }
+
+    /**
+     * Back out of the URL bar if it is up. Unlike [closeUrlbar], which sends a back until the
+     * address pill reads, this reads the URL bar itself: on a tab with no page the pill has no
+     * address to read, and a back sent with no URL bar up reaches the tab's root – at a shortcut
+     * tab's root, back returns to the launcher and closes the tab (#117's caller rule).
+     */
+    private fun dismissUrlbar() {
+        repeat(3) {
+            if (!urlbarOpen()) return
+            back()
+            SystemClock.sleep(1_200)
+        }
+        if (urlbarOpen()) Log.w(tag, "the urlbar stayed open")
+    }
+
+    /** The phone's URL bar is up: its field carries the search engine's glyph, labelled after it. */
+    private fun urlbarOpen(): Boolean = findNode { it.startsWith("Search engine:") } != null
 
     // --- the overview, through the chrome's DOM --------------------------------------------------
 
