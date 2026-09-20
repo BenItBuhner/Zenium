@@ -10,9 +10,6 @@ name: Android bar hide on scroll demo
 # demo. The build, the emulator and its caches live in android-emulator-demo.yml; this file only
 # picks the driver and the colour scheme.
 on:
-  push:
-    branches:
-      - cursor/android-bar-hide-on-scroll-a77b
   workflow_dispatch:
     inputs:
       theme:
