@@ -17,12 +17,25 @@ import { ExtensionIcon } from '../extensions/ExtensionIcon'
  * of an extension that supplies no favicon of its own shows the extension's icon (the puzzle
  * glyph while it has none), never a letter of its id (§10.1 applied to extension pages).
  */
+/** What the favicon is drawn from: a tab, or a row that carries the same fields (tab search). */
+export type FaviconSource = Pick<
+  Tab,
+  | 'url'
+  | 'title'
+  | 'favicon'
+  | 'customIcon'
+  | 'customTitle'
+  | 'loading'
+  | 'discarded'
+  | 'containerId'
+>
+
 export function Favicon({
   tab,
   size = 16,
   className
 }: {
-  tab: Tab
+  tab: FaviconSource
   size?: number
   className?: string
 }): JSX.Element {
