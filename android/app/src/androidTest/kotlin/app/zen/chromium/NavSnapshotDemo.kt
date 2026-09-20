@@ -41,7 +41,15 @@ import kotlin.math.roundToInt
  *     closed from the quick menu and brought back with Undo: the host answered `restored: true`,
  *     the restore was one `navigated` (no second copy of the page loaded on top), the URL shown
  *     is the virtual one, the list has its three entries under their names, nothing was fetched;
- *     then Back brings the article without a request.
+ *     then Back brings the article without a request;
+ *  7. a same-document entry as the current one: on the article, `history.pushState` puts `#x`
+ *     on top of the list with no load of its own (the commit the host hears of in
+ *     `doUpdateVisitedHistory` alone, where the list and the state are refreshed), the tab is
+ *     closed from the quick menu and brought back with Undo: `restored: true`, one `navigated`,
+ *     the list with `#x` current, nothing fetched.
+ *
+ * Across all of it the chrome's view events are watched for a `crashed` (the state is now
+ * taken inside the WebView's own callbacks): none is the last check.
  *
  * The pages come from a loopback server inside this process ([DemoServer]) with `max-age`
  * caching, so a page coming back without a request can be told from one fetched again
@@ -93,6 +101,7 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
     }
 
     override fun demo() {
+        expect("the chrome's view events can be watched (navigated per tab, crashed anywhere)", watchViewEvents())
         still("page-one")
         buildStack()
         closeFromQuickMenu()
@@ -100,7 +109,9 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         backTwice()
         holdOnBack()
         internalPageUndo()
+        sameDocumentUndo()
         still("end")
+        expect("no view crashed across the scenes (the state taken inside the WebView's callbacks): ${crashes()} crashed event(s)", crashes() == 0)
         finding("\nend: ${describeActive()}")
         finding(if (failures == 0) "ALL CHECKS PASSED" else "$failures CHECK(S) FAILED")
     }
@@ -257,7 +268,6 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         expect("the reader page fetched nothing (${hitsLine()})", hits() == fetched)
         still("reader-view")
 
-        expect("the chrome's view events can be counted", countNavigations())
         closeActiveTabFromQuickMenu("Closed $ARTICLE_TITLE", "reader-quick-menu")
         val navigatedBefore = navigations()
         expect("the touch on Undo takes", undo())
@@ -286,6 +296,47 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         list = hostList()
         expect("the list stands at the article with the reader page ahead: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, reader) && list?.optInt("index") == 1)
         still("back-to-article")
+    }
+
+    /**
+     * 7. A same-document entry as the current one. On the article (the reader entry ahead of
+     * it), `history.pushState` puts `…/article.html#x` on top of the list, the entry ahead goes,
+     * and nothing loads: no `onPageStarted`, the commit heard of in `doUpdateVisitedHistory`
+     * alone, where the host refreshes the list and the state behind it before the `navigated`
+     * the core records them on. Close Tab and Undo then have to bring the list back with `#x`
+     * current: the state the core took at close time was the one of that commit.
+     */
+    private fun sameDocumentUndo() {
+        finding("\n7. A pushState entry as the current one: close, Undo")
+        val fetched = hits()
+        tabJs("history.pushState({}, '', ${JSONObject.quote("/article.html#x")})")
+        expect("the page takes the new URL in place", awaitLoaded(ARTICLE_X))
+        settle()
+        var list = hostList()
+        expect("the host's list is page one, the article and the article at #x, the third current (the reader entry ahead gone): ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, ARTICLE_X) && list?.optInt("index") == 2)
+        val core = coreList()
+        expect("so is the core's: ${describe(core)}", urlsOf(core) == listOf(ONE, ARTICLE, ARTICLE_X) && core.optInt("index") == 2)
+        expect("nothing was fetched for it (${hitsLine()})", hits() == fetched)
+        val title = activeCoreTab()?.optString("title").orEmpty()
+
+        closeActiveTabFromQuickMenu("Closed $title", "pushstate-quick-menu")
+        val navigatedBefore = navigations()
+        expect("the touch on Undo takes", undo())
+        expect("the tab is back", awaitTab(TAB, exists = true))
+        expect("and active", awaitUntil(8_000) { activeTabId() == TAB })
+        expect("on the article at #x", awaitLoaded(ARTICLE_X))
+        settle()
+        val restored = onMain { host.tabs.get(TAB)?.lastRestore }
+        expect("the host answered restored: true (the same-document entry was in the state taken at its commit)", restored == true)
+        val navigated = navigations() - navigatedBefore
+        expect("the restore was one navigated event for the tab: $navigated (${navigationUrls()})", navigated == 1)
+        list = hostList()
+        expect("the host's list is the three entries again with #x current: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, ARTICLE_X) && list?.optInt("index") == 2)
+        val coreAfter = coreList()
+        expect("so is the core's: ${describe(coreAfter)}", urlsOf(coreAfter) == listOf(ONE, ARTICLE, ARTICLE_X) && coreAfter.optInt("index") == 2)
+        expect("the article came back without a request (${hitsLine()})", hits() == fetched)
+        still("pushstate-undone")
+        awaitToastGone()
     }
 
     // --- moves -----------------------------------------------------------------------------------
@@ -558,19 +609,24 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
     }
 
     /**
-     * Count the `navigated` events the host delivers to the chrome for the demo tab from now on
-     * (the wrapper on `__zenHost.viewEvent` the chrome's core hears through), skipping the
-     * in-page ones; true once it is in place. What [navigations] and [navigationUrls] read.
+     * Watch the view events the host delivers to the chrome from now on (a wrapper on
+     * `__zenHost.viewEvent`, which the chrome's core hears through): the `navigated` events of
+     * the demo tab other than in-page ones, and a `crashed` from any tab; true once it is in
+     * place. What [navigations], [navigationUrls] and [crashes] read.
      */
-    private fun countNavigations(): Boolean = jsString(
+    private fun watchViewEvents(): Boolean = jsString(
         "(function(){if(window.__demoNav)return 'yes';var h=window.__zenHost;if(!h||typeof h.viewEvent!=='function')return '';" +
-            "var orig=h.viewEvent;window.__demoNav=[];h.viewEvent=function(tabId,name,json){" +
+            "var orig=h.viewEvent;window.__demoNav=[];window.__demoCrashed=[];h.viewEvent=function(tabId,name,json){" +
             "if(name==='navigated'&&tabId===${JSONObject.quote(TAB)}){try{var p=JSON.parse(json);if(!p.inPage)window.__demoNav.push(String(p.url))}catch(e){}}" +
+            "if(name==='crashed'){window.__demoCrashed.push(String(tabId))}" +
             "return orig.call(h,tabId,name,json)};return 'yes'})()"
     ) == "yes"
 
-    /** How many document navigations the chrome has heard of for the demo tab since [countNavigations]. */
+    /** How many document navigations the chrome has heard of for the demo tab since [watchViewEvents]. */
     private fun navigations(): Int = jsString("(function(){return String((window.__demoNav||[]).length)})()").toIntOrNull() ?: -1
+
+    /** How many `crashed` events the chrome has heard of, from any tab, since [watchViewEvents] (-1 when it cannot be read). */
+    private fun crashes(): Int = jsString("(function(){return String((window.__demoCrashed||[]).length)})()").toIntOrNull() ?: -1
 
     /** The URLs of those navigations, newest last, for the findings. */
     private fun navigationUrls(): String =
@@ -631,6 +687,8 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         private const val TWO = "$ORIGIN/two.html"
         private const val THREE = "$ORIGIN/three.html"
         private const val ARTICLE = "$ORIGIN/article.html"
+        /** The article's same-document entry (`history.pushState`), scene 7. */
+        private const val ARTICLE_X = "$ARTICLE#x"
         /** Where the core's Reader View pages live (`zen://reader?id=…&url=…`). */
         private const val READER_PREFIX = "zen://reader"
         private const val ARTICLE_TITLE = "The long read"
