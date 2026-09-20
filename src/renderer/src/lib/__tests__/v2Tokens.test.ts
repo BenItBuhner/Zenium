@@ -862,6 +862,35 @@ describe('the v2 primitives (§9.34)', () => {
       )
   })
 
+  it('ink a message row’s lead glyph and description in the status ink through the row’s [data-tone], the label staying in text ink (§9.33, §1; the #261 review)', () => {
+    // The tone is the row's: `warn` / `danger` on `.zen-v2-row` reaches `.zen-v2-row-lead` and
+    // `.zen-v2-description` THROUGH the row – a surface says it once, never re-inks its
+    // description by hand – in the status tokens as ink only (no fill, no border). Beside the
+    // row's other marks in the primitive block, unlayered as they are, so the layered
+    // `.zen-v2-description` colour (main.css's, extensions.css's) cannot win it back.
+    for (const [tone, token] of [
+      ['warn', '--v2-warn'],
+      ['danger', '--v2-danger']
+    ] as const) {
+      const selector = `.zen-v2-row[data-tone='${tone}'] .zen-v2-row-lead,\n.zen-v2-row[data-tone='${tone}'] .zen-v2-description`
+      const at = ruleAt(selector)
+      expect(at, `${tone} selects the lead and the description through the row`).toBeGreaterThan(
+        ruleAt('.zen-v2-row[data-static]')
+      )
+      expect(nesting(at)).toBe(0)
+      expect(block(selector).match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([`  color: var(${token});`])
+    }
+    // Nothing inks the label, and no other stylesheet of the renderer restates the row's tone.
+    expect(bare).not.toMatch(/\[data-tone=[^\]]+\] \.zen-v2-label/)
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => f.endsWith('.css') && f !== 'assets/main.css'))
+      expect(readFileSync(join(root, file), 'utf8'), `${file} restates the row's tone`).not.toMatch(
+        /\.zen-v2-row\[data-tone|\.zen-v2-description\[data-tone/
+      )
+  })
+
   it('are what the phone history and bookmarks rows are built on: one unlayered, token-only modifier beside the row, no row or icon-button box of their own', () => {
     // The panels' own row (`.zen-list-row`, #47) is gone from the renderer: nothing names it.
     const root = fileURLToPath(new URL('../../', import.meta.url))

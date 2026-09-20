@@ -6439,6 +6439,23 @@
 .zen-v2-row[data-static] {
   cursor: default;
 }
+/*
+ * The message row (§9.33's anatomy on the row, §1's status ink as ink only): a static row that
+ * tells of a state – the sync folder gone, an extension's error – carries `data-tone` (`warn`
+ * or `danger`), which inks its lead glyph (`.zen-v2-row-lead`) and its description
+ * (`.zen-v2-description`) in `--v2-warn` / `--v2-danger` and leaves the label in the text's
+ * ink, the row taking no fill and no border of its own. Selected through the row, so a
+ * surface says the tone once, on the row, and never re-inks its description by hand; the tone
+ * is the row's, as `data-static` is, and a row with a tone is a static one.
+ */
+.zen-v2-row[data-tone='warn'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='warn'] .zen-v2-description {
+  color: var(--v2-warn);
+}
+.zen-v2-row[data-tone='danger'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='danger'] .zen-v2-description {
+  color: var(--v2-danger);
+}
 .zen-v2-row:active:not([aria-disabled='true'], [data-static]) {
   background: var(--v2-fill);
 }
