@@ -23,7 +23,8 @@
 //                      for editing), `overlay=<kind>`
 //                      (history, bookmarks, downloads, settings, addons, …; `&section=<id>` picks
 //                      a Settings section, `&show=<text>` scrolls a row into view), `menu=app`
-//                      (`&show=<text>` scrolls an item into view) or `menu=tabs` (the Tabs
+//                      (`&show=<text>` scrolls an item into view; `&article` marks the page an
+//                      article, for the items an article enables) or `menu=tabs` (the Tabs
 //                      button's quick menu), `prompt=<permission>` (the permission prompt
 //                      sheet), `private=<surface>` (`newtab`: a private tab on its new tab page,
 //                      `page`: on a page (`&url=<page>`), `overview`: the overview on its Private

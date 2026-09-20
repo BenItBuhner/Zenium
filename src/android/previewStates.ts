@@ -620,6 +620,15 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       tab?.id ?? null
     ).then(() => requestAnimationFrame(finish))
   } else if (target.kind === 'menu') {
+    // `article`: the page is an article to the menu (the stand-in host cannot run the
+    // readability probe in a site's frame; the flag stands for the probe's answer).
+    if (target.article && tab) {
+      const live = browser.tabs.tab(tab.id)
+      if (live && !live.readerable) {
+        live.readerable = true
+        browser.state.commitVolatile()
+      }
+    }
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
       if (!uiStore.get().menu) return

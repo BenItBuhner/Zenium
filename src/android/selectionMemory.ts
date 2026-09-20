@@ -52,9 +52,9 @@ export function rememberClearedSelection(
     withCleared: (work) => {
       const selection = doc.getSelection()
       const collapsed = !selection || selection.rangeCount === 0 || selection.isCollapsed
-      const recent = cleared !== null && now() - cleared.at <= keepMs
+      const recent = cleared !== null && now() - cleared.at <= keepMs ? cleared : null
       if (!selection || !collapsed || !recent) return work()
-      const range = cleared.range
+      const range = recent.range
       selection.removeAllRanges()
       selection.addRange(range)
       try {

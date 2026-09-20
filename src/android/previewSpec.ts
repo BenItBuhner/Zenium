@@ -212,6 +212,12 @@ export type PreviewState =
       menu: PreviewMenu
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
+      /**
+       * The active page reads as an article first (`article`): the stand-in host cannot run the
+       * readability probe inside a site's frame, so the items an article enables (Reader View,
+       * Listen to This Page) are shown enabled by marking the tab readerable, as the probe would.
+       */
+      article?: boolean
     }
   | {
       /** One of the chrome's own sheets, open over the active page; `then` steps are taken on it. */
@@ -410,7 +416,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
  * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
- * button's quick menu (with `show=<text>` to scroll an item into view), `sheet=<name>` for one
+ * button's quick menu (with `show=<text>` to scroll an item into view; `article` marks the
+ * active page an article, so the items an article enables show enabled), `sheet=<name>` for one
  * of PREVIEW_SHEETS, the chrome's own sheets (the Extensions sheet the app menu's row opens;
  * `then=<steps>` takes steps on it: `tap:<row>` is the row's tap, `hold:<row>` its long press),
  * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
@@ -513,6 +520,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
     }
     const show = params.get('show')
     if (show) state.show = show
+    if (params.has('article')) state.article = true
     return state
   }
   const sheet = params.get('sheet')

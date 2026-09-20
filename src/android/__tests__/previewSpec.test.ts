@@ -130,6 +130,13 @@ describe('parsePreviewSpec', () => {
     })
     expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu', menu: 'app' })
+    // `article`: the page reads as an article, for the items an article enables.
+    expect(parsePreviewSpec('menu=app&show=Listen to This Page&article')).toEqual({
+      kind: 'menu',
+      menu: 'app',
+      show: 'Listen to This Page',
+      article: true
+    })
     expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
       kind: 'overlay',
       overlay: 'history'
