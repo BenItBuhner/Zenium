@@ -1619,6 +1619,19 @@ export class Menus {
     )
   }
 
+  /**
+   * The pill's split chip (split-05): the app menu's "Split View" submenu on its own, at the
+   * chip – the layouts with the split's checked, Unsplit View, New Empty Split View – so the
+   * chip that says the tab is in a split is also where the split is changed or left.
+   */
+  showSplitMenu(win: ZenWindow, anchor?: MenuAnchor): void {
+    const active = this.browser.tabs.activeTabFor(win)
+    const group = active?.splitGroupId
+      ? this.browser.state.model.splitGroups[active.splitGroupId]
+      : undefined
+    this.popup(splitViewSubmenu(active, group).submenu ?? [], win, 'app', anchor)
+  }
+
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()

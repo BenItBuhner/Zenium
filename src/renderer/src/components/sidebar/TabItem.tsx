@@ -18,7 +18,14 @@ import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
-import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
+import {
+  activeTab,
+  containerOf,
+  splitMarkOf,
+  tabTitle,
+  tabTooltip,
+  type SplitCardEdge
+} from '@renderer/lib/selectors'
 import {
   browserStore,
   clearTabSelection,
@@ -28,6 +35,7 @@ import {
 } from '@renderer/lib/ui'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { cn } from '@renderer/lib/utils'
+import { SplitGlyph } from '../SplitGlyph'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
 
@@ -38,9 +46,14 @@ interface Props {
   indent?: boolean
   /** The strip header that folds this row away (`folder:<id>`, `header:<spaceId>`), if any. */
   parent?: string
+  /**
+   * The part of a split card's frame this row draws (split-05): the rows of one split group
+   * that stand together in the list read as one card, a hairline around the run of them.
+   */
+  splitCard?: SplitCardEdge
 }
 
-export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.Element {
+export function TabItem({ tab, active, compact, indent, parent, splitCard }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
@@ -67,6 +80,12 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
     return c ? CONTAINER_COLORS[c.color] : null
   })
   const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
+  // The split this tab is a pane of (a stable reference off the snapshot): its layout and the
+  // tab's own pane make the row's glyph (split-05), drawn in the close button's slot at rest.
+  const splitGroup = browserStore.use((s) =>
+    tab.splitGroupId && s.state ? (s.state.splitGroups[tab.splitGroupId] ?? null) : null
+  )
+  const splitMark = splitMarkOf(splitGroup, tab.id)
   // An address dragged over the row (lib/dnd.ts): the row takes it, and shows so (§9.4).
   const dropInto = dropStore.use((s) => s.key === `tab:${tab.id}:into`)
   const isDragSource = dragging?.tabId === tab.id
@@ -184,6 +203,8 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
       data-tab-id={tab.id}
       data-strip-item={`tab:${tab.id}`}
       data-strip-parent={parent}
+      data-split-card={splitCard}
+      data-split-group={splitMark ? tab.splitGroupId : undefined}
       tabIndex={tabIndex}
       aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
       data-testid="tab"
@@ -309,6 +330,17 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               )}
             </button>
           )}
+          {/*
+            The split glyph (split-05): the layout of the split this tab is a pane of, its own
+            pane filled, 16 in the 24 slot at the row's trailing edge – the close button's slot,
+            which the button takes back while the pointer is on the row. A changed pinned tab
+            keeps its reset button up, so there the glyph has a slot of its own before it.
+          */}
+          {splitMark && !renaming && pinnedChanged && (
+            <span className="zen-tab-split flex h-6 w-6 shrink-0 items-center justify-center">
+              <SplitGlyph {...splitMark} />
+            </span>
+          )}
           {pinnedChanged ? (
             <button
               type="button"
@@ -323,18 +355,25 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
           ) : (
-            <button
-              type="button"
-              tabIndex={-1}
-              className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
-              title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
-              onClick={(e) => {
-                e.stopPropagation()
-                run('tab.close', { tabId: tab.id })
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            <span className="relative flex h-6 w-6 shrink-0">
+              {splitMark && !renaming && (
+                <span className="zen-tab-split zen-tab-split-slot absolute inset-0 flex items-center justify-center">
+                  <SplitGlyph {...splitMark} />
+                </span>
+              )}
+              <button
+                type="button"
+                tabIndex={-1}
+                className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
+                title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  run('tab.close', { tabId: tab.id })
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
           )}
         </>
       )}

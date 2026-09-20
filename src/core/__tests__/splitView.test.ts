@@ -5,6 +5,7 @@ import { applicationMenu } from '../menuBar'
 import type {
   MenuHost,
   MenuItemTemplate,
+  MenuPopupOptions,
   Platform,
   StoreIO,
   TabView,
@@ -49,6 +50,8 @@ interface Harness {
   sent: { name: string; payload: unknown }[]
   /** The last template handed to the host's menu popup. */
   shown: () => MenuItemTemplate[]
+  /** Where the host was asked to open it. */
+  shownAt: () => MenuPopupOptions | null
   open: (url: string) => Tab
   activeId: () => string | undefined
 }
@@ -57,9 +60,11 @@ function harness(): Harness {
   const events = new Map<string, TabViewEvents>()
   const sent: { name: string; payload: unknown }[] = []
   let last: MenuItemTemplate[] = []
+  let lastAt: MenuPopupOptions | null = null
   const menus: MenuHost = {
-    popup: (items) => {
+    popup: (items, options) => {
       last = items
+      lastAt = options
     }
   }
   const platform: Platform = {
@@ -117,6 +122,7 @@ function harness(): Harness {
     win,
     sent,
     shown: () => last,
+    shownAt: () => lastAt,
     eventsOf: (tabId) => {
       const e = events.get(tabId)
       if (!e) throw new Error(`no page for ${tabId}`)
@@ -357,6 +363,34 @@ describe('the ways into a split (split-01)', () => {
     click(h.shown(), 'Split with Current Tab')
     const group = Object.values(h.browser.state.model.splitGroups)[0]
     expect(group?.tabIds.sort()).toEqual([a.id, b.id].sort())
+  })
+})
+
+describe("the pill's split chip (split-05)", () => {
+  it('opens the Split View menu at the chip, the layout of the split checked, and its items act on the split', () => {
+    const h = harness()
+    const a = h.open('https://a.example/')
+    const b = h.open('https://b.example/')
+    h.browser.tabs.createSplit([a.id, b.id], 'horizontal', h.win)
+    h.browser.handleCommand(h.win, 'split.menu', { x: 120, y: 44, keyboard: true })
+    const items = h.shown()
+    expect(labels(items)).toEqual([
+      'Grid',
+      'Vertical',
+      'Horizontal',
+      '-',
+      'Unsplit View',
+      'New Empty Split View'
+    ])
+    expect(items.find((i) => i.label === 'Horizontal')?.checked).toBe(true)
+    expect(items.find((i) => i.label === 'Grid')?.checked).toBe(false)
+    expect(h.shownAt()).toMatchObject({ x: 120, y: 44, keyboard: true })
+    click(items, 'Unsplit View')
+    expect(Object.keys(h.browser.state.model.splitGroups)).toHaveLength(0)
+    // Out of a split the chip is gone, but the menu, asked for, still offers a split.
+    h.browser.handleCommand(h.win, 'split.menu', undefined)
+    expect(h.shown().find((i) => i.label === 'Unsplit View')?.enabled).toBe(false)
+    expect(h.shown().find((i) => i.label === 'Vertical')?.enabled).toBe(true)
   })
 })
 

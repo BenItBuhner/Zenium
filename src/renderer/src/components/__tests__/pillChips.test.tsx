@@ -91,6 +91,7 @@ function state(
     tabs: t ? { [t.id]: t } : {},
     spaces: [space],
     activeSpaceId: 'space',
+    splitGroups: {},
     settings: { urlbarBehavior: 'normal' },
     window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
     boosts: [],
@@ -543,6 +544,48 @@ describe('desktop pill (NavRow)', () => {
     }
     act(() => root!.render(<NavRow state={state(page, [], [card])} tab={page} compact={false} />))
     expectChip(el.querySelector<HTMLElement>('[data-af-chip]')!, 'Save card')
+  })
+
+  // The split chip (split-05, BUG-041): the strip row's glyph as the pill's trailing chip while
+  // the active tab is a pane of a split, its popup the Split View menu at the chip.
+  it('ends in the split chip while the tab is in a split, whose menu opens at the chip', () => {
+    const inSplit = tab('https://example.com/some/path', { splitGroupId: 'g1' })
+    const el = render(<NavRow state={state(inSplit)} tab={inSplit} compact={false} />)
+    // In a split of one pane left, or out of one, there is no chip.
+    expect(el.querySelector('[data-split-chip]')).toBeNull()
+
+    const split = {
+      ...state(inSplit),
+      splitGroups: {
+        g1: { id: 'g1', spaceId: 'space', tabIds: ['t0', 't1', 't2'], layout: 'grid', sizes: [] }
+      }
+    } as unknown as UIState
+    act(() => root!.render(<NavRow state={split} tab={inSplit} compact={false} />))
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    expect(labels(focusable(pill).slice(1)).slice(-2)).toEqual([
+      'Bookmark this tab',
+      'In a split view – 3 panes'
+    ])
+    const chip = el.querySelector<HTMLElement>('[data-split-chip]')!
+    expectChip(chip, 'In a split view – 3 panes')
+    expect(chip.getAttribute('title')).toBe('In a split view – 3 panes')
+    expect(chip.getAttribute('aria-haspopup')).toBe('menu')
+    expect(chip.hasAttribute('aria-pressed')).toBe(false)
+    // The glyph: the split's layout with this tab's own pane (the second of three) filled.
+    const glyph = chip.querySelector<SVGElement>('svg[data-split-glyph]')!
+    expect(glyph.getAttribute('data-split-glyph')).toBe('grid')
+    expect(glyph.getAttribute('data-split-panes')).toBe('3')
+    expect(glyph.getAttribute('data-split-pane')).toBe('1')
+    expect(glyph.getAttribute('aria-hidden')).toBe('true')
+
+    // A click asks for the Split View menu under the chip, not the URL bar; a key's click (no
+    // pointer, `detail` 0) asks for it in keyboard mode.
+    act(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })))
+    expect(commands()).toEqual(['split.menu'])
+    expect(invoke.mock.calls[0][1]).toMatchObject({ keyboard: false })
+    expect(uiStore.get().urlbar.open).toBe(false)
+    act(() => chip.click())
+    expect(invoke.mock.calls[1][1]).toMatchObject({ keyboard: true })
   })
 
   // Design language v2 §9.29: a chip takes the token family of the surface it sits on, read from
