@@ -380,12 +380,14 @@ export function NavRow({
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
               // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
-              // and what its Escape hands the keyboard back to (§9.22). It stays in a narrow
-              // pill, unlike the other extras (§9.29): since the reader document carries no
-              // toolbar of its own (§10.1), this chip is the one home of the reader's controls,
-              // and in the default sidebar the pill is under the 170 px at which the extras
-              // fold; the app menu's "Text Preferences…" is the second route (the popover then
-              // hangs centred).
+              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
+              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
+              // does not show itself, and at the default sidebar width the pill has room for
+              // the two chips that stay (site information, Reader View) and no more – a third
+              // would spill under the media hub's button. The reader document carries no
+              // toolbar of its own (§10.1: this popover is the one home of its controls), so
+              // the app menu's "Text Preferences…" is the way in while the chip is folded (the
+              // popover then hangs centred).
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -393,7 +395,7 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
                 )}
