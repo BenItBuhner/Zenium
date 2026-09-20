@@ -458,6 +458,45 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(bytes.result).toBe(Buffer.byteLength('a1b"two"'))
   })
 
+  it("raises the area's own onChanged (storage.local.onChanged) beside storage.onChanged, and wakes a worker that listens on it alone, as Google Dictionary's does", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    // The worker listens on the area event only; a page on both; the content script on the area.
+    backgroundUp(h, 'bg1', ['storage.local.onChanged'])
+    hello(h, 'page1', 'page')
+    message(h, 'page1', { t: 'listen', event: 'storage.onChanged', on: true })
+    message(h, 'page1', { t: 'listen', event: 'storage.sync.onChanged', on: true })
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'doc1.n.abcdefgh', { t: 'listen', event: 'storage.session.onChanged', on: true })
+    // The options page's migration flag, written with a key whose value is undefined (dropped).
+    const set = await call(h, 'page1', 'storage', 'set', ['local', { 'storage-migrated': true }])
+    expect(set.ok).toBe(true)
+    const area = events(h, 'bg1', 'storage.local.onChanged')
+    expect(area).toHaveLength(1)
+    expect(area[0].args).toEqual([{ 'storage-migrated': { newValue: true } }])
+    expect(events(h, 'bg1', 'storage.onChanged')).toHaveLength(0)
+    // The page hears the generic event with the area name, not local's own (not listened for).
+    expect(events(h, 'page1', 'storage.onChanged')).toHaveLength(1)
+    expect(events(h, 'page1', 'storage.local.onChanged')).toHaveLength(0)
+    await call(h, 'bg1', 'storage', 'set', ['sync', { theme: 'dark' }])
+    const sync = events(h, 'page1', 'storage.sync.onChanged')
+    expect(sync).toHaveLength(1)
+    expect(sync[0].args).toEqual([{ theme: { newValue: 'dark' } }])
+    // A closed area's own event stays with the trusted contexts, as the generic one does.
+    await call(h, 'bg1', 'storage', 'set', ['session', { s: 1 }])
+    expect(events(h, 'doc1.n.abcdefgh', 'storage.session.onChanged')).toHaveLength(0)
+    // The stopped worker persisted the area listener: the next local change wakes it for it.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    await call(h, 'page1', 'storage', 'set', ['local', { options: { language: 'en' } }])
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2', ['storage.local.onChanged'])
+    const woken = events(h, 'bg2', 'storage.local.onChanged')
+    expect(woken).toHaveLength(1)
+    expect(woken[0].args).toEqual([{ options: { newValue: { language: 'en' } } }])
+  })
+
   it('enforces the sync quota and keeps the session area from content scripts until allowed', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
@@ -1776,6 +1815,30 @@ describe('AndroidExtensionRuntime: popups and options', () => {
     expect(h.runtime.popupFor(ID)).toBeNull()
   })
 
+  it("names the sheet with the localised manifest name when the messages.json carries a BOM, and i18n.getMessage answers from it (Awesome Screenshot's __MSG_extName__)", async () => {
+    const h = harness()
+    const m = manifest({ name: '__MSG_extName__', default_locale: 'en' })
+    // The files as the package holds them: a BOM before the messages, a comment in the manifest.
+    h.kt.manifestTexts.set(PATH, `\ufeff// packed\n${JSON.stringify(m)}`)
+    h.kt.locales.set(PATH, {
+      en: '\ufeff{ "extName": { "message": "Awesome Screenshot" }, "visible": { "message": "Capture visible part" } }'
+    })
+    await h.runtime.attach(record(h, {}, m))
+    backgroundUp(h, 'bg1')
+    h.runtime.openPopup(ID)
+    expect(h.kt.calledWith('ext.popup.open')[0]).toMatchObject({ title: 'Awesome Screenshot' })
+    // The contexts' `chrome.i18n.getMessage` answers from the table the boot unit carries.
+    const units = h.kt.calledWith('ext.configure')[0].units as Array<Record<string, unknown>>
+    const config = JSON.parse(String(units[0].config)) as Record<string, unknown>
+    expect(config.extension as Record<string, unknown>).toMatchObject({
+      name: 'Awesome Screenshot',
+      messages: {
+        extName: { message: 'Awesome Screenshot' },
+        visible: { message: 'Capture visible part' }
+      }
+    })
+  })
+
   it('options pages open as a sheet, or as a tab when the manifest asks for one', async () => {
     const h = harness()
     await h.runtime.attach(record(h, {}, manifest({ options_ui: { page: 'options.html' } })))
@@ -2011,6 +2074,20 @@ describe('pickMessages', () => {
     expect(pickMessages(locales, 'de-AT', 'en')?.name.message).toBe('Deutsch')
     expect(pickMessages(locales, 'fr-FR', 'en')?.name.message).toBe('English')
     expect(pickMessages({}, 'fr-FR', 'en')).toBeNull()
+  })
+
+  it("reads a messages.json with a UTF-8 BOM or comments, as Chrome's reader does (Awesome Screenshot's en bundle)", () => {
+    const locales = {
+      en:
+        '\ufeff{\n  // the extension name\n  "extName": { "message": "Awesome Screenshot" },\n' +
+        '  /* the tab */ "visible": { "message": "Capture visible part // not a comment" }\n}',
+      de: '[1, 2]'
+    }
+    const en = pickMessages(locales, 'en-US', 'en')
+    expect(en?.extName.message).toBe('Awesome Screenshot')
+    expect(en?.visible.message).toBe('Capture visible part // not a comment')
+    // A bundle that is not an object is passed over for the next candidate.
+    expect(pickMessages(locales, 'de-DE', 'en')?.extName.message).toBe('Awesome Screenshot')
   })
 })
 

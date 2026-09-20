@@ -148,8 +148,13 @@ export class PrivacyService {
       cleared.push('passwords')
     }
     if (chosen.has('history')) {
+      // The omnibox's learned shortcuts go with the history they were learned from: all of them
+      // with all of it (through the history service's clear), the range's with the range.
       if (range === 'all') b.history.clear()
-      else b.history.deleteRange(from, RANGE_END)
+      else {
+        b.history.deleteRange(from, RANGE_END)
+        b.omniboxShortcuts.forgetRange(from, RANGE_END)
+      }
       cleared.push('history')
     }
     const engineKinds: Array<'cookies' | 'storage' | 'cache'> = []

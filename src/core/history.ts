@@ -213,6 +213,47 @@ export function selectRange(visits: HistoryVisit[], fromMs: number, toMs: number
     .sort((a, b) => b.visitTime - a.visitTime)
 }
 
+/**
+ * Does `term` occur in `hay` at the start of a word – the start of the text, or after a
+ * character that is not a letter or digit (a space, a `/`, a `.`, a `-`, a `?`)? Case-insensitive.
+ * Chrome's HistoryQuick idea (omnibox-02): "docs" at the start of a path segment or a title word
+ * outranks "docs" inside "Googledocs".
+ */
+export function matchesAtWordStart(hay: string, term: string): boolean {
+  const h = hay.toLowerCase()
+  const t = term.toLowerCase()
+  if (!t) return false
+  let from = 0
+  for (;;) {
+    const at = h.indexOf(t, from)
+    if (at === -1) return false
+    if (at === 0 || !/[\p{L}\p{N}]/u.test(h[at - 1] ?? '')) return true
+    from = at + 1
+  }
+}
+
+/**
+ * How well a history aggregate answers a typing (omnibox-02, HistoryURL + HistoryQuick): the
+ * visits weighted by recency, typed visits counting three times (the address was wanted by
+ * name), a start-of-address match on top, and every term at the start of a word in the title or
+ * a path segment over a term inside a word. Not a match (a term missing) is null.
+ */
+export function scoreHistoryMatch(
+  entry: HistoryEntry,
+  terms: readonly string[],
+  nowMs: number
+): number | null {
+  const shownUrl = entry.url.toLowerCase().replace(/^https?:\/\/(www\.)?/, '')
+  const hay = `${entry.title} ${entry.url}`.toLowerCase()
+  if (!terms.every((t) => hay.includes(t))) return null
+  const ageDays = Math.max(0, nowMs - entry.lastVisit) / DAY_MS
+  const recency = 1 / (1 + ageDays)
+  const typed = entry.typedCount ?? 0
+  const hostMatch = shownUrl.startsWith(terms.join(' ')) ? 2 : 0
+  const wordStart = terms.every((t) => matchesAtWordStart(`${entry.title} ${shownUrl}`, t)) ? 1 : 0
+  return Math.log1p(entry.visitCount + 3 * typed) + recency * 2 + hostMatch + wordStart
+}
+
 /** Whitespace-separated terms of a query, lower-cased. */
 export function queryTerms(text: string | undefined): string[] {
   return (text ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -576,7 +617,10 @@ export class HistoryService {
     return out
   }
 
-  /** Simple frecency-style ranking: substring matches weighted by visits and recency. */
+  /**
+   * The pages a typing matches, best first (`scoreHistoryMatch`: typed and visit counts,
+   * recency, an address-start match, word-start matches over mid-word ones).
+   */
   search(query: string, limit: number): HistoryEntry[] {
     const q = query.trim().toLowerCase()
     if (!q) return this.recent(limit)
@@ -584,17 +628,8 @@ export class HistoryService {
     const now = this.now()
     const scored: Array<{ e: HistoryEntry; score: number }> = []
     for (const e of this.entries.values()) {
-      const hay = `${e.title} ${e.url}`.toLowerCase()
-      if (!terms.every((t) => hay.includes(t))) continue
-      const ageDays = (now - e.lastVisit) / DAY_MS
-      const recency = 1 / (1 + ageDays)
-      const hostMatch = e.url
-        .toLowerCase()
-        .replace(/^https?:\/\/(www\.)?/, '')
-        .startsWith(q)
-        ? 2
-        : 0
-      scored.push({ e, score: Math.log1p(e.visitCount) + recency * 2 + hostMatch })
+      const score = scoreHistoryMatch(e, terms, now)
+      if (score !== null) scored.push({ e, score })
     }
     return scored
       .sort((a, b) => b.score - a.score)
@@ -718,6 +753,12 @@ export class HistoryService {
   /** Last known favicon of a URL (the back/forward list decorates its rows with it). */
   faviconFor(url: string): string | null {
     return this.entries.get(url)?.favicon ?? null
+  }
+
+  /** Last known title of a URL, null when the page was never visited (or is untitled). */
+  titleFor(url: string): string | null {
+    const title = this.entries.get(url)?.title
+    return title && title !== url ? title : null
   }
 
   // --- deletion ---------------------------------------------------------------

@@ -256,6 +256,21 @@ export class TabIds {
     return this.next
   }
 
+  /**
+   * The URL a tab's address reads as to extensions. The PDF viewer's tab (`zen://pdf?id=…`)
+   * reads as the document it shows – the URL its document runs under (`pdfViewerBaseUrl`), as
+   * Chrome's PDF tab reads to `tabs`, `webNavigation`, host permissions and content-script
+   * matching; any other address is its own.
+   */
+  urlFor(url: string): string {
+    return this.browser.pdf.documentUrl(url) ?? url
+  }
+
+  /** The URL `tab` reads as to extensions (`urlFor` of its address). */
+  urlOf(tab: Pick<Tab, 'url'>): string {
+    return this.urlFor(tab.url)
+  }
+
   chromeTab(tab: Tab): Record<string, unknown> {
     const win = this.windowOf()
     const active = this.browser.tabs.activeTabFor(win)?.id === tab.id
@@ -279,8 +294,8 @@ export class TabIds {
       autoDiscardable: true,
       frozen: tab.frozen,
       mutedInfo: { muted: tab.muted },
-      url: tab.url,
-      pendingUrl: tab.loading ? tab.url : undefined,
+      url: this.urlOf(tab),
+      pendingUrl: tab.loading ? this.urlOf(tab) : undefined,
       title: tab.customTitle ?? tab.title,
       favIconUrl: tab.favicon ?? undefined,
       status: tab.loading ? 'loading' : tab.discarded ? 'unloaded' : 'complete',
@@ -371,7 +386,7 @@ export class ExtensionApi {
       chromeTab: (tab) => this.tabs.chromeTab(tab),
       visibleTo: (ext, tab) => this.tabs.visibleTo(ext, tab),
       icon: (id) => host.icon(id),
-      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab)
+      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab))
     })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -650,9 +665,10 @@ export class ExtensionApi {
               const patterns = Array.isArray(q.url) ? q.url.map(String) : [String(q.url)]
               // An extension-page tab's URL is Chrome's spelling; a pattern built from
               // `runtime.getURL` (OneTab looks for its own list page that way) is the served one.
+              const url = ids.urlOf(tab)
               if (
-                !matchesAnyPattern(tab.url, patterns) &&
-                !matchesAnyPattern(toServedUrl(tab.url), patterns)
+                !matchesAnyPattern(url, patterns) &&
+                !matchesAnyPattern(toServedUrl(url), patterns)
               )
                 return false
             }
@@ -843,9 +859,10 @@ export class ExtensionApi {
     }
     const tab = this.tabs.activeTabFor(ext)
     if (!tab || tab.discarded) throw new Error('Failed to capture tab: view is invisible')
-    const denial = captureDenial(tab.url, {
+    const tabUrl = this.tabs.urlOf(tab)
+    const denial = captureDenial(tabUrl, {
       allUrls: coversAllUrls(this.hostPatterns(ext)),
-      activeTab: this.activeTab.allowsUrl(ext.record.id, tab.url),
+      activeTab: this.activeTab.allowsUrl(ext.record.id, tabUrl),
       fileAccess: ext.record.allowFileAccess === true,
       extensionId: ext.record.id
     })
@@ -1395,7 +1412,7 @@ export class ExtensionApi {
           frameId: 0,
           parentFrameId: -1,
           processId: -1,
-          url: tab.url,
+          url: this.tabs.urlOf(tab),
           documentId: `tab-${chromeTabId}`,
           frameType: 'outermost_frame',
           documentLifecycle: 'active',

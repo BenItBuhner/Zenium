@@ -1,22 +1,29 @@
 /**
  * How the PDF viewer document (`zen://pdf`, `shared/pdfPage.ts`) and the browser talk. The
- * viewer posts its state as a `message` on its own window – the page script relays it (only
- * from a document of the viewer's origin) as a `pdf` page message – and the browser drives it
- * through a global the document exposes (`pdfCommandScript`, run with `executeJavaScript`).
- * Kept apart from `pdfPage` so the page script bundle does not carry the viewer's HTML.
+ * viewer posts its state as a `message` on its own window, with the document's token beside it;
+ * the page script relays both as a `pdf` page message, and the core takes the report only with
+ * the token it wrote into that document (`PdfViewerService.onReport`): the document runs under
+ * the PDF's own URL, an origin any web page could share, so the origin alone proves nothing.
+ * The browser drives the viewer through a global the document exposes (`pdfCommandScript`,
+ * run with `executeJavaScript`). Kept apart from `pdfPage` so the page script bundle does not
+ * carry the viewer's HTML.
  */
 
 /**
- * The origin the viewer document runs on. The WebView loads the document with this base URL
- * (`loadDataWithBaseURL`) while the tab shows `zen://pdf`: a `zen://` document has no origin
- * of its own, and pdf.js's worker and the document's bytes can only be fetched from a real one.
- * `.invalid` never resolves, so a request that escaped the host's interception would fail
- * rather than reach a network. Every request to it is answered by the host itself.
+ * The origin the viewer's own files – its script, pdf.js's worker and data – and the document's
+ * bytes are served from, by the host itself, whichever URL the document runs under
+ * (`pdfViewerBaseUrl`). `.invalid` never resolves, so a request that escaped the host's
+ * interception would fail rather than reach a network. A document with no URL of its own to
+ * run under (a PDF that did not come from an http(s) address) is loaded with this as its base
+ * URL (`loadDataWithBaseURL`) while the tab shows `zen://pdf`.
  */
 export const PDF_VIEWER_ORIGIN = 'https://pdf.zenium.invalid'
 
 /** The key of the window message the viewer posts its report under. */
 export const PDF_VIEWER_MESSAGE_KEY = 'zeniumPdf'
+
+/** The key, in the same message, of the document's token (`PdfDocumentInfo.token`). */
+export const PDF_VIEWER_TOKEN_KEY = 'zeniumPdfToken'
 
 /** The global the viewer document exposes for the browser's commands. */
 export const PDF_VIEWER_GLOBAL = '__zeniumPdf'
@@ -125,4 +132,11 @@ export function pdfReportOf(data: unknown): PdfViewerReport | null {
   if (typeof r.pageCount !== 'number' || typeof r.page !== 'number' || typeof r.zoom !== 'number')
     return null
   return report as PdfViewerReport
+}
+
+/** The document's token beside a report in a window message the viewer posted, or null. */
+export function pdfReportTokenOf(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const token = (data as Record<string, unknown>)[PDF_VIEWER_TOKEN_KEY]
+  return typeof token === 'string' && token !== '' ? token : null
 }
