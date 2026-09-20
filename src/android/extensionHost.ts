@@ -65,6 +65,18 @@ import type { AndroidExtensionStoreIo, PackageHandle } from './extensionStoreIo'
 /** Chrome checks about every five hours; the first check waits for the browser to settle. */
 export const UPDATE_CHECK_STARTUP_DELAY_MS = 45_000
 export const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 60 * 1000
+/**
+ * `chrome.runtime.requestUpdateCheck` is `throttled` within Chrome's regular update frequency of
+ * the extension's last completed ask (`kDefaultUpdateFrequencySeconds`, five hours); an ask that
+ * found an update resets that clock. Chrome jitters the wait by a tenth; the phone does not.
+ */
+export const REQUEST_UPDATE_CHECK_THROTTLE_MS = UPDATE_CHECK_INTERVAL_MS
+
+/** `chrome.runtime.requestUpdateCheck`'s answer, Chrome's shape: `version` only with `update_available`. */
+export interface RequestUpdateCheckAnswer {
+  status: 'throttled' | 'no_update' | 'update_available'
+  version?: string
+}
 
 /**
  * The Chromium version the stores are told about. The system WebView may be years behind the
@@ -219,7 +231,11 @@ export class AndroidExtensions implements ExtensionHost {
    * running while its record said off.
    */
   private readonly transitions = new Map<string, Promise<void>>()
-  private checking: Promise<void> | null = null
+  /** The registry-wide check in flight, with the update servers' answers by extension id. */
+  private checking: Promise<Map<string, UpdateCheckResult>> | null = null
+  /** `runtime.requestUpdateCheck`: the ask in flight per extension, and when its last one completed. */
+  private readonly selfChecks = new Map<string, Promise<RequestUpdateCheckAnswer>>()
+  private readonly selfChecked = new Map<string, number>()
   /**
    * The sideload installs in flight: the batch `start()` collected and every `installPending`
    * since, one after another.
@@ -1035,13 +1051,53 @@ export class AndroidExtensions implements ExtensionHost {
     )
   }
 
-  /** Checks every updatable extension and installs what the update servers offer. */
+  /**
+   * Checks every updatable extension and installs what the update servers offer, once the asks
+   * extensions made about themselves (`requestUpdateCheck`) are done: no two installs of one
+   * extension side by side.
+   */
   checkForUpdates(win?: ZenWindow): Promise<void> {
-    if (this.checking) return this.checking
-    this.checking = this.runUpdateCheck(this.updatable(), win).finally(() => {
-      this.checking = null
+    if (this.checking) return this.checking.then(() => undefined)
+    this.checking = Promise.allSettled([...this.selfChecks.values()])
+      .then(() => this.runUpdateCheck(this.updatable(), win))
+      .finally(() => {
+        this.checking = null
+      })
+    return this.checking.then(() => undefined)
+  }
+
+  /**
+   * `chrome.runtime.requestUpdateCheck`: the extension asks for its own check. Within
+   * [REQUEST_UPDATE_CHECK_THROTTLE_MS] of its last completed ask the answer is `throttled` and
+   * no request goes out, as in Chrome; a second ask while one is in flight joins it (Chrome
+   * queues up to ten callbacks behind one request); a registry-wide check in flight answers for
+   * the extension when it covers it. An update found is installed as the scheduled check installs
+   * one, and a check that failed or an extension with no update source is `no_update`, Chrome's
+   * answer whenever its updater has nothing to install.
+   */
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer> {
+    const running = this.selfChecks.get(id)
+    if (running) return running
+    const last = this.selfChecked.get(id)
+    if (last !== undefined && this.now() - last < REQUEST_UPDATE_CHECK_THROTTLE_MS)
+      return Promise.resolve({ status: 'throttled' })
+    const check = this.selfCheck(id).finally(() => {
+      this.selfChecks.delete(id)
     })
-    return this.checking
+    this.selfChecks.set(id, check)
+    return check
+  }
+
+  private async selfCheck(id: string): Promise<RequestUpdateCheckAnswer> {
+    let result = (await this.checking)?.get(id)
+    const record = this.record(id)
+    if (!result && record && this.updatable().includes(record))
+      result = (await this.runUpdateCheck([record], undefined, false)).get(id)
+    this.selfChecked.set(id, this.now())
+    if (result?.status !== 'update-available') return { status: 'no_update' }
+    // An update found resets Chrome's throttle: the next ask reaches the server again.
+    this.selfChecked.delete(id)
+    return { status: 'update_available', version: result.version }
   }
 
   updateCheck(): ExtensionUpdateCheck {
@@ -1065,14 +1121,23 @@ export class AndroidExtensions implements ExtensionHost {
     await this.runUpdateCheck([record], win)
   }
 
-  private async runUpdateCheck(records: ExtensionRecord[], win?: ZenWindow): Promise<void> {
+  /**
+   * Checks `records` and installs what the servers offer; the servers' answers, by extension id.
+   * The registry's "last checked" is the chrome's and the schedule's stamp (`stamp`): an
+   * extension's ask about itself does not move it.
+   */
+  private async runUpdateCheck(
+    records: ExtensionRecord[],
+    win?: ZenWindow,
+    stamp = true
+  ): Promise<Map<string, UpdateCheckResult>> {
     const interactive = win !== undefined
     const started = this.now()
     if (records.length === 0) {
-      this.registry.lastUpdateCheck = started
+      if (stamp) this.registry.lastUpdateCheck = started
       this.persist()
       if (interactive) this.browser.toast('No installed extension can be updated.', 'info', win)
-      return
+      return new Map()
     }
     const results = await checkForUpdates(
       this.io.fetchText,
@@ -1085,7 +1150,7 @@ export class AndroidExtensions implements ExtensionHost {
       { chromiumVersion: this.chromiumVersion }
     )
     const checkedAt = this.now()
-    this.registry.lastUpdateCheck = checkedAt
+    if (stamp) this.registry.lastUpdateCheck = checkedAt
     let installed = 0
     let failed = 0
     for (const record of records) {
@@ -1151,6 +1216,7 @@ export class AndroidExtensions implements ExtensionHost {
             : 'All extensions are up to date.'
       this.browser.toast(summary, failed > 0 && installed === 0 ? 'error' : 'info', win)
     }
+    return results
   }
 
   /**

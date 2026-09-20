@@ -1,4 +1,5 @@
 import type { EngineContextKind, MessageSender } from '../api/engine'
+import { presentExtensionUrl } from './extensionUrls'
 import { extensionOrigin } from './plan'
 
 /**
@@ -207,8 +208,16 @@ export class MessageRouter {
   }
 
   senderInfo(endpoint: Endpoint): MessageSender {
-    const info: MessageSender = { id: endpoint.extensionId, url: endpoint.url }
     const inFrame = endpoint.context === 'content' || endpoint.context === 'userScript'
+    // An extension page names itself as Chrome spells it, `chrome-extension://<id>/popup.html`,
+    // whatever origin the WebView loaded it from: Tampermonkey's background admits its own
+    // pages by that prefix (`INTERNAL_PAGE_PROTOCOLS`) and reads the page's name out of it.
+    // `origin` stays the served one, the `location.origin` the page itself sees – which is what
+    // a background compares it with.
+    const info: MessageSender = {
+      id: endpoint.extensionId,
+      url: inFrame ? endpoint.url : presentExtensionUrl(endpoint.url)
+    }
     // Chrome attributes a sender to the tab it is hosted in, an extension page open as a tab as
     // much as a content script (`sender.tab`, `frameId`; Vimium's background answers nothing to
     // a sender without a tab, and its own options page asks it `initializeFrame` from the tab

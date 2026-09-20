@@ -17,8 +17,12 @@ import type { Any } from './extensionIsolation'
  * The runtime knows which client each id belongs to and wakes the worker for a client's
  * `postMessage` as Chrome does (`extensionRuntime.ts`, `onServiceWorkerMessage`).
  *
- * The payloads travel as JSON: an `Error` is carried as `{ __zenErr }` and rebuilt, the rest is
- * what JSON keeps (Stylus answers `{ id, res, err: [Error, {...}] }`).
+ * The payloads travel as JSON: an `Error` is carried as `{ __zenErr }` and rebuilt, a transferred
+ * port named inside the data as `{ __zenPort: n }` (its place in the transfer list) and resolved
+ * to the port that arrives at that place, as structured clone hands the receiver the very object
+ * of `event.ports` (Stylus's page answers a worker's `getWorkerPort` with `{ id, res: port }` and
+ * `[port]` transferred; the worker then calls `res.postMessage`), the rest is what JSON keeps
+ * (Stylus answers `{ id, res, err: [Error, {...}] }`).
  */
 
 /** What both sides send the runtime; `t: 'sw'`, `token` and `ep` are stamped by the caller. */
@@ -43,47 +47,68 @@ export interface ClientInfo {
 type Send = (message: ServiceWorkerMessage) => void
 
 const ERROR_KEY = '__zenErr'
+const PORT_KEY = '__zenPort'
 
-/** Errors survive the JSON trip; anything else is what JSON keeps. */
-export function encodePayload(value: unknown, seen = new Set<object>()): unknown {
+const isMessagePort = (value: unknown): value is MessagePort =>
+  typeof MessagePort === 'function' && value instanceof MessagePort
+
+/**
+ * Errors survive the JSON trip, a port of `transfer` travels as its place in the list; anything
+ * else is what JSON keeps. A port outside the transfer list is the platform's `DataCloneError`.
+ */
+export function encodePayload(
+  value: unknown,
+  transfer: readonly MessagePort[] = [],
+  seen = new Set<object>()
+): unknown {
   if (value instanceof Error) {
     const own: Record<string, unknown> = {}
     for (const key of Object.keys(value))
-      own[key] = encodePayload((value as unknown as Any)[key], seen)
+      own[key] = encodePayload((value as unknown as Any)[key], transfer, seen)
     return { [ERROR_KEY]: { name: value.name, message: value.message, stack: value.stack, own } }
   }
   if (value === null || typeof value !== 'object') return value
+  if (isMessagePort(value)) {
+    const at = transfer.indexOf(value)
+    if (at < 0) throw new DOMException('A MessagePort could not be cloned.', 'DataCloneError')
+    return { [PORT_KEY]: at }
+  }
   if (seen.has(value)) throw new Error('postMessage: the value has a cycle and cannot be cloned')
   seen.add(value)
   try {
-    if (Array.isArray(value)) return value.map((item) => encodePayload(item, seen))
+    if (Array.isArray(value)) return value.map((item) => encodePayload(item, transfer, seen))
     const proto = Object.getPrototypeOf(value) as object | null
     if (proto !== Object.prototype && proto !== null) return value
     const out: Record<string, unknown> = {}
     for (const key of Object.keys(value))
-      out[key] = encodePayload((value as Record<string, unknown>)[key], seen)
+      out[key] = encodePayload((value as Record<string, unknown>)[key], transfer, seen)
     return out
   } finally {
     seen.delete(value)
   }
 }
 
-export function decodePayload(value: unknown): unknown {
+/** The payload as the far side sent it, `ports` being the ports that arrived with it, in order. */
+export function decodePayload(value: unknown, ports: readonly MessagePort[] = []): unknown {
   if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(decodePayload)
+  if (Array.isArray(value)) return value.map((item) => decodePayload(item, ports))
   const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
   const encoded = record[ERROR_KEY]
-  if (encoded && typeof encoded === 'object' && Object.keys(record).length === 1) {
+  if (encoded && typeof encoded === 'object' && keys.length === 1) {
     const e = encoded as { name?: string; message?: string; stack?: string; own?: unknown }
     const error = new Error(e.message ?? '')
     if (e.name) error.name = e.name
     if (e.stack) error.stack = e.stack
-    const own = decodePayload(e.own)
+    const own = decodePayload(e.own, ports)
     if (own && typeof own === 'object') Object.assign(error, own)
     return error
   }
+  if (typeof record[PORT_KEY] === 'number' && keys.length === 1) {
+    return ports[record[PORT_KEY]] ?? null
+  }
   const out: Record<string, unknown> = {}
-  for (const key of Object.keys(record)) out[key] = decodePayload(record[key])
+  for (const key of keys) out[key] = decodePayload(record[key], ports)
   return out
 }
 
@@ -111,12 +136,20 @@ class PortRelay {
     private readonly prefix: string
   ) {}
 
-  outbound(transfer: unknown): string[] {
-    return transferredPorts(transfer).map((port) => {
+  /** The ids under which `ports` (a transfer list, already filtered) go out; each is bound here. */
+  outbound(ports: readonly MessagePort[]): string[] {
+    return ports.map((port) => {
       const id = `${this.prefix}${++this.seq}`
       this.bind(id, port)
       return id
     })
+  }
+
+  /** A `postMessage` payload with its transfer list, as the wire carries them. */
+  encode(message: unknown, transfer: unknown): { data: unknown; ports: string[] } {
+    const ports = transferredPorts(transfer)
+    const data = encodePayload(message, ports)
+    return { data, ports: this.outbound(ports) }
   }
 
   inbound(ids: unknown): MessagePort[] {
@@ -141,7 +174,8 @@ class PortRelay {
       return true
     }
     try {
-      port.postMessage(decodePayload(message.data), this.inbound(message.ports))
+      const ports = this.inbound(message.ports)
+      port.postMessage(decodePayload(message.data, ports), ports)
     } catch (error) {
       console.error('[Zenium] service worker port relay', error)
     }
@@ -151,14 +185,14 @@ class PortRelay {
   private bind(id: string, port: MessagePort): void {
     this.bound.set(id, port)
     port.onmessage = (event: MessageEvent): void => {
-      let data: unknown
+      let encoded: { data: unknown; ports: string[] }
       try {
-        data = encodePayload(event.data)
+        encoded = this.encode(event.data, event.ports)
       } catch (error) {
         console.error('[Zenium] service worker port relay', error)
         return
       }
-      this.send({ op: 'port', port: id, data, ports: this.outbound(event.ports) })
+      this.send({ op: 'port', port: id, ...encoded })
     }
     port.onmessageerror = (): void => {
       console.warn('[Zenium] service worker port relay: a message could not be deserialised')
@@ -203,7 +237,7 @@ function messageEvent(data: unknown, ports: MessagePort[], origin: string, sourc
 const clientPostMessage =
   (send: Send, relay: PortRelay, to: string) =>
   (message: unknown, transfer?: unknown): void => {
-    send({ op: 'post', to, data: encodePayload(message), ports: relay.outbound(transfer) })
+    send({ op: 'post', to, ...relay.encode(message, transfer) })
   }
 
 /** A `WindowClient` as the worker sees one of its pages. */
@@ -390,7 +424,7 @@ export function installServiceWorkerGlobals(
         )
         const ports = relay.inbound(message.ports)
         ;(target as unknown as EventTarget).dispatchEvent(
-          messageEvent(decodePayload(message.data), ports, origin, source)
+          messageEvent(decodePayload(message.data, ports), ports, origin, source)
         )
         return
       }
@@ -474,7 +508,7 @@ export function installServiceWorkerClient(
     scriptURL: options.scriptUrl,
     state: 'activated',
     postMessage: (message: unknown, transfer?: unknown): void => {
-      send({ op: 'post', data: encodePayload(message), ports: relay.outbound(transfer) })
+      send({ op: 'post', ...relay.encode(message, transfer) })
     }
   })
   handlerProperties(worker, ['onstatechange', 'onerror'])
@@ -522,7 +556,9 @@ export function installServiceWorkerClient(
   const receive = (message: Record<string, unknown>): void => {
     if (message.op === 'message') {
       const ports = relay.inbound(message.ports)
-      container.dispatchEvent(messageEvent(decodePayload(message.data), ports, origin, worker))
+      container.dispatchEvent(
+        messageEvent(decodePayload(message.data, ports), ports, origin, worker)
+      )
       return
     }
     relay.receive(message)

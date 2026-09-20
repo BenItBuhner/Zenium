@@ -51,6 +51,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
@@ -285,8 +286,7 @@ class TabWebView(
     fun applyPrivacy() {
         val flags = host.privacy.flags
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
-        settings.mixedContentMode =
-            if (flags.httpsOnly == "always") WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        applyMixedContentPolicy(flags, currentDocument)
         applyCookiePolicy(flags, currentDocument)
         val script = flags.navigatorScript()
         if (script != signalScript) {
@@ -303,6 +303,20 @@ class TabWebView(
     private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
         // The jar of this tab's container: a WebView on another profile is not the default jar's.
         Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
+    }
+
+    /**
+     * An extension's own page in this tab (served on `https://<id>.ext.zenium.invalid/`) fetches
+     * plaintext URLs freely: in Chrome a `chrome-extension:` document is not a mixed-content
+     * restricting origin, only `https:` is, and Stylus's install page reads a usercss off the
+     * `http:` site it came from. Every other document follows the HTTPS-only setting.
+     */
+    private fun applyMixedContentPolicy(flags: PrivacyFlags, documentUrl: String?) {
+        settings.mixedContentMode = when {
+            documentUrl != null && ExtensionUrls.isExtensionUrl(documentUrl) -> WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            flags.httpsOnly == "always" -> WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            else -> WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        }
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -1083,12 +1097,15 @@ class TabWebView(
     }
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
-    override fun loadUrl(url: String) {
+    override fun loadUrl(requested: String) {
+        // The core spells an extension page's URL as Chrome does; the WebView loads the served origin.
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) {
             val flags = host.privacy.flags
+            applyMixedContentPolicy(flags, url)
             applyCookiePolicy(flags, url)
             if (retriesFailedEntry(url)) {
                 // The address the core's error page stands in for, asked for again (Proceed past
@@ -1112,9 +1129,11 @@ class TabWebView(
         super.loadUrl(url)
     }
 
-    override fun loadUrl(url: String, additionalHttpHeaders: MutableMap<String, String>) {
+    override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         switchDesktopModeFor(url)
+        if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
         super.loadUrl(url, additionalHttpHeaders)
     }
 
@@ -1331,8 +1350,15 @@ class TabWebView(
         PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, quality, callback)
     }
 
+    /**
+     * What the core hears as the tab's URL. An extension page loaded from its served origin is
+     * reported as Chrome spells it (`chrome-extension://<id>/...`, [ExtensionUrls.present]): that
+     * is the tab's canonical URL for the core's model, the URL bar and the extension APIs, and
+     * [loadUrl] takes it back to the served origin. The PDF viewer page, loaded on its own origin
+     * the same way, is reported under its `zen://pdf` address ([pageUrlFor]).
+     */
     fun navState(): JSONObject = json(
-        "url" to pageUrlFor(url ?: ""),
+        "url" to ExtensionUrls.present(pageUrlFor(url ?: "")),
         "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
@@ -1436,6 +1462,14 @@ class TabWebView(
                     if (interceptNavigation(request)) return true
                     false
                 }
+                "chrome-extension" -> {
+                    // An extension's own page, spelled as Chrome spells it (a link or a
+                    // `location` assignment in an extension page): the served origin is loaded
+                    // in its place. A frame cannot be sent there from here; it fails as WebView
+                    // fails any unknown scheme.
+                    if (request.isForMainFrame) loadUrl(ExtensionUrls.toServed(url.toString()))
+                    true
+                }
                 DeepLinks.INTERNAL_SCHEME, DeepLinks.PAGE_SCHEME -> {
                     // The browser's own pages are the user's to open (typed, a menu, a deep link
                     // from another app), never a web page's: Chrome's rule for chrome://. Only
@@ -1522,6 +1556,7 @@ class TabWebView(
             // for the failed load may commit only after this (see failedUrl).
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
+            applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             // Without document-start scripts the signals arrive late, but they arrive.
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
