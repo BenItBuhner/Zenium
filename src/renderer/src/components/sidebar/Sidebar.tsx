@@ -56,6 +56,10 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
       onPointerLeave={onPointerLeave}
       data-side={side}
       data-surface="window"
+      // The tab strip pane of the F6 rotation (lib/panes.ts); the navigation row inside it, in
+      // the single-toolbar layout, is the toolbar pane.
+      data-pane="tabs"
+      aria-label="Sidebar"
     >
       <SidebarTop state={state} tab={tab} compact={compact} showToolbar={showToolbar} />
       {local ? (

@@ -362,16 +362,19 @@
  * `.zen-v2-button-label`, `.zen-v2-spinner` in extensions.css, imported above).
  */
 /*
- * On the window (the first run, `data-surface="window"`) the secondary reads the window family
- * through the control roles (§9.29): a fill of the window's ink, not the page's – beside the rule
- * and unlayered like it, since a layered override would lose to it. The primary keeps the rule's
- * `--v2-accent`, the clamped mix, for its contrast on a gradient of the accent's own hue.
+ * On the window (the first run and the tab overview's backdrop, `data-surface="window"`) the
+ * secondary reads the window family through the control roles (§9.29): a fill of the window's
+ * ink, not the page's – beside the rule and unlayered like it, since a layered override would
+ * lose to it. The primary keeps the rule's `--v2-accent`, the clamped mix, for its contrast on a
+ * gradient of the accent's own hue.
  */
-.zen-firstrun .zen-v2-button:not([data-primary]) {
+.zen-firstrun .zen-v2-button:not([data-primary]),
+.zen-overview .zen-v2-button:not([data-primary]) {
   background: var(--v2-control-fill);
   color: var(--v2-control-text);
 }
-.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled) {
+.zen-firstrun .zen-v2-button:not([data-primary]):active:not(:disabled),
+.zen-overview .zen-v2-button:not([data-primary]):active:not(:disabled) {
   background: var(--v2-control-fill-hover);
 }
 /*
@@ -734,6 +737,15 @@
   .zen-window {
     background: var(--zen-bg);
     transition: background 600ms var(--zen-ease);
+  }
+  /*
+   * On a phone the window family changes colour by the one blend of the resolved tokens over
+   * 240 ms (design language v2 §11.5, `useTheme`): the window reads the tokens as the blend
+   * writes them, and nothing tweens per element – no transition of its own, which would trail
+   * the blend by 600 ms (and, over a gradient, jump at its midpoint instead).
+   */
+  :root[data-form-factor='phone'] .zen-window {
+    transition: none;
   }
   .zen-window ::selection {
     background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
@@ -1693,11 +1705,14 @@
   .zen-phone-bar-lifted .zen-group-strip {
     pointer-events: none;
   }
-  /* The slot an address pill left behind while it is being carried: a shallow well. */
+  /*
+   * The slot an address pill left behind while it is being carried: a shallow well. Its tint
+   * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
+   * (v2 §11.5, nothing tweens per element on the phone), and the target tint is a cut.
+   */
   .zen-pill-well {
     background: rgb(var(--zen-fg-rgb) / 0.04);
     box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06);
-    transition: background 160ms var(--zen-ease);
   }
   .zen-pill-well-target {
     background: rgb(var(--zen-fg-rgb) / 0.09);
@@ -1946,10 +1961,14 @@
   .zen-overview-card[data-active='true'] > header {
     background: rgb(var(--zen-accent-rgb) / 0.14);
   }
+  /*
+   * The New Tab card's fill is the theme's ink, and it has no transition: the theme blend moves
+   * the token (v2 §11.5, nothing tweens per element on the phone); the pressed fill is a cut,
+   * as the other cards' pressed states are.
+   */
   .zen-overview-new {
     border-radius: var(--zen-card-radius);
     background: rgb(var(--zen-fg-rgb) / 0.06);
-    transition: background 140ms var(--zen-ease);
   }
   .zen-overview-new:active {
     background: rgb(var(--zen-fg-rgb) / 0.12);
@@ -2244,6 +2263,19 @@
   }
   .zen-overview-strip::-webkit-scrollbar {
     display: none;
+  }
+  /*
+   * The overview's panes (TAB-02, TAB-03): a pane switch is a cross-fade – the one coming up
+   * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
+   * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
+   * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
+   * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
+   * while the window surfaces blend to the pane's theme (§11.5). The Tabs | Private segment above
+   * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
+   * of the sheet), in the window family through the overview's `data-surface="window"`.
+   */
+  .zen-overview-pane {
+    animation: zen-fade 120ms var(--zen-ease);
   }
 
   /*
@@ -3701,6 +3733,21 @@
   .zen-pill-label {
     display: none;
   }
+}
+/*
+ * The keyboard on the address (F6, Tab) rings the whole pill, as Chrome's location bar does (§1
+ * ring): the address button fills the pill and, in a narrow sidebar, may have no width of its
+ * own left next to the chips, so a ring on the button alone can be a sliver or nothing.
+ */
+.zen-pill:has(> button:focus-visible) {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: 0;
+}
+:root[data-theme='dark'] .zen-pill:has(> button:focus-visible) {
+  outline-offset: -2px;
+}
+.zen-pill > button:focus-visible {
+  outline: none;
 }
 
 /*
@@ -5327,6 +5374,113 @@
 }
 
 /* ---------------------------------------------------------------------------
+ * The phone omnibox's search-ready header, chips and row controls (design language v2 draft;
+ * `components/urlbar/Urlbar.tsx`; OMN-05, OMN-09, OMN-14). The omnibox is the pill grown over the
+ * frame – a window surface (§9.29), `data-surface="window"` on the sheet – so everything here
+ * draws in the window family through the control roles: fg ink, 69 % for the address, the window
+ * fills for the chips and the pressed controls. The header is the shared static two-line row
+ * (§9.2, §9.34: `.zen-v2-row[data-static]`, the page's icon aligned with its first line) and the
+ * three chips are the shared `.zen-v2-button` as actions inside a row (§9.11: hugging their label
+ * at the 88 minimum, 40 tall) at the 16 gutter, a glyph before the label; a hairline in the
+ * window ink separates the header from the list. At a bottom-docked bar
+ * the header is mirrored like the list – the page's row nearest the field, the chips past it.
+ * The Refine arrow is the shared icon button, the clipboard row's Show the shared button, each
+ * the row's trailing 44 control at 2 px margins (§9.16). Unlayered like the primitives it
+ * modifies, so the modifiers win over the shared rules.
+ * ------------------------------------------------------------------------- */
+.zen-omnibox-header {
+  display: flex;
+  flex-direction: column;
+  color: var(--v2-control-text);
+  border-bottom: 1px solid var(--v2-window-fill-hover);
+}
+.zen-omnibox-header[data-edge='bottom'] {
+  flex-direction: column-reverse;
+  border-bottom: 0;
+  border-top: 1px solid var(--v2-window-fill-hover);
+}
+.zen-v2-row.zen-omnibox-page {
+  color: var(--v2-control-text);
+}
+/*
+ * The page row's face (glyph and the two lines) is the row's one slot: when what it draws changes
+ * while the header is up, the face it showed is kept as a ghost over the new one and the two
+ * cross-fade on opacity over 120 ms (v2 §11.4; the same under reduced motion – the fade is the
+ * change's only motion, and a cut would read as a glitch). The ghost is out of the flow, clipped
+ * to the row's content box, so the row neither grows nor shifts.
+ */
+.zen-omnibox-page-face {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+}
+.zen-omnibox-page-ghost {
+  position: absolute;
+  inset: var(--v2-row-pad) 16px;
+  pointer-events: none;
+}
+.zen-omnibox-page-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-omnibox-page-title {
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-omnibox-page-url {
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-omnibox-chips {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.zen-omnibox-header[data-edge='bottom'] .zen-omnibox-chips {
+  padding: 12px 16px 0;
+}
+.zen-v2-button.zen-omnibox-chip {
+  flex: 0 1 auto;
+  min-width: 88px;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
+}
+.zen-v2-button.zen-omnibox-chip:active:not(:disabled) {
+  background: var(--v2-control-fill-hover);
+}
+.zen-v2-button.zen-omnibox-chip > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-v2-button.zen-omnibox-reveal {
+  min-width: 88px;
+  padding: 0 12px;
+  background: var(--v2-control-fill);
+  color: var(--v2-control-text);
+}
+.zen-v2-button.zen-omnibox-reveal:active:not(:disabled) {
+  background: var(--v2-control-fill-hover);
+}
+.zen-v2-icon-button.zen-omnibox-refine {
+  margin-right: -6px;
+  color: var(--v2-control-text-deemphasized);
+}
+.zen-v2-icon-button.zen-omnibox-refine:active:not(:disabled) {
+  background: var(--v2-control-fill);
+}
+
+/* ---------------------------------------------------------------------------
  * Settings as a tab (design language v2 draft §10; `components/pages/settings`).
  *
  * An internal page tab has no page view: the chrome draws the page where the view would be, an
@@ -5445,6 +5599,57 @@
   }
 }
 
+/*
+ * The shared v2 segment (§9.34; the first to land it is the tab overview's Tabs | Private,
+ * TAB-02): two or three text tabs switching the views of one surface – never a setting's choice,
+ * which is a radio or a value row. A `role="tablist"` row of `role="tab"` buttons, a row tall
+ * (`--v2-row`: 44 on a phone) at the 16 gutter, each label 15/600 in its family's ink through the
+ * §9.29 control roles: the current one (`aria-selected`) in the text role over a 2 px accent line
+ * at the label's width, the others in the deemphasised role (the theme ink at 69% on a window
+ * surface, as the overview is); no pill and no fill – §9.14 has no segmented pill. The switch is
+ * the ink and the line's opacity over 120 ms, nothing that moves (§11.4), and reduced motion
+ * keeps those 120 ms (the closing block at the end of the sheet). One unlayered rule, tokens
+ * only, like the primitives above; a surface adds a modifier beside it, never a copy.
+ */
+.zen-v2-segment {
+  display: flex;
+  min-height: var(--v2-row);
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0 8px;
+}
+.zen-v2-segment > [role='tab'] {
+  position: relative;
+  display: flex;
+  min-width: var(--v2-row);
+  align-items: center;
+  padding: 0 8px;
+  color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-body);
+  transition: color 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true'] {
+  color: var(--v2-control-text, var(--v2-text));
+}
+.zen-v2-segment > [role='tab']::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--v2-control-accent, var(--v2-accent));
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-v2-segment > [role='tab'][aria-selected='true']::after {
+  opacity: 1;
+}
+
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
   border-radius: var(--v2-radius-card);
@@ -5535,6 +5740,38 @@
 [aria-checked='true'] .zen-v2-switch::after {
   background: var(--v2-on-accent);
   transform: translateX(16px);
+}
+/*
+ * The switch row on a window surface – the private new tab page's Block third-party cookies row
+ * (NTP-31) – is the row and switch primitives with one modifier beside them, as §9.34 asks of a
+ * variant: no second row or switch. The row draws the window ink and fills through the control
+ * roles (§9.29), and its off switch is the window's: the track the theme ink at 25 %, the thumb
+ * the theme's solid colour, as the page switch's thumb is the page's. On, the switch keeps the
+ * primitive's `--v2-accent` and `--v2-on-accent`, the clamped mix, for the reason the window's
+ * primary button does: contrast on a gradient of the accent's own hue. A locked row (the setting
+ * blocks everywhere, so this switch cannot turn it off) stays laid out at .4 and takes no press,
+ * as a dependent settings row does (§9.30, §10.4). Unlayered like the primitives, since a layered
+ * override would lose to them.
+ */
+.zen-v2-row.zen-ntp-row {
+  color: var(--v2-control-text);
+}
+.zen-v2-row.zen-ntp-row:active:not([aria-disabled='true']) {
+  background: var(--v2-control-fill);
+}
+@media (hover: hover) {
+  .zen-v2-row.zen-ntp-row:hover:not([aria-disabled='true']) {
+    background: var(--v2-control-fill);
+  }
+}
+.zen-v2-row.zen-ntp-row[aria-disabled='true'] {
+  opacity: 0.4;
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch {
+  background: rgb(var(--zen-fg-rgb) / 0.25);
+}
+.zen-ntp-row:not([aria-checked='true']) .zen-v2-switch::after {
+  background: var(--zen-bg-solid);
 }
 
 /*
@@ -6047,6 +6284,28 @@
   width: var(--v2-icon);
   height: var(--v2-icon);
   border-radius: var(--v2-radius-checkbox);
+}
+/*
+ * A search engine's mark in the glyph slot (Search › Default search engine, Added search
+ * engines): a page's favicon at the icon size, else the URL bar's letter in a disc of the
+ * hover fill – 16 like every leading glyph, so the picker's rows line up whichever it is.
+ */
+.zen-settings-engine-favicon {
+  border-radius: var(--v2-radius-checkbox);
+  object-fit: contain;
+}
+.zen-settings-engine-glyph {
+  display: inline-flex;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--v2-fill-hover);
+  color: var(--v2-text);
+  font-size: 10px;
+  font-weight: var(--v2-weight-heading);
+  line-height: 1;
 }
 .zen-settings-tint,
 .zen-settings-agent-dot {
@@ -7603,6 +7862,19 @@
     transition-duration: 1ms, 120ms !important;
   }
   .zen-group::before {
+    transition-duration: 120ms !important;
+  }
+  /*
+   * The overview's panes and the segment primitive (TAB-02, TAB-03; §9.34): content changing in
+   * place on a window strip fades the same under reduced motion (v2 §11.4) – a pane coming up
+   * keeps its 120 ms fade (the still of the one leaving its 120 ms out, in `PaneSlot`), a
+   * segment's ink and its line their 120 ms; neither moves in full motion either.
+   */
+  .zen-overview-pane {
+    animation-duration: 120ms !important;
+  }
+  .zen-v2-segment > [role='tab'],
+  .zen-v2-segment > [role='tab']::after {
     transition-duration: 120ms !important;
   }
 }

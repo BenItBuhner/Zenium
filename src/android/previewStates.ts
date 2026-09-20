@@ -10,16 +10,17 @@ import type {
   Tab,
   UIState
 } from '@shared/types'
-import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { Browser } from '@core/browser'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
 import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
+import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
+import { isEmptyTabUrl } from '@shared/url'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
@@ -28,6 +29,7 @@ import {
   browserStore,
   closeMenu,
   closeOverlay,
+  closeTabsMenu,
   closeUrlbar,
   dismissBanner,
   dismissToast,
@@ -35,6 +37,7 @@ import {
   forgetToast,
   openExtensionsSheet,
   openOverlay,
+  openTabsMenu,
   openUrlbar,
   openZoom,
   pushToast,
@@ -54,6 +57,7 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
   PREVIEW_QR_EVENT,
   PREVIEW_VOICE_EVENT,
@@ -68,6 +72,7 @@ import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  type PreviewPrivateSurface,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
@@ -92,21 +97,24 @@ const QR_EVENT_MARGIN_MS = 250
  * and quick checks need no tapping through the menus. A state is a query string (see
  * `parsePreviewSpec`): `idle`, `page=settings` (the Settings tab; `section=<id>` opens a section
  * over the landing, `search=<text>` types into the landing's search, `show=<text>` scrolls a row
- * into view, `then=tap:<text>;back;overview;urlbar` takes steps on the open page in order: a tap
- * on a row opens its sheet and a second tap stacks one, `back` closes the top sheet, `overview`
- * opens the tab overview, `urlbar` the pill for editing), `group=<n>` (the active tab in a
- * group of n members made on the spot, so the group strip is up in the bar band; `then=` steps
- * run once the group has formed), `overlay=<kind>` (history, bookmarks,
+ * into view, `then=tap:<text>;type:<id>=<text>;back;overview;urlbar` takes steps on the open page
+ * in order: a tap on a row opens its sheet and a second tap stacks one, `type` fills a form's
+ * field, `back` closes the top sheet, `overview` opens the tab overview, `urlbar` the pill for
+ * editing), `group=<n>` (the active tab in a group of n members made on the spot, so the group
+ * strip is up in the bar band; `then=` steps run once the group has formed), `overlay=<kind>`
+ * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
  * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
- * into view), `sheet=extensions` (the Extensions sheet the app menu's row opens, over the
- * active page; `then=tap:<row>;hold:<row>` taps a row or long-presses it for its menu),
- * `extension-page=<id>/<path>` (an extension's page open as a tab, the way its options page
- * opens: `chrome-extension://<id>/<path>`, which the stand-in host serves a page for; with
- * `extensions=installed` the chrome knows the extension, so the pill shows its name),
- * `prompt=<permission>` (the active page asks for that permission: the prompt sheet
- * is up), `private=new` or `private=<url>` (a private tab, blank or on that page),
+ * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
+ * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
+ * or long-presses it for its menu), `extension-page=<id>/<path>` (an extension's page open as a
+ * tab, the way its options page opens: `chrome-extension://<id>/<path>`, which the stand-in
+ * host serves a page for; with `extensions=installed` the chrome knows the extension, so the
+ * pill shows its name), `prompt=<permission>` (the active page asks for that permission: the
+ * prompt sheet is up), `private=<surface>` (a private tab on its new tab page or on
+ * `url=<page>`, and the overview's Tabs and Private panes; see `PREVIEW_PRIVATE_SURFACES`;
+ * `private=new` and `private=<url>` still read),
  * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
  * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
  * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
@@ -122,10 +130,13 @@ const QR_EVENT_MARGIN_MS = 250
  * playing that script into the listening sheet: `listening`, `listening-rest`, `partial`,
  * `no-match`, `denied`, …; see `previewVoiceScript`), `qr=<script>` (QR scanning started, the
  * stand-in camera playing that script into the scan sheet: `scanning`, `torch`, `text`,
- * `denied`, …; see `previewQrScript`) or `overview` (the tab overview open over the active
- * page, its cards with whatever pictures the stand-in host has of the tabs). `rules=<n>` on
- * any spec seeds n remembered site permissions for Settings › Security; `blocking=<variant>`
- * may accompany any spec too (see `seedBlocking`).
+ * `denied`, …; see `previewQrScript`), `overview` (the tab overview open over the active
+ * page, its cards with whatever pictures the stand-in host has of the tabs) or
+ * `urlbar=<text>` (the pill's editor over the active tab with that text typed; `newtab` opens
+ * it over a new tab, `clip=<text>` seeds the stand-in clipboard for the clipboard row, `then=`
+ * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
+ * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
+ * spec too (see `seedBlocking`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -158,6 +169,7 @@ function apply(browser: Browser, spec: string): void {
     unseedExtensions()
     closeOverlay()
     closeMenu()
+    closeTabsMenu()
     closeUrlbar()
     dismissOverview()
     uiStore.set({
@@ -181,11 +193,13 @@ function apply(browser: Browser, spec: string): void {
     if (seed.rules !== null) seedRules(browser, seed.rules)
     // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
     // or picker of the previous state is gone with them – and before the group goes, since
-    // they hang from the tab that was active in it.
+    // they hang from the tab that was active in it. A private tab a previous state opened goes
+    // too (its session ends, as when the user closes the last one): the next state starts on
+    // the regular tabs, and an "empty" pane is empty.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
-      .then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
+      .then(() => closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest))))
   })
 }
 
@@ -337,6 +351,20 @@ async function dissolveGroup(): Promise<void> {
   )
 }
 
+/** Close the private tabs, then `then` once none is left. */
+function closePrivateTabs(then: () => void): void {
+  if (!anyPrivateTab(browserStore.get().state)) {
+    then()
+    return
+  }
+  void run('tab.closePrivate', undefined)
+  whenState((state) => !anyPrivateTab(state), then)
+}
+
+function anyPrivateTab(state: UIState | null): boolean {
+  return state !== null && Object.values(state.tabs).some(isPrivateTab)
+}
+
 /**
  * Dismiss the page's open sheets, top first, the way a back would (a sheet leaves with its
  * motion and its surface goes with it), then `then`. Bounded: a sheet that will not leave is
@@ -426,6 +454,18 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     // The stand-in host (preview.ts) plays the transfer back; it reports like Kotlin would.
     window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: target.download }))
     finish()
+  } else if (target.kind === 'menu' && target.menu === 'tabs') {
+    // A hold on the Tabs button: its quick menu, anchored to the button as the hold would.
+    const button = document.querySelector<HTMLElement>('[data-bar-item="tabs"]')
+    const rect = button?.getBoundingClientRect()
+    if (!rect) {
+      finish()
+      return
+    }
+    void openTabsMenu(
+      { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      tab?.id ?? null
+    ).then(() => requestAnimationFrame(finish))
   } else if (target.kind === 'menu') {
     // The core answers with `menu.show`; the state is reached once the descriptor is in the store.
     const unsubscribe = uiStore.subscribe(() => {
@@ -456,12 +496,28 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       (s) => s.permissionPrompts.some((p) => p.tabId === tab.id),
       () => afterFrames(2, () => done(spec))
     )
-  } else if (target.kind === 'private') {
-    void run('tab.newPrivate', target.url ? { url: target.url } : {})
-    untilState(
-      (s) => activeTab(s)?.containerId === PRIVATE_CONTAINER_ID,
-      () => afterFrames(2, () => done(spec))
-    )
+  } else if (target.kind === 'private' && state) {
+    // The steps, if any, once the surface is up: the overview's header menu, then its question.
+    const then = target.then ?? []
+    const surface = (): void => {
+      const now = browserStore.get().state ?? state
+      applyPrivate(target.surface, target.url ?? PRIVATE_PAGE, now, () =>
+        then.length ? steps(then, finish) : finish()
+      )
+    }
+    // The global cookie mode first, through the settings command as the Settings page writes it,
+    // and the surface once the core says so: the new tab page's switch reads the private status
+    // the core derives from it in the same state (`privacy.privateThirdPartyCookies`; with no
+    // private override, `allow` is off, `block-private` on, `block` on and locked).
+    const cookies = target.cookies
+    if (cookies !== undefined && state.settings.privacy.thirdPartyCookies !== cookies) {
+      run('settings.update', {
+        privacy: { ...state.settings.privacy, thirdPartyCookies: cookies }
+      })
+      whenState((s) => s.settings.privacy.thirdPartyCookies === cookies, surface)
+    } else {
+      surface()
+    }
   } else if (target.kind === 'zoom' && tab) {
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
@@ -534,6 +590,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     // The grid mounts on the next render and its cards read their pictures then.
     openOverview(state)
     requestAnimationFrame(() => done(spec))
+  } else if (target.kind === 'urlbar') {
+    applyUrlbar(target, tab?.id ?? null, finish)
   } else {
     finish()
   }
@@ -1064,6 +1122,48 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
   }
 }
 
+/** How long the editor's first suggestions are waited for before the state goes ahead anyway. */
+const SUGGESTIONS_MS = 4000
+
+/**
+ * The pill's editor the way a tap on the pill opens it: search-ready over the page (`edit`,
+ * nothing typed: the header row with Share, Copy link and Edit; the clipboard row when the
+ * stand-in clipboard holds something), or over a new tab (`new-tab`, no header). `text` is then
+ * typed into the field as a keyboard would (the suggestions refresh, query rows grow their Refine
+ * arrow), the first suggestions are waited for, the steps pressed in order, and `finish` called.
+ */
+function applyUrlbar(
+  target: Extract<PreviewState, { kind: 'urlbar' }>,
+  tabId: string | null,
+  finish: () => void
+): void {
+  if (target.clip !== null) {
+    window.dispatchEvent(new CustomEvent(PREVIEW_CLIP_EVENT, { detail: target.clip }))
+  }
+  const mode = target.newTab || !tabId ? 'new-tab' : 'edit'
+  void openUrlbar(mode, mode === 'edit' ? tabId : null, { attached: true }).then(() => {
+    requestAnimationFrame(() => {
+      if (target.text) type(URLBAR_FIELD, target.text)
+      whenSuggested(() => steps(target.then ?? [], finish))
+    })
+  })
+}
+
+const URLBAR_FIELD = 'input[aria-label="Search or enter address"]'
+
+/** Runs `fn` once the editor lists a row (or the hint that there is none), or after {@link SUGGESTIONS_MS}. */
+function whenSuggested(fn: () => void, deadline = performance.now() + SUGGESTIONS_MS): void {
+  const listed = document.querySelector(
+    '.zen-omnibox-sheet [role="option"], [data-testid="urlbar-page-header"]'
+  )
+  if (listed || performance.now() > deadline) {
+    // A frame for the rows to lay out before a step presses one of their controls.
+    setTimeout(fn, 300)
+    return
+  }
+  setTimeout(() => whenSuggested(fn, deadline), 50)
+}
+
 /**
  * The certificate the host reports with a certificate error (`failLoad` in `views.ts`), so that
  * `error=<ERR_CERT_*>` shows the interstitial whole: the Advanced block lists these fields and
@@ -1088,23 +1188,26 @@ function settlePage(
   seed: () => void,
   finish: () => void
 ): void {
-  whenActiveTabIs(isInternalPageUrl, () => {
-    whenPageRendered(() => {
-      setTimeout(() => {
-        seed()
-        // The landing keeps its query between states unless it is retyped: an empty one clears it.
-        type('input[aria-label="Find in Settings"]', target.search ?? '')
-        requestAnimationFrame(() => {
-          // The page keeps where a previous state scrolled it; every state starts at the top.
-          for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
-            if (el.scrollTop > 0) el.scrollTop = 0
-          }
-          show(target.show)
-          steps(target.then ?? [], finish)
-        })
-      }, 300)
-    })
-  })
+  whenActiveTabIs(
+    (active) => isInternalPageUrl(active.url),
+    () => {
+      whenPageRendered(() => {
+        setTimeout(() => {
+          seed()
+          // The landing keeps its query between states unless it is retyped: an empty one clears it.
+          type('input[aria-label="Find in Settings"]', target.search ?? '')
+          requestAnimationFrame(() => {
+            // The page keeps where a previous state scrolled it; every state starts at the top.
+            for (const el of document.querySelectorAll<HTMLElement>('[data-page] *')) {
+              if (el.scrollTop > 0) el.scrollTop = 0
+            }
+            show(target.show)
+            steps(target.then ?? [], finish)
+          })
+        }, 300)
+      })
+    }
+  )
 }
 
 /**
@@ -1147,6 +1250,16 @@ function takeStep(step: PreviewStep): void {
     case 'hold':
       hold(step.text)
       return
+    case 'type': {
+      // A finger in the field, the text, then a tap elsewhere: the field is left touched, so a
+      // form's validation has its say in the still.
+      const field = document.getElementById(step.id)
+      if (!(field instanceof HTMLInputElement)) return
+      field.focus()
+      type(`#${step.id}`, step.text)
+      field.blur()
+      return
+    }
     case 'back':
       // One system back, committed: the top sheet, or the section over the landing, goes.
       dispatchBackEvent('start', { edge: 'left' })
@@ -1227,10 +1340,10 @@ function whenPageRendered(fn: () => void, deadline = performance.now() + PAGE_RE
 }
 
 /** Runs `fn` once the active tab satisfies `test` (at once when it already does). */
-function whenActiveTabIs(test: (url: string) => boolean, fn: () => void): void {
+function whenActiveTabIs(test: (tab: Tab) => boolean, fn: () => void): void {
   whenState((state) => {
     const tab = activeTab(state)
-    return tab !== null && test(tab.url)
+    return tab !== null && test(tab)
   }, fn)
 }
 
@@ -1249,6 +1362,81 @@ function whenState(test: (state: UIState) => boolean, fn: () => void): void {
     unsubscribe()
     fn()
   })
+}
+
+/** The page a private tab is put on when the state names none. */
+const PRIVATE_PAGE = 'https://example.com/'
+
+/**
+ * A private tab and the overview's panes, the way the app reaches them: the tab through
+ * `tab.newPrivate` (the app menu's item, the quick menu's, the shortcut's), the overview through
+ * the Tabs button, which lands on the active tab's pane; the Private pane over regular tabs is
+ * the segment's pick. The theme blends to the private one as the tab becomes active (`useTheme`),
+ * so a driver's settle covers the spring. `finish` marks the state reached.
+ */
+function applyPrivate(
+  surface: PreviewPrivateSurface,
+  url: string,
+  state: UIState,
+  finish: () => void
+): void {
+  const from = activeTab(state)
+  const onPrivateTab = (test: (tab: Tab) => boolean, then: () => void): void =>
+    whenActiveTabIs((tab) => isPrivateTab(tab) && test(tab), then)
+  const overviewUp = (then: () => void): void => {
+    const now = browserStore.get().state
+    if (now) openOverview(now)
+    // The grid mounts on the next render, the pane's fade after it.
+    afterFrames(2, then)
+  }
+  switch (surface) {
+    case 'newtab':
+      void run('tab.newPrivate', {})
+      onPrivateTab(
+        (tab) => isEmptyTabUrl(tab.url),
+        () => afterFrames(2, finish)
+      )
+      return
+    case 'page':
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => afterFrames(2, finish)
+      )
+      return
+    case 'overview':
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => overviewUp(finish)
+      )
+      return
+    case 'tabs':
+      // A private tab open, the regular one active again: the overview opens on Tabs, with the
+      // segment offering Private and no private card among the regular ones.
+      void run('tab.newPrivate', { url })
+      onPrivateTab(
+        (tab) => tab.url === url,
+        () => {
+          if (!from) {
+            overviewUp(finish)
+            return
+          }
+          void run('tab.activate', { tabId: from.id })
+          whenActiveTabIs(
+            (tab) => tab.id === from.id,
+            () => overviewUp(finish)
+          )
+        }
+      )
+      return
+    case 'empty':
+      overviewUp(() => {
+        pickOverviewPane('private')
+        afterFrames(2, finish)
+      })
+      return
+  }
 }
 
 /**

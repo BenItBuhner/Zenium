@@ -123,6 +123,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     override var immersive = false
         private set
+    /**
+     * The chrome's last word on the private surface (`window.setSecure`): a private tab is in
+     * view, or the overview shows its private pane. The window's screenshot guard follows it
+     * (`PrivateBrowsing.guard`).
+     */
+    var privateSurface = false
+        private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
         private set
@@ -162,7 +169,6 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
     override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
-    override fun onViewsChanged() = privateSession.onViewsChanged()
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
@@ -398,6 +404,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
+            "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
@@ -429,6 +436,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "clipboard.clearText" -> reply(SecretClipboard.clear(activity, args.str("expected")))
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
+            // The URL bar's clipboard row: the peek reads the clip's description only (no Android 12+
+            // toast); the read takes the content once, on the user's reveal or pick; markUsed
+            // remembers the clip the user opened through the row, so it is not offered again.
+            "clipboard.peek" -> reply(ClipboardPeek.peek(activity))
+            "clipboard.read" -> reply(ClipboardPeek.read(activity))
+            "clipboard.markUsed" -> { ClipboardPeek.markUsed(activity); reply(null) }
 
             // --- autofill: the system framework's status, and which provider owns the pages -----------
             "autofill.status" -> reply(SystemAutofill.status(activity))
@@ -437,7 +450,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyAutofillProvider()
                 reply(null)
             }
-            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
+            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), args.num("maxBytes").toLong(), reply)
             // The chrome has read a spilled body (`BootHandoff.readBody`): its file goes.
             "net.release" -> { io.execute { handoff.release(args.str("token")) }; reply(null) }
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
@@ -739,6 +752,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         chrome.performHapticFeedback(constant)
     }
 
+    /** The private surface came or went: the window's screenshot guard goes up or down with it. */
+    fun setPrivateSurface(on: Boolean) {
+        privateSurface = on
+        PrivateBrowsing.guard(activity.window, on)
+    }
+
     private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
         themeDark = dark
         if (scrim.isNotEmpty()) themeScrim = parseColor(scrim)
@@ -864,11 +883,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * over `BootHandoff.NET_INLINE_LIMIT` is not answered inline (JSON-quoted into a script the
      * chrome's main thread parses) but spilled to a file the chrome fetches by token
      * (`body: {token, bytes}`; `fetchText` in `src/android/platform.ts` reads it and releases it).
+     * `maxBytes` > 0 caps the body: the read stops there and the fetch fails (`ok: false`), so a
+     * caller's cap (an OpenSearch description's 64 KB) bounds the download, not just the parse;
+     * ≤ 0 is `BootHandoff.NET_BODY_LIMIT`.
      */
-    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, reply: (Any?) -> Unit) {
+    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, maxBytes: Long, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
                 val timeout = if (timeoutMs > 0) timeoutMs else 2500
+                val cap = if (maxBytes > 0) maxBytes else BootHandoff.NET_BODY_LIMIT
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeout
                     readTimeout = timeout
@@ -876,7 +899,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 }
                 val status = conn.responseCode
                 val ok = status in 200..299
-                val body = if (ok) conn.inputStream.use { handoff.readBody(it) } else BootHandoff.Body.Inline("")
+                val body = if (ok) conn.inputStream.use { handoff.readBody(it, maxBytes = cap) } else BootHandoff.Body.Inline("")
                 // The validators a later conditional fetch sends back (`If-None-Match`, `If-Modified-Since`).
                 val responseHeaders = JSONObject()
                 conn.getHeaderField("ETag")?.let { responseHeaders.put("etag", it) }

@@ -105,7 +105,8 @@ import type { QrStartOutcome } from '../shared/qrScan'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
-import { buildSearchUrl, matchKeyword } from '../shared/search'
+import { buildSearchUrl, matchKeyword, sanitizeSearchEngines } from '../shared/search'
+import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
@@ -261,6 +262,8 @@ export class Browser {
   readonly mediaSession: MediaSessionService
   /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
   readonly webNotifications: WebNotificationService
+  /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
+  readonly searchEngines: SearchEngineService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -369,6 +372,7 @@ export class Browser {
     this.webApps = new WebAppService(this, platform.io)
     this.mediaSession = new MediaSessionService(this)
     this.webNotifications = new WebNotificationService(this)
+    this.searchEngines = new SearchEngineService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -1922,6 +1926,15 @@ export class Browser {
         this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
       return
     }
+    if (message.type === 'opensearch') {
+      if (typeof message.url === 'string')
+        void this.searchEngines.discover(
+          tabId,
+          message.url,
+          typeof message.title === 'string' ? message.title : ''
+        )
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -2086,8 +2099,9 @@ export class Browser {
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
-      'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
-      'tab.close': ({ tabId, force }, win) => void tabs.requestClose(tabId, force, win),
+      'tab.activate': ({ tabId, keepFocus }, win) => tabs.activateTab(tabId, win, { keepFocus }),
+      'tab.close': ({ tabId, force, keepFocus }, win) =>
+        void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
@@ -2108,8 +2122,8 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
-      'tab.selectionContextMenu': ({ tabIds }, win) =>
-        this.menus.showSelectionContextMenu(tabIds, win),
+      'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
+        this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
       'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
@@ -2150,7 +2164,8 @@ export class Browser {
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
-      'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
+      'tab.contextMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showTabContextMenu(tabId, win, anchor),
       'tab.toggleDevtools': ({ tabId }) => tabs.toggleDevtools(tabId),
       'tab.copyUrl': ({ tabId, markdown }) => tabs.copyUrl(tabId, markdown),
 
@@ -2197,15 +2212,17 @@ export class Browser {
         state.commit()
       },
       'space.closeUnpinned': ({ spaceId }, win) => tabs.closeUnpinned(spaceId, win),
-      'space.contextMenu': ({ spaceId }, win) => this.menus.showSpaceContextMenu(spaceId, win),
+      'space.contextMenu': ({ spaceId, ...anchor }, win) =>
+        this.menus.showSpaceContextMenu(spaceId, win, anchor),
 
       'folder.create': ({ spaceId, name, icon, color, rename }, win) =>
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
-      'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
+      'folder.contextMenu': ({ folderId, ...anchor }, win) =>
+        this.menus.showFolderContextMenu(folderId, win, anchor),
       'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
-      'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
       'app.menu': ({ anchor, keyboard }, win) =>
@@ -2339,8 +2356,8 @@ export class Browser {
       'page.navigate': ({ tabId, section, replace }) =>
         this.pages.navigate(tabId, section, replace ?? false),
 
-      'history.contextMenu': ({ visitId, url }, win) =>
-        this.menus.showHistoryContextMenu(visitId, url, win),
+      'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
+        this.menus.showHistoryContextMenu(visitId, url, win, anchor),
       'history.dayMenu': ({ dayKey, count }, win) =>
         this.menus.showHistoryDayMenu(dayKey, count, win),
 
@@ -2354,6 +2371,11 @@ export class Browser {
         else if (confirmation) this.copyText(text, confirmation, win)
         else platform.clipboard.writeText(text)
       },
+      'clipboard.peek': () => this.searchEngines.peekClipboard(),
+      'clipboard.read': () => this.searchEngines.readClipboard(),
+      'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
+      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 
       'newtab.open': (_a, win) => this.openNewTab(win),
       'newtab.addShortcut': ({ title, url }) => this.newTab.addShortcut(title, url) ?? '',
@@ -2380,8 +2402,14 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, surface }, win) =>
-        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
+      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
+        this.menus.showBookmarkContextMenu(
+          ids,
+          folderId,
+          { x, y, keyboard },
+          win,
+          surface ?? 'manager'
+        ),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -2589,12 +2617,8 @@ export class Browser {
       'extension.resizePopup': ({ bounds, visible }) =>
         this.extensions.resizePopup(bounds, visible),
       'extension.closePopup': () => this.extensions.closePopup(),
-      'extension.actionContextMenu': ({ id, x, y }, win) =>
-        this.menus.showExtensionActionMenu(
-          id,
-          win,
-          x !== undefined && y !== undefined ? { x, y } : undefined
-        ),
+      'extension.actionContextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showExtensionActionMenu(id, win, anchor),
       'extension.actionMenuItems': ({ id }, win) => this.menus.extensionActionMenuItems(id, win),
       'extension.actionMenuClick': ({ id, itemId }) =>
         this.menus.runExtensionActionMenuItem(id, itemId),
@@ -2800,6 +2824,11 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'searchEngines') {
+        // The user's engines whole (a Settings row sends the edited list); the default is kept.
+        const keep =
+          typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
+        s.searchEngines = sanitizeSearchEngines(value, keep)
       } else if (key === 'privacy' && value && typeof value === 'object') {
         s.privacy = sanitizePrivacySettings({
           ...s.privacy,
@@ -2837,6 +2866,10 @@ export class Browser {
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
+    // A default the profile no longer has an engine for (removed, or named by a peer's build that
+    // knows more engines) falls back to the shipped default; suggestions keep working.
+    if (!this.state.searchEngines.some((e) => e.id === s.searchEngineId))
+      s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||

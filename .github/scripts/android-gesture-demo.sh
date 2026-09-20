@@ -20,6 +20,9 @@
 #                 install, which grants them all (-g), so a demo meets the system's prompt for
 #                 them (the voice demo and RECORD_AUDIO); revoked before the driver starts, since
 #                 a revocation kills the app's process and the driver runs inside it
+#   WEBVIEW_APK – a Chromium snapshot SystemWebView.apk to swap in for the image's own WebView
+#                 before anything else (android-webview-swap.sh: an AOSP image booted with
+#                 -writable-system); the run fails when the swap does not take
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -134,10 +137,10 @@ monitor_pid=$!
 if [ "${DEMO_PREPARED:-0}" != 1 ]; then
 # Optional: run the demo on a Chromium snapshot WebView instead of the image's own (see
 # android-webview-swap.sh; needs an AOSP image booted with -writable-system). A demo that asks
-# for it depends on the newer engine (the media demo: the API 34 image's WebView 113 keeps no
-# profiles, so the core offers no private tabs on it, and its media / notification behaviour is
-# years behind), so a swap that does not take fails the run here, before the driver, with the
-# reason in the log.
+# for it depends on the newer engine (the private tabs and media demos: the API 34 image's
+# WebView 113 keeps no profiles, so the core offers no private tabs on it, and its media /
+# notification behaviour is years behind), so a swap that does not take fails the run here,
+# before the driver, with the reason in the log.
 if [ -n "${WEBVIEW_APK:-}" ]; then
   cp -f "$(dirname "$WEBVIEW_APK")/REVISIONS.json" "$out/webview-REVISIONS.json" 2> /dev/null || true
   if ! bash .github/scripts/android-webview-swap.sh "$WEBVIEW_APK" "$out"; then

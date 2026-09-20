@@ -1,4 +1,4 @@
-import type { SearchEngine, Suggestion } from '../shared/types'
+import { PRIVATE_CONTAINER_ID, type SearchEngine, type Suggestion } from '../shared/types'
 import {
   SEARCH_SCOPES,
   buildSearchUrl,
@@ -81,10 +81,10 @@ export class SuggestionService {
     const state = this.browser.state
     const engines = state.searchEngines
     const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
-    const isPrivate = win.isPrivate
+    const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
 
-    if (!query) return isPrivate ? [] : this.emptyState()
+    if (!query) return isPrivate ? [] : await this.emptyState()
 
     // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
     // rows are what the extension suggests, nothing else (Chrome's keyword mode).
@@ -399,6 +399,20 @@ export class SuggestionService {
     return out
   }
 
+  /**
+   * Whether the omnibox is a private one: its window is private (a desktop private window), or
+   * the tab it serves is in the private container – a phone private tab, whose window is never
+   * private. Either way nothing typed leaves the device and nothing of the profile is shown:
+   * no engine suggest requests, no answers, no history or bookmark rows, no zero-suggest
+   * (Chrome's incognito omnibox sends no suggest requests). Tab rows stay, as in a private
+   * window.
+   */
+  private privateContext(currentTabId: string | null, win: ZenWindow): boolean {
+    if (win.isPrivate) return true
+    const tab = currentTabId ? this.browser.state.model.tabs[currentTabId] : undefined
+    return tab?.containerId === PRIVATE_CONTAINER_ID
+  }
+
   /** Open tabs this window can show (private tabs stay private), as "Switch to tab" rows. */
   private tabRows(
     query: string,
@@ -514,7 +528,7 @@ export class SuggestionService {
       rows.push(...this.tabRows(terms || '', currentTabId, win, MAX_ROWS))
       return finish(rows, query)
     }
-    if (win.isPrivate) return []
+    if (this.privateContext(currentTabId, win)) return []
     rows.push({
       id: 'scope',
       kind: 'search',
@@ -536,17 +550,40 @@ export class SuggestionService {
     return finish(rows, query)
   }
 
-  private emptyState(): Suggestion[] {
-    return this.browser.history.recent(8).map((entry) => ({
-      id: `hist:${entry.url}`,
-      kind: 'history' as const,
-      title: entry.title,
-      subtitle: displayUrl(entry.url),
-      url: entry.url,
-      favicon: entry.favicon,
-      targetId: null,
-      fill: displayUrl(entry.url)
-    }))
+  /**
+   * Nothing typed yet: what the clipboard holds first (Chrome's "Link you copied" / "Text you
+   * copied"; the kind alone, from the clip's description – the content is read only when the
+   * user reveals or picks the row), then the recent history.
+   */
+  private async emptyState(): Promise<Suggestion[]> {
+    const rows: Suggestion[] = []
+    const clip = await this.browser.searchEngines.peekClipboard()
+    // An image on the clipboard has nowhere to go: Zenium has no visual search, so no row.
+    if (clip === 'url' || clip === 'text') {
+      rows.push({
+        id: 'clipboard',
+        kind: 'clipboard',
+        title: clip === 'url' ? 'Link you copied' : 'Text you copied',
+        subtitle: '',
+        url: null,
+        favicon: null,
+        targetId: clip,
+        fill: ''
+      })
+    }
+    for (const entry of this.browser.history.recent(8)) {
+      rows.push({
+        id: `hist:${entry.url}`,
+        kind: 'history' as const,
+        title: entry.title,
+        subtitle: displayUrl(entry.url),
+        url: entry.url,
+        favicon: entry.favicon,
+        targetId: null,
+        fill: displayUrl(entry.url)
+      })
+    }
+    return rows
   }
 
   // ---------------------------------------------------------------------------

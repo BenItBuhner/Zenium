@@ -94,6 +94,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // wallpaper, stagger, the customise sheet's presets grid and previews, the grow surface
   // (components/newtab/NewTabPage.tsx, CustomizeSheet.tsx, NewTabGrowLayer.tsx).
   ['.zen-ntp-field {', '/*\n * A sheet coming up pushes the page back'],
+  // The phone omnibox's search-ready header, chips, Refine arrow and clipboard Show
+  // (components/urlbar/Urlbar.tsx; a window surface reading the §9.29 control roles).
+  ['.zen-omnibox-header {', ' * Settings as a tab (design language v2 draft'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
   ['.zen-page-host {', ' * History page (design language v2 draft'],
@@ -150,8 +153,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteinfo/SiteInfoSheet.tsx',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
   // desktop popover, dialog and pane primitives' metrics and inks; the Settings panes' card
-  // padding and deemphasised ink; the builder rows' glyph ink; the pill's private badge in the
-  // window family's control roles (§9.19, §9.29).
+  // padding and deemphasised ink; the builder rows' glyph ink. (The pill carries no private
+  // badge – §9.19 keeps badges for mixed lists – so PhoneShell reads no token of its own.)
   'components/v2/controls.tsx',
   'components/siteControls/primitives.tsx',
   'components/siteControls/pane.tsx',
@@ -159,8 +162,7 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/ClearBrowsingDataDialog.tsx',
   'components/siteControls/settingsRows.tsx',
   'components/overlays/SiteSettingsSection.tsx',
-  'components/overlays/SafetyCheckSection.tsx',
-  'components/phone/PhoneShell.tsx'
+  'components/overlays/SafetyCheckSection.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -460,7 +462,10 @@ describe('the v2 primitives (§9.34)', () => {
     // copies and the translate stylesheet's own went with it.
     '.zen-v2-menulist',
     '.zen-v2-menulist-popup',
-    '.zen-v2-menulist-option'
+    '.zen-v2-menulist-option',
+    // The segment (#203, the overview's Tabs | Private): its tabs and their underline are rules
+    // on the one class (`> [role='tab']`, `::after`), so the primitive is the whole control.
+    '.zen-v2-segment'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {

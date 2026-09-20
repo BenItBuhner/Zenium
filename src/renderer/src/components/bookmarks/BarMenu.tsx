@@ -6,6 +6,12 @@ import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { pathForFile } from '@renderer/lib/dnd'
 import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
+import {
+  contextMenuAnchor,
+  mnemonicActivates,
+  mnemonicKey,
+  mnemonicMatch
+} from '@renderer/lib/menuKeys'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import {
   ChromePortal,
@@ -16,6 +22,7 @@ import {
   viewportSize,
   type DismissReason
 } from '@renderer/lib/portals'
+import { browserStore } from '@renderer/lib/ui'
 import { BookmarkIcon } from './BookmarkRow'
 import { useScrolled } from './popover'
 import { nodeLabel } from './tree'
@@ -266,8 +273,18 @@ export function BarMenu({
         // Tab wraps inside the popover (§9.22): it walks the rows like the arrows do.
         if (n) setActive((a) => (a + (e.shiftKey ? n - 1 : 1)) % n)
         break
-      default:
-        return
+      default: {
+        // A letter, as in Chrome's native menus: the next row whose name starts with it; the
+        // only such row opens (a bookmark in this tab, a folder's level) off macOS.
+        const letter = mnemonicKey(e)
+        const match = letter === null ? null : mnemonicMatch(items.map(nodeLabel), letter, active)
+        if (!match) return
+        const node = items[match.index]
+        if (match.unique && node && mnemonicActivates(browserStore.get().state?.platform))
+          activate(node, false)
+        else setActive(() => match.index)
+        break
+      }
     }
     e.preventDefault()
     e.stopPropagation()
@@ -279,8 +296,7 @@ export function BarMenu({
     run('bookmark.contextMenu', {
       ids: node ? [node.id] : [],
       folderId,
-      x: e.clientX,
-      y: e.clientY,
+      ...contextMenuAnchor(e),
       surface: 'bar'
     })
   }

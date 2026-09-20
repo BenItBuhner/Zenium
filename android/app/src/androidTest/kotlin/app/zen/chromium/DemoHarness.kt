@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -597,6 +598,106 @@ abstract class DemoHarness(
         return touchTap(node)
     }
 
+    /**
+     * A real touch on the first node whose label or text `matches`, found again right before the
+     * finger lands. A node held across a wait, a screenshot or a script can be gone from the
+     * WebView's tree by the time it is touched (Blink rebuilds the nodes under a list that
+     * re-renders, as the suggestions do while their requests answer), and [touchTap] on a stale
+     * node touches nothing. Up to three fresh finds within `timeoutMs`; false when none is on
+     * screen in time or none stays put for the touch.
+     *
+     * Opt-in, like [awaitClipboardOverlayGone]: nothing in the harness calls either, and
+     * [touchTap], [touchTapLabel] and [awaitNode] are as they were, so a driver that does not
+     * call them runs exactly as before. A driver whose list re-renders under its finger calls
+     * this in place of an `awaitNode` + `touchTap` pair (OmniboxDemo; its fallback to the DOM's
+     * rect when the tree has lost the node is the driver's own, not the harness's).
+     */
+    protected fun touchTapFresh(timeoutMs: Long = 8_000, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        repeat(3) { attempt ->
+            val left = deadline - SystemClock.uptimeMillis()
+            if (left <= 0) return false
+            val node = awaitNode(left, matches) ?: return false
+            if (touchTap(node)) return true
+            Log.w(tag, "the node went stale before the touch (attempt ${attempt + 1}); finding it again")
+            SystemClock.sleep(300)
+        }
+        return false
+    }
+
+    /**
+     * Wait for the system's clipboard overlay (Android 13+, SystemUI's "ClipboardOverlay" window:
+     * the copied text's preview chip with its actions – share, send to a nearby device – along the
+     * bottom of the screen over the phone bar, up for some six seconds after every copy) to go, so
+     * the next touch near the bottom lands in the app and not on one of the chips (a touch on the
+     * nearby-device chip sent the clip to Nearby Share, whose set-up sheet paused the app).
+     * `copiedAt` is [SystemClock.uptimeMillis] at the copy; `target` is where the finger will land
+     * (the pill by default).
+     *
+     * The overlay is a full-screen TYPE_SCREENSHOT window, and the accessibility tree gives it
+     * neither a title (only panels and accessibility overlays carry their WindowManager title over)
+     * nor a type it names, so a wait on the title saw nothing and returned at once. It is told by
+     * its place instead: a window of another package than the app's and the keyboard's (or one the
+     * tree has no root for) whose bounds reach over the part of `target` inside [touchable]. The
+     * clipping matters: the system bars' windows lie outside the touchable band by construction,
+     * but the pill's rect from the tree reaches into the navigation bar's window (run 4: the bar's
+     * `Rect(0, 1516 - 720, 1600)` over a pill ending at 1550 held the wait to its timeout, though
+     * the touch itself lands inside the band). As the belt, the wait also runs the overlay's own
+     * clock out – it never returns before [CLIPBOARD_OVERLAY_MS] have passed since the copy – so a
+     * window the tree never reports is waited out all the same. True once nothing foreign is over
+     * the target with the clock run out, within `timeoutMs`; false with it still there (logged),
+     * for the caller to say so and go on.
+     *
+     * Opt-in: no touch helper waits for the overlay on its own, so a driver that copies nothing,
+     * or touches nowhere near the bottom after a copy, is unaffected; a driver that copies and then
+     * touches there calls this between the two (OmniboxDemo, between the link menu's copy and the
+     * pill).
+     */
+    protected fun awaitClipboardOverlayGone(copiedAt: Long, target: Rect = pill, timeoutMs: Long = 15_000): Boolean {
+        val clock = copiedAt + CLIPBOARD_OVERLAY_MS
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var seen: String? = null
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            val over = foreignWindowsOver(target)
+            if (over.isNotEmpty()) seen = over.joinToString()
+            if (over.isEmpty() && now >= clock) {
+                Log.i(
+                    tag,
+                    if (seen == null) "nothing over $target since the copy (${now - copiedAt} ms)"
+                    else "the window over $target is gone (was $seen; ${now - copiedAt} ms after the copy)"
+                )
+                return true
+            }
+            if (now >= deadline) {
+                Log.w(tag, "still a window over $target $timeoutMs ms on: $seen")
+                return false
+            }
+            SystemClock.sleep(250)
+        }
+    }
+
+    /**
+     * The windows a touch on `target` could land in instead of the app's: every window the tree
+     * lists whose bounds reach over the part of `target` inside [touchable] (a finger only lands
+     * there; the system bars' windows sit outside the band), except the app's own and the
+     * keyboard's. Each as "package bounds" ("?" for a window the tree has no root, so no package,
+     * for). Empty for a target wholly outside the band.
+     */
+    private fun foreignWindowsOver(target: Rect): List<String> {
+        val band = Rect(target)
+        if (!band.intersect(touchable)) return emptyList()
+        val found = ArrayList<String>()
+        for (window in ui.windows) {
+            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+            val pkg = window.root?.packageName?.toString()
+            if (pkg == app.packageName) continue
+            val bounds = Rect().also { window.getBoundsInScreen(it) }
+            if (Rect.intersects(bounds, band)) found += "${pkg ?: "?"} $bounds"
+        }
+        return found
+    }
+
     /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
     protected fun awaitNode(timeoutMs: Long = 8_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -1012,6 +1113,11 @@ abstract class DemoHarness(
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
+        /**
+         * How long SystemUI keeps the clipboard overlay up after a copy (`ClipboardOverlayController`'s
+         * six seconds), with a margin for its exit animation.
+         */
+        private const val CLIPBOARD_OVERLAY_MS = 7_000L
         /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
         private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */

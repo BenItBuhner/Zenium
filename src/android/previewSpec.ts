@@ -1,5 +1,6 @@
 import type { OverlayKind } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
+import type { ThirdPartyCookieMode } from '@shared/privacy'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -24,13 +25,15 @@ export const PREVIEW_PULL_MAX = 2.5
 /**
  * A step taken on a page once it is open, in order: `tap` presses the first button whose label
  * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
- * asks first), `hold` long-presses it (a row's menu opens), `back` is one system back (the top
- * sheet closes, a section pops), `overview` opens the tab overview over the page, `urlbar` opens
- * the pill for editing.
+ * asks first), `hold` long-presses it (a row's menu opens), `type` fills the field with that id
+ * the way a keyboard would and leaves it (the field is touched: a form's validation shows),
+ * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
+ * overview over the page, `urlbar` opens the pill for editing.
  */
 export type PreviewStep =
   | { kind: 'tap'; text: string }
   | { kind: 'hold'; text: string }
+  | { kind: 'type'; id: string; text: string }
   | { kind: 'back' }
   | { kind: 'overview' }
   | { kind: 'urlbar' }
@@ -50,6 +53,25 @@ const EXTENSION_ID = /^[a-p]{32}$/
  */
 export const PREVIEW_WEBAPP_SURFACES = ['install', 'name', 'banner', 'pinned'] as const
 export type PreviewWebAppSurface = (typeof PREVIEW_WEBAPP_SURFACES)[number]
+
+/**
+ * The private-tab surfaces a preview state may show (`private=<surface>`): a private tab on its
+ * new tab page (`newtab`; `new` is the same, as #135 first spelt it) or on a page (`page`;
+ * `url=<page>` names it, example.com by default; `private=<url>` is that page as well), the tab
+ * overview on its Private pane with that tab (`overview`), the overview on its Tabs pane while a
+ * private tab is open elsewhere (`tabs`: the segment, and no private card among the regular
+ * ones), and the Private pane with no private tab (`empty`: the explainer). `cookies=<mode>`
+ * sets the third-party cookie setting first (`allow`, `block-private`, `block`), for the new tab
+ * page's switch in each of its states; `then=<steps>` takes steps once the surface is up
+ * (`tap:More` opens the overview's header menu, a second tap on its row the question).
+ */
+export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
+export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
+const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
+
+/** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
+export const PREVIEW_MENUS = ['app', 'tabs'] as const
+export type PreviewMenu = (typeof PREVIEW_MENUS)[number]
 
 /** A download the preview host's stand-in downloader plays back (`download=<file>`). */
 export interface PreviewDownloadSpec {
@@ -156,6 +178,8 @@ export type PreviewState =
     }
   | {
       kind: 'menu'
+      /** Which menu: the app menu sheet, or the Tabs button's quick menu. */
+      menu: PreviewMenu
       /** Text of an item in the menu to scroll into view once it is open. */
       show?: string
     }
@@ -173,8 +197,13 @@ export type PreviewState =
     }
   | {
       kind: 'private'
-      /** The page the private tab opens on; null for a blank one. */
+      surface: PreviewPrivateSurface
+      /** The page the private tab is on (`page`, `overview`, `tabs`); null for the default. */
       url: string | null
+      /** The third-party cookie setting to put in place first; absent, the profile's stands. */
+      cookies?: ThirdPartyCookieMode
+      /** Steps taken once the surface is up (the overview's header menu, its question). */
+      then?: PreviewStep[]
     }
   | { kind: 'find'; text: string }
   | {
@@ -247,6 +276,18 @@ export type PreviewState =
     }
   /** The tab overview over the active page, as a pull on the pill opens it. */
   | { kind: 'overview' }
+  | {
+      /** The pill's editor (the phone omnibox) over the active tab, or over a new tab. */
+      kind: 'urlbar'
+      /** What has been typed; empty for the search-ready state with the page's header row. */
+      text: string
+      /** Over a new tab page (no header row) rather than the active tab's page. */
+      newTab: boolean
+      /** What the stand-in clipboard holds (null: unchanged); the clipboard row reads its kind. */
+      clip: string | null
+      /** Steps taken once the suggestions are up (`tap:Show`, `tap:Edit`, `tap:Refine`). */
+      then?: PreviewStep[]
+    }
 
 /** More sample banners than the stack holds are pointless. */
 const MAX_PREVIEW_BANNERS = 3
@@ -283,20 +324,24 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * A preview state spec is a query string: `idle` (or anything unrecognised), `page=<id>` for an
  * internal page opened in its tab (`section=<id>` for one of its sections, `search=<text>` types
  * into its search field, `show=<text>` scrolls a row into view, `then=<steps>` takes steps on it
- * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `back`, `overview`, `urlbar`),
- * `extension-page=<id>/<path>` for an extension's page open as a tab (its options page, say;
- * `extensions=<variant>` alongside seeds the extensions the chrome knows, `then=<steps>` takes
- * steps once it has loaded), `group=<n>` for the
+ * afterwards, `;`-separated: `tap:<text>`, `hold:<text>`, `type:<id>=<text>`, `back`,
+ * `overview`, `urlbar`), `extension-page=<id>/<path>` for an extension's page open as a tab (its
+ * options page, say; `extensions=<variant>` alongside seeds the extensions the chrome knows,
+ * `then=<steps>` takes steps once it has loaded), `group=<n>` for the
  * active tab in a group of n members made on the spot, the group strip up in the bar band (with
  * `then=<steps>` taken once the group has formed: `tap:Show group, Research` presses the strip's
  * show chip, `tap:New tab in Research` its plus chip), `overlay=<kind>` for
  * one of PREVIEW_OVERLAYS (with `section=<id>` for an overlay that has sections, `show=<text>`
  * to scroll a row of the overlay into view, and `expand` to rest a sheet that opened at its peek
- * detent on its expanded one), `menu=app` for the app menu sheet (with `show=<text>` to scroll an
- * item into view), `sheet=<name>` for one of PREVIEW_SHEETS, the chrome's own sheets (the
- * Extensions sheet the app menu's row opens; `then=<steps>` takes steps on it: `tap:<row>` is
- * the row's tap, `hold:<row>` its long press), `prompt=<permission>` for the active page asking for that permission (the
- * prompt sheet), `private=new` for a blank private tab (`private=<url>` opens one on that page),
+ * detent on its expanded one), `menu=app` for the app menu sheet or `menu=tabs` for the Tabs
+ * button's quick menu (with `show=<text>` to scroll an item into view), `sheet=<name>` for one
+ * of PREVIEW_SHEETS, the chrome's own sheets (the Extensions sheet the app menu's row opens;
+ * `then=<steps>` takes steps on it: `tap:<row>` is the row's tap, `hold:<row>` its long press),
+ * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
+ * `private=<surface>` for one of PREVIEW_PRIVATE_SURFACES (a private tab on its new tab page or
+ * a page, the overview's Tabs and Private panes and the empty Private pane; `url=<page>` names
+ * the private tab's page; `private=new` is the new tab page and `private=<url>` that page, as
+ * #135 spelt them),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
  * `page`), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
@@ -312,17 +357,22 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
  * `mime=<type>`), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the list
  * of them, `&allowed` remembers the site as allowed), `prompt=http-auth` / `prompt=certificate`
- * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in);
- * `prompt=<any other value>` is the permission that page asks for (the permission prompt
- * sheet), `private=new|<url>` opens a private tab, and `overview` opens the tab overview over
- * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
- * When several are given, `page` wins over `extension-page`, that over `group`, `group` over
- * `overlay`, `overlay` over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`,
- * that over `private`, `private` over `autofill`,
- * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
- * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
- * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
- * URL hash as read) is ignored.
+ * for a security dialog over the page (`&failed`, `&proxy`, `&secure` vary the sign-in),
+ * `prompt=<any other value>` for the permission that page asks for (the permission prompt
+ * sheet), `private=<surface>|new|<url>` for a private tab, `voice=<script>` for voice search from the
+ * active tab, `overview` for the tab overview over the active page (the grid of cards, with
+ * whatever pictures the stand-in host has of the tabs), or `urlbar=<text>` for the pill's
+ * editor over the active tab with that text typed (`urlbar=` opens it search-ready, with the
+ * page's header row; `newtab` opens it over a new tab page instead; `clip=<text>` puts that on
+ * the stand-in clipboard first, so the clipboard row shows; `then=tap:<label>;…` presses the
+ * editor's controls once the suggestions are up: `Show`, `Edit`, `Refine`). When several are
+ * given, `page` wins over `extension-page`, that over `group`, `group` over `overlay`, `overlay`
+ * over `menu`, `menu` over `sheet`, `sheet` over the permission `prompt`, that over `private`,
+ * `private` over `autofill`, `autofill` over `find`, `find` over `pull`, `pull` over `zoom`,
+ * `zoom` over `error`, `error` over the messages, the messages over `webapp`, `webapp` over
+ * `download`, `download` over `popups`, `popups` over the security `prompt`, that over `voice`,
+ * `voice` over `overview`, and `overview` over `urlbar`. A leading `#` (the URL hash as read) is
+ * ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -366,9 +416,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (params.has('expand')) state.expand = true
     return state
   }
-  if (params.get('menu') === 'app') {
+  const menu = params.get('menu')
+  if (menu !== null && (PREVIEW_MENUS as readonly string[]).includes(menu)) {
+    const state: Extract<PreviewState, { kind: 'menu' }> = {
+      kind: 'menu',
+      menu: menu as PreviewMenu
+    }
     const show = params.get('show')
-    return show ? { kind: 'menu', show } : { kind: 'menu' }
+    if (show) state.show = show
+    return state
   }
   const sheet = params.get('sheet')
   if (sheet !== null && (PREVIEW_SHEETS as readonly string[]).includes(sheet)) {
@@ -385,9 +441,7 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const securityPrompt = prompt === 'http-auth' || prompt === 'certificate'
   if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
   const priv = params.get('private')
-  if (priv !== null && priv !== '') {
-    return { kind: 'private', url: /^https?:\/\//.test(priv) ? priv : null }
-  }
+  if (priv !== null && priv !== '') return parsePrivate(priv, params)
   const autofill = params.get('autofill')
   if (autofill !== null && (PREVIEW_AUTOFILL as readonly string[]).includes(autofill)) {
     const state: Extract<PreviewState, { kind: 'autofill' }> = {
@@ -462,12 +516,46 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
   if (params.has('overview')) return { kind: 'overview' }
+  const urlbar = params.get('urlbar')
+  if (urlbar !== null) {
+    const state: Extract<PreviewState, { kind: 'urlbar' }> = {
+      kind: 'urlbar',
+      text: urlbar,
+      newTab: params.has('newtab'),
+      clip: params.get('clip')
+    }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   return { kind: 'idle' }
 }
 
 /**
- * The `then=` list: `tap:<text>;hold:<text>;back;overview;urlbar`; blanks and unknown steps are
- * dropped.
+ * `private=<value>`: one of PREVIEW_PRIVATE_SURFACES, with `url=<page>` for the page the private
+ * tab is on; a URL as the value is that page (`private=<url>`), and any other value – `new`,
+ * `1` – is the private tab on its new tab page. `cookies=<mode>` rides along on any of them.
+ */
+function parsePrivate(value: string, params: URLSearchParams): PreviewState {
+  const state: Extract<PreviewState, { kind: 'private' }> = (
+    PREVIEW_PRIVATE_SURFACES as readonly string[]
+  ).includes(value)
+    ? { kind: 'private', surface: value as PreviewPrivateSurface, url: params.get('url') || null }
+    : /^https?:\/\//.test(value)
+      ? { kind: 'private', surface: 'page', url: value }
+      : { kind: 'private', surface: 'newtab', url: null }
+  const cookies = params.get('cookies')
+  if (cookies !== null && (PREVIEW_COOKIE_MODES as readonly string[]).includes(cookies)) {
+    state.cookies = cookies as ThirdPartyCookieMode
+  }
+  const then = parsePreviewSteps(params.get('then'))
+  if (then.length) state.then = then
+  return state
+}
+
+/**
+ * The `then=` list: `tap:<text>;hold:<text>;type:<id>=<text>;back;overview;urlbar`; blanks and
+ * unknown steps are dropped.
  */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
@@ -478,6 +566,10 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
       const kind = step.startsWith('tap:') ? 'tap' : 'hold'
       const text = step.slice(kind.length + 1).trim()
       if (text) steps.push({ kind, text })
+    } else if (step.startsWith('type:')) {
+      const at = step.indexOf('=')
+      const id = at === -1 ? '' : step.slice('type:'.length, at).trim()
+      if (id) steps.push({ kind: 'type', id, text: step.slice(at + 1) })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
     }

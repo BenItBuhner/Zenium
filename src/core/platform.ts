@@ -10,6 +10,7 @@
  */
 import type {
   CertificateDetails,
+  ClipboardPeekKind,
   ColorScheme,
   ContentCover,
   DownloadItem,
@@ -159,7 +160,15 @@ export interface PageMessage {
     | 'reader'
     /** The PDF viewer document (`zen://pdf`) reports where it stands (`shared/pdfPage.ts`). */
     | 'pdf'
+    /**
+     * The page links an OpenSearch description (`<link rel="search"
+     * type="application/opensearchdescription+xml">`): `url` is the description's absolute
+     * address, `title` the link's title if any. The core fetches and parses it (`shared/search`).
+     */
+    | 'opensearch'
   url?: string
+  /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
@@ -235,9 +244,18 @@ export interface LoadDetails {
 }
 
 export interface PageContextParams {
-  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
+  /**
+   * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
+   * for the keyboard (Shift+F10, the Menu key) Chromium reports the caret or the focused
+   * element's middle.
+   */
   x: number
   y: number
+  /**
+   * What asked for the menu, as Chromium names it (`menuSourceType`): `'keyboard'` opens the
+   * menu at `x`,`y` with its first item selected; a pointer opens it at the pointer.
+   */
+  menuSourceType?: MenuSourceType
   linkURL: string
   /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
   linkText?: string
@@ -265,6 +283,20 @@ export interface PageContextParams {
     canSelectAll: boolean
   }
 }
+
+/** Chromium's `ui::MenuSourceType` names, as Electron's `context-menu` event reports them. */
+export type MenuSourceType =
+  | 'none'
+  | 'mouse'
+  | 'keyboard'
+  | 'touch'
+  | 'touchMenu'
+  | 'longPress'
+  | 'longTap'
+  | 'touchHandle'
+  | 'stylus'
+  | 'adjustSelection'
+  | 'adjustSelectionReset'
 
 /** Chromium's media flags of a clicked media element (the subset the menus read). */
 export interface MediaContextFlags {
@@ -295,9 +327,11 @@ export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlp
  * (`data-zen-menu` in the renderer; null when none).
  */
 export interface ChromeContextParams {
-  /** Click position in chrome CSS pixels. */
+  /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
+  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  keyboard?: boolean
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
@@ -429,6 +463,11 @@ export interface TabViewEvents {
   onDevtoolsClosed(): void
   onFoundInPage(result: FindResultInfo): void
   onZoomChanged(direction: 'in' | 'out'): void
+  /**
+   * The view took the keyboard – the user clicked or tabbed into the page, or the core gave it
+   * the focus. Hosts that can tell fire it; the chrome lets go of its focused control.
+   */
+  onFocused?(): void
   onContextMenu(params: PageContextParams): void
   /** Returns true when the key was consumed by a browser shortcut. */
   onKey(input: KeyEventInput): boolean
@@ -956,6 +995,26 @@ export interface ClipboardHost {
    * cannot clear, and the core says so in the copy toast.
    */
   clearText?(expected: string): Promise<void>
+  /**
+   * What the clipboard holds, from its DESCRIPTION alone (Android's
+   * `getPrimaryClipDescription()`: mime types, the system's URL classification, the sensitive
+   * flag, the timestamp) – never its content, which Android 12+ announces to the user with a
+   * toast. Hosts with it get the URL bar's "Link you copied" / "Text you copied" row; `none`
+   * for an empty, stale (over ten minutes), sensitive or unreadable clip.
+   */
+  peek?(): Promise<ClipboardPeekKind>
+  /**
+   * The clipboard's text, read ONCE when the user reveals or picks the clipboard row (the
+   * system may toast the read); '' when it holds none.
+   */
+  read?(): Promise<string>
+  /**
+   * The clip on the clipboard now was OPENED through the row (the pick, not a reveal): `peek`
+   * answers `none` for it until the clipboard changes (Chrome's `SuppressClipboardContent`),
+   * so the row does not offer the same link again on the next focus. Hosts without it offer it
+   * again.
+   */
+  markUsed?(): void
 }
 
 export interface ShellHost {
@@ -1042,6 +1101,12 @@ export interface NetHost {
       headers?: Record<string, string>
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
+      /**
+       * The most body bytes the host reads: a body past it fails the fetch (`ok: false`) with
+       * the download stopped there, so a caller's cap (an OpenSearch description's 64 KB)
+       * bounds the transfer and not only what is kept of it. Unset: the host's own limit.
+       */
+      maxBytes?: number
     }
   ): Promise<{
     ok: boolean

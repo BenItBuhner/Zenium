@@ -19,6 +19,7 @@ import {
   toggleSelected,
   type Selection
 } from '@renderer/lib/multiSelect'
+import { openInPrivateItems } from '@renderer/lib/privateTabs'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, MENU_GAP, showLocalMenu } from '@renderer/lib/ui'
 import { OverlayShell } from '../overlays/OverlayShell'
@@ -195,6 +196,12 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
           label: picked.length === 1 ? 'Open in New Tab' : `Open All (${picked.length})`,
           onSelect: () => openAll(picked)
         },
+        // On a host with private tabs (INC-08); a private tab records no history of its own.
+        ...openInPrivateItems(
+          state.capabilities,
+          picked.map((row) => row.url),
+          exitSelection
+        ),
         { label: picked.length === 1 ? 'Copy Link' : 'Copy Links', onSelect: () => copy(picked) },
         MENU_GAP,
         { label: 'Remove from History', danger: true, onSelect: () => remove(picked) }
