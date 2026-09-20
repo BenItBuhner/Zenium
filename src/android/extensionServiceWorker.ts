@@ -439,6 +439,92 @@ export function importScriptsFor(options: ImportScriptsOptions): (...urls: strin
   }
 }
 
+/**
+ * The worker page's `self`, as a worker script built for a real worker writes to it.
+ *
+ * A worker has no `window`, so bundlers polyfill one: `self.window = self` opens Google Docs
+ * Offline's worker and both Avira workers (Closure and browserify prologues, in strict mode). On
+ * the page that stands in for the worker, `window` is one of the global's unforgeable getters,
+ * and a strict-mode write to a getter-only property is a TypeError: the script died on that
+ * line, before a single listener was registered. `self` is [Replaceable] in Chrome's IDL, so the
+ * page's `self` becomes this proxy: a write to `window` is kept here and read back from here,
+ * everything else goes to the global, with the global as receiver (its getters, `location` and
+ * `crypto` among them, want it), and a function that is not a constructor comes back bound to
+ * the global, so `self.addEventListener`, `self.fetch`, `self.setTimeout` run on the object
+ * Blink expects (a constructor constructs alike whatever the receiver, and its `prototype`
+ * must stay reachable, so it comes back as it is). The proxy's target is an empty object, not
+ * the global: a proxy over the global itself would be held to the global's own invariants,
+ * and refusing a write to a getter-only `window` is one of them. `window` and `globalThis`
+ * stay what they are.
+ */
+export function workerSelf(global: object): object {
+  const bound = new WeakMap<object, unknown>()
+  // The target: empty but for the `window` the script writes, which lives here.
+  const held: Record<PropertyKey, unknown> = {}
+  const holdsWindow = (): boolean => Object.prototype.hasOwnProperty.call(held, 'window')
+  const forCall = (key: PropertyKey, value: unknown): unknown => {
+    if (typeof value !== 'function') return value
+    if (Object.prototype.hasOwnProperty.call(value, 'prototype')) return value
+    const own = Object.getOwnPropertyDescriptor(global, key)
+    if (own && !own.configurable && !own.writable) return value
+    let fn = bound.get(value)
+    if (!fn) {
+      fn = (value as (...args: unknown[]) => unknown).bind(global)
+      bound.set(value, fn)
+    }
+    return fn
+  }
+  const proxy: object = new Proxy(held, {
+    get(target, key) {
+      if (key === 'self') return proxy
+      if (key === 'window' && holdsWindow()) return Reflect.get(target, key, proxy)
+      return forCall(key, Reflect.get(global, key, global))
+    },
+    set(target, key, value) {
+      if (key === 'window') return Reflect.set(target, key, value, target)
+      return Reflect.set(global, key, value, global)
+    },
+    has(_target, key) {
+      return Reflect.has(global, key)
+    },
+    deleteProperty(target, key) {
+      if (key === 'window' && holdsWindow()) return Reflect.deleteProperty(target, key)
+      return Reflect.deleteProperty(global, key)
+    },
+    defineProperty(target, key, descriptor) {
+      if (key === 'window') return Reflect.defineProperty(target, key, descriptor)
+      const ok = Reflect.defineProperty(global, key, descriptor)
+      // The proxy may only report a property non-configurable when its target holds one too.
+      if (ok && descriptor.configurable === false) Reflect.defineProperty(target, key, descriptor)
+      return ok
+    },
+    getOwnPropertyDescriptor(target, key) {
+      if (key === 'window' && holdsWindow()) return Reflect.getOwnPropertyDescriptor(target, key)
+      const descriptor = Reflect.getOwnPropertyDescriptor(global, key)
+      if (!descriptor) return undefined
+      // The global's unforgeable properties are non-configurable; the target holds no such
+      // property (unless a script defined one through the proxy), and the proxy may not report
+      // one it does not hold.
+      const own = Reflect.getOwnPropertyDescriptor(target, key)
+      return own && !own.configurable ? descriptor : { ...descriptor, configurable: true }
+    },
+    ownKeys(target) {
+      // The global's keys, and whatever the target holds that the global does not (the
+      // invariant: every own key of the target is reported).
+      const keys = Reflect.ownKeys(global)
+      const missing = Reflect.ownKeys(target).filter((key) => !keys.includes(key))
+      return missing.length ? [...keys, ...missing] : keys
+    },
+    getPrototypeOf() {
+      return Reflect.getPrototypeOf(global)
+    },
+    preventExtensions() {
+      return false
+    }
+  })
+  return proxy
+}
+
 interface WorkerOptions {
   origin: string
   /** The worker script's URL: `self.location`, `serviceWorker.scriptURL`, the lifecycle marker. */

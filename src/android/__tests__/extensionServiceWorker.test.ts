@@ -8,6 +8,7 @@ import {
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  workerSelf,
   type ScriptDocument,
   type ScriptElement,
   type ServiceWorkerEndpoint,
@@ -507,5 +508,116 @@ describe('importScripts on the worker page', () => {
     expect(() => importScripts('https://evil.example/x.js')).toThrow(/not on the extension origin/)
     expect(() => importScripts('missing.js')).toThrow(/missing\.js failed \(404\)/)
     expect(d.ran).toEqual([])
+  })
+})
+
+describe("the worker page's self takes a worker prologue's window", () => {
+  /**
+   * A global shaped like Blink's Window where it matters: `window` and `location` unforgeable
+   * getters, platform methods that refuse any other receiver, a constructor, and a script's
+   * own globals to come.
+   */
+  function blinkLikeGlobal(): Any {
+    const global: Any = {}
+    // Blink's operations are not constructors (no `prototype`), as a shorthand method is not.
+    const platform = (name: string): unknown =>
+      ({
+        [name](this: unknown, ...args: unknown[]): string {
+          if (this !== global) throw new TypeError('Illegal invocation')
+          return `${name}(${args.join(',')})`
+        }
+      })[name]
+    Object.defineProperty(global, 'window', { get: () => global, configurable: false })
+    Object.defineProperty(global, 'location', {
+      get() {
+        if (this !== global) throw new TypeError('Illegal invocation')
+        return { href: SCRIPT }
+      },
+      configurable: false
+    })
+    global.addEventListener = platform('addEventListener')
+    global.setTimeout = platform('setTimeout')
+    global.fetch = platform('fetch')
+    global.URL = class FakeURL {
+      href: string
+      constructor(href: string) {
+        this.href = href
+      }
+    }
+    global.chrome = { runtime: { id: 'abcdefghijklmnopabcdefghijklmnop' } }
+    global.Infinity = Infinity
+    Object.defineProperty(global, 'Infinity', { writable: false, configurable: false })
+    return global
+  }
+
+  function run(global: Any, code: string): unknown {
+    const self = workerSelf(global)
+    const context = vm.createContext({ self, window: global, TypeError, Object, Reflect })
+    return vm.runInContext(code, context)
+  }
+
+  it('a strict-mode self.window = self is kept and read back, and the page stays intact', () => {
+    const global = blinkLikeGlobal()
+    // What the page would do: a getter-only property refuses the write.
+    expect(() => {
+      'use strict'
+      global.window = global
+    }).toThrow(TypeError)
+    const result = run(
+      global,
+      `'use strict';
+       self.window = self;
+       self.matchMedia = function () {};
+       [self.window === self, self.self === self, typeof self.matchMedia, typeof window.matchMedia, 'window' in self]`
+    )
+    expect(result).toEqual([true, true, 'function', 'function', true])
+    // The page's own `window` is untouched; the script's global reached the page.
+    expect(global.window).toBe(global)
+    expect(typeof global.matchMedia).toBe('function')
+  })
+
+  it('platform methods run on the global, getters see it, constructors and identity hold', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       const listen = self.addEventListener('message', 'fn');
+       const timer = self.setTimeout('cb', 5);
+       const same = self.fetch === self.fetch && self.addEventListener !== undefined;
+       const url = new self.URL('https://a.example/').href;
+       const proto = self.URL.prototype !== undefined;
+       [listen, timer, same, url, proto, self.location.href, self.chrome.runtime.id, self.Infinity]`
+    )
+    expect(result).toEqual([
+      'addEventListener(message,fn)',
+      'setTimeout(cb,5)',
+      true,
+      'https://a.example/',
+      true,
+      SCRIPT,
+      'abcdefghijklmnopabcdefghijklmnop',
+      Infinity
+    ])
+  })
+
+  it('Object.assign, defineProperty, keys, prototype and delete go to the global; the guarded polyfills are no-ops', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       Object.assign(self, { Prefs: { a: 1 }, info: 'x' });
+       Object.defineProperty(self, 'frozen', { value: 3, configurable: false, writable: false, enumerable: true });
+       // Read&Write's and MetaMask's guarded polyfills see a window and leave it.
+       if (typeof window === 'undefined') self.window = self;
+       if (!Reflect.has(self, 'window')) self.window = self;
+       const keys = Object.keys(self).filter((k) => ['Prefs', 'info', 'frozen', 'chrome'].includes(k)).sort();
+       const own = Object.getOwnPropertyDescriptor(self, 'frozen');
+       delete self.info;
+       [keys, own.configurable, own.value, self.window === window, 'info' in self, Object.getPrototypeOf(self) === Object.getPrototypeOf(window)]`
+    )
+    expect(result).toEqual([['Prefs', 'chrome', 'frozen', 'info'], false, 3, true, false, true])
+    expect(global.Prefs).toEqual({ a: 1 })
+    expect(global.frozen).toBe(3)
+    expect(global.info).toBeUndefined()
   })
 })
