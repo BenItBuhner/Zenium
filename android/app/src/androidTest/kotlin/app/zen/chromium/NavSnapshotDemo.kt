@@ -46,7 +46,15 @@ import kotlin.math.roundToInt
  *     on top of the list with no load of its own (the commit the host hears of in
  *     `doUpdateVisitedHistory` alone, where the list and the state are refreshed), the tab is
  *     closed from the quick menu and brought back with Undo: `restored: true`, one `navigated`,
- *     the list with `#x` current, nothing fetched.
+ *     the list with `#x` current, nothing fetched;
+ *  8. two internal pages in one list: from the article at `#x` the tab goes into Reader View,
+ *     on to a second article and into Reader View again – two `data:` items in the WebView's
+ *     list, both under one and the same item URL, the case that named the older one after the
+ *     newer until the names went by position – is closed from the quick menu and brought back
+ *     with Undo: `restored: true`, one `navigated`, the top reader page's virtual URL shown,
+ *     the six entries with both reader pages under their own names in the host's and the core's
+ *     lists, nothing fetched; then Back lands on the second article, on the first reader page
+ *     under its name, and on the article at `#x`, none of it fetched.
  *
  * Across all of it the chrome's view events are watched for a `crashed` (the state is now
  * taken inside the WebView's own callbacks): none is the last check.
@@ -76,9 +84,10 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
                 "/two.html" to DemoServer.page("Page two", "<p id=\"next\"><a href=\"/three.html\">On to page three</a></p>${tint("#e8f5e9")}"),
                 "/three.html" to DemoServer.page("Page three", "<p>The top of a three-page stack.</p>${tint("#fff3e0")}"),
                 "/article.html" to DemoServer.page(ARTICLE_TITLE, ARTICLE_BODY),
+                "/article2.html" to DemoServer.page(ARTICLE2_TITLE, ARTICLE2_BODY),
                 "/other.html" to DemoServer.page("Another tab", "<p>Stays open while the demo's tab is closed.</p>")
             ),
-            cacheable = setOf("/one.html", "/two.html", "/three.html", "/article.html")
+            cacheable = setOf("/one.html", "/two.html", "/three.html", "/article.html", "/article2.html")
         ).also { it.start() }
         try {
             runDemo()
@@ -110,6 +119,7 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         holdOnBack()
         internalPageUndo()
         sameDocumentUndo()
+        twoInternalPagesUndo()
         still("end")
         expect("no view crashed across the scenes (the state taken inside the WebView's callbacks): ${crashes()} crashed event(s)", crashes() == 0)
         finding("\nend: ${describeActive()}")
@@ -133,7 +143,7 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         expect("the core reads the same list synchronously: ${describe(core)}", urlsOf(core) == listOf(ONE, TWO, THREE) && core.optInt("index") == 2)
         val hostState = onMain { host.tabs.get(TAB)?.hostState() }
         expect("the hostState for it is there and under the cap (${hostState?.length ?: 0} chars of ${NavigationState.HOST_STATE_MAX})", hostState != null && hostState.length <= NavigationState.HOST_STATE_MAX)
-        expect("each page was fetched once (${hitsLine()})", hits() == listOf(1, 1, 1, 0))
+        expect("each page was fetched once (${hitsLine()})", hits() == listOf(1, 1, 1, 0, 0))
         still("stack-of-three")
     }
 
@@ -337,6 +347,86 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
         expect("the article came back without a request (${hitsLine()})", hits() == fetched)
         still("pushstate-undone")
         awaitToastGone()
+    }
+
+    /**
+     * 8. Two internal pages in one list. From the article at `#x` the tab goes into Reader View
+     * (`reader.toggle`: the first internal page), on to a second article (`tab.navigate`) and
+     * into Reader View again (the second, on top): two `data:` items in the WebView's list, and
+     * WebView gives both one and the same item URL (the `data:` header, nothing behind the
+     * comma), which is what run 3's WebView test found and what named the older page after the
+     * newer while the names went by item URL; they go by position now. So: both reader pages
+     * under their own names in the host's list and the core's, before and after Close Tab and
+     * Undo (`restored: true`, one `navigated`, the top page's virtual URL shown, nothing
+     * fetched), and Back on the bar landing on the second article, on the first reader page
+     * under its name, and on the article at `#x`, none of it fetched.
+     */
+    private fun twoInternalPagesUndo() {
+        finding("\n8. Two internal pages (two Reader View pages) in one list: close, Undo, Back")
+        var fetched = hits()
+        coreInvoke("reader.toggle", JSONObject().put("tabId", TAB).toString())
+        expect("Reader View of the article at #x opens as the current entry", awaitLoadedWhere { it.startsWith(READER_PREFIX) })
+        val first = onMain { host.tabs.get(TAB)?.url }.orEmpty()
+        settle()
+        var list = hostList()
+        expect("the host's list is page one, the article, the article at #x and the reader page, the reader page current: ${describe(list)}", urlsOf(list) == listOf(ONE, ARTICLE, ARTICLE_X, first) && list?.optInt("index") == 3)
+        expect("the reader page fetched nothing (${hitsLine()})", hits() == fetched)
+
+        coreInvoke("tab.navigate", JSONObject().put("tabId", TAB).put("input", ARTICLE2).toString())
+        expect("the second article loads", awaitLoaded(ARTICLE2))
+        SystemClock.sleep(1_500)
+        expect("fetched once (${hitsLine()})", hits() == fetched.toMutableList().also { it[4] = it[4] + 1 })
+        fetched = hits()
+        coreInvoke("reader.toggle", JSONObject().put("tabId", TAB).toString())
+        expect("Reader View of the second article opens as the current entry", awaitLoadedWhere { it.startsWith(READER_PREFIX) && it != first })
+        val second = onMain { host.tabs.get(TAB)?.url }.orEmpty()
+        settle()
+        expect("the two reader pages are two pages: $first and $second", first != second && first.startsWith(READER_PREFIX) && second.startsWith(READER_PREFIX))
+        val stack = listOf(ONE, ARTICLE, ARTICLE_X, first, ARTICLE2, second)
+        list = hostList()
+        expect("the host's list holds the six entries, both reader pages under their own names, the second current: ${describe(list)}", urlsOf(list) == stack && list?.optInt("index") == 5)
+        val core = coreList()
+        expect("so does the core's: ${describe(core)}", urlsOf(core) == stack && core.optInt("index") == 5)
+        val hostState = onMain { host.tabs.get(TAB)?.hostState() }
+        expect("the hostState for it, both reader documents inside, is there and under the cap (${hostState?.length ?: 0} chars of ${NavigationState.HOST_STATE_MAX})", hostState != null && hostState.length <= NavigationState.HOST_STATE_MAX)
+        expect("the second reader page fetched nothing (${hitsLine()})", hits() == fetched)
+        still("two-readers")
+
+        val title = activeCoreTab()?.optString("title").orEmpty()
+        closeActiveTabFromQuickMenu("Closed $title", "two-readers-quick-menu")
+        val navigatedBefore = navigations()
+        expect("the touch on Undo takes", undo())
+        expect("the tab is back", awaitTab(TAB, exists = true))
+        expect("and active", awaitUntil(8_000) { activeTabId() == TAB })
+        expect("on the second reader page", awaitLoaded(second))
+        settle()
+        val restored = onMain { host.tabs.get(TAB)?.lastRestore }
+        expect("the host answered restored: true (the list rebuilt from hostState, both internal entries matched by their documents)", restored == true)
+        val navigated = navigations() - navigatedBefore
+        expect("the restore was one navigated event for the tab, no second copy of a page: $navigated (${navigationUrls()})", navigated == 1)
+        val shown = onMain { host.tabs.get(TAB)?.url }
+        expect("the URL shown is the top entry's virtual one: $shown", shown == second)
+        list = hostList()
+        expect("the host's list is the six entries again, both reader pages under their own names, the second current: ${describe(list)}", urlsOf(list) == stack && list?.optInt("index") == 5)
+        val coreAfter = coreList()
+        expect("so is the core's: ${describe(coreAfter)}", urlsOf(coreAfter) == stack && coreAfter.optInt("index") == 5)
+        expect("nothing was fetched for the restore (${hitsLine()})", hits() == fetched)
+        still("two-readers-undone")
+        awaitToastGone()
+
+        expect("Back brings the second article", pressBack(ARTICLE2))
+        SystemClock.sleep(1_500)
+        expect("Back again brings the first reader page, under its name", pressBack(first))
+        SystemClock.sleep(1_500)
+        list = hostList()
+        expect("the list stands at the first reader page with two entries ahead: ${describe(list)}", urlsOf(list) == stack && list?.optInt("index") == 3)
+        expect("and the core's tab is on it: ${activeCoreTab()?.optString("url")}", activeCoreTab()?.optString("url") == first)
+        still("back-to-first-reader")
+        expect("Back once more brings the article at #x", pressBack(ARTICLE_X))
+        SystemClock.sleep(1_500)
+        expect("none of it fetched (${hitsLine()})", hits() == fetched)
+        list = hostList()
+        expect("the list stands at the article at #x with three entries ahead: ${describe(list)}", urlsOf(list) == stack && list?.optInt("index") == 2)
     }
 
     // --- moves -----------------------------------------------------------------------------------
@@ -646,10 +736,11 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
     private fun describe(list: JSONObject?): String =
         if (list == null) "no list" else "${urlsOf(list).map { it.substringAfterLast('/') }} at ${list.optInt("index", -1)}"
 
-    /** The server's requests so far for pages one, two, three and the article. */
-    private fun hits(): List<Int> = listOf(server.hits("/one.html"), server.hits("/two.html"), server.hits("/three.html"), server.hits("/article.html"))
+    /** The server's requests so far for pages one, two, three and the two articles. */
+    private fun hits(): List<Int> =
+        listOf(server.hits("/one.html"), server.hits("/two.html"), server.hits("/three.html"), server.hits("/article.html"), server.hits("/article2.html"))
 
-    private fun hitsLine(): String = hits().let { "one ${it[0]}, two ${it[1]}, three ${it[2]}, article ${it[3]}" }
+    private fun hitsLine(): String = hits().let { "one ${it[0]}, two ${it[1]}, three ${it[2]}, article ${it[3]}, article2 ${it[4]}" }
 
     // --- the core's state ------------------------------------------------------------------------
 
@@ -700,6 +791,17 @@ class NavSnapshotDemo : DemoHarness("nav-snapshot-demo-state.json", "nav-snapsho
             <p>A page of the chrome's own, like this reader page, sits in that list as its document rather than as an address on the network. Restored, it has to be one document under its own name, not a second copy loaded on top of the first, which is what this scene watches for.</p>
             <p>The pages here are served from inside the test process and may be cached for an hour, so a page coming back from the list can be told from one fetched again.</p>
             </article>${tint("#f3e5f5")}
+        """.trimIndent()
+        /** A second article, for a second reader page in the same list (scene 8). */
+        private const val ARTICLE2 = "$ORIGIN/article2.html"
+        private const val ARTICLE2_TITLE = "The second read"
+        private val ARTICLE2_BODY = """
+            <article>
+            <p>Two of the chrome's own pages can sit in one tab's list: an article read in Reader View, then another, read the same way. The WebView keeps each as its document under a data URL, and it gives both items one and the same URL, the header of the data they were loaded under with nothing behind its comma.</p>
+            <p>So the host cannot tell the two items apart by what the list says of them. It names them by where they are: the URL the page was shown as, at the position the commit put it, kept as long as that position holds such an item, and taken from the snapshot when the list is rebuilt for a tab brought back with Undo.</p>
+            <p>Before that, the names went by the item's URL, and the two pages shared one: the older took the newer's name, and a stack with two reader pages came back with the wrong one behind the first Back. This scene is the check that each page is under its own name, before the tab is closed and after it is brought back.</p>
+            <p>Like the first article, this one is served from inside the test process and may be cached, so a page coming back from the list can be told from one fetched again.</p>
+            </article>${tint("#e0f7fa")}
         """.trimIndent()
         private const val TAB = "tab_demo"
         private const val OTHER = "tab_other"

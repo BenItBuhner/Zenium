@@ -7,10 +7,12 @@ name: Android navigation snapshot demo
 # with pages two and one coming back from the WebView's cache without a request, the design
 # gate on the Back button's hold (the bar editor; the phone has no long-press history list), and
 # a Reader View page (zen://reader, the chrome's own document) as the current entry closed and
-# brought back with Undo as one document, then Back to the article without a request, and a
-# pushState entry as the current one closed and brought back with it current; no view crashed
-# meanwhile. The driver reads each outcome off the host's WebView, the core's state and its own
-# page server (findings text in the artifact; the run fails on a FAIL). The same instrumentation
+# brought back with Undo as one document, then Back to the article without a request, a
+# pushState entry as the current one closed and brought back with it current, and two Reader
+# View pages in one list closed and brought back with both under their own names, Back landing
+# on each in turn without a request; no view crashed meanwhile. The driver reads each outcome
+# off the host's WebView, the core's state and its own page server (findings text in the
+# artifact; the run fails on a FAIL). The same instrumentation
 # run also takes the hostState round trip on bare WebViews (NavigationStateWebViewTest: a list
 # saved, encoded and restored into a fresh WebView, two internal pages on one under their names,
 # the refusals), so a failure there fails the run too. Dispatch-only, like the tab close demo: it takes a few minutes
