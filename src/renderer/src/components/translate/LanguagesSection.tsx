@@ -196,9 +196,15 @@ export function SpellcheckGroups({ state }: { state: UIState }): JSX.Element {
             <SpellcheckLanguageRow key={language.code} language={language} disabled={off} />
           ))}
           {atLimit ? (
-            <div className="zen-v2-row zen-translate-caption" data-static="">
-              Up to {SPELLCHECK_LANGUAGES_MAX} languages can be checked at a time. Remove one to add
-              another.
+            <div
+              className="zen-v2-row zen-translate-caption"
+              data-static=""
+              aria-disabled={off || undefined}
+            >
+              <span>
+                Up to {SPELLCHECK_LANGUAGES_MAX} languages can be checked at a time. Remove one to
+                add another.
+              </span>
             </div>
           ) : (
             remaining.length > 0 && (

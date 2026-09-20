@@ -69,17 +69,19 @@
 }
 /*
  * A dependent static row whose parent switch is off (§9.30: the pane's spell-check languages and
- * custom dictionary under "Check the spelling of text fields"): its content reads at the one
- * disabled number and its controls are disabled; the control inside stays at 1 so it does not
- * compound to .16, as the check row's box does. The row itself keeps its hairline geometry.
+ * custom dictionary under "Check the spelling of text fields"): each of its children reads at
+ * the one disabled number and its controls are disabled. A control nested in a dimmed child (the
+ * menulist's trigger in its wrapper, the add-a-word form's field and button) stays at 1 so the
+ * number does not compound to .16; a control that is the row's own child dims once through the
+ * first rule. The row itself keeps its hairline geometry.
  */
 .zen-translate-settings .zen-v2-row[aria-disabled='true'] > * {
   opacity: 0.4;
 }
-.zen-translate-settings .zen-v2-row[aria-disabled='true'] .zen-v2-icon-button:disabled,
-.zen-translate-settings .zen-v2-row[aria-disabled='true'] .zen-v2-menulist:disabled,
-.zen-translate-settings .zen-v2-row[aria-disabled='true'] .zen-v2-field:disabled,
-.zen-translate-settings .zen-v2-row[aria-disabled='true'] .zen-v2-button:disabled {
+.zen-translate-settings .zen-v2-row[aria-disabled='true'] > * .zen-v2-icon-button:disabled,
+.zen-translate-settings .zen-v2-row[aria-disabled='true'] > * .zen-v2-menulist:disabled,
+.zen-translate-settings .zen-v2-row[aria-disabled='true'] > * .zen-v2-field:disabled,
+.zen-translate-settings .zen-v2-row[aria-disabled='true'] > * .zen-v2-button:disabled {
   opacity: 1;
 }
 /* The pane's add-a-word form fills its row; the field and its Add button share the line (§9.11). */

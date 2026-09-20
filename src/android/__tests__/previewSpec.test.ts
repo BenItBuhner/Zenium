@@ -59,6 +59,16 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('puts the active tab in Reader View on the stand-in article, with or without its text sheet', () => {
+    expect(parsePreviewSpec('reader=article')).toEqual({ kind: 'reader', preferences: false })
+    expect(parsePreviewSpec('reader=preferences')).toEqual({ kind: 'reader', preferences: true })
+    expect(parsePreviewSpec('zoom=2&reader=article')).toEqual({ kind: 'zoom', factor: 2 })
+    expect(parsePreviewSpec('reader=article&error=-105')).toEqual({
+      kind: 'reader',
+      preferences: false
+    })
+  })
+
   it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
     expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
     expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({
