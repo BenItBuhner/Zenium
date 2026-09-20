@@ -581,8 +581,10 @@ export class SuggestionService {
         url: s.url,
         favicon: s.kind === 'search' ? null : this.browser.history.faviconFor(s.url),
         targetId: engine?.id ?? null,
-        // Keep the user's casing for what they typed, so the selection does not flicker.
-        fill: extendsTyped ? query + s.fill.slice(query.length) : query,
+        // The destination's text (Chromium's fill_into_edit: what arrowing onto the row puts in
+        // the field), keeping the user's casing for the part they typed when it extends it, so
+        // the inline completion's selection does not flicker.
+        fill: extendsTyped ? query + s.fill.slice(query.length) : s.fill,
         deletable: true,
         relevance: out.length === 0 ? RELEVANCE.shortcut : RELEVANCE.shortcutOther - out.length
       })
@@ -770,9 +772,20 @@ function normalizeUrl(url: string): string {
 }
 
 /**
+ * Whether Enter with nothing highlighted may open `row` (Chromium's `allowed_to_be_default_match`):
+ * a page or a search whose text starts with what was typed – the verbatim rows by construction,
+ * a completion that extends the typing. A row whose text is something else (a shortcut or a
+ * history page found by its title) is never the default, however high it ranks.
+ */
+function canBeDefault(row: Suggestion, typed: string): boolean {
+  return (row.kind === 'url' || row.kind === 'search') && row.fill.toLowerCase().startsWith(typed)
+}
+
+/**
  * Order by relevance (ties keep source order), drop rows that name the same page or search,
- * cap the list and mark the default match that is completed inline: the top row when it
- * outranks the verbatim query and extends what was typed.
+ * cap the list, put the default match first – the best row that may be one, as Chromium's
+ * `SortAndCull` rotates it to the front, so the first row is always what Enter opens – and mark
+ * it for inline completion when it outranks the verbatim query and extends what was typed.
  */
 function finish(rows: Ranked[], query: string): Suggestion[] {
   const ordered = rows
@@ -788,14 +801,15 @@ function finish(rows: Ranked[], query: string): Suggestion[] {
     out.push(row)
     if (out.length >= MAX_ROWS) break
   }
-  const top = out[0]
   const typed = query.toLowerCase()
+  const defaultIndex = out.findIndex((row) => canBeDefault(row, typed))
+  if (defaultIndex > 0) out.unshift(...out.splice(defaultIndex, 1))
+  const top = out[0]
   if (
     top &&
+    defaultIndex >= 0 &&
     (top.relevance ?? 0) > RELEVANCE.verbatim &&
-    (top.kind === 'url' || top.kind === 'search') &&
-    top.fill.length > query.length &&
-    top.fill.toLowerCase().startsWith(typed)
+    top.fill.length > query.length
   ) {
     top.inline = true
   }

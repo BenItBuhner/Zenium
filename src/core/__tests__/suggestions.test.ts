@@ -680,10 +680,21 @@ describe('SuggestionService: the shortcuts provider (omnibox-03)', () => {
     expect(results.some((r) => r.kind === 'search' && r.title === 'Ma')).toBe(true)
 
     // A typing the destination's text does not extend is boosted but not completed inline
-    // (Chromium's fill_into_edit rule): the field keeps what was typed.
+    // (Chromium's fill_into_edit rule): the row carries the destination's text for arrowing
+    // onto it, and since it cannot be the default match the verbatim row stays first
+    // (SortAndCull's rotation) – the first row is always what Enter opens – with the shortcut
+    // right under it, over the history rows.
     shortcuts.learn('gm', { url: 'https://mail.google.com/mail/', title: 'Gmail', kind: 'url' })
+    history.visit('https://example.org/guide', 'Guide', null)
     const byOtherText = await suggestions.suggest('g', null, win)
-    expect(byOtherText[0]).toMatchObject({ url: 'https://mail.google.com/mail/', fill: 'g' })
+    expect(byOtherText[0]).toMatchObject({ kind: 'search', title: 'g', fill: 'g' })
+    expect(byOtherText[0].inline).toBeUndefined()
+    expect(byOtherText[1]).toMatchObject({
+      url: 'https://mail.google.com/mail/',
+      fill: 'mail.google.com/mail/',
+      relevance: RELEVANCE.shortcut
+    })
+    expect(byOtherText.findIndex((r) => r.url === 'https://example.org/guide')).toBeGreaterThan(1)
   })
 
   it('shows a remembered search as a search row for its engine, other shortcuts under verbatim', async () => {
