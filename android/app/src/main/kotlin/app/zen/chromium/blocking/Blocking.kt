@@ -18,10 +18,11 @@ import java.util.zip.GZIPInputStream
 
 /**
  * The Android request engine. The core persists its rule sets under `files/zen/blocking/`
- * (`index.json` with every set's structured rules, one file per set with its filter text – the
- * same documents the desktop reads); this class compiles them into an [EngineSnapshot] on a
- * background thread whenever the index is rewritten and answers `shouldInterceptRequest` from
- * the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
+ * (`index.json` with every set's summary, `sets/<name>.json` with a set's structured rules, one
+ * file per set with its filter text – the same documents the desktop reads); this class
+ * compiles them into an [EngineSnapshot] on a background thread whenever the index is rewritten
+ * (the core writes a set's documents before the index that names them) and answers
+ * `shouldInterceptRequest` from the current snapshot on WebView's IO threads. It also hands the core the bundled snapshot of
  * the default lists (`assets/blocking/`), the `BlockingHost` half of the platform contract, and
  * hosts the `chrome.webRequest`-style [listeners] the extension platform's emulation registers
  * (the Android half of the desktop multiplexer's listener contract, see `WebRequest.kt`). The
@@ -47,7 +48,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private var scheduled: ScheduledFuture<*>? = null
     private var cachedText: Pair<String, TextEngine>? = null
     /** Builder thread only: keeps the compiled rules of the sets the last read saw. */
-    private val indexReader = IndexReader()
+    private val indexReader = IndexReader { line -> Log.w(TAG, line) }
 
     /** The listener registry; one for every tab and profile, like the desktop multiplexer. */
     val listeners = WebRequestListeners().also { registry ->
@@ -79,6 +80,14 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     @Volatile
     var redirector: RedirectExecutor? = null
 
+    /**
+     * The headers-received stage for documents ([HeaderStage]): a document request whose
+     * request-stage allow a header-conditioned rule could overturn is relayed through it. Null
+     * (no extension runtime attached) lets such a request through on the request stage's word.
+     */
+    @Volatile
+    var headerStage: HeaderStage? = null
+
     /** Wall-clock milliseconds of the last build, for the settings sheet and the demo. */
     @Volatile
     var lastBuildMs: Long = 0
@@ -86,6 +95,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
 
     @Volatile
     var builds: Int = 0
+        private set
+
+    /** Characters of the index text the last build read (what a rebuild costs the heap while it parses), for the log and `stats()`. */
+    @Volatile
+    var lastIndexChars: Int = 0
         private set
 
     /** A rewrite of the index by any host's storage (the core writes through the browser window's). */
@@ -114,7 +128,11 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     private fun rebuildLogged() {
         try {
             rebuild()
-            Log.i(TAG, "snapshot: ${snapshot.filterCount} network filters from ${snapshot.setCount} sets in $lastBuildMs ms")
+            Log.i(
+                TAG,
+                "snapshot: ${snapshot.filterCount} network filters and ${snapshot.ruleCount} rules from ${snapshot.setCount} sets " +
+                    "(index ${lastIndexChars / 1024} K chars) in $lastBuildMs ms"
+            )
         } catch (e: Throwable) {
             Log.e(TAG, "rule-set snapshot not rebuilt", e)
         }
@@ -140,12 +158,16 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
     }
 
     /**
-     * The index set by set; the compiled rules of a set that did not change since the previous
-     * read are the previous read's ([IndexReader]). An unreadable index is an empty one, as before.
+     * The index set by set, each set's rules from its document under `blocking/sets/`; the
+     * compiled rules of a set that did not change since the previous read are the previous
+     * read's, its document unopened ([IndexReader]). An unreadable index is an empty one, as before.
      */
     private fun readIndex(): List<RuleSetInfo> {
         val raw = storage.read(Storage.BLOCKING_INDEX) ?: return emptyList()
-        return runCatching { indexReader.read(raw) }.getOrElse { e ->
+        lastIndexChars = raw.length
+        return runCatching {
+            indexReader.read(raw) { name -> storage.read("${Storage.BLOCKING_DIR}/$name") }
+        }.getOrElse { e ->
             Log.w(TAG, "blocking index unreadable", e)
             emptyList()
         }
@@ -184,6 +206,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 mapOf("Content-Length" to verdict.bytes.size.toString()), ByteArrayInputStream(verdict.bytes)
             )
             is Verdict.Redirect -> redirector?.redirect(tab, request, verdict.url, verdict.type)
+            is Verdict.HeaderStage -> headerStage?.relay(snapshot, tab, verdict.request, request.requestHeaders ?: emptyMap(), observer, verdict.decision)?.toResponse()
         }
     }
 
@@ -290,6 +313,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
         .put("rules", snapshot.ruleCount)
         .put("builds", builds)
         .put("lastBuildMs", lastBuildMs)
+        .put("indexChars", lastIndexChars)
 
     companion object {
         private const val TAG = "zen-blocking"
@@ -360,7 +384,8 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
             val engine = evaluate(snap, tab, url, isMainFrame, headers["Accept"], method, policy, observer)
             if (listeners.isEmpty || !isHttp(url)) return engine
             val record = listeners.begin(tab, url, method, isMainFrame, ResourceType.guessKnown(url, isMainFrame, headers["Accept"]))
-            if (engine !is Verdict.Pass) {
+            // A relay to the header stage is a request that goes out: the listeners see it as one.
+            if (engine !is Verdict.Pass && engine !is Verdict.HeaderStage) {
                 if (engine is Verdict.Empty) listeners.errorOccurred(record, WebRequestListeners.BLOCKED_BY_CLIENT)
                 else listeners.end(record)
                 return engine
@@ -391,7 +416,7 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 listeners.unsupported(composed.redirectedBy ?: "", "redirectUrl", url)
             }
             listeners.sendHeaders(record, headers)
-            return Verdict.Pass
+            return engine
         }
 
         /**
@@ -445,7 +470,10 @@ class Blocking(private val storage: Storage, private val assets: AssetManager) {
                 observer.onDecision(tab, req, decision, elapsed, if (cpuAfter < 0) -1L else cpuAfter - cpuBefore)
             }
             return when (decision.action) {
-                Decision.Action.ALLOW -> Verdict.Pass
+                // A document allowed for now that a header-conditioned rule may still overturn
+                // goes through the header stage's relay (HeaderStage); other requests keep the allow.
+                Decision.Action.ALLOW ->
+                    if (decision.needsHeaders && (isMainFrame || type == ResourceType.SUB_FRAME)) Verdict.HeaderStage(req, decision) else Verdict.Pass
                 Decision.Action.BLOCK -> {
                     if (isMainFrame) {
                         tab.onDocumentBlocked(url)
@@ -601,6 +629,15 @@ sealed class Verdict {
      * to substitute; the request goes out unchanged when there is none.
      */
     class Redirect(val url: String, val type: ResourceType) : Verdict()
+
+    /**
+     * A document the request stage allowed subject to its response headers
+     * ([Decision.needsHeaders]): relayed through the [HeaderStage], which decides it again with
+     * the real headers; WebView loads it itself when there is none. `decision` is the request
+     * stage's, so the header stage reports only a decision that names another match (the
+     * desktop's `sameMatch`, contract 5.5).
+     */
+    class HeaderStage(val request: Request, val decision: Decision) : Verdict()
 }
 
 /** Hears every decision the engine takes on a page's request; see [Blocking.observer]. */

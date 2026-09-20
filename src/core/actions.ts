@@ -22,6 +22,7 @@ export type AnyAction =
   | 'resources.trim'
   | 'resources.open'
   | 'passwords.open'
+  | 'translate.open'
 
 export interface ActionContext {
   /** Tab whose web contents produced the key event (null for the chrome). */
@@ -117,8 +118,8 @@ export class Actions {
         if (target) tabs.copyUrl(target.id, true)
         return
       case 'tab.search':
-        // Reserved for Chrome's tab search (the chord is taken so it never runs something else).
-        return
+        // Chrome's tab search: the chrome opens the popover from the sidebar's top row.
+        return this.browser.emit('tabsearch.open', undefined, win)
       case 'glance.expand':
         return tabs.expandGlance(win)
 
@@ -165,7 +166,23 @@ export class Actions {
         return
       }
 
-      // --- url bar / find ---
+      // --- keyboard panes / url bar / find ---
+      // The key's source says where the keyboard is: a page's view, or the chrome document (the
+      // renderer then reads its focused element).
+      case 'focus.nextPane':
+      case 'focus.prevPane':
+        return this.browser.emit(
+          'focus.pane',
+          {
+            move: action === 'focus.nextPane' ? 'next' : 'prev',
+            from: ctx.sourceTabId === null ? 'chrome' : 'page'
+          },
+          win
+        )
+      case 'focus.toolbar':
+        return this.browser.emit('focus.pane', { pane: 'toolbar' }, win)
+      case 'focus.bookmarksBar':
+        return this.browser.emit('focus.pane', { pane: 'bookmarks' }, win)
       case 'urlbar.focus':
         return this.browser.emit('urlbar.toggle', { mode: 'edit' }, win)
       case 'urlbar.search':
@@ -205,6 +222,9 @@ export class Actions {
       case 'page.print':
         if (target) tabs.view(target.id)?.print()
         return
+      case 'page.printPreview':
+        if (target) this.browser.print.open(target.id, win)
+        return
       case 'page.viewSource':
         if (target && !target.url.startsWith('zen://'))
           tabs.createTab(
@@ -217,11 +237,17 @@ export class Actions {
       case 'page.readerMode':
         if (target) this.browser.reader.toggle(target.id, win)
         return
+      case 'translate.open':
+        if (target) void this.browser.translate.open(target.id, win)
+        return
       case 'page.pip':
         if (target) void this.togglePictureInPicture(target.id, win)
         return
       case 'page.screenshot':
         if (target) void this.screenshot(target.id, win)
+        return
+      case 'page.captureFullPage':
+        if (target) void this.screenshot(target.id, win, { fullPage: true })
         return
       case 'page.toggleMute':
         if (target) tabs.toggleMute(target.id)
@@ -403,12 +429,22 @@ export class Actions {
     for (const url of rest) this.browser.tabs.createTab({ url, active: false }, win)
   }
 
-  private async screenshot(tabId: string, win: ZenWindow): Promise<void> {
+  /**
+   * "Take Screenshot" saves the visible area; "Capture Full Page" (Edge's) the whole document
+   * beyond the viewport, which the host paints through its capture path (CDP's
+   * `captureBeyondViewport` on Electron, the WebView drawn strip by strip on Android) and cuts
+   * at its texture limit rather than fails. Either lands in Downloads as a PNG.
+   */
+  private async screenshot(
+    tabId: string,
+    win: ZenWindow,
+    options: { fullPage?: boolean } = {}
+  ): Promise<void> {
     const tab = this.browser.tabs.tab(tabId)
     const view = this.browser.tabs.view(tabId)
     if (!view) return
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const path = await view.screenshot(`Screenshot ${stamp}.png`)
+    const path = await view.screenshot(`Screenshot ${stamp}.png`, options)
     if (path) {
       this.browser.downloads.addCompleted(path, 'image/png', {
         containerId: tab?.containerId,
@@ -425,6 +461,12 @@ export class Actions {
     if (!view) return
     if (!this.browser.state.capabilities.pictureInPicture) {
       this.browser.toast('Picture-in-Picture is not available on this device.', 'info', win)
+      return
+    }
+    // A host whose window itself goes into PiP (Android): the OS shows the page's video.
+    if (this.browser.platform.mediaSession?.enterPictureInPicture) {
+      if (!(await this.browser.mediaSession.enterPictureInPicture(tabId)))
+        this.browser.toast('No video available for Picture-in-Picture', 'info', win)
       return
     }
     try {

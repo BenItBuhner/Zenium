@@ -153,6 +153,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     action: 'page.screenshot'
   },
   {
+    id: 'captureFullPage',
+    label: 'Capture Full Page',
+    keywords: ['screenshot', 'capture', 'full page', 'web capture', 'long'],
+    action: 'page.captureFullPage'
+  },
+  {
     id: 'fullscreen',
     label: 'Toggle Fullscreen',
     keywords: ['fullscreen', 'full screen'],
@@ -211,7 +217,7 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     id: 'print',
     label: 'Print Page',
     keywords: ['print'],
-    action: 'page.print',
+    action: 'page.printPreview',
     requires: 'print'
   },
   {
@@ -226,6 +232,12 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     label: 'Toggle Reader View',
     keywords: ['reader', 'read', 'article'],
     action: 'page.readerMode'
+  },
+  {
+    id: 'translate',
+    label: 'Translate Page',
+    keywords: ['translate', 'translation', 'language'],
+    action: 'translate.open'
   },
   {
     id: 'new-window',

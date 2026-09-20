@@ -5,6 +5,7 @@ import type {
   ContainerColor,
   ContainerIcon as ContainerIconName,
   ResourceGauge,
+  SearchEngine,
   Space,
   SyncScope
 } from '@shared/types'
@@ -19,6 +20,7 @@ import {
 } from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
+import { searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
 import { cmd } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
@@ -344,12 +346,18 @@ export function CssEditor({
   )
 }
 
-/** The two footer actions of a sheet (§9.11): peers splitting the width, the primary trailing. */
+/**
+ * The two footer actions of a sheet (§9.11): peers splitting the width, the primary trailing.
+ * While the form is busy (§9.30) the primary is the shared busy button – full opacity, its
+ * label kept in the flow unpainted under the 16 px `.zen-v2-spinner`, `aria-busy` – the
+ * secondary waits at .4, and neither takes a press.
+ */
 export function SheetActions({
   cancel,
   action,
   destructive = false,
   disabled = false,
+  busy = false,
   onCancel,
   onAction
 }: {
@@ -357,12 +365,13 @@ export function SheetActions({
   action: string
   destructive?: boolean
   disabled?: boolean
+  busy?: boolean
   onCancel: () => void
   onAction: () => void
 }): JSX.Element {
   return (
-    <div className="zen-settings-sheet-actions">
-      <button type="button" className="zen-v2-button" onClick={onCancel}>
+    <div className="zen-settings-sheet-actions" data-busy={busy || undefined}>
+      <button type="button" className="zen-v2-button" onClick={busy ? undefined : onCancel}>
         {cancel ?? 'Cancel'}
       </button>
       <button
@@ -370,9 +379,17 @@ export function SheetActions({
         className={cn('zen-v2-button', destructive && 'zen-settings-danger-button')}
         data-primary={destructive ? undefined : true}
         disabled={disabled}
-        onClick={onAction}
+        aria-busy={busy || undefined}
+        onClick={busy ? undefined : onAction}
       >
-        {action}
+        {busy ? (
+          <>
+            <span className="zen-v2-button-label">{action}</span>
+            <span className="zen-v2-spinner" aria-hidden="true" />
+          </>
+        ) : (
+          action
+        )}
       </button>
     </div>
   )
@@ -500,15 +517,20 @@ export function NewContainerForm({
   )
 }
 
-/** One §9.14 radio option: a 20 px circle, the label to its right, the whole row the target. */
+/**
+ * One §9.14 radio option: a 20 px circle, the label to its right, the whole row the target. A
+ * `leading` glyph (an engine's favicon) sits between the circle and the label.
+ */
 export function RadioOption({
   label,
   description,
+  leading,
   checked,
   onSelect
 }: {
   label: string
   description?: string
+  leading?: ReactNode
   checked: boolean
   onSelect: () => void
 }): JSX.Element {
@@ -521,11 +543,109 @@ export function RadioOption({
       onClick={onSelect}
     >
       <span className="zen-v2-radio" aria-hidden="true" />
+      {leading && (
+        <span className="zen-settings-leading" aria-hidden="true">
+          {leading}
+        </span>
+      )}
       <span className="zen-settings-row-text">
         <span className="zen-settings-label">{label}</span>
         {description && <span className="zen-settings-description">{description}</span>}
       </span>
     </button>
+  )
+}
+
+/**
+ * A search engine's mark in a row's 16 px glyph slot: its favicon where a page offered one (an
+ * OpenSearch engine), else the letter the URL bar shows for it, in a small disc.
+ */
+export function EngineGlyph({ engine }: { engine: SearchEngine }): JSX.Element {
+  const [broken, setBroken] = useState(false)
+  if (engine.favicon && !broken) {
+    return (
+      <img
+        src={engine.favicon}
+        alt=""
+        className="zen-settings-glyph zen-settings-engine-favicon"
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+      />
+    )
+  }
+  return <span className="zen-settings-engine-glyph">{engine.glyph}</span>
+}
+
+/**
+ * Search › Add search engine (Chrome's form): a name and the search URL with `%s` where the
+ * terms go, the template checked as it is typed (`searchTemplateProblem`), the button held until
+ * both are in; the browser adds the engine and the sheet closes.
+ */
+export function SearchEngineForm({
+  onAdd,
+  close
+}: {
+  onAdd: (name: string, url: string) => Promise<unknown> | void
+  close: () => void
+}): JSX.Element {
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [touched, setTouched] = useState(false)
+  const problem = searchTemplateProblem(url)
+  const ready = Boolean(name.trim()) && !problem
+  const submit = (): void => {
+    if (!ready) {
+      setTouched(true)
+      return
+    }
+    void Promise.resolve(onAdd(name.trim(), url.trim()))
+      .then(close)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not add the engine'))
+  }
+  const shown = error ?? (touched && url.trim() ? problem : null)
+  return (
+    <div className="zen-settings-form" data-testid="search-engine-form">
+      <Field id="search-engine-name" label="Name">
+        <input
+          id="search-engine-name"
+          className="zen-settings-input zen-v2-field"
+          placeholder="Wikipedia"
+          autoCapitalize="words"
+          autoCorrect="off"
+          spellCheck={false}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </Field>
+      <Field
+        id="search-engine-url"
+        label="URL with %s in place of query"
+        description={shown ? undefined : 'Example: https://en.wikipedia.org/w/index.php?search=%s'}
+      >
+        <input
+          id="search-engine-url"
+          className="zen-settings-input zen-v2-field"
+          placeholder="https://example.com/search?q=%s"
+          inputMode="url"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-invalid={shown ? true : undefined}
+          value={url}
+          onChange={(e) => {
+            setUrl(e.target.value)
+            setError(null)
+          }}
+          onBlur={() => setTouched(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
+        />
+        {shown && <ValidationMessage message={shown} />}
+      </Field>
+      <SheetActions action="Add" disabled={!ready} onCancel={close} onAction={submit} />
+    </div>
   )
 }
 

@@ -72,13 +72,20 @@ describe('match patterns as content scripts use them', () => {
     // The URL's host is ignored, as Chromium does for file URLs.
     expect(matches('file:///share/*', 'file://server/share/x')).toBe(true)
     expect(matches('file://', 'file:///x')).toBe(false)
+    // The pattern's host is ignored too: `file://localhost/etc/*` stands for `file:///etc/*`
+    // (Chromium's `URLPattern::Parse`), and `file://*` for `file:///*`.
+    expect(matches('file://localhost/etc/*', 'file:///etc/hosts')).toBe(true)
+    expect(matches('file://localhost/etc/*', 'file:///var/log')).toBe(false)
+    expect(matches('file://*', 'file:///etc/hosts')).toBe(true)
     expect(parseMatchPattern('file://*/*.user.js')).toEqual({
       schemes: ['file'],
       host: '',
       port: null,
-      path: '*/*.user.js',
+      path: '/*.user.js',
       matchesAllUrls: false
     })
+    expect(parseMatchPattern('file://*/*')).toMatchObject({ schemes: ['file'], path: '/*' })
+    expect(parseMatchPattern('file://*')).toMatchObject({ schemes: ['file'], path: '*' })
     expect(parseMatchPattern('file://')).toBeNull()
   })
 

@@ -6,13 +6,19 @@ import type { InterstitialAction } from '../../shared/interstitial'
 import {
   HTTPS_ONLY_PERMISSION,
   hostInSites,
+  isThirdPartyCookiePrivateMode,
+  privateThirdPartyCookieStatus,
   secureDnsServers,
   type HttpsOnlyMode,
   type PrivacyFlags,
   type PrivacySettings,
   type PrivacyStatus,
-  type SecureDnsMode
+  type ProtectionCheck,
+  type SecureDnsMode,
+  type ThirdPartyCookiePrivateMode
 } from '../../shared/privacy'
+import type { ZenWindow } from '../window'
+import { RESOLVER_UNREACHABLE, resolverCheckOf, resolverProbeUrl } from './checks'
 import { isNonUniqueHost } from '../../shared/nonUniqueHost'
 import { interstitialKindOf, safeBrowsingPageUrl } from '../../shared/url'
 import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
@@ -34,6 +40,9 @@ import { BLOCKED_BY_CLIENT_CODE } from '../../shared/zenPages'
  * The other privacy tools of Settings, Clear browsing data and Safety check, are
  * `PrivacyService` (`src/core/privacy.ts`).
  */
+/** A resolver that takes longer than this to answer one question is not one the browser should wait on. */
+const RESOLVER_CHECK_TIMEOUT_MS = 6_000
+
 export class ProtectionService {
   readonly safeBrowsing: SafeBrowsingService
   /** Hosts allowed over plaintext until the browser closes (the warning page's "Continue"). */
@@ -99,8 +108,30 @@ export class ProtectionService {
         supported: this.browser.state.capabilities.secureDns,
         mode: dns.mode,
         servers: dns.servers
-      }
+      },
+      privateThirdPartyCookies: privateThirdPartyCookieStatus(this.settings)
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Third-party cookies in private windows and private tabs
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The private contexts' switch (`privacy.setThirdPartyCookiesPrivate`): `block` when it is
+   * turned on, `allow` when off, `default` to follow the global mode again. Regular browsing is
+   * untouched; the global `block` keeps winning (the switch is locked then, see `status`). Goes
+   * through the settings like the Settings page does, so the sanitiser, the flags push to the
+   * hosts and the commit all happen there.
+   */
+  setThirdPartyCookiesPrivate(mode: ThirdPartyCookiePrivateMode, win: ZenWindow): void {
+    if (!isThirdPartyCookiePrivateMode(mode))
+      throw new Error(`Unknown private third-party cookie mode: ${String(mode)}`)
+    if (mode === this.settings.thirdPartyCookiesPrivate) return
+    this.browser.updateSettings(
+      { privacy: { ...this.settings, thirdPartyCookiesPrivate: mode } },
+      win
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -116,6 +147,7 @@ export class ProtectionService {
       httpsOnly: s.httpsOnly,
       httpsOnlyAllowed: this.plaintextSites(),
       thirdPartyCookies: s.thirdPartyCookies,
+      thirdPartyCookiesPrivate: s.thirdPartyCookiesPrivate,
       thirdPartyCookieExceptions: [...s.thirdPartyCookieExceptions],
       gpc: s.gpc,
       dnt: s.dnt,
@@ -205,6 +237,30 @@ export class ProtectionService {
     this.browser.permissions.set(HTTPS_ONLY_PERMISSION, `http://${host}`, null)
     this.refresh()
     this.browser.state.commitVolatile()
+  }
+
+  /**
+   * Ask the resolver at `template` one question before Settings keeps it (the §9.30 busy form
+   * behind the Custom resolver field): a GET for a name every resolver answers. Any answer is
+   * a resolver; an error status or nothing reachable at the address is the refusal.
+   */
+  async checkResolver(template: string): Promise<ProtectionCheck> {
+    const url = resolverProbeUrl(template)
+    if (!url) {
+      return {
+        ok: false,
+        problem: 'Enter a DNS-over-HTTPS address such as https://dns.example/dns-query'
+      }
+    }
+    try {
+      const response = await this.browser.platform.net.fetchText(url, {
+        headers: { Accept: 'application/dns-message' },
+        timeoutMs: RESOLVER_CHECK_TIMEOUT_MS
+      })
+      return resolverCheckOf(response.status)
+    } catch {
+      return RESOLVER_UNREACHABLE
+    }
   }
 
   private syncHttpsOnlyRules(): void {

@@ -1,20 +1,29 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { FrameDialogPortal, POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
 import { wrapTab } from '../../bookmarks/popover'
 import { V2TitleBlock } from '../../extensions/v2'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
-import type { ActionRow, FieldRow, ItemRow, RowGroup, SettingsRow, ValueRow } from './model'
-import { findRow } from './model'
+import type {
+  ActionRow,
+  DetailRow,
+  FieldRow,
+  ItemRow,
+  RowGroup,
+  SettingsRow,
+  ValueRow
+} from './model'
+import { findRow, optionGroups } from './model'
 import { GroupList, type RowContext, type SheetRequest } from './rows'
 import { SheetDismissContext } from './sheetContext'
 
 /**
- * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same five requests
+ * The dialogs a desktop Settings row opens (v2 §9.5, §9.22–9.24, §10.5): the same six requests
  * the phone's sheets answer (`sheets.tsx`) – a value row's picker where a row has no room for
  * its menulist (a search result's), a field row's one-field form, a destructive action's
- * confirmation, an action's small form and an item's rows – as the shared `.zen-v2-dialog` at
+ * confirmation, an action's small form, an item's rows and a detail row's second level – as
+ * the shared `.zen-v2-dialog` at
  * the form width, centred over the content frame by the frame's dialog host (lib/portals.tsx),
  * which draws the §9.5 scrim, makes the chrome inert and takes the pointer. The stack is the
  * page's (`useSheetStack`, at most two deep, §9.24): a dialog under another is `inert` and
@@ -91,6 +100,8 @@ function RowDialog({
       return <FormDialog row={row as ActionRow} under={under} close={close} />
     case 'item':
       return <ItemDialog row={row as ItemRow} under={under} ctx={ctx} close={close} />
+    case 'detail':
+      return <ItemDialog row={row as DetailRow} under={under} ctx={ctx} close={close} />
   }
 }
 
@@ -106,6 +117,8 @@ function fits(request: SheetRequest, row: SettingsRow): boolean {
       return row.kind === 'action' && row.form !== undefined
     case 'item':
       return row.kind === 'item'
+    case 'detail':
+      return row.kind === 'detail'
   }
 }
 
@@ -118,6 +131,8 @@ interface DialogProps {
   name: string
   title: string
   description?: string
+  /** A description that reports a status (an extension's load error): the §1 status ink. */
+  descriptionTone?: 'warn' | 'danger'
   /** Another dialog is open over this one: it is inert, and Escape is that dialog's. */
   under: boolean
   onClose(): void
@@ -152,6 +167,7 @@ function HostedDialog({
   name,
   title,
   description,
+  descriptionTone,
   under,
   onClose,
   children,
@@ -208,7 +224,18 @@ function HostedDialog({
       style={{ width: POPOVER_WIDTH.form }}
       onKeyDown={(e) => wrapTab(e, ref.current)}
     >
-      <V2TitleBlock id={titleId} title={title} description={description} scrolled={scrolled} />
+      <V2TitleBlock
+        id={titleId}
+        title={title}
+        description={
+          description && descriptionTone ? (
+            <span data-tone={descriptionTone}>{description}</span>
+          ) : (
+            description
+          )
+        }
+        scrolled={scrolled}
+      />
       <div
         className="zen-settings-dialog-body"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
@@ -247,24 +274,37 @@ function OptionsDialog({
       initial={(root) => root.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')}
     >
       <div role="radiogroup" aria-label={row.label} className="zen-settings-sheet-rows">
-        {row.options.map((option) => (
-          <RadioOption
-            key={option.value}
-            label={option.label}
-            description={option.description}
-            checked={option.value === row.value}
-            onSelect={() => {
-              if (option.value !== row.value) row.onChange(option.value)
-              close()
-            }}
-          />
+        {optionGroups(row.options).map((group) => (
+          <Fragment key={group.heading ?? ''}>
+            {group.heading !== null && (
+              <h3 className="zen-v2-heading zen-settings-heading">{group.heading}</h3>
+            )}
+            {group.options.map((option) => (
+              <RadioOption
+                key={option.value}
+                label={option.label}
+                description={option.description}
+                leading={option.leading}
+                checked={option.value === row.value}
+                onSelect={() => {
+                  if (option.value !== row.value) row.onChange(option.value)
+                  close()
+                }}
+              />
+            ))}
+          </Fragment>
         ))}
       </div>
     </SettingsDialog>
   )
 }
 
-/** The one field (§9.12), focused and selected as the dialog opens, its validation, Cancel and Save. */
+/**
+ * The one field (§9.12), focused and selected as the dialog opens, its validation, Cancel and
+ * Save. A commit that takes time (a key tried against its API) makes it the §9.30 busy form, as
+ * the phone's sheet is: the field read-only with the typed value, Save busy, a refusal clearing
+ * the field and showing the message, acceptance closing the dialog.
+ */
 function FieldDialog({
   row,
   under,
@@ -274,13 +314,33 @@ function FieldDialog({
   under: boolean
   close(): void
 }): JSX.Element {
+  const input = useRef<HTMLInputElement>(null)
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const id = `settings-field-${row.id.replace(/[^a-z0-9-]/gi, '-')}`
+  const refuse = (message: string): void => {
+    setError(message)
+    setValue('')
+    input.current?.focus()
+  }
   const save = (): void => {
-    const message = row.onCommit(value)
-    if (message) {
-      setError(message)
+    if (busy) return
+    const outcome = row.onCommit(value)
+    if (outcome instanceof Promise) {
+      setBusy(true)
+      setError(null)
+      void outcome
+        .catch((e: unknown) => (e instanceof Error && e.message) || 'The check did not finish')
+        .then((message) => {
+          setBusy(false)
+          if (message) refuse(message)
+          else close()
+        })
+      return
+    }
+    if (outcome) {
+      setError(outcome)
       return
     }
     close()
@@ -292,16 +352,17 @@ function FieldDialog({
       under={under}
       onClose={close}
       initial={(root) => {
-        const input = root.querySelector<HTMLInputElement>('input')
-        input?.select()
-        return input
+        const field = root.querySelector<HTMLInputElement>('input')
+        field?.select()
+        return field
       }}
     >
-      <div className="zen-settings-form">
+      <div className="zen-settings-form" aria-busy={busy || undefined}>
         <Field id={id} label={row.label} description={error ? undefined : row.description}>
           <input
+            ref={input}
             id={id}
-            className="zen-settings-input zen-v2-field"
+            className={cn('zen-settings-input zen-v2-field', row.secret && 'zen-settings-secret')}
             type={row.input === 'number' ? 'number' : 'text'}
             inputMode={row.input === 'number' ? 'numeric' : 'text'}
             min={row.min}
@@ -309,7 +370,9 @@ function FieldDialog({
             placeholder={row.placeholder}
             autoCapitalize="off"
             autoCorrect="off"
+            autoComplete="off"
             spellCheck={false}
+            readOnly={busy}
             aria-invalid={error ? true : undefined}
             value={value}
             onChange={(e) => {
@@ -322,7 +385,7 @@ function FieldDialog({
           />
           {error && <ValidationMessage message={error} />}
         </Field>
-        <SheetActions action="Save" onCancel={close} onAction={save} />
+        <SheetActions action="Save" busy={busy} onCancel={close} onAction={save} />
       </div>
     </SettingsDialog>
   )
@@ -391,7 +454,8 @@ function FormDialog({
 
 /**
  * One thing of a list and the rows that act on it, in the desktop vocabulary (a value row
- * trails its menulist, a boolean is a check row); its rows may open the second dialog.
+ * trails its menulist, a boolean is a check row); its rows may open the second dialog – a
+ * detail row's level (§10.4), the same shape one dialog deeper.
  */
 function ItemDialog({
   row,
@@ -399,16 +463,17 @@ function ItemDialog({
   ctx,
   close
 }: {
-  row: ItemRow
+  row: ItemRow | DetailRow
   under: boolean
   ctx: RowContext
   close(): void
 }): JSX.Element {
   return (
     <SettingsDialog
-      name={`item:${row.id}`}
+      name={`${row.kind}:${row.id}`}
       title={row.sheet.title}
       description={row.sheet.description}
+      descriptionTone={row.sheet.descriptionTone}
       under={under}
       onClose={close}
     >

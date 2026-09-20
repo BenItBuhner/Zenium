@@ -110,6 +110,51 @@ describe('installFromCrx', () => {
     const crx = await buildCrx({ zip: sampleExtensionZip(), rsaKeys: [developer] })
     await expect(installFromCrx(crx, { limits: { maxTotalSize: 8 } })).rejects.toThrow(/limit/i)
   })
+
+  it("refuses a package whose minimum_chrome_version is above the browser's, as Chrome does", async () => {
+    const needs153 = await buildCrx({
+      zip: sampleExtensionZip({ minimum_chrome_version: '153' }),
+      rsaKeys: [developer]
+    })
+    const failure = await installFromCrx(needs153, options).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(InstallError)
+    expect((failure as InstallError).code).toBe('chrome-version-too-low')
+    expect((failure as InstallError).message).toBe(
+      'This extension requires Chrome 153 or newer; Zenium is Chrome 152.0.0.0'
+    )
+    // Chrome's comparison: missing components are zero, so 152 meets 152.0.0.0 and 152.0.1 does not.
+    await expect(
+      installFromCrx(
+        await buildCrx({
+          zip: sampleExtensionZip({ minimum_chrome_version: '152' }),
+          rsaKeys: [developer]
+        }),
+        options
+      )
+    ).resolves.toMatchObject({ version: '1.0.0' })
+    expect(
+      await code(
+        installFromCrx(
+          await buildCrx({
+            zip: sampleExtensionZip({ minimum_chrome_version: '152.0.1' }),
+            rsaKeys: [developer]
+          }),
+          options
+        )
+      )
+    ).toBe('chrome-version-too-low')
+    // Without a browser version the minimum is not held against anything; a zip is held the same way.
+    await expect(installFromCrx(needs153)).resolves.toMatchObject({ version: '1.0.0' })
+    await expect(installFromCrx(needs153, { chromiumVersion: null })).resolves.toBeDefined()
+    expect(
+      await code(
+        installFromZip(sampleExtensionZip({ minimum_chrome_version: '153' }), {
+          idSeed: 'x',
+          ...options
+        })
+      )
+    ).toBe('chrome-version-too-low')
+  })
 })
 
 describe('installFromZip', () => {

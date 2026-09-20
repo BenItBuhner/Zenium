@@ -11,6 +11,7 @@ import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -18,8 +19,10 @@ import java.util.concurrent.TimeUnit
  * Records ad and tracker blocking on the phone: a page that asks nine real ad and tracking hosts
  * for a resource (every row red, the tab's counter at nine), a host a filter list blocks as a
  * whole document (Zenium's blocked page), the per-site exception made through the ads
- * permission and reset from the site-info sheet, the master switch off and on again, and the
- * same page in a private tab.
+ * permission and reset from the site-info sheet, the master switch off and on again, the
+ * same page in a private tab, and a rule update that rewrites one set document under
+ * `blocking/sets/` while a set the size of uBlock Origin Lite's, seeded into the profile before
+ * the boot, is neither rewritten nor re-read.
  *
  * The page comes from a loopback HTTP server inside this process (the instrumentation shares
  * the app's process), so the demo needs nothing from the workflow runner. Counters and the
@@ -32,6 +35,16 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
     private lateinit var server: DemoServer
     private lateinit var notes: File
 
+    /** Lines noted before the handshake directory (and the notes file) exists; written out in [warmUp]. */
+    private val early = ArrayList<String>()
+
+    /** Every document written or removed under `files/zen/` since the app was launched, by name, in order. */
+    private val writes = CopyOnWriteArrayList<String>()
+    private val onStorageChanged: (String) -> Unit = { name -> writes.add(name) }
+
+    /** The uBOL-sized set's document, as seeded; its size and modification time are what stage 8 checks. */
+    private lateinit var ubolDocument: File
+
     @Test
     fun record() {
         server = DemoServer(readAsset("blocking-demo-page.html"), PORT).also { it.start() }
@@ -39,12 +52,55 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
             runDemo()
         } finally {
             server.close()
+            Storage.removeChangeListener(onStorageChanged)
         }
+    }
+
+    // --- the profile: a set the size of uBlock Origin Lite's under blocking/sets/ ---------------
+
+    /**
+     * Before the boot: a `version: 2` index naming one set the size of uBlock Origin Lite's
+     * enabled rulesets (18,810 rules, megabytes of JSON), its rules in its own document under
+     * `blocking/sets/`, exactly as the core's `RuleSetStore` writes them (`fileNameFor`, `tagOf`).
+     * A `builtin` with an id of its own: nothing in the core's `syncSets` touches it, and the
+     * extension runtime's owner reconciliation is for `ext:` sets, so it lives through the boot.
+     * Blocks hosts under the reserved `.example` TLD only, so the demo page is unaffected.
+     */
+    override fun seedMore(zen: File) {
+        val dir = File(zen, "blocking").apply { mkdirs() }
+        val sets = File(dir, "sets").apply { mkdirs() }
+        sets.listFiles()?.forEach { it.delete() }
+        val started = SystemClock.uptimeMillis()
+        val text = ubolSizedDocument(UBOL_SET_ID, UBOL_RULES)
+        ubolDocument = File(sets, fileNameFor(UBOL_SET_ID))
+        ubolDocument.writeText(text)
+        val summary = "{\"id\":\"$UBOL_SET_ID\",\"source\":\"builtin\",\"priority\":6,\"enabled\":true," +
+            "\"ruleCount\":$UBOL_RULES,\"document\":\"sets/${ubolDocument.name}\",\"tag\":\"${tagOf(text)}\"," +
+            "\"hasFilterText\":false,\"filterCount\":0}"
+        val index = File(dir, "index.json")
+        index.writeText("{\"version\":2,\"sets\":[$summary]}")
+        noteEarly(
+            "profile: $UBOL_SET_ID seeded, $UBOL_RULES rules in ${ubolDocument.length() / 1024} KB at blocking/sets/${ubolDocument.name} " +
+                "(tag ${tagOf(text)}); blocking/index.json ${index.length()} bytes; written in ${SystemClock.uptimeMillis() - started} ms"
+        )
+        val boot = Storage(app).bootDocuments(BootHandoff.BOOT_INLINE_LIMIT)
+        val deferred = (0 until boot.deferred.length()).map { boot.deferred.getJSONObject(it) }
+        noteEarly(
+            "boot payload (inline limit ${BootHandoff.BOOT_INLINE_LIMIT / 1024} KB): ${boot.files.length()} document(s) inline " +
+                "(${boot.files.keys().asSequence().sorted().joinToString(", ")}); ${deferred.size} deferred: " +
+                deferred.joinToString(", ") { "${it.getString("name")} ${it.getLong("bytes") / 1024} KB etag ${it.getString("etag")}" }
+        )
+    }
+
+    override fun beforeLaunch() {
+        Storage.addChangeListener(onStorageChanged)
     }
 
     override fun warmUp() {
         notes = File(out, "services-blocking-android-counters.txt")
         notes.writeText("Zenium Android blocking demo\n\n")
+        for (line in early) note(line)
+        early.clear()
         note("demo server: ${server.selfCheck()}")
         // The bundled snapshot is installed by the core after boot, one list at a time, and the
         // Kotlin engine follows the index; the seeded tab may have loaded before either was
@@ -75,6 +131,14 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
         note("engine ready=${status.getBoolean("ready")} enabled=${status.getBoolean("enabled")}")
         note("lists: ${describeLists(status)}")
         note("kotlin engine: ${describeKotlin(blocking)}")
+        // The boot with the uBOL-sized set: the core loaded it from its document and re-emitted
+        // it as persisted (no rewrite of the document), the Kotlin engine compiled it once.
+        val bootWrites = writes.filter { it.startsWith("${Storage.BLOCKING_DIR}/") }.distinct()
+        note(
+            "boot: ${blocking.snapshot.ruleCount} structured rules in the Kotlin snapshot ($UBOL_RULES of them $UBOL_SET_ID); " +
+                "blocking/ documents written since launch: ${bootWrites.joinToString(", ").ifEmpty { "none" }}; " +
+                "${ubolDocument.name} rewritten: ${bootWrites.any { it.endsWith(ubolDocument.name) }}"
+        )
         for (attempt in 1..3) {
             invoke("tab.reload", """{"tabId":"tab_demo","skipCache":true}""")
             val tab = waitForTitle("9/9", 15_000).getJSONObject("tabs").optJSONObject("tab_demo")
@@ -177,7 +241,101 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
             shot("08-private-tab-blocked")
             beat()
         }
+
+        // 8. A rule update rewrites one set document. A per-site exception changes the
+        //    `builtin:site-exceptions` set: its document and the summaries index are written,
+        //    the uBOL-sized document is not, and the engine's rebuild keeps that set's compiled
+        //    rules (its summary's tag is the previous read's) – a few milliseconds, not a re-parse.
+        note("\n8. a rule update rewrites one set document under blocking/sets/")
+        val documentLength = ubolDocument.length()
+        val documentModified = ubolDocument.lastModified()
+        ruleUpdate("exception added", """{"site":"https://news.example","excepted":true}""", documentLength, documentModified)
+        shot("09-rule-update-one-set-document")
+        ruleUpdate("exception removed", """{"site":"https://news.example","excepted":false}""", documentLength, documentModified)
+        beat()
         note("\ndone")
+    }
+
+    /** One change of the site-exception set; what the storage saw written, and what it did not. */
+    private fun ruleUpdate(what: String, args: String, documentLength: Long, documentModified: Long) {
+        val builds = engine.builds
+        writes.clear()
+        val started = SystemClock.uptimeMillis()
+        invoke("blocking.setSiteException", args)
+        // The core writes the set document, then the index; the engine rebuilds after its debounce.
+        while (SystemClock.uptimeMillis() - started < 20_000 && engine.builds == builds) SystemClock.sleep(50)
+        val followed = SystemClock.uptimeMillis() - started
+        SystemClock.sleep(1_500)
+        val seen = writes.filter { it.startsWith("${Storage.BLOCKING_DIR}/") }.distinct()
+        val untouched = ubolDocument.length() == documentLength && ubolDocument.lastModified() == documentModified
+        note(
+            "  $what: documents written: ${seen.joinToString(", ").ifEmpty { "none" }}; " +
+                "${ubolDocument.name} untouched: $untouched (${documentLength / 1024} KB); " +
+                "engine rebuilt in ${engine.lastBuildMs} ms after $followed ms (${engine.snapshot.ruleCount} rules, ${engine.builds - builds} build(s)); " +
+                "siteExceptions=${blockingStatus().getJSONArray("siteExceptions")}"
+        )
+    }
+
+    // --- the seeded set's document, as the core writes one ----------------------------------------
+
+    private fun noteEarly(line: String) {
+        Log.i(tag, line)
+        early.add(line)
+    }
+
+    /** `fileNameFor` of `src/core/blocking/store.ts`: safe characters kept, the rest `_`, an FNV-1a hash of the id when anything was replaced. */
+    private fun fileNameFor(id: String): String {
+        val safe = id.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        if (safe == id) return "$id.json"
+        var h = FNV_OFFSET
+        for (c in id) h = (h xor c.code) * FNV_PRIME
+        return "$safe-${hex(h)}.json"
+    }
+
+    /** `tagOf` of `src/core/blocking/store.ts`: the text's length and its FNV-1a and djb2 hashes, one pass, in hex. */
+    private fun tagOf(text: String): String {
+        var a = FNV_OFFSET
+        var b = 5381
+        for (c in text) {
+            a = (a xor c.code) * FNV_PRIME
+            b = (b * 33) xor c.code
+        }
+        return "${Integer.toHexString(text.length)}-${hex(a)}${hex(b)}"
+    }
+
+    private fun hex(n: Int): String = Integer.toHexString(n).padStart(8, '0')
+
+    /**
+     * A set document the size and shape of uBlock Origin Lite's enabled rulesets (18,810 rules,
+     * about 4.9 MB when loaded through the core): `||host^` blocks with resource types, groups
+     * of `requestDomains`, initiator-scoped rules, a regex every fiftieth rule. Compact JSON in the
+     * key order the core's `documentText` writes.
+     */
+    private fun ubolSizedDocument(id: String, count: Int): String {
+        val sb = StringBuilder(count * 260)
+        sb.append("{\"id\":\"").append(id).append("\",\"rules\":[")
+        for (n in 1..count) {
+            if (n > 1) sb.append(',')
+            sb.append("{\"id\":").append(n).append(",\"action\":{\"type\":\"block\"},\"condition\":{")
+            when {
+                n % 50 == 0 -> sb.append("\"regexFilter\":\"^https?://[a-z0-9-]+\\\\.d").append(n)
+                    .append("\\\\.demo-ubol\\\\.example/(?:track|pixel)/[0-9]{3,}\",\"resourceTypes\":[\"script\",\"image\",\"xmlhttprequest\"]")
+                n % 4 == 0 -> {
+                    sb.append("\"requestDomains\":[")
+                    for (k in 1..16) {
+                        if (k > 1) sb.append(',')
+                        sb.append("\"r").append(n).append('-').append(k).append(".demo-ubol.example\"")
+                    }
+                    sb.append("],\"resourceTypes\":[\"script\",\"image\",\"xmlhttprequest\",\"sub_frame\"]")
+                }
+                n % 7 == 0 -> sb.append("\"urlFilter\":\"||h").append(n).append(".demo-ubol.example^\",\"initiatorDomains\":[\"s")
+                    .append(n).append(".demo-ubol.example\",\"t").append(n).append(".demo-ubol.example\"],\"resourceTypes\":[\"script\",\"xmlhttprequest\"]")
+                else -> sb.append("\"urlFilter\":\"||h").append(n).append(".demo-ubol.example^\",\"resourceTypes\":[\"script\",\"image\",\"xmlhttprequest\",\"sub_frame\"]")
+            }
+            sb.append("}}")
+        }
+        sb.append("]}")
+        return sb.toString()
     }
 
     // --- the chrome's bridge --------------------------------------------------------------------
@@ -430,5 +588,11 @@ class BlockingDemo : DemoHarness("blocking-demo-state.json", "services-blocking-
         private const val PRIVATE_CONTAINER = "private"
         private const val SITE_ICON_LABEL = "Site information"
         private const val GRIP_LABEL = "Drag to dismiss"
+        /** The seeded set: a builtin of its own id, the rule count of uBOL 2026.914.1325's enabled rulesets. */
+        private const val UBOL_SET_ID = "builtin:demo-ubol-sized"
+        private const val UBOL_RULES = 18_810
+        /** FNV-1a's 32-bit offset basis (2166136261 as the signed int `Math.imul` in `store.ts` works on) and prime. */
+        private const val FNV_OFFSET = -2128831035
+        private const val FNV_PRIME = 16777619
     }
 }

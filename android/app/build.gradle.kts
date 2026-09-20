@@ -20,6 +20,7 @@ val buildWeb = tasks.register<Exec>("buildWeb") {
     outputs.file(projectDir.resolve("src/main/assets/page.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext.js"))
     outputs.file(projectDir.resolve("src/main/assets/ext-janitor.js"))
+    outputs.dir(projectDir.resolve("src/main/assets/pdf"))
     onlyIf { !skipWeb }
 }
 
@@ -192,8 +193,10 @@ android {
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin")
-    sourceSets["test"].java.srcDirs("src/test/kotlin")
-    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin")
+    // src/sharedTest holds the demo harness's pure decisions (HarnessLogic.kt): one source, run on
+    // the JVM by the unit tests and on the device by the instrumentation, never part of the app.
+    sourceSets["test"].java.srcDirs("src/test/kotlin", "src/sharedTest/kotlin")
+    sourceSets["androidTest"].java.srcDirs("src/androidTest/kotlin", "src/sharedTest/kotlin")
     // The preview host's demo web app (icon, screenshots) doubles as the Add to Home screen demo's
     // page assets, served by the driver's own loopback server; one copy, never part of the app.
     sourceSets["androidTest"].assets.srcDirs("src/androidTest/assets", "../../src/android/preview-assets")
@@ -208,6 +211,42 @@ android {
 
     packaging {
         resources.excludes += setOf("META-INF/*.version", "META-INF/LICENSE*")
+    }
+}
+
+/**
+ * The launcher's static shortcut (src/main/shortcuts/shortcuts.xml) names its target activity by
+ * the build's applicationId, suffix included. The system server parses a shortcut intent's
+ * targetPackage as a plain string with its own resources, so neither a manifest placeholder nor
+ * an @string reference of the app's can carry the id (the shortcut installs pointing at
+ * "@<resource id>/MainActivity" and nothing can start it): the template is written into each
+ * variant's generated res/xml with the id spelt out.
+ */
+abstract class WriteShortcuts : DefaultTask() {
+    @get:InputFile
+    abstract val template: RegularFileProperty
+
+    @get:Input
+    abstract val applicationId: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun write() {
+        val file = outputDirectory.get().asFile.resolve("xml/shortcuts.xml")
+        file.parentFile.mkdirs()
+        file.writeText(template.get().asFile.readText().replace("\${applicationId}", applicationId.get()))
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val write = tasks.register<WriteShortcuts>("write${variant.name.replaceFirstChar(Char::uppercase)}Shortcuts") {
+            template.set(layout.projectDirectory.file("src/main/shortcuts/shortcuts.xml"))
+            applicationId.set(variant.applicationId)
+        }
+        variant.sources.res?.addGeneratedSourceDirectory(write, WriteShortcuts::outputDirectory)
     }
 }
 
@@ -234,6 +273,9 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     // Password manager re-authentication: the system biometric / device credential sheet.
     implementation("androidx.biometric:biometric:1.1.0")
+    // The pages' media on the OS controls: MediaSessionCompat behind the media-style notification,
+    // the lock screen and the headset buttons (MediaSessions.kt, MediaPlaybackService.kt).
+    implementation("androidx.media:media:1.7.0")
 
     // JVM unit tests (src/test): pure logic such as the screenshot stitching geometry and the
     // vault key wrapping format. The extension and vault tests build org.json documents, which

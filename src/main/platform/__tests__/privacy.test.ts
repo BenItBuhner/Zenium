@@ -31,6 +31,7 @@ const FLAGS: PrivacyFlags = {
   httpsOnly: 'ask',
   httpsOnlyAllowed: [],
   thirdPartyCookies: 'block',
+  thirdPartyCookiesPrivate: 'default',
   thirdPartyCookieExceptions: [],
   gpc: false,
   dnt: false,
@@ -163,6 +164,15 @@ describe('PrivacyRequestHandler', () => {
       [{ ...FLAGS, thirdPartyCookieExceptions: ['tracker.example'] }, thirdParty()],
       [{ ...FLAGS, thirdPartyCookies: 'block-private' }, thirdParty({ isPrivate: false })],
       [{ ...FLAGS, thirdPartyCookies: 'allow' }, thirdParty({ isPrivate: true })],
+      // The private override never reaches a normal window, and `allow` lifts block-private there.
+      [
+        { ...FLAGS, thirdPartyCookies: 'allow', thirdPartyCookiesPrivate: 'block' },
+        thirdParty({ isPrivate: false })
+      ],
+      [
+        { ...FLAGS, thirdPartyCookies: 'block-private', thirdPartyCookiesPrivate: 'allow' },
+        thirdParty({ isPrivate: true })
+      ],
       [FLAGS, thirdParty({ url: 'chrome-extension://abc/pixel.png' })]
     ]
     for (const [flags, req] of cases) {
@@ -174,14 +184,19 @@ describe('PrivacyRequestHandler', () => {
       handler.onHeadersReceived(req, received)
       expect(received, req.ctx.url).toEqual({ 'Set-Cookie': ['id=2'] })
     }
-    // block-private does bite in a private window.
-    const handler = new PrivacyRequestHandler(() => ({
-      ...FLAGS,
-      thirdPartyCookies: 'block-private'
-    }))
-    const sent = { Cookie: 'id=1' }
-    handler.onBeforeSendHeaders(thirdParty({ isPrivate: true }), sent)
-    expect(sent).toEqual({})
+    // block-private does bite in a private window, and so does a private `block` over `allow`.
+    for (const flags of [
+      { ...FLAGS, thirdPartyCookies: 'block-private' as const },
+      { ...FLAGS, thirdPartyCookies: 'allow' as const, thirdPartyCookiesPrivate: 'block' as const }
+    ]) {
+      const handler = new PrivacyRequestHandler(() => flags)
+      const sent = { Cookie: 'id=1' }
+      handler.onBeforeSendHeaders(thirdParty({ isPrivate: true }), sent)
+      expect(sent, flags.thirdPartyCookiesPrivate).toEqual({})
+      const received = { 'Set-Cookie': ['id=2'] }
+      handler.onHeadersReceived(thirdParty({ isPrivate: true }), received)
+      expect(received, flags.thirdPartyCookiesPrivate).toEqual({})
+    }
   })
 
   it('adds Sec-GPC and DNT to every http(s) and ws(s) request while the signals are on, replacing what a page set', () => {

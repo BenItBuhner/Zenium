@@ -1,16 +1,26 @@
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Camera, Globe, Mic, Search, Settings } from 'lucide-react'
+import {
+  Building2,
+  Camera,
+  ClipboardPen,
+  Cookie,
+  Globe,
+  History,
+  Mic,
+  Radio,
+  Search,
+  Settings,
+  VenetianMask
+} from 'lucide-react'
 import type { Tab, UIState } from '@shared/types'
 import { getHost } from '@shared/url'
-import {
-  MAX_NEW_TAB_SHORTCUTS,
-  VISUAL_SEARCH_AVAILABLE,
-  VOICE_SEARCH_AVAILABLE,
-  newTabSections
-} from '@shared/newTab'
+import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
+import { qrScanAvailable } from '@shared/qrScan'
+import { voiceSearchAvailable } from '@shared/voice'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { PROTECTION_TEXT } from '@renderer/lib/protectionUi'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
 import {
   composeTiles,
@@ -21,8 +31,11 @@ import {
   wallpaperImageStore,
   type TopSiteTile
 } from '@renderer/lib/newtab'
+import { isPrivateTab } from '@renderer/lib/privateTabs'
+import { startQrScan } from '@renderer/lib/qrScan'
 import { contentAreaStore, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
 
 interface Props {
@@ -34,19 +47,45 @@ interface Props {
 }
 
 /**
- * The phone's new tab page, drawn in the content frame where the blank page would be: the
- * space gradient as the page (a new tab in Zen is the window itself), a search field on the
- * floating URL bar's surface, and the most visited sites as Essentials-style tiles. What the
- * page shows is the preset's (or the customise sheet's) choice, and the wallpaper presets put
- * the space's colours – or a picked image under a legibility scrim – behind it all.
+ * The phone's new tab page, drawn in the content frame where the blank page would be. The one
+ * route is keyed on the tab's container: a private tab's blank page is the private new tab page
+ * (NTP-31), every other blank tab's the space's page with its field and tiles. The two are
+ * components of their own, so a blank tab changing hands between the modes mounts the other page
+ * rather than re-using one's hooks.
  */
 export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
+  if (isPrivateTab(tab)) return <PrivateNewTabPage state={state} tab={tab} hidden={hidden} />
+  return <SpaceNewTabPage state={state} tab={tab} hidden={hidden} />
+}
+
+/**
+ * The bare page is the window's own gradient: drawn at the window's size and offset by the
+ * frame's position, so the frame reads as a window onto the space rather than a second copy.
+ */
+function useWindowBackdrop(): CSSProperties | undefined {
+  const area = contentAreaStore.use((s) => s.area)
+  const viewport = useViewport()
+  return area
+    ? {
+        backgroundSize: `${viewport.width}px ${viewport.height}px`,
+        backgroundPosition: `${-area.x}px ${-area.y}px`
+      }
+    : undefined
+}
+
+/**
+ * The space's new tab page: the space gradient as the page (a new tab in Zen is the window
+ * itself), a search field on the floating URL bar's surface, and the most visited sites as
+ * Essentials-style tiles. What the page shows is the preset's (or the customise sheet's) choice,
+ * and the wallpaper presets put the space's colours – or a picked image under a legibility scrim
+ * – behind it all.
+ */
+function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
   const settings = state.settings.newTab
   const sections = newTabSections(settings)
   const growPhase = newTabGrowStore.use((s) => s.phase)
   const image = wallpaperImageStore.use()
-  const area = contentAreaStore.use((s) => s.area)
-  const viewport = useViewport()
+  const backdrop = useWindowBackdrop()
 
   useEffect(() => {
     if (sections.wallpaper) void loadWallpaperImage()
@@ -58,14 +97,9 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       ? 'image'
       : 'space'
 
-  // The bare page is the window's own gradient: drawn at the window's size and offset by the
-  // frame's position, so the frame reads as a window onto the space rather than a second copy.
   const style: CSSProperties | undefined =
-    wallpaper === 'none' && area
-      ? {
-          backgroundSize: `${viewport.width}px ${viewport.height}px`,
-          backgroundPosition: `${-area.x}px ${-area.y}px`
-        }
+    wallpaper === 'none'
+      ? backdrop
       : wallpaper === 'image' && image.dataUrl
         ? { backgroundImage: `url("${image.dataUrl}")` }
         : undefined
@@ -84,7 +118,7 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
       {wallpaper === 'image' && <div className="zen-ntp-scrim absolute inset-0" aria-hidden />}
       <div className="relative flex min-h-0 flex-1 flex-col items-center px-4">
         <div className="min-h-6" style={{ flex: 3 }} />
-        {sections.searchBox && <SearchField tab={tab} />}
+        {sections.searchBox && <SearchField state={state} tab={tab} />}
         {sections.shortcuts && <TopSites state={state} tab={tab} />}
         <div className="min-h-6" style={{ flex: 5 }} />
       </div>
@@ -101,18 +135,161 @@ export function NewTabPage({ state, tab, hidden }: Props): JSX.Element {
   )
 }
 
-/**
- * The search field: the floating URL bar's field with a placeholder, the search glyph and, once
- * their handlers exist, the trailing icon buttons for voice and visual search. A tap opens the
- * omnibox for this tab – the field itself never takes input, so what is typed goes where every
- * other address does.
- */
-function SearchField({ tab }: { tab: Tab }): JSX.Element {
-  const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
-  const trailing = VOICE_SEARCH_AVAILABLE || VISUAL_SEARCH_AVAILABLE
-  const dispatch = (name: 'zen-voice-search' | 'zen-visual-search'): void => {
-    window.dispatchEvent(new CustomEvent(name, { detail: { tabId: tab.id } }))
+const PRIVATE_TITLE = "You're browsing privately"
+const PRIVATE_DESCRIPTION =
+  'Pages you open in private tabs leave nothing behind once the last one closes, and other ' +
+  "people using this device won't see them. Downloads you save and bookmarks you add are kept."
+
+/** What the private page tells (NTP-31): a heading and its rows, each a glyph and one line. */
+const PRIVATE_EXPLAINER: Array<{ heading: string; rows: Array<[ReactNode, string]> }> = [
+  {
+    heading: "Zenium won't save",
+    rows: [
+      [<History key="history" />, 'Browsing history'],
+      [<Cookie key="cookies" />, 'Cookies and site data'],
+      [<ClipboardPen key="forms" />, 'Information entered in forms']
+    ]
+  },
+  {
+    heading: 'Still visible to',
+    rows: [
+      [<Globe key="sites" />, 'Websites you visit'],
+      [<Building2 key="work" />, 'Your employer or school'],
+      [<Radio key="isp" />, 'Your internet service provider']
+    ]
   }
+]
+
+/**
+ * The private new tab page (NTP-31; Chrome's Incognito and Edge's InPrivate page): the window's
+ * gradient – the private theme's, which the window surfaces have blended to (§9.29) – with the
+ * search field on it and an explainer of what Zenium keeps from the session and what it does
+ * not, in the window family. The explainer is the first run's page vocabulary (§9.26, §9.27,
+ * §9.2): the title block 22/600 with the mask glyph on its start and a description 15 at 69%,
+ * then groups of one-line rows under 15/600 headings, all at the 16 gutter, and last Chrome's
+ * Block third-party cookies switch over the core's setting (`ThirdPartyCookiesRow`). No tiles –
+ * the most visited sites are the regular history's – and no customise gear: the page has one
+ * look.
+ */
+function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
+  const growPhase = newTabGrowStore.use((s) => s.phase)
+  const backdrop = useWindowBackdrop()
+  return (
+    <div
+      className="zen-ntp zen-ntp-private absolute inset-0 flex flex-col"
+      data-surface="window"
+      data-wallpaper="none"
+      data-private
+      data-hidden={hidden || undefined}
+      data-grow={growPhase !== 'idle' ? growPhase : undefined}
+      data-testid="private-ntp"
+      style={backdrop}
+    >
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[520px] flex-col px-4 pb-6 pt-8">
+          <SearchField state={state} tab={tab} />
+          <div className="zen-firstrun-intro mt-8 flex flex-col gap-1">
+            <h1 className="zen-firstrun-title flex items-center gap-2">
+              <VenetianMask
+                className="h-5 w-5 shrink-0"
+                strokeWidth={1.75}
+                aria-hidden
+                data-testid="private-ntp-glyph"
+              />
+              <span>{PRIVATE_TITLE}</span>
+            </h1>
+            <p className="zen-firstrun-body zen-firstrun-deemphasized">{PRIVATE_DESCRIPTION}</p>
+          </div>
+          {PRIVATE_EXPLAINER.map(({ heading, rows }) => (
+            <section key={heading} className="zen-firstrun-group -mx-4 flex flex-col">
+              <h2 className="zen-firstrun-heading px-4 pb-1">{heading}</h2>
+              <ul className="flex flex-col">
+                {rows.map(([glyph, label]) => (
+                  <li key={label} className="zen-firstrun-row">
+                    <span className="zen-firstrun-row-glyph" aria-hidden>
+                      {glyph}
+                    </span>
+                    <span className="min-w-0 flex-1">{label}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <ThirdPartyCookiesRow state={state} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const COOKIES_SWITCH_LABEL = 'Block third-party cookies'
+// One line each at 13 px in the row's text column (about 300 px on a 412 px phone), a full stop
+// like the page's other description lines; the locked line names the section as the root named
+// it, Privacy, the short form of the Settings nav's "Privacy and Security".
+const COOKIES_SWITCH_DESCRIPTION = 'Blocks third-party cookies in private tabs.'
+const COOKIES_SWITCH_LOCKED = 'Blocked in every tab by Settings → Privacy.'
+
+/**
+ * Chrome's Incognito page's "Block third-party cookies" switch (NTP-31), private-only as
+ * Chrome's is: it reads the core's `privacy.privateThirdPartyCookies` (#218's status of the
+ * private contexts' setting, `Settings.privacy.thirdPartyCookiesPrivate`) – `blocked` is its
+ * position – and writes through `privacy.setThirdPartyCookiesPrivate`: `block` when turned on,
+ * `allow` when turned off, never `default`, so the choice survives a later change of the global
+ * mode. Regular tabs keep the global mode whatever this switch says. While the global mode blocks
+ * third-party cookies everywhere the status is `locked`: the switch shows on and disabled (§9.30:
+ * the whole row laid out at .4, full size, inert), the description giving the reason, and the row
+ * never writes in that state (the engine would keep a write for when the lock lifts, but the
+ * chrome does not offer one). A §10.4 switch row on the shared row primitive with its window
+ * modifier (`.zen-ntp-row`): the whole row is the switch, the glyph on the first line as the
+ * explainer rows' are, the description 13 at 69 % under the label (a row's own description,
+ * §9.1's stack), the switch centred on the row. The heading is the Settings cookies group's, so
+ * the two surfaces name the setting alike.
+ */
+function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
+  const { blocked, locked } = state.privacy.privateThirdPartyCookies
+  return (
+    <section className="zen-firstrun-group -mx-4 flex flex-col">
+      <h2 className="zen-firstrun-heading px-4 pb-1">{PROTECTION_TEXT.cookies.heading}</h2>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={blocked}
+        aria-disabled={locked || undefined}
+        className="zen-v2-row zen-ntp-row"
+        data-testid="private-ntp-cookies"
+        onClick={() => {
+          if (locked) return
+          run('privacy.setThirdPartyCookiesPrivate', { mode: blocked ? 'allow' : 'block' })
+        }}
+      >
+        <span className="zen-firstrun-row-glyph self-start" aria-hidden>
+          <Cookie />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="zen-firstrun-body">{COOKIES_SWITCH_LABEL}</span>
+          <span className="zen-firstrun-small zen-firstrun-deemphasized line-clamp-2">
+            {locked ? COOKIES_SWITCH_LOCKED : COOKIES_SWITCH_DESCRIPTION}
+          </span>
+        </span>
+        <span className="zen-v2-switch" aria-hidden />
+      </button>
+    </section>
+  )
+}
+
+/**
+ * The search field: the floating URL bar's field with a placeholder, the search glyph and the
+ * trailing icon buttons – the mic where the host has a speech recogniser (OMN-19: the listening
+ * sheet, its result loading in this tab), the camera where it has a back camera (OMN-22, NTP-04:
+ * the scan sheet, its payload loading in this tab). A tap on the field opens the omnibox for
+ * this tab – the field itself never takes input, so what is typed goes where every other
+ * address does.
+ */
+function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
+  const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
+  const voice = voiceSearchAvailable(state.capabilities)
+  const camera = qrScanAvailable(state.capabilities)
+  const trailing = voice || camera
   return (
     // The floating URL bar's field is an opaque panel on the window: a page surface of its own.
     <div
@@ -135,22 +312,22 @@ function SearchField({ tab }: { tab: Tab }): JSX.Element {
       </button>
       {trailing && (
         <span className="flex shrink-0 items-center gap-0.5 pr-1.5">
-          {VOICE_SEARCH_AVAILABLE && (
+          {voice && (
             <button
               type="button"
               className="zen-toolbar-button h-11 w-11"
               aria-label="Search by voice"
-              onClick={() => dispatch('zen-voice-search')}
+              onClick={() => void startVoiceSearch({ tabId: tab.id, newTab: false })}
             >
               <Mic className="h-5 w-5" strokeWidth={1.75} />
             </button>
           )}
-          {VISUAL_SEARCH_AVAILABLE && (
+          {camera && (
             <button
               type="button"
               className="zen-toolbar-button h-11 w-11"
-              aria-label="Search with your camera"
-              onClick={() => dispatch('zen-visual-search')}
+              aria-label="Scan a QR code"
+              onClick={() => void startQrScan({ tabId: tab.id, newTab: false })}
             >
               <Camera className="h-5 w-5" strokeWidth={1.75} />
             </button>

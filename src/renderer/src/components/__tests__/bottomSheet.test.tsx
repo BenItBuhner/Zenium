@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createRef, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { recedeDepth } from '@renderer/lib/motion/recede'
@@ -134,6 +135,41 @@ describe('BottomSheet on the recede chassis', () => {
     expect(sheets()[0].style.transform).toContain('scale(var(--zen-layer-scale, 1))')
   })
 
+  it('marks content scrolled under the header with the hairline, never a fade; the bottom edge keeps its fade (§9.7)', async () => {
+    render(<BottomSheet onDismissed={() => undefined}>rows</BottomSheet>)
+    await settle()
+    const sheet = sheets()[0]
+    const body = sheet.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    // A body of 900 in a 300 box, scrolled 100: content lies past both edges.
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => 900 })
+    let top = 0
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v
+      }
+    })
+    act(() => {
+      body.scrollTop = 100
+      body.dispatchEvent(new Event('scroll'))
+    })
+    frames.run(1)
+    expect(sheet.getAttribute('data-scrolled')).toBe('true')
+    expect(body.dataset.fadeAxis).toBe('y')
+    expect(body.style.getPropertyValue('--zen-fade-start')).toBe('0px')
+    expect(body.style.getPropertyValue('--zen-fade-end')).toBe('16px')
+    // Back at the top: the hairline goes; the bottom fade stays while content lies past it.
+    act(() => {
+      body.scrollTop = 0
+      body.dispatchEvent(new Event('scroll'))
+    })
+    frames.run(1)
+    expect(sheet.hasAttribute('data-scrolled')).toBe(false)
+    expect(body.style.getPropertyValue('--zen-fade-start')).toBe('0px')
+    expect(body.style.getPropertyValue('--zen-fade-end')).toBe('16px')
+  })
+
   it('a press on the scrim dismisses on pointerdown, the recede reverses on the same spring, and the layer leaves the stack', async () => {
     const onDismissed = vi.fn()
     render(<BottomSheet onDismissed={onDismissed}>rows</BottomSheet>)
@@ -232,6 +268,60 @@ describe('BottomSheet on the recede chassis', () => {
     expect(lower.style.getPropertyValue('--zen-layer-recede')).toBe('0.0000')
     expect(opacity(scrims()[0])).toBe(1)
     expect(recedeVar()).toBe('1.0000')
+  })
+
+  it('a press in a sheet stacked above it through a portal is not a press on its scrim: the lower sheet stands and the click lands on the row', async () => {
+    // An editor's menulist opens its list as a sheet through `FrameDialogPortal`: the upper
+    // sheet's DOM is outside the lower layer, its React tree inside it, so React bubbles the
+    // row's press to the lower layer too – with a target outside the lower sheet. Read as a
+    // press on the lower scrim, it dismissed the editor under the list and swallowed the click.
+    const onLowerDismissed = vi.fn()
+    const picked = vi.fn()
+    const portalHost = document.createElement('div')
+    document.body.appendChild(portalHost)
+    render(<BottomSheet onDismissed={onLowerDismissed}>editor</BottomSheet>)
+    await settle()
+    frames.run(60)
+    expect(recedeVar()).toBe('1.0000')
+    const lower = mount!.querySelector<HTMLElement>('.zen-sheet')!
+
+    // The menulist is tapped: its list comes up as a sheet above, portaled out of the layer.
+    rerender(
+      <BottomSheet onDismissed={onLowerDismissed}>
+        editor
+        {createPortal(
+          <BottomSheet onDismissed={() => undefined}>
+            <button type="button" data-testid="row" onClick={picked}>
+              United Kingdom
+            </button>
+          </BottomSheet>,
+          portalHost
+        )}
+      </BottomSheet>
+    )
+    await settle()
+    frames.run(60)
+    expect(sheets()).toHaveLength(2)
+    expect(lower.style.getPropertyValue('--zen-layer-recede')).toBe('1.0000')
+    expect(recedeVar()).toBe('1.0000')
+
+    const row = portalHost.querySelector<HTMLElement>('[data-testid="row"]')!
+    act(() => {
+      press(row)
+      press(row, 'pointerup')
+    })
+    const clickAllowed = row.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true })
+    )
+    expect(clickAllowed).toBe(true)
+    expect(picked).toHaveBeenCalledTimes(1)
+
+    for (let i = 0; i < 60 && frames.scheduled; i++) act(() => frames.run(1))
+    expect(onLowerDismissed).not.toHaveBeenCalled()
+    expect(sheets()).toHaveLength(2)
+    expect(lower.style.getPropertyValue('--zen-layer-recede')).toBe('1.0000')
+    expect(recedeVar()).toBe('1.0000')
+    portalHost.remove()
   })
 
   it('predictive back drives the same value: the page un-recedes with the finger and comes back on cancel', async () => {

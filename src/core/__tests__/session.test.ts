@@ -5,7 +5,9 @@ import { createTabRecord } from '../model'
 import {
   closedTabEntry,
   closedWindowEntry,
+  isKeepableHostState,
   NAVIGATION_ENTRIES_MAX,
+  NAVIGATION_HOST_STATE_MAX_CHARS,
   pushClosed,
   RECENTLY_CLOSED_MAX,
   sanitizeClosedEntries,
@@ -181,5 +183,74 @@ describe('sanitizeSnapshot', () => {
     expect(out?.index).toBe(NAVIGATION_ENTRIES_MAX - 3)
     // An index that pointed into the dropped part lands on the oldest kept entry.
     expect(sanitizeSnapshot({ entries, index: 2 })?.index).toBe(0)
+  })
+
+  describe('hostState (the host’s own serialisation of the whole stack)', () => {
+    const entries = [
+      { url: 'https://a.test/', title: 'A' },
+      { url: 'https://b.test/', title: 'B' }
+    ]
+    const blob = 'AAAAB'.repeat(200)
+
+    it('stays when it is a string within the cap and every entry survived', () => {
+      expect(sanitizeSnapshot({ entries, index: 1, hostState: blob })).toEqual({
+        entries,
+        index: 1,
+        hostState: blob
+      })
+      const atCap = 'x'.repeat(NAVIGATION_HOST_STATE_MAX_CHARS)
+      expect(sanitizeSnapshot({ entries, index: 0, hostState: atCap })?.hostState).toBe(atCap)
+    })
+
+    it('goes when it is not a string, empty or over 64 KB', () => {
+      const without = { entries, index: 1 }
+      expect(sanitizeSnapshot({ ...without, hostState: 42 })).toEqual(without)
+      expect(sanitizeSnapshot({ ...without, hostState: { bundle: blob } })).toEqual(without)
+      expect(sanitizeSnapshot({ ...without, hostState: '' })).toEqual(without)
+      expect(sanitizeSnapshot({ ...without, hostState: null })).toEqual(without)
+      const over = 'x'.repeat(NAVIGATION_HOST_STATE_MAX_CHARS + 1)
+      expect(sanitizeSnapshot({ ...without, hostState: over })).toEqual(without)
+      expect(sanitizeSnapshot(without)).not.toHaveProperty('hostState')
+    })
+
+    it('goes with a stack cut to NAVIGATION_ENTRIES_MAX: it described the whole list', () => {
+      const long = Array.from({ length: NAVIGATION_ENTRIES_MAX + 1 }, (_, i) => ({
+        url: `https://s${i}.test/`,
+        title: ''
+      }))
+      const out = sanitizeSnapshot({ entries: long, index: long.length - 1, hostState: blob })
+      expect(out?.entries).toHaveLength(NAVIGATION_ENTRIES_MAX)
+      expect(out).not.toHaveProperty('hostState')
+      // Exactly the cap is not a cut.
+      const full = long.slice(1)
+      expect(sanitizeSnapshot({ entries: full, index: 3, hostState: blob })?.hostState).toBe(blob)
+    })
+
+    it('goes when a malformed entry was left out of the list', () => {
+      const out = sanitizeSnapshot({
+        entries: [...entries, { url: '', title: 'no url' }],
+        index: 1,
+        hostState: blob
+      })
+      expect(out?.entries).toEqual(entries)
+      expect(out).not.toHaveProperty('hostState')
+    })
+
+    it('rides through a stored recently-closed entry', () => {
+      const stored = sanitizeClosedEntries([
+        { ...tabEntry('https://a.test/'), navigation: { entries, index: 1, hostState: blob } }
+      ])
+      expect(stored[0]?.kind === 'tab' && stored[0].navigation?.hostState).toBe(blob)
+    })
+
+    it('isKeepableHostState is the one rule for the blob', () => {
+      expect(isKeepableHostState(blob)).toBe(true)
+      expect(isKeepableHostState('')).toBe(false)
+      expect(isKeepableHostState(undefined)).toBe(false)
+      expect(isKeepableHostState(null)).toBe(false)
+      expect(isKeepableHostState(['x'])).toBe(false)
+      expect(isKeepableHostState('x'.repeat(NAVIGATION_HOST_STATE_MAX_CHARS + 1))).toBe(false)
+      expect(NAVIGATION_HOST_STATE_MAX_CHARS).toBe(64 * 1024)
+    })
   })
 })

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, CircleAlert, Puzzle } from 'lucide-react'
+import { Check, CircleAlert, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   BookmarksBarMode,
@@ -18,12 +18,14 @@ import type {
   NewTabPreset,
   NewTabSettings,
   NewTabShortcutsMode,
+  PasswordsStatus,
   PermissionRule,
   PhoneBarPosition,
   PinnedCloseBehavior,
   ResourceEnforcement,
   ResourceProcessProfile,
   ResourceSettings,
+  SearchEngine,
   Settings,
   ShortcutGroup,
   ShortcutPreset,
@@ -36,7 +38,6 @@ import type {
   WindowSyncMode
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
-import { TRACKING_LEVEL_LABELS, type TrackingLevel } from '@shared/blocking'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { resolveDownloadSettings } from '@shared/downloads'
 import {
@@ -50,6 +51,7 @@ import {
   setNewTabShortcutsMode
 } from '@shared/newTab'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
+import { engineHost } from '@shared/search'
 import {
   SHORTCUT_GROUP_LABELS,
   SHORTCUT_PRESETS,
@@ -62,7 +64,23 @@ import {
 } from '@shared/shortcuts'
 import { describeUpdateTarget, type UpdateChannel } from '@shared/updates'
 import { inputToUrl } from '@shared/url'
-import { run } from '@renderer/lib/api'
+import { languageName } from '@shared/languageNames'
+import { SPELLCHECK_LANGUAGES_MAX, type SpellcheckDictionaryStatus } from '@shared/spellcheck'
+import type { TranslatePreferences } from '@shared/translate'
+import { cmd, run } from '@renderer/lib/api'
+import {
+  CLIPBOARD_CLEAR_OPTIONS,
+  NETWORK_NAMES,
+  addressRowSubtitle,
+  addressTitle,
+  androidProviderHint,
+  cardSubtitle,
+  cardTitle,
+  openAutofillEdit,
+  passkeySubtitle,
+  vaultGateCopy
+} from '@renderer/lib/autofill'
+import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
@@ -75,8 +93,15 @@ import {
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { openOverlay } from '@renderer/lib/ui'
+import { languageOptions, pairKey, pairLabel, warmRegistryModels } from '@renderer/lib/translate'
 import { formatBytes, relativeTime } from '@renderer/lib/utils'
+import { VaultPassphraseForm } from '../../autofill/PassphraseForm'
 import { ContainerIcon } from '../../ContainerIcon'
+import {
+  clearDataGroups,
+  safetyCheckGroups,
+  siteSettingsGroups
+} from '../../siteControls/settingsRows'
 import {
   APP_ICON_HINT,
   PASSWORD_GRACE_OPTIONS,
@@ -88,20 +113,24 @@ import {
   passwordsSavedLabel,
   vaultProtectionLabel
 } from '../../overlays/settingsCopy'
+import { ModelPickList, PickList } from '../../translate/pickers'
 import {
   AddRouteForm,
   AppIconGrid,
   CodeBlock,
   CopyRow,
   CssEditor,
+  EngineGlyph,
   NewContainerForm,
   ResourceMeter,
+  SearchEngineForm,
   ShortcutForm,
   SyncSetupForm,
   UpdateStatusBlock,
   UrlForm,
   ZoomBlock
 } from './blocks'
+import { extensionsGroups } from './extensions'
 import {
   choice,
   onLayout,
@@ -110,7 +139,15 @@ import {
   type SectionModel,
   type SettingsRow
 } from './model'
+import {
+  cookiesGroups,
+  httpsOnlyGroups,
+  safeBrowsingGroups,
+  secureDnsGroups,
+  signalsGroups
+} from './protectionRows'
 import { ShortcutRow } from './ShortcutRow'
+import { trackingGroups } from './tracking'
 
 /**
  * The Settings sections as data: one builder per category turns the browser state into the
@@ -148,6 +185,12 @@ export interface SectionContext {
   openBarEditor(): void
   /** Leave for `tabId` and open the Boost editor on it (Boosts › Boost the site you came from). */
   boost(tabId: string): void
+  /**
+   * What Settings › Autofill reads of the vault – its lists while unlocked, its gate while
+   * locked – and does to it (`useAutofillSettings`); `idleAutofillSettings()` where there is no
+   * vault to read (a test, the landing's search).
+   */
+  autofill: AutofillSettingsData
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -175,6 +218,8 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   resources: resourcesSection,
   privacy: privacySection,
   search: searchSection,
+  autofill: autofillSection,
+  languages: languagesSection,
   spaces: spaceRoutingSection,
   containers: containersSection,
   boosts: boostsSection,
@@ -200,7 +245,12 @@ function item(
   label: string,
   description: string | undefined,
   rows: SettingsRow[],
-  extra: { leading?: ReactNode; keywords?: readonly string[]; sheetDescription?: string } = {}
+  extra: {
+    leading?: ReactNode
+    keywords?: readonly string[]
+    sheetDescription?: string
+    disabled?: boolean
+  } = {}
 ): SettingsRow {
   return {
     kind: 'item',
@@ -209,6 +259,7 @@ function item(
     description,
     keywords: extra.keywords,
     leading: extra.leading,
+    disabled: extra.disabled,
     sheet: {
       title: label,
       description: extra.sheetDescription ?? description,
@@ -448,6 +499,17 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
         onChange: (v) => set({ phoneBarPosition: v })
       }),
       {
+        kind: 'switch',
+        id: 'hide-toolbar-on-scroll',
+        label: 'Hide toolbar when scrolling',
+        description:
+          'On phones, the bar slides away as a page scrolls down and back as it scrolls up.',
+        keywords: ['address bar', 'scroll', 'hide', 'toolbar'],
+        layouts: ['phone'],
+        checked: s.hideToolbarOnScroll,
+        onChange: (v) => set({ hideToolbarOnScroll: v })
+      },
+      {
         kind: 'action',
         id: 'navigation-bar',
         label: 'Navigation bar',
@@ -474,11 +536,12 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       ]
     })
   }
-  if (caps.pageControls) {
-    groups.push({
-      id: 'sites',
-      heading: 'Sites',
-      rows: [
+  // The desktop-site default is the page-controls host's; the dark theme for sites is any host
+  // that darkens pages (CT-18). Each exceptions list belongs to the row above it.
+  if (caps.pageControls || caps.darkenSites) {
+    const siteRows: SettingsRow[] = []
+    if (caps.pageControls)
+      siteRows.push(
         choice<DesktopSiteDefault>({
           id: 'desktop-site',
           label: 'Desktop site',
@@ -492,19 +555,23 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
             { value: 'off', label: 'Never' }
           ],
           onChange: (v) => patchControls({ desktopSite: v })
-        }),
-        {
-          kind: 'switch',
-          id: 'darken-sites',
-          label: 'Apply dark theme to sites',
-          description: 'Sites without a dark theme get one while Zenium is dark.',
-          checked: pc.darkenSites,
-          onChange: (v) => patchControls({ darkenSites: v })
-        }
-      ]
-    })
+        })
+      )
+    if (caps.darkenSites)
+      siteRows.push({
+        kind: 'switch',
+        id: 'darken-sites',
+        label: 'Apply dark theme to sites',
+        // One sentence: the 13/20 description clamps at two lines (§9.2), and where the menu's
+        // per-site choice goes is the Site exceptions group's description below.
+        description: 'Sites without a dark theme get one while Zenium is dark.',
+        keywords: ['dark mode', 'auto dark', 'darken', 'night'],
+        checked: pc.darkenSites,
+        onChange: (v) => patchControls({ darkenSites: v })
+      })
+    groups.push({ id: 'sites', heading: 'Sites', rows: siteRows })
     const exceptions: SettingsRow[] = [
-      ...sorted(pc.desktopSites).map(([domain, on]) =>
+      ...(caps.pageControls ? sorted(pc.desktopSites) : []).map(([domain, on]) =>
         item(`desktop-site:${domain}`, domain, on ? 'Desktop site on' : 'Desktop site off', [
           {
             kind: 'action',
@@ -516,7 +583,7 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
           }
         ])
       ),
-      ...sorted(pc.darkenSiteExceptions).map(([domain, on]) =>
+      ...(caps.darkenSites ? sorted(pc.darkenSiteExceptions) : []).map(([domain, on]) =>
         item(`darken:${domain}`, domain, on ? 'Dark theme on' : 'Dark theme off', [
           {
             kind: 'action',
@@ -529,11 +596,14 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
         ])
       )
     ]
+    const creators = [
+      caps.pageControls && 'Desktop Site',
+      caps.darkenSites && 'Dark Theme for This Site'
+    ].filter((x): x is string => typeof x === 'string')
     groups.push({
       id: 'site-exceptions',
       heading: 'Site exceptions',
-      description:
-        'Desktop Site and Dark Theme for This Site in the menu remember a site’s choice here.',
+      description: `${creators.join(' and ')} in the menu ${creators.length > 1 ? 'remember' : 'remembers'} a site’s choice here.`,
       rows: exceptions,
       empty: 'No exceptions yet'
     })
@@ -945,6 +1015,20 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     : []
+  // The inverse: the tab overview's Close all tabs and its "Close N tabs?" prompt are the phone
+  // host's (a windowed host has no overview), so the switch that turns the prompt off is too.
+  const overviewRows: SettingsRow[] = windows
+    ? []
+    : [
+        {
+          kind: 'switch',
+          id: 'confirm-close-all',
+          label: 'Confirm before closing all tabs',
+          description: 'The tab overview asks before it closes every tab of a Space.',
+          checked: s.confirmCloseAll,
+          onChange: (v) => set({ confirmCloseAll: v })
+        }
+      ]
   const groups: RowGroup[] = [
     {
       id: 'tabs',
@@ -974,6 +1058,7 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.ctrlTabCyclesWithinSection,
           onChange: (v) => set({ ctrlTabCyclesWithinSection: v })
         },
+        ...overviewRows,
         {
           kind: 'switch',
           id: 'restore-session',
@@ -1078,59 +1163,139 @@ function tabsSection({ state, set }: SectionContext): RowGroup[] {
         }
       ]
     },
+    ...sleepingTabsGroups(s, set)
+  )
+  return groups
+}
+
+/**
+ * Edge's ladder for "Put inactive tabs to sleep after" (Settings › System and performance), in
+ * minutes: 30 seconds to 12 hours. The engine stores the timeout in minutes down to a half.
+ */
+const SLEEP_TIMEOUTS: readonly number[] = [0.5, 1, 5, 15, 30, 60, 120, 180, 360, 720]
+
+/** "30 seconds", "5 minutes", "1 hour", "12 hours": the ladder's labels, and any stored value's. */
+export function sleepTimeoutLabel(minutes: number): string {
+  if (minutes < 1) return `${Math.round(minutes * 60)} seconds`
+  if (minutes < 60) return minutes === 1 ? '1 minute' : `${minutes} minutes`
+  const hours = minutes / 60
+  const shown = Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(/\.0$/, '')
+  return hours === 1 ? '1 hour' : `${shown} hours`
+}
+
+/**
+ * Sleeping tabs on a phone (CT-22), in Edge's words: the switch ("Save resources with sleeping
+ * tabs"), the timeout as a choice on Edge's ladder – a stored value off it (an older profile's
+ * 20 minutes) is listed in its place rather than shown as nothing – and the never-sleep sites
+ * as a managed list ("No sites yet" while it is empty, §9.17), each with Remove, and an Add sheet
+ * in a group of its own taking a site (a URL is cut down to its host). Every dependent row reads
+ * at .4 while the switch is off (§10.4). A sleeping tab fades
+ * in the tab overview and wakes when it is opened; memory pressure puts pages to sleep ahead of
+ * the timeout whatever the switch says.
+ */
+function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void): RowGroup[] {
+  const off = !s.unloadEnabled
+  const keywords = ['sleeping tabs', 'memory saver', 'discard', 'unload', 'inactive', 'battery']
+  const ladder = SLEEP_TIMEOUTS.includes(s.unloadTimeoutMinutes)
+    ? SLEEP_TIMEOUTS
+    : [...SLEEP_TIMEOUTS, s.unloadTimeoutMinutes].sort((a, b) => a - b)
+  const sites = [...s.unloadExcludedDomains].sort((a, b) => a.localeCompare(b))
+  const addSite = (raw: string): void => {
+    const host = raw
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0]
+      .split(':')[0]
+    if (!host || s.unloadExcludedDomains.includes(host)) return
+    set({ unloadExcludedDomains: [...s.unloadExcludedDomains, host] })
+  }
+  return [
     {
-      id: 'unloading',
-      heading: 'Tab unloading',
+      id: 'sleeping-tabs',
+      heading: 'Sleeping tabs',
+      description:
+        'Tabs you have not looked at for a while go to sleep to save memory and battery. A sleeping tab fades in the tab overview and wakes when you open it.',
       rows: [
         {
           kind: 'switch',
           id: 'unload-enabled',
-          label: 'Unload inactive tabs',
-          description: 'Frees memory by unloading tabs you have not used for a while.',
+          label: 'Save resources with sleeping tabs',
+          keywords,
           checked: s.unloadEnabled,
           onChange: (v) => set({ unloadEnabled: v })
         },
-        {
-          kind: 'field',
+        choice({
           id: 'unload-after',
-          label: 'Unload after',
+          label: 'Put inactive tabs to sleep after',
+          keywords,
           value: String(s.unloadTimeoutMinutes),
-          display: `${s.unloadTimeoutMinutes} minutes`,
-          input: 'number',
-          min: 1,
-          max: 1440,
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            const n = Number(value)
-            if (!Number.isInteger(n) || n < 1 || n > 1440)
-              return 'Enter a number of minutes from 1 to 1440'
-            set({ unloadTimeoutMinutes: n })
-            return undefined
-          }
-        },
+          disabled: off,
+          options: ladder.map((minutes) => ({
+            value: String(minutes),
+            label: sleepTimeoutLabel(minutes)
+          })),
+          onChange: (v) => set({ unloadTimeoutMinutes: Number(v) })
+        })
+      ]
+    },
+    {
+      id: 'never-sleep',
+      heading: 'Never put these sites to sleep',
+      description:
+        'Pages on these sites stay awake in the background – a chat, a player, a document you come back to.',
+      rows: sites.map((domain) =>
+        item(
+          `never-sleep:${domain}`,
+          domain,
+          undefined,
+          [
+            {
+              kind: 'action',
+              id: `never-sleep:${domain}:remove`,
+              label: 'Remove',
+              description: 'Pages on the site go to sleep like any other.',
+              onPress: () =>
+                set({
+                  unloadExcludedDomains: s.unloadExcludedDomains.filter((d) => d !== domain)
+                })
+            }
+          ],
+          { keywords, disabled: off }
+        )
+      ),
+      // The list's own empty state (§9.17): one plain row where its sites would be, so the Add
+      // action below is a group of its own, as the spell-check languages' is.
+      empty: 'No sites yet'
+    },
+    {
+      id: 'never-sleep-add',
+      heading: null,
+      rows: [
         {
-          kind: 'field',
-          id: 'unload-excluded',
-          label: 'Never unload these domains',
-          value: s.unloadExcludedDomains.join(', '),
-          display: s.unloadExcludedDomains.length ? s.unloadExcludedDomains.join(', ') : 'None',
-          input: 'text',
-          placeholder: 'mail.google.com, notion.so',
-          disabled: !s.unloadEnabled,
-          onCommit: (value) => {
-            set({
-              unloadExcludedDomains: value
-                .split(',')
-                .map((d) => d.trim().toLowerCase())
-                .filter(Boolean)
-            })
-            return undefined
+          kind: 'action',
+          id: 'never-sleep-add',
+          label: 'Add a site',
+          keywords,
+          disabled: off,
+          form: {
+            title: 'Never put this site to sleep',
+            render: (close) => (
+              <UrlForm
+                id="never-sleep-site"
+                label="Site"
+                placeholder="mail.example.com"
+                action="Add"
+                onSubmit={addSite}
+                close={close}
+              />
+            )
           }
         }
       ]
     }
-  )
-  return groups
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,80 +1896,33 @@ function resourcesSection({ state, set }: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy and Security (ad and tracker blocking; the remembered per-site answers are Security's)
+// Privacy and Security (ad and tracker blocking, the site-controls program's Safety check, Clear
+// browsing data and Site settings blocks, the protection groups of `protectionRows.tsx`; the
+// remembered per-site answers are Security's)
 // ---------------------------------------------------------------------------
 
-function privacySection({ state, set }: SectionContext): RowGroup[] {
-  const b = state.settings.blocking
-  const status = state.blocking
-  const enabledLists = status.lists.filter((l) => l.enabled)
-  const listsDescription = status.updating
-    ? 'Updating…'
-    : status.lastUpdatedAt
-      ? `${enabledLists.length} lists · updated ${relativeTime(status.lastUpdatedAt)}`
-      : `${enabledLists.length} lists`
+/**
+ * Groups in Chrome's Privacy and security order – Safety check, Safe Browsing, Tracking
+ * prevention, Clear browsing data, Cookies, Site settings, HTTPS-only, Secure DNS, Privacy
+ * signals – each program's groups self-contained: the site-controls program's
+ * (`siteControls/settingsRows`) at the safety-check, clear-browsing-data and site-settings
+ * positions, the request engine's (`tracking.tsx`) at the tracking-prevention position, the
+ * protection program's (`protectionRows.tsx`) at the safe-browsing, cookies, https-only,
+ * secure-dns and privacy-signals positions; the remembered per-site answers are Security's
+ * (`securitySection`).
+ */
+function privacySection(ctx: SectionContext): RowGroup[] {
+  const { state, set } = ctx
   return [
-    {
-      id: 'tracking',
-      heading: 'Tracking protection',
-      rows: [
-        {
-          kind: 'switch',
-          id: 'blocking-enabled',
-          label: 'Block ads and trackers',
-          description: status.ready
-            ? `${status.sessionBlocked.toLocaleString()} blocked since Zenium started.`
-            : 'Filter lists are loading.',
-          keywords: ['adblock', 'tracking'],
-          checked: status.enabled,
-          onChange: (v) => run('blocking.setEnabled', { enabled: v })
-        },
-        choice<TrackingLevel>({
-          id: 'blocking-level',
-          label: 'Protection level',
-          value: b.level,
-          disabled: !status.enabled,
-          options: (Object.keys(TRACKING_LEVEL_LABELS) as TrackingLevel[]).map((level) => ({
-            value: level,
-            label: TRACKING_LEVEL_LABELS[level].label,
-            description: TRACKING_LEVEL_LABELS[level].description
-          })),
-          onChange: (level) => set({ blocking: { ...b, level } })
-        }),
-        {
-          kind: 'switch',
-          id: 'blocking-auto-update',
-          label: 'Update filter lists automatically',
-          checked: b.autoUpdate,
-          onChange: (v) => set({ blocking: { ...b, autoUpdate: v } })
-        },
-        {
-          kind: 'action',
-          id: 'blocking-update-now',
-          label: 'Update filter lists now',
-          description: listsDescription,
-          button: 'Update now',
-          busy: status.updating,
-          onPress: () => run('blocking.updateLists', {})
-        }
-      ]
-    },
-    {
-      id: 'blocking-exceptions',
-      heading: 'Sites without blocking',
-      description: 'Turning protection off for a site in the site information remembers it here.',
-      rows: status.siteExceptions.map((site) =>
-        item(`blocking:${site}`, site, 'Nothing is blocked on this site', [
-          {
-            kind: 'action',
-            id: `blocking:${site}:block`,
-            label: 'Block on this site again',
-            onPress: () => run('blocking.setSiteException', { site, excepted: false })
-          }
-        ])
-      ),
-      empty: 'No exceptions yet'
-    }
+    ...safetyCheckGroups(ctx),
+    ...safeBrowsingGroups(state, set),
+    ...trackingGroups(ctx),
+    ...clearDataGroups(ctx),
+    ...cookiesGroups(state, set),
+    ...siteSettingsGroups(ctx),
+    ...httpsOnlyGroups(state, set),
+    ...secureDnsGroups(state, set),
+    ...signalsGroups(state, set)
   ]
 }
 
@@ -1812,44 +1930,857 @@ function privacySection({ state, set }: SectionContext): RowGroup[] {
 // Search
 // ---------------------------------------------------------------------------
 
+/**
+ * Chrome for Android's Search settings: the engine picker lists the shipped engines, then an
+ * "Added" heading with the ones added by hand and a "Recently visited" heading with the engines
+ * pages offered through OpenSearch (OMN-27), each with its favicon and, for the user's own, the
+ * host it searches; the user's engines are listed under the picker with Make default and
+ * Remove, and a form adds one by name and `%s` template.
+ */
 function searchSection({ state, set }: SectionContext): RowGroup[] {
   const s = state.settings
-  const rows: SettingsRow[] = [
-    choice({
-      id: 'search-engine',
-      label: 'Default search engine',
-      value: s.searchEngineId,
-      options: state.searchEngines.map((e) => ({ value: e.id, label: e.name })),
-      onChange: (v) => set({ searchEngineId: v })
-    }),
+  // An extension's engine (`chrome_settings_overrides`) is not the user's to pick or remove; it
+  // is the default only through the extension, which the URL bar follows (`defaultSearchEngineOf`).
+  const engines = state.searchEngines.filter((e) => e.source !== 'extension')
+  const own = engines.filter((e) => e.source === 'custom' || e.source === 'discovered')
+  const glyph = (e: SearchEngine): ReactNode => <EngineGlyph engine={e} />
+  /**
+   * The picker's heading for the user's engines; the shipped ones (no `source`) sit above any
+   * heading, and only the user's own name the host they search under the label.
+   */
+  const pickerGroup = (e: SearchEngine): string | undefined =>
+    e.source === 'custom' ? 'Added' : e.source === 'discovered' ? 'Recently visited' : undefined
+  return [
     {
-      kind: 'switch',
-      id: 'search-suggestions',
-      label: 'Show search suggestions',
-      description: 'Sends what you type to the search engine as you type.',
-      checked: s.searchSuggestions,
-      onChange: (v) => set({ searchSuggestions: v })
+      id: 'search',
+      heading: 'Search',
+      rows: [
+        choice({
+          id: 'search-engine',
+          label: 'Default search engine',
+          value: s.searchEngineId,
+          options: engines.map((e) => ({
+            value: e.id,
+            label: e.name,
+            description: pickerGroup(e) ? (engineHost(e) ?? undefined) : undefined,
+            leading: glyph(e),
+            group: pickerGroup(e)
+          })),
+          onChange: (v) => set({ searchEngineId: v })
+        }),
+        {
+          kind: 'switch',
+          id: 'search-suggestions',
+          label: 'Show search suggestions',
+          description: 'Sends what you type to the search engine as you type.',
+          checked: s.searchSuggestions,
+          onChange: (v) => set({ searchSuggestions: v })
+        },
+        // The desktop URL bar shows the whole URL at rest (§10.1); the phone pill shows hosts
+        // only, so the row is the desktop and tablet shells'.
+        {
+          kind: 'switch',
+          id: 'full-urls',
+          label: 'Always show full URLs',
+          description: 'Keep the scheme and www. in the address bar instead of hiding them.',
+          keywords: ['scheme', 'https', 'www', 'address bar'],
+          layouts: ['desktop', 'tablet'],
+          checked: Boolean(s.showFullUrls),
+          onChange: (v) => set({ showFullUrls: v })
+        },
+        {
+          kind: 'info',
+          id: 'search-keywords',
+          label: 'Engine keywords',
+          description: `Type a keyword, then a space: ${engines.map((e) => e.keyword).join(' · ')}`
+        }
+      ]
+    },
+    {
+      id: 'search-engines',
+      heading: 'Added search engines',
+      description:
+        'Engines you added, and engines from sites you visited that offer one. Sites in private tabs are never listed.',
+      rows: own.map((e) =>
+        item(
+          `search-engine:${e.id}`,
+          e.name,
+          e.id === s.searchEngineId
+            ? 'Default search engine'
+            : e.source === 'discovered'
+              ? `Recently visited · ${engineHost(e) ?? e.searchUrl}`
+              : (engineHost(e) ?? e.searchUrl),
+          [
+            {
+              kind: 'action',
+              id: `search-engine:${e.id}:default`,
+              label: 'Make default',
+              description: `Searches from the URL bar use ${e.name}.`,
+              disabled: e.id === s.searchEngineId,
+              onPress: () => set({ searchEngineId: e.id })
+            },
+            {
+              kind: 'action',
+              id: `search-engine:${e.id}:remove`,
+              label: 'Remove',
+              description:
+                e.source === 'discovered'
+                  ? 'The site offers it again on your next visit.'
+                  : undefined,
+              destructive: true,
+              confirm: {
+                title: `Remove ${e.name}?`,
+                description:
+                  e.id === s.searchEngineId
+                    ? 'The URL bar goes back to the default engine.'
+                    : undefined,
+                action: 'Remove'
+              },
+              onPress: () => run('search.removeEngine', { id: e.id })
+            }
+          ],
+          { leading: glyph(e), keywords: [e.keyword, engineHost(e) ?? ''] }
+        )
+      ),
+      empty: 'No search engines added yet'
+    },
+    {
+      id: 'add-search-engine',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'add-search-engine',
+          label: 'Add search engine',
+          keywords: ['custom', 'opensearch', '%s'],
+          form: {
+            title: 'Add search engine',
+            description: 'Put %s in the URL where the search terms go.',
+            render: (close) => (
+              <SearchEngineForm
+                onAdd={(name, url) => cmd('search.addEngine', { name, url })}
+                close={close}
+              />
+            )
+          }
+        }
+      ]
     }
   ]
-  // The desktop URL bar shows the whole URL at rest (§10.1); the phone pill shows hosts only,
-  // so the row is the desktop and tablet shells'.
-  rows.push({
-    kind: 'switch',
-    id: 'full-urls',
-    label: 'Always show full URLs',
-    description: 'Keep the scheme and www. in the address bar instead of hiding them.',
-    keywords: ['scheme', 'https', 'www', 'address bar'],
-    layouts: ['desktop', 'tablet'],
-    checked: Boolean(s.showFullUrls),
-    onChange: (v) => set({ showFullUrls: v })
+}
+
+// ---------------------------------------------------------------------------
+// Autofill (services-password-fill, #145)
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings > Autofill on the phone: the rows of the desktop `AutofillSection` in the page's
+ * form – the password switches and the clipboard choice, then, while the vault is locked, its
+ * gate (§9.30: Unlock as an action row that is busy while the device checks, the passphrase form
+ * at the gutter once the vault asks for one), else the vault's addresses, payment methods and
+ * passkeys as item rows with their sheets and the editors behind them. The lists and the gate
+ * come in through `ctx.autofill` (`useAutofillSettings`), fetched while this section is shown.
+ */
+function autofillSection({ state, set, autofill }: SectionContext): RowGroup[] {
+  const s = state.settings.passwords
+  const android = state.platform === 'android'
+  const system = state.autofill.systemAutofill
+  const zenium = s.androidProvider === 'zenium'
+  const groups: RowGroup[] = [
+    {
+      id: 'autofill-passwords',
+      heading: 'Passwords',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-offer-to-save',
+          label: 'Offer to save passwords',
+          description: 'Ask to save or update a login after you sign in on a site.',
+          keywords: ['save passwords', 'login', 'update'],
+          checked: s.offerToSave,
+          onChange: (v) => set({ passwords: { ...s, offerToSave: v } })
+        },
+        {
+          kind: 'switch',
+          id: 'autofill-auto-sign-in',
+          label: 'Sign in automatically',
+          description:
+            'Fill the one saved login of a site as soon as its form is focused, without the picker.',
+          keywords: ['auto sign-in', 'fill'],
+          checked: s.autoSignIn,
+          onChange: (v) => set({ passwords: { ...s, autoSignIn: v } })
+        },
+        // The Android host alone has a system autofill service that could own the pages instead.
+        ...(android
+          ? [
+              {
+                kind: 'switch',
+                id: 'autofill-android-provider',
+                label: 'Use Zenium to fill passwords in pages',
+                description: androidProviderHint(system, zenium),
+                keywords: ['autofill service', 'provider', 'system', 'google'],
+                checked: !system?.enabled || zenium,
+                disabled: !system?.enabled,
+                onChange: (v) =>
+                  set({ passwords: { ...s, androidProvider: v ? 'zenium' : 'system' } })
+              } satisfies SettingsRow
+            ]
+          : []),
+        choice({
+          id: 'autofill-clipboard-clear',
+          label: 'Clear copied passwords',
+          keywords: ['clipboard', 'card number', 'copy'],
+          value: String(s.clipboardClearSeconds),
+          options: CLIPBOARD_CLEAR_OPTIONS,
+          sheetDescription:
+            'Remove a copied password or card number from the clipboard again after this long.',
+          onChange: (v) => set({ passwords: { ...s, clipboardClearSeconds: Number(v) } })
+        })
+      ]
+    }
+  ]
+  if (state.passwords.locked) return [...groups, vaultGateGroup(state.passwords, autofill.gate)]
+  return [
+    ...groups,
+    ...addressGroups(state, set, autofill),
+    ...cardGroups(state, set, autofill),
+    passkeysGroup(autofill)
+  ]
+}
+
+/**
+ * The vault gate (§9.27 on desktop; here the group's heading names it, §10.3): idle, one Unlock
+ * action row – busy while the device checks (§9.30), not pressable while the vault is unreadable
+ * (`status.error`, which the description then says); once the vault asks for its passphrase, or
+ * for a new one where the device cannot verify the user, the shared passphrase form at the
+ * gutter (`VaultPassphraseForm`), whose Cancel returns to the idle gate.
+ */
+function vaultGateGroup(status: PasswordsStatus, gate: VaultGate): RowGroup {
+  const { title, description } = vaultGateCopy(gate.step, status, gate.error)
+  const keywords = ['vault', 'locked', 'unlock', 'passphrase']
+  return {
+    id: 'autofill-vault',
+    heading: title,
+    description,
+    rows:
+      gate.step === 'idle'
+        ? [
+            {
+              kind: 'action',
+              id: 'autofill-unlock',
+              label: 'Unlock',
+              keywords,
+              busy: gate.busy,
+              disabled: status.error !== null,
+              onPress: () => gate.unlock()
+            }
+          ]
+        : [
+            {
+              kind: 'custom',
+              id: 'autofill-vault-passphrase',
+              label: title,
+              keywords,
+              render: () => <VaultPassphraseForm gate={gate} />
+            }
+          ]
+  }
+}
+
+/**
+ * A vault list as groups (§10.3): the heading with its switch, the entries as item rows under
+ * it (one 20 px glyph column, labels at 48 – §10.4) with the §9.17 empty line once the list has
+ * arrived, and the add action last; the two tails carry no heading, so the three read as one.
+ */
+function vaultListGroups(
+  id: string,
+  head: Omit<RowGroup, 'id'>,
+  entries: SettingsRow[] | null,
+  empty: string,
+  add: SettingsRow | null
+): RowGroup[] {
+  const groups: RowGroup[] = [{ id, ...head }]
+  groups.push({
+    id: `${id}-list`,
+    heading: null,
+    rows: entries ?? [],
+    empty: entries ? empty : undefined
   })
-  rows.push({
-    kind: 'info',
-    id: 'search-keywords',
-    label: 'Engine keywords',
-    description: `Type a keyword, then a space: ${state.searchEngines.map((e) => e.keyword).join(' · ')}`
+  if (add) groups.push({ id: `${id}-add`, heading: null, rows: [add] })
+  return groups
+}
+
+function addressGroups(
+  state: UIState,
+  set: SectionContext['set'],
+  { addresses }: AutofillSettingsData
+): RowGroup[] {
+  const a = state.settings.autofill
+  return vaultListGroups(
+    'autofill-addresses',
+    {
+      heading: 'Addresses',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-save-addresses',
+          label: 'Save and fill addresses',
+          description:
+            'Offer to save addresses typed into forms, and fill them back into checkouts and sign-ups.',
+          checked: a.addresses,
+          onChange: (v) => set({ autofill: { ...a, addresses: v } })
+        }
+      ]
+    },
+    addresses?.map((address) =>
+      item(
+        `autofill-address:${address.id}`,
+        addressTitle(address),
+        addressRowSubtitle(address),
+        [
+          {
+            kind: 'action',
+            id: `autofill-address:${address.id}:edit`,
+            label: 'Edit address',
+            closesSheet: true,
+            onPress: () => openAutofillEdit({ kind: 'address', id: address.id })
+          },
+          {
+            kind: 'action',
+            id: `autofill-address:${address.id}:delete`,
+            label: 'Delete address',
+            destructive: true,
+            confirm: {
+              title: `Delete ${addressTitle(address)}?`,
+              description: 'Zenium stops filling it into forms.',
+              action: 'Delete'
+            },
+            onPress: () => run('autofill.removeAddress', { id: address.id })
+          }
+        ],
+        {
+          leading: <MapPin className="zen-settings-glyph" aria-hidden="true" />,
+          keywords: [address.organization, address.locality, address.country].filter(Boolean)
+        }
+      )
+    ) ?? null,
+    'No addresses saved yet',
+    {
+      kind: 'action',
+      id: 'autofill-add-address',
+      label: 'Add address',
+      keywords: ['new address'],
+      onPress: () => openAutofillEdit({ kind: 'address', id: null })
+    }
+  )
+}
+
+function cardGroups(
+  state: UIState,
+  set: SectionContext['set'],
+  { cards, copying, copyCard }: AutofillSettingsData
+): RowGroup[] {
+  const a = state.settings.autofill
+  return vaultListGroups(
+    'autofill-cards',
+    {
+      heading: 'Payment methods',
+      description: 'Card numbers stay in the vault; security codes are never saved.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'autofill-save-cards',
+          label: 'Save and fill payment methods',
+          description:
+            'Offer to save cards typed into checkouts, and fill them back after you verify it is you.',
+          keywords: ['credit card', 'debit card'],
+          checked: a.cards,
+          onChange: (v) => set({ autofill: { ...a, cards: v } })
+        }
+      ]
+    },
+    cards?.map((card) =>
+      item(
+        `autofill-card:${card.id}`,
+        cardTitle(card),
+        cardSubtitle(card),
+        [
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:copy`,
+            label: 'Copy card number',
+            description: 'Unlocks with your passphrase where the vault asks for it.',
+            busy: copying === card.id,
+            onPress: () => copyCard(card)
+          },
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:edit`,
+            label: 'Edit card',
+            closesSheet: true,
+            onPress: () => openAutofillEdit({ kind: 'card', id: card.id })
+          },
+          {
+            kind: 'action',
+            id: `autofill-card:${card.id}:delete`,
+            label: 'Delete card',
+            destructive: true,
+            confirm: {
+              title: `Delete ${cardTitle(card)}?`,
+              description: 'Zenium stops filling it into checkouts.',
+              action: 'Delete'
+            },
+            onPress: () => run('autofill.removeCard', { id: card.id })
+          }
+        ],
+        {
+          leading: <CreditCard className="zen-settings-glyph" aria-hidden="true" />,
+          keywords: [NETWORK_NAMES[card.network], card.last4, card.name].filter(Boolean)
+        }
+      )
+    ) ?? null,
+    'No cards saved yet',
+    {
+      kind: 'action',
+      id: 'autofill-add-card',
+      label: 'Add card',
+      keywords: ['new card', 'credit card', 'debit card'],
+      onPress: () => openAutofillEdit({ kind: 'card', id: null })
+    }
+  )
+}
+
+function passkeysGroup({ passkeys }: AutofillSettingsData): RowGroup {
+  return {
+    id: 'autofill-passkeys',
+    heading: 'Passkeys',
+    description:
+      "Passkeys created in Zenium. The keys themselves stay with your device's authenticator (Windows Hello, Touch ID, Google Password Manager); this is where they exist and when they were last used.",
+    rows:
+      passkeys?.map((passkey) =>
+        item(
+          `autofill-passkey:${passkey.id}`,
+          passkey.userDisplayName || passkey.userName,
+          passkeySubtitle(passkey),
+          [
+            {
+              kind: 'action',
+              id: `autofill-passkey:${passkey.id}:forget`,
+              label: "Forget this passkey's record",
+              description: 'The passkey itself stays with the authenticator that holds it.',
+              destructive: true,
+              confirm: {
+                title: `Forget the passkey for ${passkey.rpName || passkey.rpId}?`,
+                description:
+                  'Only the record goes; the key itself stays with the authenticator that holds it.',
+                action: 'Forget'
+              },
+              onPress: () => run('autofill.removePasskey', { id: passkey.id })
+            }
+          ],
+          {
+            leading: <Fingerprint className="zen-settings-glyph" aria-hidden="true" />,
+            keywords: [passkey.rpId, passkey.rpName, passkey.userName].filter(Boolean)
+          }
+        )
+      ) ?? [],
+    empty: passkeys ? 'No passkeys yet' : undefined
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Languages (page translation, #106)
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings › Languages, the desktop pane (`LanguagesSection.tsx`) row for row: whether Zenium
+ * offers to translate, the languages the user reads – the first is what pages are translated
+ * into – as item rows that promote or remove, the always and never lists, the sites never
+ * offered, and the models on the device with their size and a confirmed removal. What the
+ * desktop adds through a menulist is an action row here (§9.13: no menulist on a phone settings
+ * page) opening a sheet of the languages or models left to pick. The lists read the core's
+ * translate state and write through its commands, so both platforms keep one set of rules.
+ */
+function languagesSection({ state }: SectionContext): RowGroup[] {
+  const t = state.translate
+  const prefs = t.preferences
+  // The "Download a model" sheet lists the registry's pairs, which the core is asked for: asked
+  // here, so the list is at hand by the time the sheet – which measures itself as it mounts –
+  // opens (once; nothing happens after the first answer).
+  warmRegistryModels()
+  const set = (patch: Partial<TranslatePreferences>): void => run('translate.setPreferences', patch)
+  const rule = (language: string, value: 'always' | 'never' | 'ask'): void =>
+    run('translate.setLanguageRule', { language, rule: value })
+
+  /** The languages in `codes` as item rows, each opening the rows `actions` gives it. */
+  const languageRows = (
+    prefix: string,
+    codes: readonly string[],
+    actions: (code: string, index: number) => SettingsRow[],
+    description?: (code: string, index: number) => string | undefined
+  ): SettingsRow[] =>
+    codes.map((code, index) =>
+      item(
+        `${prefix}:${code}`,
+        languageName(code),
+        description?.(code, index),
+        actions(code, index),
+        { keywords: [code] }
+      )
+    )
+
+  /** The action row that adds to a list, in a group of its own after it; none when nothing is left. */
+  const addGroup = (
+    id: string,
+    title: string,
+    codes: readonly string[],
+    onAdd: (code: string) => void
+  ): RowGroup[] => {
+    const options = languageOptions(t.languages.filter((code) => !codes.includes(code)))
+    if (options.length === 0) return []
+    return [
+      {
+        id: `${id}-add`,
+        heading: null,
+        rows: [
+          {
+            kind: 'action',
+            id: `languages-${id}-add`,
+            label: 'Add a language',
+            keywords: [title],
+            form: {
+              title,
+              render: (close) => (
+                <PickList label={title} options={options} onPick={onAdd} close={close} />
+              )
+            }
+          }
+        ]
+      }
+    ]
+  }
+
+  const preferred = prefs.preferred
+  const installedBytes = t.installed.reduce((sum, m) => sum + m.bytes, 0)
+  const modelRows: SettingsRow[] = [
+    ...t.installed.map((m) => {
+      const pair = pairLabel(m.from, m.to)
+      return item(`languages-model:${pairKey(m)}`, pair, formatBytes(m.bytes), [
+        {
+          kind: 'action',
+          id: `languages-model:${pairKey(m)}:remove`,
+          label: 'Remove model',
+          description: 'It is downloaded again the next time these languages are translated.',
+          destructive: true,
+          confirm: {
+            title: `Remove the ${pair} model?`,
+            description: `${formatBytes(m.bytes)} is freed; the model is downloaded again the next time a page in these languages is translated.`,
+            action: 'Remove'
+          },
+          onPress: () => run('translate.removeModel', { from: m.from, to: m.to })
+        }
+      ])
+    }),
+    ...t.downloading.map((m): SettingsRow => ({
+      kind: 'info',
+      id: `languages-model:${pairKey(m)}`,
+      label: pairLabel(m.from, m.to),
+      description: 'Downloading…'
+    }))
+  ]
+  if (t.installed.length > 0) {
+    modelRows.push({
+      kind: 'info',
+      id: 'languages-models-total',
+      label: `${formatBytes(installedBytes)} on this device`,
+      keywords: ['storage', 'space']
+    })
+  }
+
+  return [
+    {
+      id: 'translation',
+      heading: 'Translation',
+      description:
+        'Pages in other languages are translated on this device, with models Zenium downloads the first time a language pair is used. Nothing leaves the device.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'languages-offer',
+          label: 'Offer to translate pages in other languages',
+          keywords: ['automatic', 'translation bar', 'auto offer'],
+          checked: prefs.autoOffer,
+          onChange: (autoOffer) => set({ autoOffer })
+        }
+      ]
+    },
+    {
+      id: 'read',
+      heading: 'Languages you read',
+      description:
+        'Pages in these languages are shown as they are; the first one is the language other pages are translated into.',
+      rows: languageRows(
+        'languages-read',
+        preferred,
+        (code, index) => [
+          ...(index > 0
+            ? [
+                {
+                  kind: 'action',
+                  id: `languages-read:${code}:first`,
+                  label: 'Translate pages into this language',
+                  description: 'Puts it first among the languages you read.',
+                  onPress: () => set({ preferred: [code, ...preferred.filter((c) => c !== code)] })
+                } satisfies SettingsRow
+              ]
+            : []),
+          ...(preferred.length > 1
+            ? [
+                {
+                  kind: 'action',
+                  id: `languages-read:${code}:remove`,
+                  label: 'Remove',
+                  description: 'Pages in this language are offered for translation again.',
+                  onPress: () => set({ preferred: preferred.filter((c) => c !== code) })
+                } satisfies SettingsRow
+              ]
+            : [])
+        ],
+        (_code, index) => (index === 0 ? 'Pages are translated into this language' : undefined)
+      )
+    },
+    ...addGroup('read', 'Add a language you read', preferred, (code) =>
+      set({ preferred: [...preferred, code] })
+    ),
+    {
+      id: 'always',
+      heading: 'Always translate',
+      description: 'Pages in these languages are translated as soon as they load, without asking.',
+      rows: languageRows('languages-always', prefs.alwaysTranslate, (code) => [
+        {
+          kind: 'action',
+          id: `languages-always:${code}:ask`,
+          label: 'Remove',
+          description: 'Zenium asks before translating pages in this language again.',
+          onPress: () => rule(code, 'ask')
+        }
+      ]),
+      empty: 'No languages yet'
+    },
+    ...addGroup('always', 'Always translate', prefs.alwaysTranslate, (code) =>
+      rule(code, 'always')
+    ),
+    {
+      id: 'never',
+      heading: 'Never translate',
+      description: 'Zenium never offers to translate pages in these languages.',
+      rows: languageRows('languages-never', prefs.neverTranslate, (code) => [
+        {
+          kind: 'action',
+          id: `languages-never:${code}:ask`,
+          label: 'Remove',
+          description: 'Zenium offers to translate pages in this language again.',
+          onPress: () => rule(code, 'ask')
+        }
+      ]),
+      empty: 'No languages yet'
+    },
+    ...addGroup('never', 'Never translate', prefs.neverTranslate, (code) => rule(code, 'never')),
+    {
+      id: 'sites',
+      heading: 'Sites never translated',
+      description:
+        'Zenium does not offer to translate these sites. Add one from the translation bar’s options while you are on the site.',
+      rows: prefs.neverTranslateSites.map((site) =>
+        item(`languages-site:${site}`, site, undefined, [
+          {
+            kind: 'action',
+            id: `languages-site:${site}:forget`,
+            label: 'Remove',
+            description: 'Zenium offers to translate this site again.',
+            onPress: () =>
+              set({ neverTranslateSites: prefs.neverTranslateSites.filter((s) => s !== site) })
+          }
+        ])
+      ),
+      empty: 'No sites yet'
+    },
+    {
+      id: 'models',
+      heading: 'Translation models',
+      description: `Downloaded the first time a language pair is translated and kept on this device. Mozilla’s Firefox Translations models (${t.modelLicense}); list from ${t.registryDate}.`,
+      rows: modelRows,
+      empty: 'No models on this device yet'
+    },
+    {
+      id: 'models-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'languages-model-download',
+          label: 'Download a model',
+          description: 'Fetch a language pair ahead of time, for pages read offline.',
+          keywords: ['offline', 'language pair'],
+          form: {
+            title: 'Download a model',
+            render: (close) => (
+              <ModelPickList onDevice={[...t.installed, ...t.downloading]} close={close} />
+            )
+          }
+        }
+      ]
+    },
+    ...spellcheckGroups(state)
+  ]
+}
+
+/** What a language's dictionary is doing, as its row's description; nothing while it is ready. */
+function dictionaryDetail(status: SpellcheckDictionaryStatus): string | undefined {
+  if (status === 'downloading') return 'Downloading dictionary…'
+  if (status === 'failed') return 'Dictionary download failed'
+  return undefined
+}
+
+/**
+ * Settings › Languages › Spell check on a phone, the desktop pane's `SpellcheckGroups` row for
+ * row (CT-07, CT-19). Android's WebView has no spellchecker of the browser's own – the system
+ * spell checker service chosen next to the keyboards checks its text fields – so on that host
+ * the group states the limit and leads to the keyboard settings (`spellcheck.openKeyboardSettings`).
+ * A host with a checker of its own gets the switch, the languages checked in as item rows – the
+ * dictionary's state as the description, Remove inside – and an Add sheet of the host's other
+ * dictionaries up to Chrome's five; with the switch off the list is the dependent group at .4
+ * (§10.4). A host whose checker follows the OS's languages shows where they are chosen instead.
+ * The custom dictionary stays on the desktop pane: no phone host checks spelling itself.
+ */
+function spellcheckGroups(state: UIState): RowGroup[] {
+  const status = state.spellcheck
+  const settings = state.settings.spellcheck
+  const keywords = ['spelling', 'spell check', 'dictionary', 'misspelt', 'autocorrect']
+  if (!status.available) {
+    return [
+      {
+        id: 'spellcheck',
+        heading: 'Spell check',
+        description:
+          'Text fields are checked by the spell checker of the keyboard in use. Its languages, and whether it marks or corrects words as you type, are chosen with the keyboard in the system settings.',
+        rows: [
+          {
+            kind: 'action',
+            id: 'spellcheck-keyboard',
+            label: 'Keyboard settings',
+            description: 'Open the system’s keyboard and spell checker settings.',
+            keywords,
+            leaves: 'external',
+            onPress: () => run('spellcheck.openKeyboardSettings', undefined)
+          }
+        ]
+      }
+    ]
+  }
+  const checked = status.languages.filter((l) => l.enabled)
+  const remaining = status.languages.filter((l) => !l.enabled)
+  const off = !settings.enabled
+  const groups: RowGroup[] = [
+    {
+      id: 'spellcheck',
+      heading: 'Spell check',
+      description:
+        'Misspelt words in text fields are underlined as you type; their menu offers corrections and Add to Dictionary.',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'spellcheck-enabled',
+          label: 'Check the spelling of text fields',
+          keywords,
+          checked: settings.enabled,
+          onChange: (enabled) => run('spellcheck.setEnabled', { enabled })
+        }
+      ]
+    }
+  ]
+  if (status.systemLanguages) {
+    groups.push({
+      id: 'spellcheck-languages',
+      heading: 'Languages',
+      rows: [
+        {
+          kind: 'info',
+          id: 'spellcheck-system-languages',
+          label: 'Languages follow the system',
+          description:
+            'The system’s spell checker checks in the languages chosen for it in the system settings; a text field’s menu switches between them.',
+          keywords
+        }
+      ]
+    })
+    return groups
+  }
+  groups.push({
+    id: 'spellcheck-languages',
+    heading: 'Languages',
+    description: `Text fields are checked in up to ${SPELLCHECK_LANGUAGES_MAX} languages at a time. A dictionary is downloaded the first time a language is checked in and kept on this device.`,
+    rows: checked.map((language) =>
+      item(
+        `spellcheck-language:${language.code}`,
+        language.name,
+        dictionaryDetail(language.status),
+        [
+          {
+            kind: 'action',
+            id: `spellcheck-language:${language.code}:remove`,
+            label: 'Remove',
+            description: 'Text fields are no longer checked in this language.',
+            onPress: () => run('spellcheck.setLanguage', { code: language.code, on: false })
+          }
+        ],
+        { keywords: [language.code, ...keywords], disabled: off }
+      )
+    ),
+    empty: 'No languages yet'
   })
-  return [{ id: 'search', heading: 'Search', rows }]
+  if (checked.length >= SPELLCHECK_LANGUAGES_MAX) {
+    groups.push({
+      id: 'spellcheck-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'info',
+          id: 'spellcheck-limit',
+          label: `Up to ${SPELLCHECK_LANGUAGES_MAX} languages can be checked at a time`,
+          description: 'Remove one to add another.',
+          disabled: off
+        }
+      ]
+    })
+  } else if (remaining.length > 0) {
+    const options = remaining.map((l) => ({ value: l.code, label: l.name }))
+    groups.push({
+      id: 'spellcheck-add',
+      heading: null,
+      rows: [
+        {
+          kind: 'action',
+          id: 'spellcheck-add',
+          label: 'Add a language',
+          keywords,
+          disabled: off,
+          form: {
+            title: 'Add a language to check in',
+            render: (close) => (
+              <PickList
+                label="Add a language to check in"
+                options={options}
+                onPick={(code) => run('spellcheck.setLanguage', { code, on: true })}
+                close={close}
+              />
+            )
+          }
+        }
+      ]
+    })
+  }
+  return groups
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,91 +3148,8 @@ function modsSection({ state }: SectionContext): RowGroup[] {
 // Extensions
 // ---------------------------------------------------------------------------
 
-function extensionsSection({ state }: SectionContext): RowGroup[] {
-  return [
-    {
-      id: 'extensions',
-      heading: 'Extensions',
-      description:
-        'Chrome extensions from the Chrome Web Store or a folder with a manifest.json. Extensions run in every container.',
-      rows: state.extensions.map((ext) =>
-        item(
-          `extension:${ext.id}`,
-          ext.version ? `${ext.name} ${ext.version}` : ext.name,
-          ext.error ?? (ext.description || ext.path),
-          [
-            {
-              kind: 'switch',
-              id: `extension:${ext.id}:enabled`,
-              label: 'Enabled',
-              checked: ext.enabled,
-              onChange: (v) => run('extension.setEnabled', { id: ext.id, enabled: v })
-            },
-            {
-              kind: 'action',
-              id: `extension:${ext.id}:remove`,
-              label: 'Remove extension',
-              button: 'Remove…',
-              destructive: true,
-              confirm: { title: `Remove ${ext.name}?`, action: 'Remove' },
-              onPress: () => run('extension.remove', { id: ext.id })
-            }
-          ],
-          {
-            leading: ext.icon ? (
-              <img src={ext.icon} alt="" className="zen-settings-ext-icon" draggable={false} />
-            ) : (
-              <Puzzle className="zen-settings-glyph" aria-hidden="true" />
-            ),
-            keywords: ['add-on']
-          }
-        )
-      ),
-      empty: 'No extensions yet'
-    },
-    {
-      id: 'install-extension',
-      heading: 'Install an extension',
-      rows: [
-        {
-          kind: 'action',
-          id: 'install-from-store',
-          label: 'From the Chrome Web Store',
-          description: 'Paste an extension id, or a Chrome Web Store or Edge Add-ons link.',
-          button: 'Install…',
-          form: {
-            title: 'Install from the Chrome Web Store',
-            render: (close) => (
-              <UrlForm
-                id="store-ref"
-                label="Extension id or store link"
-                placeholder="https://chromewebstore.google.com/detail/…"
-                action="Install"
-                onSubmit={(ref) => run('extension.installFromStore', { ref })}
-                close={close}
-              />
-            )
-          }
-        },
-        {
-          kind: 'action',
-          id: 'install-from-file',
-          label: 'From a file',
-          description: 'A packed .crx or .zip.',
-          button: 'Install…',
-          onPress: () => run('extension.installFromFile', undefined)
-        },
-        {
-          kind: 'action',
-          id: 'load-unpacked',
-          label: 'Load unpacked',
-          description: 'A folder with a manifest.json.',
-          button: 'Load…',
-          onPress: () => run('extension.add', undefined)
-        }
-      ]
-    }
-  ]
+function extensionsSection(ctx: SectionContext): RowGroup[] {
+  return extensionsGroups(ctx)
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
   type SliderRow,
   type SwitchRow
 } from './model'
+import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
 /**
  * The Settings rows (design language v2 §10.3–10.5) as React: one flat row per model row, text
@@ -83,6 +84,7 @@ export type SheetRequest =
   | { kind: 'confirm'; rowId: string }
   | { kind: 'form'; rowId: string }
   | { kind: 'item'; rowId: string }
+  | { kind: 'detail'; rowId: string }
 
 export interface RowContext {
   open(request: SheetRequest): void
@@ -114,7 +116,12 @@ export function GroupList({
           data-group={group.id}
           aria-label={group.heading ?? undefined}
         >
-          {group.heading !== null && <h3 className="zen-settings-heading">{group.heading}</h3>}
+          {group.heading !== null && (
+            <h3 className="zen-v2-heading zen-settings-heading">
+              {group.heading}
+              {group.aside && <span className="zen-settings-heading-aside">{group.aside}</span>}
+            </h3>
+          )}
           {group.description && (
             <p className="zen-settings-group-description">{group.description}</p>
           )}
@@ -142,7 +149,10 @@ export function RowView({
   caption?: string
   variant?: RowVariant
 }): JSX.Element {
-  if (variant === 'desktop') return <DesktopRowView row={row} ctx={ctx} caption={caption} />
+  // The sheet this row sits in, for an action that opens a surface of its own over the page.
+  const dismissSheet = useSheetDismiss()
+  if (variant === 'desktop')
+    return <DesktopRowView row={row} ctx={ctx} caption={caption} dismissSheet={dismissSheet} />
   switch (row.kind) {
     case 'value':
       return (
@@ -172,6 +182,7 @@ export function RowView({
           row={row}
           caption={caption}
           description={row.description}
+          leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
@@ -179,6 +190,7 @@ export function RowView({
           onPress={() => {
             if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
+            else if (row.closesSheet) dismissSheet(() => row.onPress?.())
             else row.onPress?.()
           }}
         />
@@ -204,6 +216,24 @@ export function RowView({
           onPress={() => ctx.open({ kind: 'item', rowId: row.id })}
         />
       )
+    case 'detail':
+      // §10.4's detail row: the summary in 13 at 69 % then the 16 px chevron, both trailing.
+      return (
+        <PressableRow
+          row={row}
+          caption={caption}
+          description={row.description}
+          leading={row.leading}
+          haspopup="dialog"
+          trailing={
+            <>
+              {row.summary && <span className="zen-settings-summary">{row.summary}</span>}
+              <ChevronRight aria-hidden="true" />
+            </>
+          }
+          onPress={() => ctx.open({ kind: 'detail', rowId: row.id })}
+        />
+      )
     case 'info':
       // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
       // pointer cursor, no role – a div, since static text is not a button.
@@ -212,9 +242,23 @@ export function RowView({
           ref={row.trailing ? attachLineCount : undefined}
           data-row={row.id}
           data-static=""
-          className={cn('zen-settings-row zen-v2-row', row.disabled && 'zen-settings-row-disabled')}
+          className={cn(
+            'zen-settings-row zen-v2-row',
+            row.disabled && 'zen-settings-row-disabled',
+            row.clamp && 'zen-settings-row-clamp'
+          )}
         >
-          <RowText label={row.label} description={row.description} caption={caption} />
+          {row.leading && (
+            <span className="zen-settings-leading" aria-hidden="true">
+              {row.leading}
+            </span>
+          )}
+          <RowText
+            label={row.label}
+            description={row.description}
+            tone={row.tone}
+            caption={caption}
+          />
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
       )
@@ -254,10 +298,14 @@ export function RowView({
 // Desktop rows (§10.5)
 // ---------------------------------------------------------------------------
 
-/** What pressing an action row (or its button) does: its dialog first, else the action itself. */
-function pressAction(row: ActionRow, ctx: RowContext): void {
+/**
+ * What pressing an action row (or its button) does: its dialog first, else the action itself –
+ * after the sheet it sits in has gone, for an action that opens a surface of its own.
+ */
+function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss): void {
   if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
   else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
+  else if (row.closesSheet) dismissSheet(() => row.onPress?.())
   else row.onPress?.()
 }
 
@@ -269,11 +317,13 @@ function pressAction(row: ActionRow, ctx: RowContext): void {
 function DesktopRowView({
   row,
   ctx,
-  caption
+  caption,
+  dismissSheet
 }: {
   row: SettingsRow
   ctx: RowContext
   caption?: string
+  dismissSheet: SheetDismiss
 }): JSX.Element {
   switch (row.kind) {
     case 'value':
@@ -304,7 +354,7 @@ function DesktopRowView({
               busy={row.busy}
               disabled={row.disabled}
               aria-haspopup={row.confirm || row.form ? 'dialog' : undefined}
-              onClick={() => pressAction(row, ctx)}
+              onClick={() => pressAction(row, ctx, dismissSheet)}
             >
               {row.button}
             </V2Button>
@@ -320,7 +370,7 @@ function DesktopRowView({
           busy={row.busy}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}
           trailing={actionGlyph(row)}
-          onPress={() => pressAction(row, ctx)}
+          onPress={() => pressAction(row, ctx, dismissSheet)}
         />
       )
     case 'field':
@@ -425,7 +475,7 @@ function ControlRow({
         row.disabled && 'zen-settings-row-disabled'
       )}
     >
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText label={row.label} description={description} tone={row.tone} caption={caption} />
       <span className="zen-settings-trailing zen-settings-control">{children}</span>
     </div>
   )
@@ -466,28 +516,38 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
   const [value, setValue] = useState(row.value)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  // A commit that settles later (§9.30): the field keeps the typed value, read-only, until it does.
+  const [busy, setBusy] = useState(false)
   // The row's value moved under the field (another window, a reset): follow it unless typing.
   const [seen, setSeen] = useState(row.value)
   if (row.value !== seen) {
     setSeen(row.value)
     if (!editing) setValue(row.value)
   }
+  const settle = (message: string | undefined): void => {
+    setError(message ?? null)
+    if (message) setEditing(true)
+  }
   const commit = (): void => {
+    if (busy) return
     setEditing(false)
     if (value === row.value) {
       setError(null)
       return
     }
-    const message = row.onCommit(value)
-    setError(message ?? null)
-    if (message) setEditing(true)
+    const result = row.onCommit(value)
+    if (result instanceof Promise) {
+      setBusy(true)
+      void result.then(settle, (e: unknown) => settle(String(e))).finally(() => setBusy(false))
+    } else settle(result)
   }
   return (
     <span className="zen-settings-inline-field">
       <input
         className={cn(
           'zen-settings-input zen-v2-field',
-          row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text'
+          row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
+          row.secret && 'zen-settings-field-secret'
         )}
         type={row.input === 'number' ? 'number' : 'text'}
         inputMode={row.input === 'number' ? 'numeric' : 'text'}
@@ -500,6 +560,8 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
         autoCorrect="off"
         spellCheck={false}
         disabled={row.disabled}
+        readOnly={busy}
+        aria-busy={busy || undefined}
         value={value}
         onFocus={() => setEditing(true)}
         onChange={(e) => {
@@ -593,27 +655,36 @@ function PressableRow({
           {leading}
         </span>
       )}
-      <RowText label={row.label} description={description} caption={caption} />
+      <RowText label={row.label} description={description} tone={row.tone} caption={caption} />
       {trail && <span className="zen-settings-trailing">{trail}</span>}
     </button>
   )
 }
 
-/** Label on the first line, the description under it at 13/69 %, at most two lines (§9.2). */
+/**
+ * Label on the first line, the description under it at 13/69 %, at most two lines (§9.2) – in
+ * a §1 status ink when the row has a `tone`.
+ */
 export function RowText({
   label,
   description,
+  tone,
   caption
 }: {
   label: string
   description?: string
+  tone?: 'warn' | 'danger'
   caption?: string
 }): JSX.Element {
   return (
     <span className="zen-settings-row-text">
       {caption && <span className="zen-settings-caption">{caption}</span>}
       <span className="zen-settings-label">{label}</span>
-      {description && <span className="zen-settings-description">{description}</span>}
+      {description && (
+        <span className="zen-settings-description" data-tone={tone}>
+          {description}
+        </span>
+      )}
     </span>
   )
 }

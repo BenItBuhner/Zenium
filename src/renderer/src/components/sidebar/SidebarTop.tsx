@@ -1,6 +1,7 @@
 import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
+  ALargeSmall,
   AppWindow,
   ArrowLeft,
   ArrowRight,
@@ -8,6 +9,7 @@ import {
   Copy,
   File,
   Info,
+  Languages,
   Lock,
   MoreHorizontal,
   RotateCw,
@@ -20,24 +22,40 @@ import {
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import { addressParts, displayUrl, fullUrl, getDomain, pillText } from '@shared/url'
+import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
+import { chromeDropStore } from '@renderer/lib/dnd'
+import { extensionPageChrome } from '@renderer/lib/extensions/pages'
+import { dropStore } from '@renderer/lib/drag'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { isPrivateWindow } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { APP_MENU_EVENT, hint, openAppMenu } from '@renderer/lib/shortcuts'
-import { openOverlay, openUrlbar, uiStore } from '@renderer/lib/ui'
+import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
+import {
+  closeReaderPreferences,
+  openOverlay,
+  openReaderPreferences,
+  openUrlbar,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { AutofillChip } from '../autofill/AutofillChip'
 import { StarChip } from '../bookmarks/StarChip'
 import { useBookmarkTree } from '../bookmarks/tree'
+import { ExtensionIcon } from '../extensions/ExtensionIcon'
 import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
+import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
+import { MediaHubButton } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
+import { mediaHubVisible } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -108,7 +126,11 @@ export function NavRow({
     tab?.certificateError ?? null
   )
   const isPrivate = isPrivateWindow(state)
-  const isWebPage = Boolean(tab && /^https?:/.test(tab.url))
+  // A page of the web gets the site chips; an extension page is not one, whatever origin the
+  // Android runtime serves it from (v2 §10.1 applied to extension pages): its icon takes the
+  // site icon's place, titled for what it is, and no lock, shield, reader or translation chip.
+  const isWebPage = Boolean(tab && isWebPageUrl(tab.url))
+  const extension = tab ? extensionPageChrome(tab.url, state.extensions) : null
   const isReader = Boolean(tab?.url.startsWith('zen://reader'))
   const boosted = Boolean(
     tab && isWebPage && state.boosts.some((b) => b.domain === getDomain(tab.url) && b.enabled)
@@ -122,9 +144,19 @@ export function NavRow({
   const blockedOpen = uiStore.use(
     (s) => s.blockedPopupsPanel !== null && s.blockedPopupsPanel.tabId === tab?.id
   )
+  const readerPrefsOpen = uiStore.use(
+    (s) => s.readerPreferences !== null && s.readerPreferences.tabId === tab?.id
+  )
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
-  // its chips show where the page is, but nothing can be typed into it.
-  const readOnly = state.window.chrome === 'popup'
+  // its chips show where the page is, but nothing can be typed into it. (An app window draws
+  // its title bar in place of this row, `app/AppTitleBar.tsx`; should the row ever stand in for
+  // it, the address stays read-only there too.)
+  const readOnly = state.window.chrome === 'popup' || state.window.chrome === 'app'
+  // An address or text dragged over the pill goes to the tab as typed (lib/dnd.ts, Chrome's
+  // paste and go): the pill shows it will take the drop (§9.4) – or, read-only, that it cannot,
+  // dimmed for as long as the drag is over the window.
+  const dropInto = dropStore.use((s) => s.key === 'address:')
+  const dropInvalid = chromeDropStore.use((s) => readOnly && s.kind !== null)
   const openField = (): void => {
     if (readOnly) return
     void openUrlbar(tab ? 'edit' : 'new-tab', tab?.id ?? null, {
@@ -151,6 +183,10 @@ export function NavRow({
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
   const blocked = blockedPopupsOf(state, tab?.id)
+  // Translation: the glyph stays once the page has been offered or translated (in the accent
+  // while the translation shows), and comes up on hover for every other web page.
+  const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
+  const translateBarUp = tab ? barStateOf(state, tab.id) !== null : false
   return (
     <div
       ref={row}
@@ -160,6 +196,9 @@ export function NavRow({
       // on SidebarTop's root.)
       data-bar={compact ? undefined : ''}
       data-zen-nav-row
+      // The toolbar pane of the F6 rotation (lib/panes.ts): F6 lands on the address, Shift+Alt+T
+      // on the first enabled control.
+      data-pane="toolbar"
     >
       <NavigationButton
         tab={tab}
@@ -167,7 +206,7 @@ export function NavRow({
         enabled={Boolean(tab?.canGoBack)}
         command="tab.back"
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </NavigationButton>
       <NavigationButton
         tab={tab}
@@ -175,7 +214,7 @@ export function NavRow({
         enabled={Boolean(tab?.canGoForward)}
         command="tab.forward"
       >
-        <ArrowRight className="h-4 w-4" />
+        <ArrowRight className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </NavigationButton>
       <button
         type="button"
@@ -189,7 +228,11 @@ export function NavRow({
           (tab.loading ? run('tab.stop', { tabId: tab.id }) : run('tab.reload', { tabId: tab.id }))
         }
       >
-        {tab?.loading ? <X className="h-4 w-4" /> : <RotateCw className="h-4 w-4" />}
+        {tab?.loading ? (
+          <X className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        ) : (
+          <RotateCw className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        )}
       </button>
       {!compact && (
         /*
@@ -214,6 +257,9 @@ export function NavRow({
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
+          data-address-pill
+          data-drop-into={dropInto || undefined}
+          data-drop-invalid={dropInvalid || undefined}
           onClick={openField}
         >
           <button
@@ -306,7 +352,8 @@ export function NavRow({
                 data-indicator={indicator.state}
                 className={cn(
                   'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100',
-                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100'
+                  indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100',
+                  extension && 'opacity-100'
                 )}
                 onActivate={(e) => {
                   const chip = e.currentTarget
@@ -318,12 +365,19 @@ export function NavRow({
                   )
                 }}
               >
-                <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
+                {extension ? (
+                  <ExtensionIcon icon={extension.icon} size={16} box={16} />
+                ) : (
+                  <IndicatorGlyph state={indicator.state} scheme={tab.url.split(':')[0] ?? ''} />
+                )}
               </PillChip>
             ) : (
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
             )}
-            {tab && (tab.readerable || isReader) && (
+            {tab && isWebPage && state.capabilities.requestBlocking && (
+              <BlockedChip tab={tab} state={state} variant="desktop" />
+            )}
+            {tab && !extension && (tab.readerable || isReader) && (
               <PillChip
                 label="Reader View"
                 title={hint(
@@ -339,6 +393,36 @@ export function NavRow({
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
                 <BookOpenText className="h-3.5 w-3.5" />
+              </PillChip>
+            )}
+            {tab && isReader && (
+              // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
+              // View's while an article is open, whose popup is the preferences popover;
+              // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
+              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
+              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
+              // does not show itself, and the app menu's "Text Preferences…" and the reader
+              // page's own toolbar keep the surface reachable (the popover then hangs centred).
+              <PillChip
+                label="Text preferences"
+                title="Text preferences"
+                popup="dialog"
+                expanded={readerPrefsOpen}
+                data-reader-prefs-chip=""
+                className={cn(
+                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  // The anchor keeps its pressed fill while its popover is up (§9.20).
+                  readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
+                )}
+                onActivate={(e) => {
+                  // The chip that put the popover away keeps the keyboard, as the anchor does
+                  // after Escape (§9.22); a pointer press while it is up never gets here (the
+                  // chrome layer consumes it), so this is the keyboard's toggle.
+                  if (readerPrefsOpen) closeReaderPreferences({ keepFocus: true })
+                  else void openReaderPreferences(tab.id, e.currentTarget.getBoundingClientRect())
+                }}
+              >
+                <ALargeSmall className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && blocked.length > 0 && (
@@ -370,12 +454,33 @@ export function NavRow({
                   else void openBlockedPopups(tab.id, e.currentTarget.getBoundingClientRect())
                 }}
               >
-                <AppWindow className="h-4 w-4" strokeWidth={1.5} />
+                <AppWindow className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
                 {blocked.length > 1 && (
                   <span className="rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)] tabular-nums">
                     {blocked.length}
                   </span>
                 )}
+              </PillChip>
+            )}
+            {tab && isWebPage && state.translate.available && (
+              <PillChip
+                label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                className={cn(
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  translation &&
+                    isTranslating(translation) &&
+                    'text-[var(--zen-accent)] opacity-100',
+                  translation
+                    ? 'flex'
+                    : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
+                )}
+                onActivate={() => {
+                  if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
+                  else run('translate.offer', { tabId: tab.id })
+                }}
+              >
+                <Languages className="h-3.5 w-3.5" />
               </PillChip>
             )}
             {tab && isWebPage && !isPrivate && (
@@ -406,6 +511,7 @@ export function NavRow({
               </PillChip>
             )}
             {tab && <ZoomChip state={state} tab={tab} />}
+            {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starred && (
               <StarChip
                 tab={tab}
@@ -420,12 +526,17 @@ export function NavRow({
           </span>
         </div>
       )}
+      <MediaHubButton state={state} />
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The downloads button joins the fixed set while it is in the row.
-        fixedButtons={FIXED_BUTTONS + (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)}
+        // The media and downloads buttons join the fixed set while they are in the row.
+        fixedButtons={
+          FIXED_BUTTONS +
+          (mediaHubVisible(state) ? 1 : 0) +
+          (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)
+        }
         compact={compact}
       />
       <button
@@ -436,7 +547,7 @@ export function NavRow({
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
     </div>
   )

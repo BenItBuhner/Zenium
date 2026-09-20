@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities, Platform as PlatformOs, Tab } from '../../shared/types'
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  type HostCapabilities,
+  type Platform as PlatformOs,
+  type Tab
+} from '../../shared/types'
 import { INTERNAL_PAGES, type InternalPageRegistry } from '../../shared/internalPages'
 import { Browser } from '../browser'
 import type { ZenWindow } from '../window'
 import type {
   ClipboardHost,
   Platform,
+  SessionHost,
   ShellHost,
   StoreIO,
   TabView,
@@ -57,6 +64,8 @@ interface Fixture {
   copied: string[]
   /** URLs handed to the system share sheet, in order. */
   shared: string[]
+  /** How often the host was told to wipe the private session (`sessions.clearPrivate`). */
+  privateCleared: { count: number }
 }
 
 function fixture(
@@ -64,6 +73,8 @@ function fixture(
     pageTabs?: boolean
     /** A host with several windows (the desktop); one window (Android) by default. */
     windows?: boolean
+    /** Private browsing as tabs of the one window (Android); off by default. */
+    privateTabs?: boolean
     profile?: unknown
     pages?: InternalPageRegistry
   } = {}
@@ -74,8 +85,10 @@ function fixture(
   const raised = new Map<string, number>()
   const copied: string[] = []
   const shared: string[] = []
+  const privateCleared = { count: 0 }
   const capabilities = stub<HostCapabilities>({
     windows: opts.windows ?? false,
+    privateTabs: opts.privateTabs ?? false,
     updates: false,
     agents: false,
     pageTabs: opts.pageTabs ?? true
@@ -143,7 +156,11 @@ function fixture(
     }),
     net: stub(),
     downloads: stub(),
-    sessions: stub(),
+    sessions: stub<SessionHost>({
+      clearPrivate: async () => {
+        privateCleared.count += 1
+      }
+    }),
     app: stub(),
     readabilitySource: () => null
   }
@@ -155,7 +172,7 @@ function fixture(
   browser.state.settings.onboardingDone = true
   browser.start()
   const win = browser.focusedWindow()
-  return { browser, win, viewsFor, loaded, sent, raised, copied, shared }
+  return { browser, win, viewsFor, loaded, sent, raised, copied, shared, privateCleared }
 }
 
 function activeTab(f: Fixture): Tab | undefined {
@@ -612,6 +629,290 @@ describe('a page asked for from a popup window (core rule)', () => {
     expect(overlays).toHaveLength(1)
     expect(overlays[0].winId).toBe(f.win.id)
     expect(f.raised.get(f.win.id)).toBe(1)
+  })
+})
+
+describe('a page asked for from a private window (Chrome opens Settings from Incognito in a regular window)', () => {
+  /** Ctrl+Shift+N off `from` on a desktop-shaped host: a private window with its starter tab. */
+  function privateOff(f: Fixture, from: ZenWindow = f.win): ZenWindow {
+    const win = f.browser.createWindow({ kind: 'private', from })
+    if (!win.isPrivate || !win.localSpace) throw new Error('a private window has a local space')
+    return win
+  }
+
+  /** The tabs a window with a space of its own holds, by URL. */
+  function localUrls(f: Fixture, win: ZenWindow): string[] {
+    return (win.localSpace?.tabIds ?? []).map((id) => f.browser.tabs.tab(id)?.url ?? '?')
+  }
+
+  function settingsTabs(f: Fixture): Tab[] {
+    return Object.values(f.browser.state.model.tabs).filter((t) =>
+      t.url.startsWith('zen://settings')
+    )
+  }
+
+  it('opens the page in the regular window used last, active and in front, without an opener; the private window is left as it was', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    // Two regular windows: the synced one the session started with and a blank one used later.
+    const blank = f.browser.createWindow({ kind: 'unsynced', from: f.win })
+    f.win.lastFocusedAt = 1000
+    blank.lastFocusedAt = 2000
+    const priv = privateOff(f)
+    const privBefore = localUrls(f, priv)
+    const privateBefore = f.browser.tabs.privateTabs().map((t) => t.id)
+    expect(privateBefore).toHaveLength(1)
+    const id = f.browser.handleCommand(priv, 'page.open', { id: 'settings', section: 'privacy' })
+    const tab = f.browser.tabs.tab(typeof id === 'string' ? id : undefined)
+    expect(tab?.url).toBe('zen://settings/privacy')
+    // In the blank window – the regular window used last – active there and in front.
+    expect(localUrls(f, blank)).toContain('zen://settings/privacy')
+    expect(f.browser.tabs.activeTabFor(blank)?.id).toBe(id)
+    expect(f.browser.tabs.windowFor(tab?.id ?? '')).toBe(blank)
+    expect(f.raised.get(blank.id)).toBe(1)
+    expect(f.raised.get(f.win.id)).toBeUndefined()
+    expect(f.raised.get(priv.id)).toBeUndefined()
+    // The asking window's tab is not in that window: no opener, and a regular container.
+    expect(tab?.openerTabId).toBeNull()
+    expect(tab?.containerId).toBe(DEFAULT_CONTAINER_ID)
+    expect(f.browser.tabs.isPrivate(tab!)).toBe(false)
+    // The private window kept its one starter tab and nothing else; the other regular window
+    // was not touched either.
+    expect(localUrls(f, priv)).toEqual(privBefore)
+    expect(f.browser.tabs.privateTabs().map((t) => t.id)).toEqual(privateBefore)
+    expect(f.browser.tabs.activeTabFor(priv)?.id).toBe(priv.localSpace?.tabIds[0])
+    expect(spaceUrls(f)).not.toContain('zen://settings/privacy')
+    // Recency decides: with the synced window used last, the page goes there (one per window).
+    f.win.lastFocusedAt = 3000
+    const again = f.browser.handleCommand(priv, 'page.open', { id: 'settings' })
+    expect(again).not.toBe(id)
+    expect(spaceUrls(f)).toContain('zen://settings')
+    expect(f.raised.get(f.win.id)).toBe(1)
+    expect(localUrls(f, priv)).toEqual(privBefore)
+  })
+
+  it('makes a new regular window for the page when no regular window is alive', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    const privBefore = localUrls(f, priv)
+    f.win.onClosing()
+    f.win.host.close()
+    f.win.onClosed()
+    expect(f.browser.allWindows()).toEqual([priv])
+    const id = f.browser.handleCommand(priv, 'page.open', { id: 'settings', section: 'look' })
+    const windows = f.browser.allWindows()
+    expect(windows).toHaveLength(2)
+    const fresh = windows.find((w) => w !== priv)
+    if (!fresh) throw new Error('a regular window was opened for the page')
+    // What Ctrl+N makes: a synced window with the full chrome, not private, brought to the front.
+    expect(fresh.kind).toBe('synced')
+    expect(fresh.isPrivate).toBe(false)
+    expect(fresh.chrome).toBe('full')
+    expect(f.browser.tabs.activeTabFor(fresh)?.id).toBe(id)
+    expect(f.browser.tabs.tab(typeof id === 'string' ? id : undefined)?.url).toBe(
+      'zen://settings/look'
+    )
+    expect(f.browser.tabs.tab(typeof id === 'string' ? id : undefined)?.openerTabId).toBeNull()
+    expect(f.raised.get(fresh.id)).toBe(1)
+    expect(localUrls(f, priv)).toEqual(privBefore)
+    expect(f.browser.tabs.privateTabs()).toHaveLength(1)
+  })
+
+  it('keeps one Settings tab: asked twice from the private window, the regular window’s is focused and moved to the section', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    const first = f.browser.handleCommand(priv, 'page.open', { id: 'settings', section: 'look' })
+    // Something else in front in the regular window meanwhile.
+    openSite(f, 'https://b.test/')
+    expect(activeTab(f)?.url).toBe('https://b.test/')
+    const again = f.browser.handleCommand(priv, 'page.open', { id: 'settings', section: 'about' })
+    expect(again).toBe(first)
+    expect(settingsTabs(f)).toHaveLength(1)
+    expect(activeTab(f)?.id).toBe(first)
+    expect(activeTab(f)?.url).toBe('zen://settings/about')
+    expect(activeTab(f)?.canGoBack).toBe(true)
+    expect(f.raised.get(f.win.id)).toBe(2)
+    expect(localUrls(f, priv)).toHaveLength(1)
+    expect(localUrls(f, priv)[0]).not.toContain('zen://settings')
+  })
+
+  it('leaves a private tab on its page when the address is typed into it: the page opens in the regular window', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    const privTab = f.browser.tabs.createTab({ url: 'https://p.test/', active: true }, priv)
+    expect(f.browser.tabs.isPrivate(privTab)).toBe(true)
+    // The TabManager's navigation of the private tab (`routeNavigation`).
+    f.browser.tabs.navigate(privTab.id, 'zen://settings/look')
+    expect(f.browser.tabs.tab(privTab.id)?.url).toBe('https://p.test/')
+    expect(f.browser.tabs.activeTabFor(priv)?.id).toBe(privTab.id)
+    expect(spaceUrls(f)).toContain('zen://settings/look')
+    const settings = activeTab(f)
+    expect(settings?.url).toBe('zen://settings/look')
+    expect(settings?.openerTabId).toBeNull()
+    expect(settings?.containerId).toBe(DEFAULT_CONTAINER_ID)
+    expect(f.raised.get(f.win.id)).toBe(1)
+    // The URL bar of the private window says the same.
+    f.browser.handleCommand(priv, 'urlbar.submit', {
+      input: 'zenium://settings/about',
+      newTab: false,
+      tabId: privTab.id,
+      background: false
+    })
+    expect(f.browser.tabs.tab(privTab.id)?.url).toBe('https://p.test/')
+    expect(settingsTabs(f)).toHaveLength(1)
+    expect(activeTab(f)?.url).toBe('zen://settings/about')
+    expect(localUrls(f, priv).filter((u) => u.startsWith('zen://settings'))).toHaveLength(0)
+  })
+
+  it('lets the private session end when the private window closes: no private tab is left behind', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    f.browser.tabs.createTab({ url: 'https://p.test/', active: true }, priv)
+    const id = f.browser.handleCommand(priv, 'page.open', { id: 'settings', section: 'privacy' })
+    expect(f.browser.tabs.privateTabs()).toHaveLength(2)
+    expect(f.privateCleared.count).toBe(0)
+    priv.onClosing()
+    priv.host.close()
+    priv.onClosed()
+    expect(f.browser.allWindows()).toEqual([f.win])
+    expect(f.browser.tabs.privateTabs()).toEqual([])
+    expect(f.privateCleared.count).toBe(1)
+    // Settings stays where it went, in the regular window.
+    expect(f.browser.tabs.tab(typeof id === 'string' ? id : undefined)?.url).toBe(
+      'zen://settings/privacy'
+    )
+    expect(activeTab(f)?.id).toBe(id)
+  })
+
+  it('resolves a popup whose opener is a private window to a regular window', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    // A private page's sized `window.open`: a toolbar-only window that is private itself.
+    const popup = f.browser.createWindow({
+      kind: 'private',
+      from: priv,
+      chrome: 'popup',
+      bounds: { x: 80, y: 80, width: 500, height: 400 },
+      empty: true
+    })
+    const inPopup = f.browser.tabs.createTab({ url: 'https://popup.test/', active: true }, popup)
+    expect(f.browser.tabs.isPrivate(inPopup)).toBe(true)
+    // The overlay's host is the private opener; a tab's host is the regular window.
+    expect(f.browser.pages.hostWindowFor(popup)).toBe(priv)
+    expect(f.browser.pages.tabWindowFor(popup)).toBe(f.win)
+    expect(f.browser.pages.tabWindowFor(priv)).toBe(f.win)
+    expect(f.browser.pages.tabWindowFor(f.win)).toBe(f.win)
+    const id = f.browser.handleCommand(popup, 'page.open', { id: 'settings' })
+    const tab = f.browser.tabs.tab(typeof id === 'string' ? id : undefined)
+    expect(tab?.url).toBe('zen://settings')
+    expect(tab?.openerTabId).toBeNull()
+    expect(activeTab(f)?.id).toBe(id)
+    expect(f.raised.get(f.win.id)).toBe(1)
+    expect(popup.localSpace?.tabIds).toEqual([inPopup.id])
+    expect(localUrls(f, priv)).toHaveLength(1)
+    // No regular window left: the resolver says so and `open` makes one.
+    f.win.onClosing()
+    f.win.host.close()
+    f.win.onClosed()
+    expect(f.browser.pages.tabWindowFor(popup)).toBeNull()
+    expect(f.browser.pages.tabWindowFor(priv)).toBeNull()
+  })
+
+  it('keeps a chrome page’s overlay over the private window that asked, on a host without page tabs', () => {
+    const f = fixture({ windows: true, pageTabs: false })
+    openSite(f, 'https://a.test/')
+    const priv = privateOff(f)
+    f.sent.length = 0
+    const result = f.browser.handleCommand(priv, 'page.open', {
+      id: 'settings',
+      section: 'privacy'
+    })
+    expect(result).toBeNull()
+    const overlays = f.sent.filter((s) => s.name === 'overlay.open')
+    expect(overlays).toHaveLength(1)
+    expect(overlays[0].winId).toBe(priv.id)
+    expect(f.raised.size).toBe(0)
+    expect(f.browser.allWindows()).toHaveLength(2)
+  })
+})
+
+describe('a page asked for from a private tab (one window, private browsing as tabs)', () => {
+  it('opens Settings as a regular-container tab that remembers the private tab as its opener', () => {
+    const f = fixture({ privateTabs: true })
+    openSite(f, 'https://a.test/')
+    const privId = f.browser.tabs.newPrivateTab('https://p.test/', f.win)
+    const priv = f.browser.tabs.tab(privId ?? undefined)
+    if (!priv) throw new Error('a private tab opened')
+    expect(priv.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(activeTab(f)?.id).toBe(priv.id)
+    const id = openPage(f, 'privacy')
+    const tab = f.browser.tabs.tab(id ?? undefined)
+    expect(tab?.url).toBe('zen://settings/privacy')
+    expect(tab?.containerId).toBe(DEFAULT_CONTAINER_ID)
+    expect(f.browser.tabs.isPrivate(tab!)).toBe(false)
+    // Back still works: the opener is the private tab, and it is left as it was.
+    expect(tab?.openerTabId).toBe(priv.id)
+    expect(activeTab(f)?.id).toBe(id)
+    expect(f.browser.tabs.tab(priv.id)?.url).toBe('https://p.test/')
+    expect(f.browser.tabs.tab(priv.id)?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(f.browser.tabs.privateTabs().map((t) => t.id)).toEqual([priv.id])
+    // Asked again from the private tab, the one Settings tab is reused.
+    f.browser.tabs.activateTab(priv.id, f.win)
+    expect(openPage(f, 'about')).toBe(id)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://settings'))).toHaveLength(1)
+    // Typed into the private tab's bar: the private tab stays, the regular Settings tab moves.
+    f.browser.tabs.activateTab(priv.id, f.win)
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: 'zenium://settings/look',
+      newTab: false,
+      tabId: priv.id,
+      background: false
+    })
+    expect(activeTab(f)?.id).toBe(id)
+    expect(activeTab(f)?.url).toBe('zen://settings/look')
+    expect(f.browser.tabs.tab(priv.id)?.url).toBe('https://p.test/')
+    // Closing the private tab ends the private session even while Settings is open.
+    f.browser.tabs.closeTab(priv.id, false, f.win)
+    expect(f.browser.tabs.privateTabs()).toEqual([])
+    expect(f.privateCleared.count).toBe(1)
+    expect(f.browser.tabs.tab(id ?? undefined)?.url).toBe('zen://settings/look')
+  })
+
+  it('opens a deep link with a private tab in front as a regular-container tab', () => {
+    const f = fixture({ privateTabs: true })
+    openSite(f, 'https://a.test/')
+    f.browser.tabs.newPrivateTab('https://p.test/', f.win)
+    f.browser.openExternalUrl('zenium://settings/privacy', f.win, { fromIntent: true })
+    const tab = activeTab(f)
+    expect(tab?.url).toBe('zen://settings/privacy')
+    expect(tab?.containerId).toBe(DEFAULT_CONTAINER_ID)
+    expect(tab?.openerTabId).toBeNull()
+    expect(tab?.fromIntent).toBe(true)
+    expect(f.browser.tabs.privateTabs()).toHaveLength(1)
+  })
+
+  it('keeps a regular opener’s own container, default or not', () => {
+    const f = fixture({ privateTabs: true })
+    const work = f.browser.tabs.createTab(
+      { url: 'https://work.test/', active: true, containerId: 'work' },
+      f.win
+    )
+    expect(work.containerId).toBe('work')
+    const id = openPage(f, 'privacy')
+    const tab = f.browser.tabs.tab(id ?? undefined)
+    expect(tab?.containerId).toBe('work')
+    expect(tab?.openerTabId).toBe(work.id)
+    f.browser.tabs.closeTab(id ?? '', false, f.win)
+    const plain = openSite(f, 'https://a.test/')
+    expect(plain.containerId).toBe(DEFAULT_CONTAINER_ID)
+    const again = f.browser.tabs.tab(openPage(f) ?? undefined)
+    expect(again?.containerId).toBe(DEFAULT_CONTAINER_ID)
+    expect(again?.openerTabId).toBe(plain.id)
   })
 })
 

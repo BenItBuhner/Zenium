@@ -2,9 +2,10 @@ import type { UIState } from '@shared/types'
 import { run } from '../api'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '../motion/spring'
 import { pushBackSurface } from '../back'
+import { resetOverviewPane, sameModeAs } from '../privateTabs'
 import { activeSpace, activeTab, tabOrderOf } from '../selectors'
 import { createStore } from '../store'
-import { captureThumbnail, pruneThumbnails } from '../thumbnails'
+import { captureThumbnail } from '../thumbnails'
 import {
   browserStore,
   contentAreaStore,
@@ -177,7 +178,6 @@ const tabSpring = new SpringAnimation(
 export function prepareStage(state: UIState): void {
   const tab = activeTab(state)
   if (!tab) return
-  pruneThumbnails((id) => Boolean(state.tabs[id]))
   pendingCapture = captureThumbnail(tab.id)
 }
 
@@ -188,11 +188,15 @@ export function takePendingCapture(): Promise<unknown> | null {
   return capture
 }
 
-/** Start dragging the tab track. Returns false when there is no tab to move away from. */
+/**
+ * Start dragging the tab track. Returns false when there is no tab to move away from. The track
+ * is the space's tabs of the active tab's own mode: a swipe never crosses between the private
+ * tabs and the regular ones (the overview's segment is the way across).
+ */
 export function beginTabSwitch(state: UIState): boolean {
   const tab = activeTab(state)
   if (!tab) return false
-  const order = tabOrderOf(state, activeSpace(state)).map((t) => t.id)
+  const order = sameModeAs(tab, tabOrderOf(state, activeSpace(state))).map((t) => t.id)
   let origin = order.indexOf(tab.id)
   if (origin < 0) {
     order.unshift(tab.id)
@@ -477,6 +481,8 @@ export function dismissOverview(): void {
   cancelOverviewCommit = null
   if (stageStore.get().overview.phase !== 'closed') stageStore.set({ overview: OVERVIEW_CLOSED })
   overviewShown = false
+  // The pane picked with the segment was this overview's; the next one opens on the tab's own.
+  resetOverviewPane()
   syncStageActive()
   invalidateSnapshot()
   returnFocusToPage()

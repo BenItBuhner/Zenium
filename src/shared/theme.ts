@@ -93,8 +93,37 @@ export function luminance([r, g, b]: RGB): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 }
 
+/** WCAG contrast ratio of two colours, 1 to 21. */
+export function contrastRatio(a: RGB, b: RGB): number {
+  const la = luminance(a)
+  const lb = luminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+/** The chrome's two inks: near-white on a dark window, near-black on a light one. */
+export const LIGHT_INK: RGB = [240, 240, 245]
+export const DARK_INK: RGB = [30, 30, 36]
+
+/**
+ * Whether a colour reads as dark: a luminance under 0.45. The web-app tiles and the Android
+ * launcher split their letter ink on this reading (`tileInk`, `ShortcutTile.onColor`), so it
+ * stays; the chrome's own ink polarity is `wantsLightInk`, which goes by contrast.
+ */
 export function isDarkColor(rgb: RGB): boolean {
   return luminance(rgb) < 0.45
+}
+
+/**
+ * The ink polarity for a window painted with these colours: the ink whose worst stop still has
+ * the most contrast, since one ink has to read over the whole gradient (a11y-30). The crossover
+ * for a single colour is a luminance near 0.19, not the 0.45 `isDarkColor` reads: on the
+ * mid-tones in between, light ink sits under 3:1 while dark ink clears 4.5:1, so a gradient from
+ * a mid-tone to a dark colour takes dark ink where a reading of its average alone picked white.
+ */
+export function wantsLightInk(colors: RGB[]): boolean {
+  if (colors.length === 0) return false
+  const worst = (ink: RGB): number => Math.min(...colors.map((c) => contrastRatio(ink, c)))
+  return worst(LIGHT_INK) > worst(DARK_INK)
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +200,13 @@ export const BASE_DARK: RGB = [28, 28, 32]
 export interface ResolvedTheme {
   /** CSS `background` value for the browser window. */
   background: string
+  /**
+   * The colours `background` is made of, evenly spaced along the gradient (one for a solid
+   * colour): what a blend between two themes interpolates (`blendResolvedThemes`).
+   */
+  stops: RGB[]
+  /** The gradient's angle in degrees (`rotation` of the space theme; 0 for a solid colour). */
+  rotation: number
   /** Solid colour approximating the gradient (used for the content edge / fallbacks). */
   averageColor: RGB
   isDark: boolean
@@ -179,11 +215,64 @@ export interface ResolvedTheme {
   texture: number
 }
 
-export function resolveTheme(theme: SpaceTheme | null, darkScheme: boolean): ResolvedTheme {
+/** The CSS `background` of evenly spaced `stops` at `rotation` degrees (a solid colour for one stop). */
+function gradientCss(stops: RGB[], rotation: number): string {
+  if (stops.length === 1) return rgbToHex(stops[0])
+  return `linear-gradient(${Math.round(rotation)}deg, ${stops
+    .map((c, i) => `${rgbToHex(c)} ${Math.round((i / (stops.length - 1)) * 100)}%`)
+    .join(', ')})`
+}
+
+/** `stops` re-sampled to `count` evenly spaced colours along the same gradient. */
+function resampleStops(stops: RGB[], count: number): RGB[] {
+  if (stops.length === count) return stops
+  if (stops.length === 1) return Array.from({ length: count }, () => stops[0])
+  return Array.from({ length: count }, (_, i) => {
+    const at = (i / (count - 1)) * (stops.length - 1)
+    const lo = Math.floor(at)
+    const hi = Math.min(stops.length - 1, lo + 1)
+    return mix(stops[lo], stops[hi], at - lo)
+  })
+}
+
+/**
+ * The theme `t` of the way from `a` to `b` (0 = `a`, 1 = `b`): every colour lerps, the gradient
+ * through its stops (re-sampled to the longer of the two so a solid colour blends into a
+ * gradient and back), the angle and the texture linearly. Which side counts as dark switches at
+ * the midpoint: the flag drives the ink and the page family's tokens, which do not interpolate.
+ * This is the phone chrome's theme blend (design language v2 §11.5; MOT-14 for the private
+ * theme): `useTheme` runs `t` linearly over 240 ms, so the window surfaces lerp while the page
+ * family switches at once, at 120 ms.
+ */
+export function blendResolvedThemes(a: ResolvedTheme, b: ResolvedTheme, t: number): ResolvedTheme {
+  const k = clamp(t, 0, 1)
+  if (k <= 0) return a
+  if (k >= 1) return b
+  const count = Math.max(a.stops.length, b.stops.length)
+  const from = resampleStops(a.stops, count)
+  const to = resampleStops(b.stops, count)
+  const stops = from.map((c, i) => mix(c, to[i], k))
+  const rotation = a.rotation + (b.rotation - a.rotation) * k
+  return {
+    background: gradientCss(stops, rotation),
+    stops,
+    rotation,
+    averageColor: mix(a.averageColor, b.averageColor, k),
+    isDark: k < 0.5 ? a.isDark : b.isDark,
+    accent: mix(a.accent, b.accent, k),
+    texture: a.texture + (b.texture - a.texture) * k
+  }
+}
+
+export function resolveTheme(theme: SpaceTheme | null, requestedScheme: boolean): ResolvedTheme {
+  // A theme pinned to one scheme (the private window's) is muted for that scheme under either OS setting.
+  const darkScheme = theme?.scheme ? theme.scheme === 'dark' : requestedScheme
   const base = darkScheme ? BASE_DARK : BASE_LIGHT
   if (!theme || theme.colors.length === 0) {
     return {
       background: rgbToHex(base),
+      stops: [base],
+      rotation: 0,
       averageColor: base,
       isDark: darkScheme,
       accent: darkScheme ? [130, 132, 240] : [98, 100, 220],
@@ -207,16 +296,14 @@ export function resolveTheme(theme: SpaceTheme | null, darkScheme: boolean): Res
   )
   const average: RGB = [Math.round(avg[0]), Math.round(avg[1]), Math.round(avg[2])]
   const primary = colors.find((c) => c.isPrimary) ?? colors[0]
-  const background =
-    tinted.length === 1
-      ? rgbToHex(tinted[0])
-      : `linear-gradient(${Math.round(theme.rotation)}deg, ${tinted
-          .map((c, i) => `${rgbToHex(c)} ${Math.round((i / (tinted.length - 1)) * 100)}%`)
-          .join(', ')})`
+  const rotation = tinted.length === 1 ? 0 : theme.rotation
   return {
-    background,
+    background: gradientCss(tinted, rotation),
+    stops: tinted,
+    rotation,
     averageColor: average,
-    isDark: isDarkColor(average),
+    // The ink has to read on every stop of the gradient, not only on its average (a11y-30).
+    isDark: wantsLightInk(tinted),
     accent: primary.c,
     texture: clamp(theme.texture, 0, 1)
   }
@@ -253,10 +340,15 @@ export function makeTheme(primaryHex: string, extra: string[] = []): SpaceTheme 
   }
 }
 
-/** Zen's private-window look: a deep purple gradient regardless of the space theme. */
+/**
+ * Zen's private-window look: a deep purple gradient regardless of the space theme, and dark
+ * under either scheme (an Incognito window is): muted towards paper for a light scheme it came
+ * out lavender, where neither ink reached 4.5:1 (a11y-30).
+ */
 export const PRIVATE_THEME: SpaceTheme = {
   ...makeTheme('#5b3fa0', ['#2b1d4f', '#3f2c7a']),
-  opacity: 0.85
+  opacity: 0.85,
+  scheme: 'dark'
 }
 
 /** Preset gradients offered in the theme picker / onboarding. */
@@ -281,7 +373,7 @@ export function panelBase(resolved: ResolvedTheme): RGB {
 
 /** The chrome's ink (`--zen-fg`) on a resolved theme. */
 export function themeInk(resolved: ResolvedTheme): RGB {
-  return resolved.isDark ? [240, 240, 245] : [30, 30, 36]
+  return resolved.isDark ? LIGHT_INK : DARK_INK
 }
 
 /**

@@ -18,12 +18,14 @@ import {
 } from '../../shared/translateScript'
 import type { Browser } from '../browser'
 import type { TabView, TranslateHost } from '../platform'
+import type { ZenWindow } from '../window'
 import { JsonStore } from '../store/JsonStore'
 import { decideLanguage, MIN_SAMPLE_CHARS, registryCodeForLabel } from './detect'
 import { WorkerEngine, type TranslationEngine } from './engine'
 import {
   defaultPreferences,
   defaultTarget,
+  languageRule,
   offerFor,
   sanitizePreferences,
   siteOf,
@@ -140,7 +142,6 @@ export class TranslateService {
   private busy = 0
   private sessions = 0
   private readonly tabs = new Map<string, TabEntry>()
-  private installedCache: TranslateModelInfo[] | null = null
 
   constructor(private readonly browser: Browser) {
     this.host = browser.platform.translate ?? null
@@ -184,15 +185,15 @@ export class TranslateService {
     for (const tabId of [...this.tabs.keys()]) {
       if (!this.browser.tabs.tab(tabId)) this.tabs.delete(tabId)
     }
-    if (!this.installedCache)
-      this.installedCache = this.models ? this.models.info().filter((m) => m.installed) : []
+    const models = this.modelInfo()
     const tabs: Record<string, TranslateTabState> = {}
     for (const [tabId, entry] of this.tabs) tabs[tabId] = entry.state
     return {
       available: this.available,
       preferences: this.prefs,
       languages: this.registry.languages(),
-      installed: this.installedCache,
+      installed: models.filter((m) => m.installed),
+      downloading: models.filter((m) => m.downloading),
       registryDate: new Date(this.registry.fetchedAt || Date.parse(ModelRegistry.snapshotDate))
         .toISOString()
         .slice(0, 10),
@@ -206,7 +207,6 @@ export class TranslateService {
   }
 
   private changed(): void {
-    this.installedCache = null
     this.browser.state.commitVolatile()
   }
 
@@ -223,7 +223,28 @@ export class TranslateService {
   setLanguageRule(language: string, rule: LanguageRule): void {
     this.prefs = withLanguageRule(this.prefs, language, rule)
     this.persist()
+    // A language the user never wants translated takes its open offers down with it.
+    if (rule === 'never')
+      for (const entry of this.tabs.values())
+        if (entry.state.status === 'offered' && entry.state.source === language)
+          this.update(entry, { status: 'idle' })
     this.changed()
+  }
+
+  /** The rule `language` is under (for the chrome's menus). */
+  languageRule(language: string): LanguageRule {
+    return languageRule(this.prefs, language)
+  }
+
+  /** The site key of the tab's page ('' when it is not a web page). */
+  siteOf(tabId: string): string {
+    const tab = this.browser.tabs.tab(tabId)
+    return tab ? siteOf(tab.url) : ''
+  }
+
+  /** Whether the tab shows a document the translation UI can work on. */
+  canTranslate(tabId: string): boolean {
+    return this.available && this.view(tabId) !== null
   }
 
   /** Never offer to translate the site of `tabId` (or offer again). */
@@ -283,10 +304,16 @@ export class TranslateService {
     }
   }
 
+  /** Fetch a pair ahead of its first use (the Languages settings); the list shows it arriving. */
   async downloadModel(pair: LanguagePair): Promise<void> {
     const models = this.requireModels()
-    await models.ensure(pair)
+    const running = models.ensure(pair)
     this.changed()
+    try {
+      await running
+    } finally {
+      this.changed()
+    }
   }
 
   async removeModel(pair: LanguagePair): Promise<void> {
@@ -294,6 +321,11 @@ export class TranslateService {
     if (this.engine && !this.engine.disposed) await this.engine.unload(pair).catch(() => undefined)
     await models.remove(pair)
     this.changed()
+  }
+
+  /** `translate.models`: every pair the registry offers, installed or not (the Languages settings). */
+  modelInfo(): TranslateModelInfo[] {
+    return this.models ? this.models.info() : []
   }
 
   private requireModels(): ModelManager {
@@ -530,6 +562,100 @@ export class TranslateService {
   // ---------------------------------------------------------------------------
   // Commands
   // ---------------------------------------------------------------------------
+
+  /**
+   * `translate.offer`: the user asked for the translation UI. Puts the offer up for the tab,
+   * identifying the page language first when it is not known yet; the never-translate rules do
+   * not apply to an explicit request. A running or finished translation only gets its bar shown
+   * again. Throws when the tab shows nothing that can be translated.
+   */
+  async offer(tabId: string): Promise<void> {
+    const view = this.view(tabId)
+    if (!view) throw new Error('This page cannot be translated.')
+    const entry = this.entry(tabId)
+    const status = entry.state.status
+    if (status === 'downloading' || status === 'translating' || status === 'translated') {
+      this.update(entry, { dismissed: false })
+      return
+    }
+    if (status === 'detecting') return
+    const gen = entry.gen
+    if (!entry.state.source) {
+      this.update(entry, { status: 'detecting', error: null, auto: false, dismissed: false })
+      this.busy++
+      try {
+        await this.identify(tabId, view)
+      } catch {
+        // Unknown language: the offer goes up without a source and the user picks one.
+      } finally {
+        this.busy--
+        this.touch()
+      }
+      if (entry.gen !== gen || this.tabs.get(tabId) !== entry) return
+    }
+    this.update(entry, {
+      status: 'offered',
+      target: entry.state.target ?? defaultTarget(this.prefs, entry.state.source),
+      error: null,
+      progress: null,
+      download: null,
+      auto: false,
+      dismissed: false
+    })
+  }
+
+  /**
+   * `translate.retarget`: change the languages the tab's offer would translate from or into
+   * (the bar's menulists, the options menu) without translating yet. Unknown codes are ignored.
+   */
+  retarget(tabId: string, patch: { source?: string; target?: string }): void {
+    const entry = this.tabs.get(tabId)
+    if (!entry) return
+    const supported = this.registry.languages()
+    const update: Partial<TranslateTabState> = {}
+    if (patch.source && supported.includes(patch.source) && patch.source !== entry.state.source) {
+      update.source = patch.source
+      update.confidence = null
+    }
+    if (patch.target && supported.includes(patch.target)) update.target = patch.target
+    if (Object.keys(update).length) this.update(entry, update)
+  }
+
+  /** The menu and command-bar entry to `offer`: a toast, not an error, for other pages. */
+  async open(tabId: string, win?: ZenWindow): Promise<void> {
+    try {
+      await this.offer(tabId)
+    } catch (error) {
+      this.browser.toast(messageOf(error), 'info', win)
+    }
+  }
+
+  /**
+   * `translate.showSelection`: put the selection popover up for `text` (the page's current
+   * selection when omitted; nothing happens when there is none). `anchor` is where the user
+   * asked, in CSS pixels of the page view.
+   */
+  async showSelection(
+    tabId: string,
+    text?: string,
+    anchor: { x: number; y: number } | null = null,
+    win?: ZenWindow
+  ): Promise<void> {
+    if (!this.available) return
+    let value = text?.replace(/\s+/g, ' ').trim() ?? ''
+    if (!value) {
+      const view = this.view(tabId)
+      if (!view) return
+      value = String((await callPage<string>(view, 'selection', SELECTION_MAX_CHARS)) ?? '')
+    }
+    value = value.slice(0, SELECTION_MAX_CHARS)
+    if (!value || !this.browser.tabs.tab(tabId)) return
+    this.browser.emit(
+      'translate.selection',
+      { tabId, text: value, x: anchor?.x ?? null, y: anchor?.y ?? null },
+      win ?? this.browser.tabs.windowFor(tabId)
+    )
+  }
 
   /** `translate.page`: translate the tab's document (into `target`, the default when omitted). */
   async translatePage(tabId: string, options: TranslatePageOptions = {}): Promise<void> {

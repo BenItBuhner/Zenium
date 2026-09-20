@@ -4,11 +4,37 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 /**
+ * A runtime permission the app asked for in its own name (voice search's microphone, `Voice.kt`;
+ * the scanner's camera, `QrScan.kt`) once the system prompt has answered. A refusal for this once
+ * and one for good are told apart by `shouldShowRequestPermissionRationale` read AFTER the
+ * refusal: true while the system would show the prompt once more, false once it would not (the
+ * user chose "Don't ask again", refused twice on Android 11+, or a device policy holds the
+ * permission), when only the app's settings screen can turn it on.
+ */
+enum class RuntimeGrant {
+    GRANTED,
+    /** Refused this once: asking again shows the system prompt again. */
+    DENIED,
+    /** Refused for good: the prompt will not show again, Settings is the way on. */
+    DENIED_PERMANENTLY;
+
+    companion object {
+        fun of(granted: Boolean, canAskAgain: Boolean): RuntimeGrant = when {
+            granted -> GRANTED
+            canAskAgain -> DENIED
+            else -> DENIED_PERMANENTLY
+        }
+    }
+}
+
+/**
  * Bridges WebView permission prompts to the core's per-site decisions (which prompt the user once
- * and remember the answer), then to Android's runtime permissions.
+ * and remember the answer), then to Android's runtime permissions; and asks for the permissions
+ * the app needs in its own name ([requestForApp]).
  */
 class Permissions(private val host: PageHost) {
     private var seq = 0
@@ -17,6 +43,26 @@ class Permissions(private val host: PageHost) {
     /** The core decided (`permission.respond`). */
     fun respond(requestId: String, allow: Boolean) {
         pending.remove(requestId)?.invoke(allow)
+    }
+
+    /**
+     * A permission the app itself needs (voice search's microphone, the scanner's camera), unlike
+     * a page's: no per-site decision of the core's and no remembered answer, straight to the system
+     * prompt when it is not granted, and the prompt's answer read as a [RuntimeGrant]. `then` runs
+     * on the main thread.
+     */
+    fun requestForApp(permission: String, then: (RuntimeGrant) -> Unit) {
+        val activity = host.activity
+        if (ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED) {
+            then(RuntimeGrant.GRANTED)
+            return
+        }
+        activity.requestRuntimePermissions(listOf(permission)) { results ->
+            // An empty map is a request overtaken by another: not granted, and not for good either.
+            val granted = results[permission] == true
+            val canAskAgain = results.isEmpty() || ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)
+            then(RuntimeGrant.of(granted, canAskAgain))
+        }
     }
 
     private fun ask(

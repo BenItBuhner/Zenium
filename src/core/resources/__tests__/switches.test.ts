@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   BASELINE_DISABLED_FEATURES,
+  baselineDisabledFeatures,
   deriveStartupProfile,
   profilesDiffer,
   sanitizeResourceSettings,
@@ -196,5 +197,16 @@ describe('startupSwitches', () => {
     )
     expect(profile.switches.find((sw) => sw.name === 'disable-features')?.value).toBe(own?.value)
     expect(startupSwitches(profile, ['FedCm', 'BackForwardCache'])).toEqual(applied)
+  })
+
+  it('switches Chromium’s own MPRIS player off on Linux only, where Zenium exports its own', () => {
+    expect(baselineDisabledFeatures('linux')).toEqual(['FedCm', 'HardwareMediaKeyHandling'])
+    expect(baselineDisabledFeatures('win32')).toEqual(['FedCm'])
+    expect(baselineDisabledFeatures('darwin')).toEqual(['FedCm'])
+    const linux = startupSwitches(
+      deriveStartupProfile(settings({ enabled: false })),
+      baselineDisabledFeatures('linux')
+    )
+    expect(linux).toEqual([{ name: 'disable-features', value: 'FedCm,HardwareMediaKeyHandling' }])
   })
 })

@@ -9,11 +9,15 @@ import {
   DEFAULT_CONTAINERS,
   DEFAULT_SETTINGS,
   emptyAgentServerStatus,
+  emptyAutofillUIState,
   emptyPasswordsStatus,
   emptyResourceSnapshot
 } from '@shared/defaults'
 import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
+import { emptyPrivacyStatus } from '@shared/privacy'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
+import { UNAVAILABLE_SPELLCHECK } from '@shared/spellcheck'
+import type { TranslateUIState } from '@shared/translate'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -60,11 +64,22 @@ const DESKTOP: HostCapabilities = {
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: false,
+  darkenSites: true,
   privateTabs: false,
   secureDns: true,
   newTabPage: true,
   pageTabs: true,
-  pinShortcuts: false
+  pinShortcuts: false,
+  printPreview: true,
+  pdfViewer: false,
+  translate: true,
+  voiceSearch: false,
+  screenCapture: true,
+  shareSheet: true,
+  selectionToolbar: false,
+  popupSurface: true,
+  qrScan: false,
+  readAloud: true
 }
 
 const ANDROID: HostCapabilities = {
@@ -126,6 +141,26 @@ function tab(url: string, patch: Partial<Tab> = {}): Tab {
   } as Tab
 }
 
+/** The translation engine with a registry and one model on the device (the Languages rows read it). */
+const TRANSLATE: TranslateUIState = {
+  available: true,
+  preferences: {
+    preferred: ['en'],
+    alwaysTranslate: [],
+    neverTranslate: [],
+    neverTranslateSites: [],
+    autoOffer: true
+  },
+  languages: ['de', 'en', 'es', 'fr'],
+  installed: [
+    { from: 'es', to: 'en', version: '1.0', bytes: 40_000_000, installed: true, downloading: false }
+  ],
+  downloading: [],
+  registryDate: '2026-09-01',
+  modelLicense: 'MPL-2.0',
+  tabs: {}
+}
+
 function state(
   capabilities: HostCapabilities = DESKTOP,
   platform: UIState['platform'] = 'linux',
@@ -170,11 +205,13 @@ function state(
     zappingTabId: null,
     liveFolders: {},
     extensions: [],
+    extensionUpdates: { lastCheckedAt: null, checking: false },
     mods: [],
     agents: [],
     agentServer: emptyAgentServerStatus(),
     updates: emptyUpdateStatus('0.3.0-test', { os: 'linux', arch: 'x64', kind: 'appimage' }),
     passwords: emptyPasswordsStatus(),
+    autofill: emptyAutofillUIState(),
     defaultBrowser: { isDefault: false, prompt: null },
     sync: {
       enabled: false,
@@ -199,10 +236,15 @@ function state(
       devices: []
     },
     permissionRules: [],
+    permissionDefaults: {},
+    lastSafetyCheck: null,
     blocking: emptyBlockingStatus(),
+    privacy: emptyPrivacyStatus(),
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     newTabShortcuts: [],
-    newTabBackground: { image: false, canPick: false }
+    newTabBackground: { image: false, canPick: false },
+    translate: TRANSLATE,
+    spellcheck: UNAVAILABLE_SPELLCHECK
   } as unknown as UIState
 }
 
@@ -275,6 +317,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Downloads',
       'Resources',
       'Search',
+      'Autofill',
+      'Languages',
       'Privacy and Security',
       'Space Routing',
       'Containers',
@@ -490,7 +534,9 @@ describe('Find in Settings (§10.5)', () => {
       (c) => c.textContent ?? ''
     )
     expect(captions.length).toBeGreaterThan(0)
-    for (const caption of captions) expect(caption).toMatch(/^[A-Z][^›]+ › .+/)
+    // "Category › Group", or the category alone over a group without a heading (an "Add a site"
+    // action under a list).
+    for (const caption of captions) expect(caption).toMatch(/^[A-Z][^›]+( › .+)?$/)
     expect(captions.some((c) => c.startsWith('Tab Management › '))).toBe(true)
     expect(captions.some((c) => c.startsWith('Look and Feel'))).toBe(false)
     // The rows are the desktop's (a menulist, not a picker chevron).

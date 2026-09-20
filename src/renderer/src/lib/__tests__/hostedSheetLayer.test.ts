@@ -33,6 +33,12 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url))
  * on purpose (and the check below applies to it); one that goes is removed.
  */
 const OWN_SCRIM_CONSUMERS = [
+  // The autofill surfaces' phone sheets (#145): the editors, the save / update and passkey
+  // prompts, the menulist's picker sheet, the passphrase sheet.
+  'components/autofill/AutofillEditor.tsx',
+  'components/autofill/AutofillPrompts.tsx',
+  'components/autofill/PassphraseDialog.tsx',
+  'components/autofill/controls.tsx',
   'components/downloads/DownloadsSheet.tsx',
   'components/newtab/CustomizeSheet.tsx',
   // The password manager's phone passphrase prompt, and its prompt and picker sheets (#92).
@@ -40,11 +46,20 @@ const OWN_SCRIM_CONSUMERS = [
   'components/overlays/passwords/shared.tsx',
   'components/pages/settings/sheets.tsx',
   'components/phone/InstallSheet.tsx',
+  // The media sheet the pill's Now playing chip opens (MW-16).
+  'components/phone/MediaSheet.tsx',
   'components/phone/PhoneSheet.tsx',
+  // Reader View's text preferences sheet (CT-20): the hosted `BottomSheet` with the size stepper,
+  // the font, the colour theme and the column width.
+  'components/reader/ReaderPreferencesPanel.tsx',
   // The blocked pop-ups sheet (#62); its sign-in and certificate sheet registers `ownScrim: phone`
   // (`security/SecurityPromptDialog.tsx`, one component for the dialog and the sheet), which the
   // literal-`true` match above does not see – it returns the hosted `BottomSheet` to the slot too.
-  'components/security/BlockedPopupsPanel.tsx'
+  'components/security/BlockedPopupsPanel.tsx',
+  // The translate surfaces' phone sheets (#106): a language menulist's picker (over the bar or
+  // the selection sheet) and the selection translation sheet.
+  'components/translate/Menulist.tsx',
+  'components/translate/SelectionPopover.tsx'
 ]
 
 function sourceFiles(dir: string): string[] {

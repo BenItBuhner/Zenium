@@ -363,9 +363,19 @@ describe('engagement', () => {
 })
 
 describe('names', () => {
-  it('launcherName prefers the short name', () => {
+  it('launcherName prefers the short name on the Home screen', () => {
     expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' })).toBe('Sketch')
     expect(launcherName({ name: 'Sketch Studio', shortName: null })).toBe('Sketch Studio')
+    expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' }, 'homeScreen')).toBe(
+      'Sketch'
+    )
+  })
+
+  it('launcherName prefers the full name on the desktop, like Chrome', () => {
+    expect(launcherName({ name: 'Sketch Studio', shortName: 'Sketch' }, 'desktop')).toBe(
+      'Sketch Studio'
+    )
+    expect(launcherName({ name: '', shortName: 'Sketch' }, 'desktop')).toBe('Sketch')
   })
 
   it('fallbackShortcutTitle uses the page title, else the host', () => {

@@ -5,6 +5,10 @@
  * after an async snapshot, outside that window, so `focusin` asks the host for it and `focusout`
  * – to nothing editable – asks the host to take it down.
  *
+ * Only fields count: a radio or a checkbox is an `<input>` too and takes focus from a tap (and
+ * from an accessibility click) like any control, but never wants a keyboard – and one over a
+ * picker sheet would shrink the window under it. `takesTypedText` tells them apart.
+ *
  * And the busy form of §9.30: its fields go read-only while the value is applied and Chromium
  * hides the keyboard for a read-only field (its text input type is none). Refused, the field
  * clears, turns editable again and takes the focus – but it has the focus already, so that
@@ -32,8 +36,39 @@ export type KeyboardMessage = 'chrome.showKeyboard' | 'chrome.hideKeyboard'
 
 type Field = HTMLInputElement | HTMLTextAreaElement
 
-const isEditable = (el: EventTarget | null): el is Field =>
-  el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+/**
+ * Input types that take no typed text (Chrome's `HTMLInputElement::TextInputType` is `NONE` for
+ * these). A tap or an accessibility click focuses a radio or a checkbox like any control, so the
+ * chrome has to tell them from a field before it asks the host for the keyboard.
+ */
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'file',
+  'hidden',
+  'image',
+  'radio',
+  'range',
+  'reset',
+  'submit'
+])
+
+/**
+ * Whether the element that took focus is one the user types into – an `<input>` of a text kind
+ * or a `<textarea>` – so the host should bring the soft keyboard up for it. The chrome focuses
+ * its fields after an async snapshot, outside the tap's gesture window, and the WebView raises
+ * no keyboard of its own then; a radio, a checkbox or a button never wants one.
+ */
+export function takesTypedText(target: EventTarget | null): target is Field {
+  if (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) {
+    return true
+  }
+  if (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) {
+    return !NON_TEXT_INPUT_TYPES.has(target.type.toLowerCase())
+  }
+  return false
+}
 
 /**
  * Install the policy on `doc`; `send` carries a message to the host. Returns the uninstall.
@@ -100,14 +135,14 @@ export function installKeyboardPolicy(
   }
 
   const onFocusIn = (e: FocusEvent): void => {
-    if (!isEditable(e.target)) return
+    if (!takesTypedText(e.target)) return
     send('chrome.showKeyboard')
     watch(e.target)
   }
   const onFocusOut = (e: FocusEvent): void => {
-    if (!isEditable(e.target) || swapping) return
+    if (!takesTypedText(e.target) || swapping) return
     unwatch()
-    if (!isEditable(e.relatedTarget)) send('chrome.hideKeyboard')
+    if (!takesTypedText(e.relatedTarget)) send('chrome.hideKeyboard')
   }
   doc.addEventListener('focusin', onFocusIn)
   doc.addEventListener('focusout', onFocusOut)

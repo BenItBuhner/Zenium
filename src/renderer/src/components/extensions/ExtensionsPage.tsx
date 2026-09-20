@@ -15,9 +15,11 @@ import {
 import type { ExtensionInfo, UIState } from '@shared/types'
 import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { errorCounts, errorSummary } from '@renderer/lib/extensions/errorText'
 import { relativeTime } from '@renderer/lib/extensions/format'
+import { extensionRevealStore, takeExtensionReveal } from '@renderer/lib/extensions/manage'
 import { parseStoreInput, versionAndSource } from '@renderer/lib/extensions/storeInput'
-import { closeOverlay } from '@renderer/lib/ui'
+import { browserStore, closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { LocalMenu, type LocalMenuEntry } from '../menus/LocalMenu'
 import { ExtensionDetails } from './ExtensionDetails'
@@ -50,7 +52,20 @@ export function ExtensionsPage({
   /** Inside another page's column (Settings → Extensions): no page colour, no own scrolling. */
   embedded?: boolean
 }): JSX.Element {
-  const [detailsId, setDetailsId] = useState<string | null>(null)
+  // "Manage extension" from elsewhere (an extension page's site information) asks for one
+  // extension's details as the page comes up; asked while the page is up, the same.
+  const [detailsId, setDetailsId] = useState<string | null>(() =>
+    takeExtensionReveal(state.extensions.map((e) => e.id))
+  )
+  useEffect(
+    () =>
+      extensionRevealStore.subscribe(() => {
+        const listed = browserStore.get().state?.extensions ?? []
+        const id = takeExtensionReveal(listed.map((e) => e.id))
+        if (id) setDetailsId(id)
+      }),
+    []
+  )
   const [adding, setAdding] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [dropping, setDropping] = useState(false)
@@ -349,6 +364,9 @@ function ExtensionCard({
 }): JSX.Element {
   const mv2 = ext.manifestVersion === 2
   const disabledLook = !ext.enabled && !ext.error
+  // One red line per card: while the load error is the sub-line, the console (which holds that
+  // same error) is not summarised beside it (the design lead's ruling on #212).
+  const log = ext.errors.length > 0 && !ext.error ? errorCounts(ext.errors) : null
   return (
     <li className="zen-v2-card zen-ext-card" data-disabled={disabledLook || undefined}>
       <button
@@ -381,6 +399,16 @@ function ExtensionCard({
       </button>
       {/* The controls are the ⋯'s bar (§9.20): its menu end-aligns with it, flush under the row. */}
       <div className="zen-ext-card-controls" data-bar="">
+        {/*
+          The error console's summary on the row's trailing side (13 in the §1 status ink, the
+          details page's Errors card has the lines): the one thing about an installed extension
+          that its own sub-line does not say – so not while the sub-line is the load error.
+        */}
+        {log && (
+          <span className="zen-ext-card-errors mr-1" data-tone={log.errors > 0 ? 'danger' : 'warn'}>
+            {errorSummary(ext.errors)}
+          </span>
+        )}
         {/* Working, the button stays at its size with a spinner for its label (§9.30 busy). */}
         {(ext.updateState === 'available' || ext.updateState === 'updating') && (
           <V2Button

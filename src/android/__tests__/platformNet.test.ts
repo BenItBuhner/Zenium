@@ -64,11 +64,26 @@ describe('AndroidPlatform.net.fetchText', () => {
         args: {
           url: 'https://s.example/q',
           headers: { Accept: 'application/json' },
-          timeoutMs: 1000
+          timeoutMs: 1000,
+          // No cap asked for: Kotlin's own limit (0).
+          maxBytes: 0,
+          method: 'GET',
+          body: null
         }
       }
     ])
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('hands a caller’s byte cap to Kotlin, which bounds the download there', async () => {
+    const { bridge, calls } = fakeBridge({ ok: false, status: 0, text: '' })
+    const result = await new AndroidPlatform(bridge, BOOT).net.fetchText(
+      'https://forum.example/opensearch.xml',
+      { headers: {}, timeoutMs: 6000, maxBytes: 64 * 1024 }
+    )
+    expect(calls[0]).toMatchObject({ method: 'net.fetch', args: { maxBytes: 64 * 1024 } })
+    // Kotlin stopped at the cap and failed the fetch: the caller sees a failure, no body.
+    expect(result).toEqual({ ok: false, status: 0, text: '', headers: {} })
   })
 
   it('reads a spilled body from the app origin by token and releases it', async () => {

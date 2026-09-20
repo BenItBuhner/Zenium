@@ -3,6 +3,7 @@ import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { readerPage } from './readerPage'
+import { readerPreferencesPatch, type ReaderPreferences } from '../shared/reader'
 
 export const READER_URL_PREFIX = 'zen://reader'
 
@@ -23,7 +24,8 @@ export interface ReaderArticle {
   dir: 'ltr' | 'rtl' | null
 }
 
-interface RawArticle {
+/** What Readability's `parse()` returns, before the service cleans and stores it. */
+export interface RawArticle {
   title?: string
   byline?: string | null
   siteName?: string | null
@@ -62,7 +64,46 @@ export class ReaderService {
   /** HTML of the `zen://reader` page for an article id (null once the article is gone). */
   pageHtml(id: string): string | null {
     const article = this.articles.get(id)
-    return article ? readerPage(article) : null
+    return article ? readerPage(article, this.preferences()) : null
+  }
+
+  /** The text preferences every reader page is rendered with (Settings, persisted). */
+  preferences(): ReaderPreferences {
+    return this.browser.state.settings.reader
+  }
+
+  /**
+   * Change the text preferences (CT-20): from a reader page's own toolbar (relayed by the page
+   * script), the chrome's reader sheet / popover, or a settings patch. Saved with the profile and
+   * pushed to every open reader page, so a second reader tab follows the first.
+   */
+  setPreferences(patch: Partial<ReaderPreferences>): void {
+    const clean = readerPreferencesPatch(patch)
+    if (!clean) return
+    const current = this.preferences()
+    const next = { ...current, ...clean }
+    if (JSON.stringify(next) === JSON.stringify(current)) return
+    this.browser.state.settings.reader = next
+    this.pushPreferences()
+    this.browser.state.commit()
+  }
+
+  /** The setting changed under the service (a settings patch, a sync merge). */
+  onPreferencesChanged(): void {
+    this.pushPreferences()
+  }
+
+  /** Every open reader page takes the saved preferences (`window.zenReaderApply`). */
+  private pushPreferences(): void {
+    const prefs = JSON.stringify(this.preferences())
+    for (const tab of Object.values(this.browser.state.model.tabs)) {
+      if (!this.isReaderUrl(tab.url) || tab.discarded) continue
+      const view = this.browser.tabs.view(tab.id)
+      if (!view) continue
+      void view
+        .executeJavaScript(`window.zenReaderApply && window.zenReaderApply(${prefs})`)
+        .catch(() => undefined)
+    }
   }
 
   isReaderUrl(url: string): boolean {
@@ -152,6 +193,17 @@ export class ReaderService {
       this.browser.toast('This page cannot be shown in Reader View.', 'info', win)
       return
     }
+    this.open(tabId, raw)
+  }
+
+  /**
+   * Show an article already extracted from the tab's page in Reader View: the page script's
+   * result here, or a host's own extraction (the preview host stands one in). The tab goes to
+   * `zen://reader?id=…&url=…`, which renders it with the saved text preferences.
+   */
+  open(tabId: string, raw: RawArticle): void {
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !raw.content) return
     const id = newId('article')
     const article: ReaderArticle = {
       id,

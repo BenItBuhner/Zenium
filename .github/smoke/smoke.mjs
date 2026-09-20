@@ -1389,6 +1389,232 @@ async function closeExtraWindows(s) {
   await waitFor(async () => (await s.windowCount()) === 1, 10000, 'extra windows closed')
 }
 
+/**
+ * The private window's new tab page has the "Block third-party cookies" switch (the private-scoped
+ * setting of #218): the row is there once the page has its state, and a real click on the switch
+ * flips `privacy.thirdPartyCookiesPrivate` – off writes `allow`, on writes `block` – while the
+ * regular mode is left alone. The click goes through xdotool like the pop-up step's: the served
+ * page is a WebContentsView, not a Playwright page. Returns the step's detail.
+ */
+async function privateCookiesSwitch(s, privateWindowId) {
+  // A window opened by a synthetic shortcut gets no focus from a window manager and lands behind
+  // the main one; under Xvfb without one it can sit fully under it. A window Chromium finds
+  // occluded gets no rendering updates: the chrome's ResizeObserver never measures the content
+  // frame, no `layout.report` reaches the core, and the page's view – created and attached –
+  // stays hidden (main red twice on 2026-09-20 with `{url: "zen://newtab/", visible: false}`
+  // after 15 s). So the window is raised before anything is waited for, the wait is split into
+  // the view existing and the view being shown, and a view that stays hidden gets the chrome
+  // nudged into a fresh report: the window raised again and resized by a pixel and back.
+  await s.bringToFront(privateWindowId)
+  const nudged = []
+  const windowViews = () =>
+    s.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = BrowserWindow.fromId(wid)
+      if (!w || w.isDestroyed()) return { shown: null, views: 'window gone' }
+      const views = []
+      const walk = (parent) => {
+        for (const v of parent.children || []) {
+          const wc = v.webContents
+          if (wc && !wc.isDestroyed()) {
+            views.push({
+              id: wc.id,
+              url: wc.getURL(),
+              visible: v.getVisible(),
+              loading: wc.isLoading()
+            })
+          }
+          walk(v)
+        }
+      }
+      walk(w.contentView)
+      const page = (v) => v.url.startsWith('zen://newtab')
+      const hit = views.find((v) => page(v) && v.visible && !v.loading)
+      return { shown: hit ? hit.id : null, exists: views.some(page), views }
+    }, privateWindowId)
+  const nudge = () =>
+    s.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = BrowserWindow.fromId(wid)
+      if (!w || w.isDestroyed()) return
+      w.show()
+      w.focus()
+      w.moveTop()
+      const [width, height] = w.getSize()
+      w.setSize(width + 1, height)
+      w.setSize(width, height)
+    }, privateWindowId)
+  // What the window holds goes into a failure, so a miss says which page the window shows.
+  let seen = null
+  // (a) The page's view exists in the window (the window may hold an adopted preload of it too).
+  await waitFor(
+    async () => {
+      const snapshot = await windowViews()
+      seen = snapshot.views
+      return snapshot.exists ? true : null
+    },
+    15000,
+    "the private window's zen://newtab view"
+  ).catch((err) => {
+    throw new Error(`${err.message}; the window's views: ${JSON.stringify(seen)}`)
+  })
+  // (b) The view is shown and its page loaded: the chrome placed it. Every 4 s without that, the
+  // chrome is nudged into another layout report.
+  let lastNudge = Date.now()
+  const ntpId = await waitFor(
+    async () => {
+      const snapshot = await windowViews()
+      seen = snapshot.views
+      if (snapshot.shown) return snapshot.shown
+      if (Date.now() - lastNudge >= 4000) {
+        lastNudge = Date.now()
+        nudged.push(new Date().toISOString())
+        await nudge()
+      }
+      return null
+    },
+    20000,
+    "the private window's zen://newtab view shown by the chrome"
+  ).catch((err) => {
+    throw new Error(
+      `${err.message}; the window's views: ${JSON.stringify(seen)}; nudged ${nudged.length} time(s)`
+    )
+  })
+  const probe = `(() => {
+      const row = document.getElementById('zen-cookies')
+      const sw = document.getElementById('zen-cookies-switch')
+      const desc = document.getElementById('zen-cookies-desc')
+      if (!row || !sw) return null
+      const r = sw.getBoundingClientRect()
+      return {
+        hidden: row.hidden,
+        role: sw.getAttribute('role'),
+        checked: sw.getAttribute('aria-checked'),
+        disabled: sw.disabled,
+        label: (document.getElementById('zen-cookies-label') || {}).textContent,
+        description: desc && desc.textContent,
+        rect: { left: r.left, top: r.top, width: r.width, height: r.height }
+      }
+    })()`
+  const privacy = async () =>
+    (await s.chrome.evaluate(() => window.zen.invoke('app.getState'))).settings.privacy
+  const before = await privacy()
+  // (1) The row exists on the private page, a switch in the position the settings give it.
+  const row = await waitFor(
+    async () => {
+      const r = await s.tabEval(ntpId, probe).catch(() => null)
+      return r && !r.hidden ? r : null
+    },
+    10000,
+    'the "Block third-party cookies" row on the private new tab page'
+  )
+  const detail = { privateWindowId, ntpId, before, row, nudged }
+  if (row.role !== 'switch' || row.label !== 'Block third-party cookies') {
+    throw new Error(`the row is not the switch it should be: ${JSON.stringify(row)}`)
+  }
+  if (row.disabled && before.thirdPartyCookies !== 'block') {
+    throw new Error(`the switch is disabled while the global mode is ${before.thirdPartyCookies}`)
+  }
+  // (2) A real click at the switch flips the setting the way the switch reads: on -> block,
+  // off -> allow, never default. The window opened behind the main one (a synthetic shortcut
+  // gives it no focus from the window manager): raise it and wait until it is the focused
+  // window, then Escape takes its URL bar out of the new-tab mode so the page is what sits
+  // under the pointer; the view's place is read after that, once the window has settled.
+  await s.bringToFront(privateWindowId)
+  await waitFor(
+    () =>
+      s.app.evaluate(
+        ({ BrowserWindow }, wid) => BrowserWindow.fromId(wid)?.isFocused() ?? false,
+        privateWindowId
+      ),
+    8000,
+    'the private window focused'
+  )
+  await s.press('Escape', privateWindowId)
+  await s.settle()
+  await delay(500)
+  const view = await s.tabViewScreenRect(ntpId, privateWindowId)
+  if (!view) throw new Error(`no view for the page ${ntpId} in window ${privateWindowId}`)
+  const zoom = (await s.tabs()).find((t) => t.id === ntpId)?.zoomFactor ?? 1
+  const rowNow = await s.tabEval(ntpId, probe)
+  const point = buttonScreenPoint({
+    view,
+    frame: { left: 0, top: 0 },
+    button: rowNow.rect,
+    zoom,
+    scale: view.scale
+  })
+  detail.geometry = { view, zoom, point }
+  if (!point.inside) {
+    throw new Error(`the switch is outside the page view: ${JSON.stringify(detail.geometry)}`)
+  }
+  await s.shot('05a-private-cookies-row')
+  const wantAfterClick = rowNow.checked === 'true' ? 'allow' : 'block'
+  const flipped = async (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const p = await privacy()
+      if (p.thirdPartyCookiesPrivate === wantAfterClick) return p
+      if (Date.now() >= deadline) return null
+      await delay(150)
+    }
+  }
+  // The gesture, as the sign-in smoke sends its: trusted input through `sendInputEvent` at the
+  // switch on the page's own webContents (the served page is the top document of its view, so
+  // the event reaches it); when the setting has not moved, the pointer goes through X instead –
+  // the window raised by the window manager first, since a window opened by a synthetic
+  // shortcut can sit behind the main one.
+  const local = {
+    x: Math.round(rowNow.rect.left + rowNow.rect.width / 2),
+    y: Math.round(rowNow.rect.top + rowNow.rect.height / 2)
+  }
+  await s.app.evaluate(
+    ({ webContents }, { id, x, y }) => {
+      const wc = webContents.fromId(id)
+      if (!wc || wc.isDestroyed()) throw new Error(`page webContents ${id} is gone`)
+      wc.focus()
+      wc.sendInputEvent({ type: 'mouseMove', x, y })
+      wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+      wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    },
+    { id: ntpId, ...local }
+  )
+  let after = await flipped(4000)
+  detail.gesture = after ? 'sendInputEvent' : 'sendInputEvent did not move the setting'
+  if (!after) {
+    const xid = await s.app.evaluate(({ BrowserWindow }, wid) => {
+      const w = BrowserWindow.fromId(wid)
+      const handle = w && !w.isDestroyed() ? w.getNativeWindowHandle() : null
+      return handle && handle.length >= 4 ? handle.readUInt32LE(0) : null
+    }, privateWindowId)
+    if (xid) sh('xdotool', ['windowactivate', '--sync', String(xid)], 10000)
+    await delay(300)
+    xdotoolClick(point.x, point.y)
+    after = await flipped(8000)
+    detail.gesture += after ? `; xdotool at ${point.x},${point.y} did` : '; xdotool did not either'
+    if (!after) {
+      throw new Error(
+        `privacy.thirdPartyCookiesPrivate did not become ${wantAfterClick} after the click (${detail.gesture}); geometry ${JSON.stringify(detail.geometry)}`
+      )
+    }
+  }
+  const rowAfter = await waitFor(
+    async () => {
+      const r = await s.tabEval(ntpId, probe).catch(() => null)
+      return r && r.checked === (wantAfterClick === 'block' ? 'true' : 'false') ? r : null
+    },
+    8000,
+    `aria-checked mirrors the ${wantAfterClick} choice`
+  )
+  detail.after = after
+  detail.rowAfter = rowAfter
+  if (after.thirdPartyCookies !== before.thirdPartyCookies) {
+    throw new Error(
+      `the private switch changed the regular mode: ${before.thirdPartyCookies} -> ${after.thirdPartyCookies}`
+    )
+  }
+  await s.shot('05b-private-cookies-switch')
+  return detail
+}
+
 /** The chrome page of the window whose chrome is `chrome` (`full`, `popup`), once it renders. */
 function chromePageWithChrome(s, chrome, timeoutMs) {
   return waitFor(
@@ -1698,6 +1924,38 @@ async function scenarioWalkthrough() {
       await s.shot('05-three-windows')
       await closeExtraWindows(s)
       return { windows: await s.windowCount() }
+    })
+
+    // The private window's new tab page carries the "Block third-party cookies" switch (the
+    // private-scoped setting of #218): the row is there once the page has its state, and a real
+    // click on the switch flips `privacy.thirdPartyCookiesPrivate` – off writes `allow`, on writes
+    // `block` – while the regular mode is left alone. The click goes through xdotool like the
+    // pop-up step's: the served page is a WebContentsView, not a Playwright page.
+    await s.step('private-cookies-switch', async () => {
+      await s.reset()
+      const windowsBefore = await s.windowCount()
+      await s.press(PRIVATE_WINDOW_COMBO)
+      await waitFor(
+        async () => (await s.windowCount()) >= windowsBefore + 1,
+        10000,
+        'private window'
+      )
+      const privateWindowId = await waitFor(
+        () =>
+          s.app.evaluate(
+            ({ BrowserWindow }, main) =>
+              BrowserWindow.getAllWindows().find((w) => w.id !== main && !w.isDestroyed())?.id ??
+              null,
+            s.mainWindowId
+          ),
+        10000,
+        'the private window'
+      )
+      try {
+        return await privateCookiesSwitch(s, privateWindowId)
+      } finally {
+        await closeExtraWindows(s)
+      }
     })
 
     await s.step('history', async () => {

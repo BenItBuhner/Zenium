@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
@@ -21,6 +22,8 @@ import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -38,6 +41,7 @@ import app.zen.chromium.blocking.Blocking
 import app.zen.chromium.ext.ExtensionStore
 import app.zen.chromium.privacy.Privacy
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
@@ -68,11 +72,45 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
     val siteData = SiteData()
+    private val accessibility: AccessibilityManager? = activity.getSystemService(AccessibilityManager::class.java)
+    private val touchExplorationListener = AccessibilityManager.TouchExplorationStateChangeListener { enabled ->
+        Log.d(TAG, "touch exploration ${if (enabled) "on: the bar stays put" else "off: the bar may hide on scroll again"}")
+        chrome.barTouchExploration(enabled)
+    }
+
+    /** An accessibility service explores the screen by touch right now (TalkBack). */
+    val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
 
     init {
         // A private session the last run did not get to end (a crash, the system killing the app)
-        // ends now, before any tab exists and while its profile is free to be deleted.
+        // ends now, before any tab exists and while its profile is free to be deleted; the card
+        // that offered to close its tabs goes with the PrivateSession below.
         Profiles.wipePrivate(activity)
+        // Accessibility focus (TalkBack's swipe, or a service's focus action) landing in the
+        // chrome while the bar that hides on scroll is off its edge: the bar comes back, as
+        // Chrome's controls do, so what was focused is on screen. Chromium raises the event
+        // through the WebView's parent; with the bar off nothing else of the chrome is up to land
+        // on (a sheet or a panel keeps the bar shown), so the pill and its buttons are the only
+        // way here. Not while a finger is on the page: a service's focus never comes with one
+        // (TalkBack's swipe is its own gesture and explore by touch is hover), and Chromium
+        // re-raises the event for the node it already has as it restores its state, which under a
+        // drag would snap a bar the finger is moving one to one. The event goes on unchanged.
+        root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onRequestSendAccessibilityEvent(host: ViewGroup, child: View, event: AccessibilityEvent): Boolean {
+                if (child === chrome && event.eventType == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED) {
+                    val frame = tabs.barHide
+                    val touching = tabs.touchingPage()
+                    val shows = frame?.away == true && !touching
+                    if (shows) chrome.barShow()
+                    Log.d(TAG, "accessibility focus in the chrome: bar ${frame?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "at rest"}, finger on the page $touching: ${if (shows) "the bar comes back" else "left as it is"}")
+                }
+                return super.onRequestSendAccessibilityEvent(host, child, event)
+            }
+        }
+        // Touch exploration (TalkBack) on: the bar does not hide on scroll at all, and comes back
+        // if it was off – Chrome never hides its controls while an accessibility service is on. The
+        // chrome starts from the state in the boot payload and hears each change from here.
+        accessibility?.addTouchExplorationStateChangeListener(touchExplorationListener)
     }
 
     /** The launcher icon colour (one enabled `activity-alias`), driven by Settings → Look and Feel. */
@@ -96,6 +134,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
     /** The share sheet, in both directions (after `io`: it fetches on it). */
     val share = Share(this, io)
+    /** The pages' media on the OS controls: the media notification, the lock screen, picture-in-picture (`media.*`). */
+    val media = MediaSessions(this, io)
+    /** The pages' Web Notifications on the shade, one channel per site (`notification.*`). */
+    val webNotifications = WebNotifications(this, io)
+    /** The private session's card while private tabs are open (`private.*`). */
+    val privateSession = PrivateSession(this)
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
     /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
@@ -105,10 +149,43 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
     val shortcuts = Shortcuts(activity, io)
+    /** Voice search: the device's speech recogniser behind the chrome's mic buttons (OMN-19). */
+    val voice = Voice(this)
+    /** QR scanning: the back camera behind the chrome's camera buttons, its preview laid over the scan sheet (OMN-22). */
+    val qrScan = QrScan(this, root)
+    /** Read aloud: the device's speech engine behind the core's `SpeechHost`, and the speech stream's audio focus (A11Y-06). */
+    val readAloud = ReadAloud(this)
     override var fullscreenTab: TabWebView? = null
         private set
+    /** The page's fullscreen element as the WebView renders it (the view in the fullscreen layer), while there is one. */
+    val fullscreenView: View? get() = fullscreenLayer.getChildAt(0)
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+    /**
+     * The fullscreen video's natural size as its page last reported it ([fullscreenVideo]), the
+     * tab it is in, and whether one of the page's frames (an embed's document) reported it rather
+     * than the main document: the screen turns by it (MED-01). The page's `fullscreenchange`
+     * follows the engine's `onShowCustomView`, so the report usually finds [fullscreenTab] set
+     * and turns the screen at once; kept here for the other order, and dropped when the page says
+     * fullscreen ended or the fullscreen exits ([exitFullscreen]).
+     */
+    private var fullscreenVideoTab: TabWebView? = null
+    private var fullscreenVideoSize: Pair<Int, Int>? = null
+    private var fullscreenVideoFromFrame = false
+    /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
+    private var fullscreenOrientationHeld = false
+    /**
+     * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
+     * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
+     */
+    val landing = FullscreenLanding()
     override var immersive = false
+        private set
+    /**
+     * The chrome's last word on the private surface (`window.setSecure`): a private tab is in
+     * view, or the overview shows its private pane. The window's screenshot guard follows it
+     * (`PrivateBrowsing.guard`).
+     */
+    var privateSurface = false
         private set
     /** The chrome's colour scheme, so native pieces (the back preview) match it. */
     override var themeDark = false
@@ -127,6 +204,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         private set
     /** Previews of the pages a back gesture would return to. */
     override val snapshots = HistorySnapshots(activity)
+    /** The tab cards' pictures, one JPEG per tab under the cache dir (`thumbnail.*`, [TabWebView.captureThumbnail]). */
+    override val thumbnails = Thumbnails(File(activity.cacheDir, Thumbnails.DIR))
+    /**
+     * Each tab's last pushed list and the `hostState` behind it, for the synchronous
+     * `view.navigationEntries` and `view.navigationHostState` the core makes from the bridge
+     * thread, where the WebView cannot be asked (see [NavigationMirror]).
+     */
+    val navigation = NavigationMirror(SystemClock::uptimeMillis)
     /**
      * Page views go behind the chrome no earlier than with the chrome's next drawn frame, and the
      * chrome hears when the frame carrying each change is on screen (`view.drawn`, [reportDrawn]).
@@ -141,10 +226,20 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     // --- what the pages report into (PageHost): all of it goes to the core in the chrome ------------
 
-    override fun viewEvent(tabId: String, name: String, payload: Any?) = chrome.viewEvent(tabId, name, payload)
+    override fun viewEvent(tabId: String, name: String, payload: Any?) {
+        when (name) {
+            "historyChanged" -> (payload as? JSONObject)?.let { navigation.listChanged(tabId, it) }
+            "destroyed" -> navigation.forget(tabId)
+        }
+        chrome.viewEvent(tabId, name, payload)
+    }
+    override fun navigationStateChanged(tabId: String, hostState: String?) = navigation.stateChanged(tabId, hostState)
+    override fun viewBound(viewId: String, tabId: String) = navigation.forget(viewId)
     override fun hostEvent(name: String, payload: Any?) = chrome.hostEvent(name, payload)
     override fun onKey(tabId: String?, input: JSONObject) = chrome.onKey(tabId, input)
     override fun pullEvent(tabId: String, phase: String, payload: JSONObject?) = chrome.pullEvent(tabId, phase, payload)
+    override fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = chrome.selectionMenu(tabId, text, reply)
+    override fun barScroll(tabId: String, phase: String, payload: JSONObject?) = chrome.barScroll(tabId, phase, payload)
     override fun progress(tabId: String, percent: Int) = chrome.viewEvent(tabId, "progress", json("progress" to percent / 100.0))
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
@@ -180,7 +275,17 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 "insets" to activity.currentInsets(),
                 "fullscreen" to immersive,
                 "environment" to activity.environment(),
-                "pinShortcuts" to shortcuts.supported
+                "pinShortcuts" to shortcuts.supported,
+                // A speech recogniser on the device: the mic buttons show (voice search, OMN-19).
+                "voiceSearch" to voice.available,
+                // A back camera on the device: the camera buttons show (QR scanning, OMN-22).
+                "qrScan" to qrScan.available,
+                // A speech engine on the device: Listen to this page and Read aloud show (A11Y-06).
+                "readAloud" to readAloud.available,
+                // TalkBack (or another service) explores by touch: the bar does not hide on scroll.
+                "touchExploration" to touchExploration,
+                // What sync calls this device until the user renames it (Chrome names a phone by its model).
+                "deviceModel" to Build.MODEL
             )
         }
         // Answers `true` once the file is replaced; a failure throws, which the bridge reports as
@@ -189,10 +294,32 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             storage.writeSync(args.str("name"), args.str("text"), args.bool("backup"))
             true
         }
-        // Documents outside the boot payload (the rule-set files under blocking/), and a boot
-        // document the core reads before its fetched file has arrived.
-        "storage.read" -> storage.read(args.str("name"))
+        // Documents outside the boot payload (the rule-set files under blocking/, the extension
+        // storage under ext-storage/), and a boot document the core reads before its fetched file
+        // has arrived: the text whole up to Storage.INLINE_READ_BYTES, a bigger one as { token } to
+        // be read in pieces (storage.readChunk until null), one piece on the Java heap at a time.
+        "storage.read" -> storage.readOrBegin(args.str("name"), Storage.INLINE_READ_BYTES)
         "storage.exists" -> storage.exists(args.str("name"))
+        "storage.readChunk" -> storage.readChunk(args.num("token").toLong(), args.num("maxChars").toInt())
+        "storage.readEnd" -> {
+            storage.endRead(args.num("token").toLong())
+            null
+        }
+        // The last-chance write of a large document, in pieces on this thread (true: the piece landed).
+        "storage.writeBegin" -> storage.beginWrite(args.str("name"), args.bool("backup")) ?: throw IllegalArgumentException("cannot write ${args.str("name")}")
+        "storage.writeChunk" -> storage.writeChunk(args.num("token").toLong(), args.str("text")).takeIf { it } ?: throw IllegalStateException("no write ${args.num("token").toLong()}")
+        "storage.writeEnd" -> storage.endWrite(args.num("token").toLong()).takeIf { it } ?: throw IllegalStateException("write ${args.num("token").toLong()} did not land")
+        "storage.writeAbort" -> {
+            storage.abortWrite(args.num("token").toLong())
+            null
+        }
+        // The tab's back/forward stack, from the last `historyChanged` its view pushed (the
+        // core reads it synchronously when it remembers a tab's navigation and for the back
+        // list); `{ entries: [], index: -1 }` for a tab without a view.
+        "view.navigationEntries" -> navigation.entries(args.str("tabId"))
+        // The opaque state behind that stack (the string itself; null when there is none: a
+        // private tab, no list, over the cap), from the mirror the view refreshes with each push.
+        "view.navigationHostState" -> navigation.hostState(args.str("tabId"))
         else -> throw IllegalArgumentException("Unknown sync method: $method")
     }
 
@@ -206,6 +333,25 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 main.post { reply(if (failure == null) null else Rejection(failure.message ?: failure.javaClass.simpleName)) }
             }
             "storage.remove" -> storage.remove(args.str("name")) { main.post { reply(null) } }
+            // A large document in pieces, each landing on the storage thread before the next is sent.
+            "storage.writeBegin" -> {
+                val name = args.str("name")
+                val backup = args.bool("backup")
+                storage.execute { val token = storage.beginWrite(name, backup); main.post { reply(token ?: Rejection("cannot write $name")) } }
+            }
+            "storage.writeChunk" -> {
+                val token = args.num("token").toLong()
+                val text = args.str("text")
+                storage.execute { val ok = storage.writeChunk(token, text); main.post { reply(if (ok) true else Rejection("no write $token")) } }
+            }
+            "storage.writeEnd" -> {
+                val token = args.num("token").toLong()
+                storage.execute { val ok = storage.endWrite(token); main.post { reply(if (ok) true else Rejection("write $token did not land")) } }
+            }
+            "storage.writeAbort" -> {
+                val token = args.num("token").toLong()
+                storage.execute { storage.abortWrite(token); main.post { reply(null) } }
+            }
 
             // --- request blocking (the BlockingHost contract and diagnostics) ----------------------
             "blocking.bundled" -> reply(blocking.bundledLists())
@@ -220,14 +366,50 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
 
+            // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
+            "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }
+            // A read per card the chrome shows (it keeps a few in flight at a time), off the main
+            // thread; the file's bytes go over as a data URL with their size, so the chrome can
+            // count them against its budget. Nothing for a picture of another page than the tab's.
+            "thumbnail.load" -> io.execute {
+                val picture = thumbnails.loadPicture(args.str("tabId"), args.str("url"))
+                main.post { reply(picture?.let { json("data" to it.dataUrl, "width" to it.width, "height" to it.height) }) }
+            }
+            // Drops and the sweep queue behind the writes on the pictures' own thread: a drop the
+            // chrome sends on a navigation lands after the save of the page before it – and, with
+            // the URL the tab left, spares a save of the page after it that got in first. The
+            // tab's last picture no longer stands either way: its next hide takes one.
+            "thumbnail.drop" -> {
+                val tabId = args.str("tabId")
+                val left = args.strOrNull("url")
+                thumbnails.stale(tabId)
+                thumbnails.disk.execute { thumbnails.drop(tabId, left) }
+                reply(null)
+            }
+            "thumbnail.sweep" -> {
+                val keep = args.arr("keep").let { ids -> (0 until ids.length()).mapTo(HashSet()) { ids.optString(it) } }
+                thumbnails.disk.execute { thumbnails.sweep(keep) }
+                reply(null)
+            }
+
             // --- views -----------------------------------------------------------------------
             "view.create" -> { tabs.create(args.str("tabId"), args.str("containerId", Profiles.DEFAULT_CONTAINER)); reply(null) }
             "view.destroy" -> { tabs.destroy(args.str("tabId")); reply(null) }
             "view.bind" -> { tabs.bind(args.str("viewId"), args.str("tabId")); reply(null) }
             "view.load" -> { tab?.loadUrl(args.str("url")); reply(null) }
-            "view.loadHtml" -> { tab?.loadHtml(args.str("url"), args.str("html")); reply(null) }
+            "view.loadHtml" -> {
+                tab?.loadHtml(args.str("url"), args.str("html"), args.strOrNull("baseUrl"), args.optJSONObject("document")?.let(PdfViewer::documentOf))
+                reply(null)
+            }
             "view.back" -> { if (tab?.canGoBack() == true) tab.goBack(); reply(null) }
             "view.forward" -> { if (tab?.canGoForward() == true) tab.goForward(); reply(null) }
+            // --- the back/forward stack (NavigationState.kt; the core uses the sync forms in dispatchSync) ---
+            "view.navigationEntries" -> reply(tab?.navigationEntries() ?: NavigationState.emptySnapshot())
+            "view.navigationHostState" -> reply(tab?.hostState())
+            "view.goToIndex" -> { tab?.goToIndex(args.optInt("index", -1)); reply(null) }
+            // `{ restored: false }` leaves the load to the core (one path for every fallback, the
+            // internal pages' document included): a `loadUrl` here would load the page twice.
+            "view.restoreNavigation" -> reply(json("restored" to (tab?.restoreNavigation(args.arr("entries"), args.optInt("index", -1), args.strOrNull("hostState")) ?: false)))
             "view.reload" -> {
                 if (args.bool("ignoreCache")) tab?.clearCache(false)
                 tab?.reload()
@@ -280,7 +462,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "view.print" -> { tab?.let(::print); reply(null) }
             "view.savePage" -> if (tab == null) reply(null) else savePage(tab, args.str("name"), reply)
             "view.snapshot" -> if (tab == null) reply(null) else tab.snapshot(reply)
-            "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
+            "view.screenshot" -> if (tab == null) reply(null) else tab.screenshot(args.bool("fullPage")) { png -> saveToDownloads(args.str("name"), "image/png", png, reply) }
             "view.capture" -> if (tab == null) reply(null) else tab.capture(args.str("mode", "viewport"), args.optJSONObject("region"), args.str("format", "jpeg"), args.optInt("quality", -1), reply)
             "view.certificate" -> reply(tab?.certificateInfo())
 
@@ -312,8 +494,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyPullToRefreshMode()
                 reply(null)
             }
+            // The bar that hides on scroll says where it is (per frame while it moves) or that it
+            // may not hide: every page's edge on the bar's side follows (see `TabHost.place`).
+            "chrome.setBarHide" -> { tabs.setBarHide(BarHideFrame.parse(args, activity.resources.displayMetrics.density)); reply(null) }
             "back.update" -> { back.update(args.bool("chrome"), args.strOrNull("tabId"), args.optBoolean("root")); reply(null) }
             "window.setFullscreen" -> { setImmersive(args.bool("fullscreen")); reply(null) }
+            "window.setSecure" -> { setPrivateSurface(args.bool("secure")); reply(null) }
             "app.quit" -> { activity.finishAndRemoveTask(); reply(null) }
             "app.background" -> { activity.moveTaskToBack(true); reply(null) }
             "app.openExternal" -> { openExternal(args.str("url")); reply(null) }
@@ -321,6 +507,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "app.setIcon" -> { launcherIcon.apply(args.str("id"), activity); reply(null) }
             "app.share" -> share.share(args, reply)
             "app.openAppLinkSettings" -> { openAppLinkSettings(); reply(null) }
+            "app.openPrivateDnsSettings" -> { openPrivateDnsSettings(); reply(null) }
+            "app.openKeyboardSettings" -> { openKeyboardSettings(); reply(null) }
             "externalProtocol.respond" -> { externalProtocols.respond(args.str("requestId"), args.bool("allow")); reply(null) }
             "app.isDefaultBrowser" -> reply(DefaultBrowser.isDefault(activity))
             "app.requestDefaultBrowser" -> activity.requestDefaultBrowser(reply)
@@ -328,7 +516,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
             // --- services --------------------------------------------------------------------------
             "dialog.confirm" -> confirm(args, reply)
-            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions")) { files -> reply(files) }
+            "dialog.openText" -> activity.pickTextFiles(args.arr("extensions"), if (args.has("maxBytes")) args.num("maxBytes") else null) { files -> reply(files) }
             "dialog.saveText" -> activity.saveTextFile(args.str("defaultName"), args.str("mimeType"), args.str("text")) { ok -> reply(ok) }
 
             // --- passwords: vault key protection and re-authentication ---------------------------
@@ -343,6 +531,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             }
             "clipboard.clearText" -> reply(SecretClipboard.clear(activity, args.str("expected")))
             "clipboard.writeImage" -> copyImage(args.str("url"), reply)
+            // The URL bar's clipboard row: the peek reads the clip's description only (no Android 12+
+            // toast); the read takes the content once, on the user's reveal or pick; markUsed
+            // remembers the clip the user opened through the row, so it is not offered again.
+            "clipboard.peek" -> reply(ClipboardPeek.peek(activity))
+            "clipboard.read" -> reply(ClipboardPeek.read(activity))
+            "clipboard.markUsed" -> { ClipboardPeek.markUsed(activity); reply(null) }
 
             // --- autofill: the system framework's status, and which provider owns the pages -----------
             "autofill.status" -> reply(SystemAutofill.status(activity))
@@ -351,7 +545,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 for (view in tabs.all()) view.applyAutofillProvider()
                 reply(null)
             }
-            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), reply)
+            "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), args.num("maxBytes").toLong(), args.str("method", "GET"), args.strOrNull("body"), reply)
             // The chrome has read a spilled body (`BootHandoff.readBody`): its file goes.
             "net.release" -> { io.execute { handoff.release(args.str("token")) }; reply(null) }
             "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
@@ -365,6 +559,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "download.deleteFile" -> downloads.deleteFile(args.str("savePath"), reply)
             "download.chooseDirectory" -> downloads.chooseDirectory(reply)
             "download.open" -> { downloads.open(args.str("savePath"), args.str("mimeType")); reply(null) }
+            "download.openWith" -> { downloads.openWith(args.str("savePath"), args.str("mimeType")); reply(null) }
+            "download.share" -> { downloads.share(args.str("savePath"), args.str("mimeType"), args.str("name")); reply(null) }
             "download.showAll" -> { downloads.showAll(); reply(null) }
             "profile.clear" -> {
                 security.forgetCertificates(args.str("containerId"))
@@ -396,6 +592,48 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "shortcut.pin" -> shortcuts.pin(args, reply)
+
+            // --- cross-device sync's folder (SyncFolder.kt; the contract is `SyncTransport` in
+            //     src/core/platform.ts, the caller `AndroidSyncTransport` in src/android/sync.ts) --------
+            "sync.chooseFolder" -> activity.pickFolder { uri ->
+                if (uri != null) SafTree.persist(activity, uri)
+                reply(uri?.toString())
+            }
+            "sync.folderName" -> syncOp(args, reply) { it.folderName() }
+            "sync.list" -> syncOp(args, reply) { JSONArray(it.list()) }
+            "sync.read" -> syncOp(args, reply) { it.read(args.str("name")) }
+            "sync.write" -> syncOp(args, reply) { it.write(args.str("name"), args.str("text")); null }
+            "sync.remove" -> syncOp(args, reply) { it.remove(args.str("name")); null }
+            "sync.removeAll" -> syncOp(args, reply) { it.removeAll(); null }
+
+            // --- voice search (Voice.kt; the contract is `VoiceHost` in src/core/platform.ts) ----------
+            "voice.start" -> voice.start(reply)
+            "voice.cancel" -> { voice.cancel(); reply(null) }
+            "voice.openSettings" -> { voice.openSettings(); reply(null) }
+
+            // --- QR scanning (QrScan.kt; the contract is `QrScanHost` in src/core/platform.ts) --------
+            "qr.start" -> qrScan.start(reply)
+            "qr.cancel" -> { qrScan.cancel(); reply(null) }
+            "qr.layout" -> { qrScan.layout(args); reply(null) }
+            "qr.setTorch" -> { qrScan.setTorch(args.bool("on")); reply(null) }
+            "qr.openSettings" -> { qrScan.openSettings(); reply(null) }
+
+            // --- read aloud (ReadAloud.kt; the contract is `SpeechHost` in src/core/platform.ts) -------
+            "speech.voices" -> readAloud.voices(reply)
+            "speech.speak" -> { readAloud.speak(args); reply(null) }
+            "speech.stop" -> { readAloud.stop(); reply(null) }
+
+            // Android's details page for Zenium (its permissions): the Open settings of a toast the
+            // host raised itself (`toast` host event: the file chooser's camera refused for good).
+            "app.openSettings" -> { openAppDetails(); reply(null) }
+            // --- the OS media controls, the pages' notifications, the private session -------------
+            "media.update" -> { media.update(args.optJSONObject("session")); reply(null) }
+            "media.pip" -> media.enterPictureInPicture(args.obj("session"), reply)
+            "notification.show" -> webNotifications.show(args, reply)
+            "notification.close" -> { webNotifications.close(args.str("id")); reply(null) }
+            "notification.forgetOrigin" -> { webNotifications.forgetOrigin(args.str("origin")); reply(null) }
+            "notification.ensureAllowed" -> webNotifications.ensureAllowed(reply)
+            "private.setOpenTabs" -> { privateSession.setOpenTabs(args.num("count").toInt()); reply(null) }
 
             // --- AI agents (MCP server) ------------------------------------------------------------
             "agent.start" -> reply(agentServer.start(args.num("port", 41735.0).toInt(), args.bool("lan")))
@@ -435,6 +673,26 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     /**
+     * One operation on the sync folder, off the main thread (SAF round-trips are slow). A tree
+     * whose permission is gone rejects with `folder-lost:`, which the chrome turns into
+     * `SyncStatus.folderLost`; any other failure rejects with its message.
+     */
+    private fun syncOp(args: JSONObject, reply: (Any?) -> Unit, op: (SyncFolder) -> Any?) {
+        val folder = args.str("folder")
+        io.execute {
+            val result = try {
+                op(SyncFolder(SafTree(activity, Uri.parse(folder))))
+            } catch (e: SyncFolder.FolderLostException) {
+                Rejection("${SyncFolder.LOST_PREFIX} ${e.message}")
+            } catch (e: Exception) {
+                Log.w(TAG, "sync folder operation failed", e)
+                Rejection(e.message ?: e.javaClass.simpleName)
+            }
+            main.post { reply(result) }
+        }
+    }
+
+    /**
      * Keep a WebView alive without showing it (extension background pages). It sits behind the
      * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
      * renderer and gets background timer throttling, which a background page must not.
@@ -465,22 +723,110 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenCallback = callback
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
+        // The window the exit comes back to: the bars as they stand before they hide.
+        landing.onEnter(activity.landingWindow())
         setSystemBarsHidden(true)
+        // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
+        if (tabs.filling == tab.tabId) tabs.fillWindow(null)
+        // The page's size report came ahead of the engine's view: the screen turns now.
+        if (fullscreenVideoTab === tab) fullscreenVideoSize?.let { (width, height) -> turnForVideo(width, height) }
+        // The first-time exit hint's cue (GN-20): every fullscreen is left the same way, a
+        // canvas's or an embed's as much as a video's, so the cue is the layer's, not the size's.
+        chrome.hostEvent("fullscreen.entered", json("tabId" to tab.tabId))
         chrome.viewEvent(tab.tabId, "enterFullscreen", null)
         back.refresh()
+        media.onFullscreenChanged()
     }
 
     override fun exitFullscreen(tab: TabWebView) {
         if (fullscreenTab !== tab) return
+        // The orientation goes back to the system's as the layer goes, so the chrome that returns
+        // is laid out for the screen the system settles on.
+        releaseFullscreenOrientation()
         fullscreenLayer.removeAllViews()
         fullscreenLayer.visibility = View.GONE
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
         fullscreenTab = null
+        // The size was this fullscreen's. A navigation, a renderer crash or a close ends fullscreen
+        // without the page's `active: false`; a size kept past that would turn the tab's next
+        // fullscreen before its own report and hold a destroyed view.
+        if (fullscreenVideoTab === tab) clearFullscreenVideo()
         if (!immersive) setSystemBarsHidden(false)
+        // Out of fullscreen while the window is the small one: the tab's own view takes it over.
+        if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
+        // A hint standing over the page (the first-time exit hint, GN-20) leaves with the fullscreen.
+        tab.postToPage(json("type" to "hint", "hint" to null).toString())
+        // The bars are on their way back: said before the exit itself, so the chrome's return
+        // fade waits for the page's landing rather than starting over its first inline layout.
+        activity.onFullscreenExit()
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
+        media.onFullscreenChanged()
     }
+
+    /**
+     * The page's `fullscreenchange` with the fullscreen video's natural size, from the page
+     * script's reporter (`installFullscreenReporter`; the media report of #223 is debounced and
+     * describes the playing element, which a video going fullscreen before its first play is
+     * not). A landscape video turns the activity to `SENSOR_LANDSCAPE`, rotation lock or not,
+     * as Chrome's orientation lock does; a portrait or square one, or an element without a
+     * video, turns nothing ([FullscreenOrientation]).
+     *
+     * The main document's report stands for the tab. A frame's (an embed's document, the one
+     * that knows its video's size where the main document sees the `<iframe>` alone, 0 × 0) is
+     * taken only for the fullscreen under way, and only while the main document has named no
+     * video of its own: a frame that lies about a video can at most turn a screen that is
+     * already fullscreen on an element without one. Its `active: false` says nothing the main
+     * document's `fullscreenchange` does not say too.
+     */
+    override fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {
+        if (!active) {
+            if (mainFrame && fullscreenVideoTab === tab) clearFullscreenVideo()
+            return
+        }
+        // No video, or a size not known yet (the script reports again at loadedmetadata).
+        if (videoWidth <= 0 || videoHeight <= 0) return
+        if (!mainFrame) {
+            if (fullscreenTab !== tab) return
+            if (fullscreenVideoTab === tab && fullscreenVideoSize != null && !fullscreenVideoFromFrame) return
+        }
+        fullscreenVideoTab = tab
+        fullscreenVideoSize = videoWidth to videoHeight
+        fullscreenVideoFromFrame = !mainFrame
+        if (fullscreenTab === tab) turnForVideo(videoWidth, videoHeight)
+    }
+
+    private fun clearFullscreenVideo() {
+        fullscreenVideoTab = null
+        fullscreenVideoSize = null
+        fullscreenVideoFromFrame = false
+    }
+
+    private fun turnForVideo(videoWidth: Int, videoHeight: Int) {
+        val orientation = FullscreenOrientation.forVideo(videoWidth, videoHeight)
+        if (orientation == FullscreenOrientation.RELEASED) {
+            releaseFullscreenOrientation()
+        } else {
+            fullscreenOrientationHeld = true
+            activity.requestedOrientation = orientation
+        }
+    }
+
+    private fun releaseFullscreenOrientation() {
+        if (!fullscreenOrientationHeld) return
+        fullscreenOrientationHeld = false
+        activity.requestedOrientation = FullscreenOrientation.RELEASED
+    }
+
+    /** Whether the fullscreen video holds the screen in landscape right now (the demos read it). */
+    val fullscreenLandscape: Boolean get() = fullscreenOrientationHeld
+
+    /** The user is leaving for Home or Recents ([MainActivity.onUserLeaveHint]): Android 8-11's way into picture-in-picture. */
+    fun onUserLeaveHint() = media.onUserLeaveHint()
+
+    /** The window entered or left picture-in-picture ([MainActivity.onPictureInPictureModeChanged]). */
+    fun onPictureInPictureModeChanged(active: Boolean) = media.onPictureInPictureModeChanged(active)
 
     /**
      * The window left the screen (launcher, another app, the lock screen). Fullscreen is a way of
@@ -490,6 +836,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     fun onStop() {
         if (immersive) setImmersive(false)
+        // A recogniser listening to a screen that is gone: the session ends, the sheet with it.
+        voice.abort()
+        // A camera scanning a screen that is gone: the session ends, the sheet with it (#187).
+        qrScan.abort()
     }
 
     /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
@@ -553,6 +903,53 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
     }
 
+    /**
+     * Android's details page for Zenium, where a permission refused for good is turned back on
+     * (the Open settings of the camera toasts: the QR sheet's through `qr.openSettings`, the file
+     * chooser's through `app.openSettings`).
+     */
+    fun openAppDetails() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
+        try {
+            activity.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "no application details screen")
+        }
+    }
+
+    /**
+     * Android's Private DNS setting (encrypted DNS for every app, Android 9+) lives in the
+     * Network & internet screen; there is no intent for the row itself. The main Settings screen
+     * is the fallback on devices that lack even that action.
+     */
+    private fun openPrivateDnsSettings() {
+        for (action in listOf(Settings.ACTION_WIRELESS_SETTINGS, Settings.ACTION_SETTINGS)) {
+            try {
+                activity.startActivity(Intent(action))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
+    /**
+     * Android's keyboard settings: the WebView has no spellchecker of the browser's own – its text
+     * fields are checked by the system's spell checker service, which is chosen (and switched on)
+     * next to the keyboards – so that is where "Spell check" in Settings leads (CT-07's limit).
+     * The main Settings screen is the fallback on devices that lack the action.
+     */
+    private fun openKeyboardSettings() {
+        for (action in listOf(Settings.ACTION_INPUT_METHOD_SETTINGS, Settings.ACTION_SETTINGS)) {
+            try {
+                activity.startActivity(Intent(action))
+                return
+            } catch (e: ActivityNotFoundException) {
+                // The next screen down is on every device.
+            }
+        }
+    }
+
     private fun confirm(args: JSONObject, reply: (Any?) -> Unit) {
         var answered = false
         val done = { ok: Boolean -> if (!answered) { answered = true; reply(ok) } }
@@ -580,6 +977,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             else -> return
         }
         chrome.performHapticFeedback(constant)
+    }
+
+    /** The private surface came or went: the window's screenshot guard goes up or down with it. */
+    fun setPrivateSurface(on: Boolean) {
+        privateSurface = on
+        PrivateBrowsing.guard(activity.window, on)
     }
 
     private fun applyTheme(dark: Boolean, scheme: String, background: String, scrim: String) {
@@ -707,19 +1110,29 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * over `BootHandoff.NET_INLINE_LIMIT` is not answered inline (JSON-quoted into a script the
      * chrome's main thread parses) but spilled to a file the chrome fetches by token
      * (`body: {token, bytes}`; `fetchText` in `src/android/platform.ts` reads it and releases it).
+     * `maxBytes` > 0 caps the body: the read stops there and the fetch fails (`ok: false`), so a
+     * caller's cap (an OpenSearch description's 64 KB) bounds the download, not just the parse;
+     * ≤ 0 is `BootHandoff.NET_BODY_LIMIT`. `method` is a GET, or a POST carrying `requestBody`
+     * (the network location query).
      */
-    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, reply: (Any?) -> Unit) {
+    private fun fetchText(url: String, headers: JSONObject, timeoutMs: Int, maxBytes: Long, method: String, requestBody: String?, reply: (Any?) -> Unit) {
         io.execute {
             val result = runCatching {
                 val timeout = if (timeoutMs > 0) timeoutMs else 2500
+                val cap = if (maxBytes > 0) maxBytes else BootHandoff.NET_BODY_LIMIT
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeout
                     readTimeout = timeout
+                    requestMethod = if (method == "POST") "POST" else "GET"
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
+                    if (method == "POST") {
+                        doOutput = true
+                        outputStream.use { it.write((requestBody ?: "").toByteArray()) }
+                    }
                 }
                 val status = conn.responseCode
                 val ok = status in 200..299
-                val body = if (ok) conn.inputStream.use { handoff.readBody(it) } else BootHandoff.Body.Inline("")
+                val body = if (ok) conn.inputStream.use { handoff.readBody(it, maxBytes = cap) } else BootHandoff.Body.Inline("")
                 // The validators a later conditional fetch sends back (`If-None-Match`, `If-Modified-Since`).
                 val responseHeaders = JSONObject()
                 conn.getHeaderField("ETag")?.let { responseHeaders.put("etag", it) }
@@ -757,9 +1170,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         scheduleProbe(attempt = 0, delayMs = HostLifecycle.PROBE_DELAY_MS)
     }
 
-    /** Leaving the foreground: a probe answered while hidden would only mislead. */
+    /**
+     * Leaving the foreground: a probe answered while hidden would only mislead. The pages on
+     * screen have their card pictures taken while the window still shows them – the tab the app
+     * comes back to in the overview, or is restored with, is the one it was left on.
+     */
     fun onPause() {
         cancelProbe()
+        for (tab in tabs.all()) tab.captureThumbnail()
     }
 
     /** Ask every WebView on screen for a fresh frame at its current size. */
@@ -776,6 +1194,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     private fun setTabVisible(tabId: String, visible: Boolean) {
         val ticket = pageVisibility.request(tabId, visible) ?: return
+        // A page on its way off the screen has its card picture taken while it is still there. The
+        // chrome may have just captured its cover for the same frame: the copy is shared, and a
+        // fresh cover stands as the picture ([TabWebView.captureThumbnail]).
+        tabs.get(tabId)?.captureThumbnail()
         val deadline = Runnable {
             if (pageVisibility.complete(ticket)) Log.d(TAG, "hide of $tabId: chrome drew no frame within the deadline")
         }
@@ -817,6 +1239,41 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
         view.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) = onFrame()
+        })
+    }
+
+    /** Per tab: the serial of the last size change whose frame the chrome has not been told of yet. */
+    private val unreportedSizes = HashMap<String, Long>()
+    private var sizeSeq = 0L
+
+    /**
+     * `tab`'s view was laid out at a new size: tell the chrome once the frame showing the page at
+     * that size is on screen (`view.sized`, CSS px; the renderer's `lib/fullscreenLanding.ts`
+     * starts the chrome's return fade from it). As for a view coming back in [reportDrawn], the
+     * page's own visual-state callback says when it has content at the size, and the frames are
+     * counted from there; a renderer that never answers is not waited on past
+     * [PageVisibility.DRAWN_DEADLINE_MS]. A newer size for the same view overtakes the report.
+     */
+    override fun viewSized(tab: TabWebView, widthPx: Int, heightPx: Int) {
+        val tabId = tab.tabId
+        val change = ++sizeSeq
+        unreportedSizes[tabId] = change
+        val d = activity.resources.displayMetrics.density
+        val payload = json("tabId" to tabId, "width" to widthPx / d, "height" to heightPx / d)
+        val report = Runnable {
+            if (unreportedSizes[tabId] == change) {
+                unreportedSizes.remove(tabId)
+                chrome.hostEvent("view.sized", payload)
+            }
+        }
+        main.postDelayed(report, PageVisibility.DRAWN_DEADLINE_MS)
+        tab.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                afterFrames(2) {
+                    main.removeCallbacks(report)
+                    report.run()
+                }
+            }
         })
     }
 
@@ -947,6 +1404,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     fun onChromeDocumentReplaced() {
         cancelProbe()
         tabs.dropAll()
+        navigation.clear()
         // The old core's unread spilled bodies went with its document.
         io.execute(handoff::sweep)
     }
@@ -988,6 +1446,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (dead !== chrome || activity.isFinishing || activity.isDestroyed) return
         cancelProbe()
         tabs.dropAll()
+        navigation.clear()
         // Spilled bodies the dead chrome never released would otherwise stay for the process lifetime.
         io.execute(handoff::sweep)
         val index = root.indexOfChild(dead)
@@ -1011,8 +1470,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     }
 
     fun destroy() {
+        accessibility?.removeTouchExplorationStateChangeListener(touchExplorationListener)
         extensions.destroy()
         cancelProbe()
+        media.destroy()
+        webNotifications.destroy()
+        privateSession.destroy()
+        voice.destroy()
+        qrScan.destroy()
+        readAloud.destroy()
         shortcuts.destroy()
         agentServer.stop()
         downloads.destroy()

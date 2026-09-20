@@ -1,4 +1,5 @@
 import type { EngineContextKind, MessageSender } from '../api/engine'
+import { presentExtensionUrl } from './extensionUrls'
 import { extensionOrigin } from './plan'
 
 /**
@@ -38,6 +39,8 @@ interface PendingMessage {
   sawListeners: boolean
   awaitingAsync: Set<string>
   done: boolean
+  /** The sender passed a callback (Chrome reports a closed port as an error to those alone). */
+  callback: boolean
 }
 
 interface PortState {
@@ -122,7 +125,8 @@ export class MessageRouter {
           sender,
           Number(message.id),
           (message.target ?? {}) as MessageTarget,
-          message.data
+          message.data,
+          message.callback === true
         )
         return true
       case 'msgReply':
@@ -184,10 +188,13 @@ export class MessageRouter {
       const tabId = this.outbox.tabIdFromChrome(chromeTabId)
       if (tabId === null) return `No tab with id: ${chromeTabId}.`
       const frameId = target.options?.frameId
+      // Every document of the extension hosted in the tab: its content scripts, its user-script
+      // worlds and an extension page of its own open as the tab (their `runtime.onMessage` /
+      // `onConnect` hear `tabs.sendMessage` / `tabs.connect`, as Chrome's do); popups and the
+      // background are hosted in no tab.
       return this.all().filter(
         (e) =>
           e.extensionId === sender.extensionId &&
-          e.context === 'content' &&
           e.tabId === tabId &&
           (frameId === undefined || frameId === null || e.frameId === Number(frameId))
       )
@@ -204,16 +211,31 @@ export class MessageRouter {
   }
 
   senderInfo(endpoint: Endpoint): MessageSender {
-    const info: MessageSender = { id: endpoint.extensionId, url: endpoint.url }
-    if (endpoint.context === 'content' || endpoint.context === 'userScript') {
-      const tab = endpoint.tabId ? this.outbox.tabFor(endpoint.tabId) : null
-      if (tab) info.tab = tab
+    const inFrame = endpoint.context === 'content' || endpoint.context === 'userScript'
+    // An extension page names itself as Chrome spells it, `chrome-extension://<id>/popup.html`,
+    // whatever origin the WebView loaded it from: Tampermonkey's background admits its own
+    // pages by that prefix (`INTERNAL_PAGE_PROTOCOLS`) and reads the page's name out of it.
+    // `origin` stays the served one, the `location.origin` the page itself sees – which is what
+    // a background compares it with.
+    const info: MessageSender = {
+      id: endpoint.extensionId,
+      url: inFrame ? endpoint.url : presentExtensionUrl(endpoint.url)
+    }
+    // Chrome attributes a sender to the tab it is hosted in, an extension page open as a tab as
+    // much as a content script (`sender.tab`, `frameId`; Vimium's background answers nothing to
+    // a sender without a tab, and its own options page asks it `initializeFrame` from the tab
+    // it is open in). Popups, the background and offscreen documents have none.
+    const tab = endpoint.tabId ? this.outbox.tabFor(endpoint.tabId) : null
+    if (tab) info.tab = tab
+    if (inFrame || tab) {
       info.frameId = endpoint.frameId
       // Chrome 106+ identifies the sending document (extensions key per-document state on it:
       // Dark Reader's dark-theme detection, for one); the endpoint id is per document here, as
       // in `runtime.getContexts`.
       info.documentId = endpoint.id
       info.documentLifecycle = 'active'
+    }
+    if (inFrame) {
       try {
         info.origin = new URL(endpoint.url).origin
       } catch {
@@ -229,7 +251,8 @@ export class MessageRouter {
     sender: Endpoint,
     senderMessageId: number,
     target: MessageTarget,
-    data: unknown
+    data: unknown,
+    callback = false
   ): void {
     const targets = this.targetsFor(sender, target)
     if (typeof targets === 'string' || targets.length === 0) {
@@ -248,7 +271,8 @@ export class MessageRouter {
       outstanding: new Set(targets.map((t) => t.id)),
       sawListeners: false,
       awaitingAsync: new Set(),
-      done: false
+      done: false,
+      callback
     }
     this.pending.set(rid, pending)
     const info = this.senderInfo(sender)
@@ -283,12 +307,17 @@ export class MessageRouter {
     this.settle(rid, pending)
   }
 
-  /** Everyone answered without a response: "no listener anywhere" is an error, otherwise undefined. */
+  /**
+   * Everyone answered without a response. "No listener anywhere" is an error; listeners that
+   * let the port close without answering are an error too, but only to a sender that passed a
+   * callback (Chrome keeps that difference: a callback says a response was expected, the promise
+   * form takes the closed port as delivery – `OneTimeMessageHandler::DisconnectOpener`).
+   */
   private settle(rid: number, pending: PendingMessage): void {
     if (pending.done || pending.outstanding.size > 0 || pending.awaitingAsync.size > 0) return
     pending.done = true
     this.pending.delete(rid)
-    if (pending.sawListeners)
+    if (pending.sawListeners && !pending.callback)
       this.outbox.send(pending.sender, {
         t: 'reply',
         id: pending.senderMessageId,
@@ -300,7 +329,7 @@ export class MessageRouter {
         t: 'reply',
         id: pending.senderMessageId,
         ok: false,
-        error: NO_RECEIVER
+        error: pending.sawListeners ? PORT_CLOSED : NO_RECEIVER
       })
   }
 

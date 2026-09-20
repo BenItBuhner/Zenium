@@ -191,6 +191,9 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
 
 const EXTENSION_ID = /^[a-p]{32}$/
 
+/** Chrome's `runtime.lastError` for a native messaging host that does not exist. */
+export const NATIVE_HOST_NOT_FOUND = 'Specified native messaging host not found.'
+
 const isExtensionId = (value: unknown): value is string =>
   typeof value === 'string' && EXTENSION_ID.test(value)
 
@@ -357,7 +360,12 @@ export function createEmulatedEngine(
 
   type MessageTarget = { extensionId?: string | null; tabId?: unknown; options?: unknown }
 
-  const sendMessage = (target: MessageTarget, data: unknown): Promise<unknown> =>
+  /**
+   * `callback`: the sender passed one, so a port every listener let close without a response is
+   * reported to it as an error, as Chrome reports it ("The message port closed before a response
+   * was received."); the promise form resolves with undefined there.
+   */
+  const sendMessage = (target: MessageTarget, data: unknown, callback: boolean): Promise<unknown> =>
     new Promise((resolve, reject) => {
       const id = ++seq
       pending.set(id, { resolve, reject })
@@ -366,6 +374,7 @@ export function createEmulatedEngine(
         id,
         target,
         data: data === undefined ? null : data,
+        ...(callback ? { callback: true } : {}),
         ...(userScript ? { userScript: true } : {})
       })
     })
@@ -385,7 +394,13 @@ export function createEmulatedEngine(
     return { extensionId, message, options, callback }
   }
 
-  const createPort = (portId: string, name: string, sender: MessageSender | undefined): Port => {
+  /** A port; `local` ones (a native port that never reached a host) have no host side to tell. */
+  const createPort = (
+    portId: string,
+    name: string,
+    sender: MessageSender | undefined,
+    local = false
+  ): Port => {
     const port: Port = {
       name,
       sender,
@@ -395,7 +410,7 @@ export function createEmulatedEngine(
         const entry = ports.get(portId)
         if (!entry || !entry.connected)
           throw new Error('Attempting to use a disconnected port object')
-        post({ t: 'portMsg', portId, data: message === undefined ? null : message })
+        if (!local) post({ t: 'portMsg', portId, data: message === undefined ? null : message })
       },
       disconnect: () => {
         const entry = ports.get(portId)
@@ -404,7 +419,7 @@ export function createEmulatedEngine(
         ports.delete(portId)
         events.delete(`Port.onMessage:${portId}`)
         events.delete(`Port.onDisconnect:${portId}`)
-        post({ t: 'portDisconnect', portId })
+        if (!local) post({ t: 'portDisconnect', portId })
       }
     }
     ports.set(portId, { port, connected: true })
@@ -439,16 +454,50 @@ export function createEmulatedEngine(
     else fire()
   }
 
+  /**
+   * `runtime.connectNative` is synchronous in Chrome: a Port at once, and when no native
+   * messaging host of that name answers, `onDisconnect` a moment later with `lastError`
+   * "Specified native messaging host not found.". The phone has no native messaging hosts, so
+   * every native port ends that way; an extension that probes for its desktop companion this way
+   * (1Password) reads the disconnect as "no desktop app" and carries on. A routed rejection in
+   * its place handed back a Promise, and `port.onMessage.addListener` threw on it.
+   */
+  const connectNative = (...args: unknown[]): Port => {
+    if (typeof args[0] !== 'string')
+      throw new TypeError(
+        'Error in invocation of runtime.connectNative(string application): No matching signature.'
+      )
+    const portId = `${config.endpointId}:native:${++seq}`
+    const port = createPort(portId, '', undefined, true)
+    primordials.setTimeout(() => closePort(portId, NATIVE_HOST_NOT_FOUND), 0)
+    return port
+  }
+
   // --- runtime -----------------------------------------------------------------------------------
 
   const getURL = (path: unknown): string =>
     `${config.origin}/${String(path ?? '').replace(/^\/+/, '')}`
 
+  // What every context has, a `USER_SCRIPT` world with `messaging` on included: Chrome gives
+  // user-script worlds the identity bits and messaging both ways – `sendMessage` / `connect` to
+  // the extension (its `onUserScriptMessage` / `onUserScriptConnect`) and `onMessage` /
+  // `onConnect` for what the extension sends the tab (`shared/userScriptWorld.ts` is the
+  // desktop's copy of this surface). Tampermonkey's content.js runs in that world and adds its
+  // `runtime.onMessage` listener unguarded.
   Object.assign(runtime, {
     id: config.id,
+    getURL,
+    getPlatformInfo: (...args: unknown[]) =>
+      settle(
+        Promise.resolve({ os: 'android', arch: 'arm64', nacl_arch: 'arm' }),
+        takeCallback(args)
+      ),
     sendMessage: (...args: unknown[]) => {
       const { extensionId, message, options, callback } = parseSendMessageArgs(args)
-      return settle(sendMessage({ extensionId, options: options ?? null }, message), callback)
+      return settle(
+        sendMessage({ extensionId, options: options ?? null }, message, callback !== undefined),
+        callback
+      )
     },
     connect: (...args: unknown[]) => {
       const rest = [...args]
@@ -457,21 +506,17 @@ export function createEmulatedEngine(
         extensionId = (rest.shift() as string | null) ?? null
       }
       return connect({ extensionId }, rest[0])
-    }
+    },
+    onMessage: createEvent('runtime.onMessage', true),
+    onConnect: createEvent('runtime.onConnect', true)
   })
 
   if (!userScript) {
     Object.assign(runtime, {
-      getURL,
+      // Chrome defines it only with the `nativeMessaging` permission.
+      ...(config.permissions.includes('nativeMessaging') ? { connectNative } : {}),
       getManifest: () => config.manifest,
-      getPlatformInfo: (...args: unknown[]) =>
-        settle(
-          Promise.resolve({ os: 'android', arch: 'arm64', nacl_arch: 'arm' }),
-          takeCallback(args)
-        ),
-      onMessage: createEvent('runtime.onMessage', true),
       onMessageExternal: createEvent('runtime.onMessageExternal', true),
-      onConnect: createEvent('runtime.onConnect', true),
       onConnectExternal: createEvent('runtime.onConnectExternal', true),
       onUserScriptMessage: createEvent('runtime.onUserScriptMessage', true),
       onUserScriptConnect: createEvent('runtime.onUserScriptConnect', true)
@@ -479,6 +524,9 @@ export function createEmulatedEngine(
   }
 
   const chrome: Record<string, unknown> = { runtime }
+  // The world's `chrome.extension` is the incognito flag alone (the shim's default for a content
+  // script, which has no private-tab notion here either).
+  if (userScript) chrome.extension = { inIncognitoContext: false }
 
   // --- engine members the table marks `engine` -------------------------------------------------
 
@@ -509,7 +557,10 @@ export function createEmulatedEngine(
         const tabId = rest.shift()
         const callback = takeCallback(rest)
         const [message, options] = rest
-        return settle(sendMessage({ tabId, options: options ?? null }, message), callback)
+        return settle(
+          sendMessage({ tabId, options: options ?? null }, message, callback !== undefined),
+          callback
+        )
       },
       connect: (tabId: unknown, connectInfo?: unknown) => connect({ tabId }, connectInfo)
     }

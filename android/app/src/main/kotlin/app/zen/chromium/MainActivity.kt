@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
@@ -39,6 +40,8 @@ class MainActivity : BrowserActivity() {
     /** The keyboard is animating for the chrome; its frames are streamed as insets. */
     private var imeAnimating = false
     private var textFilesCallback: ((JSONArray) -> Unit)? = null
+    /** The byte cap of the text-file pick in flight (`TextFiles.capFor`). */
+    private var textFilesCap: Long = TextFiles.DEFAULT_CAP_BYTES
     private var saveTextCallback: ((Boolean) -> Unit)? = null
     private var saveTextContent: String = ""
 
@@ -60,12 +63,14 @@ class MainActivity : BrowserActivity() {
     private val textFilePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val callback = textFilesCallback ?: return@registerForActivityResult
         textFilesCallback = null
+        val cap = textFilesCap
+        textFilesCap = TextFiles.DEFAULT_CAP_BYTES
         val files = JSONArray()
         for (uri in uris) {
+            // A document over the cap is left out (the read stops at the cap, nothing is held whole).
             val text = runCatching {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                contentResolver.openInputStream(uri)?.use { TextFiles.readCapped(it, cap) }
             }.getOrNull() ?: continue
-            if (text.length > 512 * 1024) continue
             files.put(json("name" to displayNameOf(uri), "text" to text))
         }
         callback(files)
@@ -159,7 +164,11 @@ class MainActivity : BrowserActivity() {
         )
     }
 
-    /** Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px. */
+    /**
+     * Tell the chrome how far the status bar, cutout, gesture bar and keyboard reach in CSS px,
+     * and whether the bars are still on their way back from a page's fullscreen (`settling`,
+     * [FullscreenLanding]): the chrome holds its return fade while they are.
+     */
     private fun applyInsets(windowInsets: WindowInsetsCompat) {
         val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
@@ -170,7 +179,43 @@ class MainActivity : BrowserActivity() {
             "bottom" to maxOf(bars.bottom, ime.bottom) / d,
             "left" to bars.left / d
         )
-        host.chrome.hostEvent("insets", insets)
+        sendInsets()
+    }
+
+    /** The insets as last measured, with the landing's word as it stands now; judged again when the landing asks. */
+    private fun sendInsets() {
+        val now = SystemClock.uptimeMillis()
+        val settling = host.landing.settle(landingWindow(), now)
+        val payload = JSONObject(insets.toString()).put("settling", settling)
+        host.chrome.hostEvent("insets", payload)
+        root.removeCallbacks(landingCheck)
+        val at = host.landing.nextCheckAt()
+        if (at >= 0) root.postDelayed(landingCheck, (at - now).coerceAtLeast(0))
+    }
+
+    private val landingCheck = Runnable { sendInsets() }
+
+    /** The window as the chrome is told it: its insets, on the screen they were measured for. */
+    fun landingWindow(): FullscreenLanding.Window {
+        val c = resources.configuration
+        return FullscreenLanding.Window(
+            insets.optDouble("top", 0.0),
+            insets.optDouble("right", 0.0),
+            insets.optDouble("bottom", 0.0),
+            insets.optDouble("left", 0.0),
+            c.screenWidthDp,
+            c.screenHeightDp
+        )
+    }
+
+    /**
+     * A page's fullscreen ends ([Host.exitFullscreen]): the chrome hears that the bars are on
+     * their way back before it hears of the exit itself, so its first inline layout is not
+     * mistaken for the landing.
+     */
+    fun onFullscreenExit() {
+        host.landing.onExit(SystemClock.uptimeMillis())
+        sendInsets()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -209,8 +254,16 @@ class MainActivity : BrowserActivity() {
             Intent.ACTION_WEB_SEARCH -> host.share.onWebSearch(intent)
             // One of Zenium's own buttons in the system share sheet (Android 14).
             Share.ACTION_BROWSER_ACTION -> host.share.onBrowserAction(intent)
+            // The launcher's "New private tab" shortcut (src/main/shortcuts/shortcuts.xml, relayed
+            // by LauncherIconActivity): the chrome opens one in the current space, or says why it
+            // cannot on a WebView without profiles.
+            PrivateBrowsing.ACTION_NEW_TAB -> host.chrome.newPrivateTab()
             // A tap or a button on an extension's notification card (chrome.notifications).
             ExtensionNotifications.ACTION_OPENED -> host.extensions.onNotificationIntent(intent)
+            // A tap on the media notification (or the system's media player): the session's tab.
+            MediaSessions.ACTION_OPEN -> host.media.onOpenIntent(intent)
+            // A tap on a page's notification: its tab comes forward (WebNotifications.kt).
+            WebNotifications.ACTION_OPENED -> host.webNotifications.onOpenIntent(intent)
         }
         // Consume so a configuration change does not re-open it.
         intent.action = null
@@ -259,6 +312,19 @@ class MainActivity : BrowserActivity() {
         super.onDestroy()
     }
 
+    // --- picture-in-picture (MediaSessions.kt) ---------------------------------------------------
+
+    /** Home or Recents pressed: on Android 8-11 a video playing fullscreen goes into the small window from here. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        host.onUserLeaveHint()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        host.onPictureInPictureModeChanged(isInPictureInPictureMode)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // The chrome re-measures itself; nothing to do but let WebViews relayout.
@@ -272,6 +338,8 @@ class MainActivity : BrowserActivity() {
         // Backgrounded and on the system's LRU list: the back previews are the one cache worth
         // dropping (see HostLifecycle for why UI_HIDDEN is not pressure).
         if (HostLifecycle.trimDropsSnapshots(level)) host.snapshots.clear()
+        // Short of memory: the core puts hidden pages to sleep ahead of their timeout (CT-22).
+        HostLifecycle.memoryPressure(level)?.let { host.chrome.hostEvent("memoryPressure", json("level" to it)) }
     }
 
     // --- keyboard --------------------------------------------------------------------------------
@@ -289,25 +357,21 @@ class MainActivity : BrowserActivity() {
 
     // --- helpers for the core ---------------------------------------------------------------------
 
-    /** Let the user pick text files (CSS mods); answers with `[{ name, text }]`. */
-    fun pickTextFiles(extensions: JSONArray, callback: (JSONArray) -> Unit) {
+    /**
+     * Let the user pick text files (CSS mods, a bookmarks HTML, a passwords CSV) through
+     * `ACTION_OPEN_DOCUMENT`; answers with `[{ name, text }]`. `maxBytes` lifts the size cap for
+     * one request (`TextFiles.capFor`).
+     */
+    fun pickTextFiles(extensions: JSONArray, maxBytes: Double?, callback: (JSONArray) -> Unit) {
         textFilesCallback?.invoke(JSONArray())
         textFilesCallback = callback
-        val mimes = (0 until extensions.length()).flatMap { i ->
-            when (extensions.optString(i)) {
-                "css" -> listOf("text/css")
-                "json" -> listOf("application/json")
-                "txt" -> listOf("text/plain")
-                "html", "htm" -> listOf("text/html")
-                // Password exports: providers label CSV either way.
-                "csv" -> listOf("text/csv", "text/comma-separated-values")
-                else -> emptyList()
-            }
-        }.ifEmpty { listOf("*/*") }
+        textFilesCap = TextFiles.capFor(maxBytes)
+        val mimes = TextFiles.mimeTypesFor((0 until extensions.length()).map { extensions.optString(it) })
         try {
-            textFilePicker.launch(mimes.toTypedArray())
+            textFilePicker.launch(mimes)
         } catch (e: Exception) {
             textFilesCallback = null
+            textFilesCap = TextFiles.DEFAULT_CAP_BYTES
             callback(JSONArray())
         }
     }

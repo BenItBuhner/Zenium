@@ -1,10 +1,11 @@
 import type { JSX } from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { WebAppInstallPrompt } from '@shared/types'
-import { tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
+import type { UIState, WebAppInstallPrompt } from '@shared/types'
+import { installSheetCopy, tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
+import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useFrameDialog } from '@renderer/lib/portals'
 import { closeInstallSheet, uiStore } from '@renderer/lib/ui'
@@ -15,10 +16,18 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 const TITLE_ID = 'zen-install-title'
 const NAME_FIELD_ID = 'zen-install-name'
 
-/** "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. */
-export function InstallLayer(): JSX.Element | null {
+/**
+ * "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. The
+ * sheet is the install surface of a one-window host (`ChromeSurface`: the core sends an install
+ * prompt only to a window with one up); a desktop's installs get their own dialog
+ * (`install/InstallDialog.tsx`, the surface on hosts with windows), so on such a host this layer
+ * registers nothing and shows nothing.
+ */
+export function InstallLayer({ state }: { state: UIState }): JSX.Element | null {
+  const phone = !state.capabilities.windows
+  useChromeSurface('install', phone)
   const prompt = uiStore.use((s) => s.install)
-  return prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
+  return phone && prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
 }
 
 /**
@@ -49,6 +58,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   })
 
   const name = title.trim() || prompt.title
+  const copy = installSheetCopy(prompt.surface, info)
   const add = async (): Promise<void> => {
     if (accepted.current) return
     accepted.current = true
@@ -73,7 +83,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
       header={
         <h2 id={TITLE_ID} className="zen-sheet-title">
-          Add to Home screen
+          {copy.title}
         </h2>
       }
       footer={
@@ -85,11 +95,15 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
             type="button"
             className="zen-v2-button"
             data-primary
-            aria-label="Add"
+            aria-label={copy.action}
             aria-busy={busy || undefined}
             onClick={() => void add()}
           >
-            {busy ? <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden /> : 'Add'}
+            {busy ? (
+              <Loader2 className="zen-spin h-4 w-4" strokeWidth={2} aria-hidden />
+            ) : (
+              copy.action
+            )}
           </button>
         </>
       }
@@ -178,40 +192,50 @@ export function AppIcon({
 const SHOT_HEIGHT = 240
 
 /** Width for a screenshot from its declared `sizes`, before the image itself has loaded. */
-function shotWidth(shot: WebAppScreenshot): number | null {
+function shotWidth(shot: WebAppScreenshot, height: number): number | null {
   const m = shot.sizes ? /^(\d+)x(\d+)/.exec(shot.sizes) : null
   if (!m) return null
   const w = Number(m[1])
   const h = Number(m[2])
   if (!w || !h) return null
-  return Math.round((SHOT_HEIGHT * w) / h)
+  return Math.round((height * w) / h)
 }
 
 /**
  * The manifest's screenshots as a horizontal strip of bordered cards: fixed height, natural
- * width, one snap stop per shot and fading edges where more is hidden. Phone-shaped (`narrow`)
- * shots are shown when the manifest has any; the rest only otherwise.
+ * width, one snap stop per shot and fading edges where more is hidden. The shots for this
+ * chrome's shape are shown when the manifest marks any – `narrow` (phone-shaped) in the phone's
+ * sheet, `wide` in the desktop's dialog, as Chrome picks them for its two install dialogs – and
+ * the rest only otherwise.
  */
-function ScreenshotStrip({ shots }: { shots: WebAppScreenshot[] }): JSX.Element {
+export function ScreenshotStrip({
+  shots,
+  formFactor = 'narrow',
+  height = SHOT_HEIGHT
+}: {
+  shots: WebAppScreenshot[]
+  formFactor?: 'narrow' | 'wide'
+  height?: number
+}): JSX.Element {
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 20 })
   const visible = useMemo(() => {
-    const narrow = shots.filter((s) => s.formFactor === 'narrow')
-    return narrow.length ? narrow : shots
-  }, [shots])
+    const shaped = shots.filter((s) => s.formFactor === formFactor)
+    return shaped.length ? shaped : shots
+  }, [shots, formFactor])
   return (
     <div ref={fadeRef} className="zen-install-shots" role="list" aria-label="Screenshots">
       {visible.map((shot) => (
         <figure
           key={shot.src}
           role="listitem"
-          className={cn('zen-install-shot', !shotWidth(shot) && 'min-w-[96px]')}
-          data-sized={shotWidth(shot) ? '' : undefined}
-          style={{ height: SHOT_HEIGHT, width: shotWidth(shot) ?? undefined }}
+          className={cn('zen-install-shot', !shotWidth(shot, height) && 'min-w-[96px]')}
+          data-sized={shotWidth(shot, height) ? '' : undefined}
+          style={{ height, width: shotWidth(shot, height) ?? undefined }}
         >
           <img
             src={shot.src}
             alt={shot.label ?? ''}
-            height={SHOT_HEIGHT}
+            height={height}
             loading="lazy"
             decoding="async"
             draggable={false}

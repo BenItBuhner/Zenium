@@ -1,10 +1,25 @@
 import type { JSX } from 'react'
+import { useEffect } from 'react'
 import { Globe } from 'lucide-react'
 import type { UIState } from '@shared/types'
+import { installChromeDrops, registerChromeCaret } from '@renderer/lib/dnd'
 import { dropStore, registerCaret, registerGhost } from '@renderer/lib/drag'
 import { tabTitle } from '@renderer/lib/selectors'
 import type { DragState } from '@renderer/lib/ui'
 import { Favicon } from './sidebar/Favicon'
+
+/**
+ * The chrome's drop target for what comes from outside the tab strip – a link, text, files
+ * (lib/dnd.ts): the document listens for the drag while this is mounted, and the insertion
+ * caret it places between the rows is this element, positioned by the drag code like the tab
+ * drag's. Mounted for the window's life, so a drag that arrives from the page finds it there.
+ */
+export function ChromeDropLayer(): JSX.Element {
+  useEffect(() => installChromeDrops(), [])
+  return (
+    <div ref={registerChromeCaret} className="zen-tab-caret" data-surface="window" aria-hidden />
+  )
+}
 
 /**
  * What a tab drag draws over the window: the ghost in the hand – the lifted row, thinned out

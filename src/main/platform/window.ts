@@ -1,6 +1,16 @@
-import { BrowserWindow, screen, shell, webContents } from 'electron'
+import {
+  BrowserWindow,
+  WebContentsView,
+  nativeImage,
+  screen,
+  shell,
+  webContents,
+  type NativeImage
+} from 'electron'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { is } from '@electron-toolkit/utils'
+import { ElectronShortcuts } from './shortcuts'
 import type { EventName, Events, Rect, WindowChrome } from '../../shared/types'
 import { CAPTION_HEIGHT, type CaptionColors } from '../../shared/theme'
 import type { Browser } from '../../core/browser'
@@ -24,6 +34,9 @@ const DEFAULT_HEIGHT = 820
 /** Popups are as small as the page asked for, within reason. */
 const POPUP_MIN_WIDTH = 320
 const POPUP_MIN_HEIGHT = 200
+/** An app window's first size (Chrome opens installed apps at about this); the app's own after. */
+const APP_DEFAULT_WIDTH = 1024
+const APP_DEFAULT_HEIGHT = 720
 /** Width (px) of the edge zone that reveals the sidebar in compact mode. */
 const COMPACT_REVEAL_ZONE = 14
 /**
@@ -38,11 +51,23 @@ const TOOLBAR_KEEP_ZONE = 120
  * maximise button its Snap Layouts flyout. macOS keeps its traffic lights; Linux draws Zenium's.
  */
 const CAPTION_OVERLAY = process.platform === 'win32'
+/**
+ * The popup surface is kept loaded for this long after it was last shown, so the next picker
+ * comes up without a document load; then it is closed to give its memory back.
+ */
+const POPUP_SURFACE_IDLE_MS = 30_000
+
+/** Where the factory keeps the chrome documents that may send commands for a window. */
+export interface ChromeContentsRegistry {
+  add(id: number): void
+  remove(id: number): void
+}
 
 /**
  * The Electron side of one `ZenWindow`: a frameless `BrowserWindow` whose web contents render
  * Zen's chrome. Tab pages are `WebContentsView` children the core positions through the window's
- * layout reports. Frame events (focus, bounds, close) are forwarded to the core window.
+ * layout reports. Frame events (focus, bounds, close) are forwarded to the core window. The popup
+ * surface (`setPopupSurface`) is a second chrome document in a `WebContentsView` above the pages.
  */
 export class ElectronWindow implements WindowHost {
   readonly win: BrowserWindow
@@ -52,11 +77,17 @@ export class ElectronWindow implements WindowHost {
   private readonly toolbarEdge = new EdgeTracker()
   private readonly titles: TitleThrottle
   private captionColors: CaptionColors
+  private popup: WebContentsView | null = null
+  private popupIdleTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly browser: Browser,
     readonly zen: ZenWindow,
-    init: WindowCreateInit
+    init: WindowCreateInit,
+    private readonly registry: ChromeContentsRegistry = {
+      add: () => undefined,
+      remove: () => undefined
+    }
   ) {
     let initial = init.bounds
     let displayId = init.displayId
@@ -69,17 +100,19 @@ export class ElectronWindow implements WindowHost {
     const bounds = sanitizeBounds(initial, displayId, init.chrome)
     const isMac = process.platform === 'darwin'
     const mica = init.material === 'mica' && process.platform === 'win32'
+    // Popups and app windows are as small as the page (or the app) wants, within reason.
+    const compactChrome = init.chrome !== 'full'
     this.captionColors = init.captionColors
     this.win = new BrowserWindow({
       ...bounds,
-      minWidth: init.chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: init.chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
+      minWidth: compactChrome ? POPUP_MIN_WIDTH : MIN_WIDTH,
+      minHeight: compactChrome ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
       show: false,
       frame: false,
       titleBarStyle: isMac ? 'hiddenInset' : CAPTION_OVERLAY ? 'hidden' : undefined,
       // Centred on the 38px header row (12px lights: 16 + 6 = 22 = 6 + 32 / 2); a toolbar-only
-      // window's 40px toolbar row is centred at 20.
-      trafficLightPosition: isMac ? { x: 14, y: init.chrome === 'popup' ? 14 : 16 } : undefined,
+      // window's 40px toolbar row (and an app window's title row) is centred at 20.
+      trafficLightPosition: isMac ? { x: 14, y: compactChrome ? 14 : 16 } : undefined,
       titleBarOverlay: CAPTION_OVERLAY
         ? {
             color: init.captionColors.color,
@@ -95,10 +128,14 @@ export class ElectronWindow implements WindowHost {
         : { backgroundColor: init.backgroundColor }),
       autoHideMenuBar: true,
       title: init.title,
-      // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's).
+      // Windows and Linux take the icon per window (macOS shows the bundle's, or the Dock's); an
+      // app window carries its app's icon into the taskbar and the window switcher.
       ...(process.platform === 'darwin'
         ? {}
-        : { icon: windowIcon(browser.state.settings.appIcon) }),
+        : {
+            icon:
+              appWindowIcon(init.app?.icon ?? null) ?? windowIcon(browser.state.settings.appIcon)
+          }),
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         sandbox: true,
@@ -112,6 +149,18 @@ export class ElectronWindow implements WindowHost {
     this.titles = new TitleThrottle((title) => {
       if (this.alive) win.setTitle(title)
     }, init.title)
+    // Windows groups taskbar buttons by AppUserModelID: an installed app's windows get their
+    // own group, icon and pin ("pin to taskbar" relaunches the app), as Chrome's app windows do.
+    if (process.platform === 'win32' && init.app?.appId) {
+      const icon = init.app.icon?.startsWith('file:') ? fileURLToPath(init.app.icon) : null
+      const ico = icon ? icon.replace(/\.png$/i, '.ico') : null
+      win.setAppDetails({
+        appId: ElectronShortcuts.appUserModelId(init.app.appId),
+        ...(ico ? { appIconPath: ico, appIconIndex: 0 } : {}),
+        relaunchCommand: ElectronShortcuts.relaunchCommand(init.app.startUrl),
+        relaunchDisplayName: init.app.name
+      })
+    }
     if (init.maximized) win.maximize()
 
     win.once('ready-to-show', () => win.show())
@@ -157,6 +206,7 @@ export class ElectronWindow implements WindowHost {
     win.on('closed', () => {
       this.stopCompactTracking()
       this.titles.cancel()
+      this.closePopupSurface()
       zen.onClosed()
     })
     this.startCompactTracking()
@@ -180,11 +230,13 @@ export class ElectronWindow implements WindowHost {
     })
     wc.on('will-navigate', (event) => event.preventDefault())
     // The chrome's rows show their menus themselves (and cancel the DOM event, which keeps this
-    // one from firing); what reaches here is a text field, the URL bar or plain chrome.
+    // one from firing); what reaches here is a text field, the URL bar or plain chrome. Shift+F10
+    // and the Menu key arrive as a keyboard-sourced event at the caret or the focused element.
     wc.on('context-menu', (_event, params) =>
       zen.onContextMenu({
         x: params.x,
         y: params.y,
+        keyboard: params.menuSourceType === 'keyboard',
         isEditable: params.isEditable,
         selectionText: params.selectionText,
         editFlags: params.editFlags
@@ -212,7 +264,11 @@ export class ElectronWindow implements WindowHost {
   // ---------------------------------------------------------------------------
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
-    if (this.alive) this.win.webContents.send('zen:event', name, payload)
+    if (!this.alive) return
+    this.win.webContents.send('zen:event', name, payload)
+    // The popup surface mirrors the window's state like the chrome does (the picker lives in it).
+    const popup = this.popup?.webContents
+    if (popup && !popup.isDestroyed()) popup.send('zen:event', name, payload)
   }
 
   focusChrome(): void {
@@ -330,6 +386,101 @@ export class ElectronWindow implements WindowHost {
   }
 
   // ---------------------------------------------------------------------------
+  // Popup surface
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The picker's document in a `WebContentsView` above every page view, at `bounds` (window CSS
+   * pixels); null hides it. Showing never moves the keyboard: the view is added without focus and
+   * the page field keeps typing. Hidden, the document stays loaded for `POPUP_SURFACE_IDLE_MS` so
+   * the next picker is instant, then it is closed.
+   */
+  setPopupSurface(bounds: Rect | null): void {
+    if (!this.alive) return
+    if (!bounds) {
+      this.hidePopupSurface()
+      return
+    }
+    if (this.popupIdleTimer) {
+      clearTimeout(this.popupIdleTimer)
+      this.popupIdleTimer = null
+    }
+    const view = this.popup ?? this.createPopupSurface()
+    view.setBounds({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height)
+    })
+    // Adding again moves the view to the top of the z-order, over a page view placed since.
+    this.win.contentView.addChildView(view)
+    if (!view.getVisible()) view.setVisible(true)
+  }
+
+  private createPopupSurface(): WebContentsView {
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        spellcheck: false,
+        backgroundThrottling: false
+      }
+    })
+    // The panel draws its own background and shadow; the margin around it shows the page.
+    view.setBackgroundColor('#00000000')
+    this.popup = view
+    const wc = view.webContents
+    const id = wc.id
+    this.registry.add(id)
+    wc.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/.test(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    wc.on('will-navigate', (event) => event.preventDefault())
+    wc.on('context-menu', (event) => event.preventDefault())
+    wc.on('destroyed', () => {
+      this.registry.remove(id)
+      if (this.popup === view) this.popup = null
+    })
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+      url.searchParams.set('surface', 'autofill')
+      void wc.loadURL(url.toString())
+    } else {
+      void wc.loadFile(join(__dirname, '../renderer/index.html'), {
+        query: { surface: 'autofill' }
+      })
+    }
+    return view
+  }
+
+  private hidePopupSurface(): void {
+    const view = this.popup
+    if (!view) return
+    if (view.getVisible()) view.setVisible(false)
+    if (this.alive) this.win.contentView.removeChildView(view)
+    if (this.popupIdleTimer) clearTimeout(this.popupIdleTimer)
+    this.popupIdleTimer = setTimeout(() => {
+      this.popupIdleTimer = null
+      this.closePopupSurface()
+    }, POPUP_SURFACE_IDLE_MS)
+  }
+
+  private closePopupSurface(): void {
+    if (this.popupIdleTimer) clearTimeout(this.popupIdleTimer)
+    this.popupIdleTimer = null
+    const view = this.popup
+    if (!view) return
+    this.popup = null
+    if (this.alive) this.win.contentView.removeChildView(view)
+    const wc = view.webContents
+    this.registry.remove(wc.id)
+    if (!wc.isDestroyed()) wc.close()
+  }
+
+  // ---------------------------------------------------------------------------
   // Bounds persistence
   // ---------------------------------------------------------------------------
 
@@ -365,7 +516,7 @@ export class ElectronWindow implements WindowHost {
     const zen = this.zen
     const cm = state.settings.compactMode
     // The window's fullscreen hides the chrome like compact mode with both switches on.
-    const fullscreen = zen.chrome !== 'popup' && this.win.isFullScreen()
+    const fullscreen = zen.chrome === 'full' && this.win.isFullScreen()
     const sidebarHidden =
       fullscreen || (zen.compactEnabled && cm.hideSidebar && !zen.compactSidebarPersistent)
     const toolbarHidden =
@@ -417,7 +568,11 @@ export class ElectronWindowFactory implements WindowHostFactory {
   }
 
   create(win: ZenWindow, init: WindowCreateInit): WindowHost {
-    const host = new ElectronWindow(this.browser, win, init)
+    // The popup surface's document sends commands for the window like the chrome does.
+    const host = new ElectronWindow(this.browser, win, init, {
+      add: (id) => this.byWebContentsId.set(id, win),
+      remove: (id) => this.byWebContentsId.delete(id)
+    })
     const id = host.win.webContents.id
     this.byWebContentsId.set(id, win)
     host.win.on('closed', () => this.byWebContentsId.delete(id))
@@ -444,10 +599,31 @@ function sanitizeBounds(saved: Rect | null, displayId: number | null, chrome: Wi
     {
       saved,
       displayId,
-      minWidth: chrome === 'popup' ? POPUP_MIN_WIDTH : MIN_WIDTH,
-      minHeight: chrome === 'popup' ? POPUP_MIN_HEIGHT : MIN_HEIGHT,
-      defaultSize: { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
+      minWidth: chrome === 'full' ? MIN_WIDTH : POPUP_MIN_WIDTH,
+      minHeight: chrome === 'full' ? MIN_HEIGHT : POPUP_MIN_HEIGHT,
+      defaultSize:
+        chrome === 'app'
+          ? { width: APP_DEFAULT_WIDTH, height: APP_DEFAULT_HEIGHT }
+          : { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
     },
     displays
   )
+}
+
+/**
+ * An app window's icon for the frame and taskbar: the launcher icon the shortcut host kept (a
+ * `file:` URL under the profile) or a data URL; null when there is none or it cannot be read.
+ */
+function appWindowIcon(icon: string | null): NativeImage | null {
+  if (!icon) return null
+  try {
+    const image = icon.startsWith('data:')
+      ? nativeImage.createFromDataURL(icon)
+      : icon.startsWith('file:')
+        ? nativeImage.createFromPath(fileURLToPath(icon))
+        : null
+    return image && !image.isEmpty() ? image : null
+  } catch {
+    return null
+  }
 }

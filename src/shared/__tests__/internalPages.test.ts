@@ -24,12 +24,12 @@ const ALL = new Proxy({} as HostCapabilities, { get: () => true })
 
 describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
-    expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings'])
+    expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings', 'print', 'pdf'])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
-    // Zen's features, Privacy and Security after Search, Security (the remembered per-site
-    // answers and the session's sign-ins) last among them, then the browser-wide group past the
-    // first hairline: Sync, Accessibility, Keyboard Shortcuts, Default Browser (the desktop
-    // platforms alone), Updates; About past the second.
+    // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
+    // Security (the remembered per-site answers and the session's sign-ins) last among them; then
+    // the browser-wide group past the first hairline: Sync, Accessibility, Keyboard Shortcuts,
+    // Default Browser (the desktop platforms alone), Updates; About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
@@ -38,6 +38,8 @@ describe('the page registry', () => {
       'downloads',
       'resources',
       'search',
+      'autofill',
+      'languages',
       'privacy',
       'spaces',
       'containers',
@@ -60,6 +62,24 @@ describe('the page registry', () => {
     const ids = SETTINGS_SECTIONS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9-]*$/)
+  })
+
+  it('gates the print preview and the PDF viewer on the host that can show them', () => {
+    // Print is Chrome's tab-modal preview: a chrome-drawn singleton over the page, never split.
+    expect(INTERNAL_PAGES.print).toMatchObject({
+      render: 'chrome',
+      singleton: true,
+      overlay: 'print',
+      splittable: false,
+      requires: 'printPreview'
+    })
+    // The PDF viewer is a document of its own per file, for the host whose engine draws no PDF.
+    expect(INTERNAL_PAGES.pdf).toMatchObject({
+      render: 'document',
+      singleton: false,
+      splittable: true,
+      requires: 'pdfViewer'
+    })
   })
 })
 
@@ -222,6 +242,12 @@ describe('the section model', () => {
     expect(ids).not.toContain('accessibility')
     expect(ids).not.toContain('privacy')
     expect(ids).not.toContain('passwords')
+    // #106's Languages follows the translation engine, as the desktop pane does.
+    expect(ids).not.toContain('languages')
+    const translating = new Proxy({} as HostCapabilities, { get: (_t, key) => key === 'translate' })
+    expect(
+      availableSections(INTERNAL_PAGES.settings, translating, 'phone').map((s) => s.id)
+    ).toContain('languages')
   })
 })
 
@@ -229,15 +255,26 @@ describe('the landing list', () => {
   const page = INTERNAL_PAGES.settings
 
   it('separates Zen features from Sync and Updates, and those from About (v2 §10.2)', () => {
-    const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
+    // The tablet layout: Sync (the desktop panel's section serves the two-pane page) and Keyboard
+    // Shortcuts are listed there and not on the phone.
+    const runs = landingRuns(page, availableSections(page, ALL, 'tablet')).map((run) =>
       run.map((s) => s.id)
     )
     expect(runs).toHaveLength(3)
     expect(runs[0][0]).toBe('look')
     expect(runs[0]).not.toContain('sync')
     expect(runs[0]).not.toContain('accessibility')
-    expect(runs[1]).toEqual(['sync', 'accessibility', 'updates'])
+    expect(runs[1]).toEqual(['sync', 'accessibility', 'shortcuts', 'updates'])
     expect(runs[2]).toEqual(['about'])
+  })
+
+  it('holds the Sync category off the phone landing until its builder lands (ID-08 UI PR)', () => {
+    const phone = availableSections(page, ALL, 'phone').map((s) => s.id)
+    expect(phone).not.toContain('sync')
+    const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
+      run.map((s) => s.id)
+    )
+    expect(runs[1]).toEqual(['accessibility', 'updates'])
   })
 
   it('keeps a break when the section it precedes is missing and drops a run left empty', () => {

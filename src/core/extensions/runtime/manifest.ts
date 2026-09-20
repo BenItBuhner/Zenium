@@ -4,6 +4,8 @@
  * runtime model is what the injection planner, the chrome.* shim and the hosts consume.
  */
 import { getMessage, localeCandidates, substituteMessages, type LocaleMessages } from '../api/i18n'
+import { availablePermissions } from '../api/permissions'
+import { buildMessageCatalog, localizeManifest } from '../manifest'
 
 export type ManifestVersion = 2 | 3
 
@@ -90,7 +92,12 @@ export interface RuntimeManifest {
   extensionPagesCsp: string | null
   minimumChromeVersion: string | null
   incognito: 'spanning' | 'split' | 'not_allowed'
-  /** The raw document, for `chrome.runtime.getManifest()`. */
+  /**
+   * The document for `chrome.runtime.getManifest()`: as written, with Chrome's localisable
+   * strings (`name`, `short_name`, `description`, action titles, command descriptions, omnibox
+   * and search-provider strings) resolved from `_locales` the way Chrome resolves them at load.
+   * Adblock Plus reads `short_name` from it and refuses to start on `__MSG_name__`.
+   */
   raw: Record<string, unknown>
 }
 
@@ -276,9 +283,19 @@ export function parseRuntimeManifest(
     description: substituteMessages(str(source.description), messages),
     defaultLocale: typeof source.default_locale === 'string' ? source.default_locale : null,
     icons: stringMap(source.icons),
-    // MV2 keeps host patterns inside `permissions`; split them the MV3 way.
-    permissions: permissions.filter((p) => !isHostPattern(p)),
-    optionalPermissions: strings(source.optional_permissions).filter((p) => !isHostPattern(p)),
+    // MV2 keeps host patterns inside `permissions`; split them the MV3 way. An API permission
+    // outside its manifest version (`webRequestBlocking` on MV3, `scripting` on MV2) is not
+    // granted, as Chrome's feature system refuses it with an install warning: an MV3 extension
+    // asking `permissions.contains({ permissions: ['webRequestBlocking'] })` hears `false`
+    // (Stylus does, and registers its observational listener on that answer).
+    permissions: availablePermissions(
+      permissions.filter((p) => !isHostPattern(p)),
+      mv
+    ),
+    optionalPermissions: availablePermissions(
+      strings(source.optional_permissions).filter((p) => !isHostPattern(p)),
+      mv
+    ),
     hostPermissions: [...hostPermissions, ...permissions.filter(isHostPattern)],
     optionalHostPermissions: [
       ...strings(source.optional_host_permissions),
@@ -296,7 +313,7 @@ export function parseRuntimeManifest(
       typeof source.minimum_chrome_version === 'string' ? source.minimum_chrome_version : null,
     incognito:
       incognitoRaw === 'split' || incognitoRaw === 'not_allowed' ? incognitoRaw : 'spanning',
-    raw: source
+    raw: messages ? localizeManifest(source, buildMessageCatalog([messages])).manifest : source
   }
 }
 

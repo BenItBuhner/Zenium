@@ -80,7 +80,8 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
             back()
         }
         SystemClock.sleep(1_500)
-        closeUrlbar()
+        val close = closeUrlField()
+        if (!close.ok) finding("warm-up: ${close.describe()}")
         finding("start: active ${activeCoreTab()?.optString("url")}")
     }
 

@@ -770,13 +770,18 @@ export function RadioRow({
 /**
  * A settings row: label and description to the left, the control to the right, centred on the
  * row (§9.18); the row itself is not a target (`data-static`, §9.34), its control is. `stack`
- * drops the control under the text (a phone with a wide menulist or a pair of buttons).
+ * drops the control under the text (a phone with a wide menulist or a pair of buttons). The
+ * height is the shared row's: a one-line row whose child is a shared `control` (a button,
+ * menulist or field) carries the primitive's `data-control` and grows to the control plus 8
+ * (§9.21: 40 / 48); a two-line row holds the control inside its lines on the row pad and takes
+ * no mark (52 / 64), nor does a row with a slider.
  */
 export function SettingRow({
   label,
   description,
   stack = false,
   clamp = true,
+  control = false,
   children,
   className
 }: {
@@ -785,6 +790,8 @@ export function SettingRow({
   stack?: boolean
   /** Descriptions clamp at two lines unless the row is the explanation itself. */
   clamp?: boolean
+  /** The child is one of the shared controls the row grows around (§9.21). */
+  control?: boolean
   children?: ReactNode
   className?: string
 }): JSX.Element {
@@ -793,6 +800,7 @@ export function SettingRow({
       className={cn('zen-v2-row zen-v2-pw-row', className)}
       data-static=""
       data-stack={stack || undefined}
+      data-control={control && !description && !stack ? '' : undefined}
     >
       <RowText label={label} description={description} full={!clamp} />
       {children && <div className="zen-v2-pw-row-control">{children}</div>}
@@ -803,17 +811,29 @@ export function SettingRow({
 /**
  * A list row on the surface: the shared row as a target when it opens something (the fill on
  * hover and press), its static form when its controls are the targets (a never-saved site with
- * its Allow button, a checkup finding with Change).
+ * its Allow button, a checkup finding with Change). A one-line row trailing a shared button or
+ * icon button says `control` and carries the primitive's `data-control` (§9.21: 36 / 52 around
+ * the icon button, 40 / 48 around a button); a two-line row holds its control inside its lines
+ * and takes no mark.
  */
 export function ListRow({
   className,
   children,
   onClick,
+  control = false,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement>): JSX.Element {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** A one-line row whose trailing child is a shared button or icon button (§9.21). */
+  control?: boolean
+}): JSX.Element {
+  const mark = control ? '' : undefined
   if (!onClick) {
     return (
-      <div className={cn('zen-v2-row zen-v2-pw-list-row', className)} data-static="">
+      <div
+        className={cn('zen-v2-row zen-v2-pw-list-row', className)}
+        data-static=""
+        data-control={mark}
+      >
         {children}
       </div>
     )
@@ -823,6 +843,7 @@ export function ListRow({
       type="button"
       className={cn('zen-v2-row zen-v2-pw-list-row', className)}
       onClick={onClick}
+      data-control={mark}
       {...rest}
     >
       {children}
@@ -860,7 +881,7 @@ export function ChoiceRow<T extends string>({
   const current = options.find((o) => o.value === value)
   if (!phone) {
     return (
-      <SettingRow label={label} description={description} className={className}>
+      <SettingRow label={label} description={description} className={className} control>
         <Menulist
           label={label}
           description={description}

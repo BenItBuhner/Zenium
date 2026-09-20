@@ -42,14 +42,6 @@ export const NEW_TAB_PRESETS: readonly NewTabPreset[] = [
 /** No feed core exists yet; the preset that needs one is offered as "not available". */
 export const FEED_AVAILABLE = false
 
-/**
- * Voice and visual search are later workers' rows. The phone's search field shows their buttons
- * only once something handles the `zen-voice-search` / `zen-visual-search` events they dispatch,
- * so no control that does nothing ships in the meantime.
- */
-export const VOICE_SEARCH_AVAILABLE = false
-export const VISUAL_SEARCH_AVAILABLE = false
-
 /** What a page draws. Same shape as the modules: a preset is a fixed set of them. */
 export type NewTabSections = NewTabModules
 

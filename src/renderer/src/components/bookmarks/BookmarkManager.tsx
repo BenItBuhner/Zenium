@@ -31,6 +31,7 @@ import { shortcutHint } from '@shared/shortcuts'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { ChromePortal, FrameDialogHost } from '@renderer/lib/portals'
+import { contextMenuAnchor, handleMenuKey } from '@renderer/lib/menuKeys'
 import { activeTab } from '@renderer/lib/selectors'
 import { browserStore, closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -328,7 +329,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         ids = [node.id]
       }
     }
-    run('bookmark.contextMenu', { ids, folderId, x: e.clientX, y: e.clientY })
+    run('bookmark.contextMenu', { ids, folderId, ...contextMenuAnchor(e) })
   }
 
   const importBookmarks = (): void => {
@@ -655,12 +656,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                 onContextMenu={(id, e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  run('bookmark.contextMenu', {
-                    ids: [id],
-                    folderId: id,
-                    x: e.clientX,
-                    y: e.clientY
-                  })
+                  run('bookmark.contextMenu', { ids: [id], folderId: id, ...contextMenuAnchor(e) })
                 }}
                 dropFolderId={dropFolderId}
               />
@@ -982,17 +978,12 @@ function OverflowMenu({
     </button>
   )
 
-  // Arrow keys walk the rows (from the top when the menu itself has focus) and Tab wraps through
-  // them; Escape is trapped above so it closes the menu, not the manager.
+  // Arrow keys walk the rows (from the top when the menu itself has focus), Home and End jump,
+  // Tab wraps through them and a letter goes to or runs the row it names (lib/menuKeys.ts);
+  // Escape is trapped above so it closes the menu, not the manager.
   const onMenuKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Tab') return
     const rows = [...(ref.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
-    const at = rows.indexOf(document.activeElement as HTMLElement)
-    const back = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)
-    const next =
-      at === -1 ? (back ? rows.length - 1 : 0) : (at + (back ? -1 : 1) + rows.length) % rows.length
-    rows[next]?.focus()
-    e.preventDefault()
+    handleMenuKey(e, rows, { mnemonics: true, tab: true })
   }
 
   return (

@@ -30,8 +30,12 @@ export const INTERNAL_SCHEME = 'zen'
 /** The user-facing alias: shown in the address bar, accepted from typed input and deep links. */
 export const INTERNAL_ALIAS_SCHEME = 'zenium'
 
-/** The pages registered today. Widened as pages move onto the mechanism. */
-export type InternalPageId = 'settings'
+/**
+ * The pages registered today: Settings, the print preview (`zen://print`, a chrome page that is
+ * the desktop's print dialog) and the PDF viewer (`zen://pdf?id=…`, a document page on hosts
+ * whose engine cannot draw a PDF). Widened as pages move onto the mechanism.
+ */
+export type InternalPageId = 'settings' | 'print' | 'pdf'
 
 /**
  * How a page's tab holds its page.
@@ -107,6 +111,12 @@ export interface InternalPageDefinition {
    * chrome cannot draw into) opens as this overlay instead; a document page never needs one.
    */
   overlay?: OverlayKind
+  /**
+   * Host capability the page needs (the print preview needs `printPreview`): the `PageService`
+   * refuses to open the page on a host without it, and a typed address loads as a plain
+   * document. The parser stays host neutral, as for sections.
+   */
+  requires?: keyof HostCapabilities
   /** The page's sections (`zen://<id>/<section>`); a page without sections has none. */
   sections: readonly InternalPageSection[]
 }
@@ -177,9 +187,51 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     keywords: ['engine', 'suggestions', 'keyword']
   },
   {
+    id: 'autofill',
+    label: 'Autofill',
+    keywords: [
+      'autofill',
+      'addresses',
+      'payment methods',
+      'cards',
+      'passkeys',
+      'save passwords',
+      'offer to save',
+      'clipboard'
+    ],
+    requires: 'passwords'
+  },
+  {
+    id: 'languages',
+    label: 'Languages',
+    keywords: [
+      'languages',
+      'translate',
+      'translation',
+      'offer to translate',
+      'never translate',
+      'preferred languages',
+      'spell'
+    ],
+    requires: 'translate'
+  },
+  {
     id: 'privacy',
     label: 'Privacy and Security',
-    keywords: ['ads', 'trackers', 'blocking', 'filter', 'permissions', 'site', 'exceptions'],
+    keywords: [
+      'ads',
+      'trackers',
+      'blocking',
+      'filter',
+      'permissions',
+      'site',
+      'exceptions',
+      'safe browsing',
+      'https',
+      'dns',
+      'cookies',
+      'do not track'
+    ],
     requires: 'requestBlocking'
   },
   {
@@ -239,7 +291,10 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     id: 'sync',
     label: 'Sync',
     keywords: ['devices', 'folder', 'passphrase'],
-    requires: 'sync'
+    requires: 'sync',
+    // The engine runs on the phone (ID-08) but its Settings builder is the UI PR's: until it
+    // lands the category stays off the phone landing rather than opening on an empty page.
+    layouts: ['desktop', 'tablet']
   },
   {
     id: 'accessibility',
@@ -294,6 +349,39 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     splittable: false,
     overlay: 'settings',
     sections: SETTINGS_SECTIONS
+  },
+  /**
+   * The print preview (`shared/print.ts`, `core/print.ts`): Chrome's `chrome://print`, a
+   * tab-modal dialog over the page it prints, so on the desktop – the host with the preview,
+   * and one without page tabs – it opens as the `print` overlay for the active tab. Never a tab
+   * of its own: one preview per tab, no sections, no star.
+   */
+  print: {
+    id: 'print',
+    title: 'Print',
+    render: 'chrome',
+    singleton: true,
+    pill: { showStar: false },
+    splittable: false,
+    overlay: 'print',
+    requires: 'printPreview',
+    sections: []
+  },
+  /**
+   * The PDF viewer (`shared/pdfPage.ts`): `zen://pdf?id=<download>` shows a PDF the host
+   * downloaded, in the tab that navigated to it, as Chrome Android's inline viewer does. A
+   * document page: an ordinary page view with the viewer's own history, a title from the file's
+   * name, and every open its own (two PDFs are two tabs).
+   */
+  pdf: {
+    id: 'pdf',
+    title: 'PDF',
+    render: 'document',
+    singleton: false,
+    pill: { showStar: true },
+    splittable: true,
+    requires: 'pdfViewer',
+    sections: []
   }
 }
 

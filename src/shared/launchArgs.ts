@@ -14,9 +14,15 @@ export interface LaunchArgs {
   window: LaunchWindowMode
   /** `--make-default-browser`: the Windows registration's ReinstallCommand (build/installer.nsh). */
   makeDefault: boolean
+  /**
+   * `--app=<url>` (Chrome's app mode, what an installed web app's launcher runs): the page opens
+   * in a standalone app window of its own instead of a tab. Null without the flag.
+   */
+  app: string | null
 }
 
 const MAKE_DEFAULT_FLAG = '--make-default-browser'
+const APP_FLAG = '--app='
 
 /** Zen Browser ships `--blank-window` and `--private-window`; Chrome's spellings are accepted too. */
 const WINDOW_FLAGS: Record<string, LaunchWindowMode> = {
@@ -52,6 +58,7 @@ export function parseLaunchArgs(argv: readonly string[], cwd: string): LaunchArg
   const urls: string[] = []
   let window: LaunchWindowMode = 'current'
   let makeDefault = false
+  let app: string | null = null
   for (const raw of argv) {
     const arg = unquote(raw)
     if (!arg) continue
@@ -64,13 +71,24 @@ export function parseLaunchArgs(argv: readonly string[], cwd: string): LaunchArg
       makeDefault = true
       continue
     }
+    if (arg.toLowerCase().startsWith(APP_FLAG)) {
+      // The launcher's value may itself be quoted (`--app="https://…"`), or the whole argument
+      // may be (`"--app=https://…"`); the last flag wins.
+      const trimmed = raw.trim()
+      const value = trimmed.toLowerCase().startsWith(APP_FLAG)
+        ? unquote(trimmed.slice(APP_FLAG.length))
+        : arg.slice(APP_FLAG.length)
+      const url = launchArgToUrl(value, cwd)
+      if (url) app = url
+      continue
+    }
     // Chromium switches (`--no-sandbox`, `--original-process-start-time=…`) and the `-psn_…`
     // argument macOS used to add for Finder launches are not documents.
     if (arg.startsWith('-')) continue
     const url = launchArgToUrl(arg, cwd)
     if (url) urls.push(url)
   }
-  return { urls, window, makeDefault }
+  return { urls, window, makeDefault, app }
 }
 
 /**

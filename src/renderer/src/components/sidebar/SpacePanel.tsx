@@ -5,10 +5,13 @@ import type { Folder, Space, Tab, UIState } from '@shared/types'
 import { FOLDER_COLORS } from '@shared/defaults'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
+import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
-import { useHint } from '@renderer/lib/shortcuts'
+import { hint, useHint } from '@renderer/lib/shortcuts'
+import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
@@ -66,9 +69,18 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
     motion.flip(uiStore.get().drag?.tabId ?? null, isActive)
   }, [motion, orderKey, isActive, zones])
 
+  const pinnedHeaderKey = `header:${space.id}`
+  const activePinnedHidden = space.pinnedCollapsed && pinned.some((t) => t.id === activeTabId)
+
   return (
     <ListMotionContext.Provider value={motion}>
-      <div className="flex h-full w-full shrink-0 flex-col" aria-hidden={!isActive}>
+      {/* The panels of the other spaces are off to the side: out of the tab order and the
+          accessibility tree (`inert`) until the strip slides them in. */}
+      <div
+        className="flex h-full w-full shrink-0 flex-col"
+        aria-hidden={!isActive}
+        inert={!isActive}
+      >
         <div
           ref={scroller}
           data-tab-scroller
@@ -79,69 +91,92 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
           }}
         >
-          {pinned.length > 0 && (
-            <>
-              <SpaceHeader space={space} compact={compact} />
-              {!space.pinnedCollapsed && (
-                <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
-                  {pinned.map((tab) => (
-                    <TabItem
-                      key={tab.id}
-                      tab={tab}
-                      active={tab.id === activeTabId}
-                      compact={compact}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {showSeparator && (
-            <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
-              <div className="h-px flex-1 bg-[var(--zen-border)]" />
-              {regular.length > 0 && !compact && (
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
-                  title="Clear unpinned tabs"
-                  onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
-                >
-                  <Brush className="h-3 w-3" />
-                </button>
-              )}
-              {/* Pinning by drag: the separator is the target, over its own margins, so nothing
-                  in the list moves when a drag starts (an appearing zone would shift the rows). */}
-              {drag && (
-                <DropZone
-                  dropKey={`section:pinned:${space.id}`}
-                  activeKey={dropKey}
-                  label="Pin here"
-                  overlay
+          {/* The tab list (a11y-07, a11y-31): the pinned header and rows, folder headers and
+              rows, loose rows – one tablist per space, vertical; the New Tab button is the
+              strip's next control after it. */}
+          <div
+            className="flex flex-col"
+            role="tablist"
+            aria-orientation="vertical"
+            aria-label={`${space.name} tabs`}
+          >
+            {pinned.length > 0 && (
+              <>
+                <SpaceHeader space={space} compact={compact} fallback={activePinnedHidden} />
+                {!space.pinnedCollapsed && (
+                  <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
+                    {pinned.map((tab) => (
+                      <TabItem
+                        key={tab.id}
+                        tab={tab}
+                        active={tab.id === activeTabId}
+                        compact={compact}
+                        parent={pinnedHeaderKey}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            {showSeparator && (
+              <div className="group/sep relative my-1.5 flex items-center gap-2 px-1">
+                <div className="h-px flex-1 bg-[var(--zen-border)]" />
+                {regular.length > 0 && !compact && (
+                  // Pointer-only (it shows on hover); the keyboard has the space menu's
+                  // "Close Unpinned Tabs" and the action's shortcut.
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="zen-toolbar-button h-5 w-5 opacity-0 group-hover/sep:opacity-70"
+                    title={hint('Clear unpinned tabs', state, 'space.closeUnpinned')}
+                    onClick={() => run('space.closeUnpinned', { spaceId: space.id })}
+                  >
+                    <Brush className="h-3 w-3" />
+                  </button>
+                )}
+                {/* Pinning by drag: the separator is the target, over its own margins, so nothing
+                    in the list moves when a drag starts (an appearing zone would shift the rows). */}
+                {drag && (
+                  <DropZone
+                    dropKey={`section:pinned:${space.id}`}
+                    activeKey={dropKey}
+                    label="Pin here"
+                    overlay
+                  />
+                )}
+              </div>
+            )}
+            <div className="flex flex-col gap-0.5" data-tab-list="regular">
+              {folders.map((folder) => (
+                <FolderRow
+                  key={folder.id}
+                  folder={folder}
+                  tabs={regular.filter((t) => t.folderId === folder.id)}
+                  activeTabId={activeTabId}
+                  compact={compact}
+                  dropKey={dropKey}
+                  dragging={Boolean(drag)}
+                  live={Boolean(state.liveFolders[folder.id])}
+                  liveError={state.liveFolders[folder.id]?.lastError ?? null}
                 />
-              )}
-            </div>
-          )}
-          <div className="flex flex-col gap-0.5" data-tab-list="regular">
-            {folders.map((folder) => (
-              <FolderRow
-                key={folder.id}
-                folder={folder}
-                tabs={regular.filter((t) => t.folderId === folder.id)}
-                activeTabId={activeTabId}
-                compact={compact}
-                dropKey={dropKey}
-                dragging={Boolean(drag)}
-                live={Boolean(state.liveFolders[folder.id])}
-                liveError={state.liveFolders[folder.id]?.lastError ?? null}
-              />
-            ))}
-            {regular
-              .filter((t) => !t.folderId || !state.folders[t.folderId])
-              .map((tab) => (
-                <TabItem key={tab.id} tab={tab} active={tab.id === activeTabId} compact={compact} />
               ))}
-            <NewTabButton compact={compact} />
+              {regular
+                .filter((t) => !t.folderId || !state.folders[t.folderId])
+                .map((tab) => (
+                  <TabItem
+                    key={tab.id}
+                    tab={tab}
+                    active={tab.id === activeTabId}
+                    compact={compact}
+                  />
+                ))}
+            </div>
           </div>
+          <NewTabButton
+            compact={compact}
+            spaced={folders.length > 0 || regular.length > 0}
+            dropInto={dropKey === `newtab:${space.id}`}
+          />
           <div
             className="relative min-h-6 flex-1"
             onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
@@ -154,16 +189,38 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
   )
 }
 
-function SpaceHeader({ space, compact }: { space: Space; compact: boolean }): JSX.Element {
+/**
+ * The pinned section's header: the space's name, folding its pinned rows. A strip item
+ * (lib/tabStrip.ts): Enter, Space, Left and Right fold and unfold it; `fallback` makes it the
+ * strip's tab stop while it hides the active row.
+ */
+function SpaceHeader({
+  space,
+  compact,
+  fallback
+}: {
+  space: Space
+  compact: boolean
+  fallback: boolean
+}): JSX.Element {
+  const key = `header:${space.id}`
+  const tabIndex = useStripTabIndex(key, fallback)
   return (
     <button
       type="button"
-      className="mb-1 flex h-7 w-full items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-[var(--zen-muted)] hover:bg-[var(--zen-element-bg)]"
+      className="mb-1 flex h-7 w-full items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-[var(--zen-fg)] hover:bg-[var(--zen-element-bg)]"
       title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
+      aria-label={`${space.name} pinned tabs`}
+      aria-expanded={!space.pinnedCollapsed}
+      data-strip-item={key}
+      tabIndex={tabIndex}
+      onFocus={stripFocusIn}
+      onBlur={stripFocusOut}
+      onKeyDown={stripKeyDown}
       onClick={() => run('space.togglePinnedCollapsed', { spaceId: space.id })}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('space.contextMenu', { spaceId: space.id })
+        run('space.contextMenu', { spaceId: space.id, ...contextMenuAnchor(e) })
       }}
     >
       <SpaceGlyph icon={space.icon} size={14} />
@@ -212,20 +269,36 @@ function DropZone({
   )
 }
 
-function NewTabButton({ compact }: { compact: boolean }): JSX.Element {
+/**
+ * The New Tab row under the list; `spaced` keeps the list's 2 px gap above it when it has rows.
+ * An address dragged from outside opens in a new tab at the end of the list when dropped on it
+ * (lib/dnd.ts, `data-new-tab`), and the button shows it will (§9.4).
+ */
+function NewTabButton({
+  compact,
+  spaced,
+  dropInto
+}: {
+  compact: boolean
+  spaced: boolean
+  dropInto: boolean
+}): JSX.Element {
   const title = useHint('New Tab', 'tab.new')
   return (
     <button
       type="button"
       className={cn(
-        'zen-tab h-8 text-[var(--zen-muted)] hover:text-[var(--zen-fg)]',
-        compact && 'justify-center px-0'
+        'zen-tab h-8 text-[var(--zen-fg)]',
+        compact && 'justify-center px-0',
+        spaced && 'mt-0.5'
       )}
+      data-new-tab
+      data-drop-into={dropInto || undefined}
       title={title}
       onClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
       onContextMenu={(e) => {
         e.preventDefault()
-        run('newtab.contextMenu', undefined)
+        run('newtab.contextMenu', contextMenuAnchor(e))
       }}
     >
       <Plus className="h-4 w-4 shrink-0" />
@@ -257,28 +330,55 @@ function FolderRow({
   liveError
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
+  const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
   const lastClick = useRef(0)
+  const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
   const isDropTarget = dropKey === `folder:${folder.id}`
+  const toggle = (): void =>
+    run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
+  // The header is a tab group's (tabs-14): a press folds or unfolds it; the second press of a
+  // double-click undoes the first's fold and opens the group editor bubble (tabs-13) instead, as
+  // does the folder menu's Edit Folder…. It is a strip item (lib/tabStrip.ts) – Chrome's group
+  // header: Enter, Space, Left and Right fold it, the arrows reach it from the rows (§9.22) – and
+  // the strip's tab stop while it stands for the active tab (folded around it).
+  const key = `folder:${folder.id}`
+  const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
   return (
     <div className="flex flex-col gap-0.5">
       <div
         className={cn('zen-tab h-8', compact && 'justify-center px-0')}
+        role="button"
+        aria-label={folder.name}
+        aria-description={`${live ? 'Live folder' : 'Folder'}, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`}
+        aria-expanded={!folder.collapsed}
+        data-strip-item={key}
+        tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
+        data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
+        data-tab-folder={folder.id}
+        onFocus={stripFocusIn}
+        onBlur={stripFocusOut}
+        onKeyDown={stripKeyDown}
         onClick={() => {
           const now = performance.now()
           if (now - lastClick.current < 400) {
             lastClick.current = 0
-            uiStore.set({ renamingFolderId: folder.id })
+            run('folder.update', {
+              folderId: folder.id,
+              patch: { collapsed: collapsedBeforeClick.current }
+            })
+            openGroupEditor(folder.id)
             return
           }
           lastClick.current = now
-          run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
+          collapsedBeforeClick.current = folder.collapsed
+          toggle()
         }}
         onContextMenu={(e) => {
           e.preventDefault()
-          run('folder.contextMenu', { folderId: folder.id })
+          run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
         }}
         title={compact ? folder.name : undefined}
       >
@@ -322,6 +422,7 @@ function FolderRow({
             active={tab.id === activeTabId}
             compact={compact}
             indent
+            parent={key}
           />
         ))}
     </div>

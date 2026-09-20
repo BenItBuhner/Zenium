@@ -15,7 +15,8 @@ describe('parseLaunchArgs', () => {
     expect(launch).toEqual({
       urls: ['https://example.org/a?b=c#d', 'http://x.test'],
       window: 'current',
-      makeDefault: false
+      makeDefault: false,
+      app: null
     })
   })
 
@@ -28,8 +29,28 @@ describe('parseLaunchArgs', () => {
     expect(parseLaunchArgs(['--New-Window', 'example.org'], '/')).toEqual({
       urls: ['https://example.org'],
       window: 'new',
-      makeDefault: false
+      makeDefault: false,
+      app: null
     })
+  })
+
+  it('reads --app=<url> as a standalone app window, the last one winning', () => {
+    expect(parseLaunchArgs(['--app=https://app.example/start?x=1'], '/')).toEqual({
+      urls: [],
+      window: 'current',
+      makeDefault: false,
+      app: 'https://app.example/start?x=1'
+    })
+    // A launcher may quote the value; a bare host becomes https; other schemes are not apps.
+    expect(parseLaunchArgs(['--app="app.example"'], '/').app).toBe('https://app.example')
+    expect(parseLaunchArgs(['--APP=mailto:x@y.z'], '/').app).toBeNull()
+    expect(parseLaunchArgs(['--app=https://a.test', '--app=https://b.test'], '/').app).toBe(
+      'https://b.test'
+    )
+    // Documents given next to the flag still open as tabs of a browser window.
+    expect(parseLaunchArgs(['--app=https://a.test', 'https://doc.test'], '/').urls).toEqual([
+      'https://doc.test'
+    ])
   })
 
   it('recognises the Windows ReinstallCommand flag', () => {
@@ -37,7 +58,8 @@ describe('parseLaunchArgs', () => {
     expect(parseLaunchArgs(['--hide-icons'], 'C:\\')).toEqual({
       urls: [],
       window: 'current',
-      makeDefault: false
+      makeDefault: false,
+      app: null
     })
   })
 

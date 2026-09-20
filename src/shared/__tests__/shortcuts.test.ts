@@ -105,6 +105,9 @@ describe('the Zen preset (Linux/Windows)', () => {
     expect(key('openFileKb')).toBeNull()
     expect(key('key_tabSearch')).toBeNull()
     expect(key('key_minimizeWindow', 'darwin')).toBeNull()
+    // Ctrl+Shift+P is Zen's private window; the system print dialog has no key of its own here.
+    expect(key('printSystemKb')).toBeNull()
+    expect(key('printKb')).toEqual(ctrl('p'))
   })
 
   it('opens the application menu on F10 and Alt+F (Windows and Linux only)', () => {
@@ -144,7 +147,8 @@ describe('the Chrome preset', () => {
     expect(chrome('openFileKb')).toEqual(ctrl('o'))
     expect(chrome('key_tabSearch')).toEqual(ctrl('a', { shift: true }))
     expect(chrome('zen-duplicate-tab')).toEqual(ctrl('k', { shift: true }))
-    expect(extras('printKb', 'linux', 'chrome')).toEqual([ctrl('p', { shift: true })])
+    expect(chrome('printKb')).toEqual(ctrl('p'))
+    expect(chrome('printSystemKb')).toEqual(ctrl('p', { shift: true }))
     expect(chrome('key_openDownloads', 'linux')).toEqual(ctrl('j'))
     expect(chrome('key_selectTab1', 'linux')).toEqual(ctrl('1'))
     expect(extras('key_reload_skip_cache', 'linux', 'chrome')).toEqual([
@@ -162,6 +166,8 @@ describe('the Chrome preset', () => {
     expect(chrome('key_inspector', 'darwin')).toEqual(cmd('c', { alt: true }))
     expect(extras('key_inspector', 'darwin', 'chrome')).toEqual([cmd('c', { shift: true })])
     expect(chrome('key_viewSource', 'darwin')).toEqual(cmd('u', { alt: true }))
+    expect(chrome('printKb', 'darwin')).toEqual(cmd('p'))
+    expect(chrome('printSystemKb', 'darwin')).toEqual(cmd('p', { alt: true }))
     expect(chrome('goHome', 'darwin')).toEqual(cmd('h', { shift: true }))
     expect(chrome('key_search', 'darwin')).toEqual(cmd('f', { alt: true }))
     expect(extras('key_nextTab', 'darwin', 'chrome')).toEqual([
@@ -196,9 +202,10 @@ describe('the Chrome preset', () => {
     expect(chrome('key_appMenu', 'darwin')).toBeNull()
   })
 
-  it('hides the reserved tab search row but keeps its chord', () => {
+  it('shows the tab search row on Ctrl+Shift+A', () => {
     const search = defaultShortcuts('linux', 'chrome').find((s) => s.id === 'key_tabSearch')
-    expect(search?.hidden).toBe(true)
+    expect(search?.hidden).toBeUndefined()
+    expect(search?.label).toBe('Search Tabs')
     expect(
       matchShortcut(defaultShortcuts('linux', 'chrome'), {
         key: 'A',

@@ -1,24 +1,37 @@
 import type { JSX, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { MonitorSmartphone, Plus, X } from 'lucide-react'
-import type { Rect, SidePanelInfo, UIState } from '@shared/types'
+import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
+import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
+import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
-import { captureActiveTab, panelAloneOverContent, uiStore, type UiState } from '@renderer/lib/ui'
+import { barStateOf } from '@renderer/lib/translate'
+import {
+  captureActiveTab,
+  closeFindBar,
+  closeZoom,
+  panelAloneOverContent,
+  uiStore,
+  type UiState
+} from '@renderer/lib/ui'
 import { extensionChromeAloneOverContent } from '@renderer/lib/extensions/scrim'
 import { cn } from '@renderer/lib/utils'
 import { dropStore } from '@renderer/lib/drag'
 import { newTabGrowStore } from '@renderer/lib/newtab'
+import { PickerStrip } from '../autofill/PickerStrip'
 import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
+import { PdfViewerBar } from '../pdf/PdfViewerBar'
+import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
@@ -26,6 +39,7 @@ import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { LoadProgress } from './LoadProgress'
 import { PullIndicator } from './PullIndicator'
+import { ReadAloudPanel } from './ReadAloudPanel'
 import { SplitChrome } from './SplitChrome'
 import { useLayoutReporter } from './useLayoutReporter'
 import { ZoomSheet } from './ZoomSheet'
@@ -103,10 +117,52 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !(phone && ui.urlbar.open) &&
     !newTabPage
   const dropKey = dropStore.use((s) => s.key)
+  // The translate bar shares the frame with the live page, under the strips and directly above
+  // the page; chrome that stands in for the page (panels, the gesture stage) takes the whole frame.
+  const translateBar = barStateOf(state, tab?.id)
+  const showTranslateBar =
+    translateBar !== null && !foreign && ui.overlay === 'none' && !ui.stageActive
 
   // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
   // it yet, so Electron's wide layout renders the frame alone as it did.
   const loadBar = phone || state.platform === 'android'
+
+  // The inline PDF viewer's bar (CT-02) docks where the find bar and the zoom sheet do, one of
+  // the three at a time: the find bar over a viewer tab searches the document itself and takes
+  // the slot over while it is up; a page shown in another window has no controls here.
+  const pdfBar =
+    state.capabilities.pdfViewer &&
+    tab !== null &&
+    !foreign &&
+    !ui.findOpen &&
+    !ui.zoomTabId &&
+    isPdfViewerTab(state, tab.id)
+
+  // Read aloud's player is the fourth docked panel (§9.32: one in the slot at a time). A session
+  // starting takes the slot – the find bar and the zoom sheet give it up, as they do for each
+  // other – and a find or zoom opened while it reads takes the slot back for its stay: the
+  // panel hides, the session goes on (the OS controls still carry it), and it returns when they
+  // close. The PDF viewer's bar keeps the slot on its tab (a document there is the viewer's,
+  // not an article). The panel is the session's tab's: another tab in front shows no player.
+  // The phone's panel alone: the desktop's read aloud is the services program's own UI, and
+  // the desktop frame must not grow a phone panel for a session its menus start.
+  const readAloud = state.readAloud
+  const readAloudTabId = phone ? (readAloud?.tabId ?? null) : null
+  useEffect(() => {
+    if (!readAloudTabId) return
+    const current = uiStore.get()
+    if (current.findOpen) closeFindBar()
+    if (current.zoomTabId) closeZoom()
+  }, [readAloudTabId])
+  const readAloudDocked =
+    phone &&
+    readAloud !== null &&
+    tab !== null &&
+    readAloud.tabId === tab.id &&
+    !foreign &&
+    !ui.findOpen &&
+    ui.zoomTabId === null &&
+    !pdfBar
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -129,6 +185,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {banner && <DefaultBrowserBanner state={state} />}
           </div>
         )}
+        {showTranslateBar && <TranslateBar state={state} tab={translateBar} />}
         <div className="flex min-h-0 flex-1 flex-row">
           {/* A tab dragged onto the page (past the split zones at its edges) tears off into a new window. */}
           <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden" data-tear-zone>
@@ -179,7 +236,14 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
             )}
-            {ui.drag && local && tab && <SplitDropZones dropKey={dropKey} />}
+            {ui.drag && local && tab && (
+              <SplitDropZones
+                dropKey={dropKey}
+                group={group}
+                area={local}
+                draggedTabId={ui.drag.tabId}
+              />
+            )}
             {glanceActive && state.glance && local && (
               <GlanceFrame
                 state={state}
@@ -207,6 +271,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         {ui.zoomTabId && state.capabilities.pageControls && (
           <ZoomSheet state={state} tabId={ui.zoomTabId} />
         )}
+        {pdfBar && tab && <PdfViewerBar key={tab.id} state={state} tabId={tab.id} />}
+        {readAloudDocked && <ReadAloudPanel session={readAloud} />}
+        {/* The autofill picker of a host without a popup surface docks here, above the keyboard. */}
+        <PickerStrip state={state} />
       </div>
       {/* The bar is the frame's edge: it recedes with the frame, and overlays cover both. */}
       {loadBar && <LoadProgress tab={tab} hidden={contentHidden || glanceActive || foreign} />}
@@ -232,6 +300,9 @@ function SidePanelStrip({
     <aside
       className="flex w-[360px] shrink-0 flex-col border-l border-[var(--zen-border)] bg-[var(--zen-bg)]"
       aria-label={`${panel.name} side panel`}
+      // The side panel pane of the F6 rotation (lib/panes.ts): the strip's controls are what
+      // the chrome can focus; the panel's own page is a host view.
+      data-pane="sidepanel"
     >
       <div className="flex h-9 shrink-0 items-center gap-2 px-3 text-[13px]">
         {panel.icon && <img src={panel.icon} alt="" className="h-4 w-4" draggable={false} />}
@@ -265,7 +336,9 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
-    ui.windowPromptOpen
+    ui.windowPromptOpen ||
+    ui.clearBrowsingDataOpen ||
+    ui.autofillPrompt !== null
   )
 }
 
@@ -334,13 +407,34 @@ function EmptyState(): JSX.Element {
   )
 }
 
-/** Zen: drop a dragged tab on the edge of the content area to split it with the active tab. */
-function SplitDropZones({ dropKey }: { dropKey: string | null }): JSX.Element {
+const ZONE_CLASS =
+  'absolute flex items-center justify-center rounded-xl border-2 border-dashed border-white/30 text-[13px] font-medium text-white/80 transition-colors'
+
+/**
+ * Zen: drop a dragged tab on an edge of the content area to split it with the active tab (Chrome
+ * and Edge's edge drop), or to join the split shown here as a pane on that side. With a split
+ * open each pane is a target too (Edge): the dragged tab takes the pane over from the tab shown
+ * in it, or – dragged from another pane of the same split – swaps panes with it. The edge zones
+ * lie over the panes and win where they overlap.
+ */
+function SplitDropZones({
+  dropKey,
+  group,
+  area,
+  draggedTabId
+}: {
+  dropKey: string | null
+  group: SplitGroup | null
+  area: Rect
+  draggedTabId: string
+}): JSX.Element {
+  const { coarse } = useViewport()
   const zone = (key: string, className: string, label: string): JSX.Element => (
     <div
       data-drop={`split:${key}`}
       className={cn(
-        'absolute flex items-center justify-center rounded-xl border-2 border-dashed border-white/30 text-[13px] font-medium text-white/80 transition-colors',
+        ZONE_CLASS,
+        'pointer-events-auto',
         className,
         dropKey === `split:${key}` && 'border-white bg-white/20'
       )}
@@ -348,14 +442,41 @@ function SplitDropZones({ dropKey }: { dropKey: string | null }): JSX.Element {
       {label}
     </div>
   )
+  const panes = group
+    ? splitPaneRects(area, group, coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP).filter(
+        (p) => p.tabId !== draggedTabId
+      )
+    : []
+  const swap = group?.tabIds.includes(draggedTabId) ?? false
   return (
-    <div className="absolute inset-0 z-20 p-4">
-      <div className="relative h-full w-full">
-        {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
-        {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
-        {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
-        {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+    <div className="absolute inset-0 z-20">
+      {panes.map((p) => (
+        <div
+          key={p.tabId}
+          data-drop={`pane:${p.tabId}`}
+          className={cn(ZONE_CLASS, dropKey === `pane:${p.tabId}` && 'border-white bg-white/20')}
+          style={{
+            left: p.header.x + PANE_INSET,
+            top: p.header.y + PANE_INSET,
+            width: Math.max(0, p.header.width - PANE_INSET * 2),
+            height: Math.max(0, p.header.height + p.rect.height - PANE_INSET * 2)
+          }}
+        >
+          {swap ? 'Swap panes' : 'Replace this pane'}
+        </div>
+      ))}
+      {/* The zones' frame lets the pointer through to the panes; the zones themselves take it. */}
+      <div className="pointer-events-none absolute inset-0 p-4">
+        <div className="relative h-full w-full">
+          {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
+          {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
+          {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
+          {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+        </div>
       </div>
     </div>
   )
 }
+
+/** A pane's target keeps clear of its edges: the gap beside it and the page's rounded corners. */
+const PANE_INSET = 16

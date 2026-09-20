@@ -141,7 +141,10 @@ export function createPreviewDownloads(
       filename: spec.filename,
       totalBytes: spec.totalBytes,
       mimeType: spec.mimeType,
-      sourceTabId: null,
+      // A transfer the tab's own navigation produced (a PDF the viewer opens) names the tab and
+      // says so, as Kotlin's DownloadListener does; a plain download names neither.
+      sourceTabId: resumes ? null : (spec.sourceTabId ?? null),
+      navigation: !resumes && spec.navigation === true,
       containerId: spec.private ? 'private' : 'default',
       resumes,
       savePath: resumes ? partialPath(p) : undefined,
@@ -169,7 +172,9 @@ export function createPreviewDownloads(
       paused: false,
       error: null,
       deleted: false,
-      private: args['private'] === true
+      private: args['private'] === true,
+      sourceTabId: null,
+      navigation: false
     }
     // The transfer the spec had failing, pausing or losing its file has done that once; it runs
     // on from here, and the file it writes is there again.
@@ -210,6 +215,8 @@ export function createPreviewDownloads(
     }),
     'download.discard': () => undefined,
     'download.open': () => undefined,
+    'download.openWith': () => undefined,
+    'download.share': () => undefined,
     // The engine's existence check and Delete file (#166), against the files pretended so far:
     // a path is there unless it went, and deleting a gone one says so.
     'download.exists': ({ savePath }) => !gone.has(String(savePath)),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { pickMessages, type ExtRequestEvent } from '../extensionRuntime'
+import { languageCodeOf, offscreenUrl } from '../extensionApi'
+import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
   type Harness,
@@ -229,6 +230,16 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     ])
   })
 
+  it('expect names the extensions about to be attached to Kotlin, ahead of the environment handshake', () => {
+    const h = harness()
+    h.runtime.expect([ID, 'b'.repeat(32)])
+    h.runtime.expect([])
+    // Sent as-is (fire and forget): the constructor runs before the windows are restored, and a
+    // restored tab's document request must find the ids already on the Kotlin side.
+    expect(h.kt.calledWith('ext.expect')).toEqual([{ ids: [ID, 'b'.repeat(32)] }, { ids: [] }])
+    expect(h.kt.calledWith('ext.env')).toEqual([])
+  })
+
   it('detach drops the endpoints and tells Kotlin; forget takes the persisted state and storage along', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
@@ -236,7 +247,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     hello(h, 'doc1.n.abcdefgh', 'content')
     expect(h.runtime.router.of(ID)).toHaveLength(2)
     await call(h, 'bg1', 'storage', 'set', ['local', { a: 1 }])
-    expect(h.saved(`ext-storage-${ID}.json`).local).toEqual({ a: 1 })
+    expect(h.saved(`ext-storage/${ID}.json`).local).toEqual({ a: 1 })
     await h.runtime.forget(ID)
     expect(h.runtime.router.of(ID)).toHaveLength(0)
     expect(h.kt.calledWith('ext.detach')).toEqual([{ id: ID }])
@@ -244,7 +255,7 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const saved = h.saved('extensions-runtime.json')
     expect(saved.installed).toEqual({})
     // No debounced write of the dropped storage document resurrects it.
-    expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
+    expect(h.files.has(`ext-storage/${ID}.json`)).toBe(false)
   })
 })
 
@@ -441,7 +452,7 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     const changed = events(h, 'bg1', 'storage.onChanged')
     expect(changed).toHaveLength(1)
     expect(changed[0].args).toEqual([{ a: { newValue: 1 }, b: { newValue: 'two' } }, 'local'])
-    const doc = h.saved(`ext-storage-${ID}.json`)
+    const doc = h.saved(`ext-storage/${ID}.json`)
     expect(doc.local).toEqual({ a: 1, b: 'two' })
     const bytes = await call(h, 'doc1.n.abcdefgh', 'storage', 'getBytesInUse', ['local', null])
     expect(bytes.result).toBe(Buffer.byteLength('a1b"two"'))
@@ -474,7 +485,50 @@ describe('AndroidExtensionRuntime: chrome.storage on the shared helpers', () => 
     expect(heard[0].args).toEqual([{ s: { newValue: 1 } }, 'session'])
     // Session items never touch the disk.
     h.runtime.flushSync()
-    expect(h.files.has(`ext-storage-${ID}.json`)).toBe(false)
+    expect(h.files.has(`ext-storage/${ID}.json`)).toBe(false)
+  })
+
+  it('setAccessLevel closes local (or sync) to content scripts and opens it again, as 1Password does at start', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['storage.onChanged'])
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    message(h, 'doc1.n.abcdefgh', { t: 'listen', event: 'storage.onChanged', on: true })
+    // Open by default (Chrome's default for local, sync and managed).
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])).ok).toBe(true)
+    // A content script may not change the level.
+    const fromContent = await call(h, 'doc1.n.abcdefgh', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_CONTEXTS' }
+    ])
+    expect(fromContent.ok).toBe(false)
+    expect(String(fromContent.error)).toContain('cannot set the storage access level')
+    const closed = await call(h, 'bg1', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_CONTEXTS' }
+    ])
+    expect(closed.ok).toBe(true)
+    const denied = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])
+    expect(denied.ok).toBe(false)
+    expect(String(denied.error)).toContain('not allowed from this context')
+    // Nor does the content script hear a closed area change; the background still does.
+    await call(h, 'bg1', 'storage', 'set', ['local', { vault: 'locked' }])
+    expect(events(h, 'doc1.n.abcdefgh', 'storage.onChanged')).toHaveLength(0)
+    expect(events(h, 'bg1', 'storage.onChanged')).toHaveLength(1)
+    // Sync is its own switch: still open.
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['sync', null])).ok).toBe(true)
+    // An unknown level is refused as the schema would refuse it, and changes nothing.
+    const bad = await call(h, 'bg1', 'storage', 'setAccessLevel', ['local', { accessLevel: 'ALL' }])
+    expect(bad.ok).toBe(false)
+    expect(String(bad.error)).toContain('TRUSTED_AND_UNTRUSTED_CONTEXTS')
+    expect((await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])).ok).toBe(false)
+    const reopened = await call(h, 'bg1', 'storage', 'setAccessLevel', [
+      'local',
+      { accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }
+    ])
+    expect(reopened.ok).toBe(true)
+    const again = await call(h, 'doc1.n.abcdefgh', 'storage', 'get', ['local', null])
+    expect(again.result).toEqual({ vault: 'locked' })
   })
 
   it('chrome.extension reads the file-access and private toggles from the record', async () => {
@@ -740,9 +794,21 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       document: 3
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('')
-    // A webRequest listener turns the observation on: every decision becomes the events.
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: true })
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: true })
+    // A webRequest listener (the shim registers it with its RequestFilter) turns the
+    // observation on: every decision becomes the events.
+    const listened = await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'] },
+      [],
+      1
+    ])
+    expect(listened.error).toBeUndefined()
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onErrorOccurred',
+      { urls: ['<all_urls>'] },
+      [],
+      2
+    ])
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
     h.runtime.onRequest(
       request({
@@ -774,8 +840,142 @@ describe('AndroidExtensionRuntime: tab and navigation events', () => {
       error: 'net::ERR_BLOCKED_BY_CLIENT'
     })
     expect(h.runtime.api.toolbarAction(ID)?.badgeText).toBe('1')
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onBeforeRequest', on: false })
-    message(h, 'bg1', { t: 'listen', event: 'webRequest.onErrorOccurred', on: false })
+    // Each delivery is addressed to the one listener whose filter matched.
+    expect(before[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    expect(errors[0].delivery).toEqual({ unfiltered: false, matched: [2] })
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onBeforeRequest', 1])
+    await call(h, 'bg1', 'webRequest', 'removeListener', ['onErrorOccurred', 2])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
+  })
+
+  it("a webRequest listener's RequestFilter picks its requests: Violentmonkey's installer hears the .user.js main frame, not the page's script", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest', 'tabs'] })))
+    backgroundUp(h, 'bg1')
+    // The installer's registration as its sw.js makes it, and a second listener for scripts.
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js', '*://*/*.user.js?*'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['<all_urls>'], types: ['script'] },
+      [],
+      2
+    ])
+    const decided = (over: Partial<ExtRequestEvent>): void =>
+      h.runtime.onRequest({
+        tabId: 't1',
+        requestId: '1',
+        url: 'http://10.0.2.2:8765/hello.user.js',
+        type: 'main_frame',
+        method: 'GET',
+        initiator: null,
+        mainFrame: true,
+        document: 2,
+        action: 'allow',
+        matchedSet: null,
+        matchedRule: null,
+        micros: 3,
+        cpuMicros: null,
+        ...over
+      })
+    decided({})
+    decided({
+      requestId: '2',
+      url: 'http://10.0.2.2:8765/page.js',
+      type: 'script',
+      mainFrame: false
+    })
+    decided({
+      requestId: '3',
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      type: 'xmlhttprequest',
+      mainFrame: false
+    })
+    const heard = events(h, 'bg1', 'webRequest.onBeforeRequest')
+    expect(heard.map((e) => (e.args as Array<{ requestId: string }>)[0].requestId)).toEqual([
+      '1',
+      '2'
+    ])
+    expect(heard[0].delivery).toEqual({ unfiltered: false, matched: [1] })
+    expect((heard[0].args as Array<Record<string, unknown>>)[0]).toMatchObject({
+      url: 'http://10.0.2.2:8765/hello.user.js',
+      type: 'main_frame',
+      method: 'GET',
+      tabId: h.runtime.api.tabs.chromeIdFor('t1')
+    })
+    expect(heard[1].delivery).toEqual({ unfiltered: false, matched: [2] })
+    // The binding's validation, as on the desktop.
+    const bad = await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['nonsense'] },
+      [],
+      3
+    ])
+    expect(bad.error).toBe("'nonsense' is not a valid URL pattern.")
+    const noUrls = await call(h, 'bg1', 'webRequest', 'addListener', ['onBeforeRequest', {}, [], 4])
+    expect(noUrls.error).toContain("Error at property 'urls'")
+  })
+
+  it('a stopped worker is woken for a request its persisted webRequest listener wants, and observation stays on for it', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['webRequest'] })))
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    expect((h.saved('extensions-runtime.json').listeners as Record<string, string[]>)[ID]).toEqual([
+      'webRequest.onBeforeRequest'
+    ])
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    // Stopped, its listener persisted: Kotlin keeps reporting decisions.
+    expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }])
+    const decided = (requestId: string, url: string): void =>
+      h.runtime.onRequest({
+        tabId: 't1',
+        requestId,
+        url,
+        type: 'main_frame',
+        method: 'GET',
+        initiator: null,
+        mainFrame: true,
+        document: 2,
+        action: 'allow',
+        matchedSet: null,
+        matchedRule: null,
+        micros: 3,
+        cpuMicros: null
+      })
+    decided('1', 'http://10.0.2.2:8765/hello.user.js')
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    // The worker comes up and registers its listener again; the held request reaches it, filtered.
+    hello(h, 'bg2', 'background')
+    await call(h, 'bg2', 'webRequest', 'addListener', [
+      'onBeforeRequest',
+      { urls: ['*://*/*.user.js'], types: ['main_frame'] },
+      [],
+      1
+    ])
+    message(h, 'bg2', { t: 'ready' })
+    const heard = events(h, 'bg2', 'webRequest.onBeforeRequest')
+    expect(heard).toHaveLength(1)
+    expect((heard[0].args as Array<{ url: string }>)[0].url).toBe(
+      'http://10.0.2.2:8765/hello.user.js'
+    )
+    // Running: a request its filter does not want is not its activity either.
+    decided('2', 'http://10.0.2.2:8765/page-a.html')
+    expect(events(h, 'bg2', 'webRequest.onBeforeRequest')).toHaveLength(1)
+    // Gone for good: the observation ends with the extension.
+    await h.runtime.detach(ID)
     expect(h.kt.calledWith('ext.observeRequests')).toEqual([{ on: true }, { on: false }])
   })
 
@@ -818,14 +1018,21 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
     ])
     expect(top.result).toEqual([{ frameId: 0, documentId: '', result: { ran: true } }])
     expect(h.kt.calledWith('ext.exec').map((a) => a.doc)).toEqual([null])
-    // One subframe: its document; the result carries its frame id.
-    h.kt.files.set(`${ID}/api.js`, 'self.api = 1')
+    // One subframe: its document; the result carries its frame id. The files go by name: the
+    // host reads them into the script (Loom's is 13 MB), nothing is read here.
     const inner = await call(h, 'bg1', 'scripting', 'executeScript', [
-      { target: { tabId, frameIds: [1] }, files: ['api.js'] }
+      { target: { tabId, frameIds: [1] }, files: ['api.js', 'more.js'] }
     ])
     expect(inner.error).toBeUndefined()
     expect(inner.result).toEqual([{ frameId: 1, documentId: '', result: { ran: true } }])
-    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({ doc: 'docB', ext: ID, tabId: 't1' })
+    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({
+      doc: 'docB',
+      ext: ID,
+      tabId: 't1',
+      code: null,
+      files: ['api.js', 'more.js']
+    })
+    expect(h.kt.calledWith('ext.readFile')).toHaveLength(0)
     // Every frame the extension has a script in.
     const all = await call(h, 'bg1', 'scripting', 'insertCSS', [
       { target: { tabId, allFrames: true }, css: 'body{margin:0}' }
@@ -866,6 +1073,679 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
       { target: { tabId, frameIds: [1] }, funcSource: '() => 1' }
     ])
     expect(String(gone.error)).toContain('No frame with id 1')
+  })
+})
+
+describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
+  it("is the tab's sender as a content frame is, its iframe numbered, and hears tabs.sendMessage to the tab", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const origin = `https://${ID}.ext.zenium.invalid`
+    // Vimium's options page in a tab, with an iframe of its own; a popup beside them.
+    hello(h, 'docP.1', 'page', { tabId: 't1', url: `${origin}/pages/options.html` })
+    hello(h, 'docQ.1', 'page', { tabId: 't1', top: false, url: `${origin}/pages/frame.html` })
+    hello(h, 'pop1', 'popup', { url: `${origin}/popup.html` })
+    message(h, 'docP.1', { t: 'msg', id: 7, target: {}, data: { handler: 'initializeFrame' } })
+    const toBg = (): Array<Record<string, unknown>> =>
+      h.kt.to('bg1').filter((m) => m.t === 'deliver')
+    expect(toBg()).toHaveLength(1)
+    const sender = toBg()[0].sender as Record<string, unknown>
+    // The page names itself as Chrome spells it (extensionUrls.ts); `origin` stays the served one.
+    expect(sender).toMatchObject({
+      id: ID,
+      url: `chrome-extension://${ID}/pages/options.html`,
+      origin,
+      frameId: 0,
+      documentId: 'docP.1',
+      documentLifecycle: 'active'
+    })
+    expect(sender.tab).toMatchObject({ url: 'https://example.com/' })
+    message(h, 'docQ.1', { t: 'msg', id: 8, target: {}, data: 'sub' })
+    expect((toBg().at(-1)?.sender as Record<string, unknown>).frameId).toBe(1)
+    message(h, 'pop1', { t: 'msg', id: 9, target: {}, data: 'pop' })
+    const fromPopup = toBg().at(-1)?.sender as Record<string, unknown>
+    expect(fromPopup.tab).toBeUndefined()
+    expect(fromPopup.frameId).toBeUndefined()
+    // runtime.getContexts spells the pages the same way, the served origin as their origin.
+    const contexts = (await call(h, 'bg1', 'runtime', 'getContexts', [{}])).result as Array<
+      Record<string, unknown>
+    >
+    expect(contexts.find((c) => c.contextId === 'docP.1')).toMatchObject({
+      contextType: 'TAB',
+      documentUrl: `chrome-extension://${ID}/pages/options.html`,
+      documentOrigin: origin
+    })
+    expect(contexts.find((c) => c.contextId === 'pop1')?.documentUrl).toBe(
+      `chrome-extension://${ID}/popup.html`
+    )
+    // The filter keeps only the listed values (Tampermonkey asks for OFFSCREEN_DOCUMENT contexts
+    // before creating its offscreen document: with the filter ignored it never created one).
+    const byType = async (types: string[]): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: types }])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(await byType(['OFFSCREEN_DOCUMENT'])).toEqual([])
+    expect(await byType(['POPUP'])).toEqual(['pop1'])
+    expect((await byType(['TAB', 'BACKGROUND'])).sort()).toEqual(['bg1', 'docP.1', 'docQ.1'])
+    const byTab = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['TAB'], frameIds: [0] }])
+    ).result as Array<Record<string, unknown>>
+    expect(byTab.map((c) => c.contextId)).toEqual(['docP.1'])
+    // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })
+    const heard = (ep: string): number =>
+      h.kt.to(ep).filter((m) => m.t === 'deliver' && m.data === 'hi').length
+    expect([heard('docP.1'), heard('docQ.1'), heard('pop1')]).toEqual([1, 1, 0])
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.userScripts', () => {
+  it('gives the user-script world its chrome on configureWorld and carries code entries in place', async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    )
+    backgroundUp(h, 'bg1')
+    const userUnit = (): Record<string, unknown> => {
+      const plan = h.kt.calledWith('ext.configure').at(-1)
+      const units = plan?.units as Array<Record<string, unknown>>
+      const unit = units.find((u) => String(u.key).startsWith('user:'))
+      if (!unit) throw new Error('no user unit planned')
+      return unit
+    }
+    // Tampermonkey's start: the messaging switch first, then the registrations (its user
+    // scripts are `{ code }` entries around the file its content script comes from).
+    const configured = await call(h, 'bg1', 'userScripts', 'configureWorld', [
+      { csp: "script-src 'self'", messaging: true }
+    ])
+    expect(configured.error).toBeUndefined()
+    expect(h.runtime.userScriptMessaging(ID)).toBe(true)
+    const registered = await call(h, 'bg1', 'userScripts', 'register', [
+      [
+        {
+          id: 'tm-content',
+          matches: ['<all_urls>'],
+          runAt: 'document_start',
+          allFrames: true,
+          js: [{ code: 'window.tm_scripts = null;' }, { file: 'content.js' }, { code: 'run();' }]
+        }
+      ]
+    ])
+    expect(registered.error).toBeUndefined()
+    const unit = userUnit()
+    const config = JSON.parse(String(unit.config)) as Record<string, unknown>
+    expect(config.world).toBe('user')
+    expect(config.userScriptMessaging).toBe(true)
+    const groups = unit.groups as Array<{ js: string[] }>
+    expect(groups).toHaveLength(1)
+    expect(groups[0].js).toEqual(['\u0000window.tm_scripts = null;', 'content.js', '\u0000run();'])
+    // The registration reads back as it went in.
+    const listed = await call(h, 'bg1', 'userScripts', 'getScripts', [{}])
+    expect(listed.result).toEqual([
+      expect.objectContaining({
+        id: 'tm-content',
+        world: 'USER_SCRIPT',
+        js: [{ code: 'window.tm_scripts = null;' }, { file: 'content.js' }, { code: 'run();' }]
+      })
+    ])
+    // An update that names no js leaves the scripts as they are (Chrome patches fields).
+    const updated = await call(h, 'bg1', 'userScripts', 'update', [
+      [{ id: 'tm-content', matches: ['https://example.com/*'] }]
+    ])
+    expect(updated.error).toBeUndefined()
+    expect((userUnit().groups as Array<{ js: string[] }>)[0].js).toHaveLength(3)
+    expect(h.runtime.registered(ID)[0].matches).toEqual(['https://example.com/*'])
+    // The switch off again: the world keeps its scripts and loses its chrome.
+    await call(h, 'bg1', 'userScripts', 'resetWorldConfiguration', [])
+    expect(h.runtime.userScriptMessaging(ID)).toBe(false)
+    const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
+    expect(off.userScriptMessaging).toBe(false)
+  })
+
+  it('execute runs the sources in order in the user-script world of the target frames and answers per frame', async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    )
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'userScripts', 'configureWorld', [{ messaging: true }])
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    h.kt.execAnswer = (args) => `${String(args.code ?? (args.files as string[])[0])}!`
+    const ran = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: 'first()' }, { file: 'lib.js' }, { code: 'last()' }] }
+    ])
+    expect(ran.error).toBeUndefined()
+    expect(ran.result).toEqual([{ frameId: 0, documentId: '', result: 'last()!' }])
+    const execs = h.kt.calledWith('ext.exec')
+    expect(execs).toHaveLength(3)
+    expect(execs.map((e) => e.code ?? (e.files as string[])[0])).toEqual([
+      'first()',
+      'lib.js',
+      'last()'
+    ])
+    // The user-script world, with the messaging switch the extension set, not the content world.
+    expect(execs.map((e) => e.payload)).toEqual(
+      Array<unknown>(3).fill({ world: 'USER_SCRIPT', messaging: true })
+    )
+    expect(execs.every((e) => e.tabId === 't1' && e.doc === null)).toBe(true)
+    // The main world on request; a bad injection is refused before anything runs.
+    const main = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: '1' }], world: 'MAIN' }
+    ])
+    expect(main.error).toBeUndefined()
+    expect(h.kt.calledWith('ext.exec').at(-1)?.payload).toEqual({
+      world: 'MAIN',
+      messaging: true
+    })
+    const bad = await call(h, 'bg1', 'userScripts', 'execute', [{ target: { tabId }, js: [] }])
+    expect(String(bad.error)).toContain('js')
+    expect(h.kt.calledWith('ext.exec')).toHaveLength(4)
+    const noTab = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId: 9999 }, js: [{ code: '1' }] }
+    ])
+    expect(String(noTab.error)).toContain('No tab with id')
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.offscreen', () => {
+  it('createDocument puts up one hidden page and resolves on its hello; closeDocument takes it down', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+    const closedEarly = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    expect(closedEarly.error).toBe('No current offscreen document.')
+    // Tampermonkey's call, its URL a path: the page is up when its bootstrap says hello.
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [{ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'blob URLs' }]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    expect(h.kt.offscreens.get(ID)).toBe(`https://${ID}.ext.zenium.invalid/offscreen.html`)
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // While it loads the document counts as present: a second call is refused, as in Chrome.
+    const second = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'offscreen.html', reasons: ['BLOBS'], justification: 'again' }
+    ])
+    expect(second.error).toBe('Only a single offscreen document may be created.')
+    hello(h, 'off1', 'offscreen', { url: `https://${ID}.ext.zenium.invalid/offscreen.html` })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toBeUndefined()
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(true)
+    // The page has the extension's chrome: its runtime.sendMessage reaches the background as a
+    // popup's does, with no tab on the sender.
+    message(h, 'off1', { t: 'msg', id: 3, target: {}, data: { blob: 'made' } })
+    const delivered = h.kt.to('bg1').filter((m) => m.t === 'deliver')
+    expect(delivered).toHaveLength(1)
+    expect(delivered[0].data).toEqual({ blob: 'made' })
+    expect((delivered[0].sender as Record<string, unknown>).tab).toBeUndefined()
+    message(h, 'bg1', { t: 'msgReply', id: delivered[0].id, handled: true, response: 'ok' })
+    expect(h.kt.to('off1').find((m) => m.t === 'reply')).toMatchObject({
+      id: 3,
+      ok: true,
+      result: 'ok'
+    })
+    const closed = await call(h, 'bg1', 'offscreen', 'closeDocument', [])
+    expect(closed.error).toBeUndefined()
+    expect(h.kt.offscreens.has(ID)).toBe(false)
+    h.runtime.onGone(['off1'])
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+
+  it('refuses a page off the extension origin and rejects a page that never loads', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['offscreen'] })))
+    backgroundUp(h, 'bg1')
+    const elsewhere = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'https://example.com/x.html', reasons: ['AUDIO_PLAYBACK'], justification: 'no' }
+    ])
+    expect(elsewhere.error).toMatch(/not on this extension's origin/)
+    const other = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      {
+        url: `chrome-extension://${ID2}/off.html`,
+        reasons: ['AUDIO_PLAYBACK'],
+        justification: 'no'
+      }
+    ])
+    expect(other.error).toMatch(/not on this extension's origin/)
+    const noReason = await call(h, 'bg1', 'offscreen', 'createDocument', [
+      { url: 'off.html', reasons: [], justification: 'no' }
+    ])
+    expect(noReason.error).toMatch(/Expected at least one reason/)
+    expect(h.kt.offscreens.size).toBe(0)
+    // Chrome's own scheme names this extension's page.
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'offscreen',
+      method: 'createDocument',
+      args: [
+        {
+          url: `chrome-extension://${ID}/off.html`,
+          reasons: ['AUDIO_PLAYBACK'],
+          justification: 'tts'
+        }
+      ]
+    })
+    await until(() => h.kt.offscreens.has(ID))
+    expect(h.kt.offscreens.get(ID)).toBe(`https://${ID}.ext.zenium.invalid/off.html`)
+    // No hello within the load window: the call rejects and Kotlin's view goes.
+    h.tick(20_000)
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)?.error).toMatch(
+      /did not load/
+    )
+    expect(h.kt.offscreens.has(ID)).toBe(false)
+    expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+})
+
+describe('offscreenUrl and languageCodeOf', () => {
+  it('maps the forms of createDocument({ url }) onto the served origin and refuses the rest', () => {
+    const origin = `https://${ID}.ext.zenium.invalid`
+    expect(offscreenUrl(ID, 'offscreen.html')).toBe(`${origin}/offscreen.html`)
+    expect(offscreenUrl(ID, '/a/b.html?x=1#y')).toBe(`${origin}/a/b.html?x=1#y`)
+    expect(offscreenUrl(ID, `chrome-extension://${ID}/off.html?q`)).toBe(`${origin}/off.html?q`)
+    expect(offscreenUrl(ID, `chrome-extension://${ID}`)).toBe(`${origin}/`)
+    expect(offscreenUrl(ID, `${origin}/served.html`)).toBe(`${origin}/served.html`)
+    expect(() => offscreenUrl(ID, `chrome-extension://${ID2}/off.html`)).toThrow(
+      /not on this extension's origin/
+    )
+    expect(() => offscreenUrl(ID, 'https://example.com/off.html')).toThrow(
+      /not on this extension's origin/
+    )
+    expect(() => offscreenUrl(ID, 'data:text/html,hi')).toThrow(/not on this extension's origin/)
+  })
+
+  it('reduces a declared language tag to the code detectLanguage answers with', () => {
+    expect(languageCodeOf('en')).toBe('en')
+    expect(languageCodeOf('en-US')).toBe('en')
+    expect(languageCodeOf('pt_BR')).toBe('pt')
+    expect(languageCodeOf(' DE ')).toBe('de')
+    expect(languageCodeOf('ast')).toBe('ast')
+    expect(languageCodeOf('')).toBe('und')
+    expect(languageCodeOf('x-klingon')).toBe('und')
+    expect(languageCodeOf('1234')).toBe('und')
+    expect(languageCodeOf(null)).toBe('und')
+    expect(languageCodeOf({ ran: true })).toBe('und')
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
+  it('answers the language the page declares, as its bare code, and und when it declares none', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'c1', 'content')
+    h.kt.execAnswer = () => 'de-DE'
+    const declared = await call(h, 'bg1', 'tabs', 'detectLanguage', [
+      h.runtime.api.tabs.chromeIdFor('t1')
+    ])
+    expect(declared.result).toBe('de')
+    const exec = h.kt.calledWith('ext.exec').at(-1)
+    expect(exec).toMatchObject({ tabId: 't1', ext: ID, kind: 'js', payload: { world: 'ISOLATED' } })
+    expect(String(exec?.code)).toContain("getAttribute('lang')")
+    h.kt.execAnswer = () => ''
+    expect((await call(h, 'bg1', 'tabs', 'detectLanguage', [])).result).toBe('und')
+    // A page the extension cannot ask (no host permission, say) is undetermined, not an error.
+    h.kt.failExec = () => 'Cannot access contents of the page.'
+    expect((await call(h, 'bg1', 'tabs', 'detectLanguage', [])).result).toBe('und')
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.getCurrent', () => {
+  it('answers the tab an extension page is open in, as it does a content script, and nothing for a popup or worker', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tabs.t2 = makeTab('t2', `https://${ID}.ext.zenium.invalid/onetab.html`)
+    h.notifyState()
+    hello(h, 'p1', 'page', { tabId: 't2', url: `https://${ID}.ext.zenium.invalid/onetab.html` })
+    const page = await call(h, 'p1', 'tabs', 'getCurrent', [])
+    expect((page.result as { id: number; url: string }).id).toBe(
+      h.runtime.api.tabs.chromeIdFor('t2')
+    )
+    expect((page.result as { url: string }).url).toBe(
+      `https://${ID}.ext.zenium.invalid/onetab.html`
+    )
+    hello(h, 'c1', 'content')
+    expect(((await call(h, 'c1', 'tabs', 'getCurrent', [])).result as { id: number }).id).toBe(
+      h.runtime.api.tabs.chromeIdFor('t1')
+    )
+    hello(h, 'pop1', 'popup')
+    expect((await call(h, 'pop1', 'tabs', 'getCurrent', [])).result ?? null).toBeNull()
+    expect((await call(h, 'bg1', 'tabs', 'getCurrent', [])).result ?? null).toBeNull()
+  })
+})
+
+describe('AndroidExtensionRuntime: i18n.detectLanguage', () => {
+  it("answers the platform classifier's guess in Chrome's shape, from a content script too", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'c1', 'content')
+    const asked: string[] = []
+    h.kt.languageAnswer = (text) => {
+      asked.push(text)
+      return {
+        isReliable: true,
+        languages: [
+          { language: 'de', percentage: 93 },
+          { language: 'en', percentage: 4 }
+        ]
+      }
+    }
+    const guess = await call(h, 'c1', 'i18n', 'detectLanguage', ['  Guten Tag, wie geht es dir?  '])
+    expect(guess.result).toEqual({
+      isReliable: true,
+      languages: [
+        { language: 'de', percentage: 93 },
+        { language: 'en', percentage: 4 }
+      ]
+    })
+    // The text travels trimmed; a long one only by its leading part.
+    expect(asked).toEqual(['Guten Tag, wie geht es dir?'])
+    await call(h, 'bg1', 'i18n', 'detectLanguage', ['x'.repeat(10_000)])
+    expect(asked[1]).toHaveLength(4096)
+  })
+
+  it('places no language for a blank text without asking, and never calls an empty guess reliable', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    let asked = 0
+    h.kt.languageAnswer = () => {
+      asked++
+      return { isReliable: true, languages: [{ language: '', percentage: 100 }, 'junk'] }
+    }
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', ['   \n '])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', [42])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect(asked).toBe(0)
+    // A malformed answer from the host is an unplaced text, not an error.
+    expect((await call(h, 'bg1', 'i18n', 'detectLanguage', ['?!'])).result).toEqual({
+      isReliable: false,
+      languages: []
+    })
+    expect(asked).toBe(1)
+  })
+})
+
+describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
+  it("routes to the store and answers Chrome's shape; without a store there is nothing to install", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const bare = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(bare.ok).toBe(true)
+    expect(bare.result).toEqual({ status: 'no_update' })
+
+    const asked: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async (id) => {
+        asked.push(id)
+        return { status: 'update_available', version: '2.0.0' }
+      }
+    }
+    const found = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
+    expect(found.result).toEqual({ status: 'update_available', version: '2.0.0' })
+    expect(asked).toEqual([ID])
+  })
+})
+
+describe('AndroidExtensionRuntime: runtime.onUpdateAvailable and the idle word to the store', () => {
+  function storeOf(h: Harness): string[] {
+    const idle: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      idle: (id) => idle.push(id)
+    }
+    return idle
+  }
+
+  it("delays an update while the worker runs or a page of the extension's own is open, not for content scripts", async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    // The attach starts the worker (Chrome's start at browser start): busy from the first moment.
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    expect(h.runtime.isIdle(ID)).toBe(false)
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    backgroundUp(h, 'bg1')
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    // The worker idles out and is reported gone: idle, and the store hears it once.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID])
+    // A popup keeps the extension busy; a content script does not.
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    h.runtime.onGone(['pop1'])
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID, ID])
+    // A content script going says nothing: it never made the extension busy.
+    h.runtime.onGone(['doc1.n.abcdefgh'])
+    expect(idle).toEqual([ID, ID])
+    // Not attached, nothing delays.
+    await h.runtime.detach(ID)
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+  })
+
+  it('a background going while a page stays open is no idle yet; the page closing is', async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(idle).toEqual([])
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    h.runtime.onGone(['opt1'])
+    expect(idle).toEqual([ID])
+  })
+
+  it("raises runtime.onUpdateAvailable with the staged manifest in the extension's contexts and wakes a worker that listened for it", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['runtime.onUpdateAvailable'])
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    const details = { manifest_version: 3, name: 'Sample', version: '1.1.0' }
+    h.runtime.updateAvailable(ID, details)
+    expect(events(h, 'bg1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    expect(events(h, 'opt1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // Stopped, the worker persisted the listener: the event starts it and waits for ready.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1', 'opt1'])
+    h.runtime.updateAvailable(ID, details)
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2', ['runtime.onUpdateAvailable'])
+    expect(events(h, 'bg2', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // An extension the runtime does not run hears nothing.
+    h.runtime.updateAvailable(ID2, details)
+  })
+
+  it('with a persistent page, delays only while the page listens for runtime.onUpdateAvailable', async () => {
+    const h = harness()
+    const mv2 = manifest({
+      manifest_version: 2,
+      permissions: ['storage', 'https://example.com/*'],
+      host_permissions: undefined,
+      background: { scripts: ['bg.js'], persistent: true },
+      action: undefined,
+      browser_action: { default_popup: 'popup.html' }
+    })
+    await h.runtime.attach(record(h, {}, mv2))
+    backgroundUp(h, 'bg1')
+    // Running but not listening: Chrome installs at once, the page restarts anyway.
+    expect(h.runtime.background.kind(ID)).toBe('persistent')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: false })
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+  })
+})
+
+describe('AndroidExtensionRuntime: native messaging', () => {
+  it('sendNativeMessage fails as Chrome does for a host that does not exist', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    const sent = await call(h, 'bg1', 'runtime', 'sendNativeMessage', [
+      'com.1password.1password',
+      { hello: 1 }
+    ])
+    expect(sent.ok).toBe(false)
+    expect(sent.error).toBe('Specified native messaging host not found.')
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.permissions', () => {
+  it('answers false for a permission Chrome refuses to the manifest version, and lists the granted set without it', async () => {
+    // Stylus 2.4.11 (MV3): webRequestBlocking declared, permissions.contains asked, and on a
+    // true a 'blocking' onHeadersReceived listener the webRequest emulation refuses – its async
+    // setup() died on that (background PARTIAL in the compat sweep's run 35455747975). Chrome's
+    // answer is false: the permission is not granted to an MV3 manifest.
+    const h = harness()
+    await h.runtime.attach(
+      record(
+        h,
+        {},
+        manifest({
+          permissions: ['webRequest', 'webRequestBlocking', 'storage'],
+          optional_permissions: ['webRequestBlocking', 'downloads']
+        })
+      )
+    )
+    backgroundUp(h, 'bg1')
+    const blocking = await call(h, 'bg1', 'permissions', 'contains', [
+      { permissions: ['webRequestBlocking'] }
+    ])
+    expect(blocking.result).toBe(false)
+    const observing = await call(h, 'bg1', 'permissions', 'contains', [
+      { permissions: ['webRequest', 'storage'], origins: ['https://example.com/*'] }
+    ])
+    expect(observing.result).toBe(true)
+    const all = await call(h, 'bg1', 'permissions', 'getAll', [])
+    expect(all.result).toEqual({
+      permissions: ['webRequest', 'storage'],
+      origins: ['https://example.com/*']
+    })
+    // Nor can it be requested: it is not a permission of this manifest.
+    const requested = await call(h, 'bg1', 'permissions', 'request', [
+      { permissions: ['webRequestBlocking'] }
+    ])
+    expect(requested.result).toBe(false)
+    const optional = await call(h, 'bg1', 'permissions', 'request', [
+      { permissions: ['downloads'] }
+    ])
+    expect(optional.result).toBe(true)
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.system.storage', () => {
+  it('answers Chrome\u2019s shape over no devices for an extension declaring the permission', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.storage', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect((await call(h, 'bg1', 'system.storage', 'getInfo', [])).result).toEqual([])
+    expect((await call(h, 'bg1', 'system.storage', 'ejectDevice', ['0123'])).result).toBe(
+      'no_such_device'
+    )
+    expect(await call(h, 'bg1', 'system.storage', 'getAvailableCapacity', ['0123'])).toMatchObject({
+      ok: false,
+      error: 'Error occurred when querying available capacity.'
+    })
+  })
+
+  it('refuses an extension that did not declare it with Chrome\u2019s no-permission error', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'system.storage', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.storage' permission."
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
+  it('reads as the system\u2019s settings that no extension controls, and takes only that value', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['proxy', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    // The shim routes a ChromeSetting's calls as `(setting, details)`.
+    expect(
+      (await call(h, 'bg1', 'proxy', 'get', ['settings', { incognito: false }])).result
+    ).toEqual({
+      value: { mode: 'system' },
+      levelOfControl: 'not_controllable'
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'system' }, scope: 'regular' }
+      ])
+    ).toMatchObject({ ok: true })
+    expect((await call(h, 'bg1', 'proxy', 'clear', ['settings', { scope: 'regular' }])).ok).toBe(
+      true
+    )
+    // A PAC script (what VeePN, NordVPN and Browsec set) has no application on the WebView: the
+    // call fails, so the extension shows its error instead of believing it is connected.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        { value: { mode: 'pac_script', pacScript: { data: 'function FindProxyForURL() {}' } } }
+      ])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('not controllable on Zenium for Android')
+    })
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', [
+        'settings',
+        {
+          value: {
+            mode: 'fixed_servers',
+            rules: { singleProxy: { host: 'p.example', port: 3128 } }
+          }
+        }
+      ])
+    ).toMatchObject({ ok: false, error: expect.stringContaining('not controllable') })
+    // Chrome's own checks come first: a config Chrome refuses is refused with Chrome's message.
+    expect(
+      await call(h, 'bg1', 'proxy', 'set', ['settings', { value: { mode: 'nonsense' } }])
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('value.mode')
+    })
   })
 })
 
@@ -1131,5 +2011,87 @@ describe('pickMessages', () => {
     expect(pickMessages(locales, 'de-AT', 'en')?.name.message).toBe('Deutsch')
     expect(pickMessages(locales, 'fr-FR', 'en')?.name.message).toBe('English')
     expect(pickMessages({}, 'fr-FR', 'en')).toBeNull()
+  })
+})
+
+describe("AndroidExtensionRuntime: an extension's files come through the store's asset loader", () => {
+  /** A store behind the runtime whose install directory holds `files` (package-relative). */
+  function storeWithFiles(h: Harness, files: Record<string, string>): string[] {
+    const reads: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      readInstalledFile: async (dir, relative) => {
+        reads.push(`${dir}|${relative}`)
+        const text = files[relative]
+        return text === undefined ? null : new TextEncoder().encode(text)
+      }
+    }
+    return reads
+  }
+
+  it('reads a static ruleset by the record directory, never as one bridge answer', async () => {
+    const h = harness()
+    const rules = JSON.stringify([
+      { id: 1, action: { type: 'block' }, condition: { urlFilter: '||ads.example^' } }
+    ])
+    // The bridge would answer too, with something else: the store is the source.
+    h.kt.files.set(`${ID}/filters/base.json`, '[]')
+    const reads = storeWithFiles(h, { 'filters/base.json': rules })
+    await h.runtime.attach(
+      record(
+        h,
+        {},
+        manifest({
+          permissions: ['declarativeNetRequest'],
+          declarative_net_request: {
+            rule_resources: [{ id: 'base', enabled: true, path: '/filters/./base.json' }]
+          }
+        })
+      )
+    )
+    await h.runtime.dnr.whenSynced(ID)
+    expect(reads).toEqual([`${PATH}|filters/base.json`])
+    expect(h.kt.calledWith('ext.readFile')).toEqual([])
+    // The store's file, not the bridge's empty one, is the ruleset in the engine.
+    expect(h.engine.summary(`ext:${ID}:static:base`)).toMatchObject({
+      source: 'dnr',
+      enabled: true,
+      ruleCount: 1
+    })
+  })
+
+  it("a stylesheet's file is read the same way, and a path leaving the package is no file", async () => {
+    const h = harness()
+    storeWithFiles(h, { 'styles/dark.css': 'body{background:#000}' })
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['scripting'] })))
+    backgroundUp(h, 'bg1')
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    const ok = await call(h, 'bg1', 'scripting', 'insertCSS', [
+      { target: { tabId }, files: ['styles/dark.css'] }
+    ])
+    expect(ok.error).toBeUndefined()
+    expect(h.kt.calledWith('ext.exec').at(-1)).toMatchObject({
+      kind: 'css',
+      payload: { id: 'styles/dark.css', code: 'body{background:#000}' }
+    })
+    const escape = await call(h, 'bg1', 'scripting', 'insertCSS', [
+      { target: { tabId }, files: ['../other/secret.css'] }
+    ])
+    expect(escape.error).toMatch(/Could not load file/)
+    expect(h.kt.calledWith('ext.readFile')).toEqual([])
+  })
+
+  it('packageRelativePath resolves a files entry as Chrome does', () => {
+    expect(packageRelativePath('/css/a.css')).toBe('css/a.css')
+    expect(packageRelativePath('./css//a.css')).toBe('css/a.css')
+    expect(packageRelativePath('a.css')).toBe('a.css')
+    expect(packageRelativePath('')).toBeNull()
+    expect(packageRelativePath('/')).toBeNull()
+    expect(packageRelativePath('../x.css')).toBeNull()
+    expect(packageRelativePath('css/../../x.css')).toBeNull()
   })
 })

@@ -6,12 +6,16 @@ import type {
   HostCapabilities,
   PageEnvironment,
   Platform as PlatformOs,
-  ShareAction
+  ShareAction,
+  ThumbnailPicture
 } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { interruptReasonFrom, resolveDownloadSettings } from '@shared/downloads'
 import { newId } from '@shared/ids'
 import type { SharedIntent } from '@shared/shareTarget'
+import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
+import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
+import type { ReadAloudVoice } from '@shared/readAloud'
 import {
   isDebugApplicationId,
   type UpdateAsset,
@@ -22,6 +26,7 @@ import {
 import { Browser } from '@core/browser'
 import type { HostExternalRequest } from '@core/externalProtocols'
 import { NoExtensions } from '@core/hostDefaults'
+import type { SelectionToolbarItem } from '@core/menus'
 import { RendererMenuHost } from '@core/rendererMenus'
 import type { ZenWindow } from '@core/window'
 import type {
@@ -39,18 +44,27 @@ import type {
   KdfParams,
   KeyEventInput,
   KeyWrapHost,
+  MediaSessionAction,
+  MediaSessionHost,
   NetHost,
   PasswordsHost,
   PickedTextFile,
   Platform,
   PlatformInfo,
   PrivacyHost,
+  QrScanHost,
+  PrivateSessionHost,
   ReauthHost,
   SessionHost,
   ShellHost,
   ShortcutHost,
+  SpeechHostEvent,
+  SpeechHost,
+  VoiceHost,
   SystemAutofillStatus,
+  ThumbnailHost,
   UpdateHost,
+  WebNotificationHost,
   WindowHost,
   WindowHostFactory
 } from '@core/platform'
@@ -77,14 +91,19 @@ import {
   type ExtRequestEvent
 } from './extensionRuntime'
 import { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { onFullscreenEntered } from './fullscreenHint'
 import { AndroidNewTabBackground } from './newTabBackground'
+import { AndroidSyncHost } from './sync'
 import { AndroidSiteData } from './siteData'
 import { AndroidStoreIO } from './storeIo'
 import { AndroidTranslateHost, type TranslateProgressEvent } from './translate'
-import { AndroidTabViewHost, type ViewEventPayloads } from './views'
+import { AndroidTabViewHost, type HostHistory, type ViewEventPayloads } from './views'
 
 /** Android 13 (Tiramisu): the first release whose clipboard shows its own "copied" chip. */
 const CLIPBOARD_CHIP_SDK = 33
+
+/** Android 8 (Oreo): `Activity.enterPictureInPictureMode` with parameters. */
+const PICTURE_IN_PICTURE_SDK = 26
 
 export interface AndroidCapabilityInputs {
   /** `Build.VERSION.SDK_INT`. */
@@ -119,13 +138,19 @@ export function androidCapabilities({
     windowDrag: false,
     devtools: false,
     compactReveal: false,
-    pictureInPicture: false,
+    // The window goes into the OS's picture-in-picture for a playing video (Android 8+).
+    pictureInPicture: sdkInt >= PICTURE_IN_PICTURE_SDK,
     viewSource: false,
     windows: false,
     extensions,
     resourceGovernor: false,
-    sync: false,
+    // The engine runs in the chrome over a Storage Access Framework folder (`sync.ts`, ID-08).
+    sync: true,
     print: true,
+    // The system print flow (`PrintRelay.kt`) has its own preview; no PDF rendering in the WebView.
+    printPreview: false,
+    // The WebView cannot draw a PDF: one it navigates to is downloaded and shown in `zen://pdf`.
+    pdfViewer: true,
     agents: true,
     updates: true,
     share: true,
@@ -136,6 +161,7 @@ export function androidCapabilities({
     defaultBrowser: true,
     requestBlocking: true,
     pageControls: true,
+    darkenSites: true,
     reducedExtensionIsolation: extensions && !isolatedWorlds,
     // One window: private browsing is a tab in it, on a throwaway WebView profile.
     privateTabs: profiles,
@@ -143,7 +169,18 @@ export function androidCapabilities({
     // The WebView has no preload bridge for `zen://newtab` yet; new tabs stay URL-bar-only.
     newTabPage: false,
     pageTabs: true,
-    pinShortcuts: false
+    pinShortcuts: false,
+    translate: true,
+    voiceSearch: false,
+    screenCapture: false,
+    shareSheet: false,
+    // The WebView's floating action mode, with Zenium's items added after Copy (`TabWebView.kt`).
+    selectionToolbar: true,
+    // One document: the picker is drawn in the chrome, above the keyboard.
+    popupSurface: false,
+    qrScan: false,
+    // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
+    readAloud: false
   }
 }
 
@@ -273,6 +310,14 @@ export interface BootInfo {
   appIcon?: string
   /** The launcher accepts pinned shortcuts (`ShortcutManagerCompat.isRequestPinShortcutSupported`). */
   pinShortcuts?: boolean
+  /** The device has a speech recogniser (`SpeechRecognizer.isRecognitionAvailable`, `Voice.kt`). */
+  voiceSearch?: boolean
+  /** The device has a back camera to scan QR codes with (`QrScan.kt`). */
+  qrScan?: boolean
+  /** The device has a text-to-speech engine (`ReadAloud.kt`: an installed TTS service); `Platform.speech` speaks through it. */
+  readAloud?: boolean
+  /** `Build.MODEL`: what sync calls this device until the user renames it (absent in old hosts). */
+  deviceModel?: string
   /** Persisted JSON documents by name (state.json, history.json, …), the ones small enough to inline. */
   files: Record<string, string>
   /**
@@ -296,11 +341,23 @@ export interface BootInfo {
   fullscreen: boolean
   /** Screen class, peripherals and font scale for the page controls (absent in old hosts). */
   environment?: PageEnvironment
+  /**
+   * An accessibility service explores the screen by touch (TalkBack;
+   * `AccessibilityManager.isTouchExplorationEnabled`): the bar that hides on scroll stays put
+   * (`lib/barHide.ts`). Changes come as `__zenHost.barTouchExploration`. Absent in old hosts
+   * and in the preview host.
+   */
+  touchExploration?: boolean
 }
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
 export interface HostEventPayloads {
-  insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * The window's safe-area insets, and whether the system bars are still on their way back from
+   * a page's fullscreen (`FullscreenLanding.kt`): the chrome's return fade waits while they are
+   * (`lib/fullscreenLanding.ts`). Absent from a host without the word.
+   */
+  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
   /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
   environment: PageEnvironment
   focus: { focused: boolean }
@@ -312,11 +369,41 @@ export interface HostEventPayloads {
   'externalProtocol.request': HostExternalRequest
   /** A tap on one of Zenium's own buttons in the system share sheet (Android 14). */
   'share.action': ShareAction
+  /**
+   * A Zenium item of a page's floating text-selection toolbar was touched (`TabWebView.kt`,
+   * the items `selectionMenu` listed): the action's id, the text selected at the touch and
+   * where the selection sits in the page (0…1 of its width and height).
+   */
+  'selection.action': {
+    tabId: string
+    id: string
+    text: string
+    originX?: number
+    originY?: number
+  }
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /**
+   * The system is short of memory (`onTrimMemory`, graded by `HostLifecycle.memoryPressure`):
+   * hidden pages go to sleep ahead of their timeout, all of them when the process is about to
+   * be killed.
+   */
+  memoryPressure: { level: 'low' | 'critical' }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * A page view laid out at a new size (CSS px) has drawn the page at it (`Host.viewSized`):
+   * the chrome's return from a fullscreen fades in on the page's landing (`lib/fullscreenLanding.ts`).
+   */
+  'view.sized': { tabId: string; width: number; height: number }
+  /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
+  'thumbnail.captured': ThumbnailPicture & { tabId: string }
+  /**
+   * A tab WebView's back/forward list changed, as the app-wide form of the view event of the
+   * same name (`AndroidTabView.dispatch('historyChanged')`): routed to the view named.
+   */
+  historyChanged: HostHistory & { tabId: string }
   'download.started': {
     token: string
     url: string
@@ -331,6 +418,14 @@ export interface HostEventPayloads {
     resumes?: string
     savePath?: string
     canResume?: boolean
+    /**
+     * The response the tab's own navigation produced (the WebView's `DownloadListener`, no
+     * `download` attribute behind it), as against a "Download link" or a retry: what decides
+     * whether a PDF opens in the viewer (`core/pdf.ts`).
+     */
+    navigation?: boolean
+    /** The response's Content-Disposition type, when it named one. */
+    disposition?: 'inline' | 'attachment' | null
   }
   'download.progress': {
     token: string
@@ -404,6 +499,52 @@ export interface HostEventPayloads {
   'translate.progress': TranslateProgressEvent
   /** The launcher confirmed a `shortcut.pin` request (the user accepted the system dialog). */
   'shortcut.pinned': { id: string }
+  /** The speech recogniser reports while a voice search runs (`Voice.kt`; `shared/voice.ts`). */
+  'voice.event': VoiceEvent
+  /** The camera reports while a QR scan runs (`QrScan.kt`; `shared/qrScan.ts`). */
+  'qr.event': QrEvent
+  /** The text-to-speech engine reports on an utterance (`ReadAloud.kt`; `SpeechHost.onEvent`). */
+  'speech.event': { utteranceId: string } & SpeechHostEvent
+  /** The engine's voices changed (the engine was swapped or a voice installed): `SpeechHost.onVoicesChanged`. */
+  'speech.voicesChanged': null
+  /**
+   * The OS media controls acted (`MediaSessions.kt`: the notification, the lock screen, a
+   * headset button, the PiP window's buttons): the Media Session action for the tab the
+   * controls showed (null: whichever holds the session), `seekTime` for `seekto` in seconds.
+   */
+  'media.action': {
+    tabId: string | null
+    action: MediaSessionAction | 'toggle'
+    seekTime?: number
+    seekOffset?: number
+  }
+  /** The window entered (`active`) or left picture-in-picture, showing `tabId`'s page (`MediaSessions.kt`). */
+  'media.pip': { tabId: string; active: boolean; dismissed?: boolean }
+  /** A tap on the media notification: the session's tab comes to the front (`MediaSessions.kt`). */
+  'media.reveal': { tabId: string }
+  /**
+   * The shade's tap (`click`) or swipe (`close`) on a page's notification, or its quiet
+   * replacement by a later one with the same tag (`WebNotifications.kt`); `url` is the page's,
+   * for a tap on a notification that outlived the core.
+   */
+  'notification.event': { id: string; event: 'click' | 'close' | 'replaced'; url?: string }
+  /** The user blocked a site's notification channel in the system settings: the site's permission follows. */
+  'notification.blocked': { origin: string }
+  /** "Close all private tabs" pressed on the private session's notification (`PrivateSession.kt`). */
+  'private.closeAll': Record<string, never>
+  /**
+   * A page's element went fullscreen: the engine's view is up in the fullscreen layer
+   * (`Host.enterFullscreen`), a video's, a canvas's or an embed's alike. The first-time exit
+   * hint's cue (GN-20); the video's size, which turns the screen, stays the host's own.
+   */
+  'fullscreen.entered': { tabId: string }
+  /**
+   * A toast the host raises itself on the chrome's message cards (v2 §9.33), where it cannot
+   * go through the core's own (`Browser.toast` has no action): the file chooser's camera
+   * refused, `action: 'settings'` for a refusal for good, whose Open settings is the app's
+   * details page (`app.openSettings`). Handled in `boot.ts`, where the renderer is in reach.
+   */
+  toast: { message: string; kind?: 'info' | 'error'; action?: 'settings' }
 }
 
 /**
@@ -759,8 +900,29 @@ export class AndroidPlatform implements Platform {
   readonly privacy: PrivacyHost
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
+  readonly voice: VoiceHost
+  /**
+   * The speech engine (`ReadAloud.kt`), on devices that have one: boot's `readAloud` says
+   * whether a text-to-speech service is installed (the package manager's answer, no binding),
+   * and without one the host is left out, so `capabilities.readAloud` is false, the core's
+   * `readAloud.available` is false and the entry points stay hidden (interface 3.2).
+   */
+  readonly speech?: SpeechHost
+  private speechListeners: Array<(utteranceId: string, event: SpeechHostEvent) => void> = []
+  private voicesListeners: Array<() => void> = []
+  /**
+   * Tab card pictures, Kotlin's (`Thumbnails.kt`, `cacheDir/zen-thumbs/<tabId>.jpg`): it takes
+   * them and raises `thumbnail.captured`; the chrome reads one when it shows the card.
+   */
+  readonly thumbnails: ThumbnailHost
+  readonly qrScan: QrScanHost
+  readonly mediaSession: MediaSessionHost
+  readonly webNotifications: WebNotificationHost
+  readonly privateSession: PrivateSessionHost
   /** The new tab page's picked wallpaper, in its own document (`newtab-wallpaper.json`). */
   readonly newTabBackground: AndroidNewTabBackground
+  /** Cross-device sync over a Storage Access Framework folder (`sync.ts`; the engine is the core's). */
+  readonly sync: AndroidSyncHost
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -795,11 +957,15 @@ export class AndroidPlatform implements Platform {
         isolatedWorlds: boot.isolatedWorlds === true,
         profiles: boot.profiles
       }),
-      pinShortcuts: boot.pinShortcuts === true
+      pinShortcuts: boot.pinShortcuts === true,
+      voiceSearch: boot.voiceSearch === true,
+      qrScan: boot.qrScan === true,
+      readAloud: boot.readAloud === true
     }
     this.bootEnvironment = boot.environment ?? null
     this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
+    this.sync = new AndroidSyncHost(bridge, boot.deviceModel ?? '')
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
@@ -832,14 +998,25 @@ export class AndroidPlatform implements Platform {
       writeText: (text, sensitive) =>
         bridge.send('clipboard.writeText', { text, sensitive: sensitive === true }),
       writeImageFromUrl: (url) => bridge.call<boolean>('clipboard.writeImage', { url }),
-      clearText: (expected) => bridge.call('clipboard.clearText', { expected })
+      clearText: (expected) => bridge.call('clipboard.clearText', { expected }),
+      // The URL bar's clipboard row: `peek` reads the clip's description alone (no Android 12+
+      // toast), `read` its text once on the user's reveal or pick, `markUsed` remembers the clip
+      // the user opened so it is not offered again until the clipboard changes (ClipboardPeek.kt).
+      peek: async () => {
+        const kind = await bridge.call<string>('clipboard.peek', {})
+        return kind === 'url' || kind === 'text' || kind === 'image' ? kind : 'none'
+      },
+      read: () => bridge.call<string>('clipboard.read', {}),
+      markUsed: () => bridge.send('clipboard.markUsed')
     }
     this.shell = {
       openExternal: (url) => bridge.send('app.openExternal', { url }),
       openPath: (path) => bridge.call('app.openPath', { path }),
       showItemInFolder: () => bridge.send('download.showAll'),
       share: (payload) => bridge.call('app.share', payload),
-      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings')
+      openAppLinkSettings: () => bridge.send('app.openAppLinkSettings'),
+      openPrivateDnsSettings: () => bridge.send('app.openPrivateDnsSettings'),
+      openKeyboardSettings: () => bridge.send('app.openKeyboardSettings')
     }
     this.externalProtocols = {
       respond: (requestId, allow) => bridge.send('externalProtocol.respond', { requestId, allow })
@@ -855,7 +1032,15 @@ export class AndroidPlatform implements Platform {
           headers?: Record<string, string>
           /** The spilled body, when there is one; `text` is empty then. */
           body?: SpilledBody
-        }>('net.fetch', { url, headers: options.headers ?? {}, timeoutMs: options.timeoutMs ?? 0 })
+        }>('net.fetch', {
+          url,
+          headers: options.headers ?? {},
+          timeoutMs: options.timeoutMs ?? 0,
+          // Kotlin stops reading there and fails the fetch (`readBody`'s cap); 0 is its own limit.
+          maxBytes: options.maxBytes ?? 0,
+          method: options.method ?? 'GET',
+          body: options.method === 'POST' ? (options.body ?? '') : null
+        })
         let text = result.text
         if (result.body) {
           const release = (token: string): void => bridge.send('net.release', { token })
@@ -912,6 +1097,21 @@ export class AndroidPlatform implements Platform {
           savePath: item.savePath,
           mimeType: item.mimeType
         }),
+      // The PDF viewer's "Open with" (the system chooser, every app that takes the file) and
+      // its share sheet, with the file itself.
+      openWith: (item) =>
+        bridge.call('download.openWith', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType
+        }),
+      share: (item) =>
+        bridge.call('download.share', {
+          id: item.id,
+          savePath: item.savePath,
+          mimeType: item.mimeType,
+          name: item.finalName || item.filename
+        }),
       showInFolder: () => bridge.send('download.showAll'),
       chooseDirectory: () => bridge.call<string | null>('download.chooseDirectory')
     }
@@ -942,6 +1142,68 @@ export class AndroidPlatform implements Platform {
     this.shortcuts = {
       pin: (request) => bridge.call<boolean>('shortcut.pin', request)
     }
+    // Kotlin asks for the microphone and runs the recogniser (`Voice.kt`); its reports come back
+    // as `voice.event`s and go to the window for the listening sheet.
+    this.voice = {
+      start: () => bridge.call<VoiceStartOutcome>('voice.start'),
+      cancel: () => bridge.send('voice.cancel'),
+      openSettings: () => bridge.send('voice.openSettings')
+    }
+    // Kotlin's text-to-speech (`ReadAloud.kt`) is the core's `SpeechHost`: one utterance per
+    // `speak` (the engine's queue flushed) or `prepare` (queued behind the current one), its
+    // `onStart` / `onRangeStart` / `onDone` / `onError` back as `speech.event`s. No `pause`: the
+    // core stops and restarts the sentence. `speech.voices` initialises the engine on first use.
+    // Built only where boot found an engine: the core reads the host's presence as read aloud's
+    // availability, and a device without one (a build without Google's engine) shows no entry.
+    if (this.capabilities.readAloud) {
+      this.speech = {
+        voices: () => bridge.call<ReadAloudVoice[]>('speech.voices'),
+        onVoicesChanged: (listener) => {
+          this.voicesListeners.push(listener)
+        },
+        speak: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'flush' }),
+        prepare: (utteranceId, text, options) =>
+          bridge.send('speech.speak', { utteranceId, text, ...options, queue: 'add' }),
+        stop: () => bridge.send('speech.stop'),
+        onEvent: (listener) => {
+          this.speechListeners.push(listener)
+        }
+      }
+    }
+    this.thumbnails = {
+      configure: (width) => bridge.send('thumbnail.configure', { width }),
+      load: (tabId, url) => bridge.call<ThumbnailPicture | null>('thumbnail.load', { tabId, url }),
+      drop: (tabId, url) =>
+        bridge.send('thumbnail.drop', url === undefined ? { tabId } : { tabId, url }),
+      sweep: (keep) => bridge.send('thumbnail.sweep', { keep })
+    }
+    // Kotlin asks for the camera, opens it and decodes (`QrScan.kt`); its reports come back as
+    // `qr.event`s and go to the window for the scan sheet.
+    this.qrScan = {
+      start: () => bridge.call<QrStartOutcome>('qr.start'),
+      cancel: () => bridge.send('qr.cancel'),
+      layout: (slot) => bridge.send('qr.layout', slot),
+      setTorch: (on) => bridge.send('qr.setTorch', { on }),
+      openSettings: () => bridge.send('qr.openSettings')
+    }
+    // The OS media controls (`MediaSessions.kt`): a MediaSessionCompat behind the media-style
+    // notification, the lock screen and the headset buttons, fed with the session the core
+    // resolves; the window's picture-in-picture for a video (`PictureInPicture.kt`).
+    this.mediaSession = {
+      update: (session) => bridge.send('media.update', { session }),
+      enterPictureInPicture: (session) => bridge.call<boolean>('media.pip', { session })
+    }
+    // Web Notifications of the pages (`WebNotifications.kt`): one channel per site on the shade.
+    this.webNotifications = {
+      show: (request) => bridge.call<boolean>('notification.show', request),
+      close: (id) => bridge.send('notification.close', { id }),
+      forgetOrigin: (origin) => bridge.send('notification.forgetOrigin', { origin }),
+      ensureAllowed: () => bridge.call<boolean>('notification.ensureAllowed')
+    }
+    this.privateSession = {
+      setOpenTabs: (count) => bridge.send('private.setOpenTabs', { count })
+    }
     this.events.send('insets', boot.insets)
   }
 
@@ -949,6 +1211,7 @@ export class AndroidPlatform implements Platform {
     this.browser = browser
     this.views.pages.reader = (id) => browser.reader.pageHtml(id)
     this.views.pages.image = (id) => browser.sharedImage(id)
+    this.views.pages.pdf = (id) => browser.pdf.document(id)
     if (this.bootEnvironment) browser.pageControls.setEnvironment(this.bootEnvironment)
   }
 
@@ -1003,6 +1266,16 @@ export class AndroidPlatform implements Platform {
     if (name === 'destroyed') this.views.forget(tabId)
   }
 
+  /**
+   * Zenium's items for the floating toolbar over a page's selected text (`TabWebView.kt` asks
+   * as the system's action mode comes up, and again as the selection changes): ids and titles
+   * in order, from the one list the page context menu draws from (`Menus.selectionToolbar`).
+   */
+  selectionMenu(tabId: string, request: { text?: unknown }): SelectionToolbarItem[] {
+    const text = typeof request.text === 'string' ? request.text : ''
+    return this.browser.menus.selectionToolbar(tabId, text)
+  }
+
   /** A physical key pressed while a page WebView had focus (already matched by Kotlin). */
   viewKey(tabId: string | null, input: KeyEventInput): boolean {
     if (tabId === null) return this.browser.keys.handle(input, null, this.window)
@@ -1019,6 +1292,17 @@ export class AndroidPlatform implements Platform {
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
         return
+      case 'view.sized':
+        this.events.send('view.sized', payload as HostEventPayloads['view.sized'])
+        return
+      case 'thumbnail.captured':
+        this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])
+        return
+      case 'historyChanged': {
+        const p = payload as Partial<HostEventPayloads['historyChanged']>
+        if (typeof p.tabId === 'string') this.viewEvent(p.tabId, 'historyChanged', p as HostHistory)
+        return
+      }
       case 'environment':
         browser.pageControls.setEnvironment(payload as HostEventPayloads['environment'])
         return
@@ -1031,6 +1315,8 @@ export class AndroidPlatform implements Platform {
         if (focused) window.dispatchEvent(new Event('zen-resume'))
         // Back from the system settings, the autofill service may be another one (or none).
         if (focused) this.autofill.refresh()
+        // Sync polls only in front; a resume is its cue to look at the folder again.
+        this.sync.signal.setFocused(focused)
         if (!this.windowHost) return
         this.windowHost.focused = focused
         if (focused) this.window.onFocused()
@@ -1061,6 +1347,22 @@ export class AndroidPlatform implements Platform {
       case 'share.action':
         browser.onShareAction(payload as HostEventPayloads['share.action'], this.window)
         return
+      case 'selection.action': {
+        // The host's payload, checked before it names an action: the text is a page's.
+        const action = payload as Partial<HostEventPayloads['selection.action']>
+        if (
+          typeof action.tabId !== 'string' ||
+          typeof action.id !== 'string' ||
+          typeof action.text !== 'string'
+        )
+          return
+        const origin =
+          typeof action.originX === 'number' && typeof action.originY === 'number'
+            ? { x: action.originX, y: action.originY }
+            : undefined
+        browser.menus.runSelectionAction(action.tabId, action.id, action.text, origin)
+        return
+      }
       case 'pause':
         browser.flushSync()
         return
@@ -1069,6 +1371,11 @@ export class AndroidPlatform implements Platform {
         // chrome returns to; Kotlin asks its WebViews for a fresh frame alongside.
         this.zenWindow?.relayout()
         return
+      case 'memoryPressure': {
+        const p = payload as HostEventPayloads['memoryPressure']
+        browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
+        return
+      }
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']
         const containerId = p.containerId || DEFAULT_CONTAINER_ID
@@ -1084,7 +1391,10 @@ export class AndroidPlatform implements Platform {
           canResume: p.canResume,
           containerId,
           private: containerId === PRIVATE_CONTAINER_ID,
-          resumes: p.resumes
+          resumes: p.resumes,
+          navigation: p.navigation === true,
+          disposition:
+            p.disposition === 'inline' || p.disposition === 'attachment' ? p.disposition : null
         })
         this.downloadTokens.set(p.token, record.id)
         // Where the file goes: the system save dialog, the folder from Settings, or the default.
@@ -1218,6 +1528,77 @@ export class AndroidPlatform implements Platform {
       case 'shortcut.pinned':
         browser.webApps.onPinned((payload as HostEventPayloads['shortcut.pinned']).id)
         return
+      case 'voice.event':
+        browser.emit('voice.event', payload as HostEventPayloads['voice.event'], this.window)
+        return
+      case 'qr.event':
+        browser.emit('qr.event', payload as HostEventPayloads['qr.event'], this.window)
+        return
+      case 'speech.event': {
+        const { utteranceId, ...event } = payload as HostEventPayloads['speech.event']
+        if (typeof utteranceId !== 'string') return
+        for (const listener of this.speechListeners) listener(utteranceId, event)
+        return
+      }
+      case 'speech.voicesChanged':
+        for (const listener of this.voicesListeners) listener()
+        return
+      case 'media.action': {
+        const p = payload as Partial<HostEventPayloads['media.action']>
+        if (typeof p.action !== 'string') return
+        browser.mediaSession.act(typeof p.tabId === 'string' ? p.tabId : null, p.action, {
+          seekTime: typeof p.seekTime === 'number' ? p.seekTime : undefined,
+          seekOffset: typeof p.seekOffset === 'number' ? p.seekOffset : undefined
+        })
+        return
+      }
+      case 'media.pip': {
+        const p = payload as Partial<HostEventPayloads['media.pip']>
+        if (typeof p.tabId === 'string')
+          browser.mediaSession.onPictureInPicture(p.tabId, p.active === true)
+        return
+      }
+      case 'media.reveal': {
+        const p = payload as Partial<HostEventPayloads['media.reveal']>
+        if (typeof p.tabId === 'string') browser.revealTab(p.tabId)
+        return
+      }
+      case 'notification.event': {
+        const p = payload as Partial<HostEventPayloads['notification.event']>
+        if (
+          typeof p.id === 'string' &&
+          (p.event === 'click' || p.event === 'close' || p.event === 'replaced')
+        )
+          browser.webNotifications.onHostEvent(
+            p.id,
+            p.event,
+            typeof p.url === 'string' ? p.url : undefined
+          )
+        return
+      }
+      case 'notification.blocked': {
+        const p = payload as Partial<HostEventPayloads['notification.blocked']>
+        if (typeof p.origin === 'string') browser.permissions.set('notifications', p.origin, 'deny')
+        return
+      }
+      case 'private.closeAll':
+        browser.tabs.closePrivateTabs(this.window)
+        return
+      case 'fullscreen.entered': {
+        const p = payload as Partial<HostEventPayloads['fullscreen.entered']>
+        if (typeof p.tabId !== 'string') return
+        const tabId = p.tabId
+        // The chrome is under the fullscreen layer: the hint is drawn in the page's top layer
+        // (`shared/pageHint.ts`), as the desktop's fullscreen hints are.
+        onFullscreenEntered({
+          settings: () => browser.state.settings,
+          dark: () => browser.darkScheme(),
+          markShown: () => browser.updateSettings({ fullscreenHintDone: true }, this.window),
+          post: (hint) =>
+            this.bridge.send('view.postMessage', { tabId, message: { type: 'hint', hint } })
+        })
+        return
+      }
       case 'view.adopt': {
         const p = payload as HostEventPayloads['view.adopt']
         // Kotlin created the WebView for a popup. Pick the tab id first and bind it before the

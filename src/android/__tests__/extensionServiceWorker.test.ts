@@ -1,10 +1,17 @@
+import vm from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Any } from '../extensionIsolation'
 import {
   decodePayload,
   encodePayload,
+  readBlobs,
+  importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
+  platformOperations,
+  workerSelf,
+  type ScriptDocument,
+  type ScriptElement,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
 } from '../extensionServiceWorker'
@@ -44,7 +51,11 @@ function pair(): {
   } = {}
   const page: Any = { navigator: {} }
   const worker = new EventTarget() as EventTarget & Any
-  const clientSend = (message: ServiceWorkerMessage): void => {
+  // The bridge carries JSON text: nothing but what JSON keeps survives the hop.
+  const json = (message: ServiceWorkerMessage): ServiceWorkerMessage =>
+    JSON.parse(JSON.stringify(message)) as ServiceWorkerMessage
+  const clientSend = (sent: ServiceWorkerMessage): void => {
+    const message = json(sent)
     wire.push(`client ${message.op}`)
     if (message.op === 'post')
       ends.sw?.receive({
@@ -58,7 +69,8 @@ function pair(): {
       })
     else ends.sw?.receive({ t: 'sw', ...message })
   }
-  const workerSend = (message: ServiceWorkerMessage): void => {
+  const workerSend = (sent: ServiceWorkerMessage): void => {
+    const message = json(sent)
     wire.push(`worker ${message.op}`)
     if (message.op === 'post') {
       expect(message.to).toBe('pop1')
@@ -127,6 +139,52 @@ describe('service-worker payloads', () => {
     // The same object twice is not a cycle.
     const shared = { x: 1 }
     expect(encodePayload([shared, shared])).toEqual([{ x: 1 }, { x: 1 }])
+  })
+
+  it('carries an ArrayBuffer, a typed array and a DataView as their bytes, rebuilt as the same kind', () => {
+    const buffer = new Uint8Array([1, 2, 3, 250]).buffer
+    const view = new Uint16Array([7, 65535])
+    const sub = new Uint8Array(new Uint8Array([9, 8, 7, 6]).buffer, 1, 2)
+    const encoded = encodePayload({ buffer, view, sub, dv: new DataView(buffer) })
+    const decoded = decodePayload(JSON.parse(JSON.stringify(encoded))) as {
+      buffer: ArrayBuffer
+      view: Uint16Array
+      sub: Uint8Array
+      dv: DataView
+    }
+    expect(decoded.buffer).toBeInstanceOf(ArrayBuffer)
+    expect(Array.from(new Uint8Array(decoded.buffer))).toEqual([1, 2, 3, 250])
+    expect(decoded.view).toBeInstanceOf(Uint16Array)
+    expect(Array.from(decoded.view)).toEqual([7, 65535])
+    // A view over part of a buffer travels as the bytes it covers.
+    expect(Array.from(decoded.sub)).toEqual([8, 7])
+    expect(decoded.dv).toBeInstanceOf(DataView)
+    expect(decoded.dv.getUint8(3)).toBe(250)
+  })
+
+  it('carries a Blob and a File with their type and name once read, or as JSON does without a list', async () => {
+    const blob = new Blob(['// ==UserScript==\n'], { type: 'text/javascript' })
+    const file = new File([new Uint8Array([0, 255])], 'a.bin', {
+      type: 'application/octet-stream',
+      lastModified: 5
+    })
+    const blobs: Array<{ blob: Blob; slot: Record<string, unknown> }> = []
+    const encoded = encodePayload({ action: 'objectURL', blob, file }, [], new Set(), blobs)
+    expect(blobs.map((b) => b.blob)).toEqual([blob, file])
+    await readBlobs(blobs)
+    const decoded = decodePayload(JSON.parse(JSON.stringify(encoded))) as { blob: Blob; file: File }
+    expect(decoded.blob).toBeInstanceOf(Blob)
+    expect(decoded.blob.type).toBe('text/javascript')
+    expect(await decoded.blob.text()).toBe('// ==UserScript==\n')
+    expect(decoded.file).toBeInstanceOf(File)
+    expect([decoded.file.name, decoded.file.type, decoded.file.lastModified]).toEqual([
+      'a.bin',
+      'application/octet-stream',
+      5
+    ])
+    expect(Array.from(new Uint8Array(await decoded.file.arrayBuffer()))).toEqual([0, 255])
+    // Without a list to enter it in, a Blob is what JSON keeps of it.
+    expect(JSON.parse(JSON.stringify(encodePayload({ blob })))).toEqual({ blob: {} })
   })
 })
 
@@ -208,6 +266,90 @@ describe('navigator.serviceWorker in a page and the worker globals, joined by th
     channel.port1.close()
   })
 
+  it('a Blob the worker hands a page arrives as a Blob, after a read, in the order of the sends', async () => {
+    // Tampermonkey's worker: `client.postMessage({ action: 'objectURL', blob }, [port2])` to its
+    // offscreen document, which answers `{ result: { url } }` on the port; a `Blob` cannot be
+    // JSON and the worker has no `URL.createObjectURL` of its own.
+    const { page, worker, wire } = pair()
+    const clients = worker.clients as Any
+    const [client] = (await (clients.matchAll as () => Promise<Any[]>)()) as Any[]
+    const container = (page.navigator as Any).serviceWorker as Any
+    const got: unknown[] = []
+    container.onmessage = (event: MessageEvent): void => {
+      const data = event.data as { action: string; blob?: Blob }
+      got.push(data)
+      if (data.blob) {
+        void data.blob.text().then((text) => {
+          event.ports[0].postMessage({ result: { url: `blob:${text.length}` } })
+        })
+      }
+    }
+    const channel = new MessageChannel()
+    const answers: unknown[] = []
+    channel.port1.onmessage = (m: MessageEvent): void => {
+      answers.push(m.data)
+    }
+    const post = client.postMessage as (m: unknown, t?: unknown[]) => void
+    post({ action: 'objectURL', blob: new Blob(['abc'], { type: 'text/plain' }) }, [channel.port2])
+    // Sent after the blob's message and without a blob of its own: it must still arrive second.
+    post({ action: 'config' })
+    expect(wire.filter((w) => w === 'worker post')).toHaveLength(0)
+    await until(() => answers.length === 1)
+    expect((got[0] as { action: string }).action).toBe('objectURL')
+    expect((got[0] as { blob: Blob }).blob).toBeInstanceOf(Blob)
+    expect((got[0] as { blob: Blob }).blob.type).toBe('text/plain')
+    expect(got[1]).toEqual({ action: 'config' })
+    expect(answers).toEqual([{ result: { url: 'blob:3' } }])
+    // With nothing to read and nothing waiting, a send goes out at once.
+    const before = wire.length
+    post({ action: 'ping' })
+    expect(wire.length).toBe(before + 1)
+    channel.port1.close()
+  })
+
+  it("a port named inside the data arrives as the very port of the event's transfer list", async () => {
+    // Stylus: the worker asks a page for a worker port over a channel port; the page answers
+    // `{ id, res: port2 }` with `[port2]` transferred and the worker calls `res.postMessage`.
+    const { page, worker } = pair()
+    const container = (page.navigator as Any).serviceWorker as Any
+    container.onmessage = (event: MessageEvent): void => {
+      const [reply] = event.ports
+      reply.onmessage = (m: MessageEvent): void => {
+        const { id } = m.data as { id: number }
+        const chan = new MessageChannel()
+        chan.port1.onmessage = (w: MessageEvent): void => {
+          chan.port1.postMessage({ id: (w.data as { id: number }).id, res: 'built' })
+        }
+        reply.postMessage({ id, res: chan.port2 }, [chan.port2])
+      }
+    }
+    const clients = worker.clients as Any
+    const [client] = (await (clients.matchAll as () => Promise<Any[]>)()) as Any[]
+    const channel = new MessageChannel()
+    const answers: unknown[] = []
+    channel.port1.onmessage = (m: MessageEvent): void => {
+      answers.push(m.data)
+    }
+    ;(client.postMessage as (m: unknown, t: unknown[]) => void)(null, [channel.port2])
+    channel.port1.postMessage({ id: 1, args: ['getWorkerPort', '/js/worker.js'] })
+    await until(() => answers.length === 1)
+    const { res } = answers[0] as { id: number; res: MessagePort }
+    expect(res).toBeInstanceOf(MessagePort)
+    // What the worker got in `res` is what it can talk on.
+    const built: unknown[] = []
+    res.onmessage = (m: MessageEvent): void => {
+      built.push(m.data)
+    }
+    res.postMessage({ id: 7, args: ['build'] })
+    await until(() => built.length === 1)
+    expect(built).toEqual([{ id: 7, res: 'built' }])
+    // A port that is not in the transfer list cannot be cloned, as on the platform.
+    expect(() => encodePayload({ p: new MessageChannel().port1 })).toThrow(/cloned/)
+    expect(decodePayload({ __zenPort: 3 }, [])).toBeNull()
+    res.close()
+    channel.port1.close()
+  })
+
   it('a close from the far side closes the local end and later traffic for the id is dropped', async () => {
     const { page, worker, client, wire } = pair()
     worker.addEventListener('message', (event) => {
@@ -278,5 +420,322 @@ describe('the worker lifecycle events', () => {
     worker.addEventListener('install', () => fired++)
     await sw.lifecycle()
     expect(fired).toBe(0)
+  })
+
+  it('takes the page dialogs off the worker global: a worker has none, and a native one stalls the renderer', () => {
+    const { worker } = pair()
+    expect('alert' in worker && worker.alert).toBeUndefined()
+    expect(worker.confirm).toBeUndefined()
+    expect(worker.prompt).toBeUndefined()
+  })
+})
+
+describe('importScripts on the worker page', () => {
+  /**
+   * A document whose script elements run in one V8 context, as a page's classic scripts share
+   * one global lexical environment: what `const config = …` in one import means for the next.
+   */
+  function documentInContext(): {
+    document: ScriptDocument
+    context: vm.Context
+    ran: string[]
+    removed: number
+  } {
+    const context = vm.createContext({ log: [] as string[] })
+    const ran: string[] = []
+    let removed = 0
+    const document: ScriptDocument = {
+      head: {
+        appendChild: (node: ScriptElement) => {
+          ran.push(node.textContent ?? '')
+          vm.runInContext(node.textContent ?? '', context)
+        }
+      },
+      documentElement: null,
+      createElement: () => ({
+        textContent: null,
+        remove: () => {
+          removed++
+        }
+      })
+    }
+    return {
+      document,
+      context,
+      ran,
+      get removed() {
+        return removed
+      }
+    }
+  }
+
+  it('runs each file as a classic script of the page, so a top-level const reaches the next file and the worker', () => {
+    const files: Record<string, string> = {
+      [`${ORIGIN}/js/config.js`]: 'const config = { speed: 2 }; let seen = 0;',
+      [`${ORIGIN}/js/util.js`]: 'seen = config.speed; log.push("util " + seen)'
+    }
+    const fetched: string[] = []
+    const d = documentInContext()
+    const importScripts = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/js/service-worker.js`,
+      fetchText: (url) => {
+        fetched.push(url)
+        const text = files[url]
+        return text === undefined ? { status: 404, text: '' } : { status: 200, text }
+      },
+      document: d.document
+    })
+    importScripts('config.js', '/js/util.js')
+    expect(fetched).toEqual([`${ORIGIN}/js/config.js`, `${ORIGIN}/js/util.js`])
+    // The worker script itself, after the imports, sees the const as a worker would.
+    expect(vm.runInContext('config.speed + seen', d.context)).toBe(4)
+    expect(d.context.log).toEqual(['util 2'])
+    expect(d.ran.map((text) => text.split('\n').at(-1))).toEqual([
+      `//# sourceURL=${ORIGIN}/js/config.js`,
+      `//# sourceURL=${ORIGIN}/js/util.js`
+    ])
+    expect(d.removed).toBe(2)
+  })
+
+  it('refuses another origin and reports a file the extension does not have', () => {
+    const d = documentInContext()
+    const importScripts = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/sw.js`,
+      fetchText: () => ({ status: 404, text: '' }),
+      document: d.document
+    })
+    expect(() => importScripts('https://evil.example/x.js')).toThrow(/not on the extension origin/)
+    expect(() => importScripts('missing.js')).toThrow(/missing\.js failed \(404\)/)
+    expect(d.ran).toEqual([])
+  })
+})
+
+describe("the worker page's self and globalThis answer as a worker's global", () => {
+  /** A Window-shaped global: unforgeable getters, platform operations that check their receiver. */
+  function blinkLikeGlobal(): Any {
+    // EventTarget.prototype's operation sits on the chain, as in Blink; the Window's own on it.
+    const eventTarget: Any = {}
+    const global: Any = Object.create(eventTarget)
+    // Blink's operations are not constructors (no `prototype`), as a shorthand method is not.
+    const platform = (name: string): unknown =>
+      ({
+        [name](this: unknown, ...args: unknown[]): string {
+          if (this !== global) throw new TypeError('Illegal invocation')
+          return `${name}(${args.join(',')})`
+        }
+      })[name]
+    const unforgeable = (name: string, value: () => unknown): void => {
+      Object.defineProperty(global, name, { get: value, configurable: false, enumerable: true })
+    }
+    unforgeable('window', () => global)
+    unforgeable('document', () => ({ nodeType: 9, visibilityState: 'visible' }))
+    unforgeable('localStorage', () => ({ getItem: () => 'page' }))
+    unforgeable('navigator', () => ({ userAgent: 'page' }))
+    Object.defineProperty(global, 'location', {
+      get() {
+        if (this !== global) throw new TypeError('Illegal invocation')
+        return { href: SCRIPT }
+      },
+      configurable: false
+    })
+    eventTarget.addEventListener = platform('addEventListener')
+    global.setTimeout = platform('setTimeout')
+    global.fetch = platform('fetch')
+    global.requestAnimationFrame = platform('requestAnimationFrame')
+    global.URL = class FakeURL {
+      href: string
+      constructor(href: string) {
+        this.href = href
+      }
+    }
+    global.chrome = { runtime: { id: 'abcdefghijklmnopabcdefghijklmnop' } }
+    global.Infinity = Infinity
+    Object.defineProperty(global, 'Infinity', { writable: false, configurable: false })
+    return global
+  }
+
+  function run(global: Any, code: string): unknown {
+    const self = workerSelf(global)
+    const context = vm.createContext({ self, window: global, TypeError, Object, Reflect })
+    return vm.runInContext(code, context)
+  }
+
+  it('a strict-mode self.window = self is kept and read back, and the page stays intact', () => {
+    const global = blinkLikeGlobal()
+    // What the page would do: a getter-only property refuses the write.
+    expect(() => {
+      'use strict'
+      global.window = global
+    }).toThrow(TypeError)
+    const result = run(
+      global,
+      `'use strict';
+       const before = [self.window, 'window' in self];
+       self.window = self;
+       self.Prefs = { a: 1 };
+       [before, self.window === self, self.self === self, self.globalThis === self, typeof window.Prefs, 'window' in self]`
+    )
+    expect(result).toEqual([[undefined, false], true, true, true, 'object', true])
+    // The page's own `window` is untouched; the script's global reached the page.
+    expect(global.window).toBe(global)
+    expect(global.Prefs).toEqual({ a: 1 })
+  })
+
+  it("a worker's missing members are absent until the script polyfills them, and the polyfills take", () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       // Capital One Shopping's worker: a localStorage over chrome.storage.
+       const absent = [self.localStorage, self.document, self.requestAnimationFrame, 'document' in self, 'localStorage' in self];
+       self.localStorage = { getItem: (k) => 'shim:' + k };
+       // Online Security's worker: Sentry's GLOBAL_OBJ is globalThis, and its document shim goes there.
+       self.globalThis.document = { visibilityState: 'hidden', addEventListener: () => {} };
+       // NordPass's worker tells a background from a page by the document it has not.
+       const nordpass = (() => { const g = self.globalThis; return !g.document || g.window === g; })();
+       [absent, self.localStorage.getItem('k'), self.document.visibilityState, 'document' in self, nordpass, Object.keys(self).includes('document'), Object.keys(self).includes('localStorage')]`
+    )
+    expect(result).toEqual([
+      [undefined, undefined, undefined, false, false],
+      'shim:k',
+      'hidden',
+      true,
+      false,
+      true,
+      true
+    ])
+    // The page keeps its own document and storage.
+    expect((global.document as { visibilityState: string }).visibilityState).toBe('visible')
+    expect((global.localStorage as { getItem(k: string): string }).getItem('k')).toBe('page')
+  })
+
+  it('a write the global refuses is kept, a delete of a missing member is a no-op, and the page is not touched', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       const nav = self.navigator.userAgent;
+       self.navigator = { userAgent: 'shim' };
+       const deleted = delete self.document;
+       const descriptor = Object.getOwnPropertyDescriptor(self, 'document');
+       [nav, self.navigator.userAgent, deleted, descriptor, Reflect.has(self, 'navigator')]`
+    )
+    expect(result).toEqual(['page', 'shim', true, undefined, true])
+    expect((global.navigator as { userAgent: string }).userAgent).toBe('page')
+  })
+
+  it('platform methods run on the global, getters see it, constructors and identity hold', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       const listen = self.addEventListener('message', 'fn');
+       const timer = self.setTimeout('cb', 5);
+       const same = self.fetch === self.fetch && self.addEventListener !== undefined;
+       const url = new self.URL('https://a.example/').href;
+       const proto = self.URL.prototype !== undefined;
+       [listen, timer, same, url, proto, self.location.href, self.chrome.runtime.id, self.Infinity]`
+    )
+    expect(result).toEqual([
+      'addEventListener(message,fn)',
+      'setTimeout(cb,5)',
+      true,
+      'https://a.example/',
+      true,
+      SCRIPT,
+      'abcdefghijklmnopabcdefghijklmnop',
+      Infinity
+    ])
+  })
+
+  it("a script's wrapper of a platform operation runs on the global too, wherever it was installed", () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       // Sentry's browserApiErrors: EventTarget.prototype.addEventListener becomes a plain
+       // function (it has a prototype, as any does) that forwards this to the native, and its
+       // INP tracking then calls GLOBAL_OBJ.addEventListener(...).
+       const proto = Object.getPrototypeOf(self);
+       const nativeListen = proto.addEventListener;
+       proto.addEventListener = function (type, fn) { return 'wrapped:' + nativeListen.apply(this, [type, fn]); };
+       const listened = self.addEventListener('click', 'fn');
+       // Sentry's fill(WINDOW, 'setTimeout', ...): the Window's own operation, replaced through
+       // the proxy; the replacement forwards this to the native it took from the page.
+       const nativeTimer = window.setTimeout;
+       self.setTimeout = function (cb, ms) { return 'wrapped:' + nativeTimer.apply(this, [cb, ms]); };
+       const timed = self.setTimeout('cb', 7);
+       // The replacement landed on the page's global, where the bare identifier finds it.
+       const bare = window.setTimeout('bare', 1);
+       // A constructor the script defines on the global is not an operation: raw, constructible.
+       self.Thing = function Thing(v) { this.v = v; };
+       const built = new self.Thing(4).v;
+       [listened, timed, bare, self.setTimeout === self.setTimeout, built, self.Thing === window.Thing]`
+    )
+    expect(result).toEqual([
+      'wrapped:addEventListener(click,fn)',
+      'wrapped:setTimeout(cb,7)',
+      'wrapped:setTimeout(bare,1)',
+      true,
+      4,
+      true
+    ])
+  })
+
+  it('the operations snapshot names the platform functions, not constructors, accessors or Object.prototype', () => {
+    const global = blinkLikeGlobal()
+    const operations = platformOperations(global)
+    expect(operations.has('addEventListener')).toBe(true)
+    expect(operations.has('setTimeout')).toBe(true)
+    expect(operations.has('fetch')).toBe(true)
+    expect(operations.has('URL')).toBe(false)
+    expect(operations.has('document')).toBe(false)
+    expect(operations.has('location')).toBe(false)
+    expect(operations.has('hasOwnProperty')).toBe(false)
+    expect(operations.has('toString')).toBe(false)
+    // The snapshot runs no getter: location's throws for any receiver but the global, and a
+    // getter with a side effect would count.
+    let read = 0
+    Object.defineProperty(global, 'counted', {
+      get: () => {
+        read++
+        return () => 'x'
+      },
+      configurable: true
+    })
+    expect(platformOperations(global).has('counted')).toBe(false)
+    expect(read).toBe(0)
+  })
+
+  it('Object.assign, defineProperty, keys, prototype and delete go to the global; the guarded polyfills run as in a worker', () => {
+    const global = blinkLikeGlobal()
+    const result = run(
+      global,
+      `'use strict';
+       Object.assign(self, { Prefs: { a: 1 }, info: 'x' });
+       Object.defineProperty(self, 'frozen', { value: 3, configurable: false, writable: false, enumerable: true });
+       // Read&Write's and MetaMask's guarded polyfills: the bare identifier is the page's, the
+       // reflective test is the worker's, and the polyfill takes.
+       if (typeof window === 'undefined') self.window = self;
+       if (!Reflect.has(self, 'window')) self.window = self;
+       const keys = Object.keys(self).filter((k) => ['Prefs', 'info', 'frozen', 'chrome', 'window'].includes(k)).sort();
+       const own = Object.getOwnPropertyDescriptor(self, 'frozen');
+       delete self.info;
+       [keys, own.configurable, own.value, self.window === self, 'info' in self, Object.getPrototypeOf(self) === Object.getPrototypeOf(window)]`
+    )
+    expect(result).toEqual([
+      ['Prefs', 'chrome', 'frozen', 'info', 'window'],
+      false,
+      3,
+      true,
+      false,
+      true
+    ])
+    expect(global.Prefs).toEqual({ a: 1 })
+    expect(global.frozen).toBe(3)
+    expect(global.info).toBeUndefined()
+    expect(global.window).toBe(global)
   })
 })

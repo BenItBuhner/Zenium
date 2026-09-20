@@ -8,6 +8,7 @@ import {
 } from '@shared/internalPages'
 import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
+import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
@@ -64,6 +65,9 @@ export function DesktopSettings({
   const shown = current ?? sections[0] ?? null
   const sectionId = shown?.id ?? null
   const sheets = useSheetStack()
+  // The vault's lists while Autofill is the open category (the phone page reads them the same
+  // way); a search builds every category with the gate and the switches, not the entries.
+  const autofill = useAutofillSettings(state, sectionId === 'autofill')
   const ctx: SectionContext = {
     state,
     tab,
@@ -75,7 +79,8 @@ export function DesktopSettings({
     boost: (tabId) => {
       run('tab.activate', { tabId })
       void openOverlay('boosts', tabId)
-    }
+    },
+    autofill
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

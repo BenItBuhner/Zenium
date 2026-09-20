@@ -35,6 +35,8 @@ interface PageHost {
     /** HTTP sign-in and client-certificate requests. */
     val security: Security
     val snapshots: HistorySnapshots
+    /** The tab cards' pictures on disk ([Thumbnails]); a host without cards (a custom tab) keeps none. */
+    val thumbnails: Thumbnails? get() = null
     val tabs: TabHost
     val fullscreenTab: TabWebView?
     /** Whether the host is in its own fullscreen (Menu > Fullscreen: the bars hidden, no element fullscreen). */
@@ -70,6 +72,22 @@ interface PageHost {
     /** Something happened to one page: `navigated`, `title`, `startLoading`, … (see [TabWebView]). */
     fun viewEvent(tabId: String, name: String, payload: Any?)
 
+    /**
+     * The state a fresh WebView rebuilds `tabId`'s back/forward list from changed: `hostState`
+     * as [NavigationState.hostStateOf] gives it, null when there is none to keep (a private tab,
+     * an empty list, one over the cap). Main thread, with every `historyChanged`; the browser
+     * window keeps the latest to answer the core's synchronous `view.navigationHostState` from
+     * the bridge thread, where the WebView cannot be asked. A custom tab has no core to answer.
+     */
+    fun navigationStateChanged(tabId: String, hostState: String?) {}
+
+    /**
+     * The view known as `viewId` (a popup's provisional id) is `tabId`'s from now on: whatever
+     * the window kept under the old id – the list its pushes filled, the state behind it – is not
+     * kept there any more; the view pushes both again under the new id right after.
+     */
+    fun viewBound(viewId: String, tabId: String) {}
+
     /** Something happened outside any one page: a download, a permission request, a popup. */
     fun hostEvent(name: String, payload: Any?)
 
@@ -79,11 +97,36 @@ interface PageHost {
     /** A pull-to-refresh on a page moved on: `start`, `move`, `release` or `cancel` (see `lib/pull.ts`). */
     fun pullEvent(tabId: String, phase: String, payload: JSONObject?) {}
 
+    /**
+     * Zenium's items for the floating toolbar over `text` selected in a page (`Menus.selectionToolbar`
+     * in the core): `reply` gets the JSON text of `[{ id, title }]` in order, or null for none. A
+     * host without a core (a custom tab) has none; the system's toolbar stands as it is.
+     */
+    fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) = reply(null)
+
+    /** A page scrolled under the bar that hides on scroll: `start`, `move`, `end` or `show` (see `lib/barHide.ts`). */
+    fun barScroll(tabId: String, phase: String, payload: JSONObject?) {}
+
     /** A physical key the shortcut table matched (`tabId` null: typed into the chrome). */
     fun onKey(tabId: String?, input: JSONObject)
 
     fun enterFullscreen(tab: TabWebView, view: View, callback: WebChromeClient.CustomViewCallback)
     fun exitFullscreen(tab: TabWebView)
+    /**
+     * The page's `fullscreenchange` ([PageMessageRoute.Fullscreen]): a fullscreen element is
+     * there or gone, with the natural size of the video it shows (0 × 0 for none known), from
+     * the main document (`mainFrame`) or from one of its frames, whose embed's video the main
+     * document cannot see into. A host that turns the screen with a landscape video reads it
+     * (MED-01); the default leaves it.
+     */
+    fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {}
+    /**
+     * The page view was laid out at a new size (device px). The browser's host tells the chrome
+     * once the frame at that size is drawn (`view.sized`), for the chrome's return from a
+     * fullscreen to fade in on the page's landing (MED-01); a host without a chrome has no one
+     * to tell.
+     */
+    fun viewSized(tab: TabWebView, widthPx: Int, heightPx: Int) {}
     /** Leave the host's own fullscreen (a back while [immersive]); a host without one has nothing to do. */
     fun leaveImmersive() {}
     fun openExternal(url: String)

@@ -124,7 +124,7 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
                 webView: WebView,
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams
-            ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
+            ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
         }
     }
 
@@ -203,13 +203,52 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         js("window.__zenHost&&__zenHost.pullEvent(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
     }
 
+    /**
+     * A tab's page scrolled under the bar that hides on scroll: `start` (a finger down), `move`
+     * (the scroll since the last report, CSS px, one report per frame), `end` (the finger lifted)
+     * or `show` (the page pushed against its top); the chrome's `lib/barHide.ts` moves the bar and
+     * hands the page's edge back through `chrome.setBarHide` (see `BarHideGesture.kt`).
+     */
+    fun barScroll(tabId: String, phase: String, payload: JSONObject?) {
+        js("window.__zenHost&&__zenHost.barScroll(${JSONObject.quote(tabId)},${JSONObject.quote(phase)},${JSONObject.quote(encodeResult(payload))})")
+    }
+
+    /** Accessibility focus landed in the chrome with the bar hidden: the bar comes back on its spring (`lib/barHide.ts` `showBar`). */
+    fun barShow() {
+        js("window.__zenHost&&__zenHost.barShow()")
+    }
+
+    /** Touch exploration (TalkBack) turned on or off: on, the bar that hides on scroll stays put (`lib/barHide.ts` `setBarHideTouchExploration`). */
+    fun barTouchExploration(enabled: Boolean) {
+        js("window.__zenHost&&__zenHost.barTouchExploration($enabled)")
+    }
+
     /** Commit the gesture; answers whether the chrome had anything to dismiss or navigate. */
     fun backCommit(callback: (Boolean) -> Unit) {
         evaluateJavascript("window.__zenHost?__zenHost.backEvent('commit',null):false") { result -> callback(result == "true") }
     }
 
+    /**
+     * Zenium's items for the floating toolbar over `text` selected in tab `tabId` (the core's
+     * `Menus.selectionToolbar`): `reply` gets the JSON text of `[{ id, title }]` in order, "[]"
+     * before the core has started, null while the chrome document is still loading.
+     */
+    fun selectionMenu(tabId: String, text: String, reply: (String?) -> Unit) {
+        if (!ready) {
+            reply(null)
+            return
+        }
+        val request = JSONObject.quote(json("text" to text).toString())
+        evaluateJavascript("window.__zenHost?__zenHost.selectionMenu(${JSONObject.quote(tabId)},$request):null") { reply(it) }
+    }
+
     fun openUrl(url: String) {
         onReady { js("window.__zenHost&&__zenHost.openUrl(${JSONObject.quote(url)})") }
+    }
+
+    /** The launcher's "New private tab" shortcut: a private tab in the current space, once the core is up. */
+    fun newPrivateTab() {
+        onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
     }
 
     private fun js(code: String) {

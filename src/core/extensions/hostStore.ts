@@ -92,6 +92,8 @@ export function downloadUpdate(
 export interface PackageOptions {
   locale: string | null
   expectedId?: string
+  /** The browser's Chromium version a `minimum_chrome_version` is held against (`InstallOptions`). */
+  chromiumVersion?: string | null
 }
 
 /** Verifies and unpacks a `.crx` (signed) or `.zip` (unsigned) file's bytes. */

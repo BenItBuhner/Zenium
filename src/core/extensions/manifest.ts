@@ -5,6 +5,7 @@
  * depend on it without pulling anything else in.
  */
 import { base64Decode } from './bytes'
+import { overrideUrl, type ManifestSettingsOverrides } from './searchProvider'
 
 // ---------------------------------------------------------------------------
 // Model
@@ -120,6 +121,7 @@ export interface ExtensionManifest {
   externally_connectable?: { ids?: string[]; matches?: string[]; accepts_tls_channel_id?: boolean }
   sandbox?: { pages: string[]; content_security_policy?: string }
   storage?: { managed_schema: string }
+  chrome_settings_overrides?: ManifestSettingsOverrides
 }
 
 /**
@@ -255,11 +257,13 @@ export function isMatchPattern(pattern: string): boolean {
   const scheme = pattern.slice(0, separator)
   if (scheme !== '*' && !MATCH_SCHEMES.has(scheme)) return false
   const rest = pattern.slice(separator + 3)
+  // Chromium's file grammar: the host is optional and ignored (`file://*/*`, which Adobe
+  // Acrobat and MetaMask declare, and `file://localhost/x` both stand for `file:///...`), so
+  // anything after `file://` is a path glob; only a bare `file://` is refused.
+  if (scheme === 'file') return rest !== ''
   const slash = rest.indexOf('/')
   if (slash < 0) return false
   const host = rest.slice(0, slash)
-  const path = rest.slice(slash)
-  if (scheme === 'file') return host === '' && path.startsWith('/')
   if (host === '') return false
   if (
     host.includes(':') &&
@@ -271,7 +275,7 @@ export function isMatchPattern(pattern: string): boolean {
   const hostName = host.replace(/:(\d+|\*)$/, '')
   if (hostName !== '*' && hostName.includes('*') && !hostName.startsWith('*.')) return false
   if (hostName.slice(2).includes('*')) return false
-  return path.startsWith('/')
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +320,8 @@ const KNOWN_KEYS = new Set<string>([
   'externally_connectable',
   'sandbox',
   'storage',
-  // Accepted without further checks: Chrome knows them, this installer does not act on them.
   'chrome_settings_overrides',
+  // Accepted without further checks: Chrome knows them, this installer does not act on them.
   'cross_origin_embedder_policy',
   'cross_origin_opener_policy',
   'differential_fingerprint',
@@ -674,6 +678,90 @@ function usesMessages(raw: Raw): boolean {
 }
 
 /** Validates an already-parsed manifest object. */
+/**
+ * `chrome_settings_overrides` as Chrome's `SettingsOverridesHandler` reads it: the shapes are
+ * type errors; a part whose URL is not `http(s)`, or a `search_provider` spelled out without a
+ * field Chrome requires when there is no `prepopulated_id`, is dropped, and the install fails
+ * only when every declared part is dropped (Chrome parses the three parts and errors when none
+ * survives). A dropped part beside a surviving one is a warning here, since Chrome says nothing.
+ */
+function checkSettingsOverrides(c: Checker, raw: Raw): void {
+  const key = 'chrome_settings_overrides'
+  if (!c.object(key, raw[key])) return
+  const overrides = raw[key]
+  const dropped: Array<{ path: string; message: string }> = []
+  let kept = 0
+
+  if (overrides.homepage !== undefined) {
+    if (c.string(`${key}.homepage`, overrides.homepage)) {
+      if (overrideUrl(overrides.homepage)) kept += 1
+      else dropped.push({ path: `${key}.homepage`, message: 'Must be an http(s) URL' })
+    }
+  }
+  if (overrides.startup_pages !== undefined) {
+    if (c.stringArray(`${key}.startup_pages`, overrides.startup_pages)) {
+      const pages = overrides.startup_pages as string[]
+      const bad = pages.findIndex((page) => !overrideUrl(page))
+      if (bad === -1 && pages.length > 0) kept += 1
+      else if (bad !== -1) {
+        dropped.push({ path: `${key}.startup_pages[${bad}]`, message: 'Must be an http(s) URL' })
+      }
+    }
+  }
+  const providerPath = `${key}.search_provider`
+  if (
+    overrides.search_provider !== undefined &&
+    c.object(providerPath, overrides.search_provider)
+  ) {
+    const p = overrides.search_provider
+    const hasUrl = c.string(`${providerPath}.search_url`, p.search_url, { required: true })
+    let hasDefault = false
+    if (p.is_default === undefined) c.error(`${providerPath}.is_default`, 'Required key is missing')
+    else hasDefault = c.boolean(`${providerPath}.is_default`, p.is_default)
+    const shape = hasUrl && hasDefault
+    for (const field of [
+      'name',
+      'keyword',
+      'favicon_url',
+      'encoding',
+      'suggest_url',
+      'image_url'
+    ]) {
+      c.string(`${providerPath}.${field}`, p[field])
+    }
+    if (p.prepopulated_id !== undefined && typeof p.prepopulated_id !== 'number') {
+      c.error(`${providerPath}.prepopulated_id`, 'Must be an integer')
+    }
+    c.stringArray(`${providerPath}.alternate_urls`, p.alternate_urls)
+    if (shape) {
+      if (!overrideUrl(p.search_url)) {
+        dropped.push({ path: `${providerPath}.search_url`, message: 'Must be an http(s) URL' })
+      } else if (p.prepopulated_id === undefined) {
+        const missing = ['name', 'keyword', 'encoding', 'favicon_url'].find(
+          (field) => typeof p[field] !== 'string'
+        )
+        if (missing) {
+          dropped.push({
+            path: `${providerPath}.${missing}`,
+            message: 'Required without prepopulated_id'
+          })
+        } else if (!overrideUrl(p.favicon_url)) {
+          dropped.push({ path: `${providerPath}.favicon_url`, message: 'Must be an http(s) URL' })
+        } else kept += 1
+      } else kept += 1
+    }
+  }
+
+  if (kept === 0 && dropped.length === 0 && c.errors.every((e) => !e.path.startsWith(key))) {
+    c.error(key, 'Must override the homepage, the search provider or the startup pages')
+    return
+  }
+  for (const issue of dropped) {
+    if (kept === 0) c.error(issue.path, issue.message)
+    else c.warn(issue.path, `${issue.message} (ignored)`)
+  }
+}
+
 export function validateManifest(input: unknown): ManifestParseResult {
   const c = new Checker()
   if (!isRecord(input)) {
@@ -819,6 +907,7 @@ export function validateManifest(input: unknown): ManifestParseResult {
   }
   if (c.object('side_panel', raw.side_panel))
     c.string('side_panel.default_path', raw.side_panel.default_path)
+  checkSettingsOverrides(c, raw)
   c.boolean('offline_enabled', raw.offline_enabled)
   if (c.object('externally_connectable', raw.externally_connectable)) {
     c.stringArray('externally_connectable.ids', raw.externally_connectable.ids)

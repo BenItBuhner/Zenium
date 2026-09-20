@@ -17,6 +17,8 @@ import android.webkit.WebViewClient
  */
 object NetErrors {
     const val FAILED = -2
+    /** The request engine (or Chrome's extension layer) refused the navigation itself. */
+    const val BLOCKED_BY_CLIENT = -20
     const val CONNECTION_REFUSED = -102
     const val NAME_NOT_RESOLVED = -105
     const val INTERNET_DISCONNECTED = -106
@@ -33,7 +35,7 @@ object NetErrors {
         "ERR_FAILED" to FAILED,
         "ERR_FILE_NOT_FOUND" to -6,
         "ERR_TIMED_OUT" to -7,
-        "ERR_BLOCKED_BY_CLIENT" to -20,
+        "ERR_BLOCKED_BY_CLIENT" to BLOCKED_BY_CLIENT,
         "ERR_NETWORK_ACCESS_DENIED" to -21,
         "ERR_CONNECTION_CLOSED" to -100,
         "ERR_CONNECTION_RESET" to -101,

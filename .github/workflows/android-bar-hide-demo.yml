@@ -1,0 +1,75 @@
+name: Android bar hide on scroll demo
+
+# Records the phone bar hiding on scroll on a hardware-accelerated Android emulator and uploads
+# the video, the screenshots and the driver's findings: a long page scrolled with injected touch
+# drags takes the bar off and the page grows by its band, a short scroll back brings it home, a
+# release part way snaps to the nearer end, a sheet over the page brings the hidden bar back, the
+# Look and Feel switch turns the hiding off and on, and the same sequence runs with the bar docked
+# at the top. The driver judges each step from the chrome's own value (`--zen-bar-hide`) and
+# fails the run when a claim does not hold; see BarHideDemo.kt. Dispatch-only, like the gesture
+# demo. The build, the emulator and its caches live in android-emulator-demo.yml; this file only
+# picks the driver and the colour scheme.
+#
+# This driver also proves the shared harness (DemoHarness.kt: it closes the URL field twice per
+# run, under the conditions of PR #200's retry), so a harness change dispatches it; the optional
+# `harness-tests` input runs other instrumentation classes on the same emulator ahead of the
+# demo, e.g. WebViewLoadDataFoldProbe (the bare-WebView loadDataWithBaseURL history probe).
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme the profile is seeded with
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+      harness-tests:
+        description: >-
+          Instrumentation classes to run ahead of the demo, comma-separated (for example
+          app.zen.chromium.WebViewLoadDataFoldProbe); empty runs the demo alone
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-bar-hide-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Bar hide on scroll demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header); a
+      # comma-separated DEMO_CLASS runs the classes in order, so the harness tests asked for go
+      # ahead of the demo on the same emulator.
+      script-env: |
+        DEMO_CLASS=${{ inputs.harness-tests != '' && format('{0},app.zen.chromium.BarHideDemo', inputs.harness-tests) || 'app.zen.chromium.BarHideDemo' }}
+        DEMO_DIR=bar-hide-demo
+        DEMO_OUT=artifacts/android-bar-hide-demo
+        DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+      artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-bar-hide-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Bar hide on scroll demo (${{ inputs.theme || 'light' }}), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=${{ inputs.harness-tests != '' && format('{0},app.zen.chromium.BarHideDemo', inputs.harness-tests) || 'app.zen.chromium.BarHideDemo' }}
+        DEMO_DIR=bar-hide-demo
+        DEMO_OUT=artifacts/android-bar-hide-demo
+        DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+      artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-bar-hide-demo/

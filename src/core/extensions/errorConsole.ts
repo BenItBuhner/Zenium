@@ -4,6 +4,7 @@ import type {
   ExtensionErrorSource
 } from '../../shared/types'
 import type { ManifestIssue } from './manifest'
+import { withheldPermissionLine } from './withheldPermissions'
 
 /**
  * An extension's error console (`ExtensionInfo.errors`): what Chrome's extensions page shows
@@ -171,6 +172,46 @@ export function manifestIssueReport(
     level,
     source: 'load',
     message: issue.path ? `${issue.path}: ${issue.message}` : issue.message,
+    url: `chrome-extension://${extensionId}/manifest.json`,
+    line: null,
+    context: null
+  }
+}
+
+/**
+ * A permission the host withheld from the engine (`withheldPermissions.ts`) as a console line:
+ * one warning per withheld permission, reported when the extension loads, never a toast.
+ */
+export function withheldPermissionReport(
+  extensionId: string,
+  permission: string
+): ExtensionErrorReport {
+  return {
+    level: 'warning',
+    source: 'load',
+    message: withheldPermissionLine(permission),
+    url: `chrome-extension://${extensionId}/manifest.json`,
+    line: null,
+    context: null
+  }
+}
+
+/**
+ * The engine that renders pages and runs content scripts is older than the manifest's
+ * `minimum_chrome_version`, though the extension installed (the host's platform version met
+ * it): a phone's system WebView can be years behind the extension platform Zenium emulates
+ * on top of it. Chrome has no such line, since its engine and platform are one version; here
+ * the install goes ahead and the console says what the extension may find missing.
+ */
+export function engineBelowMinimumReport(
+  extensionId: string,
+  minimumChromeVersion: string,
+  engineChromiumVersion: string
+): ExtensionErrorReport {
+  return {
+    level: 'warning',
+    source: 'load',
+    message: `Requires Chrome ${minimumChromeVersion} or newer; this device's WebView is Chrome ${engineChromiumVersion.split('.')[0]}, so pages and content scripts may miss features the extension expects`,
     url: `chrome-extension://${extensionId}/manifest.json`,
     line: null,
     context: null

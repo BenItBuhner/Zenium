@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Selection</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #15141a; background: #fbfbfe; }
+  section { height: 118px; display: flex; align-items: center; justify-content: center; font-size: 22px; text-align: center; padding: 0 16px; }
+  #intro { height: 72px; background: #edf2fb; font-size: 18px; }
+  #text { background: #fff3b0; }
+  /* The label above the address, the address centred on a line of its own: its end handle
+     (the drag in the demo) sits well inside the view, not at its right edge. */
+  #address { background: #d8f3dc; font-size: 20px; flex-direction: column; gap: 4px; }
+  #address span { user-select: all; -webkit-user-select: all; font-family: monospace; font-size: 16px; display: inline-block; white-space: nowrap; padding: 6px 0; }
+  #tail { background: #f4f4f7; font-size: 18px; }
+</style>
+</head>
+<body>
+<section id="intro">Selected text and the toolbar</section>
+<section id="text">Some <span id="word">quantum</span> text to long press for the toolbar.</section>
+<section id="address">An address as plain text: <span id="url">http://127.0.0.1:18135/glance.html</span></section>
+<section id="tail">Nothing below this line.</section>
+</body>
+</html>

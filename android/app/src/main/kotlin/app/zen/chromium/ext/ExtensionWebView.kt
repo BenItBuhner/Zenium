@@ -17,8 +17,9 @@ import app.zen.chromium.Host
 import app.zen.chromium.UserAgent
 
 /**
- * A WebView on an extension's origin: the hidden background page (`context = "background"`) or a
- * popup / options page (`context = "popup"` / `"options"`). It serves every file of the extension
+ * A WebView on an extension's origin: the hidden background page (`context = "background"`), the
+ * hidden offscreen document of `chrome.offscreen` (`"offscreen"`) or a popup / options page
+ * (`context = "popup"` / `"options"`). It serves every file of the extension
  * directory plus the generated background page from `shouldInterceptRequest`, injects the page
  * bootstrap at document start and speaks the same `__zenExtBridge` protocol as tab frames.
  * Navigations off the origin open as tabs (a popup linking to a website, say); the view itself
@@ -52,8 +53,8 @@ class ExtensionWebView(
         // Extension pages present as Zenium, as tab pages do; the CORS proxy sends the same string.
         UserAgent.apply(settings, BuildConfig.VERSION_NAME)
         extensions.userAgent = settings.userAgentString
-        // Chrome paints popups white until the document says otherwise; the hidden background view has nothing to paint.
-        setBackgroundColor(if (context == "background") Color.TRANSPARENT else Color.WHITE)
+        // Chrome paints popups white until the document says otherwise; the hidden views (the background, an offscreen document) have nothing to paint.
+        setBackgroundColor(if (context == "background" || context == "offscreen") Color.TRANSPARENT else Color.WHITE)
         webViewClient = Client()
         webChromeClient = Chrome()
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {

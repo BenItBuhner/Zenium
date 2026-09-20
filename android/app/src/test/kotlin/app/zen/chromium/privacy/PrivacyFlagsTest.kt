@@ -68,6 +68,63 @@ class PrivacyFlagsTest {
     }
 
     @Test
+    fun `the private choice overrides the mode in the private container only, the global block wins`() {
+        // The same table as policy.test.ts's: global mode, private choice, blocked in a regular
+        // container, blocked in the private one.
+        val table = listOf(
+            Triple("allow", "default", false to false),
+            Triple("allow", "allow", false to false),
+            Triple("allow", "block", false to true),
+            Triple("block-private", "default", false to true),
+            Triple("block-private", "allow", false to false),
+            Triple("block-private", "block", false to true),
+            Triple("block", "default", true to true),
+            Triple("block", "allow", true to true),
+            Triple("block", "block", true to true)
+        )
+        for ((mode, private, expected) in table) {
+            val (regular, inPrivate) = expected
+            val flags = PrivacyFlags.parse(JSONObject("""{"thirdPartyCookies":"$mode","thirdPartyCookiesPrivate":"$private"}"""))
+            val label = "$mode / $private"
+            assertEquals(label, regular, flags.blocksThirdPartyCookiesIn(false))
+            assertEquals(label, inPrivate, flags.blocksThirdPartyCookiesIn(true))
+            assertEquals(label, !regular, flags.acceptsThirdPartyCookies("default", "https://news.example/"))
+            assertEquals(label, !regular, flags.acceptsThirdPartyCookies("work", null))
+            assertEquals(label, !inPrivate, flags.acceptsThirdPartyCookies(PrivacyFlags.PRIVATE_CONTAINER, "https://news.example/"))
+            assertEquals(label, !inPrivate, flags.acceptsThirdPartyCookies(PrivacyFlags.PRIVATE_CONTAINER, null))
+        }
+
+        // The related-sites exception spares the top site under the private block as under the mode's.
+        val excepted = PrivacyFlags.parse(
+            JSONObject("""{"thirdPartyCookies":"allow","thirdPartyCookiesPrivate":"block","thirdPartyCookieExceptions":["shop.example"]}""")
+        )
+        assertTrue(excepted.acceptsThirdPartyCookies(PrivacyFlags.PRIVATE_CONTAINER, "https://checkout.shop.example/"))
+        assertFalse(excepted.acceptsThirdPartyCookies(PrivacyFlags.PRIVATE_CONTAINER, "https://news.example/"))
+        assertTrue(excepted.acceptsThirdPartyCookies("default", "https://news.example/"))
+    }
+
+    @Test
+    fun `the private choice parses tolerantly, defaults to following the mode, and rides the stored copy`() {
+        val d = PrivacyFlags.DEFAULT
+        assertEquals("default", d.thirdPartyCookiesPrivate)
+        // Absent (a core from before the field) or malformed: follow the mode, as today.
+        assertEquals("default", PrivacyFlags.parse(JSONObject("""{"thirdPartyCookies":"allow"}""")).thirdPartyCookiesPrivate)
+        for (junk in listOf("\"sometimes\"", "\"block-private\"", "\"Block\"", "\"\"", "7", "null", "{}"))
+            assertEquals(junk, "default", PrivacyFlags.parse(JSONObject("""{"thirdPartyCookiesPrivate":$junk}""")).thirdPartyCookiesPrivate)
+        for (mode in listOf("default", "allow", "block"))
+            assertEquals(mode, PrivacyFlags.parse(JSONObject("""{"thirdPartyCookiesPrivate":"$mode"}""")).thirdPartyCookiesPrivate)
+
+        val pushedPrivate = PrivacyFlags.parse(
+            JSONObject("""{"safeBrowsingBypassed":["evil.example"],"thirdPartyCookies":"allow","thirdPartyCookiesPrivate":"block"}""")
+        )
+        val stored = pushedPrivate.withoutSession()
+        assertEquals("block", stored.thirdPartyCookiesPrivate)
+        assertEquals("block", stored.toJson().getString("thirdPartyCookiesPrivate"))
+        assertEquals("block", PrivacyFlags.parse(JSONObject(stored.toJson().toString())).thirdPartyCookiesPrivate)
+        assertEquals("default", PrivacyFlags.parse(JSONObject(d.toJson().toString())).thirdPartyCookiesPrivate)
+    }
+
+    @Test
     fun `plaintext is allowed when the mode is off or the site was allowed, subdomains included`() {
         val flags = PrivacyFlags.parse(pushed)
         assertTrue(flags.plaintextAllowed("http://legacy.example/"))

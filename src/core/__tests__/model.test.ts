@@ -11,10 +11,14 @@ import {
   deleteFolder,
   dissolveSplitGroup,
   essentialsForSpace,
+  folderTabs,
+  foldersOf,
   getSpace,
   insertTabIntoSpace,
+  isSplitSide,
   loadProgressAfter,
   moveTab,
+  nextFolderColor,
   nextTabAfterClose,
   orderedTabsForSpace,
   pinnedTabs,
@@ -23,10 +27,12 @@ import {
   removeTabFromSplit,
   reorderContainer,
   reorderSpace,
+  replaceTabInSplit,
   sectionIndexOf,
+  splitPlacement,
   type Model
 } from '../model'
-import { DEFAULT_CONTAINERS } from '../../shared/defaults'
+import { DEFAULT_CONTAINERS, FOLDER_COLOR_ORDER, FOLDER_COLORS } from '../../shared/defaults'
 import type { Tab } from '../../shared/types'
 
 function makeModel(): Model {
@@ -215,6 +221,53 @@ describe('split groups', () => {
     dissolveSplitGroup(m, group.id)
     expect(tabs.every((t) => m.tabs[t.id].splitGroupId === null)).toBe(true)
   })
+
+  it('adds a tab at a given pane index', () => {
+    const m = makeModel()
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => addTab(m, `https://${n}.test`))
+    const group = createSplitGroup(m, m.spaces[0].id, [a.id, b.id], 'vertical')!
+    expect(addTabToSplit(m, group.id, c.id, 0)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, a.id, b.id])
+    expect(addTabToSplit(m, group.id, d.id, 99)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, a.id, b.id, d.id])
+    expect(group.sizes).toEqual([0.25, 0.25, 0.25, 0.25])
+  })
+
+  it('replaces the tab shown in a pane, keeping the pane sizes; two panes swap', () => {
+    const m = makeModel()
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => addTab(m, `https://${n}.test`))
+    const group = createSplitGroup(m, m.spaces[0].id, [a.id, b.id], 'vertical')!
+    group.sizes = [0.3, 0.7]
+    expect(replaceTabInSplit(m, group.id, a.id, c.id)).toBe(true)
+    expect(group.tabIds).toEqual([c.id, b.id])
+    expect(group.sizes).toEqual([0.3, 0.7])
+    expect(m.tabs[a.id].splitGroupId).toBeNull()
+    expect(m.tabs[c.id].splitGroupId).toBe(group.id)
+    expect(replaceTabInSplit(m, group.id, c.id, b.id)).toBe(true)
+    expect(group.tabIds).toEqual([b.id, c.id])
+    // Nothing to replace with itself, nor in a pane that is not there.
+    expect(replaceTabInSplit(m, group.id, b.id, b.id)).toBe(false)
+    expect(replaceTabInSplit(m, group.id, a.id, d.id)).toBe(false)
+    // A tab of another split leaves it (a pair dissolves) to take the pane.
+    const other = createSplitGroup(m, m.spaces[0].id, [a.id, d.id], 'horizontal')!
+    expect(replaceTabInSplit(m, group.id, b.id, d.id)).toBe(true)
+    expect(group.tabIds).toEqual([d.id, c.id])
+    expect(m.splitGroups[other.id]).toBeUndefined()
+    expect(m.tabs[a.id].splitGroupId).toBeNull()
+  })
+
+  it('places a pane dropped on a side: beside the others along the axis, spanning across it', () => {
+    expect(splitPlacement('vertical', 'left', 2)).toEqual({ layout: 'vertical', index: 0 })
+    expect(splitPlacement('vertical', 'right', 2)).toEqual({ layout: 'vertical', index: 2 })
+    expect(splitPlacement('vertical', 'top', 2)).toEqual({ layout: 'horizontal', index: 0 })
+    expect(splitPlacement('vertical', 'bottom', 3)).toEqual({ layout: 'horizontal', index: 3 })
+    expect(splitPlacement('horizontal', 'left', 2)).toEqual({ layout: 'vertical', index: 0 })
+    expect(splitPlacement('horizontal', 'bottom', 2)).toEqual({ layout: 'horizontal', index: 2 })
+    expect(splitPlacement('grid', 'top', 3)).toEqual({ layout: 'grid', index: 0 })
+    expect(splitPlacement('grid', 'right', 3)).toEqual({ layout: 'grid', index: 3 })
+    expect(isSplitSide('left')).toBe(true)
+    expect(isSplitSide('diagonal')).toBe(false)
+  })
 })
 
 describe('windows', () => {
@@ -293,6 +346,57 @@ describe('spaces & folders', () => {
     b.folderId = folder2.id
     expect(deleteFolder(m, folder2.id, false)).toEqual([b.id])
     expect(m.folders[folder2.id]).toBeUndefined()
+  })
+
+  it('creates a folder with its colour and open, and keeps a colourless one colourless', () => {
+    const m = makeModel()
+    const blue = createFolder(m, m.spaces[0].id, 'Docs', '📁', 'blue')
+    expect(blue).toMatchObject({ name: 'Docs', icon: '📁', color: 'blue', collapsed: false })
+    const plain = createFolder(m, m.spaces[0].id, 'Misc', '📂')
+    expect('color' in plain).toBe(false)
+    expect(foldersOf(m, m.spaces[0].id).map((f) => f.id)).toEqual([blue.id, plain.id])
+  })
+
+  it('gives a new group the first colour no group of its space has yet, as Chrome does', () => {
+    const m = makeModel()
+    const space = m.spaces[0].id
+    const palette = FOLDER_COLOR_ORDER
+    // Chrome's order, grey first, every colour once.
+    expect(palette[0]).toBe('grey')
+    expect([...palette].sort()).toEqual(Object.keys(FOLDER_COLORS).sort())
+    expect(nextFolderColor(m, space)).toBe('grey')
+    createFolder(m, space, 'A', '📁', palette[0])
+    createFolder(m, space, 'B', '📁', palette[1])
+    expect(nextFolderColor(m, space)).toBe(palette[2])
+    // A gap left by a group that changed colour is filled before moving on.
+    createFolder(m, space, 'C', '📁', palette[3])
+    expect(nextFolderColor(m, space)).toBe(palette[2])
+    // Other spaces' groups do not count.
+    const other = createSpace('Other', '')
+    m.spaces.push(other)
+    expect(nextFolderColor(m, other.id)).toBe(palette[0])
+  })
+
+  it('cycles through the palette again once every colour of the space is taken', () => {
+    const m = makeModel()
+    const space = m.spaces[0].id
+    const palette = FOLDER_COLOR_ORDER
+    for (const color of palette) createFolder(m, space, color, '📁', color)
+    expect(nextFolderColor(m, space)).toBe(palette[0])
+    createFolder(m, space, 'again', '📁', palette[0])
+    expect(nextFolderColor(m, space)).toBe(palette[1])
+  })
+
+  it('lists a folder’s tabs in the space’s order and nothing for a folder that is gone', () => {
+    const m = makeModel()
+    const folder = createFolder(m, m.spaces[0].id, 'Docs', '📁')
+    const a = addTab(m, 'https://a.test', { folderId: folder.id })
+    addTab(m, 'https://loose.test')
+    const b = addTab(m, 'https://b.test', { folderId: folder.id })
+    expect(folderTabs(m, folder.id).map((t) => t.id)).toEqual([a.id, b.id])
+    moveTab(m, b, { section: 'regular', index: 0 }, 12)
+    expect(folderTabs(m, folder.id).map((t) => t.id)).toEqual([b.id, a.id])
+    expect(folderTabs(m, 'folder:missing')).toEqual([])
   })
 })
 

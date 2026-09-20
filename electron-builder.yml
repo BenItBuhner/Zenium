@@ -6,6 +6,7 @@ files:
   - '!**/.vscode/*'
   - '!.github/**'
   - '!android/**'
+  - '!scripts/**'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!vite.android.config.{js,ts,mjs,cjs}'
@@ -80,6 +81,11 @@ mac:
     NSCameraUsageDescription: Zenium requests access to the device's camera for websites that ask for it.
     NSMicrophoneUsageDescription: Zenium requests access to the device's microphone for websites that ask for it.
     NSDownloadsFolderUsageDescription: Zenium saves downloaded files to your Downloads folder.
+    # CoreLocation refuses an app without a usage description; the engine's own location provider
+    # (behind the geolocation permission, MW-04) needs it. The network provider stands in when
+    # the OS says no.
+    NSLocationUsageDescription: Zenium shares your location with websites that ask for it and that you allow.
+    NSLocationWhenInUseUsageDescription: Zenium shares your location with websites that ask for it and that you allow.
   # Documents Zenium can open from the Finder ("Open With" lists it; Alternate rank keeps Preview
   # and Safari as the system's own defaults until the user chooses otherwise).
   fileAssociations:

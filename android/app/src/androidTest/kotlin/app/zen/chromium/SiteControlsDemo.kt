@@ -1,7 +1,9 @@
 package app.zen.chromium
 
+import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
@@ -20,7 +22,9 @@ import java.util.concurrent.TimeUnit
  * in-chrome permission prompt that answers it (Allow remembered for the site, Allow once kept for
  * the tab), a private tab on its own WebView profile (the normal profile's cookie is not there,
  * its own cookie is gone once the last private tab closes), Clear browsing data with its count
- * preview, Safety check and the site-information snapshot.
+ * preview, Safety check and the site-information snapshot; then the chrome on those: the
+ * Settings tab's Privacy and Security rows (Safety check, the Clear browsing data form sheet,
+ * Site settings with a type's sheet and picker) and the menu sheet.
  *
  * The page comes from a loopback HTTP server inside this process and reports what it sees
  * through its title, which the driver reads from the core's state. Command results are written
@@ -62,10 +66,14 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         shot("01-normal-tab-with-data")
         beat()
 
-        // 2. The page asks for the location: the in-chrome prompt, answered with Allow.
+        // 2. The page asks for the location: the in-chrome prompt, answered with Allow. The chrome
+        //    has painted first: on the runner's software renderer its first frames take seconds
+        //    each while the feeds load alongside, and in run 35385072693 the first request went
+        //    by unprompted in that window (the second, 15 s later, prompted at once).
         note("\n2. location prompt, Allow")
+        note("  first paint: ${waitForFirstPaint()}")
         invoke("tab.navigate", """{"tabId":"tab_demo","input":"$DEMO_URL?set=1&ask=1"}""")
-        var prompt = waitForPrompt()
+        var prompt = waitForPrompt(30_000)
         note("  prompt: ${prompt?.toString() ?: "none"}")
         if (prompt != null) {
             waitFor("Allow", 8_000)
@@ -155,7 +163,265 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
         note("  safetyCheck: ${invoke("privacy.safetyCheck")}")
         note("  siteInfo.snapshot: ${invoke("siteInfo.snapshot", """{"tabId":"tab_demo"}""")}")
         note("  permissions.defaults: ${invoke("permissions.defaults")}")
+
+        // 7. The chrome on those results: the Settings tab's Privacy and Security category (#134:
+        //    Settings is a tab of the phone chrome, its rows from the builder), where this PR's
+        //    groups sit in Chrome's order – Safety check (the standing, Check now, a row per
+        //    area), Clear browsing data (one row whose sheet is the form: Basic, then Advanced,
+        //    the range picker over it), Site settings (the catalogue, a type's sheet with its
+        //    default and the sites that answered, the §9.13 picker over that, the sites with
+        //    their own settings) – and the menu sheet with New Private Tab. The tab is opened by
+        //    the core's `page.open` (what the menu's Settings row and a `zenium://settings/privacy`
+        //    deep link both run; the menu sheet is recorded on its own at the end). Every sheet is
+        //    opened and worked by a real finger and what the finger did is asserted, never that a
+        //    sheet went away (the rule in DemoHarness): Check now by the check's new time, a row by
+        //    the control its sheet shows, Advanced by the rows it reveals.
+        note("\n7. the chrome: the Settings tab's privacy rows, the clear-data sheet, the menu sheet")
+        invoke("permissions.set", """{"origin":"$ORIGIN","permission":"camera","decision":"deny"}""")
+        val settingsTab = openPrivacySettings()
+        if (settingsTab != null) {
+            // Safety check: the standing at the top, Check now under a finger, the rows after it.
+            val checkedBefore = state().optJSONObject("lastSafetyCheck")?.optLong("checkedAt") ?: 0L
+            if (touchRowExpecting("Check now", "the check ran again (lastSafetyCheck.checkedAt moved)", 20_000) {
+                    (state().optJSONObject("lastSafetyCheck")?.optLong("checkedAt") ?: 0L) > checkedBefore
+                }
+            ) {
+                // The results group is rebuilt by the run; its rows come back into the tree one by
+                // one (the run at 8adeb628 read Updates and Site permissions while Passwords, on
+                // screen, was not in the tree yet): the last row of the group is the one waited for.
+                awaitRow("Extensions", 10_000)
+                SystemClock.sleep(1_500)
+                note("  safety check rows: ${rowText("Updates")} | ${rowText("Passwords")} | ${rowText("Site permissions")}")
+                shot("13-safety-check-results")
+                beat()
+            }
+
+            // Clear browsing data: the row's form sheet, Basic; Advanced reveals its rows; the range
+            // picker stacks over the form (§9.24); Cancel closes it.
+            if (touchRowExpecting("Clear browsing data", "the form sheet shows Clear data", 10_000) { findByLabel("Clear data") != null }) {
+                SystemClock.sleep(SHEET_SETTLE)
+                shot("11-clear-data-basic")
+                beat()
+                if (touchRowExpecting("Advanced", "the Advanced rows show (Download history)", 8_000) { rowNode("Download history") != null }) {
+                    SystemClock.sleep(SHEET_SETTLE)
+                    shot("12-clear-data-advanced")
+                    beat()
+                }
+                if (touchRowExpecting("Time range", "the range picker shows All time", 8_000) { findByLabel("All time") != null }) {
+                    SystemClock.sleep(SHEET_SETTLE)
+                    shot("12b-clear-data-range")
+                    beat()
+                    backUntil("the range picker is gone and the form's Time range row is back") {
+                        findByLabel("All time") == null && rowNode("Time range")?.isClickable == true
+                    }
+                }
+                if (!touchRowExpecting("Cancel", "the form sheet closes", 8_000) { findByLabel("Clear data") == null }) {
+                    backUntil("the form sheet is gone") { findByLabel("Clear data") == null }
+                }
+                awaitRow("Clear browsing data", 8_000)
+                SystemClock.sleep(600)
+            }
+
+            // Site settings: the catalogue (Camera among it), Camera's sheet with the default as a
+            // value row and the demo host's answer under it (rows read the origin's host with its
+            // port, `127.0.0.1:18124`), the default's picker over the sheet, then the sites with
+            // settings of their own.
+            if (awaitRow("Camera", 8_000, show = true) != null) {
+                SystemClock.sleep(1_200)
+                shot("09-site-settings-catalogue")
+                beat()
+                if (touchRowExpecting("Camera", "the Camera sheet shows its Default behaviour row", 10_000) { rowNode("Default behaviour") != null }) {
+                    SystemClock.sleep(SHEET_SETTLE)
+                    note("  Camera sheet: ${rowText("Default behaviour")}; $HOST ${if (rowNode(HOST) != null) "listed" else "NOT listed"} under Sites with their own answer")
+                    shot("10b-site-settings-camera-sheet")
+                    beat()
+                    if (touchRowExpecting("Default behaviour", "the picker shows the Block option", 8_000) { findByLabel("Block") != null }) {
+                        SystemClock.sleep(SHEET_SETTLE)
+                        shot("10c-site-settings-picker")
+                        beat()
+                        // The Camera sheet's value row (clickable) is back in the tree once the
+                        // picker over it has gone; the picker's own header reads the same words
+                        // but is no control.
+                        backUntil("the picker is gone and the Camera sheet's Default behaviour row is back") {
+                            findByLabel("Block") == null && rowNode("Default behaviour")?.isClickable == true
+                        }
+                    }
+                    // The catalogue's Camera row (clickable) is back once the sheet has gone; the
+                    // sheet's title reads Camera too, as a plain node.
+                    backUntil("the Camera sheet is gone and the catalogue is back") {
+                        rowNode("Default behaviour") == null && rowNode("Camera")?.isClickable == true
+                    }
+                }
+            }
+            if (reveal("Sites with their own settings") != null && awaitRow(HOST, 8_000, show = true) != null) {
+                SystemClock.sleep(1_200)
+                shot("10-site-settings-sites")
+                beat()
+            }
+            note("  site rules: ${invoke("permissions.listForPermission", """{"permission":"camera"}""")}")
+            closeSettingsTab(settingsTab)
+        }
+
+        tapMenuButton()
+        SystemClock.sleep(SHEET_SETTLE)
+        val privateItem = reveal("New Private Tab") != null
+        note("  menu sheet: 'New Private Tab' ${if (privateItem) "shown" else "absent (capabilities.privateTabs=false)"}")
+        shot("14-menu-sheet")
+        beat()
+        back()
+        SystemClock.sleep(1_500)
         note("\ndone")
+    }
+
+    // --- the Settings tab -----------------------------------------------------------------------
+
+    /**
+     * The Settings tab at Privacy and Security through the core's `page.open` (the menu's
+     * Settings row and a `zenium://settings/privacy` deep link run the same), the section over
+     * its landing; the new tab's id as the core's JSON once its first group's heading is in the
+     * tree, null when it never came. The Settings page is a chunk of its own that loads on its
+     * first open, so the wait is generous.
+     */
+    private fun openPrivacySettings(): String? {
+        val id = invoke("page.open", """{"id":"settings","section":"privacy"}""")
+        note("  page.open settings/privacy -> $id")
+        if (waitFor("Safety check", 20_000) == null) {
+            note("  settings: the Privacy and Security category never showed")
+            return null
+        }
+        SystemClock.sleep(2_000)
+        return id
+    }
+
+    /**
+     * Back closes the section over the landing (the chrome holds the back for it, on camera);
+     * the tab itself goes through the core, the way the Settings tab demo leaves it, and the
+     * demo page's tab is active again for the menu sheet. The section's first heading is in the
+     * tree only while no sheet stands over it (a surface under a sheet is inert and out of the
+     * tree): it is waited for, and a sheet still up after that is backed out of first.
+     */
+    private fun closeSettingsTab(id: String) {
+        if (waitFor("Safety check", 6_000) == null) {
+            backUntil("the sheet left over is gone and the section is back in the tree") { findByLabel("Safety check") != null }
+        }
+        if (findByLabel("Safety check") != null) {
+            back()
+            SystemClock.sleep(1_500)
+        }
+        if (activeCoreTab()?.optString("id") != "tab_demo") {
+            invoke("tab.close", """{"tabId":$id}""")
+            SystemClock.sleep(1_500)
+        }
+        if (activeCoreTab()?.optString("id") != "tab_demo") {
+            invoke("tab.activate", """{"tabId":"tab_demo"}""")
+            SystemClock.sleep(1_500)
+        }
+        note("  settings closed; active ${activeCoreTab()?.optString("id")}, tabs ${state().getJSONObject("tabs").length()}")
+    }
+
+    /**
+     * The row (or control) reading `label`: a Settings row is one button whose text runs its
+     * label and description together ("Camera Sites can ask to use your camera"), a group
+     * heading of the same words is a plain node before it in the tree, so the clickable node
+     * reading the label alone or the label and a space wins; any node reading it otherwise.
+     */
+    private fun rowNode(label: String): AccessibilityNodeInfo? {
+        val reads = { node: AccessibilityNodeInfo ->
+            val text = (node.text ?: node.contentDescription)?.toString()
+            text != null && (text == label || text.startsWith("$label "))
+        }
+        return findNodeWhere { node -> node.isClickable && reads(node) } ?: findNodeWhere(reads)
+    }
+
+    /** What the row reading `label` says in full ("" when there is none). */
+    private fun rowText(label: String): String =
+        rowNode(label)?.let { (it.text ?: it.contentDescription)?.toString() }.orEmpty()
+
+    /**
+     * Poll up to `timeoutMs` for the row reading `label`, with `show` scrolled onto the screen
+     * (the chrome scrolls its list the least it has to); its bounds then, null when it never came.
+     */
+    private fun awaitRow(label: String, timeoutMs: Long, show: Boolean = false): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            val node = rowNode(label)
+            if (node != null) {
+                if (show) {
+                    node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                    SystemClock.sleep(1_500)
+                }
+                return (rowNode(label) ?: node).let { n -> Rect().also { n.getBoundsInScreen(it) } }
+            }
+            SystemClock.sleep(200)
+        }
+        note("  no row reads '$label'")
+        return null
+    }
+
+    /**
+     * One system back on a sheet, then up to `timeoutMs` for `took` – what the tree shows once
+     * the sheet has gone and the surface under it is back in it, named by `effect` – to hold.
+     * Never a fixed sleep: the emulator's software renderer paints a dismissal seconds late, and
+     * a second back sent on a sleep lands on the sheet still standing there and is absorbed (the
+     * run at 8adeb628: the Camera sheet stayed and the sites with their own settings went
+     * unrecorded). False and a note when the tree never showed it; the recording goes on.
+     */
+    private fun backUntil(effect: String, timeoutMs: Long = 12_000, took: () -> Boolean): Boolean {
+        back()
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                SystemClock.sleep(600)
+                return true
+            }
+            SystemClock.sleep(200)
+        }
+        note("  after back: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * A real touch on the row reading `label` (scrolled onto the screen first), then up to
+     * `timeoutMs` for `took` – the claim of the step, named by `effect` – to hold. The shape of a
+     * sheet step under the rule in DemoHarness: false and a touch fault when the touch went in
+     * and nothing came of it; false and a note when there was no such row to touch.
+     */
+    private fun touchRowExpecting(label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
+        awaitRow(label, 8_000, show = true) ?: return false
+        val node = rowNode(label) ?: return false
+        if (!touchTap(node)) {
+            note("  the row '$label' is not inside the touchable window")
+            return false
+        }
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                note("  touch on '$label': $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        note("  TOUCH FAULT: '$label' did not $effect")
+        return false
+    }
+
+    // --- the chrome's first frames --------------------------------------------------------------
+
+    /**
+     * Two animation frames of the chrome WebView, which the compositor grants only once it
+     * presents frames, up to 30 s: the chrome has painted and the emulator's renderer is
+     * keeping up before the page is asked to prompt. What it took, for the notes.
+     */
+    private fun waitForFirstPaint(timeoutMs: Long = 30_000): String {
+        val started = SystemClock.uptimeMillis()
+        js("window.__painted=0;requestAnimationFrame(function(){requestAnimationFrame(function(){window.__painted=1})})")
+        val deadline = started + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (js("window.__painted") == "1") return "two frames after ${SystemClock.uptimeMillis() - started} ms"
+            SystemClock.sleep(250)
+        }
+        return "no second frame within $timeoutMs ms"
     }
 
     // --- the prompt -----------------------------------------------------------------------------
@@ -331,7 +597,11 @@ class SiteControlsDemo : DemoHarness("site-controls-demo-state.json", "services-
 
     companion object {
         private const val PORT = 18124
-        private const val ORIGIN = "http://127.0.0.1:$PORT"
+        /** What the Settings rows call the origin (`hostOf`: the URL's host, port included). */
+        private const val HOST = "127.0.0.1:$PORT"
+        private const val ORIGIN = "http://$HOST"
         private const val DEMO_URL = "$ORIGIN/"
+        /** A sheet's slide, with the margin the software-rendered emulator needs. */
+        private const val SHEET_SETTLE = 2_500L
     }
 }

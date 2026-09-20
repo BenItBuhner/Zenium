@@ -5,7 +5,10 @@
 # artifacts directory.
 #
 # Which demo runs is chosen through the environment (defaults are the URL-pill gesture demo):
-#   DEMO_CLASS  – instrumentation class to run
+#   DEMO_CLASS  – instrumentation class to run; a comma-separated list runs the classes in that
+#                 order on the one boot (`am instrument -e class a,b`), the demo driver last:
+#                 the classes ahead of it must leave its `record` handshake (below) within the
+#                 300 s allowed for it, and its `done` ends the recording
 #   DEMO_DIR    – handshake directory under the app's files/
 #   DEMO_OUT    – where the artifacts go
 #   DEMO_VIDEO  – file name of the recording
@@ -16,6 +19,13 @@
 #   DEMO_PREPARED – `1` when the device was prepared by an earlier run of this script on the same
 #                 boot (android-sheet-touch-audit.sh chains several drivers): the display, the
 #                 navigation mode, the bundled apps and the settling pause are then skipped
+#   DEMO_REVOKE – runtime permissions (space separated) to take back from the app after the
+#                 install, which grants them all (-g), so a demo meets the system's prompt for
+#                 them (the voice demo and RECORD_AUDIO); revoked before the driver starts, since
+#                 a revocation kills the app's process and the driver runs inside it
+#   WEBVIEW_APK – a Chromium snapshot SystemWebView.apk to swap in for the image's own WebView
+#                 before anything else (android-webview-swap.sh: an AOSP image booted with
+#                 -writable-system); the run fails when the swap does not take
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -128,6 +138,22 @@ df -h / /tmp
 monitor_pid=$!
 
 if [ "${DEMO_PREPARED:-0}" != 1 ]; then
+# Optional: run the demo on a Chromium snapshot WebView instead of the image's own (see
+# android-webview-swap.sh; needs an AOSP image booted with -writable-system). A demo that asks
+# for it depends on the newer engine (the private tabs and media demos: the API 34 image's
+# WebView 113 keeps no profiles, so the core offers no private tabs on it, and its media /
+# notification behaviour is years behind), so a swap that does not take fails the run here,
+# before the driver, with the reason in the log.
+if [ -n "${WEBVIEW_APK:-}" ]; then
+  cp -f "$(dirname "$WEBVIEW_APK")/REVISIONS.json" "$out/webview-REVISIONS.json" 2> /dev/null || true
+  if ! bash .github/scripts/android-webview-swap.sh "$WEBVIEW_APK" "$out"; then
+    echo "::error::the WebView swap did not take; the demo needs the snapshot WebView"
+    adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+    kill "$monitor_pid" 2> /dev/null || true
+    exit 1
+  fi
+  adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
+fi
 # The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
 # snapshots and records through a software GPU, and every pixel costs.
 adb shell wm size 720x1600
@@ -169,6 +195,10 @@ echo "app: $apk"
 echo "driver: $test_apk"
 adb install -r -g "$apk"
 adb install -r -g "$test_apk"
+for permission in ${DEMO_REVOKE:-}; do
+  echo "revoking $permission"
+  adb shell pm revoke "$app_id" "$permission"
+done
 
 adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &

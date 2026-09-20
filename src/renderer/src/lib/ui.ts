@@ -11,6 +11,7 @@ import type {
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
+import { TOAST_SHOW_MS } from '@shared/toastCard'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
 import { cmd, onEvent, run } from './api'
@@ -192,6 +193,15 @@ export interface BookmarkEditRequest {
   type: BookmarkNodeType
 }
 
+/** A selection the core asked the chrome to translate (the `translate.selection` event). */
+export interface TranslateSelectionRequest {
+  tabId: string
+  text: string
+  /** Where the user asked, in CSS pixels of the page view; null when unknown. */
+  x: number | null
+  y: number | null
+}
+
 export interface UiState {
   overlay: OverlayKind
   overlaySpaceId: string | null
@@ -235,6 +245,8 @@ export interface UiState {
   securityPromptOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
+  /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
+  screenPickerOpen: boolean
   /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
   windowPromptOpen: boolean
   /**
@@ -257,6 +269,13 @@ export interface UiState {
    */
   zoomBubble: { tabId: string; factor: number; seq: number; source: 'auto' | 'chip' } | null
   /**
+   * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
+   * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
+   * on a phone. Opened by the chip, the app menu's "Text Preferences…" or the reader page's own
+   * toolbar; the page beneath is a picture that is taken again after every change.
+   */
+  readerPreferences: { tabId: string; anchor: Rect | null } | null
+  /**
    * A bookmark the manager should edit, or create (`id: null`) inside `parentId`; on phones the
    * editor sheet (the `bookmark.edit` event, the star toast's Edit).
    */
@@ -277,10 +296,47 @@ export interface UiState {
   barMenuOpen: boolean
   /** A permission prompt ("Allow example.com to use your camera?") is up over the page. */
   permissionPromptOpen: boolean
+  /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
+  clearBrowsingDataOpen: boolean
+  /**
+   * Zenium's print preview (`zen://print`, `print/PrintPreviewDialog`): a frame dialog over the
+   * page in `tabId`, which it renders to a PDF and shows, with Chrome's options beside it.
+   */
+  printPreview: { tabId: string } | null
+  /**
+   * An autofill prompt (save / update a login, save an address or card, pick a passkey account)
+   * is up over the page, and how: a popover under the URL bar (no scrim), a sheet, or a dialog.
+   */
+  autofillPrompt: 'popover' | 'sheet' | 'dialog' | null
+  /** The id of a save prompt put away behind the key chip in the pill; the chip brings it back. */
+  autofillPromptCollapsed: string | null
+  /**
+   * The id of a save prompt the chip brought back by hand: that one takes the focus as any
+   * popover the user opened, where the prompt the page raised takes none (v2 §9.22's notice rule).
+   */
+  autofillPromptByHand: string | null
+  /** Settings > Autofill is editing an address or a card (`id: null` adds one). */
+  autofillEdit: { kind: 'address' | 'card'; id: string | null } | null
+  /**
+   * A re-authenticated autofill command wants the vault passphrase (`lib/autofill.ts`
+   * `withPassphrase`): the dialog asking for it is up, with the refused attempt's error.
+   */
+  autofillPassphrase: {
+    title: string
+    description: string
+    error: string | null
+    busy: boolean
+  } | null
   /** Zen's multi-select: tabs picked with Ctrl / Shift+click (acted on together). */
   selectedTabIds: string[]
   /** Last plainly clicked / toggled tab – the anchor for Shift+click ranges. */
   selectionAnchorId: string | null
+  /**
+   * The tab strip's one tab stop (lib/tabStrip.ts): the strip item – a row, a tile, a folder or
+   * pinned header – the keyboard is on, `tab:<id>` and the like; null when the keyboard is
+   * elsewhere, and the active row is the stop.
+   */
+  stripFocus: string | null
   /** The glance parent has been captured and the card is animating in / shown. */
   glanceActive: boolean
   /** The card animation finished – the glance view may be placed. */
@@ -294,8 +350,14 @@ export interface UiState {
   siteInfoOpen: boolean
   /** A page wants to open another app: the external-protocol confirm sheet is up for it. */
   externalProtocol: ExternalProtocolRequest | null
+  /** Voice search: the listening sheet is up, for the search it will load (`lib/voiceSearch.ts`). */
+  voice: VoicePrompt | null
+  /** QR scanning: the scan sheet is up, for the payload it will load (`lib/qrScan.ts`). */
+  qrScan: QrPrompt | null
   /** Phone layout: the sheet that rearranges the bar's controls is up. */
   barEditorOpen: boolean
+  /** Phone layout: the app menu's Extensions sheet (one row per extension action) is up. */
+  extensionsSheetOpen: boolean
   /**
    * Phone layout: a `FrameDialogHost` sheet holds the page under its cover, from before it
    * rises until it has left the screen (`coverPageUnderSheet`); the dialogs it hosts set their
@@ -310,8 +372,37 @@ export interface UiState {
   defaultBrowserPrompt: boolean
   /** "Add to Home screen": the install sheet (manifest) or the name-edit sheet, when open. */
   install: WebAppInstallPrompt | null
+  /**
+   * Phone layout: the media sheet (the in-app player for the tab whose media the OS controls
+   * show, MW-16) is up, opened from the pill's Now playing chip; the tab it opened on.
+   */
+  mediaSheet: string | null
+  /**
+   * The selection the core asked the chrome to translate: the selection popover (desktop) or
+   * sheet (phone) is up for it. A request only – the surface holds the page's capture and the
+   * keyboard itself while it is up (`useFloatingChrome`, counted in `floatingChrome`).
+   */
+  translateSelection: TranslateSelectionRequest | null
+  /**
+   * The tab search popover (tabs-17, Ctrl+Shift+A) is up from the sidebar's top row. `keyboard`:
+   * a chrome control had the focus when it opened, so the page does not take it back on close.
+   * A request only, as `translateSelection`: the popover holds the capture and the keyboard
+   * itself (`useFloatingChrome`).
+   */
+  tabSearch: { keyboard: boolean } | null
+  /**
+   * The group editor bubble (tabs-13) is up beside a folder's header row in the sidebar.
+   * `keyboard`: the header had the focus when it opened (Space or Enter, the folder menu from
+   * the keyboard), so Escape hands the keyboard back to it. A request only, as `tabSearch`.
+   */
+  groupEditor: { folderId: string; keyboard: boolean } | null
   /** Safe-area insets of the host window (status bar, gesture bar, IME). */
   insets: Insets
+  /**
+   * Phone layout: the bar has hidden on scroll and is at rest off its edge (`lib/barHide.ts`);
+   * the content column gives the page its band. False the moment the bar starts back.
+   */
+  barHidden: boolean
   /**
    * Phone layout: the gesture stage (tab-switch cards, the tab overview) stands in for the live
    * page, which must be hidden underneath it.
@@ -374,17 +465,27 @@ export const uiStore = createStore<UiState>(
     blockedPopupsPanel: null,
     securityPromptOpen: false,
     pageDialogOpen: false,
+    screenPickerOpen: false,
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
+    readerPreferences: null,
     bookmarkEdit: null,
     bookmarkAllTabs: null,
     newTabShortcutDialog: null,
     siteDataConfirm: null,
     barMenuOpen: false,
     permissionPromptOpen: false,
+    clearBrowsingDataOpen: false,
+    printPreview: null,
+    autofillPrompt: null,
+    autofillPromptCollapsed: null,
+    autofillPromptByHand: null,
+    autofillEdit: null,
+    autofillPassphrase: null,
     selectedTabIds: [],
     selectionAnchorId: null,
+    stripFocus: null,
     glanceActive: false,
     glanceReady: false,
     spaceSlideDirection: 0,
@@ -392,13 +493,21 @@ export const uiStore = createStore<UiState>(
     menu: null,
     siteInfoOpen: false,
     externalProtocol: null,
+    voice: null,
+    qrScan: null,
     barEditorOpen: false,
+    extensionsSheetOpen: false,
     frameSheetOpen: false,
     tabsMenu: null,
     downloadsOpen: false,
     defaultBrowserPrompt: false,
     install: null,
+    mediaSheet: null,
+    translateSelection: null,
+    tabSearch: null,
+    groupEditor: null,
     insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    barHidden: false,
     stageActive: false,
     hoverCard: HOVER_CARD_HIDDEN,
     extensionPopup: null,
@@ -413,8 +522,8 @@ export const uiStore = createStore<UiState>(
 // Messages: toasts at the bottom, banners at the top
 // ---------------------------------------------------------------------------
 
-/** A plain toast is read in a glance; one with an action needs time to be acted on. */
-export const TOAST_DURATION = 2800
+/** A plain toast is read in a glance (§9.33's 2.8 s, one number with the page-drawn twin: `@shared/toastCard`); one with an action needs time to be acted on. */
+export const TOAST_DURATION = TOAST_SHOW_MS
 export const TOAST_ACTION_DURATION = 5000
 /** Banners beyond this many push the oldest out. */
 export const MAX_BANNERS = 3
@@ -706,21 +815,31 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.voice &&
+    !ui.qrScan &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.extensionsSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.clearBrowsingDataOpen &&
+    !ui.printPreview &&
+    !ui.autofillPrompt &&
+    !ui.autofillEdit &&
+    !ui.autofillPassphrase &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.readerPreferences &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
     !bookmarkChromeOpen(ui)
@@ -753,22 +872,30 @@ export function invalidateSnapshot(): void {
     !ui.menu &&
     !ui.siteInfoOpen &&
     !ui.externalProtocol &&
+    !ui.voice &&
+    !ui.qrScan &&
     ui.extensionPrompts.length === 0 &&
     !ui.extensionPopup &&
     ui.floatingChrome === 0 &&
     !ui.barEditorOpen &&
+    !ui.extensionsSheetOpen &&
     !ui.frameSheetOpen &&
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
     !ui.install &&
+    !ui.clearBrowsingDataOpen &&
+    !ui.printPreview &&
+    !ui.autofillPrompt &&
     !ui.stageActive &&
     !ui.zoomBubble &&
+    !ui.readerPreferences &&
     ui.hoverCard.tabId === null &&
     !ui.newTabShortcutDialog &&
     !ui.siteDataConfirm &&
@@ -952,7 +1079,11 @@ export function closeBookmarkChrome(
   if (!opts.keepFocus) returnFocusToPage()
 }
 
-/** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
+/**
+ * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install app" /
+ * "Create shortcut" dialog (`InstallLayer`, `InstallDialogLayer`; the host's chrome mounts the
+ * one that is its surface) – dims the page behind it like a menu: the snapshot comes first.
+ */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
   await captureActiveTab(prompt.tabId)
   run('focus.chrome', undefined)
@@ -962,6 +1093,26 @@ export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<voi
 export function closeInstallSheet(tabId: string): void {
   if (uiStore.get().install?.tabId !== tabId) return
   uiStore.set({ install: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The media sheet (phone): the in-app player for `tabId`'s media, over a capture of the page
+ * like every sheet in the frame's host. Opened from the pill's Now playing chip. The picture is
+ * the active tab's – the tab on screen, which the media's tab need not be (the chip shows on
+ * whichever pill is up) – so the recede holds what the user sees and `snapshotTabId` names the
+ * view the host hides; the sheet's content stays the media's tab.
+ */
+export async function openMediaSheet(tabId: string, activeTabId: string | null): Promise<void> {
+  await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ mediaSheet: tabId, drawerOpen: false })
+}
+
+export function closeMediaSheet(): void {
+  if (uiStore.get().mediaSheet === null) return
+  uiStore.set({ mediaSheet: null })
   invalidateSnapshot()
   returnFocusToPage()
 }
@@ -1031,12 +1182,17 @@ export function openNewTabPageUrlbar(
   })
 }
 
-export function closeUrlbar(): void {
+/**
+ * Close the URL bar. The keyboard goes back to the page unless `keepKeyboard`: a pane shortcut
+ * (F6 from the bar, lib/panes.ts) has already put it on another chrome control, and asking for
+ * the page's focus as well would take it back off that control.
+ */
+export function closeUrlbar(opts: { keepKeyboard?: boolean } = {}): void {
   typeahead = null
   if (!uiStore.get().urlbar.open) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!opts.keepKeyboard) returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,6 +1295,74 @@ export function pickMenuItem(itemId: string): void {
       else run('menu.click', { menuId: menu.id, itemId })
     })
   )
+}
+
+// ---------------------------------------------------------------------------
+// Voice search (the listening sheet; `lib/voiceSearch.ts` runs the session)
+// ---------------------------------------------------------------------------
+
+/** The listening sheet's request: one per start, and where the transcript goes. */
+export interface VoicePrompt {
+  /** Each start is a new sheet (Try again restarts the recogniser inside the same one). */
+  id: number
+  /** The tab the search or address loads in (null: there is none, a new tab opens). */
+  tabId: string | null
+  /** Load the result in a new tab rather than `tabId` (the bar was in new-tab mode). */
+  newTab: boolean
+}
+
+/**
+ * Put the listening sheet up over a capture of the page (the sheet dims it like a menu). The
+ * omnibox closes if it was the opener: the sheet takes the frame from it, the capture it held
+ * carrying over.
+ */
+export async function openVoiceSheet(prompt: VoicePrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ voice: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/** The sheet's request is over (a result submitted, Cancel, an error toasted): take it down. */
+export function closeVoiceSheet(id: number): void {
+  if (uiStore.get().voice?.id !== id) return
+  uiStore.set({ voice: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+// ---------------------------------------------------------------------------
+// QR scanning (the scan sheet; `lib/qrScan.ts` runs the session)
+// ---------------------------------------------------------------------------
+
+/** The scan sheet's request: one per start, and where the decoded payload goes. */
+export interface QrPrompt {
+  /** Each start is a new sheet. */
+  id: number
+  /** The tab the address or search loads in (null: there is none, a new tab opens). */
+  tabId: string | null
+  /** Load the result in a new tab rather than `tabId` (the bar was in new-tab mode). */
+  newTab: boolean
+}
+
+/**
+ * Put the scan sheet up over a capture of the page (the sheet dims it like a menu). The omnibox
+ * closes if it was the opener: the sheet takes the frame from it, the capture it held carrying
+ * over.
+ */
+export async function openQrSheet(prompt: QrPrompt): Promise<void> {
+  await captureActiveTab(prompt.tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ qrScan: prompt, drawerOpen: false })
+  if (uiStore.get().urlbar.open) closeUrlbar()
+}
+
+/** The sheet's request is over (a payload submitted, Cancel, an error toasted): take it down. */
+export function closeQrSheet(id: number): void {
+  if (uiStore.get().qrScan?.id !== id) return
+  uiStore.set({ qrScan: null })
+  invalidateSnapshot()
+  returnFocusToPage()
 }
 
 // ---------------------------------------------------------------------------
@@ -1261,6 +1485,8 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.menu !== null ||
     ui.siteInfoOpen ||
     ui.externalProtocol !== null ||
+    ui.voice !== null ||
+    ui.qrScan !== null ||
     ui.extensionPrompts.length > 0 ||
     ui.extensionPopup !== null ||
     ui.floatingChrome > 0 ||
@@ -1271,12 +1497,18 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
+    ui.screenPickerOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||
     ui.install !== null ||
+    ui.mediaSheet !== null ||
+    ui.clearBrowsingDataOpen ||
+    ui.printPreview !== null ||
+    ui.autofillPrompt !== null ||
     ui.stageActive ||
     ui.zoomBubble !== null ||
+    ui.readerPreferences !== null ||
     ui.hoverCard.tabId !== null ||
     ui.newTabShortcutDialog !== null ||
     ui.siteDataConfirm !== null ||
@@ -1391,6 +1623,29 @@ export function closeBarEditor(): void {
   returnFocusToPage()
 }
 
+// ---------------------------------------------------------------------------
+// Phone Extensions sheet
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the app menu's Extensions sheet (`extensions.open` from the core; the phone's entry to
+ * the extensions' actions). The sheet is a frame-dialog sheet on the chassis, which captures
+ * the page and takes its cover itself as it comes up (`coverPageUnderSheet`), so nothing is
+ * captured here; the flag holds the keyboard and the capture while it is up.
+ */
+export function openExtensionsSheet(): void {
+  if (uiStore.get().extensionsSheetOpen) return
+  uiStore.set({ extensionsSheetOpen: true, drawerOpen: false })
+}
+
+/** The sheet has left the screen (its own dismissal, a row that opened something, the back gesture). */
+export function closeExtensionsSheet(): void {
+  if (!uiStore.get().extensionsSheetOpen) return
+  uiStore.set({ extensionsSheetOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
 /**
  * The Tabs button's quick menu. It overhangs the content area, where the page view is drawn
  * above the chrome, so the page gives way to its snapshot while the menu is up, as it does for
@@ -1410,36 +1665,93 @@ export function closeTabsMenu(): void {
 }
 
 /**
+ * Clear browsing data (`siteControls/ClearBrowsingDataDialog`): a dialog through the frame dialog
+ * host on a mouse, a sheet on a phone, over whatever is up – Settings, where its row lives, or
+ * the page, whose snapshot then has to exist first for the scrim to dim.
+ */
+export async function openClearBrowsingData(activeTabId: string | null): Promise<void> {
+  if (uiStore.get().clearBrowsingDataOpen) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ clearBrowsingDataOpen: true })
+}
+
+export function closeClearBrowsingData(): void {
+  if (!uiStore.get().clearBrowsingDataOpen) return
+  uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * The print preview (`print/PrintPreviewDialog`, the `overlay.open` event with kind `print`
+ * from `core/print.ts`): a dialog through the frame dialog host over the page it prints, whose
+ * snapshot has to exist first for the scrim to dim. Ctrl+P on an open preview leaves it as it
+ * is, as Chrome's does.
+ */
+export async function openPrintPreview(tabId: string): Promise<void> {
+  if (uiStore.get().printPreview) return
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ printPreview: { tabId } })
+}
+
+/** The preview closed – Cancel, Escape, the scrim, a finished Print or Save, the tab going. */
+export function closePrintPreview(): void {
+  const open = uiStore.get().printPreview
+  if (!open) return
+  uiStore.set({ printPreview: null })
+  run('print.close', { tabId: open.tabId })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
- * bubble, the tab hover card, the downloads bubble, site information, the blocked pop-ups
- * popover, or a sign-in or certificate dialog. The page behind them is captured all the same
- * (they overlap the live view), but panels draw no scrim, so the capture shows undimmed;
- * dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5), so the same holds under
- * the site-information sheet, and the security prompt's dim is the frame dialog host's scrim
- * alone (v2 §9.5, §11.5: one dim layer).
+ * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
+ * blocked pop-ups popover, an autofill prompt in its popover form, or a sign-in or certificate
+ * dialog. The page behind them is captured all the same (they overlap the live view), but panels
+ * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
+ * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
+ * sheet and the prompt sheet on a phone, and the security prompt's dim is the frame dialog host's
+ * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
+ * translate selection popover, a menulist's list) count in `floatingChrome` and are the
+ * extensions' counterpart's case
+ * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
+ * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
+ * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
+ * both stays undimmed.
  */
 export function panelAloneOverContent(ui: UiState): boolean {
+  const popover = ui.autofillPrompt === 'popover'
   return (
     (ui.barMenuOpen ||
       ui.starDialog !== null ||
       ui.zoomBubble !== null ||
+      ui.readerPreferences !== null ||
       ui.hoverCard.tabId !== null ||
       ui.downloadsOpen ||
-      // Site information is a popover on a mouse (no scrim, §9.5) and a chassis sheet on a
-      // phone, whose own scrim is the one dim over the page (§11.5).
+      // Site information and the permission prompt are popovers on a mouse (no scrim, §9.5) and
+      // chassis sheets on a phone, whose own scrim is the one dim over the page (§11.5).
       ui.siteInfoOpen ||
+      ui.permissionPromptOpen ||
       ui.blockedPopupsPanel !== null ||
-      ui.securityPromptOpen) &&
+      ui.securityPromptOpen ||
+      popover) &&
     !overlayCoversContent({
       ...ui,
       barMenuOpen: false,
       starDialog: null,
       zoomBubble: null,
+      readerPreferences: null,
       hoverCard: HOVER_CARD_HIDDEN,
       downloadsOpen: false,
       siteInfoOpen: false,
+      permissionPromptOpen: false,
       blockedPopupsPanel: null,
-      securityPromptOpen: false
+      securityPromptOpen: false,
+      floatingChrome: 0,
+      autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
 }
@@ -1490,6 +1802,60 @@ export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
   invalidateSnapshot()
   if (!opts.keepFocus) returnFocusToPage()
 }
+
+// ---------------------------------------------------------------------------
+// Reader View's text preferences over the page
+// ---------------------------------------------------------------------------
+
+/**
+ * "Text Preferences…" for a reader tab (the pill's chip, the app menu, the page's toolbar): the
+ * surface comes up over a picture of the page, as the zoom bubble does, and the keyboard goes
+ * into it. `anchor` is the chip it hangs from on a mouse; without one the popover hangs under
+ * the frame's top edge. A second request for the tab whose surface is up puts it away (the
+ * chip's toggle).
+ */
+export async function openReaderPreferences(
+  tabId: string,
+  anchor: DOMRect | Rect | null = null
+): Promise<void> {
+  const open = uiStore.get().readerPreferences
+  if (open && open.tabId === tabId) return
+  await captureActiveTab(tabId)
+  run('focus.chrome', undefined)
+  uiStore.set({
+    readerPreferences: {
+      tabId,
+      anchor: anchor
+        ? { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
+        : null
+    }
+  })
+}
+
+/**
+ * Put the surface away. Focus goes back to the page unless the caller keeps it in the chrome
+ * (`keepFocus`: Escape hands it to the chip the popover hung from, §9.22).
+ */
+export function closeReaderPreferences(opts: { keepFocus?: boolean } = {}): void {
+  if (!uiStore.get().readerPreferences) return
+  uiStore.set({ readerPreferences: null })
+  invalidateSnapshot()
+  if (!opts.keepFocus) returnFocusToPage()
+}
+
+/**
+ * A preference changed while the surface is up: the reader page has taken it, so its picture
+ * is taken again after the page's next paint (the push and the repaint are asynchronous; the
+ * wait covers a frame or two on a phone's WebView).
+ */
+export function readerPreferencesChanged(tabId: string): void {
+  window.setTimeout(() => {
+    if (uiStore.get().readerPreferences?.tabId !== tabId) return
+    void refreshSnapshot(tabId)
+  }, READER_REPAINT_MS)
+}
+
+const READER_REPAINT_MS = 160
 
 /** The page changed under the chrome (a zoom step): its picture is taken again. */
 async function refreshSnapshot(tabId: string): Promise<void> {

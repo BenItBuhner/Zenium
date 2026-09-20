@@ -8,8 +8,9 @@
  * a form-factor override below exists only where the draft's phone value has no token yet.
  *
  * The primitives are main.css's (§9.34): `.zen-v2-row`, `.zen-v2-field`, `.zen-v2-icon-button`,
- * `.zen-v2-switch`, `.zen-v2-radio`, `.zen-v2-checkbox` and `.zen-v2-button` are one unlayered
- * rule each there, and nothing in this file restates them – a layered copy would lose every
+ * `.zen-v2-switch`, `.zen-v2-radio`, `.zen-v2-checkbox`, `.zen-v2-menulist` (with its popover's
+ * `-popup` and `-option`) and `.zen-v2-button` are one unlayered rule each there, and nothing in
+ * this file restates them – a layered copy would lose every
  * declaration to the unlayered rule anyway. What is here is the extension surfaces' own: the
  * row's inner anatomy (body, lead, text, label, description, value), the rows-in-a-card
  * hairlines and bleed, the field's leading glyph, the icon button's expanded fill and pressed
@@ -311,7 +312,12 @@
   /*
    * A form field (§9.12): label above, 4 to the field, the message (description or validation)
    * under it; actions that belong to the field follow it on a desktop and, on a phone, become a
-   * full-width row under the message, two peers splitting it with an 8 gap (§9.11).
+   * full-width row under the message, two peers splitting it with an 8 gap (§9.11). The 8
+   * between the field and its actions comes with the actions (pr-245 chassis (c)): the grid's
+   * empty `actions` track is 0 wide, but a column gap is drawn between the tracks whether or not
+   * one holds anything, and left a field without actions 8 short of its gutter. The wrappers
+   * render `.zen-v2-form-actions` only when there are actions, so the gap follows them. On a
+   * phone the grid is one column and has no column gap either way.
    */
   .zen-v2-form-field {
     display: grid;
@@ -321,8 +327,11 @@
       'control actions'
       'message message';
     align-items: center;
-    column-gap: 8px;
+    column-gap: 0;
     row-gap: 4px;
+  }
+  .zen-v2-form-field:has(> .zen-v2-form-actions) {
+    column-gap: 8px;
   }
   .zen-v2-field-label {
     grid-area: label;
@@ -376,48 +385,10 @@
   }
 
   /*
-   * The menulist trigger is main.css's `.zen-v2-menulist` (§6, §9.13, §9.34): the rectangular
-   * control, 32 (40 on a phone) with a 1px border and a 16 chevron at its end, one unlayered
-   * rule there like the other primitives. What is here is its popup: a panel at radius 12 with
-   * 6 padding, 28 rows at radius 6, a trailing check on the current option. The compound
-   * selector outranks `.zen-v2-panel` (further down this layer, `--v2-radius-card` 8) so the
-   * §9.13 radius wins; the popup measured 8 while both were single-class rules.
+   * The menulist is the shared `.zen-v2-menulist` (§9.34; the translate surfaces own the rule,
+   * one unlayered rule in main.css with its popover's `.zen-v2-menulist-popup` and
+   * `.zen-v2-menulist-option`), so nothing here restates it; `V2Menulist` puts the class on.
    */
-  .zen-v2-panel.zen-v2-menulist-popup {
-    display: flex;
-    flex-direction: column;
-    padding: 6px;
-    border-radius: var(--v2-radius-sheet);
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-    overflow-y: auto;
-  }
-  .zen-v2-menulist-option {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: var(--v2-radius-inner);
-    color: inherit;
-    text-align: left;
-    white-space: nowrap;
-    transition: background 120ms var(--zen-ease);
-  }
-  @media (hover: hover) {
-    .zen-v2-menulist-option:hover {
-      background: var(--v2-fill);
-    }
-  }
-  .zen-v2-menulist-option:active {
-    background: var(--v2-fill-hover);
-  }
-  .zen-v2-menulist-option > .lucide {
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    margin-left: auto;
-  }
 
   /*
    * The checkbox is the shared `.zen-v2-checkbox` (§9.34), one unlayered rule in main.css beside
@@ -668,6 +639,21 @@
   .zen-ext-card[data-disabled] .zen-ext-fade {
     opacity: 0.4;
   }
+  /*
+   * The error console's summary on the card's trailing side ("2 errors, 1 warning"): 13 in the
+   * §1 status ink for the worst level, tabular, one line – text among the controls, never a
+   * filled badge (§1: status inks only).
+   */
+  .zen-ext-card-errors {
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--v2-warn);
+  }
+  .zen-ext-card-errors[data-tone='danger'] {
+    color: var(--v2-danger);
+  }
   .zen-ext-card-controls {
     display: flex;
     flex-shrink: 0;
@@ -688,6 +674,34 @@
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+  /*
+   * The details level's Errors card: each line's leading glyph takes the §1 ink of its level
+   * (the row primitive's lead is deemphasised otherwise), its message clamps to two lines then
+   * an ellipsis (§9.2; a log line can be long), and "Clear errors" sits in a §9.11 desktop
+   * footer – hugging, end-aligned, 32 tall – 12 under the rows as the Permissions card's caption
+   * is.
+   */
+  .zen-ext-log-error .zen-v2-row-lead {
+    color: var(--v2-danger);
+  }
+  .zen-ext-log-warning .zen-v2-row-lead {
+    color: var(--v2-warn);
+  }
+  .zen-ext-log .zen-v2-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .zen-ext-card-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  [data-form-factor='phone'] .zen-ext-card-footer > .zen-v2-button {
+    flex: 1 1 0;
   }
   /*
    * The list's empty state (§9.17): one sentence 15/400 at 69%, centred inside a 32 gutter (the
@@ -929,8 +943,10 @@
   }
   /*
    * The phone sheet variant: the sheet's own scroll, so the dialog is plain flow inside it, its
-   * title block first; its footer is the chassis' `.zen-sheet-footer` (§9.11: the two peers
-   * split the width at the 8 gap, the primary trailing, each 40 tall, at the sheet's 16 gutter).
+   * title block first; its buttons are in the sheet's `footer` slot, the chassis'
+   * `.zen-sheet-footer` under the scroller (§9.11: the two peers split the width at the 8 gap,
+   * the primary trailing, each 40 tall, at the sheet's 16 gutter), in reach at every detent
+   * however many rows the extension's warnings make.
    */
   [data-form-factor='phone'] .zen-ext-dialog {
     width: auto;
@@ -940,6 +956,37 @@
   }
   [data-form-factor='phone'] .zen-ext-dialog-body {
     overflow: visible;
+  }
+
+  /*
+   * The phone's Extensions sheet (`components/phone/ExtensionsSheet.tsx`, the app menu's row):
+   * the rows are the phone list's (`PhoneListRow`, phonePanels.css) with the badge trailing.
+   * The badge is the §9.19 pill at the badge's own geometry – 20 tall, 13/600, padding 0 8,
+   * tabular – in the extension's colours when it set them (inline), else the sheet's accent with
+   * its ink (a page surface, §9.29), as the toolbar badge takes the toolbar's. It sits in the
+   * row's trailing slot, which reaches (button − glyph) / 2 into the gutter for a 44 icon button;
+   * the badge is no button, so it gives that back and lands at the 16 the leading glyph keeps.
+   */
+  .zen-ext-phone-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    height: 20px;
+    min-width: 20px;
+    padding: 0 8px;
+    margin-right: calc((var(--v2-icon-button) - var(--v2-icon)) / 2);
+    border-radius: 9999px;
+    background: var(--v2-accent);
+    color: var(--v2-on-accent);
+    font-size: var(--v2-font-small);
+    font-weight: var(--v2-weight-heading);
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The hold's menu sheet: Remove from Zenium in the danger ink, as a menu's destructive item. */
+  .zen-ext-action-menu .zen-sheet-item[data-danger] {
+    color: var(--v2-danger);
   }
 }
 
@@ -1026,7 +1073,7 @@
  * buttons split their row between them (§9.11), so the minimum must not hold one of them wider.
  */
 .zen-toast .zen-v2-button,
-[data-form-factor='phone'] .zen-ext-dialog .zen-v2-button,
+.zen-ext-prompt-sheet .zen-sheet-footer > .zen-v2-button,
 [data-form-factor='phone'] .zen-v2-form-actions > .zen-v2-button {
   min-width: 0;
 }

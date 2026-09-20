@@ -2,7 +2,8 @@ import chromeCss from '../renderer/src/assets/main.css?raw'
 
 /**
  * `zen://newtab`: the document of the new tab page. It is a static shell – search box, grid,
- * Customize button and the Undo toast's container – that the page script
+ * the private explainer with its "Block third-party cookies" row, Customize button and the Undo
+ * toast's container – that the page script
  * (`newTabPageScript.ts`, run from the host's preload) fills from `NewTabPageState`. The page
  * has no scripts of its own and no network access beyond favicons and the custom background
  * image. It draws no popover, menu or dialog (design language v2 §9.20–9.23): the tile menu is
@@ -178,6 +179,58 @@ export const NEW_TAB_PAGE_STYLE = `
   .zen-ntp-private p { margin: 4px 0 0; color: var(--v2-control-text-deemphasized); }
 
   /*
+   * The private page's one row, under the title block: "Block third-party cookies", the switch
+   * Chrome's Incognito page has, for the private-only setting. The shared v2 row (main.css's
+   * \`.zen-v2-row\`, §9.34) in its static form – the geometry alone: the switch is the target,
+   * not the row, so no fill and no role – at the title block's measure and centred like it, its
+   * box 8 below the block's (§9.26), the row's own padding around the text (§9.21: padding, not
+   * gap): two 20 px lines plus 6 above and below make the two-line row's 52 (§9.2). The label
+   * 15/400 in the window ink, the description 13 at 69 % under it on the 20 px line, two lines
+   * at most (§9.2); the switch trails, centred on the row (§9.18).
+   */
+  .zen-v2-row {
+    position: relative; display: flex; align-items: center; gap: 12px; box-sizing: border-box;
+    width: 100%; min-height: var(--v2-row); padding: var(--v2-row-pad) 16px;
+    color: var(--v2-control-text); text-align: left;
+    font-size: var(--v2-font-body); font-weight: var(--v2-weight-body); line-height: var(--v2-line-body);
+  }
+  .zen-ntp-cookies { width: min(560px, 100%); margin: 8px 0 0; }
+  .zen-ntp-cookies-text { flex: 1; min-width: 0; }
+  .zen-ntp-cookies-label { display: block; overflow-wrap: anywhere; }
+  .zen-ntp-cookies-desc {
+    display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    margin: 0; color: var(--v2-control-text-deemphasized);
+    font-size: var(--v2-font-small); line-height: var(--v2-line-small);
+  }
+  /*
+   * The shared switch (main.css's \`.zen-v2-switch\`, §9.34, §10.4: a 36 × 20 track at radius 10,
+   * a 16 thumb inset 2, travel 16, 150 ms), the same rule set read in the window family (§9.29):
+   * the off track is the window ink at 25 % where the primitive has the page ink at 25 %, the on
+   * track the surface's accent (\`--v2-control-accent\`, the theme's accent on this root), and the
+   * thumb is the ink that reads on the accent in both states – the window has no page colour to
+   * lend the off thumb, and \`--v2-on-accent\` keeps the primitive's polarity (light on light, dark
+   * on dark), so the thumb moves and barely changes, as the primitive's does. A real
+   * \`<button role="switch">\` here rather than the chrome's span inside a row that is the switch,
+   * so the button's own chrome is zeroed. Disabled – the setting locked by Settings > Privacy and
+   * Security – is §9.30's one number, .4 on the whole control, laid out at full size, and it does
+   * not transition: only the knob and the track colour ever move.
+   */
+  .zen-v2-switch {
+    position: relative; display: block; flex-shrink: 0; box-sizing: border-box; appearance: none;
+    width: 36px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 10px;
+    background: rgb(var(--zen-fg-rgb) / 0.25);
+    transition: background 150ms var(--zen-ease);
+  }
+  .zen-v2-switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--v2-on-accent);
+    transition: transform 150ms var(--zen-ease), background 150ms var(--zen-ease);
+  }
+  .zen-v2-switch[aria-checked='true'] { background: var(--v2-control-accent); }
+  .zen-v2-switch[aria-checked='true']::after { background: var(--v2-on-accent); transform: translateX(16px); }
+  .zen-v2-switch:disabled { opacity: 0.4; }
+
+  /*
    * The grid (§9.29): four columns by two rows at a 12 gap, centred under the field. A cell is a
    * 104 px column – the 64 tile centred in it, the caption across it – so the grid is 452 wide;
    * narrower pages shrink the columns, never the gap.
@@ -270,6 +323,18 @@ export const PRIVATE_EXPLAINER = {
     "Zenium won't keep this window's history, cookies or site data after you close it. Your school, employer or internet provider can still see what you visit."
 } as const
 
+/**
+ * The private page's "Block third-party cookies" row (Chrome's Incognito switch), bound to
+ * `privacy.thirdPartyCookiesPrivate` – private windows only, regular browsing never changes.
+ * Sentence case (§9.1). The locked description stands while Settings > Privacy and Security
+ * blocks third-party cookies in every window, when the switch is on and disabled.
+ */
+export const PRIVATE_COOKIES = {
+  label: 'Block third-party cookies',
+  description: 'Blocks third-party cookies in private windows',
+  lockedDescription: 'Blocked in every window by Settings > Privacy and Security'
+} as const
+
 /** The `zen://newtab` document. Everything dynamic is added by the page script. */
 export function newTabPageHtml(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src * data: zen:;"><title>New Tab</title><style>${chromeTokenCss()}\n${newTabSharedCss()}${NEW_TAB_PAGE_STYLE}</style></head>
@@ -279,6 +344,7 @@ export function newTabPageHtml(): string {
   <h1 class="zen-greeting" id="zen-greeting" hidden></h1>
   <form class="zen-ntp-field" id="zen-search" role="search" autocomplete="off" data-surface="page">${newTabIconSvg('search')}<input id="zen-search-input" type="text" placeholder="Search or enter address" aria-label="Search or enter address" autocomplete="off" autocapitalize="off" spellcheck="false"></form>
   <section class="zen-ntp-private" id="zen-private" aria-labelledby="zen-private-title" hidden><h2 id="zen-private-title">${PRIVATE_EXPLAINER.title}</h2><p>${PRIVATE_EXPLAINER.description}</p></section>
+  <div class="zen-v2-row zen-ntp-cookies" id="zen-cookies" data-static hidden><div class="zen-ntp-cookies-text"><label class="zen-ntp-cookies-label" id="zen-cookies-label" for="zen-cookies-switch">${PRIVATE_COOKIES.label}</label><p class="zen-ntp-cookies-desc" id="zen-cookies-desc">${PRIVATE_COOKIES.description}</p></div><button type="button" class="zen-v2-switch" id="zen-cookies-switch" role="switch" aria-checked="false" aria-describedby="zen-cookies-desc"></button></div>
   <p class="zen-ntp-empty" id="zen-empty" hidden>Sites you visit often will appear here</p>
   <div class="zen-grid" id="zen-grid" role="list" aria-label="Shortcuts" hidden></div>
 </main>

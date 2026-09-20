@@ -13,7 +13,11 @@ import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import { base64Encode } from '@core/extensions/bytes'
 import { parseCrxHeader } from '@core/extensions/crx'
-import { ExtensionErrorRing } from '@core/extensions/errorConsole'
+import {
+  ExtensionErrorRing,
+  engineBelowMinimumReport,
+  type ExtensionErrorReport
+} from '@core/extensions/errorConsole'
 import {
   checkForUpdates,
   installFromCrx,
@@ -37,7 +41,11 @@ import {
   type InstallConfirmation
 } from '@core/extensions/hostStore'
 import { isManagedPath } from '@core/extensions/installLayout'
-import { stripJsonComments } from '@core/extensions/manifest'
+import {
+  parseVersion,
+  satisfiesMinimumChromeVersion,
+  stripJsonComments
+} from '@core/extensions/manifest'
 import {
   newWarnings,
   permissionWarningLines,
@@ -45,13 +53,16 @@ import {
   type PermissionWarningSource
 } from '@core/extensions/permissionMessages'
 import {
+  manifestFields,
   migrateRegistry,
   newRecord,
   setNewTabOverride,
   withManifest,
   type ExtensionRecord,
-  type ExtensionRegistry
+  type ExtensionRegistry,
+  type StagedUpdate
 } from '@core/extensions/registry'
+import { extensionUrl } from '@core/extensions/runtime/plan'
 import {
   STORE_UPDATE_URLS,
   isExtensionId,
@@ -64,6 +75,18 @@ import type { AndroidExtensionStoreIo, PackageHandle } from './extensionStoreIo'
 /** Chrome checks about every five hours; the first check waits for the browser to settle. */
 export const UPDATE_CHECK_STARTUP_DELAY_MS = 45_000
 export const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 60 * 1000
+/**
+ * `chrome.runtime.requestUpdateCheck` is `throttled` within Chrome's regular update frequency of
+ * the extension's last completed ask (`kDefaultUpdateFrequencySeconds`, five hours); an ask that
+ * found an update resets that clock. Chrome jitters the wait by a tenth; the phone does not.
+ */
+export const REQUEST_UPDATE_CHECK_THROTTLE_MS = UPDATE_CHECK_INTERVAL_MS
+
+/** `chrome.runtime.requestUpdateCheck`'s answer, Chrome's shape: `version` only with `update_available`. */
+export interface RequestUpdateCheckAnswer {
+  status: 'throttled' | 'no_update' | 'update_available'
+  version?: string
+}
 
 /**
  * The Chromium version the stores are told about. The system WebView may be years behind the
@@ -88,6 +111,17 @@ export function storeChromiumVersion(
     if (a !== b) return a > b ? padVersion(match[1]) : floor
   }
   return floor
+}
+
+/**
+ * The Chromium version of the engine itself, the WebView that renders pages and runs content
+ * scripts (`Chrome/113.0.5672.136` in its user agent), padded to four components; null when the
+ * user agent names none. Distinct from [storeChromiumVersion]: the platform the extension
+ * installs against is Zenium's emulated one, the engine under it may be older.
+ */
+export function engineChromiumVersion(userAgent: string): string | null {
+  const match = /Chrome\/(\d+(?:\.\d+){0,3})/.exec(userAgent)
+  return match ? padVersion(match[1]) : null
 }
 
 function padVersion(version: string): string {
@@ -158,15 +192,25 @@ const NO_UPDATE_INFO: UpdateInfo = {
 
 /** What the host remembers about an installed version besides its record. */
 interface Details {
-  manifest: PermissionWarningSource & IconManifest & { name?: string; description?: string }
+  manifest: PermissionWarningSource &
+    IconManifest & { name?: string; description?: string; minimum_chrome_version?: string }
   icon: string | null
 }
 
 export interface AndroidExtensionsOptions {
   /** The runtime that runs extensions; the default keeps installs as files and records. */
   hooks?: ExtensionRuntimeHooks
-  /** Full Chromium version for store requests (see `storeChromiumVersion`). */
+  /**
+   * Full Chromium version for store requests and the version a package's
+   * `minimum_chrome_version` is held against at install (see `storeChromiumVersion`).
+   */
   chromiumVersion?: string
+  /**
+   * The WebView's own Chromium version (`engineChromiumVersion` of the user agent by default),
+   * or null when unknown: an attached extension whose `minimum_chrome_version` is above it gets
+   * a warning on its error console, since the pages it touches run on that older engine.
+   */
+  engineChromiumVersion?: string | null
   /** UI locale for manifest localisation (`navigator.language` by default). */
   locale?: string | null
   now?: () => number
@@ -180,7 +224,8 @@ export interface AndroidExtensionsOptions {
  * Chrome extensions on Android, the store half: installs from the Chrome Web Store and Edge
  * Add-ons (verified CRX3 packages), from `.crx` and `.zip` files picked or sent to Zenium, with
  * the registry (`extensions.json`, the desktop's schema) remembering them, updates on Chrome's
- * schedule while the app is in the foreground, and the permission-increase gate Chrome applies to
+ * schedule while the app is in the foreground (staged while the extension is busy, as Chrome
+ * delays them, see `applyUpdate`), and the permission-increase gate Chrome applies to
  * updates. Kotlin (`ext/ExtensionStore.kt`) moves the bytes: downloads land in a temporary file
  * the chrome document reads through the asset loader, and the archive is unpacked from that
  * file straight into `files/zen/extensions/<id>/<version>/`. Running the extensions is the
@@ -191,6 +236,7 @@ export class AndroidExtensions implements ExtensionHost {
   private readonly store: JsonStore<ExtensionRegistry>
   private readonly hooks: ExtensionRuntimeHooks
   private readonly chromiumVersion: string
+  private readonly engineVersion: string | null
   private readonly locale: string | null
   private readonly now: () => number
   private readonly timers: Required<
@@ -210,7 +256,19 @@ export class AndroidExtensions implements ExtensionHost {
   private readonly reading = new Set<string>()
   /** Ids with an install or update in flight. */
   private readonly busy = new Set<string>()
-  private checking: Promise<void> | null = null
+  /**
+   * The lifecycle steps of one extension, one after another (`transition`). A reload the
+   * extension asked for (`chrome.runtime.reload()`: uBlock Origin restarts itself on its first
+   * start), a disable from the chrome and an install would otherwise interleave their detach
+   * and attach – a reload's re-attach landing after the disable's detach left the extension
+   * running while its record said off.
+   */
+  private readonly transitions = new Map<string, Promise<void>>()
+  /** The registry-wide check in flight, with the update servers' answers by extension id. */
+  private checking: Promise<Map<string, UpdateCheckResult>> | null = null
+  /** `runtime.requestUpdateCheck`: the ask in flight per extension, and when its last one completed. */
+  private readonly selfChecks = new Map<string, Promise<RequestUpdateCheckAnswer>>()
+  private readonly selfChecked = new Map<string, number>()
   /**
    * The sideload installs in flight: the batch `start()` collected and every `installPending`
    * since, one after another.
@@ -238,9 +296,12 @@ export class AndroidExtensions implements ExtensionHost {
   ) {
     this.prompts = new ChromePrompts(browser)
     this.hooks = options.hooks ?? noRuntimeHooks
-    this.chromiumVersion =
-      options.chromiumVersion ??
-      storeChromiumVersion(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+    const userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
+    this.chromiumVersion = options.chromiumVersion ?? storeChromiumVersion(userAgent)
+    this.engineVersion =
+      options.engineChromiumVersion !== undefined
+        ? options.engineChromiumVersion
+        : engineChromiumVersion(userAgent)
     this.locale =
       options.locale !== undefined
         ? options.locale
@@ -261,11 +322,23 @@ export class AndroidExtensions implements ExtensionHost {
       { idForPath: idForUnpackedPath, readManifest: () => null },
       this.now()
     )
+    // Before the browser restores its windows (the constructor runs ahead of `Browser.start`):
+    // the runtime holds a restored tab's extension page for these until `start()` attached them.
+    this.hooks.expect?.(this.registry.extensions.filter((r) => r.enabled).map((r) => r.id))
   }
 
   /** `files/zen/extensions`, absolute. */
   get root(): string {
     return this.io.root
+  }
+
+  /**
+   * A file of an installed version (`RuntimeStoreLink.readInstalledFile`): the runtime's
+   * rulesets and stylesheets come this way, streamed by the asset loader rather than quoted
+   * into a bridge answer.
+   */
+  readInstalledFile(dir: string, relative: string): Promise<Uint8Array | null> {
+    return this.io.readInstalledFile(dir, relative)
   }
 
   async start(): Promise<void> {
@@ -279,9 +352,15 @@ export class AndroidExtensions implements ExtensionHost {
       console.warn('[zen] extensions: sweep failed:', (error as Error).message)
     }
     for (const record of this.registry.extensions) {
-      if (record.enabled) await this.attach(record)
-      void this.readDetails(record)
+      // An update staged in the last session lands now, as Chrome finishes the installs it
+      // delayed at the next start (the apply attaches the new version when enabled).
+      if (record.staged) await this.applyStaged(record.id, 'start')
+      else if (record.enabled) await this.attach(record)
+      void this.readDetails(this.record(record.id) ?? record)
     }
+    // Every enabled extension is attached or failed: a page still held for one that did not
+    // come up fails now, as Chrome fails the page of an extension that is not enabled.
+    this.hooks.expect?.([])
     this.browser.state.commitVolatile()
     this.scheduleUpdateChecks()
     // A package another app handed over while the chrome was still booting. Not awaited: the
@@ -341,26 +420,67 @@ export class AndroidExtensions implements ExtensionHost {
       this.attached.add(record.id)
     } catch (error) {
       this.attachFailed(record, (error as Error).message)
+      return
     }
+    // Not awaited: the manifest may come from disk, and the start must not wait on a warning.
+    void this.warnEngineBelowMinimum(record)
+  }
+
+  /**
+   * A running extension whose `minimum_chrome_version` the WebView does not meet: one warning
+   * on its console per attach (the ring folds repeats), as the install itself went ahead
+   * against Zenium's platform version. Nothing when the engine's version is unknown.
+   */
+  private async warnEngineBelowMinimum(record: ExtensionRecord): Promise<void> {
+    const engine = this.engineVersion
+    if (!engine) return
+    const minimum = (await this.installedManifest(record)).minimum_chrome_version
+    if (typeof minimum !== 'string' || !parseVersion(minimum)) return
+    if (satisfiesMinimumChromeVersion({ minimum_chrome_version: minimum }, engine)) return
+    // The record may have gone or been replaced while the manifest was read.
+    if (this.record(record.id)?.path !== record.path) return
+    this.report(record.id, engineBelowMinimumReport(record.id, minimum, engine))
+    this.browser.state.commitVolatile()
+  }
+
+  /** A line on an extension's error console (`ExtensionInfo.errors`). */
+  private report(id: string, report: ExtensionErrorReport): void {
+    let ring = this.console.get(id)
+    if (!ring) {
+      ring = new ExtensionErrorRing()
+      this.console.set(id, ring)
+    }
+    ring.push(report, Date.now())
+  }
+
+  /**
+   * Runs `step` once every earlier transition of `id` has settled; the entry points that
+   * detach or attach (`setEnabled`, `reload`, `remove`, an install's swap) go through here. The
+   * step reads the record's state when it starts, not when it was asked for.
+   */
+  private transition<T>(id: string, step: () => Promise<T>): Promise<T> {
+    const previous = this.transitions.get(id) ?? Promise.resolve()
+    const run = previous.then(step)
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    )
+    this.transitions.set(id, settled)
+    void settled.then(() => {
+      if (this.transitions.get(id) === settled) this.transitions.delete(id)
+    })
+    return run
   }
 
   private attachFailed(record: ExtensionRecord, message: string): void {
     this.errors.set(record.id, message)
-    let ring = this.console.get(record.id)
-    if (!ring) {
-      ring = new ExtensionErrorRing()
-      this.console.set(record.id, ring)
-    }
-    ring.push(
-      {
-        level: 'error',
-        source: 'load',
-        message,
-        url: `chrome-extension://${record.id}/manifest.json`,
-        context: record.path
-      },
-      Date.now()
-    )
+    this.report(record.id, {
+      level: 'error',
+      source: 'load',
+      message,
+      url: `chrome-extension://${record.id}/manifest.json`,
+      context: record.path
+    })
   }
 
   private async detach(id: string): Promise<void> {
@@ -495,7 +615,10 @@ export class AndroidExtensions implements ExtensionHost {
     try {
       bytes = await this.io.readHandle(handle)
       const name = packageFileName(handle.name, bytes)
-      const { pkg, kind } = await packageFromFile(name, bytes, { locale: this.locale })
+      const { pkg, kind } = await packageFromFile(name, bytes, {
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       console.log(
         `[zen] extensions: read ${name} as ${pkg.id} ${pkg.version} (${kind}, ${pkg.files.length} files, ${bytes.length} bytes, ${elapsed(started, this.now())})`
       )
@@ -591,7 +714,11 @@ export class AndroidExtensions implements ExtensionHost {
     )
     const downloaded = this.now()
     try {
-      const pkg = await installFromCrx(download.bytes, { expectedId: id, locale: this.locale })
+      const pkg = await installFromCrx(download.bytes, {
+        expectedId: id,
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       const skipped = download.skipped
         .map((s) => ` (${storeLabel(s.store)}: HTTP ${s.status})`)
         .join('')
@@ -667,7 +794,9 @@ export class AndroidExtensions implements ExtensionHost {
             path: dir,
             publisher: meta.publisher,
             updateUrl: meta.updateUrl,
-            updatedAt: now
+            updatedAt: now,
+            // An install over a staged update supersedes it (the prune below takes its files).
+            staged: undefined
           })
         : newRecord({
             id: pkg.id,
@@ -678,28 +807,30 @@ export class AndroidExtensions implements ExtensionHost {
             publisher: meta.publisher,
             updateUrl: meta.updateUrl
           })
-      if (existing) await this.detach(existing.id)
-      this.replace(record)
-      this.details.set(record.id, {
-        manifest: pkg.manifest as unknown as Details['manifest'],
-        icon
+      await this.transition(pkg.id, async () => {
+        if (existing) await this.detach(existing.id)
+        this.replace(record)
+        this.details.set(record.id, {
+          manifest: pkg.manifest as unknown as Details['manifest'],
+          icon
+        })
+        if (record.enabled) await this.attach(record)
+        const error = this.errors.get(record.id)
+        if (error && existing && existing.path !== dir) {
+          console.warn(
+            `[zen] extensions: ${pkg.id} ${pkg.version} failed to load, keeping ${existing.version}:`,
+            error
+          )
+          this.replace(existing)
+          this.details.delete(existing.id)
+          await this.io.prune(existing.id, existing.path).catch(() => [])
+          if (existing.enabled) await this.attach(existing)
+          void this.readDetails(existing)
+          this.persist()
+          this.browser.state.commitVolatile()
+          throw new Error(error)
+        }
       })
-      if (record.enabled) await this.attach(record)
-      const error = this.errors.get(record.id)
-      if (error && existing && existing.path !== dir) {
-        console.warn(
-          `[zen] extensions: ${pkg.id} ${pkg.version} failed to load, keeping ${existing.version}:`,
-          error
-        )
-        this.replace(existing)
-        this.details.delete(existing.id)
-        await this.io.prune(existing.id, existing.path).catch(() => [])
-        if (existing.enabled) await this.attach(existing)
-        void this.readDetails(existing)
-        this.persist()
-        this.browser.state.commitVolatile()
-        throw new Error(error)
-      }
       if (existing && isManagedPath(this.root, existing.path) && existing.path !== dir) {
         const pruned = await this.io.prune(record.id, dir).catch(() => [])
         if (pruned.length > 0) console.log(`[zen] extensions: pruned ${pruned.join(', ')}`)
@@ -723,46 +854,66 @@ export class AndroidExtensions implements ExtensionHost {
   // ---------------------------------------------------------------------------
 
   async remove(id: string): Promise<void> {
-    const record = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
-    if (!record) return
-    await this.detach(record.id)
-    this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
-    this.errors.delete(record.id)
-    this.console.delete(record.id)
-    this.updates.delete(record.id)
-    this.details.delete(record.id)
-    if (isManagedPath(this.root, record.path))
-      await this.io
-        .remove(record.id)
-        .catch((error: Error) =>
-          console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
-        )
-    this.persist()
-    this.browser.state.commitVolatile()
+    const found = this.record(id) ?? this.registry.extensions.find((r) => r.path === id)
+    if (!found) return
+    await this.transition(found.id, async () => {
+      const record = this.record(found.id)
+      if (!record) return
+      await this.detach(record.id)
+      this.registry.extensions = this.registry.extensions.filter((r) => r !== record)
+      this.errors.delete(record.id)
+      this.console.delete(record.id)
+      this.updates.delete(record.id)
+      this.details.delete(record.id)
+      if (isManagedPath(this.root, record.path))
+        await this.io
+          .remove(record.id)
+          .catch((error: Error) =>
+            console.warn(`[zen] extensions: could not delete ${record.path}:`, error.message)
+          )
+      this.persist()
+      this.browser.state.commitVolatile()
+    })
   }
 
   async setEnabled(id: string, enabled: boolean, win?: ZenWindow): Promise<void> {
-    const record = this.record(id)
-    if (!record || record.enabled === enabled) return
-    if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
-      const ok = await this.confirmInstall(
-        {
-          kind: 'permissions',
-          name: record.name,
-          icon: this.details.get(record.id)?.icon ?? null,
-          warnings: record.pendingWarnings,
-          source: record.source
-        },
-        win
-      )
-      if (!ok) return
-      record.pendingWarnings = null
-    }
-    record.enabled = enabled
-    if (enabled) await this.attach(record)
-    else await this.detach(record.id)
-    this.persist()
-    this.browser.state.commitVolatile()
+    await this.transition(id, async () => {
+      const record = this.record(id)
+      if (!record || record.enabled === enabled) return
+      if (enabled && record.pendingWarnings && record.pendingWarnings.length > 0) {
+        const ok = await this.confirmInstall(
+          {
+            kind: 'permissions',
+            name: record.name,
+            icon: this.details.get(record.id)?.icon ?? null,
+            warnings: record.pendingWarnings,
+            source: record.source
+          },
+          win
+        )
+        if (!ok) return
+        record.pendingWarnings = null
+      }
+      record.enabled = enabled
+      if (enabled) await this.attach(record)
+      else await this.detach(record.id)
+      this.persist()
+      this.browser.state.commitVolatile()
+    })
+    // Disabled, the extension is idle: an update staged on it lands, as Chrome finishes a
+    // delayed install when the extension's background host closes.
+    if (!enabled) this.idle(id)
+  }
+
+  /**
+   * The runtime's word that `id` went idle (its pages closed, its worker or event page stopped),
+   * and the store's own after a disable: an update staged on the record is applied unless the
+   * runtime would still delay it (Chrome's `MaybeFinishDelayedInstallation`).
+   */
+  idle(id: string): void {
+    if (!this.record(id)?.staged) return
+    if (this.attached.has(id) && this.hooks.delaysUpdate?.(id)) return
+    void this.applyStaged(id, 'idle')
   }
 
   setPinned(id: string, pinned: boolean): void {
@@ -793,14 +944,24 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.state.commitVolatile()
   }
 
-  /** The flag is the desktop's registry schema; the Android host does not route new tabs yet. */
   setNewTabOverride(id: string, enabled: boolean): void {
     if (setNewTabOverride(this.registry.extensions, id, enabled).length === 0) return
     this.persist()
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * The page a new tab opens instead of Zenium's, as Chrome's `chrome_url_overrides.newtab`: the
+   * one enabled record that opted in (`setNewTabOverride`), on the emulated extension origin a
+   * tab serves. A record the runtime could not attach has no page to serve, so the new tab page
+   * is better than an error there.
+   */
   newTabUrl(): string | null {
+    for (const record of this.registry.extensions) {
+      if (!record.enabled || !record.newTabOverride || !record.newTabPage) continue
+      if (!this.attached.has(record.id)) continue
+      return extensionUrl(record.id, record.newTabPage)
+    }
     return null
   }
 
@@ -860,15 +1021,25 @@ export class AndroidExtensions implements ExtensionHost {
     this.browser.state.commitVolatile()
   }
 
-  /** Stop and start again, re-reading the installed files. */
+  /**
+   * Stop and start again, re-reading the installed files. With an update staged, the reload is
+   * the update landing: Chrome's `runtime.reload()` finishes the delayed install (the extension
+   * heard `runtime.onUpdateAvailable` and asked for it), and so does the chrome's reload.
+   */
   async reload(id: string): Promise<void> {
-    const record = this.record(id)
-    if (!record) return
-    await this.detach(record.id)
-    this.details.delete(record.id)
-    if (record.enabled) await this.attach(record)
-    void this.readDetails(record)
-    this.browser.state.commitVolatile()
+    if (this.record(id)?.staged) {
+      await this.applyStaged(id, 'reload')
+      return
+    }
+    await this.transition(id, async () => {
+      const record = this.record(id)
+      if (!record) return
+      await this.detach(record.id)
+      this.details.delete(record.id)
+      if (record.enabled) await this.attach(record)
+      void this.readDetails(record)
+      this.browser.state.commitVolatile()
+    })
   }
 
   openOptions(id: string, win: ZenWindow): void {
@@ -897,6 +1068,11 @@ export class AndroidExtensions implements ExtensionHost {
 
   closePopup(): void {
     // Nothing of the store's is open; the runtime closes its own popup.
+  }
+
+  popupOpen(): boolean {
+    // The runtime's popup sheet is the engine's own; `action.openPopup` there is the engine's too.
+    return false
   }
 
   /** The chrome answered a prompt `confirmInstall` raised through its sheet. */
@@ -987,23 +1163,81 @@ export class AndroidExtensions implements ExtensionHost {
     )
   }
 
-  /** Checks every updatable extension and installs what the update servers offer. */
+  /**
+   * Checks every updatable extension and installs what the update servers offer, once the asks
+   * extensions made about themselves (`requestUpdateCheck`) are done: no two installs of one
+   * extension side by side.
+   */
   checkForUpdates(win?: ZenWindow): Promise<void> {
-    if (this.checking) return this.checking
-    this.checking = this.runUpdateCheck(this.updatable(), win).finally(() => {
-      this.checking = null
+    if (this.checking) return this.checking.then(() => undefined)
+    this.checking = Promise.allSettled([...this.selfChecks.values()])
+      .then(() => this.runUpdateCheck(this.updatable(), win))
+      .finally(() => {
+        this.checking = null
+      })
+    return this.checking.then(() => undefined)
+  }
+
+  /**
+   * `chrome.runtime.requestUpdateCheck`: the extension asks for its own check. Within
+   * [REQUEST_UPDATE_CHECK_THROTTLE_MS] of its last completed ask the answer is `throttled` and
+   * no request goes out, as in Chrome; a second ask while one is in flight joins it (Chrome
+   * queues up to ten callbacks behind one request); a registry-wide check in flight answers for
+   * the extension when it covers it. An update found is installed (or staged) as the scheduled
+   * check installs one, and a check that failed or an extension with no update source is
+   * `no_update`, Chrome's answer whenever its updater has nothing to install. While an update
+   * waits staged, the answer is `update_available` with its version (Chrome's, for a pending
+   * delayed install), without a request.
+   */
+  requestUpdateCheck(id: string): Promise<RequestUpdateCheckAnswer> {
+    const running = this.selfChecks.get(id)
+    if (running) return running
+    const staged = this.record(id)?.staged
+    if (staged) return Promise.resolve({ status: 'update_available', version: staged.version })
+    const last = this.selfChecked.get(id)
+    if (last !== undefined && this.now() - last < REQUEST_UPDATE_CHECK_THROTTLE_MS)
+      return Promise.resolve({ status: 'throttled' })
+    const check = this.selfCheck(id).finally(() => {
+      this.selfChecks.delete(id)
     })
-    return this.checking
+    this.selfChecks.set(id, check)
+    return check
+  }
+
+  private async selfCheck(id: string): Promise<RequestUpdateCheckAnswer> {
+    let result = (await this.checking)?.get(id)
+    const record = this.record(id)
+    if (!result && record && this.updatable().includes(record))
+      result = (await this.runUpdateCheck([record], undefined, false)).get(id)
+    this.selfChecked.set(id, this.now())
+    if (result?.status !== 'update-available') return { status: 'no_update' }
+    // An update found resets Chrome's throttle: the next ask reaches the server again.
+    this.selfChecked.delete(id)
+    return { status: 'update_available', version: result.version }
   }
 
   updateCheck(): ExtensionUpdateCheck {
     return { lastCheckedAt: this.registry.lastUpdateCheck, checking: this.checking !== null }
   }
 
-  /** Checks (and installs) an update for one extension. */
+  /**
+   * The user's "Update" for one extension: an update already staged lands now (Chrome installs
+   * a delayed update at once when asked), else a check that installs what it finds at once.
+   */
   async update(id: string, win?: ZenWindow): Promise<void> {
     const record = this.record(id)
     if (!record) return
+    if (record.staged) {
+      const version = record.staged.version
+      await this.applyStaged(id, 'asked')
+      const landed = this.record(id)?.version === version
+      this.browser.toast(
+        landed ? 'Updated 1 extension.' : 'An extension update failed.',
+        landed ? 'info' : 'error',
+        win
+      )
+      return
+    }
     if (!this.updatable().includes(record)) {
       this.browser.toast(
         record.pinned
@@ -1017,14 +1251,23 @@ export class AndroidExtensions implements ExtensionHost {
     await this.runUpdateCheck([record], win)
   }
 
-  private async runUpdateCheck(records: ExtensionRecord[], win?: ZenWindow): Promise<void> {
+  /**
+   * Checks `records` and installs what the servers offer; the servers' answers, by extension id.
+   * The registry's "last checked" is the chrome's and the schedule's stamp (`stamp`): an
+   * extension's ask about itself does not move it.
+   */
+  private async runUpdateCheck(
+    records: ExtensionRecord[],
+    win?: ZenWindow,
+    stamp = true
+  ): Promise<Map<string, UpdateCheckResult>> {
     const interactive = win !== undefined
     const started = this.now()
     if (records.length === 0) {
-      this.registry.lastUpdateCheck = started
+      if (stamp) this.registry.lastUpdateCheck = started
       this.persist()
       if (interactive) this.browser.toast('No installed extension can be updated.', 'info', win)
-      return
+      return new Map()
     }
     const results = await checkForUpdates(
       this.io.fetchText,
@@ -1037,8 +1280,9 @@ export class AndroidExtensions implements ExtensionHost {
       { chromiumVersion: this.chromiumVersion }
     )
     const checkedAt = this.now()
-    this.registry.lastUpdateCheck = checkedAt
+    if (stamp) this.registry.lastUpdateCheck = checkedAt
     let installed = 0
+    let staged = 0
     let failed = 0
     for (const record of records) {
       const result = results.get(record.id) ?? { status: 'error' as const, reason: 'no-response' }
@@ -1046,6 +1290,17 @@ export class AndroidExtensions implements ExtensionHost {
         `[zen] extensions: update check ${record.id} ${record.version} (${record.source}): ${describe(result)}`
       )
       if (result.status === 'update-available') {
+        const waiting = this.record(record.id)?.staged
+        if (waiting && waiting.version === result.version && !interactive) {
+          // Downloaded and unpacked by an earlier check; it still waits for the extension.
+          this.updates.set(record.id, {
+            state: 'available',
+            availableVersion: waiting.version,
+            error: null,
+            checkedAt
+          })
+          continue
+        }
         this.updates.set(record.id, {
           state: 'updating',
           availableVersion: result.version,
@@ -1054,7 +1309,17 @@ export class AndroidExtensions implements ExtensionHost {
         })
         this.browser.state.commitVolatile()
         try {
-          await this.applyUpdate(record, result)
+          const outcome = await this.applyUpdate(record, result, interactive)
+          if (outcome === 'staged') {
+            staged += 1
+            this.updates.set(record.id, {
+              state: 'available',
+              availableVersion: result.version,
+              error: null,
+              checkedAt
+            })
+            continue
+          }
           installed += 1
           this.updates.set(record.id, {
             state: 'up-to-date',
@@ -1090,7 +1355,7 @@ export class AndroidExtensions implements ExtensionHost {
       }
     }
     console.log(
-      `[zen] extensions: checked ${records.length} extension(s) for updates in ${elapsed(started, this.now())}: ${installed} updated, ${failed} failed`
+      `[zen] extensions: checked ${records.length} extension(s) for updates in ${elapsed(started, this.now())}: ${installed} updated, ${staged} staged, ${failed} failed`
     )
     this.persist()
     this.browser.state.commitVolatile()
@@ -1103,28 +1368,51 @@ export class AndroidExtensions implements ExtensionHost {
             : 'All extensions are up to date.'
       this.browser.toast(summary, failed > 0 && installed === 0 ? 'error' : 'info', win)
     }
+    return results
   }
 
   /**
-   * Downloads and installs an update. Like Chrome, an update that asks for more than the user
-   * approved is installed but left disabled until the new permissions are accepted.
+   * Downloads an update and installs it, or stages it. Chrome installs a downloaded update at
+   * once unless the extension is running and would be disturbed (`ShouldDelayExtensionUpdate`,
+   * the runtime's `delaysUpdate`: a persistent background page listening for
+   * `runtime.onUpdateAvailable`, or a busy worker or event page); then the new version waits
+   * unpacked next to the running one, the extension hears `runtime.onUpdateAvailable`, and the
+   * swap comes with `runtime.reload()`, the extension going idle, the user's ask, or the next
+   * start (`applyStaged`). The user's own check (`immediately`) never waits. Like Chrome, an
+   * update that asks for more than the user approved lands disabled until the new permissions
+   * are accepted.
    */
   private async applyUpdate(
     record: ExtensionRecord,
-    update: Extract<UpdateCheckResult, { status: 'update-available' }>
-  ): Promise<void> {
+    update: Extract<UpdateCheckResult, { status: 'update-available' }>,
+    immediately: boolean
+  ): Promise<'installed' | 'staged'> {
     const started = this.now()
     const { bytes } = await this.download(async (fetch) => ({
       bytes: await downloadUpdate(fetch, update)
     }))
     try {
-      const pkg = await installFromCrx(bytes, { expectedId: record.id, locale: this.locale })
+      const pkg = await installFromCrx(bytes, {
+        expectedId: record.id,
+        locale: this.locale,
+        chromiumVersion: this.chromiumVersion
+      })
       console.log(
         `[zen] extensions: downloaded update ${record.id} ${record.version} -> ${pkg.version} (${bytes.length} bytes, sha256 ${update.sha256 ? 'verified' : 'not announced'}) in ${elapsed(started, this.now())}`
       )
       const before = permissionWarnings(await this.installedManifest(record), 'other')
       const after = permissionWarnings(pkg.manifest, 'other')
       const added = newWarnings(before, after).map((w) => w.message)
+      // Decided once the package is in hand, as Chrome decides at install: the extension may
+      // have gone busy or idle over the download.
+      if (
+        !immediately &&
+        this.attached.has(record.id) &&
+        this.hooks.delaysUpdate?.(record.id) === true
+      ) {
+        await this.stage(record.id, bytes, pkg, added)
+        return 'staged'
+      }
       const outcome = await this.installPackage(
         bytes,
         pkg,
@@ -1137,26 +1425,142 @@ export class AndroidExtensions implements ExtensionHost {
         console.log(
           `[zen] extensions: ${record.id} ${pkg.version} asks for new permissions; disabled until approved`
         )
-        outcome.record.pendingWarnings = added
-        outcome.record.enabled = false
-        await this.detach(outcome.record.id)
+        await this.transition(outcome.record.id, async () => {
+          outcome.record.pendingWarnings = added
+          outcome.record.enabled = false
+          await this.detach(outcome.record.id)
+        })
         this.persist()
       }
+      return 'installed'
     } finally {
       this.io.release(bytes)
     }
   }
 
+  /**
+   * Unpacks the update next to the running version and notes it on the record (`staged`), then
+   * raises `runtime.onUpdateAvailable` with the new manifest. A version staged earlier stays on
+   * disk until the apply's prune (or the uninstall's remove) takes every directory but the one
+   * that landed.
+   */
+  private async stage(
+    id: string,
+    bytes: Uint8Array,
+    pkg: ExtensionPackage,
+    addedWarnings: string[]
+  ): Promise<void> {
+    const record = this.record(id)
+    if (!record) throw new Error('The extension was removed.')
+    const started = this.now()
+    const dir = await this.io.unpack(
+      bytes,
+      pkg,
+      parseCrxHeader(bytes).zipOffset,
+      await manifestToWrite(pkg)
+    )
+    const staged: StagedUpdate = {
+      version: pkg.version,
+      path: dir,
+      publisher: pkg.publisher,
+      fields: manifestFields(pkg.manifest),
+      addedWarnings,
+      stagedAt: this.now()
+    }
+    console.log(
+      `[zen] extensions: staged update ${id} ${record.version} -> ${pkg.version} at ${dir} in ${elapsed(started, this.now())}: the extension is busy`
+    )
+    record.staged = staged
+    this.persist()
+    this.browser.state.commitVolatile()
+    this.hooks.updateAvailable?.(id, pkg.manifest as unknown as Record<string, unknown>)
+  }
+
+  /**
+   * The staged update lands: the running version is detached, the record becomes the staged
+   * version's, the new version is attached, the old directory goes; a version the runtime
+   * refuses rolls back to the one that was running, as an install does. One that asked for more
+   * than the user approved lands disabled with the warnings pending (Chrome's delayed install of
+   * a permission increase), so it is not attached.
+   */
+  private applyStaged(id: string, reason: 'start' | 'idle' | 'reload' | 'asked'): Promise<void> {
+    return this.transition(id, async () => {
+      const existing = this.record(id)
+      const staged = existing?.staged
+      if (!existing || !staged) return
+      const checkedAt = this.updates.get(id)?.checkedAt ?? null
+      console.log(
+        `[zen] extensions: applying the staged update ${id} ${existing.version} -> ${staged.version} (${reason})`
+      )
+      const record: ExtensionRecord = {
+        ...existing,
+        ...staged.fields,
+        // Store installs keep updating through their store, as `withManifest` keeps it.
+        updateUrl: storeOf(existing.source) ? existing.updateUrl : staged.fields.updateUrl,
+        path: staged.path,
+        publisher: staged.publisher,
+        updatedAt: this.now(),
+        staged: undefined,
+        ...(staged.addedWarnings.length > 0
+          ? { pendingWarnings: staged.addedWarnings, enabled: false }
+          : {})
+      }
+      await this.detach(existing.id)
+      this.replace(record)
+      this.details.delete(record.id)
+      if (record.enabled) await this.attach(record)
+      const error = this.errors.get(record.id)
+      if (error && record.enabled && existing.path !== staged.path) {
+        console.warn(
+          `[zen] extensions: ${id} ${staged.version} failed to load, keeping ${existing.version}:`,
+          error
+        )
+        const kept: ExtensionRecord = { ...existing, staged: undefined }
+        this.replace(kept)
+        await this.io.prune(kept.id, kept.path).catch(() => [])
+        if (kept.enabled) await this.attach(kept)
+        void this.readDetails(kept)
+        this.updates.set(id, {
+          state: 'error',
+          availableVersion: staged.version,
+          error,
+          checkedAt
+        })
+        this.persist()
+        this.browser.state.commitVolatile()
+        return
+      }
+      if (staged.addedWarnings.length > 0)
+        console.log(
+          `[zen] extensions: ${id} ${staged.version} asks for new permissions; disabled until approved`
+        )
+      if (isManagedPath(this.root, existing.path) && existing.path !== staged.path) {
+        const pruned = await this.io.prune(record.id, staged.path).catch(() => [])
+        if (pruned.length > 0) console.log(`[zen] extensions: pruned ${pruned.join(', ')}`)
+      }
+      void this.readDetails(record)
+      // The check that staged it said "available"; it reads up to date now. At a start no check
+      // has run in this session and the state stays unknown, as for any other extension.
+      if (this.updates.has(id))
+        this.updates.set(id, {
+          state: 'up-to-date',
+          availableVersion: null,
+          error: null,
+          checkedAt
+        })
+      this.persist()
+      this.browser.state.commitVolatile()
+    })
+  }
+
   /** The manifest the installed version was approved with: from memory, from disk, or the record. */
-  private async installedManifest(record: ExtensionRecord): Promise<PermissionWarningSource> {
+  private async installedManifest(record: ExtensionRecord): Promise<Details['manifest']> {
     const known = this.details.get(record.id)
     if (known) return known.manifest
     const raw = await this.io.readInstalledFile(record.path, 'manifest.json').catch(() => null)
     if (raw) {
       try {
-        return JSON.parse(
-          stripJsonComments(new TextDecoder().decode(raw))
-        ) as PermissionWarningSource
+        return JSON.parse(stripJsonComments(new TextDecoder().decode(raw))) as Details['manifest']
       } catch {
         /* fall through to the record */
       }

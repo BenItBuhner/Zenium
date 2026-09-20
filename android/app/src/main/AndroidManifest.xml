@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A page playing audio keeps playing behind other apps: the media notification's service
+         (MediaPlaybackService.kt) holds the process up as one of the mediaPlayback kind. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- The chrome's gesture haptics (a tab card picked up in the overview). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- In-app updates: hand a downloaded release APK to the package installer. -->
@@ -76,6 +80,33 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="geo" />
         </intent>
+        <!--
+          Voice search (Voice.kt): on Android 11+ SpeechRecognizer.isRecognitionAvailable only sees
+          the device's recogniser service when the app declares it wants to; without this the mic
+          buttons would never show there.
+        -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <!--
+          Read aloud (ReadAloud.kt): on Android 11+ TextToSpeech finds the device's speech engines
+          (getEngines, the default engine the constructor binds) only when the app declares it
+          wants to see them; without this the engine list is empty and Listen to this page never shows.
+        -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!--
+          The camera apps behind the file chooser's Camera and Camcorder entries (OS-22,
+          BrowserActivity.showFileChooser): without these, Android 11+ hides them from
+          resolveActivity and the chooser would offer the files alone.
+        -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.VIDEO_CAPTURE" />
+        </intent>
     </queries>
 
     <!--
@@ -107,6 +138,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|locale|layoutDirection|fontScale|colorMode">
             <!-- The launcher entry is one of the icon aliases below (Settings → Look and Feel → App
@@ -219,6 +251,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Purple"
@@ -231,6 +264,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Ocean"
@@ -243,6 +277,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Forest"
@@ -255,6 +290,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Sunset"
@@ -267,6 +303,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Rose"
@@ -279,6 +316,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Slate"
@@ -291,6 +329,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <activity-alias
             android:name=".icon.Graphite"
@@ -303,12 +342,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
         <!-- app-icon-aliases:end -->
+
+        <!-- The pages' media on the OS controls (MediaSessions.kt): the media-style notification's
+             foreground service, so a page playing audio keeps playing behind other apps and under
+             the lock screen, as Chrome's does. Nothing else starts it; it stops with the session. -->
+        <service
+            android:name=".MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- The launcher's confirmation that a Home-screen shortcut was pinned (Shortcuts.kt). -->
         <receiver
             android:name=".ShortcutPinnedReceiver"
+            android:exported="false" />
+
+        <!-- "Close all private tabs" on the private session's notification (PrivateSession.kt); in the
+             manifest so a press on a card that outlived the process still takes the card down. -->
+        <receiver
+            android:name=".PrivateSessionReceiver"
             android:exported="false" />
 
         <provider

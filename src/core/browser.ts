@@ -1,4 +1,5 @@
 import type {
+  AppWindowInfo,
   BookmarkImportResult,
   BookmarkNode,
   CommandArgs,
@@ -21,6 +22,7 @@ import type {
   Shortcut,
   Space,
   Tab,
+  TabSection,
   WindowChrome,
   WindowKind
 } from '../shared/types'
@@ -40,9 +42,9 @@ import { ExternalLaunches } from './external'
 import { SecurityPromptService } from './security'
 import { PageDialogService } from './pageDialogs'
 import { WindowPrompts } from './windowPrompts'
-import { TabManager } from './tabs'
-import { TabDragController } from './tabDrag'
-import { ZenWindow } from './window'
+import { TabManager, isTabSection } from './tabs'
+import { TabDragController, parseDropKey } from './tabDrag'
+import { surfaceMounted, ZenWindow } from './window'
 import { Actions, type AnyAction } from './actions'
 import { KeyboardHandler } from './keys'
 import { Menus } from './menus'
@@ -54,18 +56,29 @@ import { BoostService } from './boosts'
 import { ReaderService } from './reader'
 import { LiveFolderService } from './livefolders'
 import { ModService } from './mods'
+import { SyncEngine } from './sync/engine'
 import { SiteInfoService } from './siteInfo'
 import { TranslateService } from './translate/service'
+import { PrintService } from './print'
+import { PdfViewerService } from './pdf'
 import { PageControls } from './pageControls'
+import { SpellcheckService } from './spellcheck'
 import { FindMemory } from './find'
 import { FullscreenService } from './fullscreen'
 import { WebAppService } from './webapp'
+import { MediaSessionService } from './mediaSession'
+import { ReadAloudService } from './readAloud'
+import { WebNotificationService } from './webNotifications'
+import { ScreenCaptureService } from './screenCapture'
+import { ShareService } from './share'
+import { GeolocationService } from './geolocation'
 import { UpdateService } from './updates'
 import { ExternalProtocolService } from './externalProtocols'
 import { PasswordService } from './credentials/service'
 import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
+import { ImportService } from './import/service'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
@@ -76,23 +89,43 @@ import {
   createSpace,
   cycleSpace,
   deleteFolder,
+  folderTabs,
   getSpace,
+  nextFolderColor,
   orderedTabsForSpace,
   reorderContainer,
   reorderSpace,
+  sectionIndexOf,
   tabVisibleIn
 } from './model'
-import { BLANK_URL, getDomain, inputToUrl, isEmptyTabUrl } from '../shared/url'
-import { internalPageAliasUrl } from '../shared/internalPages'
+import {
+  BLANK_URL,
+  displayHost,
+  extensionPageOf,
+  getDomain,
+  inputToUrl,
+  isEmptyTabUrl,
+  isWebPageUrl,
+  presentedUrl
+} from '../shared/url'
+import type { VoiceStartOutcome } from '../shared/voice'
+import type { QrStartOutcome } from '../shared/qrScan'
 import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
-import { buildSearchUrl, matchKeyword } from '../shared/search'
+import {
+  buildSearchUrl,
+  isPickableSearchEngine,
+  matchKeyword,
+  sanitizeSearchEngines
+} from '../shared/search'
+import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import {
+  DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
   sanitizeAutofillSettings,
   sanitizePasswordSettings,
@@ -105,9 +138,12 @@ import { newId } from '../shared/ids'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { sanitizeUpdateSettings } from '../shared/updates'
 import { sanitizePromoState } from '../shared/defaultBrowser'
+import { displayModeFor, type DisplayMode } from '../shared/displayMode'
 import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
+import { sanitizeSpellcheck } from '../shared/spellcheck'
+import { sanitizeReaderPreferences, type ReaderPreferences } from '../shared/reader'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -134,18 +170,24 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'overlay.open',
   'find.open',
   'zoom.open',
+  'siteInfo.open',
+  'extensions.open',
+  'reader.preferences',
   'theme.open',
   'space.new',
   'space.edit',
   'tab.startRename',
   'folder.startRename',
+  'folder.edit',
   'tab.editPinnedUrl',
   'tab.pickIcon',
   'menu.show',
   'menu.app',
+  'tabsearch.open',
   'bookmark.star',
   'bookmark.edit',
-  'webapp.install'
+  'webapp.install',
+  'translate.selection'
 ])
 
 /**
@@ -213,20 +255,41 @@ export class Browser {
   readonly autofill: AutofillService
   /** The system's browser role: are we the default, and should we be asking to become it. */
   readonly defaultBrowser: DefaultBrowserService
+  /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
+  readonly imports: ImportService
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
   readonly protection: ProtectionService
   /** Offline page translation: detection, offers, the engine and its models. */
   readonly translate: TranslateService
+  /** The print preview (`zen://print`) on hosts whose engine has none of its own. */
+  readonly print: PrintService
+  /** The inline PDF viewer (`zen://pdf`) on hosts whose engine cannot draw a PDF. */
+  readonly pdf: PdfViewerService
   /** Desktop site, dark theme for sites and page zoom, remembered per site (Chrome's page controls). */
   readonly pageControls: PageControls
+  readonly spellcheck: SpellcheckService
   /** The last find-in-page query per tab and profile-wide (what the bar reopens with). */
   readonly find = new FindMemory()
   /** Fullscreen hints (F11, a page's element) and the Esc hold that leaves the window's fullscreen. */
   readonly fullscreen: FullscreenService
   /** Web app manifests, "Add to Home screen" and the ambient install prompt. */
   readonly webApps: WebAppService
+  /** The pages' media as the OS controls and the in-app player see it (the Media Session). */
+  readonly mediaSession: MediaSessionService
+  /** Read aloud: the one session's text, playback and highlight state over the host's speech engine. */
+  readonly readAloud: ReadAloudService
+  /** Web Notifications of pages on hosts whose engine lacks the API (the page script's polyfill). */
+  readonly webNotifications: WebNotificationService
+  /** The user's search engines: OpenSearch discovery, the Settings > Search form, the clipboard row's reads. */
+  readonly searchEngines: SearchEngineService
+  /** The screen-capture picker (MW-19). */
+  readonly screenCapture: ScreenCaptureService
+  /** The chrome's share sheet (MW-21). */
+  readonly shares: ShareService
+  /** The network location provider behind `navigator.geolocation` where the engine has none (MW-04). */
+  readonly geolocation: GeolocationService
   readonly windows = new Map<string, ZenWindow>()
   /** Set by `shutdown()`: the app is going away, windows close without further questions. */
   quitting = false
@@ -240,6 +303,11 @@ export class Browser {
   private readonly urlbarOnReady = new Set<string>()
   /** The shortcut table last handed to the host (`syncShortcuts`). */
   private syncedShortcuts: Shortcut[] | null = null
+  /**
+   * The session's browser windows are still to open: the run began on an app window alone
+   * (`start({ windows: false })`), and they come up the first time a browser window is needed.
+   */
+  private startupWindowsPending = false
 
   constructor(readonly platform: Platform) {
     this.state = new BrowserState(
@@ -275,7 +343,8 @@ export class Browser {
         os: platform.info.os,
         settings: () => resolveDownloadSettings(this.state.settings),
         referrerFamiliar: (referrer) => this.history.visitedBeforeToday(referrer),
-        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private)
+        onDanger: (item) => this.emitDownload('download.danger', { id: item.id }, item.private),
+        onBegin: (item, init) => this.pdf.onDownloadBegin(item, init)
       }
     )
     this.state.downloadsFor = (win) => ({
@@ -313,7 +382,7 @@ export class Browser {
     this.liveFolders = new LiveFolderService(this)
     this.extensions = platform.createExtensions?.(this) ?? new NoExtensions(this)
     this.mods = new ModService(this)
-    this.sync = platform.createSync?.(this) ?? new NoSync(this)
+    this.sync = platform.sync ? new SyncEngine(this, platform.sync) : new NoSync(this)
     this.agents = new AgentService(this)
     this.updates = new UpdateService(
       this,
@@ -324,11 +393,22 @@ export class Browser {
     this.passwords = new PasswordService(this, platform.passwords)
     this.autofill = new AutofillService(this)
     this.defaultBrowser = new DefaultBrowserService(this)
+    this.imports = new ImportService(this)
     this.blocking = new BlockingService(this)
     this.protection = new ProtectionService(this)
     this.translate = new TranslateService(this)
+    this.spellcheck = new SpellcheckService(this)
+    this.print = new PrintService(this)
+    this.pdf = new PdfViewerService(this)
     this.privacy = new PrivacyService(this)
     this.webApps = new WebAppService(this, platform.io)
+    this.mediaSession = new MediaSessionService(this)
+    this.readAloud = new ReadAloudService(this)
+    this.webNotifications = new WebNotificationService(this)
+    this.searchEngines = new SearchEngineService(this)
+    this.screenCapture = new ScreenCaptureService(this)
+    this.shares = new ShareService(this)
+    this.geolocation = new GeolocationService(this)
     this.state.extras = (win) => ({
       boosts: this.boosts.all(),
       zappingTabId: this.boosts.zappingTabId(),
@@ -345,14 +425,21 @@ export class Browser {
       defaultBrowser: this.defaultBrowser.status(),
       blockedPopups: this.popups.all(),
       permissionRules: this.permissions.rules(),
+      permissionDefaults: this.permissions.defaults(CONTENT_SETTINGS.map((s) => s.id)),
+      lastSafetyCheck: this.privacy.lastSafetyCheck(),
       permissionPrompts: this.permissionPrompts.list(),
       securityPrompts: this.security.list(),
       pageDialogs: this.pageDialogs.list(),
+      screenCaptureRequests: this.screenCapture.list(),
+      shareRequests: this.shares.listFor(win),
       crashRestore: this.session.crashRestoreOffer(),
       autofill: this.autofill.uiState(),
       blocking: this.blocking.status(),
       privacy: this.protection.status(),
-      translate: this.translate.uiState()
+      translate: this.translate.uiState(),
+      spellcheck: this.spellcheck.uiState(),
+      readAloud: this.readAloud.uiState(),
+      import: this.imports.uiState()
     })
     this.handlers = this.commandHandlers()
   }
@@ -371,7 +458,19 @@ export class Browser {
     const focused = alive.find((w) => w.host.isFocused())
     if (focused) return focused
     const recent = [...alive].sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
-    return recent ?? this.createWindow({ kind: 'synced' })
+    return recent ?? this.openBrowserWindow()
+  }
+
+  /**
+   * A browser window when none is alive: the session's windows when a run that began on an app
+   * window alone (`--app=`) has not opened them yet, else a new synced window.
+   */
+  private openBrowserWindow(): ZenWindow {
+    if (this.startupWindowsPending) {
+      const opened = this.openStartupWindows()
+      if (opened[0]) return opened[0]
+    }
+    return this.createWindow({ kind: 'synced' })
   }
 
   /** User-facing "new window" (capability gated – Android has exactly one window). */
@@ -394,6 +493,89 @@ export class Browser {
     this.tabs.createTab({ url, active: true }, win)
   }
 
+  /**
+   * A web app in a standalone window of its own – `zenium --app=<url>`, what an installed app's
+   * launcher runs (MW-23, Chrome's app window): no browser chrome, the app's name and icon on the
+   * frame, one page that stays inside the app's scope (a navigation out of it opens in a browser
+   * tab, `TabManager.onWillNavigate`). The installed app whose scope holds `url` lends its name,
+   * icon and remembered bounds; a URL no app claims opens under its host's name with its origin
+   * as the scope. Hosts with one window open the URL as a tab instead. Returns the window, or
+   * null when the URL cannot be a page.
+   */
+  openAppWindow(url: string, opts: { from?: ZenWindow } = {}): ZenWindow | null {
+    if (!/^https?:\/\//i.test(url)) return null
+    if (!this.state.capabilities.windows) {
+      this.openExternalUrl(url)
+      return null
+    }
+    const record = this.webApps.pinnedFor(url)
+    const app: AppWindowInfo = record
+      ? {
+          name: record.name,
+          icon: record.icon ?? null,
+          scope: record.scope,
+          appId: record.id,
+          startUrl: record.startUrl
+        }
+      : {
+          name: displayHost(url) || url,
+          icon: null,
+          scope: new URL(url).origin + '/',
+          appId: null,
+          startUrl: url
+        }
+    const win = this.createWindow({
+      kind: 'unsynced',
+      from: opts.from,
+      chrome: 'app',
+      app,
+      bounds: record?.bounds ?? null,
+      empty: true
+    })
+    this.tabs.createTab({ url, active: true }, win)
+    return win
+  }
+
+  /**
+   * The `display-mode` a page reports (`shared/displayMode`): Chrome's answer for the window
+   * holding its live page – `fullscreen` while that window is, `standalone` in an app window,
+   * `browser` elsewhere. `browser` for a tab with no page or window yet.
+   */
+  displayModeFor(tabId: string): DisplayMode {
+    const win = this.tabs.ownerOf(tabId) ?? this.tabs.windowsShowing(tabId)[0]
+    if (!win?.alive) return 'browser'
+    return displayModeFor(win.windowState(), tabId)
+  }
+
+  /**
+   * A window's pages may answer a different `display-mode` now (it went fullscreen or came back,
+   * a page entered or left element fullscreen, a page arrived from another window): tell them,
+   * so a page's `matchMedia('(display-mode: …)')` listeners hear the change as they would in Chrome.
+   */
+  pushDisplayMode(win: ZenWindow): void {
+    for (const [tabId, view] of this.tabs.viewsOwnedBy(win))
+      view.postToPage?.({ type: 'display-mode', mode: this.displayModeFor(tabId) })
+  }
+
+  /**
+   * The browser window a page asked for from `win` opens in: `win` itself with the full chrome;
+   * from a toolbar-only popup or an app window (one page, no tab strip) the browser window it was
+   * opened from, else the browser window used last, else a new one. Chrome opens a popup's
+   * chrome://settings and an app window's out-of-scope links in the browser the same way.
+   */
+  browserWindowFor(win: ZenWindow): ZenWindow {
+    if (win.chrome === 'full') return win
+    for (let w = win.opener; w; w = w.opener) if (w.alive && w.chrome === 'full') return w
+    const full = this.allWindows().filter((w) => w.chrome === 'full' && !w.isClosing)
+    const recent = full.sort((a, b) => b.lastFocusedAt - a.lastFocusedAt)[0]
+    if (recent) return recent
+    if (!this.state.capabilities.windows) return win
+    // A private popup keeps its pages private; anything else goes to the browser proper – the
+    // session's windows when an app launched on its own (`--app=`) has not opened them yet.
+    if (win.isPrivate) return this.createWindow({ kind: 'private', from: win, empty: true })
+    return this.openBrowserWindow()
+  }
+
   createWindow(opts: {
     kind: WindowKind
     from?: ZenWindow
@@ -410,6 +592,8 @@ export class Browser {
      * adopts a page right away).
      */
     empty?: boolean
+    /** The web app of a standalone window (`chrome` `app`): name, icon and scope. */
+    app?: AppWindowInfo | null
   }): ZenWindow {
     const m = this.state.model
     const id = opts.persisted?.id ?? newId('window')
@@ -435,6 +619,7 @@ export class Browser {
       activeSpaceId = localSpace.id
     }
     const chrome = opts.chrome ?? 'full'
+    const app = chrome === 'app' ? (opts.app ?? null) : null
     const win = new ZenWindow(this, {
       id,
       kind: opts.kind,
@@ -447,15 +632,17 @@ export class Browser {
       maximized: opts.persisted?.maximized ?? false,
       activeSpaceId,
       selection: opts.persisted?.selection ?? {},
+      // Toolbar-only popups and app windows have no sidebar or toolbar to hide.
       compact:
-        chrome === 'popup'
+        chrome !== 'full'
           ? false
           : (opts.persisted?.compact ??
             from?.compactEnabled ??
             this.state.settings.compactMode.enabled),
       localSpace,
       cascadeFrom: opts.bounds ? undefined : from,
-      opener: from
+      opener: from,
+      app
     })
     this.windows.set(id, win)
     const theme = resolveTheme(win.activeSpace().theme, this.darkScheme())
@@ -464,11 +651,12 @@ export class Browser {
       displayId: win.initialDisplayId,
       maximized: win.initialMaximized,
       cascadeFrom: win.cascadeFrom,
-      title: win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
+      title: app ? app.name : win.isPrivate ? 'Zenium (Private Browsing)' : 'Zenium',
       chrome,
       material: win.material,
       backgroundColor: rgbToHex(theme.averageColor),
-      captionColors: captionColors(theme)
+      captionColors: captionColors(theme),
+      app
     })
     this.governor.watchWindow(win)
     if (localSpace && !opts.empty) {
@@ -680,6 +868,15 @@ export class Browser {
   /** A private tab closed (hosts with `capabilities.privateTabs`). */
   onPrivateTabClosed(): void {
     this.endPrivateSessionIfOver()
+    this.syncPrivateSession()
+  }
+
+  /**
+   * A private tab opened or closed: the host's presence for the session (Android's "Close all
+   * private tabs" notification) follows the count.
+   */
+  syncPrivateSession(): void {
+    this.platform.privateSession?.setOpenTabs(this.tabs.privateTabs().length)
   }
 
   /**
@@ -702,12 +899,25 @@ export class Browser {
   }
 
   /**
+   * A browser window for a page from outside (the command line, another app's link): the
+   * focused one, or the browser window behind a focused popup or app window – never the app
+   * window itself, whose one page is the app's.
+   */
+  ensureBrowserWindow(): ZenWindow {
+    return this.browserWindowFor(this.ensureWindow())
+  }
+
+  /**
    * A navigation that turned into a download leaves its tab without a committed document (and
    * without a renderer to route shortcuts through). Like Chrome, close such a tab when it was
    * opened only for the download; otherwise just make sure the keyboard keeps working.
    */
   onDownloadStarted(sourceTabId: string | null): void {
     const win = sourceTabId ? this.tabs.windowFor(sourceTabId) : this.focusedWindow()
+    // A PDF the tab navigated to opens in the tab's own viewer once it is down
+    // (`PdfViewerService`): as in Chrome Android the tab stays for it, and no Downloads surface
+    // comes over the page – the sheet would take the fingers meant for the viewer.
+    if (sourceTabId && this.pdf.expects(sourceTabId)) return
     // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
     // from `download.changed` instead (Chrome-style button, or the bubble when
     // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the
@@ -727,7 +937,12 @@ export class Browser {
     }
   }
 
-  start(): void {
+  /**
+   * Bring the browser up. `windows: false` leaves the session's browser windows unopened – a run
+   * that begins with `--app=<url>` shows the app's window alone, as Chrome does, and opens the
+   * browser proper the first time something asks for a browser window.
+   */
+  start(options: { windows?: boolean } = {}): void {
     if (this.state.settings.pinnedResetOnStartup) {
       for (const tab of Object.values(this.state.model.tabs)) {
         if ((tab.pinned || tab.essential) && tab.pinnedUrl) tab.url = tab.pinnedUrl
@@ -752,24 +967,11 @@ export class Browser {
     this.blocking.start()
     // After the blocking store is attached: HTTPS-only mode's set is persisted like the others.
     this.protection.start()
-    // Zen restores every synced window (and the space each one was in). With "restore previous
-    // session" off, the last session's tabs are forgotten and one window starts fresh.
-    const { restoreSession } = this.state.settings
-    if (!restoreSession) this.state.forgetSession()
-    const restore =
-      restoreSession && this.state.capabilities.windows
-        ? this.state.restoredWindows
-        : this.state.restoredWindows.slice(0, 1)
-    if (restore.length === 0) this.createWindow({ kind: 'synced' })
-    for (const persisted of restore) this.createWindow({ kind: 'synced', persisted })
-    if (!restoreSession) {
-      const win = this.allWindows()[0]
-      if (win) this.openFreshTab(win)
-    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
-      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
-      // most runs by killing the process – that is its normal exit, and the pages just come back.
-      this.session.onUncleanStart()
-    }
+    // With "restore previous session" off, the last session's tabs are forgotten at once, whether
+    // or not a window opens now.
+    if (!this.state.settings.restoreSession) this.state.forgetSession()
+    if (options.windows === false) this.startupWindowsPending = true
+    else this.openStartupWindows()
     // The host may have come up under another icon (a fresh install with a restored profile,
     // a launcher alias flipped back by an update); the persisted choice wins.
     this.platform.app.setAppIcon?.(this.state.settings.appIcon)
@@ -783,9 +985,34 @@ export class Browser {
     this.autofill.start()
     this.defaultBrowser.start()
     this.translate.start()
+    this.spellcheck.start()
     this.syncShortcuts()
     this.pageControls.push()
     this.state.commit()
+  }
+
+  /**
+   * The session's browser windows: Zen restores every synced window (and the space each one was
+   * in). With "restore previous session" off one window starts fresh. Returns the windows opened.
+   */
+  private openStartupWindows(): ZenWindow[] {
+    this.startupWindowsPending = false
+    const { restoreSession } = this.state.settings
+    const restore =
+      restoreSession && this.state.capabilities.windows
+        ? this.state.restoredWindows
+        : this.state.restoredWindows.slice(0, 1)
+    const opened: ZenWindow[] = []
+    if (restore.length === 0) opened.push(this.createWindow({ kind: 'synced' }))
+    for (const persisted of restore) opened.push(this.createWindow({ kind: 'synced', persisted }))
+    if (!restoreSession) {
+      this.openFreshTab(opened[0])
+    } else if (this.state.uncleanExit && this.state.platform !== 'android') {
+      // The last run crashed (or was killed): its pages are offered, not loaded. Android ends
+      // most runs by killing the process – that is its normal exit, and the pages just come back.
+      this.session.onUncleanStart()
+    }
+    return opened
   }
 
   // ---------------------------------------------------------------------------
@@ -847,6 +1074,7 @@ export class Browser {
   onPageReady(tabId: string): void {
     this.boosts.apply(tabId)
     void this.reader.detect(tabId)
+    this.readAloud.onPageReady(tabId)
     this.translate.onPageReady(tabId)
     this.autofill.onPageReady(tabId)
   }
@@ -861,13 +1089,21 @@ export class Browser {
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)
+    this.geolocation.onNavigated(tabId, inPage)
+    this.readAloud.onNavigated(tabId, inPage)
+    if (!inPage) {
+      this.screenCapture.cancelForTab(tabId)
+      this.shares.cancelForTab(tabId)
+    }
   }
 
+  /**
+   * The media list (`UIState.media`): every audible tab, plus – on hosts whose page script
+   * reports the Media Session – what its controls show. The session for the OS controls is
+   * pushed to the host alongside; a closed tab drops out of both.
+   */
   updateMedia(): void {
-    const media: MediaState[] = []
-    for (const [tabId, view] of this.tabs.allViews()) {
-      if (!view.isDestroyed() && view.isCurrentlyAudible()) media.push({ tabId, playing: true })
-    }
+    const media: MediaState[] = this.mediaSession.refresh()
     const before = JSON.stringify(this.state.media)
     this.state.media = media
     if (before !== JSON.stringify(media)) this.state.commitVolatile()
@@ -1151,6 +1387,12 @@ export class Browser {
     }
   }
 
+  /**
+   * A new folder – a tab group (tabs-13) – in the space, wearing the next free colour as
+   * Chrome's new groups do unless the caller picked one. Unless `rename` is off (a folder made
+   * by a gesture), the chrome then shows the folder's editor: the group editor bubble on
+   * desktop, the inline rename on the phone.
+   */
   createFolder(
     spaceId: string,
     name: string,
@@ -1158,17 +1400,64 @@ export class Browser {
     win?: ZenWindow,
     options: { color?: FolderColor; rename?: boolean } = {}
   ): Folder {
-    const folder = createFolder(this.state.model, spaceId, name, icon, options.color)
+    const color = options.color ?? nextFolderColor(this.state.model, spaceId)
+    const folder = createFolder(this.state.model, spaceId, name, icon, color)
     this.state.commit()
-    if (options.rename !== false) this.emit('folder.startRename', { folderId: folder.id }, win)
+    if (options.rename !== false) this.editFolder(folder.id, win)
     return folder
   }
 
+  /**
+   * Show the folder's editor in the chrome (`folder.edit`), once the state that holds the folder
+   * has gone out: the bubble hangs from the folder's header row and shows the folder's own name
+   * and colour, so it must not arrive ahead of them.
+   */
+  private editFolder(folderId: string, win?: ZenWindow): void {
+    this.state.afterBroadcast(() => this.emit('folder.edit', { folderId }, win))
+  }
+
+  /** Chrome's "Add tab to new group": a new folder around the tab, its editor open. */
   newFolderWithTab(spaceId: string, tabId: string, win?: ZenWindow): void {
-    const folder = createFolder(this.state.model, spaceId, 'New Folder', '📁')
+    const folder = createFolder(
+      this.state.model,
+      spaceId,
+      'New Folder',
+      '📁',
+      nextFolderColor(this.state.model, spaceId)
+    )
     this.tabs.moveToFolder(tabId, folder.id)
     this.state.commit()
-    this.emit('folder.startRename', { folderId: folder.id }, win)
+    this.editFolder(folder.id, win)
+  }
+
+  /**
+   * Chrome's "New tab in group" (tabs-13): a new tab at the end of the folder – after its last
+   * member, in that member's container – active, with the new tab page (or the URL bar) as any
+   * new tab. Resolves with the tab's id.
+   */
+  newTabInFolder(folderId: string, win: ZenWindow = this.focusedWindow()): string {
+    const folder = this.state.model.folders[folderId]
+    if (!folder) throw new Error('Folder not found')
+    const members = folderTabs(this.state.model, folderId)
+    const last = members[members.length - 1]
+    const created = this.tabs.createTab(
+      {
+        url: this.newTab.homeUrl() ?? BLANK_URL,
+        spaceId: folder.spaceId,
+        active: true,
+        afterTabId: last?.id,
+        containerId: last?.containerId,
+        folderId
+      },
+      win
+    )
+    if (folder.collapsed) this.updateFolder(folderId, { collapsed: false })
+    if (this.newTab.enabled) {
+      this.state.afterBroadcast(() => this.emit('newtab.opened', { tabId: created.id }, win))
+    } else {
+      this.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    }
+    return created.id
   }
 
   updateFolder(
@@ -1310,10 +1599,12 @@ export class Browser {
     win.host.focus()
   }
 
-  /** The user's search engine (the one picked in Settings, or the first one). */
+  /**
+   * The search engine in force: an installed extension's while one holds the default
+   * (`chrome_settings_overrides`), else the one picked in Settings, else the first one.
+   */
   defaultSearchEngine(): SearchEngine {
-    const engines = this.state.searchEngines
-    return engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
+    return this.state.defaultSearchEngine()
   }
 
   /**
@@ -1384,6 +1675,14 @@ export class Browser {
       }
       return
     }
+    // A desktop has no share target of the OS's own: the chrome's sheet (copy, QR, email, the
+    // system sheet on macOS) stands in for it – once the window's chrome has one up. Until then
+    // "share" means what it always did on a desktop without a target: the link goes to the
+    // clipboard, and the chrome says so.
+    if (this.state.capabilities.shareSheet && surfaceMounted(win, 'share')) {
+      this.shares.open(payload, win)
+      return
+    }
     const text = payload.url ?? payload.imageUrl ?? payload.text
     if (text) this.copyText(text, 'Link copied', win)
   }
@@ -1391,18 +1690,19 @@ export class Browser {
   /**
    * Share a tab's page: its title and address, with its favicon as the preview. An internal
    * page shares its user-facing `zenium://` address – the deep link another app or device opens
-   * it by; `zen://` never leaves `tab.url`.
+   * it by; `zen://` never leaves `tab.url`. An extension's page shares its `chrome-extension://`
+   * address, whichever form the tab carries (`presentedUrl`).
    */
   shareTab(tabId: string, win: ZenWindow = this.tabs.windowFor(tabId)): void {
     const tab = this.tabs.tab(tabId)
-    if (!tab || !(/^https?:/i.test(tab.url) || this.pages.isPageTab(tab))) {
+    if (!tab || !(isWebPageUrl(tab.url) || extensionPageOf(tab.url) || this.pages.isPageTab(tab))) {
       this.toast('This page cannot be shared', 'info', win)
       return
     }
     void this.share(
       {
         title: tab.customTitle ?? tab.title,
-        url: internalPageAliasUrl(tab.url),
+        url: presentedUrl(tab.url),
         tabId,
         favicon: tab.favicon ?? undefined
       },
@@ -1430,12 +1730,39 @@ export class Browser {
     })
   }
 
+  /**
+   * Voice search (OMN-19): the host's recogniser starts once the microphone is granted. A host
+   * without one – or one whose capability is off – answers `unavailable`, which the sheet toasts.
+   */
+  async startVoiceSearch(): Promise<VoiceStartOutcome> {
+    const { voice } = this.platform
+    if (!voice || !this.state.capabilities.voiceSearch) return 'unavailable'
+    return voice.start()
+  }
+
+  /**
+   * QR scanning (OMN-22): the host's camera opens once it is granted. A host without a back
+   * camera – or one whose capability is off – answers `unavailable`, which the sheet toasts.
+   */
+  async startQrScan(): Promise<QrStartOutcome> {
+    const { qrScan } = this.platform
+    if (!qrScan || !this.state.capabilities.qrScan) return 'unavailable'
+    return qrScan.start()
+  }
+
   /** The system's screen for which links open in this app (Android's "Open by default"). */
   openAppLinkSettings(win: ZenWindow): void {
     const { shell } = this.platform
     if (this.state.capabilities.appLinkSettings && shell.openAppLinkSettings)
       shell.openAppLinkSettings()
     else this.toast('Link handling is set in the system settings on this device.', 'info', win)
+  }
+
+  /** The system's Private DNS screen (Android), where a host without its own secure DNS sends the user. */
+  openPrivateDnsSettings(win: ZenWindow): void {
+    const { shell } = this.platform
+    if (shell.openPrivateDnsSettings) shell.openPrivateDnsSettings()
+    else this.toast('Secure DNS is set in the system settings on this device.', 'info', win)
   }
 
   /**
@@ -1473,6 +1800,7 @@ export class Browser {
     this.passwords.flushSync()
     this.blocking.flushSync()
     this.translate.flushSync()
+    this.print.flushSync()
     this.webApps.flushSync()
   }
 
@@ -1503,10 +1831,7 @@ export class Browser {
     const text = input.trim()
     if (!text) return
     if (!win.isPrivate && this.extensions.omniboxSubmit(input, newTab, background, win)) return
-    const engines = this.state.searchEngines
-    const keyword = matchKeyword(text, engines)
-    let url: string | null = null
-    let upgradedFrom: string | undefined
+    const keyword = matchKeyword(text, this.state.searchEngines)
     if (keyword?.kind === 'scope') {
       // `@bookmarks foo` / `@history foo` open the manager; `@tabs foo` switches to the tab.
       if (keyword.scope === 'tabs') {
@@ -1522,20 +1847,9 @@ export class Browser {
       this.emit('overlay.open', { kind: keyword.scope }, win)
       return
     }
-    if (keyword) {
-      if (!keyword.query.trim()) return
-      url = buildSearchUrl(keyword.engine, keyword.query)
-    } else {
-      url = inputToUrl(text)
-      if (url && url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text))
-        upgradedFrom = text
-      if (!url) {
-        const engine =
-          engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
-        url = buildSearchUrl(engine, text)
-      }
-    }
-    if (!url) return
+    const typed = this.typedToUrl(text)
+    if (!typed) return
+    const { url, upgradedFrom } = typed
     // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
     // the current tab as opener, whatever tab the text was typed into; a document page loads
     // like any document, in this tab or a new one, unless the window already shows the one it
@@ -1612,12 +1926,161 @@ export class Browser {
     const text = (await read.call(this.platform.clipboard)).trim().replace(/\s+/g, ' ')
     if (!text) return
     if (alwaysSearch) {
-      const engines = this.state.searchEngines
-      const engine = engines.find((e) => e.id === this.state.settings.searchEngineId) ?? engines[0]
-      this.submitUrlbar(buildSearchUrl(engine, text), false, tabId, false, win)
+      this.submitUrlbar(buildSearchUrl(this.defaultSearchEngine(), text), false, tabId, false, win)
       return
     }
     this.submitUrlbar(text, false, tabId, false, win)
+  }
+
+  /**
+   * What typed text loads: a `@keyword query` searches with that engine; an address loads as
+   * written (a bare host is upgraded to https:// and remembered for the http fallback); anything
+   * else is searched with the default engine. Null for text that loads nothing (a keyword with
+   * no query, a `@bookmarks` / `@history` / `@tabs` scope, which `submitUrlbar` acts on itself).
+   */
+  private typedToUrl(text: string): { url: string; upgradedFrom?: string } | null {
+    const keyword = matchKeyword(text, this.state.searchEngines)
+    if (keyword?.kind === 'scope') return null
+    if (keyword) {
+      if (!keyword.query.trim()) return null
+      return { url: buildSearchUrl(keyword.engine, keyword.query) }
+    }
+    const url = inputToUrl(text)
+    if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
+    const upgradedFrom =
+      url.startsWith('https://') && !/^[a-z][a-z0-9+.-]*:/i.test(text) ? text : undefined
+    return { url, upgradedFrom }
+  }
+
+  /**
+   * Addresses or text dropped on the chrome (`drop.open`): links and selections from a page,
+   * files from the OS as `file:` URLs. Each input goes where typed text would (`typedToUrl`),
+   * to the target `key` names in the `data-drop` grammar:
+   *   tab:<tabId>:into             the first input navigates that tab, the rest open after it
+   *   tab:<tabId>:before|after     new tabs in that slot of the tab's section
+   *   section:<section>:<spaceId>  new tabs at the end of the section (essential | pinned | regular)
+   *   folder:<folderId>            new tabs in the folder
+   *   space:<spaceId>              new tabs at the end of the space
+   * New tabs that land in the window's active space show the first of them and load the rest
+   * behind it (Chrome's foreground drop); tabs sent to another space load behind it.
+   */
+  openDropped(inputs: string[], key: string, win: ZenWindow): void {
+    const texts = inputs.map((s) => s.trim().replace(/\s+/g, ' ')).filter(Boolean)
+    const drop = parseDropKey(key)
+    if (!texts.length || !drop) return
+    const m = this.state.model
+    const tabs = this.tabs
+    // Where new tabs go: the section and space, the slot to start at, the folder.
+    let placement: {
+      spaceId: string | undefined
+      section: TabSection
+      index: number
+      folderId: string | null
+    } | null = null
+    let rest = texts
+    switch (drop.kind) {
+      case 'tab': {
+        const target = tabs.tab(drop.tabId)
+        if (!target) return
+        const section: TabSection = target.essential
+          ? 'essential'
+          : target.pinned
+            ? 'pinned'
+            : 'regular'
+        if (drop.position === 'into') {
+          // Dropped onto the tab: it takes the first input as its URL bar would, and shows
+          // (Chrome selects the tab a drag hovers before the drop lands in it).
+          this.submitUrlbar(texts[0], false, target.id, false, win)
+          if (tabs.tab(target.id)) tabs.activateTab(target.id, win)
+          rest = texts.slice(1)
+          placement = {
+            spaceId: target.spaceId ?? undefined,
+            section,
+            index: sectionIndexOf(m, target) + 1,
+            folderId: target.folderId
+          }
+        } else {
+          placement = {
+            spaceId: target.spaceId ?? undefined,
+            section,
+            index: sectionIndexOf(m, target) + (drop.position === 'after' ? 1 : 0),
+            folderId: target.folderId
+          }
+        }
+        break
+      }
+      case 'section': {
+        if (!isTabSection(drop.section)) return
+        if (drop.spaceId && !getSpace(m, drop.spaceId)) return
+        placement = {
+          spaceId: drop.spaceId || undefined,
+          section: drop.section,
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: null
+        }
+        break
+      }
+      case 'folder': {
+        const folder = m.folders[drop.folderId]
+        if (!folder) return
+        placement = {
+          spaceId: folder.spaceId,
+          section: 'regular',
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: folder.id
+        }
+        break
+      }
+      case 'space': {
+        if (!getSpace(m, drop.spaceId)) return
+        placement = {
+          spaceId: drop.spaceId,
+          section: 'regular',
+          index: Number.MAX_SAFE_INTEGER,
+          folderId: null
+        }
+        break
+      }
+      default:
+        // A split edge or the bookmarks bar: not a place for an address to open.
+        return
+    }
+    if (!placement || !rest.length) return
+    const { spaceId, section, folderId } = placement
+    // Blank / private windows create in their own space; the drop is in it whatever it names.
+    const space = win.localSpace ?? getSpace(m, spaceId) ?? win.activeSpace()
+    const inActiveSpace = section === 'essential' || space.id === win.activeSpaceId
+    let index = placement.index
+    let first = true
+    for (const text of rest) {
+      const typed = this.typedToUrl(text)
+      if (!typed) continue
+      const { url, upgradedFrom } = typed
+      if (this.pages.parse(url) || overlayForUrl(url)) {
+        // Zenium's own pages open their tab (or surface) the way the URL bar opens them.
+        this.submitUrlbar(url, true, null, !(first && inActiveSpace), win)
+        first = false
+        continue
+      }
+      const active = first && inActiveSpace
+      const tab = tabs.createTab(
+        {
+          url,
+          spaceId: space.id,
+          active,
+          pinned: section === 'pinned',
+          essential: section === 'essential',
+          index,
+          folderId: section === 'regular' ? folderId : null,
+          load: false,
+          upgradedFrom: active ? upgradedFrom : undefined
+        },
+        win
+      )
+      if (!active) tabs.navigate(tab.id, url, { upgradedFrom })
+      index = sectionIndexOf(m, tab) + 1
+      first = false
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1639,6 +2102,34 @@ export class Browser {
       this.webApps.handleMessage(tabId, message)
       return
     }
+    if (message.type === 'reader') {
+      // Only a reader page of the tab's own may change the preferences (the page script relays
+      // the message from `zen:` documents alone; the tab's URL is the second check).
+      if (this.reader.isReaderUrl(tab.url))
+        this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
+      return
+    }
+    if (message.type === 'opensearch') {
+      if (typeof message.url === 'string')
+        void this.searchEngines.discover(
+          tabId,
+          message.url,
+          typeof message.title === 'string' ? message.title : ''
+        )
+      return
+    }
+    if (message.type === 'share') {
+      this.shares.handleMessage(tabId, message.share)
+      return
+    }
+    if (message.type === 'geolocation') {
+      this.geolocation.handleMessage(tabId, message.geolocation)
+      return
+    }
+    if (message.type === 'readAloud') {
+      this.readAloud.handleMessage(tabId, message.readAloud)
+      return
+    }
     if (message.type === 'zap') {
       if (typeof message.selector === 'string') this.boosts.onZapped(tabId, message.selector)
       return
@@ -1653,6 +2144,10 @@ export class Browser {
     }
     if (message.type === 'focus') {
       this.revealTab(tabId)
+      return
+    }
+    if (message.type === 'pdf') {
+      if (message.pdf && typeof message.pdf === 'object') this.pdf.onReport(tabId, message.pdf)
       return
     }
     if (message.type === 'forms') {
@@ -1675,10 +2170,19 @@ export class Browser {
     }
     if (message.type === 'media') {
       if (!this.tabs.view(tabId)) return
-      tab.audible = Boolean(message.playing)
-      this.governor.onMedia(tabId, Boolean(message.playing))
+      // A host whose engine reports audibility itself (Electron's `audio-state-changed`) sends
+      // the Media Session report alone; `playing` is the page script's word where it tracks it.
+      if (message.playing !== undefined) {
+        tab.audible = Boolean(message.playing)
+        this.governor.onMedia(tabId, Boolean(message.playing))
+      }
+      if (message.media) this.mediaSession.onReport(tabId, message.media)
       this.state.commitVolatile()
       this.updateMedia()
+      return
+    }
+    if (message.type === 'notification') {
+      if (message.notification) this.webNotifications.handle(tabId, message.notification)
       return
     }
     if (typeof message.url !== 'string' || !/^https?:\/\//i.test(message.url)) return
@@ -1738,7 +2242,9 @@ export class Browser {
       'privacy.clearBrowsingData': ({ range, types, passphrase }, win) =>
         this.privacy.clearBrowsingData(range, types, passphrase, win),
       'privacy.clearBrowsingDataCounts': ({ range }) => this.privacy.counts(range),
-      'privacy.safetyCheck': () => this.privacy.safetyCheck(),
+      'privacy.safetyCheck': () => this.privacy.runSafetyCheck(),
+      'privacy.setThirdPartyCookiesPrivate': ({ mode }, win) =>
+        this.protection.setThirdPartyCookiesPrivate(mode, win),
       'security.respond': ({ id, response }) => this.security.respond(id, response),
       'pageDialog.respond': ({ id, response }) => this.pageDialogs.respond(id, response),
       'window.respondPrompt': ({ id, accepted }) => this.windowPrompts.respond(id, accepted),
@@ -1750,6 +2256,9 @@ export class Browser {
       'autofill.respond': ({ id, response }) => this.autofill.respond(id, response),
       'autofill.pick': ({ id, itemId, passphrase }, win) =>
         this.autofill.pick(id, itemId, passphrase, win),
+      'autofill.surfaceSize': ({ id, height }) => this.autofill.surfaceSize(id, height),
+      'autofill.surfaceFocus': ({ id, focused }) => this.autofill.surfaceFocus(id, focused),
+      'autofill.manage': (_args, win) => this.autofill.manage(win),
       'autofill.listAddresses': () => this.autofill.listAddresses(),
       'autofill.addAddress': ({ address }) => this.autofill.addAddress(address),
       'autofill.updateAddress': ({ id, patch }) => this.autofill.updateAddress(id, patch),
@@ -1772,14 +2281,26 @@ export class Browser {
       'app.quit': () => void this.requestQuit(),
       'app.share': (payload, win) => this.share(payload, win),
       'app.openAppLinkSettings': (_a, win) => this.openAppLinkSettings(win),
+      // Voice search: the host listens (`VoiceHost`); the chrome's sheet acts on the `voice.event`s.
+      'voice.start': () => this.startVoiceSearch(),
+      'voice.cancel': () => this.platform.voice?.cancel(),
+      'voice.openSettings': () => this.platform.voice?.openSettings(),
+      // QR scanning (OMN-22): the host's camera scans (`QrScanHost`); the chrome's sheet acts on
+      // the `qr.event`s and submits the payload through `urlbar.submit` like typed text.
+      'qr.start': () => this.startQrScan(),
+      'qr.cancel': () => this.platform.qrScan?.cancel(),
+      'qr.layout': (slot) => this.platform.qrScan?.layout(slot),
+      'qr.setTorch': ({ on }) => this.platform.qrScan?.setTorch(on),
+      'qr.openSettings': () => this.platform.qrScan?.openSettings(),
       'externalProtocol.respond': ({ requestId, allow, always }) =>
         this.externalProtocols.respond(requestId, allow, always),
       'layout.report': (report, win) => win.applyLayout(report),
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
-      'tab.activate': ({ tabId }, win) => tabs.activateTab(tabId, win),
-      'tab.close': ({ tabId, force }, win) => void tabs.requestClose(tabId, force, win),
+      'tab.activate': ({ tabId, keepFocus }, win) => tabs.activateTab(tabId, win, { keepFocus }),
+      'tab.close': ({ tabId, force, keepFocus }, win) =>
+        void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
@@ -1800,8 +2321,8 @@ export class Browser {
       'tab.setIcon': ({ tabId, icon }) => tabs.setIcon(tabId, icon),
       'tab.addRoute': ({ tabId, spaceId }) => this.addRouteForTab(tabId, spaceId),
       'tab.altClick': ({ tabId }, win) => tabs.altClick(tabId, win),
-      'tab.selectionContextMenu': ({ tabIds }, win) =>
-        this.menus.showSelectionContextMenu(tabIds, win),
+      'tab.selectionContextMenu': ({ tabIds, ...anchor }, win) =>
+        this.menus.showSelectionContextMenu(tabIds, win, anchor),
       'tab.duplicate': ({ tabId }, win) => void tabs.duplicate(tabId, win),
       'tab.unload': ({ tabId }) => tabs.discard(tabId),
       'tab.freeze': ({ tabId }) => this.governor.freezeTab(tabId),
@@ -1828,7 +2349,10 @@ export class Browser {
         this.tabDrag.move(tabId, x, y, inSidebar, win),
       'tab.dragTarget': ({ tabId, key }, win) => this.tabDrag.setTarget(tabId, key, win),
       'tab.dragEnd': ({ tabId, x, y, outcome }, win) => this.tabDrag.end(tabId, x, y, outcome, win),
+      'drop.open': ({ inputs, key }, win) => this.openDropped(inputs, key, win),
       'tab.moveToNewWindow': ({ tabId }, win) => void tabs.moveTabToNewWindow(tabId, null, win),
+      'tab.searchCandidates': (_args, win) => tabs.searchCandidates(win),
+      'tab.switchTo': ({ tabId }, win) => tabs.switchTo(tabId, win),
       'tab.reopenClosed': (_a, win) => this.session.reopenClosed(win),
       'tab.navigationEntries': ({ tabId }) => tabs.navigationEntries(tabId),
       'tab.goToIndex': ({ tabId, index }) => tabs.goToIndex(tabId, index),
@@ -1839,7 +2363,8 @@ export class Browser {
       'tab.setDesktopSite': ({ tabId, on }) => this.pageControls.setDesktopSite(tabId, on),
       'tab.setDarkenSite': ({ tabId, on }) => this.pageControls.setDarkenSite(tabId, on),
       'pageControls.forgetSite': ({ kind, domain }) => this.pageControls.forgetSite(kind, domain),
-      'tab.contextMenu': ({ tabId }, win) => this.menus.showTabContextMenu(tabId, win),
+      'tab.contextMenu': ({ tabId, ...anchor }, win) =>
+        this.menus.showTabContextMenu(tabId, win, anchor),
       'tab.toggleDevtools': ({ tabId }) => tabs.toggleDevtools(tabId),
       'tab.copyUrl': ({ tabId, markdown }) => tabs.copyUrl(tabId, markdown),
 
@@ -1886,14 +2411,17 @@ export class Browser {
         state.commit()
       },
       'space.closeUnpinned': ({ spaceId }, win) => tabs.closeUnpinned(spaceId, win),
-      'space.contextMenu': ({ spaceId }, win) => this.menus.showSpaceContextMenu(spaceId, win),
+      'space.contextMenu': ({ spaceId, ...anchor }, win) =>
+        this.menus.showSpaceContextMenu(spaceId, win, anchor),
 
       'folder.create': ({ spaceId, name, icon, color, rename }, win) =>
         this.createFolder(spaceId, name, icon, win, { color, rename }).id,
       'folder.update': ({ folderId, patch }) => this.updateFolder(folderId, patch),
       'folder.delete': ({ folderId, unpack }) => this.deleteFolder(folderId, unpack),
-      'folder.contextMenu': ({ folderId }, win) => this.menus.showFolderContextMenu(folderId, win),
-      'newtab.contextMenu': (_a, win) => this.menus.showNewTabContextMenu(win),
+      'folder.contextMenu': ({ folderId, ...anchor }, win) =>
+        this.menus.showFolderContextMenu(folderId, win, anchor),
+      'folder.newTab': ({ folderId }, win) => this.newTabInFolder(folderId, win),
+      'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
       'app.menu': ({ anchor, keyboard }, win) =>
@@ -1904,12 +2432,35 @@ export class Browser {
       'media.toggle': ({ tabId }) => {
         const view = tabs.view(tabId)
         if (!view) return
+        // A page whose script reports its media takes the toggle as a Media Session action (its
+        // own handler, or the element that plays); elsewhere the first media element is toggled.
+        if (
+          this.mediaSession.sessionTab === tabId ||
+          this.state.media.some((m) => m.tabId === tabId && m.actions)
+        ) {
+          this.mediaSession.act(tabId, 'toggle')
+          return
+        }
         void view
           .executeJavaScript(
             `(() => { const m = [...document.querySelectorAll('video,audio')].find(e => !e.paused) || document.querySelector('video,audio'); if (!m) return false; if (m.paused) { m.play().catch(() => {}); } else { m.pause(); } return true })()`
           )
           .catch(() => undefined)
       },
+      'screenCapture.respond': ({ id, sourceId, audio }) =>
+        this.screenCapture.respond(id, sourceId, Boolean(audio)),
+      'share.respond': ({ id, answer }) => this.shares.respond(id, answer),
+      'share.open': ({ tabId, payload }, win) => {
+        if (payload) void this.share(payload, win)
+        else if (tabId) this.shareTab(tabId, win)
+        else {
+          const active = tabs.activeTabFor(win)
+          if (active) this.shareTab(active.id, win)
+        }
+      },
+      'media.action': ({ tabId, action, seekTime, seekOffset }) =>
+        this.mediaSession.act(tabId, action, { seekTime, seekOffset }),
+      'media.pictureInPicture': ({ tabId }) => this.mediaSession.enterPictureInPicture(tabId),
 
       'split.create': ({ tabIds, layout }, win) => tabs.createSplit(tabIds, layout, win),
       'split.toggleLayout': ({ layout }, win) => tabs.toggleSplitLayout(layout, win),
@@ -1955,6 +2506,12 @@ export class Browser {
         this.extensions.omniboxDeleteSuggestion(input, win),
 
       'overlay.snapshot': ({ tabId, fresh }, win) => win.snapshot(tabId, fresh),
+
+      // Tab card pictures are the host's (`ThumbnailHost`); a host without them has none to show.
+      'thumbnail.configure': ({ width }) => this.platform.thumbnails?.configure(width),
+      'thumbnail.load': ({ tabId, url }) => this.platform.thumbnails?.load(tabId, url) ?? null,
+      'thumbnail.drop': ({ tabId, url }) => this.platform.thumbnails?.drop(tabId, url),
+      'thumbnail.sweep': ({ keep }) => this.platform.thumbnails?.sweep(keep),
 
       'site.info': ({ tabId }) => this.siteInfo.info(tabId),
       'siteInfo.snapshot': ({ tabId }) => this.siteInfo.snapshot(tabId),
@@ -2009,8 +2566,8 @@ export class Browser {
       'page.navigate': ({ tabId, section, replace }) =>
         this.pages.navigate(tabId, section, replace ?? false),
 
-      'history.contextMenu': ({ visitId, url }, win) =>
-        this.menus.showHistoryContextMenu(visitId, url, win),
+      'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
+        this.menus.showHistoryContextMenu(visitId, url, win, anchor),
       'history.dayMenu': ({ dayKey, count }, win) =>
         this.menus.showHistoryDayMenu(dayKey, count, win),
 
@@ -2024,6 +2581,11 @@ export class Browser {
         else if (confirmation) this.copyText(text, confirmation, win)
         else platform.clipboard.writeText(text)
       },
+      'clipboard.peek': () => this.searchEngines.peekClipboard(),
+      'clipboard.read': () => this.searchEngines.readClipboard(),
+      'clipboard.markUsed': () => this.searchEngines.markClipboardUsed(),
+      'search.addEngine': ({ name, url }, win) => this.searchEngines.add(name, url, win),
+      'search.removeEngine': ({ id }, win) => this.searchEngines.remove(id, win),
 
       'newtab.open': (_a, win) => this.openNewTab(win),
       'newtab.addShortcut': ({ title, url }) => this.newTab.addShortcut(title, url) ?? '',
@@ -2050,8 +2612,14 @@ export class Browser {
       'bookmark.allTabs': (_a, win) => this.bookmarkTabs(win),
       'bookmark.createFromTabs': ({ tabIds, title, parentId }, win) =>
         this.createBookmarksFromTabs(tabIds, title, parentId, win),
-      'bookmark.contextMenu': ({ ids, folderId, x, y, surface }, win) =>
-        this.menus.showBookmarkContextMenu(ids, folderId, { x, y }, win, surface ?? 'manager'),
+      'bookmark.contextMenu': ({ ids, folderId, x, y, keyboard, surface }, win) =>
+        this.menus.showBookmarkContextMenu(
+          ids,
+          folderId,
+          { x, y, keyboard },
+          win,
+          surface ?? 'manager'
+        ),
       'bookmark.menu': ({ x, y }, win) => this.menus.showBookmarksMenu({ x, y }, win),
       'bookmark.toggleBar': (_a, win) => this.toggleBookmarksBar(win),
       'bookmark.cut': ({ ids }) => this.clipBookmarks(ids, 'cut'),
@@ -2059,6 +2627,11 @@ export class Browser {
       'bookmark.paste': ({ folderId, index }) => this.bookmarks.paste(folderId, index),
       'bookmark.import': (_a, win) => this.importBookmarks(win),
       'bookmark.export': (_a, win) => this.exportBookmarks(win),
+
+      'import.sources': () => this.imports.sources(),
+      'import.run': ({ source, kinds }, win) => this.imports.run(source, kinds, win),
+      'import.cancel': () => this.imports.cancel(),
+      'import.dismiss': () => this.imports.dismiss(),
 
       'download.pause': ({ id }) => this.downloads.pause(id),
       'download.resume': ({ id }) => this.downloads.resume(id),
@@ -2141,15 +2714,34 @@ export class Browser {
       'window.formFactor': ({ formFactor }, win) => {
         win.formFactor = formFactor
       },
+      'ui.surface': ({ surface, mounted }, win) => {
+        if (mounted) win.surfaces.add(surface)
+        else win.surfaces.delete(surface)
+      },
       'window.new': (_a, win) => void this.openWindow('synced', win),
       'window.newUnsynced': (_a, win) => void this.openWindow('unsynced', win),
       'window.newPrivate': (_a, win) => void this.openWindow('private', win),
       'window.openUrl': ({ url, kind }, win) => this.openUrlInWindow(url, kind, win),
       'window.moveTabsToSpace': ({ spaceId }, win) => tabs.moveLocalTabsToSpace(win, spaceId),
 
-      'page.screenshot': ({ tabId }, win) =>
-        this.actions.run('page.screenshot', { sourceTabId: tabId, win }),
+      'page.screenshot': ({ tabId, fullPage }, win) =>
+        this.actions.run(fullPage ? 'page.captureFullPage' : 'page.screenshot', {
+          sourceTabId: tabId,
+          win
+        }),
       'page.print': ({ tabId }, win) => this.actions.run('page.print', { sourceTabId: tabId, win }),
+      'page.printPreview': ({ tabId }, win) =>
+        this.actions.run('page.printPreview', { sourceTabId: tabId, win }),
+      'print.session': ({ tabId }) => this.print.session(tabId),
+      'print.preview': ({ tabId, settings, pageCount }) =>
+        this.print.preview(tabId, settings, pageCount ?? null),
+      'print.run': ({ tabId, settings, pageCount }, win) =>
+        this.print.run(tabId, settings, pageCount, win),
+      'print.close': ({ tabId }) => this.print.close(tabId),
+      'pdf.openWith': ({ tabId }) => this.pdf.openWith(tabId),
+      'pdf.share': ({ tabId }) => this.pdf.share(tabId),
+      'pdf.state': ({ tabId }) => this.pdf.report(tabId),
+      'pdf.command': ({ tabId, command }) => this.pdf.command(tabId, command),
       'page.savePage': ({ tabId }, win) =>
         this.actions.run('page.savePage', { sourceTabId: tabId, win }),
       'page.viewSource': ({ tabId }, win) =>
@@ -2189,6 +2781,20 @@ export class Browser {
       'boost.stopZap': ({ tabId }) => this.boosts.stopZap(tabId),
 
       'reader.toggle': ({ tabId }, win) => this.reader.toggle(tabId, win),
+      'reader.setPreferences': (patch) => this.reader.setPreferences(patch),
+
+      'readAloud.start': ({ tabId, from }) => this.readAloud.start({ tabId, from }),
+      'readAloud.toggle': () => this.readAloud.toggle(),
+      'readAloud.pause': () => this.readAloud.pause(),
+      'readAloud.resume': () => this.readAloud.resume(),
+      'readAloud.stop': () => this.readAloud.stop(),
+      'readAloud.next': () => this.readAloud.next(),
+      'readAloud.previous': () => this.readAloud.previous(),
+      'readAloud.seek': ({ sentenceIndex }) => this.readAloud.seek({ sentenceIndex }),
+      'readAloud.setRate': ({ rate }) => this.readAloud.setRate({ rate }),
+      'readAloud.setVoice': ({ voiceId, lang }) => this.readAloud.setVoice({ voiceId, lang }),
+      'readAloud.setHighlight': ({ mode }) => this.readAloud.setHighlight({ mode }),
+      'readAloud.voices': () => this.readAloud.voicesResult(),
 
       'liveFolder.save': ({ folderId, name, config }, win) => {
         let id = folderId
@@ -2243,12 +2849,11 @@ export class Browser {
       'extension.resizePopup': ({ bounds, visible }) =>
         this.extensions.resizePopup(bounds, visible),
       'extension.closePopup': () => this.extensions.closePopup(),
-      'extension.actionContextMenu': ({ id, x, y }, win) =>
-        this.menus.showExtensionActionMenu(
-          id,
-          win,
-          x !== undefined && y !== undefined ? { x, y } : undefined
-        ),
+      'extension.actionContextMenu': ({ id, ...anchor }, win) =>
+        this.menus.showExtensionActionMenu(id, win, anchor),
+      'extension.actionMenuItems': ({ id }, win) => this.menus.extensionActionMenuItems(id, win),
+      'extension.actionMenuClick': ({ id, itemId }) =>
+        this.menus.runExtensionActionMenuItem(id, itemId),
       'extension.confirmInstall': ({ requestId, accept }) =>
         this.extensions.respondPrompt(requestId, accept),
       'extension.respondPermissionRequest': ({ requestId, accept }) =>
@@ -2264,6 +2869,7 @@ export class Browser {
       'sync.setup': (opts, win) => this.sync.setup(opts, win),
       'sync.setScope': (patch) => this.sync.setScope(patch),
       'sync.setDeviceName': ({ name }) => this.sync.setDeviceName(name),
+      'sync.setFolder': ({ folder }, win) => this.sync.setFolder(folder, win),
       'sync.now': () => this.sync.syncNow(),
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
@@ -2304,10 +2910,31 @@ export class Browser {
       'blocking.setEnabled': ({ enabled }) => this.blocking.setEnabled(enabled),
       'blocking.setSiteException': ({ site, excepted }) =>
         this.blocking.setSiteException(site, excepted),
+      'protection.updateFeeds': ({ id }) => this.protection.safeBrowsing.refresh(id),
+      'protection.forgetPlaintext': ({ host }) => this.protection.forgetPlaintext(host),
+      'protection.checkApiKey': ({ key }) => this.protection.safeBrowsing.checkKey(key),
+      'protection.checkResolver': ({ url }) => this.protection.checkResolver(url),
+      'protection.openPrivateDnsSettings': (_a, win) => this.openPrivateDnsSettings(win),
       'translate.page': ({ tabId, target, source }) =>
         this.translate.translatePage(tabId, { target, source }),
       'translate.revert': ({ tabId }) => this.translate.revert(tabId),
       'translate.dismiss': ({ tabId }) => this.translate.dismiss(tabId),
+      'translate.offer': ({ tabId }) => this.translate.offer(tabId),
+      'translate.retarget': ({ tabId, source, target }) =>
+        this.translate.retarget(tabId, { source, target }),
+      'translate.menu': ({ tabId, x, y }, win) =>
+        this.menus.showTranslateMenu(
+          tabId,
+          x !== undefined && y !== undefined ? { x, y } : undefined,
+          win
+        ),
+      'translate.showSelection': ({ tabId, text, x, y }, win) =>
+        this.translate.showSelection(
+          tabId,
+          text,
+          x !== undefined && y !== undefined ? { x, y } : null,
+          win
+        ),
       'translate.selection': ({ tabId, text, target }) =>
         this.translate.translateSelection(tabId, { text, target }),
       'translate.setPreferences': (patch) => this.translate.setPreferences(patch),
@@ -2316,14 +2943,24 @@ export class Browser {
       'translate.setSiteRule': ({ tabId, never }) => this.translate.setSiteRule(tabId, never),
       'translate.downloadModel': ({ from, to }) => this.translate.downloadModel({ from, to }),
       'translate.removeModel': ({ from, to }) => this.translate.removeModel({ from, to }),
+      'translate.models': () => this.translate.modelInfo(),
       'translate.engineResponse': (response) => this.translate.onRelayResponse(response),
+
+      'spellcheck.setEnabled': ({ enabled }) => this.spellcheck.setEnabled(enabled),
+      'spellcheck.setLanguage': ({ code, on }) => this.spellcheck.setLanguage(code, on),
+      'spellcheck.words': () => this.spellcheck.words(),
+      'spellcheck.addWord': ({ word }) => this.spellcheck.addWord(word),
+      'spellcheck.removeWord': ({ word }) => this.spellcheck.removeWord(word),
+      'spellcheck.openKeyboardSettings': () => this.spellcheck.openKeyboardSettings(),
       'webapp.openInstall': ({ tabId }, win) => this.webApps.openInstall(tabId, win),
       'webapp.pin': ({ tabId, title }, win) => this.webApps.pin(tabId, title, win),
       'webapp.cancelInstall': ({ tabId }) => this.webApps.cancelInstall(tabId),
       'webapp.dismissBanner': ({ tabId, reason }) => this.webApps.dismissBanner(tabId, reason),
+      'webapp.launch': ({ appId }, win) => this.webApps.launch(appId, win),
+      'webapp.uninstall': ({ appId }) => this.webApps.uninstall(appId),
 
       'onboarding.complete': ({ searchEngineId, colorScheme, essentials }, win) => {
-        if (state.searchEngines.some((e) => e.id === searchEngineId))
+        if (isPickableSearchEngine(state.searchEngines, searchEngineId))
           state.settings.searchEngineId = searchEngineId
         state.settings.colorScheme = colorScheme
         this.platform.theme?.setSource(colorScheme)
@@ -2369,7 +3006,10 @@ export class Browser {
       updates: JSON.stringify(s.updates),
       blocking: s.blocking,
       privacy: JSON.stringify(s.privacy),
-      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`
+      autofill: `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`,
+      spellcheck: JSON.stringify(s.spellcheck),
+      reader: JSON.stringify(s.reader),
+      readAloud: JSON.stringify(s.readAloud)
     }
     for (const [key, value] of Object.entries(patch)) {
       if (value === undefined) continue
@@ -2420,10 +3060,25 @@ export class Browser {
         this.pageControls.update(value as Partial<Settings['pageControls']>)
       } else if (key === 'shortcutPreset') {
         if (isShortcutPreset(value)) s.shortcutPreset = value
+      } else if (key === 'searchEngines') {
+        // The user's engines whole (a Settings row sends the edited list); the default is kept.
+        const keep =
+          typeof patch.searchEngineId === 'string' ? patch.searchEngineId : s.searchEngineId
+        s.searchEngines = sanitizeSearchEngines(value, keep)
       } else if (key === 'privacy' && value && typeof value === 'object') {
         s.privacy = sanitizePrivacySettings({
           ...s.privacy,
           ...(value as Partial<Settings['privacy']>)
+        })
+      } else if (key === 'spellcheck' && value && typeof value === 'object') {
+        s.spellcheck = sanitizeSpellcheck({
+          ...s.spellcheck,
+          ...(value as Partial<Settings['spellcheck']>)
+        })
+      } else if (key === 'reader' && value && typeof value === 'object') {
+        s.reader = sanitizeReaderPreferences({
+          ...s.reader,
+          ...(value as Partial<Settings['reader']>)
         })
       } else if (key === 'newTab' && value && typeof value === 'object') {
         // A one-section patch (`modules: { greeting: true }`) must not drop the other sections.
@@ -2445,8 +3100,13 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
-    s.unloadTimeoutMinutes = Math.max(1, Math.min(24 * 60, Math.round(s.unloadTimeoutMinutes)))
+    s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
+    // A default the profile no longer has an engine for (removed, or named by a peer's build that
+    // knows more engines), or an extension's engine (the default only through the extension's
+    // `is_default`, as in Chrome), falls back to the shipped default; suggestions keep working.
+    if (!isPickableSearchEngine(this.state.searchEngines, s.searchEngineId))
+      s.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     if (
       before.glance !== s.glanceEnabled ||
       before.trigger !== s.glanceTrigger ||
@@ -2475,6 +3135,9 @@ export class Browser {
     if (before.privacy !== JSON.stringify(s.privacy)) this.protection.onSettingsChanged()
     if (before.autofill !== `${JSON.stringify(s.passwords)}${JSON.stringify(s.autofill)}`)
       this.autofill.onSettingsChanged()
+    if (before.spellcheck !== JSON.stringify(s.spellcheck)) this.spellcheck.onSettingsChanged()
+    if (before.reader !== JSON.stringify(s.reader)) this.reader.onPreferencesChanged()
+    if (before.readAloud !== JSON.stringify(s.readAloud)) this.readAloud.onSettingsChanged()
     this.state.commit()
   }
 
@@ -2487,4 +3150,13 @@ export class Browser {
 
 function clamp01(v: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0.5))
+}
+
+/**
+ * The sleeping-tabs timeout in minutes, half a minute to a day in half-minute steps: Edge's
+ * ladder starts at 30 seconds, so a half is the smallest value that is stored.
+ */
+function sanitizeUnloadTimeout(minutes: number): number {
+  if (!Number.isFinite(minutes)) return DEFAULT_SETTINGS.unloadTimeoutMinutes
+  return Math.max(0.5, Math.min(24 * 60, Math.round(minutes * 2) / 2))
 }

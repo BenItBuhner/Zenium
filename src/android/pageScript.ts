@@ -1,13 +1,15 @@
-import {
-  installPageScript,
-  type PageScriptFlags,
-  type PageScriptHostMessage
-} from '@shared/pageScript'
+import { installPageScript, type PageScriptFlags, type WebAppHostMessage } from '@shared/pageScript'
+import type { PageHint } from '@shared/fullscreenHint'
 import type { PageRules } from '@shared/types'
 import { installFormsScript } from '@shared/formsScript'
 import { installPasskeyObserver } from '@shared/passkeyObserver'
 import type { FormsCommand } from '@shared/forms'
+import type { MediaSessionHostMessage } from '@shared/mediaSession'
+import type { NotificationHostMessage } from '@shared/notifications'
+import type { ReadAloudHostMessage } from '@shared/readAloud'
+import { installNotificationPolyfill } from '@shared/notificationScript'
 import { downloadNameOf, rememberDownloadName, type DownloadNames } from './downloadNames'
+import { rememberClearedSelection } from './selectionMemory'
 import { installViewportController, type PageRulesConfig } from './viewport'
 
 /**
@@ -100,7 +102,12 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
   let onFlags: ((flags: PageScriptFlags) => void) | null = null
   let onZap: ((on: boolean) => void) | null = null
   let onForms: ((command: FormsCommand) => void) | null = null
-  let onWebApp: ((message: PageScriptHostMessage) => void) | null = null
+  let onWebApp: ((message: WebAppHostMessage) => void) | null = null
+  let onMediaSession: ((message: MediaSessionHostMessage) => void) | null = null
+  let onNotification: ((message: NotificationHostMessage) => void) | null = null
+  let onReadAloud: ((message: ReadAloudHostMessage) => void) | null = null
+  let onHint: ((hint: PageHint | null) => void) | null = null
+  const selectionMemory = rememberClearedSelection(document)
   const onMessage = (event: { data: string }): void => {
     try {
       const data = JSON.parse(event.data) as {
@@ -110,15 +117,53 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
         rules?: PageRules
         deviceWidth?: number
         command?: FormsCommand
-        action?: PageScriptHostMessage['action']
-        outcome?: PageScriptHostMessage['outcome']
+        action?: string
+        outcome?: WebAppHostMessage['outcome']
+        seekTime?: number
+        seekOffset?: number
+        status?: NotificationHostMessage['status']
+        id?: string
+        hint?: PageHint | null
       }
       if (data.type === 'flags' && data.flags) onFlags?.(data.flags)
       else if (data.type === 'zap') onZap?.(Boolean(data.on))
+      // The browser's fullscreen hint, drawn over the page in its top layer (null takes it down).
+      else if (data.type === 'hint') onHint?.(data.hint ?? null)
       else if (data.type === 'forms' && data.command) onForms?.(data.command)
       else if (data.type === 'webapp' && data.action)
-        onWebApp?.({ type: 'webapp', action: data.action, outcome: data.outcome })
-      else if (data.type === 'pageRules' && data.rules && topFrame) {
+        onWebApp?.({
+          type: 'webapp',
+          action: data.action as WebAppHostMessage['action'],
+          outcome: data.outcome
+        })
+      else if (data.type === 'mediaSession' && data.action) {
+        const message: MediaSessionHostMessage = {
+          type: 'mediaSession',
+          action: data.action as MediaSessionHostMessage['action']
+        }
+        if (typeof data.seekTime === 'number') message.seekTime = data.seekTime
+        if (typeof data.seekOffset === 'number') message.seekOffset = data.seekOffset
+        if (typeof data.on === 'boolean') message.on = data.on
+        onMediaSession?.(message)
+      } else if (data.type === 'notification' && data.action) {
+        const message: NotificationHostMessage = {
+          type: 'notification',
+          action: data.action as NotificationHostMessage['action']
+        }
+        if (data.status !== undefined) message.status = data.status
+        if (typeof data.id === 'string') message.id = data.id
+        onNotification?.(message)
+      } else if (data.type === 'readAloud' && data.action) {
+        // The core's extraction request or highlight (`readAloudScript.ts` checks the fields).
+        const message = data as unknown as ReadAloudHostMessage
+        // The selection toolbar's Read Aloud: the action mode's finish collapsed the selection
+        // before this request arrived, so the one it cleared stands in (`selectionMemory.ts`).
+        if (message.action === 'extract' && message.from === 'selection') {
+          selectionMemory.withCleared(() => onReadAloud?.(message))
+        } else {
+          onReadAloud?.(message)
+        }
+      } else if (data.type === 'pageRules' && data.rules && topFrame) {
         const config: PageRulesConfig = {
           rules: data.rules,
           deviceWidth: typeof data.deviceWidth === 'number' ? data.deviceWidth : 0
@@ -164,7 +209,20 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     trackMedia: true,
     // The WebView blocks pop-ups itself; this script runs in the page's world and can see which.
     reportBlockedPopups: true,
+    // A page's OpenSearch description makes it a "Recently visited" engine in Settings > Search.
+    discoverSearchEngines: true,
+    // A fullscreen video's size turns the screen (Host.kt, MED-01). This script runs in the top
+    // document and in every frame, and each reports its own fullscreen: an embed's video goes
+    // fullscreen from its frame's document, the one that knows the size, while the top document
+    // sees only the <iframe>. The view lets a frame's fullscreen report through alone
+    // (TabWebView.onPageMessage); the host weighs it against the top document's.
+    reportFullscreen: true,
     send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+    // The fullscreen exit hint (GN-20): the chrome is under the fullscreen layer, so the hint
+    // is drawn in the page's top layer, as the desktop's fullscreen hints are.
+    onHint: (listener) => {
+      onHint = listener
+    },
     onFlags: (listener) => {
       onFlags = listener
       // Ask for the current flags; the reply arrives through the listener above.
@@ -175,6 +233,32 @@ function installDownloadNames(w: Window & { __zeniumDownloadNames?: DownloadName
     },
     onWebApp: (listener) => {
       onWebApp = listener
+    },
+    onMediaSession: (listener) => {
+      onMediaSession = listener
+    },
+    // Read aloud (A11Y-06; services' model, #246): the core's `readAloud.extract` request is
+    // answered with the document's blocks and its `readAloud.highlight` messages are painted
+    // through the CSS Custom Highlight API. Kotlin posts to the main frame alone, so only the
+    // top document ever hears these; the answer rides the `pageMessage` view event like the rest.
+    onReadAloud: (listener) => {
+      onReadAloud = listener
     }
   })
+
+  // `Notification` for the pages: the WebView hides the API, the browser shows the shade's cards
+  // under the site's channel. Top frame only: an embedded frame's notifications are its own
+  // page's business in Chrome too (they come through the embedder's permission).
+  if (topFrame) {
+    try {
+      installNotificationPolyfill({
+        send: (message) => bridge.postMessage(JSON.stringify({ token: TOKEN, ...message })),
+        onNotification: (listener) => {
+          onNotification = listener
+        }
+      })
+    } catch {
+      /* a page that sealed `window` keeps going without notifications */
+    }
+  }
 })()

@@ -17,7 +17,7 @@ import { engineSetId } from '../../extensions/dnr/sink'
 import { CONNECTIVITY_PROBES, connectivityProbesRuleSet } from '../connectivityProbes'
 import { TEXT_MATCH_SET_ID, type TextMatch } from '../engine'
 import { BlockingService, siteExceptionRule, type RuleSetOwnership } from '../service'
-import type { IndexFile } from '../store'
+import { documentNameFor, tagOf, type IndexFile, type SetDocument } from '../store'
 import {
   BUILTIN_RULE_SETS,
   RULE_SET_PRIORITY,
@@ -318,11 +318,12 @@ describe('BlockingService site exceptions and user filters', () => {
 })
 
 describe('BlockingService connectivity probes', () => {
-  /** The fixture the Kotlin engine's test reads: the set exactly as the store writes it. */
-  const fixture = new URL(
-    '../../../../android/app/src/test/resources/blocking/connectivity-probes.json',
-    import.meta.url
-  )
+  /**
+   * The fixtures the Kotlin engine's test reads, in the store's own layout: the set's summary
+   * (an `index.json` entry) and, under `sets/`, its document, exactly as the store writes them.
+   */
+  const fixtures = new URL('../../../../android/app/src/test/resources/blocking/', import.meta.url)
+  const fixture = new URL('connectivity-probes.json', fixtures)
 
   /**
    * Stands in for the lists: EasyPrivacy's `/generate_204?$image` heuristic plus a tracker on
@@ -423,7 +424,15 @@ describe('BlockingService connectivity probes', () => {
     const index = JSON.parse(h.io.files.get('blocking/index.json') ?? 'null') as IndexFile
     const entry = index.sets.find((s) => s.id === BUILTIN_RULE_SETS.connectivityProbes)
     expect(entry).toEqual(JSON.parse(readFileSync(fixture, 'utf8')))
-    expect(entry?.rules).toEqual(connectivityProbesRuleSet().rules)
+    expect(entry?.document).toMatch(/^sets\/builtin_connectivity-probes-[0-9a-f]{8}\.json$/)
+    const written = h.io.files.get(`blocking/${entry?.document}`) ?? ''
+    expect(tagOf(written)).toBe(entry?.tag)
+    const document = JSON.parse(written) as SetDocument
+    expect(document).toEqual(
+      JSON.parse(readFileSync(new URL(entry?.document ?? '', fixtures), 'utf8'))
+    )
+    expect(document.rules).toEqual(connectivityProbesRuleSet().rules)
+    expect(entry?.ruleCount).toBe(connectivityProbesRuleSet().rules?.length)
 
     // Whatever the level or the master switch, the probes are allowed.
     h.settings.blocking = { ...h.settings.blocking, level: 'off' }
@@ -775,8 +784,15 @@ describe('BlockingService.whenSettled', () => {
     void service.whenSettled().then(() => {
       settled = true
     })
-    // The index has the sets of `start()` to write, gated: not settled until it landed.
+    // `start()` has the connectivity probes' document and then the index to write, gated: not
+    // settled until both landed, the document first (the index's write waits for it).
     await tick()
+    expect(settled).toBe(false)
+    io.release()
+    await tick()
+    const probes = `blocking/${documentNameFor(BUILTIN_RULE_SETS.connectivityProbes)}`
+    expect(io.files.has(probes)).toBe(true)
+    expect(io.files.has('blocking/index.json')).toBe(false)
     expect(settled).toBe(false)
     io.release()
     await tick()
@@ -803,8 +819,12 @@ describe('BlockingService.whenSettled', () => {
     expect(io.files.has('blocking/ubo-privacy.json')).toBe(false)
     expect(settled).toBe(false)
     io.release()
-    await wait
+    await tick()
+    // The text file has landed; the index that names it follows, and only then is it settled.
     expect(io.files.has('blocking/ubo-privacy.json')).toBe(true)
+    expect(settled).toBe(false)
+    io.release()
+    await wait
     const index = JSON.parse(io.files.get('blocking/index.json') ?? 'null') as IndexFile
     expect(index.sets.find((s) => s.id === 'ubo-privacy')).toMatchObject({
       hasFilterText: true,

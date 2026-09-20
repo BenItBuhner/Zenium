@@ -39,7 +39,8 @@ export interface ShimHost {
 
 export interface ExtensionView {
   url: string
-  type: 'tab' | 'popup' | 'background' | 'options' | 'other'
+  /** `offscreen`: a document of `offscreen.createDocument` (the browser layer hosts it). */
+  type: 'tab' | 'popup' | 'background' | 'options' | 'offscreen' | 'other'
   tabId?: number
   windowId?: number
   /** True for the view the call comes from. */
@@ -75,6 +76,15 @@ export interface ShimOptions {
    * proxied writes. Absent: none of that, and the reserved keys are still kept out of sight.
    */
   storagePrelude?: string
+  /**
+   * API permissions the manifest declared that the host kept out of the manifest the engine
+   * loaded (`core/extensions/withheldPermissions.ts`: the engine's own implementation would crash
+   * the browser), by the list they were declared in. They count as declared here, so the
+   * namespaces the browser layer answers in their place exist for this extension, and
+   * `runtime.getManifest()` lists them again where the extension wrote them. Absent: nothing was
+   * withheld (an emulated engine loads the manifest as declared).
+   */
+  withheld?: { required: string[]; optional: string[] }
 }
 
 /**
@@ -162,7 +172,32 @@ export function installExtensionApi(
     }
   }
 
-  const manifest: ManifestShape = safely(() => chrome.runtime.getManifest()) ?? {}
+  /** What the host withheld from the engine's manifest; empty lists when nothing was. */
+  const withheld: { required: string[]; optional: string[] } = {
+    required: Array.isArray(options?.withheld?.required)
+      ? options.withheld.required.filter((p): p is string => typeof p === 'string')
+      : [],
+    optional: Array.isArray(options?.withheld?.optional)
+      ? options.withheld.optional.filter((p): p is string => typeof p === 'string')
+      : []
+  }
+  /** The engine's manifest with the withheld entries back in their lists: as declared. */
+  function withDeclaredPermissions(engineManifest: unknown): unknown {
+    if (withheld.required.length === 0 && withheld.optional.length === 0) return engineManifest
+    if (!isObject(engineManifest)) return engineManifest
+    const restored: Record<string, unknown> = { ...engineManifest }
+    const restore = (key: string, entries: string[]): void => {
+      if (entries.length === 0) return
+      const current = Array.isArray(restored[key]) ? (restored[key] as unknown[]) : []
+      restored[key] = current.concat(entries.filter((entry) => !current.includes(entry)))
+    }
+    restore('permissions', withheld.required)
+    restore('optional_permissions', withheld.optional)
+    return restored
+  }
+  const manifest: ManifestShape =
+    (withDeclaredPermissions(safely(() => chrome.runtime.getManifest())) as
+      ManifestShape | undefined) ?? {}
   const manifestVersion: 2 | 3 = manifest.manifest_version === 2 ? 2 : 3
   const background = isObject(manifest.background) ? manifest.background : null
   /**
@@ -256,18 +291,36 @@ export function installExtensionApi(
   }
 
   /** The namespace object on a root, created when the engine has none. */
+  /**
+   * The object at `name` under `root`, made when missing; a dotted name (`system.display`) is a
+   * path of namespaces, each made the same way (`chrome.system` holds `display`).
+   */
   function namespaceOn(root: Any, name: string): Any {
-    let ns: Any
-    try {
-      ns = root[name]
-    } catch {
-      ns = undefined
+    let holder = root
+    for (const part of name.split('.')) {
+      let ns: Any
+      try {
+        ns = holder[part]
+      } catch {
+        ns = undefined
+      }
+      if (!ns || typeof ns !== 'object') {
+        ns = {}
+        define(holder, part, ns)
+      }
+      holder = ns
     }
-    if (!ns || typeof ns !== 'object') {
-      ns = {}
-      define(root, name, ns)
+    return holder
+  }
+
+  /** The value at a dotted path under `root`, or undefined anywhere along the way. */
+  function memberAt(root: Any, name: string): unknown {
+    let value: Any = root
+    for (const part of name.split('.')) {
+      if (!isObject(value)) return undefined
+      value = value[part]
     }
-    return ns
+    return value
   }
 
   function matchesType(value: unknown, type: ParamType): boolean {
@@ -473,6 +526,9 @@ export function installExtensionApi(
   ): (...raw: unknown[]) => unknown {
     return function (...raw: unknown[]): unknown {
       const callback = takeCallback(raw)
+      if (inert.error !== undefined) {
+        return settle(qualified, Promise.reject(new Error(inert.error)), callback)
+      }
       let value = inert.value
       if (inert.id) {
         const first: unknown = raw[0]
@@ -804,6 +860,11 @@ export function installExtensionApi(
     const out: Record<string, unknown> = {}
     if (raw.cancel === true) out.cancel = true
     if (typeof raw.redirectUrl === 'string') out.redirectUrl = raw.redirectUrl
+    if (isObject(raw.authCredentials)) {
+      const { username, password } = raw.authCredentials
+      if (typeof username === 'string' && typeof password === 'string')
+        out.authCredentials = { username, password }
+    }
     for (const key of ['requestHeaders', 'responseHeaders']) {
       const list = raw[key]
       if (!Array.isArray(list)) continue
@@ -971,25 +1032,53 @@ export function installExtensionApi(
 
   /**
    * A `types.ChromeSetting`: `get` / `set` / `clear` route as `<namespace>.<method>(object,
-   * setting, details)` and `onChange` is an event the host fires under the setting's full name.
+   * setting, details)` (or `(setting, details)` for a setting that is a member of the namespace
+   * itself, `object` null) and `onChange` is an event the host fires under the setting's full
+   * name.
    */
-  function chromeSetting(namespace: string, object: string, setting: string): object {
+  function chromeSetting(namespace: string, object: string | null, setting: string): object {
     const result: Record<string, unknown> = {}
+    const path = object === null ? [setting] : [object, setting]
     for (const method of ['get', 'set', 'clear']) {
       const qualified = `types.ChromeSetting.${method}(object details, optional function callback)`
       define(result, method, function (...raw: unknown[]): unknown {
         const callback = takeCallback(raw)
         const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
-        return settle(qualified, invoke(namespace, method, [object, setting, details]), callback)
+        return settle(qualified, invoke(namespace, method, [...path, details]), callback)
       })
     }
     define(
       result,
       'onChange',
-      createEvent(`${namespace}.${object}.${setting}.onChange`, undefined, {
+      createEvent(`${namespace}.${path.join('.')}.onChange`, undefined, {
         nativeDelivers: false
       })
     )
+    return result
+  }
+
+  /**
+   * A `contentSettings.ContentSetting`: `get` / `set` / `clear` take details and route as
+   * `<namespace>.<method>(type, details)`; `getResourceIdentifiers` takes only the callback.
+   * No event: Chrome's has none.
+   */
+  function contentSetting(namespace: string, type: string): object {
+    const result: Record<string, unknown> = {}
+    for (const method of ['get', 'set', 'clear']) {
+      const qualified = `contentSettings.ContentSetting.${method}(object details, optional function callback)`
+      define(result, method, function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [details] = normalizeArgs(qualified, raw, [{ name: 'details', type: 'object' }])
+        return settle(qualified, invoke(namespace, method, [type, details]), callback)
+      })
+    }
+    const identifiers =
+      'contentSettings.ContentSetting.getResourceIdentifiers(optional function callback)'
+    define(result, 'getResourceIdentifiers', function (...raw: unknown[]): unknown {
+      const callback = takeCallback(raw)
+      normalizeArgs(identifiers, raw, [])
+      return settle(identifiers, invoke(namespace, 'getResourceIdentifiers', [type]), callback)
+    })
     return result
   }
 
@@ -1263,7 +1352,7 @@ export function installExtensionApi(
   function namespaceAllowed(namespace: string, nsSpec: NamespaceSpec): boolean {
     if (!nsSpec.permissions) return true
     if (nsSpec.permissions.some((p) => declaredPermissions.includes(p))) return true
-    return isObject(safely(() => roots[0][namespace]))
+    return isObject(safely(() => memberAt(roots[0], namespace)))
   }
 
   /** Permission-gated events (`runtime.onUserScriptMessage`) exist for extensions declaring one. */
@@ -1350,6 +1439,14 @@ export function installExtensionApi(
         const value = chromeSetting(namespace, object, setting)
         for (const holder of holders) define(holder, setting, value)
       }
+    }
+    for (const setting of nsSpec.ownSettings ?? []) {
+      const value = chromeSetting(namespace, null, setting)
+      for (const target of targets) define(target, setting, value)
+    }
+    for (const type of nsSpec.contentSettings ?? []) {
+      const value = contentSetting(namespace, type)
+      for (const target of targets) define(target, type, value)
     }
     for (const [name, value] of Object.entries(nsSpec.constants ?? {})) {
       for (const target of targets) {
@@ -1534,6 +1631,266 @@ export function installExtensionApi(
         }
         const suffix = typeof path === 'string' ? path.replace(/^\/+/, '') : ''
         return `https://${ownId}.chromiumapp.org/${suffix}`
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // tabCapture: the stream reaches the extension through this document's own getUserMedia
+  // (Chrome's binding does the same); the host turns the id it answered into the engine's for
+  // the document that consumes it, and hears how the consuming call went
+  // ---------------------------------------------------------------------------
+
+  if (spec.tabCapture && namespaceAllowed('tabCapture', spec.tabCapture)) {
+    const captureQualified = 'tabCapture.capture(object options, function callback)'
+    const SOURCE = 'chromeMediaSource'
+    const SOURCE_ID = 'chromeMediaSourceId'
+    /** The constraint sets of one track kind: `mandatory` and the `optional` list. */
+    const constraintSets = (track: unknown): unknown[] => {
+      if (!isObject(track)) return []
+      const sets: unknown[] = [track.mandatory]
+      if (Array.isArray(track.optional)) sets.push(...track.optional)
+      return sets
+    }
+    /** The stream ids `constraints` names under `chromeMediaSource: "tab"`. */
+    const tabSourceIds = (constraints: unknown): string[] => {
+      if (!isObject(constraints)) return []
+      const ids: string[] = []
+      for (const kind of ['audio', 'video']) {
+        for (const set of constraintSets(constraints[kind])) {
+          if (!isObject(set) || set[SOURCE] !== 'tab') continue
+          const id = set[SOURCE_ID]
+          if (typeof id === 'string' && !ids.includes(id)) ids.push(id)
+        }
+      }
+      return ids
+    }
+    /** The same constraints, each named tab stream id mapped through `resolve`. */
+    const withResolvedIds = (constraints: unknown, resolve: (id: string) => string): unknown => {
+      if (!isObject(constraints)) return constraints
+      const out: Record<string, unknown> = { ...constraints }
+      const mapped = (set: unknown): unknown =>
+        isObject(set) && set[SOURCE] === 'tab' && typeof set[SOURCE_ID] === 'string'
+          ? { ...set, [SOURCE_ID]: resolve(set[SOURCE_ID]) }
+          : set
+      for (const kind of ['audio', 'video']) {
+        const track = constraints[kind]
+        if (!isObject(track)) continue
+        const next: Record<string, unknown> = { ...track }
+        if (track.mandatory !== undefined) next.mandatory = mapped(track.mandatory)
+        if (Array.isArray(track.optional)) next.optional = track.optional.map(mapped)
+        out[kind] = next
+      }
+      return out
+    }
+    const reportState = (ids: string[], state: string): void => {
+      for (const id of ids) {
+        void invoke('tabCapture', 'streamState', [id, state]).catch(() => undefined)
+      }
+    }
+    /** The stream's end: its tracks ended, or it went inactive (every track stopped). */
+    const watchStream = (stream: Any, onEnded: () => void): void => {
+      let done = false
+      const finish = (): void => {
+        if (done) return
+        done = true
+        onEnded()
+      }
+      const tracks: unknown = safely(() => stream.getTracks())
+      if (Array.isArray(tracks)) {
+        let live = tracks.length
+        for (const track of tracks) {
+          safely(() =>
+            track.addEventListener('ended', () => {
+              live -= 1
+              if (live <= 0) finish()
+            })
+          )
+        }
+      }
+      safely(() => stream.addEventListener('inactive', finish))
+    }
+    /** Chromium words a tab stream the engine cannot start as an `InvalidStateError`. */
+    const invalidState = (error: unknown): unknown => {
+      const message = error instanceof Error ? error.message : String(error)
+      const DomException: Any = safely(() => real.DOMException)
+      return typeof DomException === 'function'
+        ? new DomException(message, 'InvalidStateError')
+        : error
+    }
+    /**
+     * A `getUserMedia` naming tab stream ids: the host registers each with the engine for this
+     * document and answers the engine's id, which goes in the id's place; the call's outcome
+     * is reported back as the capture's state.
+     */
+    const capturingUserMedia = (
+      native: (constraints: unknown) => Promise<Any>,
+      constraints: unknown
+    ): Promise<Any> => {
+      const ids = tabSourceIds(constraints)
+      if (ids.length === 0) return native(constraints)
+      return Promise.all(
+        ids.map((id) =>
+          invoke('tabCapture', 'resolveStreamId', [id]).then(
+            (engineId: unknown): [string, string] => [
+              id,
+              typeof engineId === 'string' ? engineId : id
+            ]
+          )
+        )
+      ).then(
+        (pairs) => {
+          const map = new Map<string, string>(pairs)
+          const resolved = withResolvedIds(constraints, (id) => map.get(id) ?? id)
+          return native(resolved).then(
+            (stream: Any) => {
+              reportState(ids, 'active')
+              watchStream(stream, () => reportState(ids, 'stopped'))
+              return stream
+            },
+            (error: unknown) => {
+              reportState(ids, 'error')
+              throw error
+            }
+          )
+        },
+        (error: unknown) => {
+          throw invalidState(error)
+        }
+      )
+    }
+    /** This document's `getUserMedia`, patched; null in a context without one (a worker). */
+    let userMedia: ((constraints: unknown) => Promise<Any>) | null = null
+    if (host.kind === 'frame') {
+      const nav: Any = safely(() => real.navigator)
+      const devices: Any = nav ? safely(() => nav.mediaDevices) : undefined
+      const nativeGum: unknown = devices ? safely(() => devices.getUserMedia) : undefined
+      if (devices && isFunction(nativeGum)) {
+        const callNative = (constraints: unknown): Promise<Any> => {
+          try {
+            return Promise.resolve(nativeGum.call(devices, constraints))
+          } catch (error) {
+            return Promise.reject(error)
+          }
+        }
+        userMedia = (constraints) => capturingUserMedia(callNative, constraints)
+        define(devices, 'getUserMedia', function (constraints: unknown): Promise<Any> {
+          return capturingUserMedia(callNative, constraints)
+        })
+      }
+      // The callback forms Chrome's own binding used (`navigator.webkitGetUserMedia`).
+      for (const name of ['webkitGetUserMedia', 'getUserMedia']) {
+        const legacy: unknown = nav ? safely(() => nav[name]) : undefined
+        if (!isFunction(legacy)) continue
+        define(
+          nav,
+          name,
+          function (constraints: unknown, onSuccess: unknown, onError: unknown): void {
+            const native = (c: unknown): Promise<Any> =>
+              new Promise((resolve, reject) => {
+                try {
+                  legacy.call(nav, c, resolve, reject)
+                } catch (error) {
+                  reject(error)
+                }
+              })
+            capturingUserMedia(native, constraints).then(
+              (stream: Any) => {
+                if (isFunction(onSuccess)) onSuccess(stream)
+              },
+              (error: unknown) => {
+                if (isFunction(onError)) onError(error)
+              }
+            )
+          }
+        )
+      }
+    }
+    for (const root of roots) {
+      const tabCapture = namespaceOn(root, 'tabCapture')
+      if (host.kind !== 'frame') {
+        // Chrome keeps `capture` out of service workers (`disallow_for_service_workers`): a
+        // worker has no `getUserMedia` to hand the stream to; `getMediaStreamId` is its way.
+        safely(() => Reflect.deleteProperty(tabCapture, 'capture'))
+        continue
+      }
+      define(tabCapture, 'capture', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        const [options] = normalizeArgs(captureQualified, raw, [
+          { name: 'options', type: 'object' }
+        ])
+        // The host answers the options with the source constraints added, as Chrome's
+        // `TabCaptureCaptureFunction` does; the stream comes from this document's getUserMedia.
+        const work = invoke('tabCapture', 'capture', [options]).then((answer: unknown) => {
+          const constraints: Record<string, unknown> = {}
+          if (isObject(answer)) {
+            if (answer.audioConstraints) constraints.audio = answer.audioConstraints
+            if (answer.videoConstraints) constraints.video = answer.videoConstraints
+          }
+          if (!userMedia) throw new Error('getUserMedia is not available in this document.')
+          return userMedia(constraints)
+        })
+        if (!callback) return work
+        work.then(
+          (stream: unknown) => callListener(callback, [stream]),
+          (error: unknown) => {
+            // Chrome's binding: the callback gets null and `runtime.lastError` the message.
+            const message = error instanceof Error ? error.message : String(error)
+            withLastError(captureQualified, message, () => callListener(callback, [null]))
+          }
+        )
+        return undefined
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // desktopCapture: `chooseDesktopMedia` answers its request id synchronously, the picker's
+  // choice through the callback; `cancelChooseDesktopMedia` withdraws a pending callback
+  // ---------------------------------------------------------------------------
+
+  if (spec.desktopCapture && namespaceAllowed('desktopCapture', spec.desktopCapture)) {
+    const chooseQualified =
+      'desktopCapture.chooseDesktopMedia(array sources, optional tabs.Tab targetTab, function callback)'
+    const pendingChoices = new Map<number, Listener>()
+    let choiceIds = 0
+    for (const root of roots) {
+      const desktopCapture = namespaceOn(root, 'desktopCapture')
+      define(desktopCapture, 'chooseDesktopMedia', function (...raw: unknown[]): number {
+        const callback = takeCallback(raw)
+        if (!callback) throw signatureError(chooseQualified)
+        const [sources, targetTab] = normalizeArgs(chooseQualified, raw, [
+          { name: 'sources', type: 'array' },
+          { name: 'targetTab', type: 'object', optional: true }
+        ])
+        choiceIds += 1
+        const id = choiceIds
+        pendingChoices.set(id, callback)
+        const answer = (args: unknown[], error?: string): void => {
+          const pending = pendingChoices.get(id)
+          if (!pending) return
+          pendingChoices.delete(id)
+          if (error === undefined) callListener(pending, args)
+          else withLastError(chooseQualified, error, () => callListener(pending, args))
+        }
+        invoke('desktopCapture', 'chooseDesktopMedia', [sources, targetTab]).then(
+          (result: unknown) => {
+            const streamId =
+              isObject(result) && typeof result.streamId === 'string' ? result.streamId : ''
+            const options =
+              isObject(result) && isObject(result.options)
+                ? result.options
+                : { canRequestAudioTrack: false }
+            answer([streamId, options])
+          },
+          (error: unknown) => answer([], error instanceof Error ? error.message : String(error))
+        )
+        return id
+      })
+      define(desktopCapture, 'cancelChooseDesktopMedia', function (id: unknown): void {
+        if (typeof id !== 'number' || !pendingChoices.has(id)) return
+        pendingChoices.delete(id)
+        void invoke('desktopCapture', 'cancelChooseDesktopMedia', [id]).catch(() => undefined)
       })
     }
   }
@@ -2235,6 +2592,15 @@ export function installExtensionApi(
   for (const root of roots) {
     const extension = namespaceOn(root, 'extension')
     const runtime = namespaceOn(root, 'runtime')
+    // The manifest the extension reads is the one it wrote, withheld permissions included.
+    if (withheld.required.length > 0 || withheld.optional.length > 0) {
+      const nativeGetManifest = safely(() => runtime.getManifest)
+      if (isFunction(nativeGetManifest)) {
+        define(runtime, 'getManifest', (): unknown =>
+          withDeclaredPermissions(nativeGetManifest.call(runtime))
+        )
+      }
+    }
     if (typeof safely(() => extension.getURL) !== 'function') {
       define(extension, 'getURL', (path: string) => runtime.getURL(path))
     }
@@ -2300,7 +2666,10 @@ export function installExtensionApi(
       else if (event === 'sync-mirror' && mirror) void mirror.apply(args[0])
       return
     }
-    if (namespace === 'webRequest') {
+    // A `webRequest` event installed in its own style (registered with the host by listener):
+    // the delivery names the one listener it is for. A spec without the style has generic
+    // events, delivered below like any other.
+    if (namespace === 'webRequest' && webRequestListeners.has(`webRequest.${event}`)) {
       webRequestDeliver(event, args, delivery)
       return
     }

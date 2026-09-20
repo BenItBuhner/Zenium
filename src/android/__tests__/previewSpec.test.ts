@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PREVIEW_MEDIA,
   PREVIEW_OVERLAYS,
+  PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
   PREVIEW_WEBAPP_SURFACES,
   parsePreviewSpec,
@@ -58,19 +60,208 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('find=x&zoom=2')).toEqual({ kind: 'find', text: 'x' })
   })
 
+  it('docks the read-aloud player at a scripted status, speed and with its voice picker', () => {
+    expect(parsePreviewSpec('readAloud=')).toEqual({
+      kind: 'readAloud',
+      status: 'playing',
+      rate: 1,
+      voices: false
+    })
+    expect(parsePreviewSpec('readAloud=paused&rate=1.5')).toEqual({
+      kind: 'readAloud',
+      status: 'paused',
+      rate: 1.5,
+      voices: false
+    })
+    expect(parsePreviewSpec('readAloud=loading&voices')).toEqual({
+      kind: 'readAloud',
+      status: 'loading',
+      rate: 1,
+      voices: true
+    })
+    // An unknown status is the default; a rate off the model's range too.
+    expect(parsePreviewSpec('readAloud=idle&rate=9')).toEqual({
+      kind: 'readAloud',
+      status: 'playing',
+      rate: 1,
+      voices: false
+    })
+    expect(parsePreviewSpec('zoom=2&readAloud=paused')).toEqual({ kind: 'zoom', factor: 2 })
+    expect(parsePreviewSpec('readAloud=error&reader=article')).toEqual({
+      kind: 'readAloud',
+      status: 'error',
+      rate: 1,
+      voices: false
+    })
+  })
+
+  it('puts the active tab in Reader View on the stand-in article, with or without its text sheet', () => {
+    expect(parsePreviewSpec('reader=article')).toEqual({ kind: 'reader', preferences: false })
+    expect(parsePreviewSpec('reader=preferences')).toEqual({ kind: 'reader', preferences: true })
+    expect(parsePreviewSpec('zoom=2&reader=article')).toEqual({ kind: 'zoom', factor: 2 })
+    expect(parsePreviewSpec('reader=article&error=-105')).toEqual({
+      kind: 'reader',
+      preferences: false
+    })
+  })
+
+  it('groups the active tab with this many members, behind a page but ahead of an overlay, its steps kept', () => {
+    expect(parsePreviewSpec('group=3')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('group=12&then=tap:Show group, Research;overview')).toEqual({
+      kind: 'group',
+      members: 12,
+      then: [{ kind: 'tap', text: 'Show group, Research' }, { kind: 'overview' }]
+    })
+    // A group is at least the tab itself and at most what a strip can be asked to scroll.
+    expect(parsePreviewSpec('group=0')).toEqual({ kind: 'group', members: 1 })
+    expect(parsePreviewSpec('group=99')).toEqual({ kind: 'group', members: 24 })
+    expect(parsePreviewSpec('group=')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=abc')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('group=3&overlay=history')).toEqual({ kind: 'group', members: 3 })
+    expect(parsePreviewSpec('page=settings&group=3')).toEqual({ kind: 'page', page: 'settings' })
+  })
+
   it('opens the app menu, behind an overlay but ahead of the bars', () => {
-    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('menu=app&show=Desktop Site')).toEqual({
       kind: 'menu',
+      menu: 'app',
       show: 'Desktop Site'
     })
-    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu' })
-    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu' })
+    expect(parsePreviewSpec('menu=app&find=x')).toEqual({ kind: 'menu', menu: 'app' })
+    expect(parsePreviewSpec('menu=app&zoom=2')).toEqual({ kind: 'menu', menu: 'app' })
+    // `article`: the page reads as an article, for the items an article enables.
+    expect(parsePreviewSpec('menu=app&show=Listen to This Page&article')).toEqual({
+      kind: 'menu',
+      menu: 'app',
+      show: 'Listen to This Page',
+      article: true
+    })
     expect(parsePreviewSpec('overlay=history&menu=app')).toEqual({
       kind: 'overlay',
       overlay: 'history'
     })
+    // The Tabs button's quick menu is the other one; a menu with no sheet of its own is idle.
+    expect(parsePreviewSpec('menu=tabs')).toEqual({ kind: 'menu', menu: 'tabs' })
     expect(parsePreviewSpec('menu=context')).toEqual({ kind: 'idle' })
+  })
+
+  it('opens one of the chrome’s sheets by name, behind the menu, its rows tapped or held', () => {
+    expect(parsePreviewSpec('sheet=extensions')).toEqual({ kind: 'sheet', sheet: 'extensions' })
+    expect(parsePreviewSpec('sheet=extensions&extensions=installed')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    expect(
+      parsePreviewSpec('sheet=extensions&then=hold:Dark Reader;tap:Remove from Zenium')
+    ).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions',
+      then: [
+        { kind: 'hold', text: 'Dark Reader' },
+        { kind: 'tap', text: 'Remove from Zenium' }
+      ]
+    })
+    expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
+    expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    expect(parsePreviewSpec('sheet=recently-closed')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSteps('hold:Dark Reader;hold:;hold')).toEqual([
+      { kind: 'hold', text: 'Dark Reader' }
+    ])
+  })
+
+  it('opens an extension’s page as a tab by id and path, behind an internal page but ahead of a group', () => {
+    const id = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
+    expect(parsePreviewSpec(`extension-page=${id}/ui/options/index.html`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'ui/options/index.html'
+    })
+    expect(parsePreviewSpec(`extension-page=${id}&extensions=installed&then=overview`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: '',
+      then: [{ kind: 'overview' }]
+    })
+    expect(parsePreviewSpec(`extension-page=${id}//options.html`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'options.html'
+    })
+    expect(parsePreviewSpec(`extension-page=${id}/options.html&group=3`)).toEqual({
+      kind: 'extension-page',
+      id,
+      path: 'options.html'
+    })
+    expect(parsePreviewSpec(`page=settings&extension-page=${id}/options.html`)).toEqual({
+      kind: 'page',
+      page: 'settings'
+    })
+    // Not an id as Chrome forms them: no such state.
+    expect(parsePreviewSpec('extension-page=dark-reader/options.html')).toEqual({ kind: 'idle' })
+    expect(parsePreviewSpec('extension-page=')).toEqual({ kind: 'idle' })
+  })
+
+  it('shows a private tab and the overview panes by surface', () => {
+    for (const surface of PREVIEW_PRIVATE_SURFACES) {
+      expect(parsePreviewSpec(`private=${surface}`)).toEqual({
+        kind: 'private',
+        surface,
+        url: null
+      })
+    }
+    expect(parsePreviewSpec('private=page&url=https://example.org/')).toEqual({
+      kind: 'private',
+      surface: 'page',
+      url: 'https://example.org/'
+    })
+    // The bare `private` flag belongs to a download.
+    expect(parsePreviewSpec('download=a.pdf&private')).toMatchObject({
+      kind: 'download',
+      download: { private: true }
+    })
+    // Ahead of the bars and of everything below them (#135's slot), behind the sheets.
+    expect(parsePreviewSpec('private=newtab&webapp=banner')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null
+    })
+    expect(parsePreviewSpec('private=empty&download=a.pdf')).toMatchObject({ kind: 'private' })
+    expect(parsePreviewSpec('menu=app&private=empty')).toEqual({ kind: 'menu', menu: 'app' })
+    // The third-party cookie setting for the new tab page's switch: a known mode rides along on
+    // any private surface, an unknown one is dropped.
+    expect(parsePreviewSpec('private=newtab&cookies=allow')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null,
+      cookies: 'allow'
+    })
+    expect(parsePreviewSpec('private=new&cookies=block')).toMatchObject({ cookies: 'block' })
+    expect(parsePreviewSpec('private=newtab&cookies=maybe')).toEqual({
+      kind: 'private',
+      surface: 'newtab',
+      url: null
+    })
+    // Steps once the surface is up: the overview's header menu and its question; none, no key.
+    expect(
+      parsePreviewSpec('private=overview&then=tap:More;tap:Close%20Private%20Tabs%20(1)')
+    ).toEqual({
+      kind: 'private',
+      surface: 'overview',
+      url: null,
+      then: [
+        { kind: 'tap', text: 'More' },
+        { kind: 'tap', text: 'Close Private Tabs (1)' }
+      ]
+    })
+    expect(parsePreviewSpec('private=overview&then=')).toEqual({
+      kind: 'private',
+      surface: 'overview',
+      url: null
+    })
   })
 
   it('puts up messages and the load bar together', () => {
@@ -99,6 +290,12 @@ describe('parsePreviewSpec', () => {
     }
     expect(parsePreviewSpec('webapp=splash')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('find=x&webapp=banner')).toEqual({ kind: 'find', text: 'x' })
+  })
+
+  it('opens the tab overview, behind every other state', () => {
+    expect(parsePreviewSpec('overview')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('overview=1')).toEqual({ kind: 'overview' })
+    expect(parsePreviewSpec('find=x&overview')).toEqual({ kind: 'find', text: 'x' })
   })
 
   it('treats idle, an unknown overlay and junk as idle', () => {
@@ -211,6 +408,64 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('page=settings&then=wave')).toEqual({ kind: 'page', page: 'settings' })
   })
 
+  it('stages an autofill surface, a manager one scrolled and stepped through like a page', () => {
+    expect(parsePreviewSpec('autofill=save-login')).toEqual({
+      kind: 'autofill',
+      surface: 'save-login'
+    })
+    expect(
+      parsePreviewSpec(
+        'autofill=manager&show=Payment%20methods&then=tap:Visa%20%E2%80%A2%E2%80%A2%E2%80%A2%E2%80%A2%204242'
+      )
+    ).toEqual({
+      kind: 'autofill',
+      surface: 'manager',
+      show: 'Payment methods',
+      then: [{ kind: 'tap', text: 'Visa \u2022\u2022\u2022\u2022 4242' }]
+    })
+    expect(parsePreviewSpec('autofill=manager&show=&then=')).toEqual({
+      kind: 'autofill',
+      surface: 'manager'
+    })
+    expect(parsePreviewSpec('autofill=bogus')).toEqual({ kind: 'idle' })
+  })
+
+  it('navigates the active tab to a sample PDF, the find bar and the steps taken along', () => {
+    expect(parsePreviewSpec('pdf=sample')).toEqual({ kind: 'pdf', variant: 'sample' })
+    for (const variant of ['sample', 'locked', 'broken', 'slow'] as const) {
+      expect(parsePreviewSpec(`pdf=${variant}`)).toEqual({ kind: 'pdf', variant })
+    }
+    // `pdf` takes `find=` along as the bar over the viewer (empty opens it blank)...
+    expect(parsePreviewSpec('pdf=sample&find=tide')).toEqual({
+      kind: 'pdf',
+      variant: 'sample',
+      find: 'tide'
+    })
+    expect(parsePreviewSpec('pdf=sample&find=')).toEqual({
+      kind: 'pdf',
+      variant: 'sample',
+      find: ''
+    })
+    // ...and steps: the bar's controls, a sheet's rows, a password typed.
+    expect(
+      parsePreviewSpec('pdf=locked&then=tap:Unlock;type:pdf-password=zenium;tap:Unlock')
+    ).toEqual({
+      kind: 'pdf',
+      variant: 'locked',
+      then: [
+        { kind: 'tap', text: 'Unlock' },
+        { kind: 'type', id: 'pdf-password', text: 'zenium' },
+        { kind: 'tap', text: 'Unlock' }
+      ]
+    })
+    // Behind autofill, ahead of a plain find.
+    expect(parsePreviewSpec('autofill=save-login&pdf=sample')).toEqual({
+      kind: 'autofill',
+      surface: 'save-login'
+    })
+    expect(parsePreviewSpec('pdf=bogus&find=x')).toEqual({ kind: 'find', text: 'x' })
+  })
+
   it('asks for a sheet on its expanded detent', () => {
     expect(parsePreviewSpec('overlay=downloads&expand')).toEqual({
       kind: 'overlay',
@@ -218,6 +473,39 @@ describe('parsePreviewSpec', () => {
       expand: true
     })
     expect(parsePreviewSpec('overlay=downloads')).not.toHaveProperty('expand')
+  })
+
+  it('has the page report media by variant, the in-app player opened on request', () => {
+    for (const variant of PREVIEW_MEDIA) {
+      expect(parsePreviewSpec(`media=${variant}`)).toEqual({
+        kind: 'media',
+        variant,
+        player: false
+      })
+      expect(parsePreviewSpec(`media=${variant}&player`)).toEqual({
+        kind: 'media',
+        variant,
+        player: true
+      })
+    }
+    expect(parsePreviewSpec('media=podcast')).toEqual({ kind: 'idle' })
+    // `sheet=` names the chrome's own sheets, so beside `media=` a bare `sheet` opens nothing;
+    // a named one wins over the media, as the precedence has it.
+    expect(parsePreviewSpec('media=audio&sheet')).toEqual({
+      kind: 'media',
+      variant: 'audio',
+      player: false
+    })
+    expect(parsePreviewSpec('media=audio&sheet=extensions')).toEqual({
+      kind: 'sheet',
+      sheet: 'extensions'
+    })
+    // An "Add to Home screen" surface wins over it; it wins over a transfer.
+    expect(parsePreviewSpec('webapp=banner&media=audio')).toEqual({
+      kind: 'webapp',
+      surface: 'banner'
+    })
+    expect(parsePreviewSpec('media=video&download=a.bin').kind).toBe('media')
   })
 
   it('describes a transfer for the stand-in downloader, with sensible defaults', () => {
@@ -263,5 +551,78 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('pull=40&download=a.bin').kind).toBe('pull')
     expect(parsePreviewSpec('error=-105&download=a.bin').kind).toBe('error')
     expect(parsePreviewSpec('download=')).toEqual({ kind: 'idle' })
+  })
+
+  it('raises a permission prompt from the active page, behind the menu but ahead of the bars', () => {
+    expect(parsePreviewSpec('prompt=camera')).toEqual({ kind: 'permission', permission: 'camera' })
+    expect(parsePreviewSpec('prompt=notifications&find=x')).toEqual({
+      kind: 'permission',
+      permission: 'notifications'
+    })
+    expect(parsePreviewSpec('menu=app&prompt=camera')).toEqual({ kind: 'menu', menu: 'app' })
+    expect(parsePreviewSpec('prompt=')).toEqual({ kind: 'idle' })
+    // The security dialogs' two `prompt=` values are theirs (#62), and come up after the bars.
+    expect(parsePreviewSpec('prompt=http-auth')).toMatchObject({
+      kind: 'prompt',
+      prompt: 'http-auth'
+    })
+    expect(parsePreviewSpec('prompt=certificate&find=x')).toEqual({ kind: 'find', text: 'x' })
+  })
+
+  it('opens a private tab, blank or on a page, as #135 first spelt it', () => {
+    const blank = { kind: 'private', surface: 'newtab', url: null }
+    expect(parsePreviewSpec('private=new')).toEqual(blank)
+    expect(parsePreviewSpec('private=1')).toEqual(blank)
+    expect(parsePreviewSpec('private=https%3A%2F%2Fexample.com%2F')).toEqual({
+      kind: 'private',
+      surface: 'page',
+      url: 'https://example.com/'
+    })
+    expect(parsePreviewSpec('private=')).toEqual({ kind: 'idle' })
+    // A sheet comes first, the bars after.
+    expect(parsePreviewSpec('private=new&prompt=camera')).toEqual({
+      kind: 'permission',
+      permission: 'camera'
+    })
+    expect(parsePreviewSpec('private=new&find=x')).toEqual(blank)
+  })
+
+  it('reads the pill editor: its text, a new tab, the stand-in clipboard and its steps', () => {
+    // Search-ready over the page: nothing typed, the clipboard untouched.
+    expect(parsePreviewSpec('urlbar=')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: null
+    })
+    expect(parsePreviewSpec('urlbar=wiki&newtab')).toEqual({
+      kind: 'urlbar',
+      text: 'wiki',
+      newTab: true,
+      clip: null
+    })
+    // The clipboard row: the stand-in clipboard seeded (an empty `clip=` clears it), Show pressed.
+    expect(parsePreviewSpec('urlbar=&clip=https%3A%2F%2Fexample.com%2F&then=tap:Show')).toEqual({
+      kind: 'urlbar',
+      text: '',
+      newTab: false,
+      clip: 'https://example.com/',
+      then: [{ kind: 'tap', text: 'Show' }]
+    })
+    expect(parsePreviewSpec('urlbar=&clip=')).toMatchObject({ clip: '' })
+    // A form filled in: `type:<id>=<text>` keeps every `=` after the first in the text.
+    expect(
+      parsePreviewSpec(
+        'page=settings&section=search&then=tap:Add search engine;type:search-engine-url=https://x.test/?q=%s;type:=x;type:name'
+      )
+    ).toMatchObject({
+      then: [
+        { kind: 'tap', text: 'Add search engine' },
+        { kind: 'type', id: 'search-engine-url', text: 'https://x.test/?q=%s' }
+      ]
+    })
+    // A download wins over the editor; no `urlbar` is idle.
+    expect(parsePreviewSpec('download=a.bin&urlbar=').kind).toBe('download')
+    expect(parsePreviewSpec('newtab')).toEqual({ kind: 'idle' })
   })
 })

@@ -17,6 +17,7 @@
  * Chrome exposes there (`CONTENT_SCRIPT_NAMESPACES`).
  */
 import { API_SPEC, type ApiSpec, type MethodSpec, type NamespaceSpec, type ParamSpec } from './spec'
+import { EXTRA_INFO_SPECS } from './webRequest'
 
 const integer = (name: string, optional = false): ParamSpec => ({ name, type: 'integer', optional })
 const object = (name: string, optional = false): ParamSpec => ({ name, type: 'object', optional })
@@ -56,7 +57,8 @@ export const ENGINE_SPEC: ApiSpec = {
       requestUpdateCheck: routed(),
       getBackgroundPage: routed(),
       sendNativeMessage: routed(string('application'), object('message')),
-      connectNative: routed(string('application')),
+      /** Synchronous in Chrome (a Port at once); the engine answers with one that disconnects. */
+      connectNative: engine(string('application')),
       restart: routed(),
       restartAfterDelay: routed(integer('seconds')),
       getPackageDirectoryEntry: routed()
@@ -235,20 +237,25 @@ export const ENGINE_SPEC: ApiSpec = {
       HeaderOperation: { APPEND: 'append', SET: 'set', REMOVE: 'remove' }
     }
   },
+  // The events take `(callback, RequestFilter, extraInfoSpec)`: the shim registers each
+  // listener with the host (`webRequest.addListener`, its filter along) and the host addresses
+  // a delivery to the listeners whose filter the request matches, as on the desktop. A generic
+  // event here would drop the filter – Violentmonkey's installer listens for `*://*/*.user.js`
+  // main frames and treats whatever it hears as a userscript to fetch.
   webRequest: {
     methods: { handlerBehaviorChanged: routed() },
     events: {
-      onBeforeRequest: {},
-      onBeforeSendHeaders: {},
-      onSendHeaders: {},
-      onHeadersReceived: {},
-      onAuthRequired: {},
-      onResponseStarted: {},
-      onBeforeRedirect: {},
-      onCompleted: {},
-      onErrorOccurred: {},
-      onActionIgnored: {}
+      onBeforeRequest: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeRequest] },
+      onBeforeSendHeaders: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeSendHeaders] },
+      onSendHeaders: { extraInfoSpec: [...EXTRA_INFO_SPECS.onSendHeaders] },
+      onHeadersReceived: { extraInfoSpec: [...EXTRA_INFO_SPECS.onHeadersReceived] },
+      onAuthRequired: { extraInfoSpec: [...EXTRA_INFO_SPECS.onAuthRequired] },
+      onResponseStarted: { extraInfoSpec: [...EXTRA_INFO_SPECS.onResponseStarted] },
+      onBeforeRedirect: { extraInfoSpec: [...EXTRA_INFO_SPECS.onBeforeRedirect] },
+      onCompleted: { extraInfoSpec: [...EXTRA_INFO_SPECS.onCompleted] },
+      onErrorOccurred: { extraInfoSpec: [...EXTRA_INFO_SPECS.onErrorOccurred] }
     },
+    eventStyle: 'webRequest',
     constants: {
       MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
       OnBeforeRequestOptions: {
@@ -653,7 +660,19 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   devtools: null,
   readingList: 'readingList',
   webRequestAuthProvider: 'webRequestAuthProvider',
-  dom: null
+  dom: null,
+  // Permission-gated namespaces the browser layer's table shapes (`spec.ts`) and the phone's
+  // host answers by rejection, or from the table's own inert members (`gcm`): Chrome makes each
+  // of them exist once its permission is declared, and workers read them in their first
+  // statements (VeePN, NordVPN and Browsec `chrome.proxy.settings`, Claude
+  // `chrome.debugger.onEvent`, Read&Write `chrome.gcm.onMessage`), so a namespace missing from
+  // this table was a TypeError before the first listener was registered.
+  proxy: 'proxy',
+  gcm: 'gcm',
+  debugger: 'debugger',
+  topSites: 'topSites',
+  tts: 'tts',
+  contentSettings: 'contentSettings'
 }
 
 /** Permissions that grant a namespace registered under another name. */
@@ -674,20 +693,27 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
 
 /**
  * Members the host answers with nothing after one console warning: setters and fire-and-forget
- * calls extensions make while starting (`setUninstallURL`, `userScripts.configureWorld`) must
- * not end their initialisation with a rejection. Keys are `namespace.method`.
+ * calls extensions make while starting (`setUninstallURL`, `omnibox.setDefaultSuggestion`) must
+ * not end their initialisation with a rejection. Keys are `namespace.method`. Nothing the host
+ * implements belongs here: a no-op answers on the context side, so the call never reaches the
+ * host (`userScripts.configureWorld` sat here after Android answered it, and the user-script
+ * world never got its `chrome`: Tampermonkey's and Violentmonkey's content scripts threw at
+ * document start on every page).
  */
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
   'tabs.highlight',
   'tabs.setZoomSettings',
-  'userScripts.configureWorld',
-  'userScripts.resetWorldConfiguration',
   'fontSettings.setFont',
   'fontSettings.clearFont',
   'fontSettings.setDefaultFontSize',
   'extension.setUpdateUrlData',
-  'webRequest.handlerBehaviorChanged'
+  'webRequest.handlerBehaviorChanged',
+  // No omnibox keyword and no side panel on the phone; the setters are start-up calls
+  // (Raindrop.io, OneTab, Bitwarden) whose rejection would be the only error of the worker.
+  'omnibox.setDefaultSuggestion',
+  'sidePanel.setOptions',
+  'sidePanel.setPanelBehavior'
 ])
 
 /**
@@ -733,6 +759,15 @@ function mergeNamespace(
   base: NamespaceSpec | undefined,
   over: NamespaceSpec | undefined
 ): NamespaceSpec {
+  const eventStyle = over?.eventStyle ?? base?.eventStyle
+  // The `types.ChromeSetting` and `ContentSetting` members (`proxy.settings`,
+  // `contentSettings.cookies`) are the layer's shapes, built by the shim and routed to the host
+  // like methods; they travel with a namespace the engine table leaves alone. A namespace the
+  // engine lists answers its settings itself (`engine.ts` defines `privacy`'s on the context
+  // side), and the shim would replace them with routed ones the host has no answer for.
+  const settings = over ? undefined : base?.settings
+  const ownSettings = over ? undefined : base?.ownSettings
+  const contentSettings = over ? undefined : base?.contentSettings
   return {
     methods: { ...base?.methods, ...over?.methods },
     events: { ...base?.events, ...over?.events },
@@ -743,7 +778,11 @@ function mergeNamespace(
       ? { manifestVersion: base?.manifestVersion ?? over?.manifestVersion }
       : {}),
     // A namespace the engine's host implements is no longer a shape.
-    ...(base?.shape && !over ? { shape: base.shape } : {})
+    ...(base?.shape && !over ? { shape: base.shape } : {}),
+    ...(eventStyle ? { eventStyle } : {}),
+    ...(settings ? { settings } : {}),
+    ...(ownSettings ? { ownSettings } : {}),
+    ...(contentSettings ? { contentSettings } : {})
   }
 }
 

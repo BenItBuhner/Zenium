@@ -8,6 +8,7 @@ import type {
   BookmarkTreeData,
   Boost,
   ClosedEntry,
+  ImportProgress,
   NavigationSnapshot,
   Container,
   CrashRestoreOffer,
@@ -25,6 +26,8 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  ScreenCaptureRequest,
+  ShareRequest,
   PasswordsStatus,
   PageEnvironment,
   PermissionPrompt,
@@ -32,7 +35,9 @@ import type {
   Platform,
   Rect,
   ResourceSnapshot,
+  SafetyCheckResult,
   SearchEngine,
+  SearchEngineControl,
   SecurityPrompt,
   Settings,
   Shortcut,
@@ -45,6 +50,7 @@ import type {
   UIState
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
+import type { ContentDefault } from '../shared/contentSettings'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { isChromePageUrl, parseInternalPageUrl } from '../shared/internalPages'
@@ -59,7 +65,12 @@ import {
   sanitizePasswordSettings
 } from '../shared/defaults'
 import { sanitizePhoneBar } from '../shared/phoneBar'
-import { DEFAULT_SEARCH_ENGINES } from '../shared/search'
+import {
+  allSearchEngines,
+  defaultSearchEngineOf,
+  isPickableSearchEngine,
+  sanitizeSearchEngines
+} from '../shared/search'
 import {
   applyShortcutOverrides,
   defaultShortcuts,
@@ -94,6 +105,13 @@ import {
 import { DEFAULT_PAGE_ENVIRONMENT, sanitizePageControls } from '../shared/pageControls'
 import { emptyPrivacyStatus, sanitizePrivacySettings, type PrivacyStatus } from '../shared/privacy'
 import {
+  UNAVAILABLE_SPELLCHECK,
+  sanitizeSpellcheck,
+  type SpellcheckStatus
+} from '../shared/spellcheck'
+import { sanitizeReaderPreferences } from '../shared/reader'
+import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
+import {
   emptyNewTabDevice,
   migrateNewTabDevice,
   migrateNewTabSettings,
@@ -101,6 +119,14 @@ import {
 } from '../shared/newTab'
 import { defer, type StoreIO } from './platform'
 import { sanitizeClosedEntries, sanitizeSnapshot, summarizeClosed } from './session'
+import { defaultScope } from './sync/records'
+import {
+  closedNavigationOf,
+  closedTabIds,
+  NavigationStateStore,
+  withoutClosedHostState,
+  withoutHostState
+} from './navigationState'
 import type { ZenWindow } from './window'
 
 const BOOKMARKS_BAR_MODES: ReadonlyArray<Settings['bookmarksBar']> = ['always', 'newtab', 'never']
@@ -147,7 +173,8 @@ export interface Persisted {
   /**
    * v3: the back/forward stack of every open tab, by tab id, so a restored tab has its history
    * and (through each entry's page state) its scroll position back. Refreshed on every commit
-   * of a navigation and once more, for the page on screen, at a graceful shutdown.
+   * of a navigation and once more, for the page on screen, at a graceful shutdown. Never with a
+   * stack's `hostState`: that blob lives in `navigation/<tabId>.json` (`NavigationStateStore`).
    */
   navigation?: Record<string, NavigationSnapshot>
   /**
@@ -193,14 +220,21 @@ export interface StateExtras {
   defaultBrowser: DefaultBrowserStatus
   blockedPopups: Record<string, BlockedPopup[]>
   permissionRules: PermissionRule[]
+  permissionDefaults: Record<string, ContentDefault>
+  lastSafetyCheck: SafetyCheckResult | null
   permissionPrompts: PermissionPrompt[]
   securityPrompts: SecurityPrompt[]
   pageDialogs: PageDialog[]
+  screenCaptureRequests: ScreenCaptureRequest[]
+  shareRequests: ShareRequest[]
   crashRestore: CrashRestoreOffer | null
   autofill: AutofillUIState
   blocking: BlockingStatus
   privacy: PrivacyStatus
   translate: TranslateUIState
+  spellcheck: SpellcheckStatus
+  readAloud: ReadAloudState | null
+  import: ImportProgress | null
 }
 
 /** Translation state of a host without an engine (and before the service exists). */
@@ -216,6 +250,7 @@ export function emptyTranslateState(): TranslateUIState {
     },
     languages: [],
     installed: [],
+    downloading: [],
     registryDate: '',
     modelLicense: '',
     tabs: {}
@@ -256,6 +291,8 @@ export class BrowserState {
   readonly migrationNotices: string[] = []
   /** Back/forward stacks of the open tabs, by tab id (`TabManager` keeps them current). */
   readonly tabNavigation = new Map<string, NavigationSnapshot>()
+  /** The stacks' host-state blobs, one document per tab, kept out of `state.json`. */
+  readonly navigationState: NavigationStateStore
   /** The new tab page's custom background image; provided by the Browser (the host owns the file). */
   newTabBackgroundFor: () => UIState['newTabBackground'] = () => ({ image: false, canPick: false })
   /**
@@ -288,20 +325,11 @@ export class BrowserState {
     sync: {
       enabled: false,
       folder: null,
+      folderName: null,
+      folderLost: false,
       deviceId: '',
       deviceName: '',
-      scope: {
-        spaces: true,
-        folders: true,
-        pinnedTabs: true,
-        essentials: true,
-        openTabs: false,
-        containers: true,
-        bookmarks: true,
-        settings: true,
-        shortcuts: true,
-        boosts: true
-      },
+      scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
       syncing: false,
@@ -319,16 +347,75 @@ export class BrowserState {
     defaultBrowser: { isDefault: null, prompt: null },
     blockedPopups: {},
     permissionRules: [],
+    permissionDefaults: {},
+    lastSafetyCheck: null,
     permissionPrompts: [],
     securityPrompts: [],
     pageDialogs: [],
+    screenCaptureRequests: [],
+    shareRequests: [],
     crashRestore: null,
     autofill: emptyAutofillUIState(),
     blocking: emptyBlockingStatus(),
     privacy: emptyPrivacyStatus(),
-    translate: emptyTranslateState()
+    translate: emptyTranslateState(),
+    spellcheck: UNAVAILABLE_SPELLCHECK,
+    readAloud: null,
+    import: null
   })
-  searchEngines: SearchEngine[] = DEFAULT_SEARCH_ENGINES
+  /**
+   * The shipped engines plus the installed extensions' (`chrome_settings_overrides`) plus the
+   * user's (`settings.searchEngines`: added by hand or discovered through OpenSearch, synced with
+   * the settings), rebuilt when either list changes.
+   */
+  get searchEngines(): SearchEngine[] {
+    const user = this.settings.searchEngines
+    const extension = this.extensionSearch.engines
+    if (
+      !this.enginesCache ||
+      this.enginesCache.user !== user ||
+      this.enginesCache.extension !== extension
+    ) {
+      this.enginesCache = { user, extension, list: allSearchEngines(user, extension) }
+    }
+    return this.enginesCache.list
+  }
+  private enginesCache: {
+    user: SearchEngine[] | undefined
+    extension: SearchEngine[]
+    list: SearchEngine[]
+  } | null = null
+
+  /**
+   * What the installed extensions declare (`chrome_settings_overrides.search_provider`): their
+   * engines, and the one holding the default if any. Set by the extension host on load and
+   * unload; never persisted here, the extension is the record.
+   */
+  private extensionSearch: { engines: SearchEngine[]; control: SearchEngineControl | null } = {
+    engines: [],
+    control: null
+  }
+
+  setExtensionSearch(engines: SearchEngine[], control: SearchEngineControl | null): void {
+    this.extensionSearch = { engines, control }
+    this.commit()
+  }
+
+  get searchEngineControl(): SearchEngineControl | null {
+    return this.extensionSearch.control
+  }
+
+  /**
+   * The engine a search goes to: the extension-controlled one while an extension holds the
+   * default, else the user's pick, else the first (`defaultSearchEngineOf`).
+   */
+  defaultSearchEngine(): SearchEngine {
+    return defaultSearchEngineOf(
+      this.searchEngines,
+      this.settings.searchEngineId,
+      this.extensionSearch.control
+    )
+  }
   readonly version: string
 
   private readonly store: JsonStore<Persisted>
@@ -356,6 +443,7 @@ export class BrowserState {
   ) {
     this.version = version
     this.store = new JsonStore<Persisted>(io, 'state.json', { backup: true })
+    this.navigationState = new NavigationStateStore(io, (tabId) => this.navigationFor(tabId))
     this.model = emptyModel(structuredClone(DEFAULT_CONTAINERS))
   }
 
@@ -368,6 +456,24 @@ export class BrowserState {
       this.uncleanExit = data.cleanExit === false
     }
     this.ensureValid()
+    // The blobs' folder hears which ids the session refers to; the documents of the others go at
+    // the store's first fire (nothing is read here).
+    this.navigationState.load(
+      new Set([...this.tabNavigation.keys(), ...closedTabIds(this.recentlyClosed)])
+    )
+  }
+
+  /**
+   * What `navigation/<tabId>.json` is to hold: the open tab's stack (a private tab's never),
+   * else the stack a recently-closed entry keeps for the id, else nothing.
+   */
+  private navigationFor(tabId: string): NavigationSnapshot | null {
+    const tab = this.model.tabs[tabId]
+    if (tab) {
+      if (tab.containerId === PRIVATE_CONTAINER_ID) return null
+      return this.tabNavigation.get(tabId) ?? null
+    }
+    return closedNavigationOf(this.recentlyClosed, tabId)
   }
 
   /** The app is shutting down gracefully: the next write marks the profile as cleanly exited. */
@@ -426,7 +532,16 @@ export class BrowserState {
     this.settings.mutedHosts = Array.isArray(this.settings.mutedHosts)
       ? this.settings.mutedHosts.filter((h): h is string => typeof h === 'string' && h !== '')
       : []
+    // The user's engines (Settings > Search, OpenSearch discovery); the default among them is
+    // never dropped by the caps. `repair()` below falls the default back if its engine is gone.
+    this.settings.searchEngines = sanitizeSearchEngines(
+      data.settings?.searchEngines,
+      typeof data.settings?.searchEngineId === 'string' ? data.settings.searchEngineId : undefined
+    )
     this.settings.privacy = sanitizePrivacySettings(data.settings?.privacy)
+    this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
+    this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
+    this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)
     // The new tab page's one model (v5). The migration reads the desktop's first shape and the
     // phone's key, and runs before the sanitiser, which knows nothing of the earlier fields; it
     // reads its own result unchanged, so a migrated profile loads as it was written.
@@ -605,7 +720,7 @@ export class BrowserState {
     )
     const bookmarkTree = new BookmarkTree(this.bookmarks)
     for (const tab of Object.values(m.tabs)) tab.bookmarked = bookmarkTree.hasUrl(tab.url)
-    if (!this.searchEngines.some((e) => e.id === this.settings.searchEngineId)) {
+    if (!isPickableSearchEngine(this.searchEngines, this.settings.searchEngineId)) {
       this.settings.searchEngineId = DEFAULT_SETTINGS.searchEngineId
     }
     for (const w of this.restoredWindows) {
@@ -721,6 +836,7 @@ export class BrowserState {
       settings,
       shortcuts: this.shortcuts,
       searchEngines: this.searchEngines,
+      searchEngineControl: this.extensionSearch.control,
       glance: win.glance,
       compactSidebarRevealed: win.compactSidebarRevealed,
       window: win.windowState(),
@@ -780,6 +896,7 @@ export class BrowserState {
   /** Stop persisting (called once the final state has been flushed on quit). */
   freeze(): void {
     this.frozen = true
+    this.navigationState.freeze()
   }
 
   /** Update only volatile UI state (no disk write). */
@@ -831,7 +948,8 @@ export class BrowserState {
       shortcutOverrides: this.shortcutOverrides,
       bookmarkTree: { schemaVersion: BOOKMARK_SCHEMA_VERSION, nodes: this.bookmarks },
       windows: persistedWindows,
-      recentlyClosed: this.recentlyClosed,
+      // The stacks travel without their host-state blobs, which `navigation/` holds.
+      recentlyClosed: withoutClosedHostState(this.recentlyClosed),
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice
@@ -845,9 +963,11 @@ export class BrowserState {
       const tab = tabs[tabId]
       if (!tab || tab.containerId === PRIVATE_CONTAINER_ID) {
         this.tabNavigation.delete(tabId)
+        // Its document follows: a closed entry holding the id keeps it, else it goes.
+        this.navigationState.touch(tabId)
         continue
       }
-      out[tabId] = snapshot
+      out[tabId] = withoutHostState(snapshot)
     }
     return out
   }
@@ -856,12 +976,14 @@ export class BrowserState {
     if (this.frozen) return
     this.store.write(this.toPersisted())
     await this.store.flush()
+    await this.navigationState.flush()
   }
 
   flushSync(): void {
     if (this.frozen) return
     this.store.write(this.toPersisted())
     this.store.flushSync()
+    this.navigationState.flushSync()
   }
 }
 

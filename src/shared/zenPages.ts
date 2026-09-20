@@ -20,6 +20,7 @@ import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitia
 import { isCertificateError } from './siteInfo'
 import { errorPageCertificate } from './url'
 import { newTabPageHtml } from './newTabPage'
+import { pdfMissingPageHtml, pdfViewerPageHtml, type PdfPageLookup } from './pdfPage'
 
 export const ZEN_SCHEME = 'zen'
 
@@ -395,17 +396,42 @@ export const ERROR_PAGE_RULES_START = '.zen-error-document {'
 export const ERROR_PAGE_RULES_END = '@layer base {'
 
 /**
+ * The status inks – `--zen-ok`, `--zen-warn`, `--zen-danger` and their rgb triples, which the
+ * token block's `--v2-ok` / `--v2-warn` / `--v2-danger` alias (§9.29: status ink is shared by
+ * both families, as ink only) – cut from the chrome's first light and dark root blocks and set
+ * on the page's root, for the interstitials' title glyphs and the way on to a dangerous site.
+ * '' when the blocks are gone.
+ */
+function statusInkStyle(css: string): string {
+  const declarations = (selector: string): string[] => {
+    const start = css.indexOf(`${selector} {`)
+    if (start === -1) return []
+    const body = css.slice(start, css.indexOf('\n}', start))
+    return body.match(/--zen-(?:ok|warn|danger)(?:-rgb)?: [^;]+;/g) ?? []
+  }
+  // Restated on the page's root under the token block's own selectors (the page is a document
+  // of its own, so `:root` is the error document).
+  const rule = (selector: string): string => {
+    const lines = declarations(selector)
+    return lines.length ? `${selector} {\n  ${lines.join('\n  ')}\n}` : ''
+  }
+  return [rule(':root'), rule(":root[data-theme='dark']")].filter(Boolean).join('\n')
+}
+
+/**
  * The error page's stylesheet, cut from the chrome's (design-language-v2-draft §1, §2, §4): the
  * token block (light, dark, coarse pointer, phone, the shared `zen-v2-*` focus ring), the v2
- * button that the Reload control is, and the page's own layout and type rules. Every colour and
- * size is read from a token; `light-dark()`, which the system WebView the page ships to (113 on
- * the emulator) does not know, appears nowhere.
+ * button that the Reload control is, the status inks the token block aliases, and the page's
+ * own layout and type rules – the interstitials' included. Every colour and size is read from a
+ * token; `light-dark()`, which the system WebView the page ships to (113 on the emulator) does
+ * not know, appears nowhere.
  */
 export function errorPageStyle(css: string = chromeStylesheet): string {
   const tokens = css.indexOf('--v2-page:')
   return [
     cssBetween(css, tokens === -1 ? -1 : css.lastIndexOf(':root {', tokens), V2_TOKENS_END),
     cssBetween(css, css.indexOf('.zen-v2-button {'), V2_BUTTON_END),
+    statusInkStyle(css),
     cssBetween(css, css.indexOf(ERROR_PAGE_RULES_START), ERROR_PAGE_RULES_END)
   ]
     .filter(Boolean)
@@ -517,7 +543,7 @@ export function errorPageHtml(url: URL): string {
 
 /**
  * Shown when a filter list blocks a whole page (malware hosts, ad-only domains). The site can be
- * excepted in Settings → Privacy and security; the page itself only offers the way back.
+ * excepted in Settings → Privacy and Security; the page itself only offers the way back.
  */
 export function blockedPageHtml(target: string): string {
   let host = target
@@ -530,7 +556,7 @@ export function blockedPageHtml(target: string): string {
 <body><div class="card">
   <h1>Zenium blocked this page</h1>
   <p><strong>${escapeHtml(host)}</strong> is on one of your filter lists as an ad, tracking or malware host, so Zenium did not load it.</p>
-  <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and security.</p>
+  <p>To visit it anyway, add the site to the exceptions in Settings &rsaquo; Privacy and Security.</p>
   <p><code>${escapeHtml(target)}</code></p>
   <button onclick="history.back()">Go back</button>
 </div></body></html>`
@@ -548,68 +574,171 @@ function threatOf(value: string | null): SafeBrowsingThreat {
   return value && value in SAFE_BROWSING_THREAT_LABELS ? (value as SafeBrowsingThreat) : 'unknown'
 }
 
-const INTERSTITIAL_STYLE = `
-  .card { text-align: left; max-width: 560px; }
-  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
-  details { margin: 0 0 20px; opacity: .8; line-height: 1.5; }
-  summary { cursor: pointer; }
-  .warn { font-size: 40px; line-height: 1; margin-bottom: 16px; }
-`
-
+/** An inline handler posting the interstitial message `action` for `target` (the certificate page's controls). */
 function postAction(action: InterstitialAction, target: string): string {
   return `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:${JSON.stringify(action)},url:${JSON.stringify(target)}}},'*')`
 }
 
+/** Lucide's glyphs the warning pages draw inline (the page cannot import the icon set). */
+const GLYPHS = {
+  'shield-alert':
+    '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  'lock-open':
+    '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+  'loader-circle': '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'
+} as const
+
+function glyph(name: keyof typeof GLYPHS): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GLYPHS[name]}</svg>`
+}
+
+/** A warning page's action: the v2 button that posts `action` for the page it stands in for. */
+interface WarningButton {
+  action: InterstitialAction
+  label: string
+  /** The page's one primary (Back to safety). */
+  primary?: boolean
+  /** Goes on to a site Safe Browsing flagged: the label in danger ink. */
+  danger?: boolean
+}
+
+/** What a warning page says and offers; `warningPageHtml` lays it out. */
+interface WarningPage {
+  kind: 'safebrowsing' | 'https-only'
+  /** The `<title>`. */
+  name: string
+  /** The status ink of the title's glyph. */
+  tone: 'danger' | 'warn'
+  glyph: keyof typeof GLYPHS
+  title: string
+  /** HTML: the title block's description. */
+  description: string
+  /** The actions beside Details, in order; the primary trails. */
+  actions: WarningButton[]
+  /** HTML paragraphs under Details, before the address. */
+  details: string
+  /** The actions under Details, after the address. */
+  detailActions: WarningButton[]
+  /** The page the interstitial stands in for. */
+  target: string
+  /** Extra `data-` attributes on the page's `<main>`. */
+  data?: Record<string, string>
+}
+
 /**
- * Safe Browsing's interstitial (Chrome's red page, in Zenium's words): the request engine
- * refused the navigation because the site is on a malware or phishing feed. "Proceed anyway"
- * excepts the host until the browser closes.
+ * The warning pages' script: Details toggles its section; an action posts the page's message
+ * (`INTERSTITIAL_MESSAGE_KEY`, relayed to the core) and turns busy – `aria-busy` with the
+ * spinner in the label's place, the other actions disabled at .4 (§9.30) – until the browser
+ * answers by leaving the page. Should it not, the page frees itself after a while so the
+ * choice can be made again.
+ */
+function warningPageScript(target: string): string {
+  const url = JSON.stringify(target).replace(/</g, '\\u003c')
+  return (
+    '(function(){var main=document.querySelector("main"),toggle=document.getElementById("zen-details-toggle"),details=document.getElementById("zen-details"),' +
+    'all=function(){return Array.prototype.slice.call(document.querySelectorAll(".zen-interstitial-action"))};' +
+    'toggle.addEventListener("click",function(){var open=details.hidden;details.hidden=!open;toggle.setAttribute("aria-expanded",String(open))});' +
+    'all().forEach(function(b){if(!b.dataset.action)return;b.addEventListener("click",function(){' +
+    'if(main.dataset.busy)return;main.dataset.busy="true";b.setAttribute("aria-busy","true");' +
+    'all().forEach(function(o){if(o!==b)o.disabled=true});' +
+    `window.postMessage({${INTERSTITIAL_MESSAGE_KEY}:{action:b.dataset.action,url:${url}}},"*");` +
+    'setTimeout(function(){delete main.dataset.busy;b.removeAttribute("aria-busy");all().forEach(function(o){o.disabled=false})},8000)})})})()'
+  )
+}
+
+function warningButton(button: WarningButton, autofocus: boolean): string {
+  const classes = ['zen-v2-button', 'zen-interstitial-action']
+  if (button.danger) classes.push('zen-interstitial-danger')
+  return `<button type="button" class="${classes.join(' ')}"${button.primary ? ' data-primary' : ''}${autofocus ? ' autofocus' : ''} data-action="${button.action}"><span class="zen-interstitial-label">${escapeHtml(button.label)}</span><span class="zen-interstitial-spinner">${glyph('loader-circle')}</span></button>`
+}
+
+/**
+ * A warning page – Safe Browsing's and HTTPS-only mode's interstitials – on the error page's
+ * surface (design-language-v2-draft §9.11, §9.23, §9.30;
+ * the rules are the page's own in `main.css`): the neutral page, its block anchored at 30% of
+ * the page's height (§9.17), a title block – the glyph in status ink before the 22/600 title, the
+ * description under it – and the actions 16 below: Details first, the way on beside it, Back to
+ * safety as the primary trailing, the row right-aligned on desktop (a phone splits two peers and
+ * stacks three, primary first). Under Details, 16 below the actions, the reason, the address at
+ * 13 and the secondary that goes on regardless.
+ */
+function warningPageHtml(page: WarningPage): string {
+  const data = Object.entries({ interstitial: page.kind, ...page.data })
+    .map(([k, v]) => ` data-${k}="${escapeHtml(v)}"`)
+    .join('')
+  const actions = [
+    `<button type="button" id="zen-details-toggle" class="zen-v2-button zen-interstitial-action" aria-expanded="false" aria-controls="zen-details">Details</button>`,
+    ...page.actions.map((b) => warningButton(b, b.primary === true))
+  ]
+  return `<!doctype html><html class="zen-error-document"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(page.name)}</title><script>${ERROR_PAGE_ATTRIBUTES_SCRIPT}</script><style>${ERROR_STYLE}</style></head>
+<body class="zen-error-page"><main${data}>
+  <div class="zen-interstitial-title" data-tone="${page.tone}">
+    ${glyph(page.glyph)}
+    <div>
+      <h1>${escapeHtml(page.title)}</h1>
+      <p>${page.description}</p>
+    </div>
+  </div>
+  <div class="zen-interstitial-actions">
+    ${actions.join('\n    ')}
+  </div>
+  <section id="zen-details" class="zen-interstitial-details" hidden>
+    ${page.details}
+    <p class="zen-interstitial-address">${escapeHtml(page.target)}</p>
+    <div class="zen-interstitial-actions">
+      ${page.detailActions.map((b) => warningButton(b, false)).join('\n      ')}
+    </div>
+  </section>
+</main><script>${warningPageScript(page.target)}</script></body></html>`
+}
+
+/**
+ * Safe Browsing's interstitial (Chrome's red page, in Zenium's words on the neutral page): the
+ * request engine refused the navigation because the site is on a malware or phishing feed.
+ * "Proceed anyway", under Details, excepts the host until the browser closes.
  */
 export function safeBrowsingPageHtml(target: string, threat: SafeBrowsingThreat): string {
   const host = hostOf(target)
   const copy = SAFE_BROWSING_THREAT_LABELS[threat]
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Security warning</title><style>${BASE_STYLE}${INTERSTITIAL_STYLE}</style></head>
-<body><div class="card" data-interstitial="safebrowsing" data-threat="${escapeHtml(threat)}">
-  <div class="warn" aria-hidden="true">&#9888;</div>
-  <h1>${escapeHtml(copy.title)}</h1>
-  <p>Zenium stopped this page. ${escapeHtml(copy.description)}</p>
-  <details>
-    <summary>Details</summary>
-    <p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and security.</p>
-    <p><code>${escapeHtml(target)}</code></p>
-    <p><button class="secondary" onclick="${escapeHtml(postAction('proceed', target))}">Proceed anyway (unsafe)</button></p>
-  </details>
-  <div class="actions">
-    <button class="primary" autofocus onclick="${escapeHtml(postAction('back', target))}">Back to safety</button>
-  </div>
-</div></body></html>`
+  return warningPageHtml({
+    kind: 'safebrowsing',
+    name: 'Security warning',
+    tone: 'danger',
+    glyph: 'shield-alert',
+    title: copy.title,
+    description: `Zenium stopped this page. ${escapeHtml(copy.description)}`,
+    actions: [{ action: 'back', label: 'Back to safety', primary: true }],
+    details: `<p><strong>${escapeHtml(host)}</strong> is on one of the open malware and phishing feeds Zenium checks (URLhaus, Phishing.Database, malware-filter). Feeds are refreshed while the browser runs; Safe Browsing can be turned off in Settings &rsaquo; Privacy and Security.</p>`,
+    detailActions: [{ action: 'proceed', label: 'Proceed anyway (unsafe)', danger: true }],
+    target,
+    data: { threat }
+  })
 }
 
 /**
  * HTTPS-only mode's question: the https upgrade of `httpUrl` failed, so the page can only be
- * had over plaintext. "Continue" allows the site until the browser closes; "Always allow"
- * remembers it (the `https-only` permission).
+ * had over plaintext. "Continue" allows the site until the browser closes; "Always allow",
+ * under Details, remembers it (the `https-only` permission).
  */
 export function httpsOnlyPageHtml(httpUrl: string, code: number): string {
   const host = hostOf(httpUrl)
   const reason = describeNetError(code, 'The secure connection could not be made.')
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Secure connection not available</title><style>${BASE_STYLE}${INTERSTITIAL_STYLE}</style></head>
-<body><div class="card" data-interstitial="https-only">
-  <div class="warn" aria-hidden="true">&#128275;</div>
-  <h1>Secure connection not available</h1>
-  <p>Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.</p>
-  <details>
-    <summary>Details</summary>
-    <p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
-    <p><code>${escapeHtml(httpUrl)}</code></p>
-    <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and security.</p>
-  </details>
-  <div class="actions">
-    <button class="primary" autofocus onclick="${escapeHtml(postAction('back', httpUrl))}">Back to safety</button>
-    <button class="secondary" onclick="${escapeHtml(postAction('continue', httpUrl))}">Continue to HTTP site</button>
-    <button class="secondary" onclick="${escapeHtml(postAction('continue-always', httpUrl))}">Always allow for this site</button>
-  </div>
-</div></body></html>`
+  return warningPageHtml({
+    kind: 'https-only',
+    name: 'Secure connection not available',
+    tone: 'warn',
+    glyph: 'lock-open',
+    title: 'Secure connection not available',
+    description: `Zenium tried to reach <strong>${escapeHtml(host)}</strong> over https and could not. Loading it over http means what you send and receive can be read and changed on the way.`,
+    actions: [
+      { action: 'continue', label: 'Continue to HTTP site' },
+      { action: 'back', label: 'Back to safety', primary: true }
+    ],
+    details: `<p>${escapeHtml(reason)}${code ? ` (${code})` : ''}</p>
+    <p>HTTPS-only mode can be changed in Settings &rsaquo; Privacy and Security.</p>`,
+    detailActions: [{ action: 'continue-always', label: 'Always allow for this site' }],
+    target: httpUrl
+  })
 }
 
 export function readerMissingPageHtml(original: string | null): string {
@@ -685,7 +814,8 @@ export function overlayForUrl(rawUrl: string): OverlayKind | null {
 export function zenPageHtml(
   rawUrl: string,
   reader?: ReaderPageLookup,
-  image?: ImagePageLookup
+  image?: ImagePageLookup,
+  pdf?: PdfPageLookup
 ): string {
   const url = parseZenUrl(rawUrl)
   if (!url) return blankPageHtml()
@@ -702,6 +832,10 @@ export function zenPageHtml(
     case 'image': {
       const data = image?.(url.searchParams.get('id') ?? '')
       return data ? imagePageHtml(data) : imageMissingPageHtml()
+    }
+    case 'pdf': {
+      const doc = pdf?.(url.searchParams.get('id') ?? '')
+      return doc ? pdfViewerPageHtml(doc) : pdfMissingPageHtml()
     }
     default:
       return blankPageHtml()

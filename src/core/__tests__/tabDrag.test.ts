@@ -284,8 +284,21 @@ function openPageTab(f: Fixture, win: ZenWindow): Tab {
 
 describe('parseDropKey', () => {
   it('reads every kind of target', () => {
-    expect(parseDropKey('tab:tab_1:before')).toEqual({ kind: 'tab', tabId: 'tab_1', after: false })
-    expect(parseDropKey('tab:tab_1:after')).toEqual({ kind: 'tab', tabId: 'tab_1', after: true })
+    expect(parseDropKey('tab:tab_1:before')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'before'
+    })
+    expect(parseDropKey('tab:tab_1:after')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'after'
+    })
+    expect(parseDropKey('tab:tab_1:into')).toEqual({
+      kind: 'tab',
+      tabId: 'tab_1',
+      position: 'into'
+    })
     expect(parseDropKey('section:pinned:space_1')).toEqual({
       kind: 'section',
       section: 'pinned',
@@ -299,6 +312,8 @@ describe('parseDropKey', () => {
     expect(parseDropKey('folder:folder_1')).toEqual({ kind: 'folder', folderId: 'folder_1' })
     expect(parseDropKey('space:space_1')).toEqual({ kind: 'space', spaceId: 'space_1' })
     expect(parseDropKey('split:left')).toEqual({ kind: 'split', side: 'left' })
+    expect(parseDropKey('split:bottom')).toEqual({ kind: 'split', side: 'bottom' })
+    expect(parseDropKey('pane:tab_1')).toEqual({ kind: 'pane', tabId: 'tab_1' })
     expect(parseDropKey('bookmark:toolbar:3')).toEqual({
       kind: 'bookmark',
       folderId: 'toolbar',
@@ -328,6 +343,8 @@ describe('parseDropKey', () => {
     expect(parseDropKey('tab::after')).toBeNull()
     expect(parseDropKey('section:pinned')).toBeNull()
     expect(parseDropKey('folder:')).toBeNull()
+    expect(parseDropKey('split:diagonal')).toBeNull()
+    expect(parseDropKey('pane:')).toBeNull()
     expect(parseDropKey('bookmark:toolbar:x')).toBeNull()
     expect(parseDropKey('elsewhere:1')).toBeNull()
   })
@@ -464,6 +481,71 @@ describe('drag between windows', () => {
     expect(a.selectedTabIn(a.activeSpace())).toBe(first.id)
     expect(f.sentTo(b, 'tab.dragOver').at(-1)).toBeNull()
     expect(f.hostOf(b).focused).toBeGreaterThan(0)
+    expect(f.browser.allWindows()).toHaveLength(2)
+  })
+
+  it('a torn-off window emptied by dragging its tab back closes (Chrome), the first stays', async () => {
+    const f = fixture()
+    const a = f.browser.focusedWindow()
+    const first = f.openPage(a, 'https://example.com')
+    const second = f.openPage(a, 'https://example.org')
+    // Tear the second tab off into a window of its own …
+    drag(f, a, second.id, { x: 1500, y: 900 })
+    f.browser.handleCommand(a, 'tab.dragEnd', {
+      tabId: second.id,
+      x: 1500,
+      y: 900,
+      outcome: 'release'
+    })
+    const torn = f.browser.allWindows().find((w) => w !== a)
+    if (!torn) throw new Error('no new window')
+    const local = torn.localSpace
+    if (!local) throw new Error('a torn-off window has a local space')
+    expect(local.tabIds).toEqual([second.id])
+    // … and drag it back onto the first window (the pointer in the torn window's coordinates).
+    const tb = f.hostOf(torn).bounds
+    const back = { x: 600 - tb.x, y: 300 - tb.y }
+    drag(f, torn, second.id, back)
+    f.browser.handleCommand(a, 'tab.dragTarget', {
+      tabId: second.id,
+      key: `section:regular:${a.activeSpace().id}`
+    })
+    f.browser.handleCommand(torn, 'tab.dragEnd', { tabId: second.id, ...back, outcome: 'release' })
+    expect(a.activeSpace().tabIds).toEqual([first.id, second.id])
+    expect(local.tabIds).toEqual([])
+    // The emptied window goes once the drag has finished; the first window is untouched.
+    expect(f.hostOf(torn).closed).toBe(false)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(torn).closed).toBe(true)
+    expect(f.hostOf(a).closed).toBe(false)
+    expect(f.browser.allWindows()).toEqual([a])
+  })
+
+  it('"Move Tab to Another Window" from the menu closes the blank window it empties', async () => {
+    const f = fixture()
+    const { a, b } = twoWindows(f)
+    f.openPage(a, 'https://example.com')
+    const theirs = f.openPage(b, 'https://example.org')
+    expect(b.localSpace?.tabIds).toEqual([theirs.id])
+    expect(f.browser.tabs.moveTabToWindow(theirs.id, a, null, b)).toBe(true)
+    expect(a.activeSpace().tabIds).toContain(theirs.id)
+    expect(a.selectedTabIn(a.activeSpace())).toBe(theirs.id)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(b).closed).toBe(true)
+    expect(f.browser.allWindows()).toEqual([a])
+  })
+
+  it('a synced window keeps its spaces when its last tab goes to another window', async () => {
+    const f = fixture()
+    const { a, b } = twoWindows(f)
+    const only = f.openPage(a, 'https://example.com')
+    const local = b.localSpace
+    if (!local) throw new Error('a blank window has a local space')
+    expect(f.browser.tabs.moveTabToWindow(only.id, b, null, a)).toBe(true)
+    expect(local.tabIds).toEqual([only.id])
+    expect(a.activeSpace().tabIds).toEqual([])
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.hostOf(a).closed).toBe(false)
     expect(f.browser.allWindows()).toHaveLength(2)
   })
 
@@ -734,6 +816,7 @@ function panelFixture(): PanelFixture {
         },
         loaded: (id: string) => (id === PANEL_EXT ? ext : undefined),
         grants: () => ({ permissions: ['sidePanel'], origins: [] }),
+        dispatch: () => undefined,
         commitUi: () => browser.state.commitVolatile()
       }
       const viewHost: PanelViewHost = {
@@ -924,6 +1007,139 @@ describe('dropTab', () => {
     expect(f.browser.tabs.dropTab(a.id, `tab:${a.id}:after`, win)).toBe(false)
     expect(f.browser.tabs.dropTab(a.id, 'folder:nope', win)).toBe(false)
     expect(f.browser.tabs.dropTab(a.id, 'section:sideways:x', win)).toBe(false)
+    expect(f.browser.tabs.dropTab(a.id, 'split:diagonal', win)).toBe(false)
+    expect(f.browser.tabs.dropTab(a.id, 'pane:nope', win)).toBe(false)
+  })
+})
+
+describe('a tab dropped on the content area (split edges and panes)', () => {
+  function groupOf(f: Fixture, tabId: string): { tabIds: string[]; layout: string } | null {
+    const tab = f.browser.tabs.tab(tabId)
+    const group = tab?.splitGroupId ? f.browser.state.model.splitGroups[tab.splitGroupId] : null
+    return group ? { tabIds: group.tabIds, layout: group.layout } : null
+  }
+
+  it('splits the shown tab with the dropped one, side by side or stacked, on the dropped side', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    f.browser.tabs.activateTab(a.id, win)
+    expect(f.browser.tabs.dropTab(b.id, 'split:left', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [b.id, a.id], layout: 'vertical' })
+    f.browser.tabs.unsplit(undefined, a.id, win)
+    expect(groupOf(f, a.id)).toBeNull()
+    expect(f.browser.tabs.dropTab(b.id, 'split:bottom', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [a.id, b.id], layout: 'horizontal' })
+    // The shown tab cannot split with itself.
+    f.browser.tabs.unsplit(undefined, a.id, win)
+    expect(f.browser.tabs.dropTab(a.id, 'split:right', win)).toBe(false)
+  })
+
+  it('joins the split shown as a pane on that side; across its axis the layout turns (BUG-039)', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    const c = f.openPage(win, 'https://c.example')
+    const d = f.openPage(win, 'https://d.example')
+    f.browser.tabs.createSplit([a.id, b.id], 'vertical', win)
+    f.browser.tabs.activateTab(a.id, win)
+    // Along the axis: a third column, on the left.
+    expect(f.browser.tabs.dropTab(c.id, 'split:left', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [c.id, a.id, b.id], layout: 'vertical' })
+    expect(win.selectedTabIn(win.activeSpace())).toBe(c.id)
+    // Across it: "Split top" stacks, the new pane above the others.
+    expect(f.browser.tabs.dropTab(d.id, 'split:top', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [d.id, c.id, a.id, b.id], layout: 'horizontal' })
+    expect(win.selectedTabIn(win.activeSpace())).toBe(d.id)
+  })
+
+  it('moves a pane of the split to the edge it is dropped on', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    const c = f.openPage(win, 'https://c.example')
+    f.browser.tabs.createSplit([a.id, b.id, c.id], 'vertical', win)
+    f.browser.tabs.activateTab(a.id, win)
+    expect(f.browser.tabs.dropTab(a.id, 'split:right', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [b.id, c.id, a.id], layout: 'vertical' })
+    expect(f.browser.tabs.dropTab(c.id, 'split:bottom', win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [b.id, a.id, c.id], layout: 'horizontal' })
+  })
+
+  it('a full split takes no more and says so', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const tabs = ['a', 'b', 'c', 'd', 'e'].map((n) => f.openPage(win, `https://${n}.example`))
+    const four = tabs.slice(0, 4).map((t) => t.id)
+    f.browser.tabs.createSplit(four, 'vertical', win)
+    f.browser.tabs.activateTab(four[0], win)
+    expect(f.browser.tabs.dropTab(tabs[4].id, 'split:right', win)).toBe(false)
+    expect(groupOf(f, four[0])).toEqual({ tabIds: four, layout: 'vertical' })
+    expect(f.sentTo(win, 'toast').at(-1)).toEqual({
+      message: 'Split views can hold up to 4 tabs.',
+      kind: 'info'
+    })
+  })
+
+  it('a tab dropped on a pane takes it over; the tab shown there leaves the split and stays open', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    const c = f.openPage(win, 'https://c.example')
+    f.browser.tabs.createSplit([a.id, b.id], 'vertical', win)
+    f.browser.tabs.activateTab(a.id, win)
+    expect(f.browser.tabs.dropTab(c.id, `pane:${a.id}`, win)).toBe(true)
+    expect(groupOf(f, c.id)).toEqual({ tabIds: [c.id, b.id], layout: 'vertical' })
+    expect(f.browser.tabs.tab(a.id)?.splitGroupId).toBeNull()
+    expect(win.activeSpace().tabIds).toContain(a.id)
+    expect(win.selectedTabIn(win.activeSpace())).toBe(c.id)
+    // Dropped on the pane it already shows: nothing to do.
+    expect(f.browser.tabs.dropTab(c.id, `pane:${c.id}`, win)).toBe(false)
+  })
+
+  it('two panes of one split swap places', () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    const a = f.openPage(win, 'https://a.example')
+    const b = f.openPage(win, 'https://b.example')
+    const c = f.openPage(win, 'https://c.example')
+    f.browser.tabs.createSplit([a.id, b.id, c.id], 'vertical', win)
+    expect(f.browser.tabs.dropTab(a.id, `pane:${c.id}`, win)).toBe(true)
+    expect(groupOf(f, a.id)).toEqual({ tabIds: [c.id, b.id, a.id], layout: 'vertical' })
+  })
+
+  it('from another window: the tab moves in, then splits with (or takes a pane of) what that window shows', () => {
+    const f = fixture()
+    const a = f.browser.focusedWindow()
+    const b = f.browser.createWindow({
+      kind: 'unsynced',
+      from: a,
+      bounds: { x: 1400, y: 100, width: 800, height: 600 },
+      empty: true
+    })
+    const local = b.localSpace
+    if (!local) throw new Error('a blank window has a local space')
+    const shown = f.openPage(b, 'https://shown.example')
+    const first = f.openPage(a, 'https://first.example')
+    const second = f.openPage(a, 'https://second.example')
+    drag(f, a, first.id, { x: 1500, y: 300 })
+    f.browser.handleCommand(b, 'tab.dragTarget', { tabId: first.id, key: 'split:right' })
+    release(f, a, first.id, { x: 1500, y: 300 })
+    expect(local.tabIds).toEqual([shown.id, first.id])
+    expect(groupOf(f, shown.id)).toEqual({ tabIds: [shown.id, first.id], layout: 'vertical' })
+    expect(b.selectedTabIn(local)).toBe(first.id)
+    drag(f, a, second.id, { x: 1500, y: 300 })
+    f.browser.handleCommand(b, 'tab.dragTarget', { tabId: second.id, key: `pane:${shown.id}` })
+    release(f, a, second.id, { x: 1500, y: 300 })
+    expect(local.tabIds).toEqual([shown.id, first.id, second.id])
+    expect(groupOf(f, second.id)).toEqual({ tabIds: [second.id, first.id], layout: 'vertical' })
+    expect(f.browser.tabs.tab(shown.id)?.splitGroupId).toBeNull()
+    expect(a.activeSpace().tabIds).not.toContain(first.id)
+    expect(a.activeSpace().tabIds).not.toContain(second.id)
   })
 })
 

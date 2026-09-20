@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,9 +16,12 @@ import android.os.Message
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
+import android.view.ActionMode
 import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
+import android.view.Menu
+import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.PixelCopy
 import android.view.View
@@ -47,6 +51,7 @@ import androidx.webkit.WebViewFeature
 import app.zen.chromium.blocking.BlockingTab
 import app.zen.chromium.blocking.Decision
 import app.zen.chromium.blocking.SafeBrowsingHit
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.NavigationReports
 import app.zen.chromium.privacy.PrivacyFlags
 import org.json.JSONArray
@@ -94,15 +99,41 @@ class TabWebView(
         private set
     /** How far the page sits below the top of its frame during a pull-to-refresh (device px). */
     private var pullOffsetPx = 0f
-    private val pull = PullToRefreshGesture(this, { super.onTouchEvent(it) }) { event -> onPull(event) }
+    /** The bar that hides on scroll: what of the touches and the scroll it hears (see `BarHideGesture`). */
+    val barHide = BarHideGesture(this) { phase, payload -> host.barScroll(tabId, phase, payload) }
+    /**
+     * With the bar hiding off the top edge, the page is laid out tall and slid up by the bar's
+     * offset, and the part of it that then pokes past the frame's bottom edge is clipped; the
+     * strip a bottom-docked bar has not yet left is clipped the same way (see `TabHost.place`).
+     */
+    private var barShiftPx = 0f
+    private var barClipPx = 0
+    private val pull = PullToRefreshGesture(this, { event -> barHide.forward(event) { super.onTouchEvent(it) } }) { event -> onPull(event) }
     /** Strips at the top and bottom edges that chrome messages cover (see `ContentCover`). */
     val cover = ContentCover({ resources.displayMetrics.density }) { invalidateOutline() }
     /** The in-page predictive back in flight on this view, if any (see `PredictiveBack.kt`). */
     var backTransition: PageBackTransition? = null
-    /** The history entry the page on screen belongs to (updated as navigations commit). */
+    /** The history entry the page on screen belongs to (updated as navigations commit), and how long the list was. */
     private var committedIndex = -1
     private var committedUrl = ""
+    private var committedSize = 0
     private var lastRememberedAt = 0L
+    /** The copies of the window in flight for this page, shared between their askers (see [captureBitmap]). */
+    private val captureShare = CaptureShare<Bitmap>()
+    /**
+     * The internal pages in this view's list, by position, to the `zen://` URL each was shown
+     * as. Their items all carry one and the same URL (the `data:` header WebView loads a
+     * `loadDataWithBaseURL` document under, [NavigationState.isDocumentPlaceholder]), so a name
+     * is its position's: set as the entry commits ([onHistoryCommitted], off the URL the commit
+     * reports, which for such a document is the base URL the page was loaded with – its own),
+     * seeded from the snapshot when a restore rebuilds the list ([restoreFromHostState]), and
+     * kept while the position holds a `data:` item ([NavigationState.keptNames]).
+     */
+    private val internalNames = HashMap<Int, String>()
+    /** A restore just rebuilt the list: the commit that follows reports it as built (see [onHistoryCommitted]). */
+    private var restoredList = false
+    /** The last `historyChanged` payload sent, as text: the same list again is not sent twice. */
+    private var lastHistoryText: String? = null
     private var replyProxy: JavaScriptReplyProxy? = null
     /** Whether the bridge object the page script posts through is registered on this view. */
     private var bridgeInstalled = false
@@ -141,6 +172,16 @@ class TabWebView(
     /** `onPageStarted` fired for a document whose commit `doUpdateVisitedHistory` has not reported yet. */
     private var awaitingCommit = false
     /**
+     * The document whose pixels the view shows: the one `onPageCommitVisible` (WebView's word that
+     * nothing of the page before is drawn any more) or `onPageFinished` last reported, carried
+     * across the in-page commits of that same document. Null until the view has drawn any
+     * document at all – a tab restored at boot whose page has not answered yet shows a blank
+     * window, and WebView says nothing of a load before the response comes (`onPageStarted`
+     * waits for it), so this is the only word that there is a page to picture: the card picture
+     * is taken of this document alone ([captureThumbnail], [snapshot]).
+     */
+    private var paintedDocument: String? = null
+    /**
      * The main-frame URL whose load failed last. WebView has already committed its own error page
      * under that URL (or is about to, and reports the commit through `doUpdateVisitedHistory` and
      * the page's title, "Webpage not available", through `onReceivedTitle`) by the time the core
@@ -162,6 +203,14 @@ class TabWebView(
     private var interstitialUrl: String? = null
     /** A certificate `onReceivedSslError` refused; the request's own failure follows and is the same news. */
     private var refusedCertificateUrl: String? = null
+    /**
+     * The extension page the runtime answered with an empty document because it does not serve
+     * the extension ([refuseExtensionPage], set from the request's thread before the document
+     * can start): its `onPageStarted` reports the load as failed, `ERR_BLOCKED_BY_CLIENT`.
+     */
+    @Volatile private var refusedExtensionPage: String? = null
+    /** The URL of the last document `onPageStarted` announced (main thread). */
+    private var startedDocument: String? = null
     /**
      * Certificates refused for resources that did not read as the page itself (another site's:
      * most likely a subresource, which Chrome blocks quietly), by URL, with the failure the
@@ -225,7 +274,9 @@ class TabWebView(
         webViewClient = Client()
         webChromeClient = Chrome()
         setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
-            host.downloads.start(url, userAgent, contentDisposition, mimetype, contentLength, tabId)
+            // A response the engine cannot show ends the navigation here; the core decides whether
+            // it is a PDF for the viewer or a file for Downloads (`navigation`).
+            host.downloads.start(url, userAgent, contentDisposition, mimetype, contentLength, tabId, navigation = true)
         }
         setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
             host.viewEvent(
@@ -267,8 +318,7 @@ class TabWebView(
     fun applyPrivacy() {
         val flags = host.privacy.flags
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) settings.safeBrowsingEnabled = flags.safeBrowsing
-        settings.mixedContentMode =
-            if (flags.httpsOnly == "always") WebSettings.MIXED_CONTENT_NEVER_ALLOW else WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        applyMixedContentPolicy(flags, currentDocument)
         applyCookiePolicy(flags, currentDocument)
         val script = flags.navigatorScript()
         if (script != signalScript) {
@@ -285,6 +335,20 @@ class TabWebView(
     private fun applyCookiePolicy(flags: PrivacyFlags, documentUrl: String?) {
         // The jar of this tab's container: a WebView on another profile is not the default jar's.
         Profiles.cookieManager(containerId).setAcceptThirdPartyCookies(this, flags.acceptsThirdPartyCookies(containerId, documentUrl))
+    }
+
+    /**
+     * An extension's own page in this tab (served on `https://<id>.ext.zenium.invalid/`) fetches
+     * plaintext URLs freely: in Chrome a `chrome-extension:` document is not a mixed-content
+     * restricting origin, only `https:` is, and Stylus's install page reads a usercss off the
+     * `http:` site it came from. Every other document follows the HTTPS-only setting.
+     */
+    private fun applyMixedContentPolicy(flags: PrivacyFlags, documentUrl: String?) {
+        settings.mixedContentMode = when {
+            documentUrl != null && ExtensionUrls.isExtensionUrl(documentUrl) -> WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            flags.httpsOnly == "always" -> WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            else -> WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        }
     }
 
     // --- placement ------------------------------------------------------------------------------
@@ -306,9 +370,38 @@ class TabWebView(
         pull.offsetApplied(px / resources.displayMetrics.density)
         if (px == pullOffsetPx) return
         pullOffsetPx = px
-        translationY = px
+        applyTranslation()
         invalidateOutline()
     }
+
+    // --- the bar that hides on scroll ---------------------------------------------------------------
+
+    /**
+     * Slide the page by `shiftPx` (a top-docked bar in motion takes the page's top edge with it)
+     * and clip `clipPx` off its bottom edge (the frame's edge where the tall layout runs past it,
+     * or the strip a bottom-docked bar has not yet left). Both 0 with the bar at rest.
+     */
+    fun setBarHideShift(shiftPx: Float, clipPx: Int) {
+        if (shiftPx == barShiftPx && clipPx == barClipPx) return
+        barShiftPx = shiftPx
+        barClipPx = clipPx.coerceAtLeast(0)
+        applyTranslation()
+        invalidateOutline()
+    }
+
+    /** The page sits below its frame's top during a pull and above it behind a hiding top bar. */
+    private fun applyTranslation() {
+        translationY = pullOffsetPx + barShiftPx
+    }
+
+    /**
+     * How much further down the page can scroll in its current layout, device px (0 at its end):
+     * what the bar that hides on scroll reads before it starts a hide – the page laid out a band
+     * taller must still have that band to scroll, or Chromium clamps the scroll back – and by
+     * which it tells that clamp from a finger's scroll up (see [BarHideScrollFilter]).
+     */
+    fun scrollRemaining(): Int =
+        (computeVerticalScrollRange() - computeVerticalScrollExtent() - scrollY).coerceAtLeast(0)
 
     /** Whether a drag down from the top of this page may become a pull-to-refresh right now. */
     fun pullToRefreshEligible(): Boolean =
@@ -335,18 +428,25 @@ class TabWebView(
 
     override fun onOverScrolled(scrollX: Int, scrollY: Int, clampedX: Boolean, clampedY: Boolean) {
         super.onOverScrolled(scrollX, scrollY, clampedX, clampedY)
+        barHide.onOverScrolled(scrollY, clampedY)
         pull.onOverScrolled(scrollY, clampedY)
+    }
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        barHide.onScrollChanged(t, oldt)
     }
 
     // --- the covered strips (chrome messages) ---------------------------------------------------
 
     /**
-     * Where the page's visible part starts and ends (device px): inside the covered strips, and
-     * above the frame's bottom edge while the page sits lower during a pull.
+     * Where the page's visible part starts and ends (device px): inside the covered strips,
+     * above the frame's bottom edge while the page sits lower during a pull, and above the strip
+     * the bar that hides on scroll still holds (see [setBarHideShift]).
      */
     private fun visibleTop(): Int = cover.topPx.coerceAtMost(height)
     private fun visibleBottom(): Int =
-        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx)).roundToInt().coerceIn(visibleTop(), height)
+        (height - maxOf(cover.bottomPx.toFloat(), pullOffsetPx, barClipPx.toFloat())).roundToInt().coerceIn(visibleTop(), height)
 
     /**
      * A touch landing on a covered strip is the chrome's: the message card drawn there wants it.
@@ -388,8 +488,7 @@ class TabWebView(
         if (host.pageScript.isEmpty()) return
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             WebViewCompat.addWebMessageListener(this, PAGE_BRIDGE, setOf("*")) { _, message, _, isMainFrame, proxy ->
-                if (!isMainFrame) return@addWebMessageListener
-                onPageMessage(message, proxy)
+                onPageMessage(message, proxy, isMainFrame)
             }
         } else {
             addJavascriptInterface(LegacyPageBridge(), PAGE_BRIDGE)
@@ -453,10 +552,21 @@ class TabWebView(
             lastDeviceWidth = css
             onPageRulesChanged()
         }
+        host.viewSized(this, w, h)
     }
 
-    private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?) {
-        when (val route = routePageMessage(message.data, host.pageToken)) {
+    /**
+     * A message from the page script in one of the tab's frames. The script runs in every frame,
+     * but the main document alone speaks for the tab, save for a frame's own fullscreen
+     * ([PageMessageRoute.heardFrom]): an embed's video goes fullscreen from its frame's document,
+     * the one that knows the video's size. The host weighs a frame's report against the main
+     * frame's ([PageHost.fullscreenVideo]). The legacy bridge (no frame on its messages) is
+     * taken as the main frame's, as it always was.
+     */
+    private fun onPageMessage(message: WebMessageCompat, proxy: JavaScriptReplyProxy?, isMainFrame: Boolean = true) {
+        val route = routePageMessage(message.data, host.pageToken)
+        if (!route.heardFrom(isMainFrame)) return
+        when (route) {
             PageMessageRoute.Ignore -> return
             PageMessageRoute.Hello -> {
                 replyProxy = proxy
@@ -465,6 +575,8 @@ class TabWebView(
             // The settled value of a Promise an evaluate() script returned (see evaluate()).
             is PageMessageRoute.EvalResult -> pendingEvals.remove(route.id)?.invoke(route.value)
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
+            is PageMessageRoute.Fullscreen ->
+                host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
             is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
         }
     }
@@ -592,7 +704,9 @@ class TabWebView(
         lastTouchX = event.x
         lastTouchY = event.y
         if (event.actionMasked == MotionEvent.ACTION_UP) reportActivation()
-        // The pull decides what of the touch the WebView sees (see PullToRefreshGesture).
+        // The bar that hides on scroll hears every touch; the pull decides what of it the WebView
+        // sees (see PullToRefreshGesture), and the bar shifts that by what it has taken.
+        barHide.onTouch(event)
         return pull.onTouchEvent(event)
     }
 
@@ -643,6 +757,123 @@ class TabWebView(
             }
         }
         return false
+    }
+
+    // --- the text-selection toolbar (see SelectionToolbar.kt) ------------------------------------
+
+    /**
+     * The WebView starts the system's floating action mode over selected text with its own
+     * callback (Copy, Share, Select all, Web search); wrapped, so Zenium's items from the core
+     * join them after Copy. The mode itself – floating type, handles, position – is the system's.
+     * Anything else (a primary action mode, another caller's callback) passes through untouched.
+     */
+    override fun startActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
+        if (type != ActionMode.TYPE_FLOATING || callback !is ActionMode.Callback2) return super.startActionMode(callback, type)
+        return super.startActionMode(SelectionActionMode(callback), type)
+    }
+
+    /**
+     * The WebView's selection callback with Zenium's items added (`SelectionToolbar.plan`). The
+     * items come from the core for the text selected, and again on every prepare of a selection
+     * menu (`SelectionToolbar.Listing`): the WebView keeps one mode across selection changes – a
+     * handle drag, Select all – and invalidates it, so the list is re-read then and the mode
+     * invalidated once more when the items change (the system's items show at once; Zenium's
+     * join within the toolbar's own entrance). A touch on one reads the selection again, sends
+     * `selection.action` to the core and finishes the mode, which clears the selection as the
+     * system's items do.
+     */
+    private inner class SelectionActionMode(private val system: ActionMode.Callback2) : ActionMode.Callback2() {
+        private var mode: ActionMode? = null
+        private var finished = false
+        /** The core's items, kept current with the selection across the mode's life. */
+        private val listing = SelectionToolbar.Listing(
+            readSelection = { onText -> evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw -> onText(SelectionToolbar.selectionText(raw)) } },
+            listItems = { text, onJson -> host.selectionMenu(tabId, text, onJson) },
+            invalidate = { mode?.invalidate() }
+        )
+        /** Where the selection sits on this view (`onGetContentRect`), for a glance's origin. */
+        private val selectionRect = Rect()
+        private val strings by lazy { frameworkStrings() }
+
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            this.mode = mode
+            Log.d(SELECTION_TAG, "selection mode of $tabId created")
+            return system.onCreateActionMode(mode, menu)
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            val prepared = system.onPrepareActionMode(mode, menu)
+            menu.removeGroup(SelectionToolbar.GROUP)
+            val systemItems = (0 until menu.size()).map(menu::getItem)
+            val plan = SelectionToolbar.plan(
+                systemItems.map { SelectionToolbar.SystemItem(it.groupId, it.order, it.title?.toString() ?: "", it.itemId) },
+                listing.items,
+                strings
+            )
+            Log.d(SELECTION_TAG, "selection mode of $tabId prepared: anchored ${plan.anchored}, items ${plan.items.map { it.id }}")
+            // A menu with Copy is a text selection: ask for the items for the selection as it is
+            // now (a Paste toolbar or a password field gets nothing); the menu shows the last
+            // answer meanwhile, and a different one invalidates the mode again.
+            if (plan.anchored) listing.onPrepare()
+            for (index in plan.hidden) systemItems[index].isVisible = false
+            plan.items.forEachIndexed { index, item ->
+                menu.add(SelectionToolbar.GROUP, SelectionToolbar.FIRST_ITEM_ID + index, plan.order, item.title).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = item.title
+                }
+            }
+            return prepared || !plan.isEmpty
+        }
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.groupId != SelectionToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            val action = SelectionToolbar.itemAt(listing.items, item.itemId) ?: return true
+            val originX = SelectionToolbar.fraction(selectionRect.exactCenterX(), width)
+            val originY = SelectionToolbar.fraction(selectionRect.exactCenterY(), height)
+            evaluateJavascript(SelectionToolbar.SELECTION_SCRIPT) { raw ->
+                val selected = SelectionToolbar.selectionText(raw).ifEmpty { listing.text }
+                if (selected.isNotBlank()) host.hostEvent("selection.action", SelectionToolbar.action(tabId, action.id, selected, originX, originY))
+                if (!finished) mode.finish()
+            }
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {
+            finished = true
+            listing.finish()
+            this.mode = null
+            Log.d(SELECTION_TAG, "selection mode of $tabId destroyed after ${listing.asks} ask(s)")
+            system.onDestroyActionMode(mode)
+        }
+
+        override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+            system.onGetContentRect(mode, view, outRect)
+            selectionRect.set(outRect)
+        }
+    }
+
+    /**
+     * What the system's selection items are told by (see `SelectionToolbar.plan`): Copy and Paste
+     * are the public `android.R.string.copy` and `android.R.string.paste`; the WebView's Share is
+     * its own `select_action_menu_share` id, resolved in the WebView package's resources (loaded
+     * into this process as a shared library, so the id is the one its items carry; 0 when the
+     * lookup fails); the framework's own Share string (its text fields' item) is not public, so it
+     * is looked up by name and may be missing – the title fallback for the id.
+     */
+    private fun frameworkStrings(): SelectionToolbar.Strings {
+        val share = Resources.getSystem().let { system ->
+            system.getIdentifier("share", "string", "android").takeIf { it != 0 }?.let { id -> runCatching { system.getString(id) }.getOrNull() }
+        }
+        val shareItemId = runCatching {
+            val webViewPackage = WebView.getCurrentWebViewPackage()?.packageName ?: return@runCatching 0
+            resources.getIdentifier(SelectionToolbar.SHARE_ITEM_ID_NAME, "id", webViewPackage)
+        }.getOrDefault(0)
+        return SelectionToolbar.Strings(
+            copy = context.getString(android.R.string.copy),
+            share = share,
+            paste = context.getString(android.R.string.paste),
+            shareItemId = shareItemId
+        )
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -782,55 +1013,318 @@ class TabWebView(
         host.snapshots.remember(HistorySnapshots.Entry(tabId, index, url, pageTitle, favicon, bitmap))
     }
 
-    /** The navigation has committed: which entry is on screen now, and which snapshots still hold. */
-    private fun onHistoryCommitted() {
+    /**
+     * The navigation has committed: which entry is on screen now, which snapshots still hold, and
+     * which internal pages' names still stand ([internalNames]). `shown` is the URL the commit
+     * was reported under (`doUpdateVisitedHistory`'s; for an internal page the `zen://` URL it
+     * was loaded with, where its list item is a `data:` placeholder), null when the commit is not
+     * a callback's (a restore: the snapshot named the entries, and the commit that follows confirms
+     * the current one). `reload` is the callback's word too.
+     */
+    private fun onHistoryCommitted(shown: String?, reload: Boolean = false) {
         val history = copyBackForwardList()
+        val items = (0 until history.size).map { history.getItemAtIndex(it)?.url }
+        // The commit of a restored list's current entry reports the list the restore built,
+        // unchanged: not a drop, whatever its size.
+        val afterRestore = restoredList
+        restoredList = false
+        if (!afterRestore && NavigationState.listDroppedAnEntry(committedIndex, committedSize, history.currentIndex, history.size, reload)) {
+            // The oldest entry went for this one: every position before it moved, and no name is
+            // its position's any more (the current one is named again below).
+            internalNames.clear()
+        }
         committedIndex = history.currentIndex
+        committedSize = history.size
         committedUrl = history.currentItem?.url ?: url ?: ""
+        val kept = NavigationState.keptNames(internalNames, items)
+        if (kept.size != internalNames.size) {
+            internalNames.clear()
+            internalNames.putAll(kept)
+        }
+        // The commit decides its own position's name: an internal page (the list holds its
+        // document under a `data:` URL, the commit reports the page's URL) is named by it; any
+        // other page committing there (a web page; a `data:` page opened as one, whose commit
+        // reports the URL itself) takes the name a previous internal page left at the position.
+        if (committedIndex >= 0 && shown != null) {
+            if (committedUrl.isNotEmpty() && NavigationState.standsInFor(committedUrl, shown)) {
+                internalNames[committedIndex] = shown
+            } else {
+                internalNames.remove(committedIndex)
+            }
+        }
         host.snapshots.validate(tabId, history)
+    }
+
+    // --- the back/forward stack for the core (NavigationSnapshot; see NavigationState.kt) ---------
+
+    /**
+     * The list as the core's snapshot: `{ entries: [{ url, title, originalUrl? }], index }`, the
+     * internal pages under the URLs they were shown as. Main thread; the `historyChanged` push
+     * ([pushHistory]) hands the same object to the chrome, and `Host` keeps the last one for the
+     * synchronous `view.navigationEntries`.
+     */
+    fun navigationEntries(): JSONObject {
+        val history = copyBackForwardList()
+        val items = (0 until history.size).map { i ->
+            val item = history.getItemAtIndex(i)
+            NavigationState.Item(item?.url ?: "", item?.title, item?.originalUrl)
+        }
+        return NavigationState.snapshotJson(items, history.currentIndex, internalNames)
+    }
+
+    /**
+     * Tell the core the list changed (`historyChanged { entries, index }`): at every commit, when
+     * a page finishes and when a title arrives, and only when it reads differently from the last
+     * time. `force` sends it anyway (the view was bound to a new tab id). The state behind the
+     * list goes to the host's mirror first, every time ([hostState]; the core asks for it as it
+     * records the list this push announces, from a thread that cannot ask the WebView).
+     */
+    fun pushHistory(force: Boolean = false) {
+        val snapshot = navigationEntries()
+        host.navigationStateChanged(tabId, hostState())
+        val text = snapshot.toString()
+        if (!force && text == lastHistoryText) return
+        lastHistoryText = text
+        host.viewEvent(tabId, "historyChanged", snapshot)
+    }
+
+    /**
+     * The opaque state a fresh view rebuilds this list from (`view.navigationHostState`), or null:
+     * for a private tab, an empty list, or a state over the core's bound. Main thread.
+     */
+    fun hostState(): String? = NavigationState.hostStateOf(this, Profiles.isPrivate(containerId))
+
+    /** Jump to entry `index` of the list (the back list's row): nothing for an index outside it. */
+    fun goToIndex(index: Int) {
+        val history = copyBackForwardList()
+        val steps = NavigationState.stepsTo(index, history.currentIndex, history.size) ?: return
+        if (steps == 0) return
+        rememberCurrentPage()
+        goBackOrForward(steps)
+    }
+
+    /**
+     * `view.restoreNavigation`: the whole list from `hostState`, when there is one and it is
+     * ours ([NavigationState.decodeHostState]), this view is still empty, `restoreState` accepts
+     * it and the list it gives back is the one `entries` describes, position for position, the
+     * current one at `index` ([NavigationState.restoredMatches]; an internal page's item is a
+     * `data:` placeholder where the entry names the `zen://` page) (true). Anything else is false
+     * and loads nothing: the core loads the current entry itself then (`loadURL`, which is also
+     * what gives an internal page its document), so a load here would be a second one. Main thread.
+     */
+    fun restoreNavigation(entries: JSONArray, index: Int, hostState: String?): Boolean {
+        val restored = restoreFromHostState(entries, index, hostState)
+        lastRestore = restored
+        return restored
+    }
+
+    /** What the last [restoreNavigation] answered, null before one: the demo driver reads it in-process. */
+    var lastRestore: Boolean? = null
+        private set
+
+    private fun restoreFromHostState(entries: JSONArray, index: Int, hostState: String?): Boolean {
+        val wanted = NavigationState.currentUrl(entries, index) ?: return false
+        val bytes = NavigationState.decodeHostState(hostState) ?: return false
+        // Only into a view with nothing in it: over a list already built, restoreState has
+        // "undesirable side-effects" (the platform's words), and the core never asks for that.
+        if (copyBackForwardList().size > 0) return false
+        val bundle = NavigationState.bundleOf(bytes) ?: return false
+        // What a load of the current entry sets up before its first request goes out (see loadUrl).
+        if (PageRules.isWebPage(wanted)) {
+            currentDocument = wanted
+            switchDesktopModeFor(wanted)
+            applyCookiePolicy(host.privacy.flags, wanted)
+        }
+        val restored = try {
+            restoreState(bundle)
+        } catch (e: Exception) {
+            Log.i("ZenTab", "restoreState refused the state of $tabId: ${e.javaClass.simpleName}")
+            null
+        } ?: return false
+        val items = (0 until restored.size).map { restored.getItemAtIndex(it)?.url }
+        val names = NavigationState.entryUrls(entries)
+        if (!NavigationState.restoredMatches(items, restored.currentIndex, names, index)) {
+            Log.i("ZenTab", "the restored list of $tabId is not the one described (${restored.size} entries, current ${restored.currentIndex}; ${names.size} expected, current $index); the core loads the entry")
+            return false
+        }
+        // The internal pages' names, from the snapshot: their items are `data:` placeholders,
+        // and the view that saved the list is not this one (see internalNames).
+        internalNames.clear()
+        internalNames.putAll(NavigationState.internalNamesOf(items, names))
+        onHistoryCommitted(shown = null)
+        restoredList = true
+        pushHistory(force = true)
+        Log.i("ZenTab", "restored the list of $tabId: ${restored.size} entries, current ${restored.currentIndex}")
+        return true
     }
 
     /**
      * Downscaled RGB_565 copy of this view's pixels as they are on screen (null when it cannot be
-     * copied: hidden, unsized). Shared by the overlay snapshot and the history previews.
+     * copied: hidden, unsized). Shared by the overlay snapshot, the card thumbnail and the
+     * history previews – and shared in flight: a request while a copy with at least its pixels
+     * is under way gets that copy's bitmap rather than a second PixelCopy of the same frame
+     * ([CaptureShare]). The bitmap belongs to everyone who hears it; nobody recycles it.
      */
     private fun captureBitmap(scale: Float, callback: (Bitmap?) -> Unit) {
         if (width <= 0 || height <= 0 || !isShown) {
             callback(null)
             return
         }
+        val ticket = captureShare.request(scale, callback) ?: return
         val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.RGB_565)
         val location = IntArray(2)
         getLocationInWindow(location)
         val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
         try {
             PixelCopy.request(host.activity.window, rect, bitmap, { result ->
-                callback(if (result == PixelCopy.SUCCESS) bitmap else null)
+                captureShare.complete(ticket, if (result == PixelCopy.SUCCESS) bitmap else null)
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
             // Software fallback (e.g. before the window is attached).
-            runCatching {
+            val drawn = runCatching {
                 val canvas = Canvas(bitmap)
                 canvas.scale(scale, scale)
                 draw(canvas)
-            }.onSuccess { callback(bitmap) }.onFailure { callback(null) }
+            }.isSuccess
+            captureShare.complete(ticket, if (drawn) bitmap else null)
+        }
+    }
+
+    /** The scale the cover and the card picture copy the page at: at most 1400 px wide, else half. */
+    private fun coverScale(): Float = if (width > 1400) 1400f / width else 0.5f
+
+    // --- card thumbnails (the pictures of the tab overview's cards, `Thumbnails.kt`) --------------
+
+    /**
+     * Take the card picture of this page now, if there is anything to take: the page is on
+     * screen, not mid navigation (a copy would be of the page it is leaving, under the URL it is
+     * going to) or mid back gesture, and its last picture is not fresh ([Thumbnails.FRESH_MS]:
+     * the cover a sheet just captured, the copy a hide a frame ago made). Called on the page's
+     * way off the screen ([Host.setTabVisible]'s hide), as the app leaves the foreground
+     * ([Host.onPause]) and before a shown tab's view goes ([TabHost.destroy], for an undo).
+     */
+    fun captureThumbnail() {
+        val thumbnails = host.thumbnails ?: return
+        if (backTransition != null || awaitingCommit) return
+        if (width <= 0 || height <= 0 || !isShown) return
+        if (thumbnails.fresh(tabId, SystemClock.uptimeMillis())) return
+        // A view with no document yet shows nothing worth a picture; its card has its placeholder.
+        val document = currentDocument ?: return
+        if (document == "about:blank") return
+        // Nor is a document the view has not drawn yet: a tab restored at boot whose page is still
+        // on its way shows a blank window, and a copy of it would take the place of the picture
+        // on disk – the very one the card is to show until the page paints (BH-33).
+        if (document != paintedDocument) return
+        val asked = SystemClock.uptimeMillis()
+        captureBitmap(coverScale()) { bitmap ->
+            if (bitmap != null) publishThumbnail(bitmap, document, SystemClock.uptimeMillis() - asked)
+        }
+    }
+
+    /**
+     * The card picture from a copy of the page: scaled to the card's width and encoded on the
+     * pictures' own thread ([Thumbnails.disk] – never the cover's `zen-encode`, whose work the
+     * chrome waits for), written to disk ([Thumbnails.save]) and handed to the chrome
+     * (`thumbnail.captured`). `document` is the one the copy shows (the caller's word: it was
+     * [paintedDocument] when the copy was asked for). Not of a page that navigated since – checked
+     * on the main thread before anything is written, and again before the chrome hears of it, so
+     * a picture of the page before is never on disk under the new page's tab (BH-14, across a
+     * kill too) – and not twice for one frame: a cover and a hide that shared the copy publish
+     * once between them. A private tab's picture goes to the chrome alone: nothing of it is
+     * written (the private profile leaves no file to wipe). `copyMs` is what the copy took when
+     * this call asked for it (-1: the copy was the cover's); the debug log line carries it with
+     * the encode and save times, for the cost of a picture per switch.
+     */
+    private fun publishThumbnail(bitmap: Bitmap, document: String, copyMs: Long = -1L) {
+        val thumbnails = host.thumbnails ?: return
+        val now = SystemClock.uptimeMillis()
+        if (document != currentDocument || thumbnails.fresh(tabId, now)) return
+        thumbnails.taken(tabId, now)
+        val id = tabId
+        val cardWidth = thumbnails.width
+        val persisted = containerId != Profiles.PRIVATE_CONTAINER
+        val target = host
+        val main = Handler(Looper.getMainLooper())
+        fun captured(picture: Thumbnails.Picture) =
+            target.hostEvent("thumbnail.captured", json("tabId" to id, "data" to picture.dataUrl, "width" to picture.width, "height" to picture.height))
+        thumbnails.disk.execute {
+            val started = SystemClock.uptimeMillis()
+            val picture = Thumbnails.encode(bitmap, cardWidth)
+            val encodeMs = SystemClock.uptimeMillis() - started
+            main.post {
+                // The page navigated while the picture was encoded: it is of the page before, and
+                // the card must not show it – nothing is written. Nor does a picture that could
+                // not be encoded count as taken.
+                if (picture == null || document != currentDocument) {
+                    thumbnails.stale(id)
+                    return@post
+                }
+                if (!persisted) {
+                    captured(picture)
+                    return@post
+                }
+                thumbnails.disk.execute {
+                    val writing = SystemClock.uptimeMillis()
+                    val saved = thumbnails.save(id, picture.jpeg, document)
+                    if (BuildConfig.DEBUG) {
+                        Log.d(
+                            "ZenTab",
+                            "thumbnail of $id: ${picture.width}x${picture.height} ${picture.jpeg.size} bytes, " +
+                                "copy ${if (copyMs < 0) "shared" else "$copyMs ms"}, encode $encodeMs ms, save ${SystemClock.uptimeMillis() - writing} ms"
+                        )
+                    }
+                    main.post {
+                        // Navigated during the write: the file names the page before
+                        // ([Thumbnails.stamp]), so no read shows it, and the chrome's own drop
+                        // for the navigation is behind the write on the same thread.
+                        if (!saved || document != currentDocument) {
+                            thumbnails.stale(id)
+                            return@post
+                        }
+                        captured(picture)
+                    }
+                }
+            }
         }
     }
 
     // --- operations used by the core -------------------------------------------------------------
 
-    fun loadHtml(url: String, html: String) {
+    /**
+     * A `zen://` page of the core's, rendered straight into the view under its own address. The
+     * PDF viewer page comes with a base URL of its own and the file it shows (`PdfViewer`): the
+     * document runs on that origin, so pdf.js can fetch its worker and the bytes, while the
+     * history entry – what [getUrl] and the navigation events show – stays `url`.
+     */
+    fun loadHtml(url: String, html: String, baseUrl: String? = null, document: PdfViewer.Document? = null) {
         rememberCurrentPage()
-        loadDataWithBaseURL(url, html, "text/html", "utf-8", url)
+        pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, document) else null
+        loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
+    }
+
+    /** The viewer page this view shows, while it does (see [loadHtml]); read on the network thread too. */
+    @Volatile private var pdfPage: PdfViewer.Page? = null
+
+    /**
+     * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
+     * for anything under the viewer's origin (WebView may report either the base or the history
+     * URL of a `loadDataWithBaseURL` document), the URL itself otherwise.
+     */
+    private fun pageUrlFor(url: String): String {
+        val page = pdfPage ?: return url
+        return if (PdfViewer.isViewerUrl(url)) page.url else url
     }
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
-    override fun loadUrl(url: String) {
+    override fun loadUrl(requested: String) {
+        // The core spells an extension page's URL as Chrome does; the WebView loads the served origin.
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         if (url.startsWith("http", ignoreCase = true)) currentDocument = url
         switchDesktopModeFor(url)
         if (url.startsWith("http", ignoreCase = true)) {
             val flags = host.privacy.flags
+            applyMixedContentPolicy(flags, url)
             applyCookiePolicy(flags, url)
             if (retriesFailedEntry(url)) {
                 // The address the core's error page stands in for, asked for again (Proceed past
@@ -854,10 +1348,61 @@ class TabWebView(
         super.loadUrl(url)
     }
 
-    override fun loadUrl(url: String, additionalHttpHeaders: MutableMap<String, String>) {
+    override fun loadUrl(requested: String, additionalHttpHeaders: MutableMap<String, String>) {
+        val url = ExtensionUrls.toServed(requested)
         rememberCurrentPage()
         switchDesktopModeFor(url)
+        if (url.startsWith("http", ignoreCase = true)) applyMixedContentPolicy(host.privacy.flags, url)
         super.loadUrl(url, additionalHttpHeaders)
+    }
+
+    /**
+     * The runtime answered the main-frame request for `url`, an extension page it does not serve
+     * (the extension is not enabled, not installed, or not allowed in this private tab), with an
+     * empty document (`Extensions.intercept`, any thread): the page fails as Chrome fails such a
+     * page, `ERR_BLOCKED_BY_CLIENT`, as its document starts, the way a load WebView fails is
+     * reported right after its `onPageStarted`. The empty document then stands under the URL
+     * like WebView's own error page under a failed load's (see [failedUrl]).
+     */
+    fun refuseExtensionPage(url: String) {
+        refusedExtensionPage = url
+    }
+
+    /**
+     * The extension page on `url`, held on an empty document while its extension was about to
+     * be configured (`Extensions.releaseHeld` reloads the ones that came up), belongs to an
+     * extension that is not coming: it fails now, as [refuseExtensionPage] fails a page. Main
+     * thread; nothing when the tab has moved on since the request.
+     */
+    fun failExtensionPage(url: String) {
+        if (currentDocument != url) return
+        if (startedDocument != url) {
+            // The empty document has not started yet: it fails as it starts.
+            refusedExtensionPage = url
+            return
+        }
+        failStartedExtensionPage(url)
+    }
+
+    /**
+     * The empty document under `url` has started ([onPageStarted]): the failure goes to the core,
+     * whose `zen://error` page replaces the document, and the document's entry is stepped over on
+     * the way back ([interstitialUrl]) whether its commit is still to come (then through
+     * [failedUrl], as for a load WebView failed) or has happened.
+     */
+    private fun failStartedExtensionPage(url: String) {
+        if (awaitingCommit) failedUrl = url
+        else {
+            interstitial = true
+            interstitialUrl = url
+        }
+        loading = false
+        host.viewEvent(
+            tabId,
+            "failLoad",
+            json("code" to NetErrors.BLOCKED_BY_CLIENT, "description" to "ERR_BLOCKED_BY_CLIENT", "url" to ExtensionUrls.present(url))
+        )
+        host.backChanged()
     }
 
     override fun reload() {
@@ -982,36 +1527,60 @@ class TabWebView(
         clearMatches()
     }
 
-    /** Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays. */
+    /**
+     * Downscaled JPEG of what is on screen right now, for the dimmed preview behind overlays.
+     * The tab's card picture comes out of the same copy ([publishThumbnail]): the page under a
+     * sheet or the overview is never copied a second time for its card. The cover's own encode
+     * is queued first and runs on its own thread; the card's work never stands in front of it.
+     */
     fun snapshot(callback: (String?) -> Unit) {
         if (backTransition != null) {
             callback(null)
             return
         }
-        val scale = if (width > 1400) 1400f / width else 0.5f
         // The chrome asks just before it hides the page (menu, URL bar, overview): the copy is the
         // last chance to remember this history entry before a load from within that UI replaces it.
         val index = committedIndex
         val url = committedUrl
-        captureBitmap(scale) { bitmap ->
+        // The card picture comes out of this copy only when the pixels are the document's own
+        // ([paintedDocument]): the cover of a window whose page has not painted is a cover of
+        // white, which is what the sheet is to stand over – not what the card is to keep.
+        val painted = currentDocument?.takeIf { it == paintedDocument }
+        captureBitmap(coverScale()) { bitmap ->
             if (bitmap == null) {
                 callback(null)
                 return@captureBitmap
             }
             if (index >= 0 && url.isNotEmpty() && url == (copyBackForwardList().currentItem?.url ?: "")) remember(index, url, bitmap)
+            // The cover first: the chrome mounts its sheet on this data URL (#168).
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 62, out)
                 val data = "data:image/jpeg;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
                 Handler(Looper.getMainLooper()).post { callback(data) }
             }
+            if (painted != null && !awaitingCommit) publishThumbnail(bitmap, painted)
         }
     }
 
-    /** Full-resolution PNG bytes of the page, or null. */
-    fun screenshot(callback: (ByteArray?) -> Unit) {
+    /**
+     * Full-resolution PNG bytes of the page, or null: the visible area, or with `fullPage` the
+     * whole document – the page scrolled in viewport-sized steps and the strips stitched
+     * (`PageCapture`, the agents' full-page path; a WebView never paints what is off screen), cut
+     * at the capture's height limit. A document the stitcher cannot read (no page script yet)
+     * comes back as the visible area, as it does for the agents.
+     */
+    fun screenshot(fullPage: Boolean = false, callback: (ByteArray?) -> Unit) {
         if (width <= 0 || height <= 0 || !isShown) {
             callback(null)
+            return
+        }
+        if (fullPage) {
+            capture(CapturePlan.MODE_FULL_PAGE, null, "png", 100) { result ->
+                val data = result?.optString("data")
+                val bytes = if (data.isNullOrEmpty()) null else runCatching { Base64.decode(data, Base64.DEFAULT) }.getOrNull()
+                if (bytes != null) callback(bytes) else screenshot(false, callback)
+            }
             return
         }
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -1049,8 +1618,15 @@ class TabWebView(
         PageCapture(this, host.activity.window, encoder, square, ::evaluate).run(mode, PageCapture.parseRegion(region), format, quality, callback)
     }
 
+    /**
+     * What the core hears as the tab's URL. An extension page loaded from its served origin is
+     * reported as Chrome spells it (`chrome-extension://<id>/...`, [ExtensionUrls.present]): that
+     * is the tab's canonical URL for the core's model, the URL bar and the extension APIs, and
+     * [loadUrl] takes it back to the served origin. The PDF viewer page, loaded on its own origin
+     * the same way, is reported under its `zen://pdf` address ([pageUrlFor]).
+     */
     fun navState(): JSONObject = json(
-        "url" to (url ?: ""),
+        "url" to ExtensionUrls.present(pageUrlFor(url ?: "")),
         "title" to reportableTitle(),
         "canGoBack" to canGoBack(),
         "canGoForward" to canGoForward()
@@ -1154,6 +1730,14 @@ class TabWebView(
                     if (interceptNavigation(request)) return true
                     false
                 }
+                "chrome-extension" -> {
+                    // An extension's own page, spelled as Chrome spells it (a link or a
+                    // `location` assignment in an extension page): the served origin is loaded
+                    // in its place. A frame cannot be sent there from here; it fails as WebView
+                    // fails any unknown scheme.
+                    if (request.isForMainFrame) loadUrl(ExtensionUrls.toServed(url.toString()))
+                    true
+                }
                 DeepLinks.INTERNAL_SCHEME, DeepLinks.PAGE_SCHEME -> {
                     // The browser's own pages are the user's to open (typed, a menu, a deep link
                     // from another app), never a web page's: Chrome's rule for chrome://. Only
@@ -1224,9 +1808,14 @@ class TabWebView(
          * whose rule sets include the extensions' declarativeNetRequest rules.
          */
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-            host.extensions?.intercept(request, this@TabWebView, null) ?: host.blocking.intercept(this@TabWebView, request)
+            PdfViewer.intercept(context, request, pdfPage)
+                ?: host.extensions?.intercept(request, this@TabWebView, null)
+                ?: host.blocking.intercept(this@TabWebView, request)
 
-        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        override fun onPageStarted(view: WebView, rawUrl: String, favicon: Bitmap?) {
+            val url = pageUrlFor(rawUrl)
+            // Another document is on its way: the viewer page's file is not to be served for it.
+            if (pdfPage != null && url != pdfPage?.url) pdfPage = null
             // Navigations with no link click ahead of them (forms, history.back(), redirects).
             rememberCurrentPage()
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.STARTED)
@@ -1235,6 +1824,8 @@ class TabWebView(
             // for the failed load may commit only after this (see failedUrl).
             if (!url.startsWith(ERROR_PAGE_PREFIX)) failedUrl = null
             currentDocument = url
+            startedDocument = url
+            applyMixedContentPolicy(host.privacy.flags, url)
             applyCookiePolicy(host.privacy.flags, url)
             // Without document-start scripts the signals arrive late, but they arrive.
             if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) signalScript?.let { evaluateJavascript(it, null) }
@@ -1249,6 +1840,13 @@ class TabWebView(
             host.extensions?.onDocumentGone(this@TabWebView, url)
             host.viewEvent(tabId, "startLoading", null)
             if (muted) setMuted(true)
+            // An extension page the runtime refused: the empty document it answered with is
+            // starting, and the load fails here, as one WebView failed does right after its start.
+            // (Any other document starting means the refused one was given up: a later load of
+            // the same URL, once the extension is enabled, is not to fail on the stale word.)
+            val refused = refusedExtensionPage
+            refusedExtensionPage = null
+            if (url == refused) failStartedExtensionPage(url)
         }
 
         /**
@@ -1257,8 +1855,9 @@ class TabWebView(
          * failed load too (right before `onReceivedError`), so reporting from there would record
          * a visit to a page that never loaded.
          */
-        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            onHistoryCommitted()
+        override fun doUpdateVisitedHistory(view: WebView, rawUrl: String, isReload: Boolean) {
+            val url = pageUrlFor(rawUrl)
+            onHistoryCommitted(shown = url, reload = isReload)
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.HISTORY_UPDATED)
             if (failedUrl != null && url == failedUrl) {
                 // WebView's own error page, committing under the failed URL while the core's
@@ -1268,12 +1867,19 @@ class TabWebView(
                 interstitial = true
                 interstitialUrl = url
                 host.backChanged()
+                pushHistory()
                 return
             }
-            currentDocument = url
             // pushState / hash navigations have no onPageStarted of their own.
             val inPage = !awaitingCommit
             awaitingCommit = false
+            // The document on screen took a new URL in place: the pixels are still its own. (Not
+            // when the one drawn is another: its own commit-visible is the word for that.)
+            if (inPage && paintedDocument != null && paintedDocument == currentDocument) paintedDocument = url
+            currentDocument = url
+            // Whatever card picture there was is of the page before – the chrome drops it on the
+            // URL change – and the next hide takes a new one, however fresh the last (BH-14).
+            host.thumbnails?.stale(tabId)
             // Another page committed: the failed load's own error page is not coming any more.
             failedUrl = null
             interstitial = false
@@ -1284,16 +1890,27 @@ class TabWebView(
                 if (documentGeneration.get() == committedGeneration) documentGeneration.incrementAndGet()
                 committedGeneration = documentGeneration.get()
             }
-            host.viewEvent(tabId, "navigated", navState().put("url", url).put("inPage", inPage).put("document", committedGeneration))
+            // Before `navigated`: the core records the tab's stack as it handles that event, and
+            // reads it from the list pushed here (the view's copy, or `Host`'s for the sync call).
+            pushHistory()
+            // The committed URL as the core spells a tab's URL: an extension page's in Chrome's
+            // form (`chrome-extension://<id>/...`, as [navState] and the list's entries have it),
+            // not the served origin the WebView reported the commit under.
+            host.viewEvent(tabId, "navigated", navState().put("url", ExtensionUrls.present(url)).put("inPage", inPage).put("document", committedGeneration))
             host.backChanged()
         }
 
         override fun onPageCommitVisible(view: WebView, url: String) {
+            // WebView's word that nothing of the page before is drawn any more: from here the
+            // pixels are this document's, and so may its card picture be.
+            paintedDocument = url
             backTransition?.onNavigation(PageBackTransition.NavigationEvent.COMMIT_VISIBLE)
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             loading = false
+            // A document that finished has drawn (the word for one whose commit-visible never came).
+            paintedDocument = url
             if (pendingFlags && host.pageScript.isNotEmpty()) {
                 evaluateJavascript(startScriptSource(), null)
             }
@@ -1304,6 +1921,7 @@ class TabWebView(
             host.viewEvent(tabId, "stopLoading", navState())
             if (muted) setMuted(true)
             host.backChanged()
+            pushHistory()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -1393,6 +2011,8 @@ class TabWebView(
             // "Webpage not available" is the built-in error page's, not the tab's (see failedUrl).
             if (failedUrl != null || interstitial) return
             host.viewEvent(tabId, "title", json("title" to (title ?: "")))
+            // The entry's title in the list follows the page's.
+            pushHistory()
         }
 
         /**
@@ -1452,7 +2072,7 @@ class TabWebView(
             webView: WebView,
             filePathCallback: ValueCallback<Array<Uri>>,
             fileChooserParams: FileChooserParams
-        ): Boolean = host.activity.showFileChooser(filePathCallback, fileChooserParams)
+        ): Boolean = host.activity.showFileChooser(host, filePathCallback, fileChooserParams)
 
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             // The WebView only asks without a gesture when the site may open windows on its own.
@@ -1482,12 +2102,20 @@ class TabWebView(
         }
 
         override fun onCloseWindow(window: WebView) {
-            // Pages closing themselves are rare enough that leaving the tab open is fine.
+            // Blink asks only for a window a script may close (one it opened, or a tab still on its
+            // first document, `history.length` 1): Chrome closes the tab, and an extension page
+            // opened with `tabs.create` counts on it (Tampermonkey's install page closes itself once
+            // its background lets the request go). The view goes the way of a page-initiated close:
+            // the core hears `destroyed` and closes the tab.
+            if (window !== this@TabWebView) return
+            post { host.tabs.destroy(tabId) }
         }
     }
 
     companion object {
         private const val PULL_TAG = "ZenPull"
+        /** The text-selection action mode's life, for the emulator driver's record (`SelectionDemo`). */
+        const val SELECTION_TAG = "ZenSelection"
         /** The core's error pages and interstitials (`ERROR_URL_PREFIX` in `src/shared/url.ts`). */
         private const val ERROR_PAGE_PREFIX = "zen://error"
         /** The object the page script posts to (and the wrappers in [evaluate] and [postToPage] name). */

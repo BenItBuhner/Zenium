@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The private session's status-bar icon (PrivateSession.kt): the mask Chrome's Incognito wears, drawn in the
+     status bar's single colour. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M17.06,13c-1.86,0 -3.42,1.33 -3.82,3.1 -0.95,-0.41 -1.82,-0.3 -2.48,-0.01C10.35,14.31 8.79,13 6.94,13 4.77,13 3,14.79 3,17s1.77,4 3.94,4c2.06,0 3.74,-1.62 3.9,-3.68 0.34,-0.24 1.23,-0.69 2.32,0.02 0.18,2.05 1.84,3.66 3.9,3.66 2.17,0 3.94,-1.79 3.94,-4s-1.77,-4 -3.94,-4zM6.94,19.86c-1.56,0 -2.81,-1.28 -2.81,-2.86s1.26,-2.86 2.81,-2.86c1.56,0 2.81,1.28 2.81,2.86s-1.25,2.86 -2.81,2.86zM17.06,19.86c-1.56,0 -2.81,-1.28 -2.81,-2.86s1.25,-2.86 2.81,-2.86 2.81,1.28 2.81,2.86 -1.25,2.86 -2.81,2.86zM22,10.5H2V12h20v-1.5zM15.53,2.63c-0.23,-0.5 -0.75,-0.83 -1.32,-0.83H9.79c-0.57,0 -1.09,0.33 -1.31,0.83l-2.56,5.7c1.05,0.77 2.36,1.17 3.75,1.17h4.66c1.39,0 2.7,-0.4 3.75,-1.17l-2.55,-5.7z" />
+</vector>

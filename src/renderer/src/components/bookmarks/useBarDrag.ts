@@ -45,7 +45,8 @@ interface Options {
 }
 
 const DRAG_THRESHOLD = 5
-const HOLD_TO_OPEN_MS = 500
+/** A drag held over a folder chip this long opens its panel (Chrome's spring-open). */
+export const HOLD_TO_OPEN_MS = 500
 
 /**
  * Dragging a chip along the bookmarks bar (or into one of its folders). The chip's slot stays

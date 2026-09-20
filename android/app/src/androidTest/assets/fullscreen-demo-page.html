@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium fullscreen demo</title>
+<style>
+  html, body { margin: 0; min-height: 100%; font-family: sans-serif; background: #fff; color: #15141a; }
+  h1 { font-size: 20px; margin: 0; padding: 16px 20px 4px; }
+  p.lead { margin: 0; padding: 0 20px 8px; font-size: 14px; line-height: 1.35; color: #5a5866; }
+  .big { display: block; box-sizing: border-box; width: calc(100% - 40px); margin: 8px 20px; height: 56px;
+    font-size: 20px; font-weight: 600; border: 0; border-radius: 14px; background: #1b4332; color: #fff;
+    text-align: center; line-height: 56px; -webkit-tap-highlight-color: transparent; }
+  .big.alt { background: #2d6a4f; }
+  .big.file { background: #264653; }
+  .big:active { filter: brightness(1.2); }
+  .clips { display: flex; gap: 12px; padding: 0 20px; align-items: flex-start; }
+  video { display: block; box-sizing: border-box; background: #000; border-radius: 8px; }
+  #land { width: 60%; aspect-ratio: 16 / 9; }
+  #port { width: 34%; aspect-ratio: 9 / 16; max-height: 120px; }
+  /* The embed row: a same-origin iframe whose own video goes fullscreen from the frame's
+     document (an embedded player's shape), and a canvas that goes fullscreen with no video in it. */
+  .embeds { display: flex; gap: 12px; padding: 0 20px; margin-top: 8px; }
+  #embed { display: block; width: 60%; height: 112px; border: 0; border-radius: 8px; background: #000; }
+  #stage { display: block; width: 34%; height: 112px; border-radius: 8px; background: #3a0ca3; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  pre#state { margin: 0; padding: 12px 20px; font-size: 13px; line-height: 1.5; color: #333; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Fullscreen video and the file chooser</h1>
+<p class="lead">A landscape clip, a portrait clip, an embed and a canvas, and two file inputs: one taking a photo (capture), one taking any image.</p>
+<div class="clips">
+  <video id="land" src="/land.webm" loop playsinline preload="auto"></video>
+  <video id="port" src="/port.webm" loop playsinline preload="auto"></video>
+</div>
+<div class="embeds">
+  <iframe id="embed" src="/embed" title="Embedded player" allow="fullscreen" allowfullscreen></iframe>
+  <canvas id="stage" width="320" height="180"></canvas>
+</div>
+<button id="fs-land" class="big">Play landscape fullscreen</button>
+<button id="fs-port" class="big alt">Play portrait fullscreen</button>
+<label id="cap-label" class="big file" for="cap">Take a photo (capture)</label>
+<input id="cap" type="file" accept="image/*" capture>
+<label id="pick-label" class="big file" for="pick">Choose an image</label>
+<input id="pick" type="file" accept="image/*">
+<pre id="state"></pre>
+<script>
+(function () {
+  // Everything the page sees goes into its title as `FS|key:value|key:value`, which the demo
+  // driver reads from the browser core's state (and through evaluateJavascript).
+  var state = { fs: 0, el: 'none', state: 'paused', file: 'none', size: 0, resizes: 0 };
+  var render = function () {
+    var parts = ['FS'];
+    Object.keys(state).forEach(function (k) { parts.push(k + ':' + state[k]); });
+    var title = parts.join('|');
+    document.title = title;
+    document.getElementById('state').textContent = title.split('|').join('\n');
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var videos = [$('land'), $('port')];
+  var playingOne = function () {
+    return videos.some(function (v) { return !v.paused && !v.ended; });
+  };
+  videos.forEach(function (v) {
+    ['play', 'playing', 'pause', 'ended', 'loadedmetadata'].forEach(function (name) {
+      v.addEventListener(name, function () {
+        state.state = playingOne() ? 'playing' : 'paused';
+        render();
+      });
+    });
+  });
+  var requestFullscreen = function (el) {
+    var request = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen;
+    if (!request) return;
+    try {
+      var r = request.call(el);
+      if (r && r.catch) r.catch(function (e) { state.err = String(e && e.name || e); render(); });
+    } catch (e) { state.err = String(e && e.name || e); render(); }
+  };
+  var goFullscreen = function (video) {
+    // The tap is the user gesture both need (mediaPlaybackRequiresUserGesture, the Fullscreen API).
+    var played = video.play();
+    if (played && played.catch) played.catch(function (e) { state.err = String(e && e.name || e); render(); });
+    requestFullscreen(video);
+  };
+  $('fs-land').addEventListener('click', function () { goFullscreen($('land')); });
+  $('fs-port').addEventListener('click', function () { goFullscreen($('port')); });
+  // The canvas: a fullscreen element with no video in it (a game's, a slide deck's), under a
+  // finger on the canvas itself. Something drawn, so the fullscreen shows more than black.
+  var stage = $('stage');
+  var ctx = stage.getContext('2d');
+  if (ctx) {
+    var grad = ctx.createLinearGradient(0, 0, 320, 180);
+    grad.addColorStop(0, '#3a0ca3');
+    grad.addColorStop(1, '#f72585');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 320, 180);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Canvas', 160, 100);
+  }
+  stage.addEventListener('click', function () { requestFullscreen(stage); });
+  var onFullscreenChange = function () {
+    var el = document.fullscreenElement || document.webkitFullscreenElement;
+    state.fs = el ? 1 : 0;
+    state.el = el ? (el.id || el.tagName.toLowerCase()) : 'none';
+    render();
+  };
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+  // Every resize on record (when, the viewport, whether fullscreen) since the driver's last mark,
+  // so the exit's relayouts can be told apart: the layer's hand-back, the bars, the turn.
+  var resizeLog = [];
+  var resizeMark = performance.now();
+  window.__resizeMark = function () { resizeLog = []; resizeMark = performance.now(); };
+  window.__resizeLog = function () { return JSON.stringify(resizeLog); };
+  window.addEventListener('resize', function () {
+    state.resizes++;
+    resizeLog.push({ at: Math.round(performance.now() - resizeMark), w: window.innerWidth, h: window.innerHeight, fs: state.fs });
+    render();
+  });
+  var onFile = function (input) {
+    input.addEventListener('change', function () {
+      var f = input.files && input.files[0];
+      state.file = f ? f.name : 'none';
+      state.size = f ? f.size : 0;
+      state.type = f ? (f.type || '?') : '?';
+      state.count = input.files ? input.files.length : 0;
+      render();
+    });
+  };
+  onFile($('cap'));
+  onFile($('pick'));
+  // The first-time exit hint the chrome draws in the page's top layer (shared/pageHint.ts): the
+  // driver asks whether its host element stands, and how it is placed.
+  // The viewport is read from visualViewport where there is one: innerWidth / innerHeight are
+  // whole CSS px, and at the emulator's density (1.75) the frame is a fraction wider.
+  window.__hint = function () {
+    var h = document.querySelector('zenium-fullscreen-hint');
+    if (!h) return null;
+    var r = h.getBoundingClientRect();
+    var vv = window.visualViewport;
+    return JSON.stringify({ top: r.top, left: r.left, width: r.width, height: r.height,
+      opacity: h.style.opacity, transform: h.style.transform,
+      viewportWidth: vv ? vv.width : window.innerWidth, viewportHeight: vv ? vv.height : window.innerHeight,
+      color: getComputedStyle(h).color, popover: typeof h.showPopover === 'function' });
+  };
+  // What the embed's document sees (same origin, so the top document may ask it).
+  window.__embed = function () {
+    var f = $('embed');
+    var w = f && f.contentWindow;
+    return w && w.__embedState ? w.__embedState() : null;
+  };
+  render();
+})();
+</script>
+</body>
+</html>

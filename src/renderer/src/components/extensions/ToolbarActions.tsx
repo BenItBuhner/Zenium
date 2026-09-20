@@ -6,6 +6,7 @@ import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { badgeLabel, badgeStyle } from '@renderer/lib/extensions/badge'
 import { closeExtensionPopup, openExtensionPopup } from '@renderer/lib/extensions/popup'
 import { openedFromKeyboard } from '@renderer/lib/popover'
@@ -20,6 +21,7 @@ import {
 } from '@renderer/lib/extensions/toolbar'
 import { activeTab } from '@renderer/lib/selectors'
 import { openOverlay, uiStore } from '@renderer/lib/ui'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { ExtensionIcon } from './ExtensionIcon'
 import { V2IconButton, V2TitleBlock } from './v2'
 
@@ -78,7 +80,7 @@ export function ToolbarActions({
         // Enter and Space come as a click alone.
         onClick={(e) => setPanelAnchor(panelAnchor ? null : anchorOf(e.currentTarget))}
       >
-        <Puzzle className="h-4 w-4" />
+        <Puzzle className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
       </button>
       {panelAnchor && (
         <ExtensionsPanel
@@ -132,7 +134,7 @@ function ActionButton({ ext }: { ext: ExtensionInfo }): JSX.Element {
           // The core's menu (#104): the extension's own `contextMenus` items, then Zenium's.
           e.preventDefault()
           closeExtensionPopup()
-          run('extension.actionContextMenu', { id: ext.id, x: e.clientX, y: e.clientY })
+          run('extension.actionContextMenu', { id: ext.id, ...contextMenuAnchor(e) })
         }}
       >
         <ExtensionIcon icon={actionIcon(ext)} size={16} box={16} />

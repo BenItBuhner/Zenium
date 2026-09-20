@@ -50,11 +50,9 @@ function compileUncached(pattern: string): CompiledMatchPattern | null {
   const scheme = pattern.slice(0, separator)
   const rest = pattern.slice(separator + 3)
   if (scheme === 'file') {
-    // Chromium's grammar: a file pattern has no host, so everything after `file://` is the
-    // path glob and the URL's host is ignored (`file:///*` and Violentmonkey's
-    // `file://*/*.user.js` both match `file:///home/me/a.user.js`).
-    if (rest === '') return null
-    const pathTest = pathGlobToRegExp(rest)
+    const filePath = filePatternPath(rest)
+    if (filePath === null) return null
+    const pathTest = pathGlobToRegExp(filePath)
     return {
       pattern,
       test: (url) => {
@@ -159,6 +157,17 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 /** The path part of a match pattern: only `*` is a wildcard, `?` starts the query and is literal. */
+// Chromium's grammar for a `file:` pattern, given what follows `file://`: the host is optional
+// and ignored, so the path glob starts at the first `/` (`file:///*`, a `*` host followed by
+// `/*` as Adobe Acrobat and MetaMask declare, and `file://localhost/*` all stand for
+// `file:///*`), or is the whole remainder when there is none (`file://*`); a bare `file://` is
+// invalid. The URL's own host is ignored when matching.
+export function filePatternPath(afterScheme: string): string | null {
+  if (afterScheme === '') return null
+  const slash = afterScheme.indexOf('/')
+  return slash < 0 ? afterScheme : afterScheme.slice(slash)
+}
+
 function pathGlobToRegExp(glob: string): RegExp {
   let source = ''
   for (const ch of glob) {
@@ -239,13 +248,13 @@ export function parseMatchPattern(pattern: string): MatchPattern | null {
     }
   }
   if (/^file:\/\/./i.test(pattern)) {
-    // No host in a file pattern: the path glob is everything after `file://` (see
-    // `compileMatchPattern`), which need not start with `/`.
+    // The host of a file pattern is ignored (see `filePatternPath`); the path glob need not
+    // start with `/`.
     return {
       schemes: ['file'],
       host: '',
       port: null,
-      path: pattern.slice(7),
+      path: filePatternPath(pattern.slice(7)) ?? '',
       matchesAllUrls: false
     }
   }
@@ -296,6 +305,21 @@ export interface FrameContext {
    * (match_origin_as_fallback): the URL whose origin the frame inherited (parent or opener).
    */
   precursorUrl: string | null
+}
+
+/**
+ * A sub-frame whose document has no URL of its own and lives on an inherited origin: `about:blank`
+ * (also the initial document of a `javascript:` frame, whose URL stays `about:blank`),
+ * `about:srcdoc`, `data:`, `blob:` and `filesystem:` frames. Chrome injects content scripts there
+ * only for declarations that opt in (`match_about_blank`, `match_origin_as_fallback`), matched on
+ * the precursor's URL; nothing of the extension system touches such a frame otherwise.
+ */
+export function inheritsOrigin(frame: FrameContext): boolean {
+  if (frame.isTopFrame) return false
+  const url = frame.url
+  if (url === 'about:blank' || url === 'about:srcdoc' || url.startsWith('about:blank?')) return true
+  const scheme = schemeOf(url)
+  return scheme === 'data' || scheme === 'blob' || scheme === 'filesystem'
 }
 
 /** The URL a content script declaration is matched against for this frame, or null when none applies. */

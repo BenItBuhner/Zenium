@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium fullscreen demo embed</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  /* The clip fills the frame and is the control, as an embedded player's poster is: a finger on
+     it plays the clip and takes it fullscreen from this document, the one that knows its size. */
+  video { display: block; width: 100%; height: 100%; object-fit: cover; background: #000; }
+</style>
+</head>
+<body>
+<video id="v" src="/land.webm" loop playsinline preload="auto"></video>
+<script>
+(function () {
+  var v = document.getElementById('v');
+  var err = 'none';
+  v.addEventListener('click', function () {
+    var played = v.play();
+    if (played && played.catch) played.catch(function (e) { err = String(e && e.name || e); });
+    var request = v.requestFullscreen || v.webkitRequestFullscreen || v.webkitEnterFullscreen;
+    if (!request) { err = 'no requestFullscreen'; return; }
+    try {
+      var r = request.call(v);
+      if (r && r.catch) r.catch(function (e) { err = String(e && e.name || e); });
+    } catch (e) { err = String(e && e.name || e); }
+  });
+  // What this document sees, for the top document to read (same origin) and the driver to note.
+  window.__embedState = function () {
+    var el = document.fullscreenElement || document.webkitFullscreenElement;
+    return JSON.stringify({ fs: el ? 1 : 0, el: el ? (el.id || el.tagName.toLowerCase()) : 'none',
+      videoWidth: v.videoWidth, videoHeight: v.videoHeight, paused: v.paused, err: err });
+  };
+})();
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import android.util.Log
 import android.webkit.WebSettings
 import androidx.core.content.IntentCompat
 import app.zen.chromium.Host
+import app.zen.chromium.Storage
 import app.zen.chromium.arr
 import app.zen.chromium.json
 import app.zen.chromium.num
@@ -117,7 +118,7 @@ class ExtensionStore(private val host: Host, private val io: ExecutorService, pr
         io.execute {
             val result = runCatching {
                 files.remove(id)
-                File(host.activity.filesDir, "zen/ext-storage-$id.json").delete()
+                File(host.activity.filesDir, "zen/${Storage.EXT_STORAGE_DIR}/$id.json").delete()
                 File(host.activity.cacheDir, "ext-rules/$id").deleteRecursively()
             }
             main.post { reply(result.exceptionOrNull()?.let { Host.Rejection(it.message ?: it.javaClass.simpleName) }) }

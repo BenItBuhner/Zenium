@@ -8,6 +8,15 @@ import {
   type InterstitialMessage
 } from './interstitial'
 import { MANIFEST_FIELDS, type RawWebAppManifest } from './webApp'
+import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
+import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
+import { installMediaTracking } from './mediaSessionScript'
+import { READER_MESSAGE_KEY } from './reader'
+import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
+import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPrompt'
+import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
+import { installReadAloud } from './readAloudScript'
+import { installReaderExtrasWhenReady } from './readerExtras'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -40,11 +49,21 @@ export interface PageScriptMessage {
     | 'interstitial'
     | 'focus'
     | 'webapp'
+    | 'notification'
+    | 'reader'
+    | 'pdf'
+    | 'opensearch'
+    | 'readAloud'
+    | 'fullscreen'
   url?: string
+  /** `opensearch`: the link's `title`, the engine's name when its description has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
   playing?: boolean
+  /** `media`: the full report on hosts that track media through the script (`trackMedia`). */
+  media?: MediaReport
   /** `zap`: CSS selector of the element the user picked. */
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (`zen://error`). */
@@ -53,14 +72,45 @@ export interface PageScriptMessage {
   webapp?: 'manifest' | 'deferred' | 'prompt'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /** `notification`: the `Notification` polyfill's request (see `shared/notifications`). */
+  notification?: NotificationPageRequest
+  /** `reader`: the text preferences a `zen://reader` page's toolbar changed (a partial). */
+  reader?: unknown
+  /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
+  pdf?: PdfViewerReport
+  /** `readAloud`: the answer to a `readAloud.extract` request (`readAloudScript.ts`). */
+  readAloud?: ReadAloudExtraction
+  /**
+   * `fullscreen` (hosts with `reportFullscreen`): the document has a fullscreen element
+   * (`active`), and when it is a `<video>` or holds one, the video's natural size – 0 × 0 while
+   * the size is not known (no video, or its metadata still to come).
+   */
+  active?: boolean
+  videoWidth?: number
+  videoHeight?: number
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
-export interface PageScriptHostMessage {
+export interface WebAppHostMessage {
   type: 'webapp'
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
+
+/**
+ * Browser → page messages the script answers: the web-app polyfill, the media session's
+ * actions, the notification polyfill's answers and read aloud's requests (mirrors
+ * `PageHostMessage` in the core).
+ */
+export type PageScriptHostMessage =
+  WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage | ReadAloudHostMessage
+
+/**
+ * The IPC channel the browser posts `PageHostMessage`s into a page on (Electron's
+ * `TabView.postToPage` → `preload/page.ts`): the web-app install events, media controls, share
+ * results and geolocation answers, told apart by `type`.
+ */
+export const PAGE_HOST_CHANNEL = 'zen:page-host'
 
 export interface PageScriptTransport {
   send(message: PageScriptMessage): void
@@ -83,7 +133,39 @@ export interface PageScriptTransport {
    * Hosts that pin pages to the Home screen: the script posts the page's manifest and turns the
    * host's `installable` / `result` / `installed` messages into the standard install events.
    */
-  onWebApp?(listener: (message: PageScriptHostMessage) => void): void
+  onWebApp?(listener: (message: WebAppHostMessage) => void): void
+  /**
+   * Hosts that carry the media session to the OS controls (with `trackMedia`): the script
+   * polyfills `navigator.mediaSession` when the engine lacks it and runs the host's actions –
+   * the page's handlers where it registered any, the playing element otherwise.
+   */
+  onMediaSession?(listener: (message: MediaSessionHostMessage) => void): void
+  /**
+   * Hosts whose screen turns with a fullscreen video (Android, as Chrome's does): the script
+   * reports every `fullscreenchange` with the fullscreen video's natural size
+   * (`installFullscreenReporter`).
+   */
+  reportFullscreen?: boolean
+  /**
+   * Hosts that offer a page's own search engine (Chrome for Android's "Recently visited" engines):
+   * the script posts the address of the first `<link rel="search"
+   * type="application/opensearchdescription+xml">` once per document; the browser fetches and
+   * parses the description itself (`shared/search`).
+   */
+  discoverSearchEngines?: boolean
+  /**
+   * Hosts whose page script runs in an isolated world (Electron): run
+   * `shared/installPrompt`'s shim in the page's main world, where the `beforeinstallprompt`
+   * event must be born for the page to call `prompt()` on it. Without it the polyfill runs
+   * inline (Android, whose script is in the page's world already).
+   */
+  installInstallPromptShim?(events: InstallPromptShimEvents): void
+  /**
+   * Hosts with a speech engine (`capabilities.readAloud`): the script answers the browser's
+   * `readAloud.extract` request with the page's text as blocks and paints its
+   * `readAloud.highlight` messages (`readAloudScript.ts`).
+   */
+  onReadAloud?(listener: (message: ReadAloudHostMessage) => void): void
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -145,8 +227,20 @@ export function installPageScript(transport: PageScriptTransport): void {
   installActivationReporter(transport)
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
+  installReaderRelay(transport)
+  installPdfViewerRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
+  if (transport.discoverSearchEngines) installOpenSearch(transport)
+  if (transport.onReadAloud)
+    installReadAloud({
+      send: transport.send.bind(transport),
+      onReadAloud: transport.onReadAloud.bind(transport)
+    })
+  if (transport.reportFullscreen) installFullscreenReporter(transport)
+  // The reader document's extras (EDGE-13: line focus, syllables) – a `zen://reader` document
+  // only; `installReaderExtras` finds no article anywhere else.
+  if (location.protocol === 'zen:') installReaderExtrasWhenReady(document)
 
   window.addEventListener(
     'click',
@@ -190,26 +284,7 @@ export function installPageScript(transport: PageScriptTransport): void {
     true
   )
 
-  if (transport.trackMedia) {
-    let lastPlaying: boolean | null = null
-    const report = (): void => {
-      const playing = [...document.querySelectorAll('video,audio')].some(
-        (m) => !(m as HTMLMediaElement).paused && !(m as HTMLMediaElement).muted
-      )
-      if (playing !== lastPlaying) {
-        lastPlaying = playing
-        transport.send({ type: 'media', playing })
-      }
-    }
-    for (const type of ['play', 'playing', 'pause', 'ended', 'volumechange', 'emptied'])
-      document.addEventListener(type, report, true)
-    window.addEventListener('pagehide', () => {
-      if (lastPlaying) {
-        lastPlaying = false
-        transport.send({ type: 'media', playing: false })
-      }
-    })
-  }
+  if (transport.trackMedia) installMediaTracking(transport)
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +324,78 @@ export function installActivationReporter(transport: Pick<PageScriptTransport, '
     },
     true
   )
+}
+
+// ---------------------------------------------------------------------------
+// Fullscreen video: the size the host turns the screen by
+// ---------------------------------------------------------------------------
+
+/** The document's fullscreen element, under either name the engines have given it. */
+function fullscreenElementOf(doc: Document): Element | null {
+  return (
+    doc.fullscreenElement ??
+    (doc as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
+    null
+  )
+}
+
+/**
+ * The video a fullscreen element shows: the element itself, or – a player's wrapper in
+ * fullscreen, YouTube's way – the first video inside it with a size, else the first at all.
+ * Null for an element without one (a game's canvas, a slide deck), which turns nothing.
+ */
+export function fullscreenVideoOf(element: Element): HTMLVideoElement | null {
+  if (typeof HTMLVideoElement === 'undefined') return null
+  if (element instanceof HTMLVideoElement) return element
+  const videos = [...element.querySelectorAll('video')].filter(
+    (v): v is HTMLVideoElement => v instanceof HTMLVideoElement
+  )
+  return videos.find((v) => v.videoWidth > 0) ?? videos[0] ?? null
+}
+
+/**
+ * Tells the host, at every `fullscreenchange`, whether the document has a fullscreen element
+ * and the natural size of the video it shows (0 × 0 for none, or none known yet). The host
+ * turns the screen by it: a landscape video takes Android to landscape as Chrome's does
+ * (MED-01). A video in fullscreen before its metadata arrived reports again at
+ * `loadedmetadata`, as Chrome's orientation lock waits for the size before it locks. The
+ * engine's own `onShowCustomView` comes before the page's event, so the host pairs the two.
+ */
+export function installFullscreenReporter(transport: Pick<PageScriptTransport, 'send'>): void {
+  let awaitingMetadata: HTMLVideoElement | null = null
+  const send = (active: boolean, video: HTMLVideoElement | null): void =>
+    transport.send({
+      type: 'fullscreen',
+      active,
+      videoWidth: video?.videoWidth ?? 0,
+      videoHeight: video?.videoHeight ?? 0
+    })
+  const onMetadata = (e: Event): void => {
+    const video = awaitingMetadata
+    awaitingMetadata = null
+    if (!video || e.target !== video) return
+    const element = fullscreenElementOf(document)
+    if (element && fullscreenVideoOf(element) === video) send(true, video)
+  }
+  const report = (): void => {
+    if (awaitingMetadata) {
+      awaitingMetadata.removeEventListener('loadedmetadata', onMetadata)
+      awaitingMetadata = null
+    }
+    const element = fullscreenElementOf(document)
+    if (!element) {
+      send(false, null)
+      return
+    }
+    const video = fullscreenVideoOf(element)
+    send(true, video)
+    if (video && video.videoWidth === 0) {
+      awaitingMetadata = video
+      video.addEventListener('loadedmetadata', onMetadata, { once: true })
+    }
+  }
+  document.addEventListener('fullscreenchange', report, true)
+  document.addEventListener('webkitfullscreenchange', report, true)
 }
 
 /**
@@ -321,6 +468,36 @@ function installInterstitialRelay(transport: PageScriptTransport): void {
     const { action, url } = message
     if (typeof action !== 'string' || !actions.has(action) || typeof url !== 'string') return
     transport.send({ type: 'interstitial', action: action as InterstitialAction, url })
+  })
+}
+
+/**
+ * The `zen://reader` page posts its toolbar's changes to the text preferences on the window;
+ * only a document of Zenium's own scheme may relay them (a web page cannot rewrite the setting).
+ * The core validates the patch (`readerPreferencesPatch`) before it saves anything.
+ */
+function installReaderRelay(transport: PageScriptTransport): void {
+  if (location.protocol !== 'zen:') return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const data = e.data as { [READER_MESSAGE_KEY]?: unknown } | null
+    const patch = data && typeof data === 'object' ? data[READER_MESSAGE_KEY] : undefined
+    if (!patch || typeof patch !== 'object') return
+    transport.send({ type: 'reader', reader: patch })
+  })
+}
+
+/**
+ * The PDF viewer document (`zen://pdf`, `pdfPage.ts`) posts its state on its window; only a
+ * document of the viewer's own origin – one the host itself served – may relay it, so a web page
+ * cannot pose as the viewer to the chrome's PDF controls.
+ */
+function installPdfViewerRelay(transport: PageScriptTransport): void {
+  if (location.origin !== PDF_VIEWER_ORIGIN) return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const report = pdfReportOf(e.data)
+    if (report) transport.send({ type: 'pdf', pdf: report })
   })
 }
 
@@ -570,6 +747,36 @@ function installWebApp(transport: PageScriptTransport): void {
 
   // --- beforeinstallprompt / appinstalled --------------------------------------------------------
 
+  if (transport.installInstallPromptShim) {
+    // The events live in the page's world (`shared/installPrompt`); this world relays.
+    const events = INSTALL_PROMPT_EVENTS
+    document.addEventListener(events.request, (e) => {
+      const detail = (e as CustomEvent<unknown>).detail
+      let kind: unknown = detail
+      if (typeof detail === 'string') {
+        try {
+          kind = (JSON.parse(detail) as { kind?: unknown }).kind
+        } catch {
+          return
+        }
+      }
+      if (kind === 'prompt' || kind === 'deferred') transport.send({ type: 'webapp', webapp: kind })
+    })
+    transport.onWebApp?.((message) => {
+      document.dispatchEvent(
+        new CustomEvent(events.result, {
+          detail: JSON.stringify({ action: message.action, outcome: message.outcome })
+        })
+      )
+    })
+    try {
+      transport.installInstallPromptShim(events)
+    } catch {
+      /* the main world refused the script; the manifest probe above still serves the menu */
+    }
+    return
+  }
+
   let pendingPrompt: ZenBeforeInstallPromptEvent | null = null
   let lastEvent: ZenBeforeInstallPromptEvent | null = null
   let fired = false
@@ -679,4 +886,70 @@ function installWebApp(transport: PageScriptTransport): void {
       /* never let the polyfill throw into the page */
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// OpenSearch: the page's own search engine
+// ---------------------------------------------------------------------------
+
+/** The longest link title carried across the bridge; the description's ShortName wins anyway. */
+const MAX_OPENSEARCH_TITLE = 64
+
+/**
+ * Whether a `<link>` names an OpenSearch description: `rel` carries the `search` token (case-
+ * insensitive, in a token list) and `type` is `application/opensearchdescription+xml` (any
+ * parameters and case aside). A `rel="search"` without the type is a site's own search page.
+ */
+export function isOpenSearchLink(rel: string, type: string): boolean {
+  const mime = type.split(';')[0].trim().toLowerCase()
+  if (mime !== 'application/opensearchdescription+xml') return false
+  return rel
+    .toLowerCase()
+    .split(/\s+/)
+    .some((token) => token === 'search')
+}
+
+/**
+ * The first OpenSearch link of the top frame of an http(s) document, posted once per document
+ * (at DOMContentLoaded and once more at load for frameworks that inject the link late). The
+ * description itself is fetched by the browser, off the page: what leaves the page is a URL and
+ * the link's title. Best effort; never throws into the page.
+ */
+function installOpenSearch(transport: PageScriptTransport): void {
+  try {
+    if (window !== window.top) return
+    if (location.protocol !== 'https:' && location.protocol !== 'http:') return
+  } catch {
+    return
+  }
+  let posted = false
+  const probe = (): void => {
+    if (posted) return
+    let link: HTMLLinkElement | null = null
+    try {
+      for (const candidate of document.querySelectorAll('link[rel]')) {
+        const l = candidate as HTMLLinkElement
+        if (
+          isOpenSearchLink(l.getAttribute('rel') ?? '', l.getAttribute('type') ?? '') &&
+          /^https?:\/\//i.test(l.href)
+        ) {
+          link = l
+          break
+        }
+      }
+    } catch {
+      return
+    }
+    if (!link) return
+    posted = true
+    transport.send({
+      type: 'opensearch',
+      url: link.href,
+      title: (link.getAttribute('title') ?? '').trim().slice(0, MAX_OPENSEARCH_TITLE)
+    })
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', probe, { once: true })
+  else probe()
+  window.addEventListener('load', probe, { once: true })
 }

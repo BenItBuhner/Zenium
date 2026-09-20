@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   CONTENT_SCRIPT_NAMESPACES,
   ENGINE_NOOPS,
@@ -7,7 +7,11 @@ import {
   engineApiSpec,
   namespaceGranted
 } from '../api/engineSpec'
+import { installExtensionApi, type ShimHost } from '../api/shim'
 import { API_SPEC } from '../api/spec'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the test pokes at the patched globals
+type Any = any
 
 describe('engineApiSpec', () => {
   it('merges the browser layer table with the engine table, engine members winning', () => {
@@ -83,6 +87,59 @@ describe('engineApiSpec', () => {
     }
   })
 
+  it('makes every permission-gated namespace of the browser layer exist once declared', () => {
+    // VeePN, NordVPN and Browsec read `chrome.proxy.settings`, Claude `chrome.debugger.onEvent`
+    // and Read&Write `chrome.gcm.onMessage` in their workers' first statements: Chrome has the
+    // namespace once the permission is declared, and a missing one was a TypeError there.
+    for (const name of ['proxy', 'gcm', 'debugger', 'topSites', 'tts', 'contentSettings']) {
+      expect(namespaceGranted(name, [name], 3), name).toBe(true)
+      expect(namespaceGranted(name, [], 3), name).toBe(false)
+    }
+    const spec = engineApiSpec({
+      permissions: ['proxy', 'gcm', 'debugger', 'privacy', 'contentSettings'],
+      manifestVersion: 3,
+      context: 'page'
+    })
+    // The ChromeSetting and ContentSetting shapes travel with a namespace the engine table
+    // leaves alone (`proxy.settings`, `contentSettings.cookies`); `privacy`'s are the engine's
+    // own (`engine.ts`), so the shim must not replace them; `gcm` stays the layer's inert shape.
+    expect(spec.proxy.ownSettings).toEqual(['settings'])
+    expect(spec.proxy.events.onProxyError).toEqual({})
+    expect(spec.proxy.constants?.Mode).toMatchObject({ PAC_SCRIPT: 'pac_script' })
+    expect(spec.privacy.settings).toBeUndefined()
+    expect(spec.contentSettings.contentSettings).toContain('cookies')
+    expect(spec.gcm.shape).toBe(true)
+    expect(spec.gcm.methods.register.inert).toEqual({ error: 'GCM_DISABLED' })
+    expect(spec.gcm.events.onMessage).toEqual({})
+    expect(spec.debugger.events.onEvent).toEqual({})
+    expect(spec.debugger.methods.attach.inert).toBeUndefined()
+  })
+
+  it('lets every userScripts member reach the host', () => {
+    // Android answers all of them (`extensionApi.ts`, `userScriptsCall`): `configureWorld` is
+    // the switch that gives the USER_SCRIPT world its `chrome`, and a context-side no-op in its
+    // place resolved the call without the host ever hearing of it (Tampermonkey's and
+    // Violentmonkey's content scripts then read `runtime` of undefined on every page).
+    for (const method of Object.keys(ENGINE_SPEC.userScripts.methods)) {
+      const key = `userScripts.${method}`
+      expect(ENGINE_NOOPS.has(key), key).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
+    }
+  })
+
+  it('answers the omnibox and side-panel setters quietly', () => {
+    // The phone has neither; Raindrop.io, OneTab and Bitwarden call them while starting.
+    for (const key of [
+      'omnibox.setDefaultSuggestion',
+      'sidePanel.setOptions',
+      'sidePanel.setPanelBehavior'
+    ])
+      expect(ENGINE_NOOPS.has(key), key).toBe(true)
+    // The getters keep rejecting: a quiet nothing would be a lie the caller acts on.
+    for (const key of ['sidePanel.getOptions', 'sidePanel.getPanelBehavior', 'sidePanel.open'])
+      expect(ENGINE_NOOPS.has(key), key).toBe(false)
+  })
+
   it('lets every declarativeNetRequest member reach the host', () => {
     // The host answers all of them from `core/extensions/dnr` (W2-3): a context-side no-op or
     // stub here would silently swallow `setExtensionActionOptions` (the badge count) or answer
@@ -91,6 +148,72 @@ describe('engineApiSpec', () => {
       const key = `declarativeNetRequest.${method}`
       expect(ENGINE_NOOPS.has(key), key).toBe(false)
       expect(Object.prototype.hasOwnProperty.call(ENGINE_STUB_RESULTS, key), key).toBe(false)
+    }
+  })
+
+  it('builds proxy.settings, gcm and debugger on a bare chrome, as the WebView leaves it', async () => {
+    // The phone has no native namespace to patch: what the shim builds from the merged table is
+    // all an extension finds. The three workers' first statements, in order.
+    const g = globalThis as Record<string, Any>
+    const manifest = {
+      manifest_version: 3,
+      name: 'Probe',
+      version: '1.0',
+      permissions: ['proxy', 'gcm', 'debugger']
+    }
+    const nativeEvent = (): Any => ({
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      hasListener: vi.fn(() => false)
+    })
+    const chrome: Any = {
+      runtime: {
+        id: 'abcdefghijklmnopabcdefghijklmnop',
+        getManifest: () => manifest,
+        getURL: (path: string) => `chrome-extension://abcdefghijklmnopabcdefghijklmnop/${path}`,
+        sendMessage: vi.fn(),
+        onMessage: nativeEvent()
+      },
+      storage: { local: {}, session: {}, onChanged: nativeEvent() }
+    }
+    Object.defineProperty(g, 'chrome', { value: chrome, configurable: true, writable: true })
+    Object.defineProperty(g, 'browser', { value: chrome, configurable: true, writable: true })
+    const calls: Array<{ namespace: string; method: string; args: unknown[] }> = []
+    const host: ShimHost = {
+      kind: 'worker',
+      invoke(namespace, method, args) {
+        calls.push({ namespace, method, args })
+        return Promise.resolve({
+          ok: true,
+          value: { value: { mode: 'system' }, levelOfControl: 'not_controllable' }
+        })
+      },
+      notify: vi.fn(),
+      onEvent: vi.fn()
+    }
+    try {
+      installExtensionApi(
+        host,
+        engineApiSpec({ permissions: manifest.permissions, manifestVersion: 3, context: 'page' })
+      )
+      chrome.proxy.settings.onChange.addListener(() => {})
+      await expect(chrome.proxy.settings.get({})).resolves.toEqual({
+        value: { mode: 'system' },
+        levelOfControl: 'not_controllable'
+      })
+      expect(calls).toEqual([{ namespace: 'proxy', method: 'get', args: ['settings', {}] }])
+      expect(chrome.proxy.Mode.FIXED_SERVERS).toBe('fixed_servers')
+      chrome.gcm.onMessage.addListener(() => {})
+      await expect(chrome.gcm.register(['1234'])).rejects.toThrow('GCM_DISABLED')
+      chrome.debugger.onEvent.addListener(() => {})
+      chrome.debugger.onDetach.addListener(() => {})
+      expect(chrome.debugger.DetachReason.TARGET_CLOSED).toBe('target_closed')
+      // Not declared: not there, as Chrome has it.
+      expect(chrome.tts).toBeUndefined()
+      expect(chrome.topSites).toBeUndefined()
+    } finally {
+      delete g.chrome
+      delete g.browser
     }
   })
 })

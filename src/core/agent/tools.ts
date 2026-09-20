@@ -575,10 +575,7 @@ export function normalizeKey(key: string): string {
 function resolveUrl(ctx: ToolContext, input: string): string {
   const direct = inputToUrl(input.trim())
   if (direct) return direct
-  const engines = ctx.browser.state.searchEngines
-  const engine =
-    engines.find((e) => e.id === ctx.browser.state.settings.searchEngineId) ?? engines[0]
-  return buildSearchUrl(engine, input.trim())
+  return buildSearchUrl(ctx.browser.state.defaultSearchEngine(), input.trim())
 }
 
 function folderOf(ctx: ToolContext, t: Tab): Folder | null {

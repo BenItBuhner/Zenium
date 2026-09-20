@@ -9,8 +9,12 @@ import { FrameDialogHost, useFrameDialog } from '@renderer/lib/portals'
 import { activeTab, tabTitle } from '@renderer/lib/selectors'
 import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { AutofillEditor } from './autofill/AutofillEditor'
+import { AutofillPrompts } from './autofill/AutofillPrompts'
+import { PassphraseDialog } from './autofill/PassphraseDialog'
 import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
-import { PermissionPrompts } from './security/PermissionPromptDialog'
+import { ClearBrowsingDataDialog } from './siteControls/ClearBrowsingDataDialog'
+import { PermissionPrompts } from './siteControls/PermissionPromptBubble'
 import { PageDialogs } from './dialogs/PageDialog'
 import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
 import { BlockedPopupsPanel } from './security/BlockedPopupsPanel'
@@ -19,12 +23,18 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { BookmarkAllTabsDialog } from './bookmarks/BookmarkAllTabsDialog'
 import { EditBookmarkDialog } from './bookmarks/EditBookmarkDialog'
+import { InstallDialogLayer } from './install/InstallDialog'
 import { StarDialog } from './bookmarks/StarDialog'
 import { NewTabShortcutDialog } from './newtab/NewTabShortcutDialog'
 import { BookmarkEditSheet } from './phone/BookmarkEditSheet'
 import { InstallLayer } from './phone/InstallSheet'
+import { PrintPreviewDialog } from './print/PrintPreviewDialog'
+import { MediaLayer } from './phone/MediaSheet'
+import { ScreenPickerLayer } from './screenCapture/ScreenPicker'
+import { ShareLayer } from './share/SharePopover'
 import { SiteDataConfirmDialog } from './siteinfo/SiteInfoSheet'
 import { ZoomBubble } from './zoom/ZoomBubble'
+import { ReaderPreferencesPanel } from './reader/ReaderPreferencesPanel'
 
 const TAB_ICONS = [
   ...SPACE_ICONS,
@@ -46,24 +56,31 @@ const TAB_ICONS = [
  * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
  * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
- * requests wait on, the permission prompts a page's requests wait on, the page's own dialogs
- * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes
- * or Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
- * permission prompts, and the site-information popover's "Clear site data?" confirmation. The
- * modal ones render through the `FrameDialogHost` this mounts, so they
- * centre in the box it is placed in – the content frame on desktop, the shell on phones – over
- * a scrim that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop
- * it portals to the chrome layer, anchored under the star; on phones it is a sheet in the host.
- * The zoom bubble is a desktop popover too, under the pill's zoom chip, and so is the blocked
- * pop-ups list under its chip (a sheet on phones). This is the frame's host: a dialog whose
- * state lives inside the frame (a phone panel's sheets, the new tab page's customise sheet)
- * reaches it through `FrameDialogPortal`.
+ * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
+ * a page's `getDisplayMedia` waits on, the page's own dialogs
+ * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
+ * Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
+ * permission prompts, the site-information popover's "Clear site data?" confirmation, the Clear
+ * browsing data dialog Settings opens on a mouse, the autofill prompts (save / update a login,
+ * save an address or a card, choose a passkey account), the address and card editors of
+ * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
+ * the chrome, the print preview (Chrome's constrained window at the frame's size) and, on
+ * phones, the media sheet the pill's Now playing chip opens (`MediaSheet`). The modal ones
+ * render through the `FrameDialogHost` this mounts, so they centre
+ * in the box it is placed in – the content frame on desktop, the shell on phones – over a scrim
+ * that dims only that box (lib/portals.tsx). The star bubble is a popover: on desktop it portals
+ * to the chrome layer, anchored under the star; on phones it is a sheet in the host. The zoom
+ * bubble is a desktop popover too, under the pill's zoom chip, and so are the blocked pop-ups
+ * list under its chip and Reader View's text preferences under theirs (sheets on phones). This is the frame's host: a dialog whose state lives
+ * inside the frame (a phone panel's sheets, the new tab page's customise sheet) reaches it
+ * through `FrameDialogPortal`.
  */
 export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const pinnedTabId = uiStore.use((s) => s.editingPinnedUrlTabId)
   const iconTabId = uiStore.use((s) => s.iconPickerTabId)
   const star = uiStore.use((s) => s.starDialog)
   const zoom = uiStore.use((s) => s.zoomBubble)
+  const readerPrefs = uiStore.use((s) => s.readerPreferences)
   const allTabs = uiStore.use((s) => s.bookmarkAllTabs)
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
@@ -101,8 +118,20 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <PageDialogs state={state} />
       <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
+      <ClearBrowsingDataDialog />
+      <PrintPreviewDialog state={state} />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
-      <InstallLayer />
+      {readerPrefs && (
+        <ReaderPreferencesPanel key={readerPrefs.tabId} state={state} panel={readerPrefs} />
+      )}
+      <InstallLayer state={state} />
+      {phone && <MediaLayer state={state} />}
+      <InstallDialogLayer state={state} />
+      <ScreenPickerLayer state={state} />
+      <ShareLayer state={state} />
+      <AutofillPrompts state={state} />
+      <AutofillEditor state={state} />
+      <PassphraseDialog />
     </FrameDialogHost>
   )
 }

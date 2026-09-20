@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   FormFactor,
   HostCapabilities,
   Platform as PlatformOs,
-  Settings
+  Settings,
+  SharePayload
 } from '../../shared/types'
+import { PRIVATE_CONTAINER_ID } from '../../shared/types'
 import { searchCommands, type CommandContext } from '../../shared/commands'
 import { resolveDownloadSettings } from '../../shared/downloads'
 import { buildSearchUrl } from '../../shared/search'
@@ -12,24 +14,34 @@ import { Browser } from '../browser'
 import type {
   AppHost,
   ClipboardHost,
+  DialogHost,
   MenuHost,
   MenuItemTemplate,
+  MenuPopupOptions,
   Platform,
+  ShortcutHost,
+  SpeechHost,
+  SpellcheckHost,
   StoreIO,
   TabView,
   TabViewHost,
+  TranslateHost,
+  TranslateModelStore,
   WindowHost
 } from '../platform'
 import type { ZenWindow } from '../window'
 import type { ChromeContextParams, PageContextParams } from '../platform'
 import {
+  hasSiteInfo,
   isDownloadable,
   joinGroups,
   linkCopyItem,
   NAVIGATION_MENU_MAX,
   navigationWindow,
+  SELECTION_TEXT_MAX,
   selectionUrl
 } from '../menus'
+import { serialiseMenu } from '../rendererMenus'
 
 /**
  * Electron's capabilities, a hand-kept copy of src/main/platform/index.ts: the real object imports
@@ -51,6 +63,8 @@ const DESKTOP: HostCapabilities = {
   resourceGovernor: true,
   sync: true,
   print: true,
+  printPreview: true,
+  pdfViewer: false,
   agents: true,
   updates: true,
   share: false,
@@ -62,11 +76,20 @@ const DESKTOP: HostCapabilities = {
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: false,
+  darkenSites: false,
   privateTabs: false,
   secureDns: false,
   newTabPage: true,
   pageTabs: false,
-  pinShortcuts: false
+  pinShortcuts: false,
+  translate: true,
+  voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
+  selectionToolbar: false,
+  popupSurface: true,
+  qrScan: false,
+  readAloud: false
 }
 
 /**
@@ -90,6 +113,8 @@ const ANDROID: HostCapabilities = {
   resourceGovernor: false,
   sync: false,
   print: true,
+  printPreview: false,
+  pdfViewer: true,
   agents: true,
   updates: true,
   share: true,
@@ -101,16 +126,24 @@ const ANDROID: HostCapabilities = {
   requestBlocking: true,
   reducedExtensionIsolation: false,
   pageControls: true,
+  darkenSites: true,
   privateTabs: true,
   secureDns: false,
   newTabPage: false,
   pageTabs: true,
   // Kotlin's boot info turns this on where the launcher can pin (ShortcutManagerCompat).
-  pinShortcuts: false
+  pinShortcuts: false,
+  translate: true,
+  voiceSearch: false,
+  screenCapture: false,
+  shareSheet: false,
+  selectionToolbar: true,
+  popupSurface: false,
+  qrScan: false,
+  readAloud: false
 }
 
-function memoryIo(): StoreIO {
-  const files: Record<string, string> = {}
+function memoryIo(files: Record<string, string> = {}): StoreIO {
   return {
     readSync: (name) => files[name] ?? null,
     write: async (name, text) => {
@@ -137,12 +170,16 @@ interface Harness {
   shown: () => MenuItemTemplate[]
   /** How many popups the host was asked for. */
   popups: () => number
+  /** The options of the last popup: where it opened and whether the keyboard asked for it. */
+  where: () => MenuPopupOptions | null
   /** Every call a tab view received, as `method(args)`. */
   viewCalls: string[]
   /** What the host's clipboard says on `readText`. */
   clipboardText: { value: string }
   /** The names of the events sent to the window's chrome, in order. */
   sent: string[]
+  /** Every `apply` the fake spellchecker host received (empty without `options.spellcheck`). */
+  spellcheckApplied: SpellcheckApplied[]
 }
 
 interface HarnessOptions {
@@ -151,6 +188,27 @@ interface HarnessOptions {
   emojiPanel?: boolean
   /** The host's window is fullscreen. */
   fullScreen?: boolean
+  /** The host runs the translation engine (`translate.available`), with no model on the device. */
+  translate?: boolean
+  /**
+   * The host has a spellchecker of the browser's own with these dictionaries (Electron's session
+   * spellchecker); `systemLanguages` makes it follow the OS's languages instead (macOS).
+   */
+  spellcheck?: { available: string[]; locales?: string[]; systemLanguages?: boolean }
+  /** The host writes launchers for installed web apps (`capabilities.pinShortcuts` set too). */
+  shortcuts?: boolean
+  /** What the host's confirmation dialog answers (absent: the stub's nothing, read as No). */
+  confirm?: boolean
+  /** Documents already in the store when the browser starts (`webapps.json`, …). */
+  files?: Record<string, string>
+  /** The host has a speech engine (`Platform.speech`; `capabilities.readAloud` set too): read aloud's entry points show. */
+  speech?: boolean
+}
+
+/** The languages the fake spellchecker was last told to check in. */
+interface SpellcheckApplied {
+  enabled: boolean
+  languages: string[]
 }
 
 /** A browser on a host with the given capabilities whose menu popup only records the template. */
@@ -160,13 +218,35 @@ function harness(
 ): Harness {
   const opts: HarnessOptions = typeof options === 'string' ? { formFactor: options } : options
   let last: MenuItemTemplate[] = []
+  let lastOptions: MenuPopupOptions | null = null
   let count = 0
   const viewCalls: string[] = []
   const clipboardText = { value: '' }
   const sent: string[] = []
+  const spellcheckApplied: SpellcheckApplied[] = []
+  const spellcheckHost = (): SpellcheckHost => {
+    const words = new Set<string>()
+    const spec = opts.spellcheck!
+    return {
+      systemLanguages: Boolean(spec.systemLanguages),
+      locales: spec.locales ?? ['en-US'],
+      availableLanguages: () => [...spec.available],
+      apply: (enabled, languages) =>
+        void spellcheckApplied.push({ enabled, languages: [...languages] }),
+      onDictionaryStatus: () => undefined,
+      listWords: async () => [...words],
+      addWord: async (word) => {
+        if (words.has(word)) return false
+        words.add(word)
+        return true
+      },
+      removeWord: async (word) => words.delete(word)
+    }
+  }
   const menus: MenuHost = {
-    popup: (items) => {
+    popup: (items, options) => {
       last = items
+      lastOptions = options
       count += 1
     }
   }
@@ -196,7 +276,7 @@ function harness(
   const platform: Platform = {
     info: { os: capabilities.windows ? ('linux' as PlatformOs) : 'android', version: '1.2.3' },
     capabilities,
-    io: memoryIo(),
+    io: memoryIo({ ...opts.files }),
     windows: {
       create: () =>
         stub<WindowHost>({
@@ -212,7 +292,9 @@ function harness(
     },
     views: stub<TabViewHost>({ createView: () => recordingView() }),
     menus,
-    dialogs: stub(),
+    dialogs: stub<DialogHost>(
+      opts.confirm === undefined ? {} : { confirm: () => Promise.resolve(opts.confirm!) }
+    ),
     clipboard: stub<ClipboardHost>({ readText: () => Promise.resolve(clipboardText.value) }),
     shell: stub(),
     net: stub(),
@@ -220,14 +302,45 @@ function harness(
     sessions: stub(),
     // Optional members must read as absent, which the catch-all stub would not give.
     app: stub<AppHost>({ showEmojiPanel: opts.emojiPanel ? () => undefined : undefined }),
-    readabilitySource: () => null
+    readabilitySource: () => null,
+    ...(opts.translate
+      ? {
+          translate: stub<TranslateHost>({
+            models: stub<TranslateModelStore>({ list: () => Promise.resolve([]) }),
+            locales: ['en']
+          })
+        }
+      : {}),
+    ...(opts.spellcheck ? { spellcheck: spellcheckHost() } : {}),
+    ...(opts.shortcuts ? { shortcuts: stub<ShortcutHost>() } : {}),
+    ...(opts.speech
+      ? {
+          speech: stub<SpeechHost>({
+            voices: () => Promise.resolve([]),
+            onVoicesChanged: () => undefined,
+            onEvent: () => undefined,
+            speak: () => undefined,
+            stop: () => undefined
+          })
+        }
+      : {})
   }
   const browser = new Browser(platform)
   browser.start()
   const win = browser.allWindows()[0] as ZenWindow
   if (opts.formFactor)
     browser.handleCommand(win, 'window.formFactor', { formFactor: opts.formFactor })
-  return { browser, win, shown: () => last, popups: () => count, viewCalls, clipboardText, sent }
+  return {
+    browser,
+    win,
+    shown: () => last,
+    popups: () => count,
+    where: () => lastOptions,
+    viewCalls,
+    clipboardText,
+    sent,
+    spellcheckApplied
+  }
 }
 
 /** Let a click that reads the host's clipboard finish. */
@@ -252,6 +365,7 @@ function appMenu(h: Harness): string[] {
 /** The desktop app menu as it was before the phone variant existed. */
 const DESKTOP_APP_MENU = [
   'New Tab',
+  'Search Tabs…',
   'New Space…',
   '-',
   'New Window',
@@ -286,6 +400,7 @@ const DESKTOP_APP_MENU = [
   'Print…',
   'Save Page As…',
   'Take Screenshot',
+  'Capture Full Page',
   '-',
   'Resources',
   'Resources > Memory 0 MB · CPU 0% · 0 live, 0 frozen',
@@ -303,7 +418,7 @@ const DESKTOP_APP_MENU = [
   'Quit'
 ]
 
-const DESKTOP_ONLY = ['Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
+const DESKTOP_ONLY = ['Search Tabs…', 'Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
 
 describe('the app menu', () => {
   it('is unchanged on the desktop', () => {
@@ -337,6 +452,60 @@ describe('the app menu', () => {
     expect(tablet.sent).not.toContain('overlay.open')
   })
 
+  it('offers Text Preferences… under Reader View while a reader page is open, on both hosts', () => {
+    for (const [caps, formFactor] of [
+      [DESKTOP, undefined],
+      [ANDROID, 'phone']
+    ] as const) {
+      const h = pageHarness(caps, formFactor ? { formFactor } : {})
+      // A web page: Reader View is the toggle, the preferences item waits for an article.
+      expect(appMenu(h)).not.toContain('Text Preferences…')
+      h.browser.tabs.navigate(
+        h.tabId,
+        'zen://reader?id=article_1&url=https%3A%2F%2Fexample.org%2Fstory'
+      )
+      const menu = appMenu(h)
+      expect(menu.indexOf('Text Preferences…')).toBe(menu.indexOf('Reader View') + 1)
+      h.sent.length = 0
+      h.click('Text Preferences…')
+      // The chrome draws the surface: a popover under the pill on a mouse, a sheet on a phone.
+      expect(h.sent).toContain('reader.preferences')
+    }
+  })
+
+  it('offers Listen to This Page on a phone with a speech engine, under Reader View and gated as it is', async () => {
+    // No engine, no item; the desktop's turn is the services program's (the reader's own controls).
+    expect(appMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).not.toContain(
+      'Listen to This Page'
+    )
+    expect(appMenu(pageHarness({ ...DESKTOP, readAloud: true }, { speech: true }))).not.toContain(
+      'Listen to This Page'
+    )
+    const h = pageHarness({ ...ANDROID, readAloud: true }, { formFactor: 'phone', speech: true })
+    const menu = appMenu(h)
+    expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
+    // The reader core's readability signal gates it exactly as it gates Reader View.
+    expect(item(h.items(), 'Reader View').enabled).toBe(false)
+    expect(item(h.items(), 'Listen to This Page').enabled).toBe(false)
+    h.browser.tabs.tab(h.tabId)!.readerable = true
+    appMenu(h)
+    expect(item(h.items(), 'Reader View').enabled).toBe(true)
+    expect(item(h.items(), 'Listen to This Page').enabled).toBe(true)
+    // The click starts the core's session on the tab, which asks the page script for the text.
+    h.viewCalls.length = 0
+    h.click('Listen to This Page')
+    await settle()
+    expect(h.browser.readAloud.uiState()?.tabId).toBe(h.tabId)
+    expect(
+      h.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"top"')
+      )
+    ).toBe(true)
+  })
+
   it('on a phone drops what only a desktop window can use', () => {
     const menu = appMenu(harness(ANDROID, 'phone'))
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
@@ -352,13 +521,22 @@ describe('the app menu', () => {
       expect(menu).not.toContain(label)
   })
 
-  it('on a phone keeps the page and library items in their desktop order', () => {
+  it('on a phone opens on the icon row and keeps the page and library items in their desktop order', () => {
+    // The star moved from the Bookmarks submenu into the row (TB-16): one bookmark entry; and
+    // the row's Download Page is the phone's one save entry, so no 'Save Page As…' row (TB-08).
     expect(appMenu(harness(ANDROID, 'phone'))).toEqual([
+      'Forward',
+      'Bookmark',
+      'Download Page',
+      'Page Info',
+      'Reload',
+      '-',
       'New Tab',
+      'New Private Tab',
+      'Close Private Tabs',
       'New Space…',
       '-',
       'Bookmarks',
-      'Bookmarks > Bookmark This Page',
       'Bookmarks > Bookmark All Tabs…',
       'Bookmarks > -',
       'Bookmarks > Show Bookmarks',
@@ -376,14 +554,35 @@ describe('the app menu', () => {
       'Reader View',
       'Share…',
       'Print…',
-      'Save Page As…',
       'Take Screenshot',
+      'Capture Full Page',
       'Desktop Site',
       '-',
       'Settings',
       '-',
       'About Zenium 1.2.3'
     ])
+  })
+
+  it('offers private tabs where the host keeps the private session in tabs', () => {
+    // Private windows: the private entry is the window, as on desktop.
+    expect(appMenu(harness(DESKTOP))).not.toContain('New Private Tab')
+    expect(appMenu(harness({ ...ANDROID, privateTabs: false }, 'phone'))).not.toContain(
+      'New Private Tab'
+    )
+    const h = harness(ANDROID, 'phone')
+    expect(appMenu(h)).toContain('New Private Tab')
+    // Nothing to close until a private tab is open: the row stays, greyed (v2 §9.17 – a menu
+    // row whose count is zero is disabled, not hidden), and comes alive with the first one.
+    const closeRow = (): MenuItemTemplate | undefined => {
+      appMenu(h)
+      return h.shown().find((item) => item.label === 'Close Private Tabs')
+    }
+    expect(closeRow()).toMatchObject({ enabled: false })
+    h.browser.handleCommand(h.win, 'tab.newPrivate', {})
+    expect(closeRow()).toMatchObject({ enabled: true })
+    h.browser.handleCommand(h.win, 'tab.closePrivate', undefined)
+    expect(closeRow()).toMatchObject({ enabled: false })
   })
 
   it('on a phone follows the capabilities, not the platform name', () => {
@@ -394,15 +593,137 @@ describe('the app menu', () => {
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
-    // A device build has the extension store: the management page is reachable from the menu,
-    // closing the library block in Firefox's order.
+    // A device build has the extension store: the actions sheet and the management page are
+    // reachable from the menu, closing the library block in Firefox's order.
     const withStore = appMenu(harness({ ...ANDROID, extensions: true }, 'phone'))
     const downloads = withStore.indexOf('Downloads')
-    expect(withStore.slice(downloads, downloads + 3)).toEqual([
+    expect(withStore.slice(downloads, downloads + 4)).toEqual([
       'Downloads',
       'Passwords',
+      'Extensions',
       'Add-ons and Themes'
     ])
+  })
+
+  it('offers the Extensions sheet on a phone with extensions only, and opens it through extensions.open', () => {
+    // The desktop has the toolbar and the puzzle panel for the actions: its menu is unchanged.
+    // The row follows the layout and the capability, not the platform, like the rest of the
+    // phone menu; a host without extensions has nothing to list.
+    expect(appMenu(harness(DESKTOP))).not.toContain('Extensions')
+    expect(appMenu(harness(DESKTOP, 'tablet'))).not.toContain('Extensions')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Extensions')
+    const h = harness({ ...ANDROID, extensions: true }, 'phone')
+    const menu = appMenu(h)
+    expect(menu).toContain('Extensions')
+    expect(menu.indexOf('Extensions')).toBeLessThan(menu.indexOf('Add-ons and Themes'))
+    h.sent.length = 0
+    h.shown()
+      .find((item) => item.label === 'Extensions')
+      ?.click?.()
+    expect(h.sent).toEqual(['extensions.open'])
+  })
+
+  it('offers the install item only to a window whose chrome has an install surface up', () => {
+    // A desktop host that writes launchers: the engine can install, but the item is a way into
+    // the chrome's install dialog, so until the chrome registers one (`ui.surface`, as the
+    // desktop's InstallDialogLayer does on mount) the menu offers no way into a prompt nothing
+    // would show.
+    const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
+    h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
+    expect(appMenu(h)).toContain('Create shortcut…')
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('Create shortcut…')
+    // A window that never registered any surface has none.
+    expect(h.win.surfaces.size).toBe(0)
+  })
+
+  describe("a web app's standalone window", () => {
+    /** An installed app on record, so its window is the app's (`appId`) and can be uninstalled. */
+    const NOTES = JSON.stringify({
+      version: 1,
+      pinned: [
+        {
+          id: 'notes',
+          name: 'Notes',
+          startUrl: 'https://notes.example/',
+          scope: 'https://notes.example/',
+          pinnedAt: 1,
+          icon: null,
+          bounds: null
+        }
+      ],
+      engagement: {}
+    })
+    const WEB_APP_MENU = [
+      'Copy URL',
+      'Open in Zenium',
+      '-',
+      'Zoom (100%)',
+      'Zoom (100%) > Zoom In',
+      'Zoom (100%) > Zoom Out',
+      'Zoom (100%) > Reset Zoom (100%)',
+      '-',
+      'Find in Page…',
+      'Print…'
+    ]
+
+    it("has Chrome's web-app menu from its title bar's button, not the browser's", () => {
+      const h = harness(DESKTOP, { files: { 'webapps.json': NOTES } })
+      const app = h.browser.openAppWindow('https://notes.example/today')!
+      h.browser.handleCommand(app, 'app.menu', { anchor: { x: 10, y: 20, width: 28, height: 28 } })
+      expect(labels(h.shown())).toEqual([...WEB_APP_MENU, '-', 'Uninstall Notes…'])
+      // From the button the menu hangs off its bottom edge, as the browser's does.
+      expect(h.where()).toMatchObject({ source: 'app', x: 10, y: 48 })
+      // The browser window keeps its own menu.
+      expect(appMenu(h)).toEqual(DESKTOP_APP_MENU)
+    })
+
+    it('offers no Uninstall for a window no installed app owns, and no Print where the host cannot', () => {
+      const h = harness({ ...DESKTOP, print: false })
+      const app = h.browser.openAppWindow('https://plain.example/page')!
+      expect(app.app?.appId).toBeNull()
+      h.browser.handleCommand(app, 'app.menu', {})
+      expect(labels(h.shown())).toEqual(WEB_APP_MENU.filter((l) => l !== 'Print…'))
+    })
+
+    it('Open in Zenium puts the page in a tab of the browser window behind the app', () => {
+      const h = harness(DESKTOP)
+      const app = h.browser.openAppWindow('https://plain.example/page', { from: h.win })!
+      const before = h.browser.tabs.activeSpaceFor(h.win).tabIds.length
+      h.browser.handleCommand(app, 'app.menu', {})
+      h.shown()
+        .find((item) => item.label === 'Open in Zenium')
+        ?.click?.()
+      expect(h.browser.tabs.activeSpaceFor(h.win).tabIds.length).toBe(before + 1)
+      expect(h.browser.tabs.activeTabFor(h.win)?.url).toBe('https://plain.example/page')
+      // The app window keeps its page.
+      expect(h.browser.tabs.activeTabFor(app)?.url).toBe('https://plain.example/page')
+    })
+
+    it('Uninstall asks first; a Yes removes the record and closes the app’s windows, a No keeps both', async () => {
+      const no = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: false })
+      const kept = no.browser.openAppWindow('https://notes.example/')!
+      no.browser.handleCommand(kept, 'app.menu', {})
+      no.shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(no.browser.webApps.pinnedFor('https://notes.example/')?.name).toBe('Notes')
+      expect(kept.alive).toBe(true)
+
+      const yes = harness(DESKTOP, { files: { 'webapps.json': NOTES }, confirm: true })
+      const gone = yes.browser.openAppWindow('https://notes.example/')!
+      yes.browser.handleCommand(gone, 'app.menu', {})
+      yes
+        .shown()
+        .find((item) => item.label === 'Uninstall Notes…')
+        ?.click?.()
+      await settle()
+      expect(yes.browser.webApps.pinnedFor('https://notes.example/')).toBeNull()
+      expect(gone.closeApproved).toBe(true)
+    })
   })
 
   it('closes the page group with the page controls where the host has them', () => {
@@ -432,6 +753,163 @@ describe('the app menu', () => {
     expect(appMenu(h)).not.toContain('Quit')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'tablet' })
     expect(appMenu(h)).toContain('Keyboard Shortcuts')
+  })
+})
+
+/** Every item of a template, submenus included. */
+function allItems(items: MenuItemTemplate[]): MenuItemTemplate[] {
+  return items.flatMap((item) => [item, ...(item.submenu ? allItems(item.submenu) : [])])
+}
+
+describe("the phone menu's icon row", () => {
+  /** A phone with one loaded web page, its menu open; `row` is the menu's first group. */
+  function phone(url = PAGE_URL): PageHarness & { row: () => MenuItemTemplate[] } {
+    const h = pageHarness(ANDROID, { formFactor: 'phone' })
+    if (url !== PAGE_URL) h.browser.tabs.tab(h.tabId)!.url = url
+    return {
+      ...h,
+      row: () => {
+        appMenu(h)
+        const items = h.shown()
+        return items.slice(
+          0,
+          items.findIndex((item) => item.type === 'separator')
+        )
+      }
+    }
+  }
+
+  it("is Chrome's five, in Chrome's order, each naming its glyph, and heads the phone menu alone", () => {
+    const h = phone()
+    expect(h.row().map((item) => [item.label, item.glyph])).toEqual([
+      ['Forward', 'forward'],
+      ['Bookmark', 'star'],
+      ['Download Page', 'download'],
+      ['Page Info', 'info'],
+      ['Reload', 'reload']
+    ])
+    // The row is the phone layout's: the desktop's native menu and the tablet's carry no glyph
+    // anywhere, and their templates are what they were.
+    for (const layout of [
+      harness(DESKTOP),
+      harness(DESKTOP, 'tablet'),
+      harness(ANDROID, 'tablet')
+    ]) {
+      appMenu(layout)
+      expect(allItems(layout.shown()).every((item) => item.glyph === undefined)).toBe(true)
+    }
+    // Rows of text below the row carry none either.
+    appMenu(h)
+    expect(allItems(h.shown().slice(6)).every((item) => item.glyph === undefined)).toBe(true)
+  })
+
+  it('serialises the glyph for the chrome and leaves every other descriptor as it was', () => {
+    const { items } = serialiseMenu(
+      [
+        { label: 'Forward', glyph: 'forward', enabled: false },
+        { type: 'separator' },
+        { label: 'New Tab', click: () => undefined }
+      ],
+      'm'
+    )
+    expect(items[0]).toMatchObject({ label: 'Forward', glyph: 'forward', enabled: false })
+    expect('glyph' in items[1]).toBe(false)
+    expect('glyph' in items[2]).toBe(false)
+  })
+
+  it('has Forward disabled with no forward entry and stepping forward with one (§9.30: greyed, not gone)', () => {
+    const h = phone()
+    const forward = (): MenuItemTemplate => h.row()[0]
+    expect(forward()).toMatchObject({ label: 'Forward', enabled: false })
+    h.browser.tabs.tab(h.tabId)!.canGoForward = true
+    expect(forward()).toMatchObject({ enabled: true })
+    const go = vi.spyOn(h.browser.tabs, 'goForward').mockImplementation(() => undefined)
+    forward().click?.()
+    expect(go).toHaveBeenCalledWith(h.tabId)
+  })
+
+  it("the star is the page's bookmark: unfilled and saving on a new page, filled and editing on a bookmarked one, off a page that takes no bookmark", () => {
+    const h = phone()
+    const star = (): MenuItemTemplate => h.row()[1]
+    expect(star()).toMatchObject({
+      label: 'Bookmark',
+      checked: false,
+      enabled: true
+    })
+    // A stateful glyph, not a toggle (§9.13): a plain item whose `checked` is the fill – never a
+    // checkbox, which the mouse popover would tick. The chrome gets `checked` either way.
+    expect(star().type).toBeUndefined()
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: false })
+    const flow = vi.spyOn(h.browser, 'starTab')
+    star().click?.()
+    expect(flow).toHaveBeenCalledWith(h.tabId, h.win)
+    // The star flow saved the page: the row's star is filled now and a press edits.
+    expect(h.browser.tabs.tab(h.tabId)!.bookmarked).toBe(true)
+    expect(star()).toMatchObject({ label: 'Edit Bookmark', checked: true, enabled: true })
+    appMenu(h)
+    expect(serialiseMenu(h.shown(), 'm').items[1]).toMatchObject({ type: 'normal', checked: true })
+    // The bookmarks submenu has no second entry for it on the phone.
+    appMenu(h)
+    const bookmarks = h.shown().find((item) => item.label === 'Bookmarks')
+    expect(bookmarks?.submenu?.map((item) => item.label ?? '-')).toEqual([
+      'Bookmark All Tabs…',
+      '-',
+      'Show Bookmarks',
+      '-',
+      'Import Bookmarks…',
+      'Export Bookmarks…'
+    ])
+    // A blank tab has nothing to bookmark.
+    const blank = phone('zen://blank')
+    expect(blank.row()[1]).toMatchObject({ label: 'Bookmark', enabled: false })
+  })
+
+  it('Download Page saves a web page through page.savePage and is off elsewhere; it is the phone menu’s one save entry', () => {
+    const h = phone()
+    expect(h.row()[2]).toMatchObject({ label: 'Download Page', glyph: 'download', enabled: true })
+    const run = vi.spyOn(h.browser.actions, 'run').mockImplementation(() => undefined)
+    h.row()[2].click?.()
+    expect(run).toHaveBeenCalledWith('page.savePage', { sourceTabId: h.tabId, win: h.win })
+    expect(phone('zen://settings').row()[2]).toMatchObject({ enabled: false })
+    expect(phone('zen://blank').row()[2]).toMatchObject({ enabled: false })
+    // Chrome's phone menu saves through the icon alone: the text row is the desktop's, so the
+    // same command is not offered twice (once gated to the web, once not).
+    appMenu(h)
+    expect(allItems(h.shown()).filter((item) => item.action === 'page.savePage')).toHaveLength(1)
+    expect(appMenu(h)).not.toContain('Save Page As…')
+    expect(appMenu(harness(DESKTOP))).toContain('Save Page As…')
+    expect(appMenu(harness(ANDROID, 'tablet'))).toContain('Save Page As…')
+  })
+
+  it('Page Info asks the chrome for the site information sheet, and is off where there is no site', () => {
+    const h = phone()
+    expect(h.row()[3]).toMatchObject({ label: 'Page Info', glyph: 'info', enabled: true })
+    h.sent.length = 0
+    h.row()[3].click?.()
+    expect(h.sent).toEqual(['siteInfo.open'])
+    // No site: a blank or new tab, a registered internal page; a site's error page keeps it.
+    expect(phone('zen://blank').row()[3]).toMatchObject({ enabled: false })
+    expect(phone('zen://newtab').row()[3]).toMatchObject({ enabled: false })
+    expect(phone('zen://settings/privacy').row()[3]).toMatchObject({ enabled: false })
+    expect(hasSiteInfo({ url: 'zen://error?url=https%3A%2F%2Fexample.com' })).toBe(true)
+    expect(hasSiteInfo({ url: 'file:///sdcard/page.html' })).toBe(true)
+    expect(hasSiteInfo({ url: 'zen://settings' })).toBe(false)
+  })
+
+  it('Reload is Stop while the page loads, each running its own command', () => {
+    const h = phone()
+    const last = (): MenuItemTemplate => h.row()[4]
+    expect(last()).toMatchObject({ label: 'Reload', glyph: 'reload', enabled: true })
+    const reload = vi.spyOn(h.browser.tabs, 'reload').mockImplementation(() => undefined)
+    last().click?.()
+    expect(reload).toHaveBeenCalledWith(h.tabId)
+    h.browser.tabs.tab(h.tabId)!.loading = true
+    expect(last()).toMatchObject({ label: 'Stop', glyph: 'stop' })
+    const stop = vi.spyOn(h.browser.tabs, 'stop').mockImplementation(() => undefined)
+    last().click?.()
+    expect(stop).toHaveBeenCalledWith(h.tabId)
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -605,6 +1083,7 @@ describe('the page context menu', () => {
       'Save Page As…',
       'Print…',
       'Take Screenshot',
+      'Capture Full Page',
       'Enter Reader View',
       '-',
       'Boosts',
@@ -971,6 +1450,89 @@ describe('the page context menu', () => {
     expect(menu.indexOf('Emoji')).toBe(menu.indexOf('Select All') + 1)
   })
 
+  it('gives a text field Chrome’s Spell Check submenu after the editing group on a host with its own checker', () => {
+    const h = pageHarness(DESKTOP, {
+      spellcheck: { available: ['en-US', 'en-GB', 'de', 'fr', 'nl'], locales: ['en-US', 'de'] }
+    })
+    const field = pageParams({ isEditable: true, editFlags: ALL_EDITS })
+    const menu = h.menu(field)
+    expect(menu.slice(menu.indexOf('Select All'))).toEqual([
+      'Select All',
+      '-',
+      'Spell Check',
+      '-',
+      'Boosts',
+      'Inspect Element'
+    ])
+    expect(separators(h.items())).toBeLessThanOrEqual(3)
+    // The languages checked now lead, checked; the UI languages' other dictionaries follow,
+    // unchecked; then the switch and the way to Settings › Languages.
+    const submenu = item(h.items(), 'Spell Check').submenu!
+    expect(labels(submenu)).toEqual([
+      'English (United States)',
+      'German',
+      '-',
+      'Check the Spelling of Text Fields',
+      '-',
+      'Language Settings'
+    ])
+    expect(submenu[0]).toMatchObject({ type: 'checkbox', checked: true, enabled: true })
+    expect(submenu[1]).toMatchObject({ type: 'checkbox', checked: false, enabled: true })
+    expect(submenu[3]).toMatchObject({ type: 'checkbox', checked: true })
+
+    // German checks in next to English and reads checked the next time.
+    submenu[1].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: true, languages: ['en-US', 'de'] })
+    h.menu(field)
+    const again = item(h.items(), 'Spell Check').submenu!
+    expect(again[1]).toMatchObject({ label: 'German', checked: true })
+
+    // The switch turns the checker off; the languages then read unchecked and greyed, as in Chrome.
+    again[3].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: false, languages: ['en-US', 'de'] })
+    h.menu(field)
+    const off = item(h.items(), 'Spell Check').submenu!
+    expect(off[0]).toMatchObject({ checked: false, enabled: false })
+    expect(off[1]).toMatchObject({ checked: false, enabled: false })
+    expect(off[3]).toMatchObject({ checked: false })
+    off[3].click!()
+    expect(h.spellcheckApplied.at(-1)).toEqual({ enabled: true, languages: ['en-US', 'de'] })
+
+    // Language Settings opens Settings on its Languages section (the overlay on the desktop).
+    h.menu(field)
+    h.sent.length = 0
+    item(h.items(), 'Spell Check').submenu![5].click!()
+    expect(h.sent).toContain('overlay.open')
+  })
+
+  it('sends Add to Dictionary to the profile’s dictionary where the host keeps one, not the view’s session', async () => {
+    const h = pageHarness(DESKTOP, { spellcheck: { available: ['en-US'] } })
+    h.menu(
+      pageParams({
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        misspelledWord: 'Zenium',
+        dictionarySuggestions: ['Zen']
+      })
+    )
+    h.click('Add to Dictionary')
+    await settle()
+    expect(await h.browser.spellcheck.words()).toEqual(['Zenium'])
+    expect(h.viewCalls).toEqual([])
+  })
+
+  it('leaves the Spell Check submenu to hosts that check spelling and choose their own languages', () => {
+    const field = pageParams({ isEditable: true, editFlags: ALL_EDITS })
+    // Android: the system's checker, chosen in the keyboard settings.
+    expect(pageHarness(ANDROID).menu(field)).not.toContain('Spell Check')
+    // macOS: the OS's languages; the submenu would have nothing to offer.
+    const mac = pageHarness(DESKTOP, {
+      spellcheck: { available: ['en-US', 'de'], systemLanguages: true }
+    })
+    expect(mac.menu(field)).not.toContain('Spell Check')
+    expect(mac.spellcheckApplied).toEqual([{ enabled: true, languages: [] }])
+  })
+
   it('never needs more than three separators', () => {
     const h = pageHarness()
     const cases: PageContextParams[] = [
@@ -1010,6 +1572,233 @@ describe('the page context menu', () => {
     expect(menu).not.toContain('Open Link in New Window')
     expect(menu).not.toContain('Open Link in New Private Window')
     expect(menu).toContain('Share Link…')
+  })
+
+  it('offers Open Link in Private Tab only where private browsing is a tab (Android)', () => {
+    const params = pageParams({ linkURL: 'https://example.org/next' })
+    expect(pageHarness(DESKTOP).menu(params)).not.toContain('Open Link in Private Tab')
+    const h = pageHarness(ANDROID)
+    const menu = h.menu(params)
+    expect(menu.indexOf('Open Link in Private Tab')).toBe(menu.indexOf('Open Link in New Tab') + 1)
+    expect(menu).not.toContain('Open Link in New Private Window')
+    h.click('Open Link in Private Tab')
+    const opened = Object.values(h.browser.state.model.tabs).find(
+      (t) => t.url === 'https://example.org/next'
+    )
+    expect(opened?.containerId).toBe(PRIVATE_CONTAINER_ID)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(opened?.id)
+    // Without the capability (an old WebView) the item stays out, as the windows items do.
+    expect(pageHarness({ ...ANDROID, privateTabs: false }).menu(params)).not.toContain(
+      'Open Link in Private Tab'
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The floating selection toolbar (Android's action mode over selected page text)
+// ---------------------------------------------------------------------------
+
+describe('the selection toolbar', () => {
+  const PHONE: HarnessOptions = { formFactor: 'phone' }
+
+  it('has no items on a desktop host, whose page context menu carries the actions', () => {
+    const h = pageHarness()
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(false)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 2)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”'
+    ])
+  })
+
+  it('on the phone lists Search <engine> then Share for text, and nothing for blank text or a gone tab', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, '  quantum foam ')).toEqual([
+      { id: 'search', title: 'Search Google' },
+      { id: 'share', title: 'Share' }
+    ])
+    // The title names the engine the search goes through, the menu's own (never the browser).
+    h.browser.handleCommand(h.win, 'settings.update', { searchEngineId: 'duckduckgo' })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')[0]).toEqual({
+      id: 'search',
+      title: 'Search DuckDuckGo'
+    })
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' }))[1]).toBe(
+      'Search DuckDuckGo for “quantum foam”'
+    )
+    expect(h.browser.menus.selectionToolbar(h.tabId, '   ')).toEqual([])
+    expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
+  })
+
+  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection', async () => {
+    expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
+      []
+    )
+    const h = pageHarness({ ...ANDROID, readAloud: true }, { ...PHONE, speech: true })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
+      { id: 'search', title: 'Search Google' },
+      { id: 'share', title: 'Share' },
+      { id: 'readAloud', title: 'Listen' }
+    ])
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”',
+      'Share…',
+      'Listen'
+    ])
+    // Without an engine the menu has no such item either. (The item is worded "Listen", the app
+    // menu's verb, so that beside Google's process-text "Read aloud" the pair reads as two things.)
+    expect(
+      pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
+    ).not.toContain('Listen')
+    // Nor does the desktop's right-click menu with one: its read aloud is the services program's
+    // own UI, and the item would start the phone's docked player in the desktop frame.
+    const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
+    expect(desktop.browser.readAloud.available).toBe(true)
+    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Listen')
+    // The touch starts the core's one session from the selection: the page script is asked for
+    // the selection's text (the model reads the selection alone, as Chrome does).
+    h.viewCalls.length = 0
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'readAloud', 'quantum foam')).toBe(true)
+    await settle()
+    expect(h.browser.readAloud.uiState()).toMatchObject({ tabId: h.tabId, source: 'selection' })
+    expect(
+      h.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"selection"')
+      )
+    ).toBe(true)
+  })
+
+  it('takes at most SELECTION_TEXT_MAX characters of a host selection', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    const long = 'a'.repeat(SELECTION_TEXT_MAX + 500)
+    expect(h.browser.menus.selectionToolbar(h.tabId, long).map((item) => item.id)).toEqual([
+      'search',
+      'share'
+    ])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', long)).toBe(true)
+    const tabIds = h.win.activeSpace().tabIds
+    const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    expect(opened?.url).toContain('a'.repeat(SELECTION_TEXT_MAX))
+    expect(opened?.url).not.toContain('a'.repeat(SELECTION_TEXT_MAX + 1))
+  })
+
+  it('Search <engine> opens the query in a background tab next to this one, with it as the opener', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(true)
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+    const tabIds = h.win.activeSpace().tabIds
+    const opened = h.browser.tabs.tab(tabIds[tabIds.indexOf(h.tabId) + 1] ?? '')
+    expect(opened?.url).toMatch(/^https:\/\/www\.google\..*quantum%20foam/)
+    expect(opened?.openerTabId).toBe(h.tabId)
+    // The menu's search still comes to the front, like Chrome's.
+    h.menu(pageParams({ selectionText: 'quantum foam' }))
+    h.click('Search Google for “quantum foam”')
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).not.toBe(h.tabId)
+  })
+
+  it('an address gets Open in Glance instead of a search, which previews it where the selection sits', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'glance', title: 'Open in Glance' },
+      { id: 'share', title: 'Share' }
+    ])
+    expect(
+      h.browser.menus.runSelectionAction(h.tabId, 'glance', 'example.org/docs', { x: 0.25, y: 1.5 })
+    ).toBe(true)
+    expect(h.win.glance).toMatchObject({ parentTabId: h.tabId, originX: 0.25, originY: 1 })
+    expect(h.browser.tabs.tab(h.win.glance?.tabId ?? '')?.url).toBe('https://example.org/docs')
+    expect(h.browser.tabs.activeTabFor(h.win)?.id).toBe(h.tabId)
+  })
+
+  it('leaves Open in Glance out while a glance is open or the setting is off', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    h.browser.tabs.openGlance('https://example.com/', h.tabId, 0.5, 0.5, h.win)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'share', title: 'Share' }
+    ])
+    h.browser.tabs.closeGlance(h.win)
+    h.browser.handleCommand(h.win, 'settings.update', { glanceEnabled: false })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs')).toEqual([
+      { id: 'share', title: 'Share' }
+    ])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'example.org/docs')).toBe(false)
+    expect(h.win.glance).toBeNull()
+  })
+
+  it('Share hands the text to the host sheet, and an id the text does not warrant does nothing', () => {
+    const shared: SharePayload[] = []
+    const h = pageHarness(ANDROID, PHONE)
+    h.browser.platform.shell.share = (payload): Promise<void> => {
+      shared.push(payload)
+      return Promise.resolve()
+    }
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'share', 'quantum foam')).toBe(true)
+    expect(shared).toEqual([{ text: 'quantum foam', tabId: h.tabId }])
+    // A menu-only action, a toolbar action the text no longer warrants, an unknown id.
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'go', 'example.org/docs')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'glance', 'quantum foam')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'define', 'quantum foam')).toBe(false)
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'share', '   ')).toBe(false)
+    expect(shared.length).toBe(1)
+    expect(h.win.glance).toBeNull()
+    expect(h.win.activeSpace().tabIds.length).toBe(1)
+  })
+
+  it('is off without the capability even on a phone-shaped host', () => {
+    const h = pageHarness({ ...ANDROID, selectionToolbar: false }, PHONE)
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'search', 'quantum foam')).toBe(false)
+  })
+
+  it('with the translation engine lists Translate last in the bar and Translate Selection before Share in the menu', async () => {
+    const h = pageHarness(ANDROID, { ...PHONE, translate: true })
+    expect(h.browser.menus.selectionToolbar(h.tabId, 'quantum foam')).toEqual([
+      { id: 'search', title: 'Search Google' },
+      { id: 'share', title: 'Share' },
+      { id: 'translate', title: 'Translate' }
+    ])
+    expect(
+      h.browser.menus.selectionToolbar(h.tabId, 'example.org/docs').map((item) => item.id)
+    ).toEqual(['glance', 'share', 'translate'])
+    // The menu keeps the desktop's order and offers it for the page's own selection only.
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' })).slice(0, 4)).toEqual([
+      'Copy',
+      'Search Google for “quantum foam”',
+      'Translate Selection',
+      'Share…'
+    ])
+    expect(h.menu(pageParams({ selectionText: 'quantum foam', isEditable: true }))).not.toContain(
+      'Translate Selection'
+    )
+    // The touch shows the sheet for the text on screen, anchored nowhere.
+    const asked: unknown[] = []
+    h.win.host.send = (name, payload) => {
+      if (name === 'translate.selection') asked.push(payload)
+    }
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'translate', 'quantum  foam ')).toBe(true)
+    await settle()
+    expect(asked).toEqual([{ tabId: h.tabId, text: 'quantum foam', x: null, y: null }])
+    // The menu's item anchors the popover where the click landed.
+    h.menu(pageParams({ selectionText: 'quantum foam', x: 40, y: 60 }))
+    h.click('Translate Selection')
+    await settle()
+    expect(asked[1]).toEqual({ tabId: h.tabId, text: 'quantum foam', x: 40, y: 60 })
+  })
+
+  it('leaves Translate out on a host without the engine', () => {
+    const h = pageHarness(ANDROID, PHONE)
+    expect(
+      h.browser.menus.selectionToolbar(h.tabId, 'quantum foam').map((item) => item.id)
+    ).toEqual(['search', 'share'])
+    expect(h.browser.menus.runSelectionAction(h.tabId, 'translate', 'quantum foam')).toBe(false)
+    expect(h.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+      'Translate Selection'
+    )
   })
 })
 
@@ -1508,6 +2297,97 @@ describe('the download row menu', () => {
     const before = h.popups()
     h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
     expect(h.popups()).toBe(before)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Where a menu opens for the keyboard (Shift+F10, the Menu key; a11y-08)
+// ---------------------------------------------------------------------------
+
+describe('a menu asked for from the keyboard', () => {
+  /** The page sits to the right of the sidebar: its coordinates are offset in the window's. */
+  const placePage = (h: PageHarness): void =>
+    h.win.applyLayout({
+      placements: [{ tabId: h.tabId, rect: { x: 300, y: 60, width: 900, height: 700 }, radius: 8 }],
+      glance: null,
+      contentHidden: false
+    })
+
+  it("a page's menu opens at the focused element or caret, in the window's coordinates, first item selected", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', x: 400, y: 260, keyboard: true })
+  })
+
+  it("a page's menu from the pointer opens at the pointer, which the host does by itself", () => {
+    const h = pageHarness()
+    placePage(h)
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'mouse' }))
+    expect(h.where()).toMatchObject({ source: 'page' })
+    expect(h.where()).not.toHaveProperty('x')
+    expect(h.where()).not.toHaveProperty('keyboard')
+    h.menu(pageParams({ x: 100, y: 200 }))
+    expect(h.where()).not.toHaveProperty('keyboard')
+  })
+
+  it('a page the chrome has not placed still gets keyboard mode', () => {
+    const h = pageHarness()
+    h.menu(pageParams({ x: 100, y: 200, menuSourceType: 'keyboard' }))
+    expect(h.where()).toMatchObject({ source: 'page', keyboard: true })
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the URL bar's menu opens at the caret for Shift+F10, at the pointer otherwise", async () => {
+    const h = pageHarness()
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({
+        target: 'urlbar',
+        tabId: h.tabId,
+        isEditable: true,
+        editFlags: ALL_EDITS,
+        x: 420,
+        y: 18,
+        keyboard: true
+      }),
+      h.win
+    )
+    expect(h.where()).toMatchObject({ source: 'urlbar', x: 420, y: 18, keyboard: true })
+    await h.browser.menus.showChromeContextMenu(
+      chromeParams({ target: 'urlbar', tabId: h.tabId, isEditable: true, editFlags: ALL_EDITS }),
+      h.win
+    )
+    expect(h.where()).not.toHaveProperty('keyboard')
+    expect(h.where()).not.toHaveProperty('x')
+  })
+
+  it("the chrome's rows pass their anchor through the commands: at the row, keyboard mode", () => {
+    const h = pageHarness()
+    const space = h.win.activeSpace()
+    h.browser.handleCommand(h.win, 'tab.contextMenu', {
+      tabId: h.tabId,
+      x: 120,
+      y: 240,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'tab', x: 120, y: 240, keyboard: true })
+    h.browser.handleCommand(h.win, 'space.contextMenu', { spaceId: space.id, x: 30, y: 900 })
+    expect(h.where()).toMatchObject({ source: 'space', x: 30, y: 900 })
+    expect(h.where()).not.toHaveProperty('keyboard')
+    const folderId = h.browser.createFolder(space.id, 'Work', '📁', h.win).id
+    h.browser.handleCommand(h.win, 'folder.contextMenu', {
+      folderId,
+      x: 100,
+      y: 300,
+      keyboard: true
+    })
+    expect(h.where()).toMatchObject({ source: 'folder', x: 100, y: 300, keyboard: true })
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', { x: 90, y: 500, keyboard: true })
+    expect(h.where()).toMatchObject({ source: 'newtab', x: 90, y: 500, keyboard: true })
+    // A right-click's command without an anchor is the pointer's, as before.
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    expect(h.where()).toMatchObject({ source: 'tab' })
+    expect(h.where()).not.toHaveProperty('x')
   })
 })
 

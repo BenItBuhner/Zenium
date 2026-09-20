@@ -16,6 +16,7 @@ import { newId } from '../shared/ids'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { createTabRecord, getSpace, insertTabIntoSpace } from './model'
+import { closedTabIds } from './navigationState'
 
 /** Entries remembered (a window with all its tabs counts as one). */
 export const RECENTLY_CLOSED_MAX = 25
@@ -153,9 +154,25 @@ export function sanitizeClosedEntries(raw: unknown): ClosedEntry[] {
 export const NAVIGATION_ENTRIES_MAX = 50
 
 /**
+ * A stack's host state (`NavigationSnapshot.hostState`, Android's `WebView.saveState` bundle as
+ * base64) is kept up to this size, like an entry's page state on desktop; a longer one – a long
+ * stack of pages with big forms – is left out and the host loads the current entry instead.
+ */
+export const NAVIGATION_HOST_STATE_MAX_CHARS = 64 * 1024
+
+/** Whether `value` is a host state blob worth keeping: a non-empty string within the cap. */
+export function isKeepableHostState(value: unknown): value is string {
+  return (
+    typeof value === 'string' && value !== '' && value.length <= NAVIGATION_HOST_STATE_MAX_CHARS
+  )
+}
+
+/**
  * A stored back/forward stack, or null when it is not one. Entries keep their URL and title;
  * `pageState` (the engine's serialised scroll and form state) stays when it is a string. The
- * current index is clamped into the entries that survived.
+ * current index is clamped into the entries that survived. The stack's `hostState` stays only
+ * when it is a string within `NAVIGATION_HOST_STATE_MAX_CHARS` and every entry survived: cut to
+ * `NAVIGATION_ENTRIES_MAX` (or rid of a malformed entry), the list is not the one it describes.
  */
 export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
   if (!value || typeof value !== 'object') return null
@@ -177,7 +194,10 @@ export function sanitizeSnapshot(value: unknown): NavigationSnapshot | null {
   const kept = entries.slice(-NAVIGATION_ENTRIES_MAX)
   const dropped = entries.length - kept.length
   const index = Math.min(Math.max(Math.round(s.index) - dropped, 0), kept.length - 1)
-  return { entries: kept, index }
+  const out: NavigationSnapshot = { entries: kept, index }
+  if (kept.length === s.entries.length && isKeepableHostState(s.hostState))
+    out.hostState = s.hostState
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +296,9 @@ export class SessionService {
 
   private push(entry: ClosedEntry): void {
     const state = this.browser.state
+    // The entry's tabs keep their host-state documents; the entries it pushes out lose theirs.
+    const evicted = state.recentlyClosed.slice(RECENTLY_CLOSED_MAX - 1)
+    for (const id of closedTabIds([entry, ...evicted])) state.navigationState.touch(id)
     state.recentlyClosed = pushClosed(state.recentlyClosed, entry)
     this.changed()
   }
@@ -307,8 +330,10 @@ export class SessionService {
   }
 
   clearRecentlyClosed(): void {
-    if (this.browser.state.recentlyClosed.length === 0) return
-    this.browser.state.recentlyClosed = []
+    const state = this.browser.state
+    if (state.recentlyClosed.length === 0) return
+    for (const id of closedTabIds(state.recentlyClosed)) state.navigationState.touch(id)
+    state.recentlyClosed = []
     this.changed()
   }
 
@@ -351,8 +376,21 @@ export class SessionService {
     }
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     if (closed.navigation && closed.navigation.entries.length > 1)
-      tabs.setPendingNavigation(tab.id, closed.navigation)
+      tabs.setPendingNavigation(tab.id, this.withHostState(closed.tab.id, closed.navigation))
+    // The closed tab's id now names another live tab, or a private one: its document follows them.
+    if (tab.id !== closed.tab.id || tab.containerId === PRIVATE_CONTAINER_ID)
+      this.browser.state.navigationState.touch(closed.tab.id)
     return tab
+  }
+
+  /**
+   * The stack a closed entry holds, with the host's blob: in memory within a run; after a
+   * relaunch from the closed tab's `navigation/` document, when that describes this very list.
+   */
+  private withHostState(closedTabId: string, navigation: NavigationSnapshot): NavigationSnapshot {
+    if (navigation.hostState !== undefined) return navigation
+    const hostState = this.browser.state.navigationState.hostStateFor(closedTabId, navigation)
+    return hostState === undefined ? navigation : { ...navigation, hostState }
   }
 
   /** A closed window comes back as a window of the same kind holding the same tabs. */

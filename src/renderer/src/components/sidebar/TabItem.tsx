@@ -15,8 +15,9 @@ import type { AgentInfo, Tab } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
 import { run } from '@renderer/lib/api'
-import { startTabDrag } from '@renderer/lib/drag'
+import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
 import {
   browserStore,
@@ -25,6 +26,7 @@ import {
   toggleTabSelection,
   uiStore
 } from '@renderer/lib/ui'
+import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
@@ -34,11 +36,14 @@ interface Props {
   active: boolean
   compact: boolean
   indent?: boolean
+  /** The strip header that folds this row away (`folder:<id>`, `header:<spaceId>`), if any. */
+  parent?: string
 }
 
-export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
+export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
+  const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
   const motion = useListMotion()
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
@@ -62,6 +67,8 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     return c ? CONTAINER_COLORS[c.color] : null
   })
   const selected = uiStore.use((s) => s.selectedTabIds.includes(tab.id))
+  // An address dragged over the row (lib/dnd.ts): the row takes it, and shows so (§9.4).
+  const dropInto = dropStore.use((s) => s.key === `tab:${tab.id}:into`)
   const isDragSource = dragging?.tabId === tab.id
   const showDropZones = Boolean(dragging) && !isDragSource
   const title = tabTitle(tab)
@@ -116,13 +123,16 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
 
   const onContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault()
+    // At the pointer, or – Shift+F10, the Menu key on the focused row – at the row, in
+    // keyboard mode (lib/menuKeys.ts).
+    const anchor = contextMenuAnchor(e)
     const ids = uiStore.get().selectedTabIds
     if (ids.length > 1 && ids.includes(tab.id)) {
-      run('tab.selectionContextMenu', { tabIds: ids })
+      run('tab.selectionContextMenu', { tabIds: ids, ...anchor })
       return
     }
     clearTabSelection()
-    run('tab.contextMenu', { tabId: tab.id })
+    run('tab.contextMenu', { tabId: tab.id, ...anchor })
   }
 
   const onAuxClick = (e: React.MouseEvent): void => {
@@ -143,51 +153,38 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
     hoverCard.pointerEnter(tab.id, () => measureRow(el))
   }
   const onPointerLeave = (): void => hoverCard.pointerLeave(tab.id)
-  const onFocus = (e: React.FocusEvent): void => {
-    const el = e.currentTarget as HTMLElement
+  const onFocus = (e: React.FocusEvent<HTMLDivElement>): void => {
+    stripFocusIn(e)
+    const el = e.currentTarget
     if (e.target !== el || !el.matches(':focus-visible')) return
     hoverCard.focus(tab.id, () => measureRow(el))
   }
-  const onBlur = (e: React.FocusEvent): void => {
+  const onBlur = (e: React.FocusEvent<HTMLDivElement>): void => {
+    stripFocusOut(e)
     if (e.target === e.currentTarget) hoverCard.blur(tab.id)
   }
 
-  // Keyboard reach (§9.22): one tab stop per list (the active row), arrows walk the rows.
-  const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.target !== e.currentTarget) return
-    const row = e.currentTarget as HTMLElement
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      run('tab.activate', { tabId: tab.id })
-      return
-    }
-    const walk: Record<string, (rows: HTMLElement[], at: number) => HTMLElement | undefined> = {
-      ArrowDown: (rows, at) => rows[at + 1],
-      ArrowUp: (rows, at) => rows[at - 1],
-      Home: (rows) => rows[0],
-      End: (rows) => rows[rows.length - 1]
-    }
-    const to = walk[e.key]
-    if (!to) return
-    e.preventDefault()
-    const scroller = row.closest<HTMLElement>('[data-tab-scroller]')
-    if (!scroller) return
-    const rows = [...scroller.querySelectorAll<HTMLElement>('.zen-tab[data-tab-id]')]
-    to(rows, rows.indexOf(row))?.focus()
-  }
-
+  // Keyboard reach (§9.22, a11y-07): the strip is one tab stop; arrows, Home/End, Enter/Space,
+  // Delete and Escape are the strip's (lib/tabStrip.ts). The row's own buttons stay out of the
+  // tab order: Delete closes, the row's context menu has the rest.
   return (
     <div
       ref={attach}
       className={cn('zen-tab group', compact && 'justify-center px-0', indent && 'ml-5')}
+      role="tab"
+      aria-selected={active}
+      aria-label={title}
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
       data-frozen={tab.frozen}
       data-agent={agent ? true : undefined}
       data-lifted={isDragSource || undefined}
+      data-drop-into={dropInto || undefined}
       data-tab-id={tab.id}
-      tabIndex={active ? 0 : -1}
+      data-strip-item={`tab:${tab.id}`}
+      data-strip-parent={parent}
+      tabIndex={tabIndex}
       aria-describedby={cardUp ? 'zen-tab-hover-card' : undefined}
       data-testid="tab"
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
@@ -196,7 +193,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
       onPointerLeave={onPointerLeave}
       onFocus={onFocus}
       onBlur={onBlur}
-      onKeyDown={onKeyDown}
+      onKeyDown={stripKeyDown}
       onClick={onClick}
       onAuxClick={onAuxClick}
       onContextMenu={onContextMenu}
@@ -252,6 +249,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {tab.discarded && !renaming && (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-toolbar-button zen-tab-sleeping h-6 w-6 shrink-0"
               title={tabTooltip(tab)}
               aria-label="Sleeping – click to wake"
@@ -266,6 +264,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {tab.frozen && !renaming && (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
               title="Frozen by the resource governor – click to wake"
               onClick={(e) => {
@@ -279,6 +278,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {!tab.frozen && tab.cpuThrottle > 1 && !renaming && (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
               title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
               onClick={(e) => {
@@ -292,6 +292,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {(tab.audible || tab.muted) && !renaming && (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-toolbar-button zen-tab-audio h-6 w-6 shrink-0"
               data-muted={tab.muted || undefined}
               title={tab.muted ? 'Unmute tab' : 'Mute tab'}
@@ -311,6 +312,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           {pinnedChanged ? (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-toolbar-button h-6 w-6 shrink-0"
               title="Reset pinned tab to its original URL"
               onClick={(e) => {
@@ -323,6 +325,7 @@ export function TabItem({ tab, active, compact, indent }: Props): JSX.Element {
           ) : (
             <button
               type="button"
+              tabIndex={-1}
               className="zen-tab-close zen-toolbar-button h-6 w-6 shrink-0"
               title={tab.pinned ? 'Close (keep pinned)' : 'Close tab'}
               onClick={(e) => {
@@ -344,6 +347,7 @@ function AgentBadge({ agent, tabId }: { agent: AgentInfo; tabId: string }): JSX.
   return (
     <button
       type="button"
+      tabIndex={-1}
       className="zen-toolbar-button flex h-5 shrink-0 items-center gap-1 rounded-full px-1.5 text-white"
       style={{ background: agent.color }}
       title={`Driven by ${agent.name} (${agent.mode} mode) — click to take this tab back`}

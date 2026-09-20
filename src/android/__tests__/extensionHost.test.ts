@@ -18,8 +18,10 @@ import {
 import type { Bridge } from '../bridge'
 import {
   AndroidExtensions,
+  REQUEST_UPDATE_CHECK_THROTTLE_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_CHECK_STARTUP_DELAY_MS,
+  engineChromiumVersion,
   idForUnpackedPath,
   packageFileName,
   storeChromiumVersion
@@ -160,21 +162,50 @@ class FakeKotlinStore {
 
 class FakeRuntime implements ExtensionRuntimeHooks {
   readonly events: string[] = []
+  /** Every hook in order, `expect` included (the `events` above leave it out for the older tests). */
+  readonly timeline: string[] = []
   /** A reason to refuse a record, or null to run it. */
   refuse: (record: ExtensionRecord) => string | null = () => null
+  /** Set, an attach waits for it before it finishes (the Kotlin side opening and configuring). */
+  attaching: Promise<void> | null = null
+  /**
+   * Extensions whose update the runtime would delay (Chrome's `ShouldDelayExtensionUpdate`: a
+   * worker running, a page open); a detach makes one idle.
+   */
+  readonly busy = new Set<string>()
+  /** The `runtime.onUpdateAvailable` events raised: extension id and the version offered. */
+  readonly updatesAvailable: Array<{ id: string; version: string }> = []
 
   async attach(record: ExtensionRecord): Promise<void> {
     this.events.push(`attach ${record.id} ${record.version}`)
+    this.timeline.push(`attach ${record.id}`)
+    if (this.attaching) await this.attaching
     const reason = this.refuse(record)
     if (reason) throw new Error(reason)
   }
 
   async detach(id: string): Promise<void> {
     this.events.push(`detach ${id}`)
+    this.timeline.push(`detach ${id}`)
+    this.busy.delete(id)
+  }
+
+  delaysUpdate(id: string): boolean {
+    return this.busy.has(id)
+  }
+
+  updateAvailable(id: string, details: Record<string, unknown>): void {
+    this.updatesAvailable.push({ id, version: String(details.version) })
+    this.timeline.push(`updateAvailable ${id} ${String(details.version)}`)
   }
 
   async reconfigure(record: ExtensionRecord): Promise<void> {
     this.events.push(`reconfigure ${record.id}`)
+    this.timeline.push(`reconfigure ${record.id}`)
+  }
+
+  expect(ids: string[]): void {
+    this.timeline.push(`expect ${ids.join(',')}`)
   }
 }
 
@@ -196,7 +227,13 @@ interface Harness {
   registry: () => { version: number; extensions: ExtensionRecord[]; lastUpdateCheck: number | null }
 }
 
-function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): Harness {
+function harness(
+  options: {
+    registry?: string
+    nativeConfirm?: boolean
+    engineChromiumVersion?: string | null
+  } = {}
+): Harness {
   const kt = new FakeKotlinStore()
   const files = new Map<string, string>()
   if (options.registry) files.set('extensions.json', options.registry)
@@ -243,6 +280,7 @@ function harness(options: { registry?: string; nativeConfirm?: boolean } = {}): 
   const ext = new AndroidExtensions(browser, kt.io(), {
     hooks: runtime,
     chromiumVersion: '152.0.0.0',
+    engineChromiumVersion: options.engineChromiumVersion ?? null,
     locale: null,
     now: () => clock.now,
     setTimeout: (fn, ms) => {
@@ -723,6 +761,9 @@ describe('AndroidExtensions: installing from files', () => {
 // Managing
 // ---------------------------------------------------------------------------
 
+/** A turn of the event loop: every microtask queued so far has run. */
+const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
 describe('AndroidExtensions: managing installs', () => {
   async function installed(): Promise<Harness> {
     const h = harness()
@@ -762,6 +803,62 @@ describe('AndroidExtensions: managing installs', () => {
     const h = await installed()
     await h.ext.reload(ID)
     expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`])
+  })
+
+  it('a disable arriving while the extension reloads itself waits for the reload and leaves it off', async () => {
+    // uBlock Origin calls chrome.runtime.reload() on its first start; the chrome's toggle (or
+    // the sweep's cleanup) flipping the extension off while that reload's attach is on its way
+    // to Kotlin left the extension running with its record disabled.
+    const h = await installed()
+    let opened!: () => void
+    h.runtime.attaching = new Promise<void>((resolve) => {
+      opened = resolve
+    })
+    const reload = h.ext.reload(ID)
+    await tick()
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`])
+    const disable = h.ext.setEnabled(ID, false)
+    await tick()
+    // The disable has not detached: the reload's attach is still in flight.
+    expect(h.runtime.events).toHaveLength(2)
+    expect(h.ext.record(ID)?.enabled).toBe(true)
+    opened()
+    await reload
+    await disable
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`, `detach ${ID}`])
+    expect(h.ext.list()[0].enabled).toBe(false)
+    expect(h.registry().extensions[0].enabled).toBe(false)
+    // Off, a reload keeps it off; on again, one attach.
+    h.runtime.attaching = null
+    await h.ext.reload(ID)
+    expect(h.runtime.events).toHaveLength(3)
+    await h.ext.setEnabled(ID, true)
+    expect(h.runtime.events.at(-1)).toBe(`attach ${ID} 1.0.0`)
+  })
+
+  it('a reload arriving during a disable does not bring the extension back', async () => {
+    const h = await installed()
+    // The disable's detach is instant here; the reload queued behind it reads the record as off.
+    const disable = h.ext.setEnabled(ID, false)
+    const reload = h.ext.reload(ID)
+    await Promise.all([disable, reload])
+    expect(h.runtime.events).toEqual([`detach ${ID}`])
+    expect(h.ext.list()[0].enabled).toBe(false)
+  })
+
+  it('a remove queued behind a reload takes the reloaded instance down', async () => {
+    const h = await installed()
+    let opened!: () => void
+    h.runtime.attaching = new Promise<void>((resolve) => {
+      opened = resolve
+    })
+    const reload = h.ext.reload(ID)
+    const remove = h.ext.remove(ID)
+    await tick()
+    opened()
+    await Promise.all([reload, remove])
+    expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.0.0`, `detach ${ID}`])
+    expect(h.ext.list()).toEqual([])
   })
 
   it('pins through reconfigure and leaves pinned extensions out of update checks', async () => {
@@ -827,6 +924,51 @@ describe('AndroidExtensions: managing installs', () => {
     expect(h.opened).toEqual([`chrome-extension://${ID}/options.html`])
   })
 
+  it('routes new tabs to the override page once opted in, on the origin a tab serves', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    await h.ext.installFromStore(ID, null)
+    // Declared is not opted in: the record carries the page, the browser keeps its own new tab.
+    expect(h.ext.list()[0].newTabPage).toBe('newtab.html')
+    expect(h.ext.newTabUrl()).toBeNull()
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    expect(h.registry().extensions[0].newTabOverride).toBe(true)
+    // Disabled, the page is not served: back to the browser's own.
+    await h.ext.setEnabled(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+    await h.ext.setEnabled(ID, true)
+    expect(h.ext.newTabUrl()).toBe(`https://${ID}.ext.zenium.invalid/newtab.html`)
+    h.ext.setNewTabOverride(ID, false)
+    expect(h.ext.newTabUrl()).toBeNull()
+  })
+
+  it('shows the browser new tab while the override extension failed to attach', async () => {
+    const h = harness()
+    const crx = await buildCrx({
+      zip: sampleExtensionZip({
+        name: 'New Tab',
+        version: '1.0.0',
+        chrome_url_overrides: { newtab: 'newtab.html' }
+      }),
+      rsaKeys: [key]
+    })
+    await storeFront(h.kt, { cws: crx })
+    h.runtime.refuse = () => 'no worker'
+    await h.ext.installFromStore(ID, null)
+    h.ext.setNewTabOverride(ID, true)
+    expect(h.ext.list()[0].error).toBe('no worker')
+    expect(h.ext.newTabUrl()).toBeNull()
+  })
+
   it('comes back from the registry on the next start and attaches what is enabled', async () => {
     const h = await installed()
     await h.ext.setEnabled(ID, false)
@@ -843,6 +985,37 @@ describe('AndroidExtensions: managing installs', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     // The manifest on disk was read back for the list.
     expect(next.ext.list()[0].name).toBe('Sample')
+  })
+
+  it('names the enabled extensions to the runtime at construction and closes the list when the start is over', async () => {
+    const h = await installed()
+    h.ext.flushSync()
+    const document = JSON.parse(h.files.get('extensions.json') ?? '{}') as {
+      extensions: ExtensionRecord[]
+    }
+    const [first] = document.extensions
+    const OTHER = 'b'.repeat(32)
+    const DISABLED = 'c'.repeat(32)
+    document.extensions.push(
+      { ...first, id: OTHER, path: first.path.replace(ID, OTHER) },
+      { ...first, id: DISABLED, path: first.path.replace(ID, DISABLED), enabled: false }
+    )
+    const next = harness({ registry: JSON.stringify(document) })
+    for (const [dir, request] of h.kt.installed) next.kt.installed.set(dir, request)
+    // The constructor runs before the browser restores its windows: the runtime hears which
+    // origins to hold a restored tab's page for before any tab can ask, and before any attach.
+    expect(next.runtime.timeline).toEqual([`expect ${ID},${OTHER}`])
+    next.runtime.refuse = (record) => (record.id === OTHER ? 'no worker' : null)
+    await next.ext.start()
+    // Once every attach settled, the failed one included, nothing more is coming: a page still
+    // held for the extension that did not come up fails.
+    expect(next.runtime.timeline).toEqual([
+      `expect ${ID},${OTHER}`,
+      `attach ${ID}`,
+      `attach ${OTHER}`,
+      'expect '
+    ])
+    expect(next.ext.list().find((info) => info.id === OTHER)?.error).toBe('no worker')
   })
 
   it('ignores a registry that is not one', () => {
@@ -1007,6 +1180,273 @@ describe('AndroidExtensions: updates', () => {
     expect(updateChecks(h.kt)).toHaveLength(1)
   })
 
+  describe('runtime.requestUpdateCheck', () => {
+    it('installs the update it finds and says so with the version; the found update resets the throttle', async () => {
+      const h = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({
+        status: 'update_available',
+        version: '1.1.0'
+      })
+      expect(h.ext.record(ID)?.version).toBe('1.1.0')
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      // An extension's ask about itself is not the chrome's "checked for updates" stamp.
+      expect(h.registry().lastUpdateCheck).toBeNull()
+      expect(h.ext.updateCheck()).toEqual({ lastCheckedAt: null, checking: false })
+      expect(h.toasts).toEqual([])
+      // Straight after an update the next ask reaches the server again (Chrome resets its backoff).
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(2)
+    })
+
+    it('answers no_update from the server and throttles the next ask for five hours', async () => {
+      const h = await installed({ update: 'noupdate' })
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      h.clock.now += REQUEST_UPDATE_CHECK_THROTTLE_MS - 1
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'throttled' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      h.clock.now += 1
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(2)
+    })
+
+    it('is no_update when the server does not answer, and for an extension with nothing to update from', async () => {
+      const h = await installed({})
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(h.kt)).toHaveLength(1)
+      const pinned = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      pinned.ext.setPinned(ID, true)
+      await expect(pinned.ext.requestUpdateCheck(ID)).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(pinned.kt)).toEqual([])
+      expect(pinned.ext.record(ID)?.version).toBe('1.0.0')
+      await expect(pinned.ext.requestUpdateCheck('not-installed')).resolves.toEqual({
+        status: 'no_update'
+      })
+    })
+
+    it('joins an ask in flight and a registry-wide check that covers the extension: one request', async () => {
+      const h = await installed({ update: 'noupdate' })
+      const asks = await Promise.all([h.ext.requestUpdateCheck(ID), h.ext.requestUpdateCheck(ID)])
+      expect(asks).toEqual([{ status: 'no_update' }, { status: 'no_update' }])
+      expect(updateChecks(h.kt)).toHaveLength(1)
+
+      const later = await installed({ update: { crx: crx2, version: '1.1.0' } })
+      const all = later.ext.checkForUpdates()
+      await expect(later.ext.requestUpdateCheck(ID)).resolves.toEqual({
+        status: 'update_available',
+        version: '1.1.0'
+      })
+      await all
+      expect(updateChecks(later.kt)).toHaveLength(1)
+      expect(later.ext.record(ID)?.version).toBe('1.1.0')
+      // The other way round, the registry-wide check waits for the extension's own ask (no two
+      // installs of one extension side by side), then asks about everything.
+      const own = await installed({ update: 'noupdate' })
+      const ask = own.ext.requestUpdateCheck(ID)
+      await own.ext.checkForUpdates(WIN)
+      await expect(ask).resolves.toEqual({ status: 'no_update' })
+      expect(updateChecks(own.kt)).toHaveLength(2)
+      expect(own.toasts).toEqual([{ message: 'All extensions are up to date.', kind: 'info' }])
+    })
+  })
+
+  describe('an update the runtime would delay (runtime.onUpdateAvailable)', () => {
+    /** Installed 1.0.0 and busy; the store offers 1.1.0 (or the package given). */
+    async function busy(crx: Uint8Array = crx2): Promise<Harness> {
+      const h = await installed({ update: { crx, version: '1.1.0' } })
+      h.runtime.busy.add(ID)
+      return h
+    }
+
+    it('stages the download next to the running version, raises onUpdateAvailable and answers requestUpdateCheck from the staged version', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      // Downloaded and unpacked, but nothing swapped: the running version runs on.
+      expect(h.runtime.events).toEqual([])
+      expect(h.runtime.updatesAvailable).toEqual([{ id: ID, version: '1.1.0' }])
+      expect(h.kt.dirsOf(ID).sort()).toEqual([
+        `${h.kt.root}/${ID}/1.0.0`,
+        `${h.kt.root}/${ID}/1.1.0`
+      ])
+      expect(h.kt.packages.size).toBe(0)
+      expect(h.ext.record(ID)).toMatchObject({
+        version: '1.0.0',
+        path: `${h.kt.root}/${ID}/1.0.0`,
+        staged: {
+          version: '1.1.0',
+          path: `${h.kt.root}/${ID}/1.1.0`,
+          // The package's signer, as an update installed at once records it.
+          publisher: 'unknown',
+          fields: { version: '1.1.0', name: 'Sample' },
+          addedWarnings: [],
+          stagedAt: h.clock.now
+        }
+      })
+      expect(h.ext.list()[0]).toMatchObject({
+        version: '1.0.0',
+        updateState: 'available',
+        availableVersion: '1.1.0',
+        updateError: null
+      })
+      expect(h.registry().extensions[0].staged).toMatchObject({ version: '1.1.0' })
+      // The extension asking about itself hears of the pending version without a request.
+      const checks = updateChecks(h.kt).length
+      await expect(h.ext.requestUpdateCheck(ID)).resolves.toEqual({
+        status: 'update_available',
+        version: '1.1.0'
+      })
+      expect(updateChecks(h.kt)).toHaveLength(checks)
+      // Another scheduled check does not download the staged version again.
+      h.kt.requests.length = 0
+      await h.ext.checkForUpdates()
+      expect(h.kt.requests.filter((u) => u.startsWith(`https://${CDN_HOST}/`))).toEqual([])
+      expect(h.ext.list()[0]).toMatchObject({ updateState: 'available', availableVersion: '1.1.0' })
+      expect(h.runtime.updatesAvailable).toHaveLength(1)
+    })
+
+    it('lands when the extension goes idle, unless the runtime still delays it', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      // Idle said while the runtime would still delay (a page reopened meanwhile): nothing.
+      h.ext.idle(ID)
+      await settle()
+      expect(h.runtime.events).toEqual([])
+      expect(h.ext.record(ID)?.version).toBe('1.0.0')
+
+      h.runtime.busy.delete(ID)
+      h.ext.idle(ID)
+      await settle()
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      expect(h.ext.record(ID)).toMatchObject({
+        version: '1.1.0',
+        path: `${h.kt.root}/${ID}/1.1.0`,
+        enabled: true,
+        pendingWarnings: null
+      })
+      expect(h.ext.record(ID)?.staged).toBeUndefined()
+      expect(h.kt.calledWith('extStore.prune')).toEqual([
+        { id: ID, keep: `${h.kt.root}/${ID}/1.1.0` }
+      ])
+      expect(h.kt.dirsOf(ID)).toEqual([`${h.kt.root}/${ID}/1.1.0`])
+      expect(h.ext.list()[0]).toMatchObject({
+        version: '1.1.0',
+        updateState: 'up-to-date',
+        availableVersion: null
+      })
+      expect(h.registry().extensions[0]).toMatchObject({ version: '1.1.0' })
+      expect(h.registry().extensions[0].staged).toBeUndefined()
+    })
+
+    it("lands at runtime.reload(), the extension's answer to onUpdateAvailable", async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      await h.ext.reload(ID)
+      // The reload is the swap: one detach of the old version, one attach of the new.
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      expect(h.ext.record(ID)?.version).toBe('1.1.0')
+      expect(h.kt.dirsOf(ID)).toEqual([`${h.kt.root}/${ID}/1.1.0`])
+    })
+
+    it('lands when the user disables the extension, and when the user asks for the update', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      await h.ext.setEnabled(ID, false)
+      await settle()
+      // The disable made it idle: the new version is the record's, and stays off as asked.
+      expect(h.runtime.events).toEqual([`detach ${ID}`])
+      expect(h.ext.record(ID)).toMatchObject({ version: '1.1.0', enabled: false })
+      expect(h.ext.record(ID)?.staged).toBeUndefined()
+
+      const asked = await busy()
+      await asked.ext.checkForUpdates()
+      asked.kt.requests.length = 0
+      await asked.ext.update(ID, WIN)
+      expect(asked.ext.record(ID)?.version).toBe('1.1.0')
+      expect(asked.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      expect(asked.kt.requests).toEqual([])
+      expect(asked.toasts).toEqual([{ message: 'Updated 1 extension.', kind: 'info' }])
+    })
+
+    it('lands at the next start, before the extension is attached', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      const document = h.files.get('extensions.json')
+      h.ext.flushSync()
+      const next = harness({ registry: h.files.get('extensions.json') ?? document })
+      for (const [dir, request] of h.kt.installed) next.kt.installed.set(dir, request)
+      await next.ext.start()
+      expect(next.runtime.events).toEqual([`attach ${ID} 1.1.0`])
+      expect(next.ext.record(ID)).toMatchObject({
+        version: '1.1.0',
+        path: `${next.kt.root}/${ID}/1.1.0`
+      })
+      expect(next.ext.record(ID)?.staged).toBeUndefined()
+      expect(next.kt.calledWith('extStore.prune')).toEqual([
+        { id: ID, keep: `${next.kt.root}/${ID}/1.1.0` }
+      ])
+      expect(next.ext.list()[0]).toMatchObject({ version: '1.1.0', updateState: 'unknown' })
+    })
+
+    it("the user's own check installs at once, busy or not", async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates(WIN)
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`])
+      expect(h.runtime.updatesAvailable).toEqual([])
+      expect(h.ext.record(ID)?.staged).toBeUndefined()
+      expect(h.toasts).toEqual([{ message: 'Updated 1 extension.', kind: 'info' }])
+    })
+
+    it('a staged update that asks for more lands disabled with the warnings pending', async () => {
+      const h = await busy(crx2WithTabs)
+      await h.ext.checkForUpdates()
+      const added = permissionWarningLines({ manifest_version: 3, permissions: ['tabs'] }, 'other')
+      expect(h.ext.record(ID)?.staged).toMatchObject({ version: '1.1.0', addedWarnings: added })
+      h.runtime.busy.delete(ID)
+      h.ext.idle(ID)
+      await settle()
+      // Never attached: Chrome installs a delayed permission increase disabled.
+      expect(h.runtime.events).toEqual([`detach ${ID}`])
+      expect(h.ext.record(ID)).toMatchObject({
+        version: '1.1.0',
+        enabled: false,
+        pendingWarnings: added
+      })
+      expect(h.ext.list()[0]).toMatchObject({ enabled: false, pendingWarnings: added })
+      h.answer(true)
+      await h.ext.setEnabled(ID, true)
+      expect(h.runtime.events.at(-1)).toBe(`attach ${ID} 1.1.0`)
+      expect(h.ext.record(ID)?.pendingWarnings).toBeNull()
+    })
+
+    it('keeps the running version when the runtime refuses the staged one as it lands', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      h.runtime.refuse = (record) => (record.version === '1.1.0' ? 'runtime refused 1.1.0' : null)
+      h.runtime.busy.delete(ID)
+      h.ext.idle(ID)
+      await settle()
+      expect(h.runtime.events).toEqual([`detach ${ID}`, `attach ${ID} 1.1.0`, `attach ${ID} 1.0.0`])
+      expect(h.ext.record(ID)).toMatchObject({ version: '1.0.0', path: `${h.kt.root}/${ID}/1.0.0` })
+      expect(h.ext.record(ID)?.staged).toBeUndefined()
+      expect(h.kt.dirsOf(ID)).toEqual([`${h.kt.root}/${ID}/1.0.0`])
+      expect(h.ext.list()[0]).toMatchObject({
+        updateState: 'error',
+        availableVersion: '1.1.0',
+        updateError: 'runtime refused 1.1.0',
+        error: null
+      })
+    })
+
+    it('an install over the staged update supersedes it', async () => {
+      const h = await busy()
+      await h.ext.checkForUpdates()
+      await h.ext.installHandle(h.kt.hold('sample.crx', crx2))
+      expect(h.ext.record(ID)?.staged).toBeUndefined()
+      expect(h.ext.record(ID)?.version).toBe('1.1.0')
+      expect(h.kt.dirsOf(ID)).toHaveLength(1)
+    })
+  })
+
   it('follows the schedule only while the app is in the foreground', async () => {
     const h = await installed({ update: 'noupdate' })
     await h.ext.start()
@@ -1145,6 +1585,96 @@ describe('the version the stores are told about', () => {
     expect(storeChromiumVersion('Chrome/153')).toBe('153.0.0.0')
     expect(storeChromiumVersion('Node.js/22')).toBe('152.0.0.0')
     expect(storeChromiumVersion('Chrome/113', '100.0.0.0')).toBe('113.0.0.0')
+  })
+})
+
+describe("the engine's own version", () => {
+  it('is the WebView Chromium of the user agent, padded, or null without one', () => {
+    expect(
+      engineChromiumVersion(
+        'Mozilla/5.0 (Linux; Android 14) Chrome/113.0.5672.136 Mobile Safari/537.36'
+      )
+    ).toBe('113.0.5672.136')
+    expect(engineChromiumVersion('Chrome/156')).toBe('156.0.0.0')
+    expect(engineChromiumVersion('Node.js/22')).toBeNull()
+    expect(engineChromiumVersion('')).toBeNull()
+  })
+})
+
+describe('minimum_chrome_version', () => {
+  let needs120: Uint8Array
+  let needs153: Uint8Array
+  beforeAll(async () => {
+    needs120 = await buildCrx({
+      zip: sampleExtensionZip({ name: 'Sample', version: '1.0.0', minimum_chrome_version: '120' }),
+      rsaKeys: [key]
+    })
+    needs153 = await buildCrx({
+      zip: sampleExtensionZip({ name: 'Sample', version: '1.0.0', minimum_chrome_version: '153' }),
+      rsaKeys: [key]
+    })
+  })
+
+  it("refuses a store package above Zenium's platform version, as Chrome refuses one above its own", async () => {
+    const h = harness({ engineChromiumVersion: '113.0.5672.136' })
+    await storeFront(h.kt, { cws: needs153 })
+    await h.ext.installFromStore(ID, null, WIN)
+    expect(h.ext.list()).toEqual([])
+    expect(h.prompts).toEqual([])
+    expect(h.kt.installed.size).toBe(0)
+    expect(h.toasts).toEqual([
+      {
+        message:
+          'Could not install extension: This extension requires Chrome 153 or newer; Zenium is Chrome 152.0.0.0',
+        kind: 'error'
+      }
+    ])
+    // A picked file is held to the same version.
+    await h.ext.installHandle(h.kt.hold('sample.crx', needs153), WIN)
+    expect(h.toasts.at(-1)?.message).toBe(
+      'Could not install sample.crx: This extension requires Chrome 153 or newer; Zenium is Chrome 152.0.0.0'
+    )
+    expect(h.kt.packages.size).toBe(0)
+  })
+
+  it("installs one above the WebView's version but within the platform's, with a warning on its console", async () => {
+    const h = harness({ engineChromiumVersion: '113.0.5672.136' })
+    await storeFront(h.kt, { cws: needs120 })
+    await h.ext.installFromStore(ID, null)
+    await settle()
+    expect(h.runtime.events).toEqual([`attach ${ID} 1.0.0`])
+    const [info] = h.ext.list()
+    expect(info.error).toBeNull()
+    expect(info.errors).toHaveLength(1)
+    expect(info.errors[0]).toMatchObject({
+      level: 'warning',
+      source: 'load',
+      message:
+        "Requires Chrome 120 or newer; this device's WebView is Chrome 113, so pages and content scripts may miss features the extension expects",
+      url: `chrome-extension://${ID}/manifest.json`,
+      count: 1
+    })
+    // The next start attaches it again: the same line, folded, not a second row.
+    const next = harness({
+      registry: JSON.stringify(h.registry()),
+      engineChromiumVersion: '113.0.5672.136'
+    })
+    for (const [dir, request] of h.kt.installed) next.kt.installed.set(dir, request)
+    await next.ext.start()
+    await settle()
+    const errors = next.ext.list()[0].errors
+    expect(errors).toHaveLength(1)
+    expect(errors[0].message).toContain('Requires Chrome 120 or newer')
+  })
+
+  it('says nothing when the WebView meets the minimum, or its version is unknown', async () => {
+    for (const engine of ['156.0.7300.0', '120.0.0.0', null]) {
+      const h = harness({ engineChromiumVersion: engine })
+      await storeFront(h.kt, { cws: needs120 })
+      await h.ext.installFromStore(ID, null)
+      await settle()
+      expect(h.ext.list()[0].errors).toEqual([])
+    }
   })
 })
 

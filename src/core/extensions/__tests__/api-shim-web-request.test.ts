@@ -303,6 +303,31 @@ describe('chrome.webRequest in the shim', () => {
     ])
   })
 
+  it("carries an onAuthRequired listener's credentials back, and nothing malformed", () => {
+    const { chrome, host } = install({ permissions: ['webRequest', 'webRequestAuthProvider'] })
+    chrome.webRequest.onAuthRequired.addListener(
+      (details: Any) =>
+        details.isProxy
+          ? { authCredentials: { username: 'vpn-user', password: 'vpn-pass' }, extra: 1 }
+          : { authCredentials: { username: 'only' } },
+      { urls: [] },
+      ['blocking']
+    )
+    const challenge = { requestId: '1', url: 'https://page.example/', statusCode: 407 }
+    host.deliver('onAuthRequired', [{ ...challenge, isProxy: true }, 51], {
+      unfiltered: false,
+      matched: [1]
+    })
+    host.deliver('onAuthRequired', [{ ...challenge, isProxy: false }, 52], {
+      unfiltered: false,
+      matched: [1]
+    })
+    expect(answers(host)).toEqual([
+      { token: 51, response: { authCredentials: { username: 'vpn-user', password: 'vpn-pass' } } },
+      { token: 52, response: {} }
+    ])
+  })
+
   it('answers with nothing for a delivery no listener claims', () => {
     const { chrome, host } = install({ manifestVersion: 2, permissions: ['webRequestBlocking'] })
     chrome.webRequest.onBeforeRequest.addListener(() => ({ cancel: true }), { urls: [] }, [

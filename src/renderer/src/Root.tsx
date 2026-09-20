@@ -2,13 +2,20 @@ import React, { type JSX } from 'react'
 import { App } from './App'
 import { DefaultBrowserLayer } from './components/defaultbrowser/DefaultBrowserPrompt'
 import { DownloadBubbleLayer } from './components/downloads/DownloadBubble'
+import { MediaHubLayer } from './components/media/MediaHubPopover'
 import { MenuSheet } from './components/menus/MenuSheet'
 import { NewTabCustomizeLayer } from './components/newtab/CustomizeSheet'
 import { NewTabGrowLayer } from './components/newtab/NewTabGrowLayer'
 import { ExternalProtocolLayer } from './components/protocol/ExternalProtocolSheet'
+import { QrScanLayer } from './components/qr/QrScanSheet'
 import { BarEditorLayer } from './components/phone/BarEditorSheet'
+import { ExtensionsSheetLayer } from './components/phone/ExtensionsSheet'
+import { GroupEditorLayer } from './components/sidebar/GroupEditorBubble'
 import { SiteInfoLayer } from './components/siteinfo/SiteInfoSheet'
+import { TabSearchLayer } from './components/tabsearch/TabSearchPopover'
+import { VoiceSearchLayer } from './components/voice/VoiceSearchSheet'
 import { SheetPresence } from './lib/motion/presence'
+import { TranslateSelectionLayer } from './components/translate/SelectionPopover'
 import { browserStore, uiStore } from './lib/ui'
 
 /** Waits for the first state snapshot from the main process before rendering the browser UI. */
@@ -22,10 +29,17 @@ export function Root(): JSX.Element {
       <NewTabCustomizeLayer />
       <DefaultBrowserLayer />
       <SiteInfoLayer />
+      <TranslateSelectionLayer />
+      <TabSearchLayer />
+      <GroupEditorLayer />
       <BarEditorLayer />
+      <ExtensionsSheetLayer />
       <DownloadBubbleLayer />
+      <MediaHubLayer />
       <MenuLayer />
       <ExternalProtocolLayer />
+      <VoiceSearchLayer />
+      <QrScanLayer />
     </>
   )
 }

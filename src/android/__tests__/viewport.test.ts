@@ -62,12 +62,19 @@ describe('controlsFor', () => {
     const c = controlsFor(
       config({
         desktop: { default: false, sites: { 'wikipedia.org': true } },
-        zoom: { default: 1.25, sites: { 'wikipedia.org': 1.5 }, scale: 1.3 },
+        // Desktop site is per site (suffix match); zoom per host, exactly as Chrome keeps it.
+        zoom: { default: 1.25, sites: { 'en.wikipedia.org': 1.5, 'wikipedia.org': 2 }, scale: 1.3 },
         forceZoom: true
       }),
       'https://en.wikipedia.org/'
     )
     expect(c).toEqual({ zoom: 1.95, desktop: true, forceZoom: true, deviceWidth: 412 })
+    expect(
+      controlsFor(
+        config({ zoom: { default: 1.25, sites: { 'wikipedia.org': 2 }, scale: 1 } }),
+        'https://fr.wikipedia.org/'
+      ).zoom
+    ).toBe(1.25)
     expect(controlsFor(config({ forceZoom: true }), 'zen://settings')).toMatchObject({
       zoom: 1,
       desktop: false,

@@ -6,6 +6,7 @@ import {
   Clock,
   Download,
   House,
+  Mic,
   MoreHorizontal,
   PanelLeft,
   PanelRight,
@@ -21,9 +22,16 @@ import { run } from '@renderer/lib/api'
 import { openSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { toggleOverview } from '@renderer/lib/gestures/stage'
 import { prepareNewTabGrow } from '@renderer/lib/newtab'
+import {
+  activeTabIsPrivate,
+  isPrivateTab,
+  privateTabsOf,
+  tabsOnPane
+} from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { ReloadStopGlyph, TabCountBadge } from './BarGlyphs'
 
 /**
@@ -153,12 +161,16 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     label: 'New tab',
     glyph: () => <Plus className={glyph} />,
     // The new tab page grows out of this button (MOT-03): the page behind is captured as the
-    // finger lands, and the button's bounds travel with the event as the surface's origin.
+    // finger lands, and the button's bounds travel with the event as the surface's origin. The
+    // new tab keeps the mode: from a private tab it is a private tab (the grow lands on the
+    // private new tab page), as the desktop private window's and Chrome's incognito strip's "+"
+    // keep theirs; the mode is left through the overview's Tabs pane or Close Private Tabs.
     press: prepareNewTabGrow,
-    run: (_ctx, target) => {
+    run: ({ tab }, target) => {
       const r = target?.getBoundingClientRect()
       const origin = r ? { x: r.left, y: r.top, width: r.width, height: r.height } : undefined
-      window.dispatchEvent(new CustomEvent('zen-new-tab', { detail: { origin } }))
+      const containerId = tab && isPrivateTab(tab) ? tab.containerId : undefined
+      window.dispatchEvent(new CustomEvent('zen-new-tab', { detail: { origin, containerId } }))
     }
   },
   menu: {
@@ -187,6 +199,14 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
       run('focus.chrome', undefined)
       openFindBar(tab.id)
     }
+  },
+  // OMN-19, offered where the host has a recogniser (`phoneBarOffered`): the listening sheet,
+  // its result loading in this tab as a submit from the bar's pill would.
+  voice: {
+    id: 'voice',
+    label: 'Voice search',
+    glyph: () => <Mic className={glyph} />,
+    run: ({ tab }) => void startVoiceSearch({ tabId: tab?.id ?? null })
   }
 }
 
@@ -213,8 +233,13 @@ export function barContext(state: UIState, overviewOpen: boolean): BarItemContex
   return { state, tab: activeTab(state), overviewOpen }
 }
 
-/** Tabs in the current space plus the Essentials – what the overview shows. */
+/**
+ * What the overview shows for the active tab: the private tabs while a private one is active
+ * (its Private pane), else the tabs in the current space plus the Essentials, the private ones
+ * aside (its Tabs pane) – as Chrome's switcher counts the mode it is in.
+ */
 export function tabCount(state: UIState): number {
+  if (activeTabIsPrivate(state)) return privateTabsOf(state).length
   const space = activeSpace(state)
-  return tabsOf(state, space).length + essentialsFor(state, space).length
+  return tabsOnPane(tabsOf(state, space), 'tabs').length + essentialsFor(state, space).length
 }

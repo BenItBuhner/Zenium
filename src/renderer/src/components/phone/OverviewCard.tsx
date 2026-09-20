@@ -1,6 +1,8 @@
 import type { CSSProperties, JSX } from 'react'
-import { X } from 'lucide-react'
+import { useRef } from 'react'
+import { Moon, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
+import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -12,6 +14,14 @@ import { liftStore, useCardLift, type CardLiftOptions } from './useCardLift'
 export const CARD_RADIUS = 14
 /** Height of a card's title row. */
 export const CARD_HEADER = 40
+/**
+ * How far past the grid's edges a card counts as on screen, as a share of the grid's height
+ * (`useOnScreen` measures from the card's scroller): about a row of cards, so the pictures of
+ * the next row are read before it scrolls in and the rest of the grid's cards hold none
+ * (`lib/thumbnails.ts`). At 412 x 915 that is the rows in view plus one above and one below –
+ * 10 to 14 cards of a 200-tab session, 18 to 25 MB counted (the preview host's numbers).
+ */
+const CARD_LOOKAHEAD = '35% 0px'
 
 interface Props {
   tab: Tab
@@ -31,6 +41,8 @@ interface Props {
  * it up, swipe it sideways to close it (see `useCardLift`). While it is in the hand the slot
  * shows a faint stand-in, and a card that another card is about to be dropped on tucks itself in
  * a little. The outer box is the grid's cell, keyed by the tab id for the glide and the morph.
+ * A card holds its tab's picture only while its cell is on screen or a row from it: the grid
+ * is not virtualised, its pictures are.
  */
 export function OverviewCard({
   tab,
@@ -45,11 +57,14 @@ export function OverviewCard({
   const held = liftStore.use((s) => (s.tabId === tab.id ? s.phase : 'idle'))
   const targeted = liftStore.use((s) => s.phase === 'dragging' && s.target === `card:${tab.id}`)
   const departing = departStore.use((s) => s.hidden.has(tab.id))
+  const cellRef = useRef<HTMLDivElement>(null)
+  const visible = useOnScreen(cellRef, CARD_LOOKAHEAD)
   const style: CSSProperties = {}
   if (hidden || departing || held === 'dropping') style.opacity = 0
   else if (held !== 'idle') style.opacity = 0.35
   return (
     <div
+      ref={cellRef}
       className="relative"
       style={{ aspectRatio: '3 / 4' }}
       data-tab-id={tab.id}
@@ -63,8 +78,9 @@ export function OverviewCard({
           targeted && 'zen-overview-card-target'
         )}
         data-active={active}
+        data-discarded={tab.discarded || undefined}
         style={style}
-        aria-label={tabTitle(tab)}
+        aria-label={tab.discarded ? `${tabTitle(tab)} – sleeping` : tabTitle(tab)}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
@@ -77,7 +93,7 @@ export function OverviewCard({
           if (e.key === 'Enter' || e.key === ' ') onPick(tab)
         }}
       >
-        <CardBody tab={tab} closable={Boolean(onClose)} onClose={onClose} />
+        <CardBody tab={tab} closable={Boolean(onClose)} onClose={onClose} visible={visible} />
       </div>
     </div>
   )
@@ -86,15 +102,18 @@ export function OverviewCard({
 /**
  * Title row and thumbnail – shared with the ghost of a card in the hand and a card on its way
  * out, which show the close button (so the card looks the same) without it doing anything.
+ * `visible` is the grid's word on whether the card is on screen (a ghost always is).
  */
 export function CardBody({
   tab,
   closable = true,
-  onClose
+  onClose,
+  visible = true
 }: {
   tab: Tab
   closable?: boolean
   onClose?: (tab: Tab) => void
+  visible?: boolean
 }): JSX.Element {
   return (
     <>
@@ -102,8 +121,22 @@ export function CardBody({
         className="flex shrink-0 items-center gap-2 pl-3 pr-1"
         style={{ height: CARD_HEADER }}
       >
-        <Favicon tab={tab} size={16} />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{tabTitle(tab)}</span>
+        <span className="zen-overview-card-favicon flex shrink-0">
+          <Favicon tab={tab} size={16} />
+        </span>
+        <span className="zen-overview-card-title min-w-0 flex-1 truncate text-[13px] font-medium">
+          {tabTitle(tab)}
+        </span>
+        {tab.discarded && (
+          // A sleeping page (CT-22): the moon the sidebar's row shows, at the deemphasised
+          // 69% with the title, 16 like the favicon and the close glyph beside it (§9.3); the
+          // card's own tap wakes the page, so the glyph is a mark.
+          <Moon
+            className="zen-overview-card-sleeping h-4 w-4 shrink-0"
+            aria-hidden
+            data-sleeping=""
+          />
+        )}
         {closable && (
           <button
             type="button"
@@ -118,8 +151,8 @@ export function CardBody({
           </button>
         )}
       </header>
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <TabPreview tab={tab} scale={0.8} />
+      <div className="zen-overview-card-preview relative min-h-0 flex-1 overflow-hidden">
+        <TabPreview tab={tab} scale={0.8} visible={visible} />
       </div>
     </>
   )

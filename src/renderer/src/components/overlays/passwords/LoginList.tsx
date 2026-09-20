@@ -124,8 +124,9 @@ function NeverSave({ domains }: { domains: string[] }): JSX.Element {
       </Heading>
       <Rows>
         {domains.map((domain) => (
-          // A static row (§9.34): its one control, the icon button, is the target.
-          <ListRow key={domain}>
+          // A static row (§9.34): its one control, the icon button, is the target; one line,
+          // so the row grows around the button (§9.21, `control`).
+          <ListRow key={domain} control>
             <span className="min-w-0 flex-1 truncate">{domain}</span>
             <IconBtn
               label="Allow saving again"

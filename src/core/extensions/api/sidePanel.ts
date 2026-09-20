@@ -31,6 +31,22 @@ export interface EffectivePanel {
   tabScoped: boolean
 }
 
+/** `onOpened` / `onClosed`: the page shown, its window, and the tab for a tab-specific panel. */
+export interface PanelOpenedInfo {
+  path: string
+  windowId: number
+  tabId?: number
+}
+
+export type PanelClosedInfo = PanelOpenedInfo
+
+/** `getLayout()`: which side of the window the panel docks on. */
+export interface PanelLayout {
+  side: 'left' | 'right'
+}
+
+export const SIDE_PANEL_SIDES = { LEFT: 'left', RIGHT: 'right' } as const
+
 export const ERROR_NO_PERMISSION = "The extension does not have the 'sidePanel' permission."
 export const ERROR_NO_TARGET = 'At least one of `windowId` or `tabId` must be specified.'
 export const ERROR_NO_ACTIVE_WINDOW = 'No active browser window.'
@@ -122,6 +138,9 @@ export function normalizeOpenOptions(raw: unknown): OpenPanelOptions {
   }
   return options
 }
+
+/** `close(options)` takes the same `tabId` / `windowId` pair as `open`, at least one of them. */
+export const normalizeCloseOptions = normalizeOpenOptions
 
 /** The manifest's `side_panel.default_path`, cleaned the way `setOptions` cleans paths. */
 export function manifestPanelPath(manifest: unknown): string | null {

@@ -70,8 +70,9 @@ function eventDelivery(raw: unknown): EventDelivery | undefined {
  * What the shim installs with, asked synchronously so it holds from the first script on
  * (`HostShimOptions` of `shared/userScripts.ts`): the extension's per-extension toggles
  * (`chrome.userScripts` behind "Allow user scripts"; a toggled namespace that is off throws on
- * access), and the content-script storage prelude when the install directory carries one. Every
- * toggle off and no prelude when the host cannot be asked.
+ * access), the content-script storage prelude when the install directory carries one, and the
+ * permissions the host withheld from the engine's manifest. Every toggle off, no prelude and
+ * nothing withheld when the host cannot be asked.
  */
 function optionsFromHost(): ShimOptions {
   const toggles: Record<string, boolean> = { userScripts: false }
@@ -88,6 +89,15 @@ function optionsFromHost(): ShimOptions {
       }
       if (typeof record.storagePrelude === 'string' && record.storagePrelude.length > 0) {
         options.storagePrelude = record.storagePrelude
+      }
+      const withheld = record.withheld
+      if (withheld !== null && typeof withheld === 'object') {
+        const list = (value: unknown): string[] =>
+          Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : []
+        const sent = withheld as Record<string, unknown>
+        const required = list(sent.required)
+        const optional = list(sent.optional)
+        if (required.length > 0 || optional.length > 0) options.withheld = { required, optional }
       }
     }
   } catch {

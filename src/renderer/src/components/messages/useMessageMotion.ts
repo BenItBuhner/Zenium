@@ -13,11 +13,9 @@ import {
   SPRING_SNAPPY,
   SpringAnimation
 } from '@renderer/lib/motion/spring'
+import { REDUCED_FADE_MS } from '@shared/toastCard'
 import { MESSAGE_INSET } from './stack'
 import { useSwipeDismiss, type SwipeDismissHandlers } from './useSwipeDismiss'
-
-/** v2 §11.3: with motion reduced, an appearance or departure is a fade in place this long. */
-const REDUCED_FADE_MS = 120
 
 export interface MessageMotionOptions {
   /** The edge the card lives at: `1` the bottom (it comes up from below), `-1` the top. */

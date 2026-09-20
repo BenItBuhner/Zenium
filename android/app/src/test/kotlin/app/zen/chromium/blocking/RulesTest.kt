@@ -36,11 +36,21 @@ class RulesTest {
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"condition":{}}"""), 1))
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"modifyHeaders"},"condition":{}}"""), 1))
         assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"regexFilter":"("}}"""), 1))
-        // Header-conditioned rules belong to the desktop engine's headers-received stage; without
-        // that stage the rule is left out rather than matched on its URL alone.
-        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[{"header":"content-type","values":["text/*"]}]}}"""), 1))
-        assertNull(DnrRule.parse(JSONObject("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","excludedResponseHeaders":[{"header":"x-ads"}]}}"""), 1))
-        assertTrue(rule("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[]}}""").matches(req("https://a.example/x")))
+        // Header-conditioned rules are kept for the headers-received stage: their request stage
+        // matches on the URL, their header stage on the response (HeaderStage relays the document).
+        val byType = rule("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[{"header":"content-type","values":["text/*"]}]}}""")
+        assertTrue(byType.needsHeaders)
+        assertTrue(byType.matches(req("https://a.example/x")))
+        assertTrue(byType.matchesHeaders(mapOf("content-type" to listOf("text/css; charset=utf-8"))))
+        assertFalse(byType.matchesHeaders(mapOf("content-type" to listOf("application/json"))))
+        assertFalse(byType.matchesHeaders(emptyMap()))
+        val excluded = rule("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","excludedResponseHeaders":[{"header":"x-ads"}]}}""")
+        assertTrue(excluded.needsHeaders)
+        assertTrue(excluded.matchesHeaders(emptyMap()))
+        assertFalse(excluded.matchesHeaders(mapOf("x-ads" to listOf("1"))))
+        val emptyConditions = rule("""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"x","responseHeaders":[]}}""")
+        assertFalse(emptyConditions.needsHeaders)
+        assertTrue(emptyConditions.matches(req("https://a.example/x")))
         val any = rule("""{"id":7,"action":{"type":"block"}}""")
         assertEquals(7, any.id)
         assertEquals(RuleAction.BLOCK, any.action)

@@ -1,4 +1,4 @@
-import type { SearchEngine } from './types'
+import type { SearchEngine, SearchEngineControl, SearchEngineSource } from './types'
 
 /**
  * Zen ships Google, DuckDuckGo and Wikipedia by default and lets you pick Google, DuckDuckGo or
@@ -52,12 +52,453 @@ export const DEFAULT_SEARCH_ENGINES: SearchEngine[] = [
 ]
 
 export function buildSearchUrl(engine: SearchEngine, query: string): string {
-  return engine.searchUrl.replace('%s', encodeURIComponent(query.trim()))
+  return fillTemplate(engine.searchUrl, query)
 }
 
 export function buildSuggestUrl(engine: SearchEngine, query: string): string | null {
   if (!engine.suggestUrl) return null
-  return engine.suggestUrl.replace('%s', encodeURIComponent(query.trim()))
+  return fillTemplate(engine.suggestUrl, query)
+}
+
+/** Every `%s` of a template takes the encoded query (an OpenSearch template may repeat it). */
+function fillTemplate(template: string, query: string): string {
+  return template.split('%s').join(encodeURIComponent(query.trim()))
+}
+
+// ---------------------------------------------------------------------------
+// The engine list: shipped engines plus the user's (Settings > Search, OpenSearch discovery)
+// ---------------------------------------------------------------------------
+
+/** Discovered engines kept, newest visit first (Chrome's "Recently visited" list is short). */
+export const MAX_DISCOVERED_ENGINES = 8
+/** Engines added by hand: a generous bound, so a synced profile cannot grow without limit. */
+export const MAX_CUSTOM_ENGINES = 32
+const MAX_ENGINE_NAME = 64
+const MAX_ENGINE_URL = 2048
+/** A favicon address kept in the settings: a URL, or a small data URL. */
+const MAX_FAVICON = 8 * 1024
+
+/**
+ * Every engine the profile offers: the shipped ones first, then the installed extensions'
+ * (`chrome_settings_overrides.search_provider`, install order), then the user's own in the order
+ * they were added, then the discovered ones newest visit first. The user's list never shadows a
+ * shipped id.
+ */
+export function allSearchEngines(
+  user: readonly SearchEngine[] | undefined,
+  extension: readonly SearchEngine[] = []
+): SearchEngine[] {
+  const shipped = new Set(DEFAULT_SEARCH_ENGINES.map((e) => e.id))
+  const own = (user ?? []).filter((e) => !shipped.has(e.id))
+  const custom = own.filter((e) => e.source !== 'discovered')
+  const discovered = own
+    .filter((e) => e.source === 'discovered')
+    .sort((a, b) => (b.visitedAt ?? 0) - (a.visitedAt ?? 0))
+  return [...DEFAULT_SEARCH_ENGINES, ...extension, ...custom, ...discovered]
+}
+
+/** The engine `id` names, or the profile's default (the shipped default when that is gone too). */
+export function engineById(engines: readonly SearchEngine[], id: string): SearchEngine {
+  return engines.find((e) => e.id === id) ?? engines[0]
+}
+
+/**
+ * The engine a search goes to: the one an extension holds the default with (`control`) while it
+ * is installed and its engine listed, else the user's pick (`settings.searchEngineId`), else the
+ * first one. One resolution for the core (submit, suggestions, menus) and the chrome (the URL
+ * bar's glyph and hint), so they never disagree.
+ */
+export function defaultSearchEngineOf(
+  engines: readonly SearchEngine[],
+  pickedId: string,
+  control: SearchEngineControl | null | undefined
+): SearchEngine {
+  const controlled = control ? engines.find((e) => e.id === control.engineId) : undefined
+  return controlled ?? engineById(engines, pickedId)
+}
+
+/**
+ * Whether `id` names an engine the user may pick as the default: a shipped, added or discovered
+ * one. An extension's engine is not (Chrome's `TemplateURLService::CanMakeDefault` refuses an
+ * extension-controlled engine); it is the default only through the extension's `is_default`.
+ */
+export function isPickableSearchEngine(engines: readonly SearchEngine[], id: string): boolean {
+  return engines.some((e) => e.id === id && e.source !== 'extension')
+}
+
+/**
+ * Why `url` cannot be a search URL template, or null when it can: an `http(s)` address that
+ * carries `%s` (Chrome's form takes the same placeholder) where the query goes.
+ */
+export function searchTemplateProblem(url: string): string | null {
+  const t = url.trim()
+  if (!t) return 'Enter the search URL'
+  if (t.length > MAX_ENGINE_URL) return 'The URL is too long'
+  if (!t.includes('%s')) return 'Put %s where the search terms go'
+  let parsed: URL
+  try {
+    parsed = new URL(t.split('%s').join('query'))
+  } catch {
+    return 'Enter a complete address, like https://example.com/search?q=%s'
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')
+    return 'The URL must start with https:// or http://'
+  return null
+}
+
+/** The letter the URL bar shows for an engine: the first letter or digit of its name. */
+export function engineGlyph(name: string): string {
+  const m = /[\p{L}\p{N}]/u.exec(name)
+  return (m?.[0] ?? '?').toUpperCase()
+}
+
+/**
+ * A keyword for a new engine, `@` and its name run together (`@wikipedia`), that no engine in
+ * `existing` answers to yet (`@wikipedia2` otherwise).
+ */
+export function uniqueEngineKeyword(name: string, existing: readonly SearchEngine[]): string {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/\s*\(.*\)\s*$/, '')
+      .replace(/[^\p{L}\p{N}]+/gu, '') || 'engine'
+  const taken = new Set(existing.flatMap(engineKeywords))
+  let keyword = `@${base}`
+  for (let n = 2; taken.has(keyword); n++) keyword = `@${base}${n}`
+  return keyword
+}
+
+/** An id no engine in `existing` has, from the engine's name. */
+function uniqueEngineId(prefix: string, name: string, existing: readonly SearchEngine[]): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 32) || 'engine'
+  const ids = new Set(existing.map((e) => e.id))
+  let id = `${prefix}:${slug}`
+  for (let n = 2; ids.has(id); n++) id = `${prefix}:${slug}-${n}`
+  return id
+}
+
+/**
+ * The engine a Settings > Search form adds: its name and template, a keyword and glyph derived
+ * from the name, no suggestions (a hand-typed engine offers no suggest endpoint).
+ */
+export function customSearchEngine(
+  name: string,
+  url: string,
+  existing: readonly SearchEngine[]
+): SearchEngine {
+  const cleanName = name.trim().slice(0, MAX_ENGINE_NAME)
+  return {
+    id: uniqueEngineId('custom', cleanName, existing),
+    name: cleanName,
+    searchUrl: url.trim(),
+    suggestUrl: null,
+    keyword: uniqueEngineKeyword(cleanName, existing),
+    glyph: engineGlyph(cleanName),
+    source: 'custom',
+    favicon: null
+  }
+}
+
+/** The host a template searches at (`www.` dropped), for telling one site's engine from another's. */
+export function engineHost(engine: Pick<SearchEngine, 'searchUrl'>): string | null {
+  try {
+    return new URL(engine.searchUrl.split('%s').join('q')).hostname.replace(/^www\./, '')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * A profile's `settings.searchEngines` as read from disk or from a peer: every entry a complete
+ * engine of the user's (a shipped id is dropped, the shipped list is not stored), the discovered
+ * ones capped to the newest `MAX_DISCOVERED_ENGINES`, the hand-added ones to `MAX_CUSTOM_ENGINES`.
+ * `keep` (the default engine's id) is never dropped by the caps.
+ */
+export function sanitizeSearchEngines(raw: unknown, keep?: string): SearchEngine[] {
+  if (!Array.isArray(raw)) return []
+  const shipped = new Set(DEFAULT_SEARCH_ENGINES.map((e) => e.id))
+  const seen = new Set<string>()
+  const out: SearchEngine[] = []
+  for (const item of raw) {
+    const engine = sanitizeSearchEngine(item)
+    if (!engine || shipped.has(engine.id) || seen.has(engine.id)) continue
+    seen.add(engine.id)
+    out.push(engine)
+  }
+  const custom = out.filter((e) => e.source !== 'discovered')
+  const discovered = out
+    .filter((e) => e.source === 'discovered')
+    .sort((a, b) => (b.visitedAt ?? 0) - (a.visitedAt ?? 0))
+  return [
+    ...cap(custom, MAX_CUSTOM_ENGINES, keep),
+    ...cap(discovered, MAX_DISCOVERED_ENGINES, keep)
+  ]
+}
+
+function cap(list: SearchEngine[], max: number, keep: string | undefined): SearchEngine[] {
+  if (list.length <= max) return list
+  const kept = list.slice(0, max)
+  const held = keep ? list.slice(max).find((e) => e.id === keep) : undefined
+  if (!held) return kept
+  kept.pop()
+  kept.push(held)
+  return kept
+}
+
+function sanitizeSearchEngine(raw: unknown): SearchEngine | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.id !== 'string' || !r.id || r.id.length > 128) return null
+  if (typeof r.name !== 'string' || !r.name.trim()) return null
+  if (typeof r.searchUrl !== 'string' || searchTemplateProblem(r.searchUrl)) return null
+  const source: SearchEngineSource = r.source === 'discovered' ? 'discovered' : 'custom'
+  const suggestUrl =
+    typeof r.suggestUrl === 'string' && !searchTemplateProblem(r.suggestUrl) ? r.suggestUrl : null
+  const name = r.name.trim().slice(0, MAX_ENGINE_NAME)
+  const keyword =
+    typeof r.keyword === 'string' && /^@\S{1,64}$/.test(r.keyword)
+      ? r.keyword.toLowerCase()
+      : `@${name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '') || 'engine'}`
+  const glyph =
+    typeof r.glyph === 'string' && r.glyph.trim() ? r.glyph.trim().slice(0, 2) : engineGlyph(name)
+  const favicon = sanitizeFavicon(r.favicon)
+  const engine: SearchEngine = {
+    id: r.id,
+    name,
+    searchUrl: r.searchUrl.trim(),
+    suggestUrl,
+    keyword,
+    glyph,
+    source,
+    favicon
+  }
+  if (source === 'discovered') {
+    engine.visitedAt =
+      typeof r.visitedAt === 'number' && Number.isFinite(r.visitedAt) ? r.visitedAt : 0
+  }
+  return engine
+}
+
+function sanitizeFavicon(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_FAVICON) return null
+  if (/^data:image\//i.test(raw)) return raw
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? raw : null
+  } catch {
+    return null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OpenSearch discovery: the description a page links with `<link rel="search">`
+// ---------------------------------------------------------------------------
+
+/** What an OpenSearch description says, in the engine model's terms. */
+export interface OpenSearchDescription {
+  name: string
+  /** The `text/html` template, `%s` for `{searchTerms}`. */
+  searchUrl: string
+  /** The `application/x-suggestions+json` template, when the site offers one. */
+  suggestUrl: string | null
+  /** The `<Image>` (the 16 px one when several), absolute. */
+  favicon: string | null
+}
+
+/** Descriptions are small documents; anything bigger is not one worth reading. */
+export const MAX_OPENSEARCH_BYTES = 64 * 1024
+
+/**
+ * Read an OpenSearch 1.1 description (a small XML document; no DOM parser is assumed, the core
+ * runs in Node too) into an engine: the `ShortName`, the GET `text/html` `Url` template with
+ * `{searchTerms}` (the required parameter; optional `{…?}` ones are dropped, any other required
+ * one disqualifies the template, as Chrome does), the JSON suggestions template if any, and the
+ * `Image`. Relative templates and images resolve against `baseUrl`, the description's address.
+ * `fallbackName` (the link's title) stands in for a missing `ShortName`. Null for anything that
+ * is not a usable description: not OpenSearch, too large, no `http(s)` search template.
+ */
+export function parseOpenSearchDescription(
+  xml: string,
+  baseUrl: string,
+  fallbackName = ''
+): OpenSearchDescription | null {
+  if (typeof xml !== 'string' || xml.length > MAX_OPENSEARCH_BYTES) return null
+  const doc = xml.replace(/<!--[\s\S]*?-->/g, '')
+  if (!/<(?:[\w.-]+:)?OpenSearchDescription[\s>]/i.test(doc)) return null
+  let searchUrl: string | null = null
+  let suggestUrl: string | null = null
+  for (const url of elements(doc, 'Url')) {
+    const method = (url.attrs.method ?? 'get').toLowerCase()
+    if (method !== 'get') continue
+    const type = (url.attrs.type ?? '').toLowerCase().trim()
+    const template = openSearchTemplate(url, baseUrl)
+    if (!template) continue
+    if (type === 'text/html' && !searchUrl) searchUrl = template
+    else if (
+      (type === 'application/x-suggestions+json' || type === 'application/json') &&
+      !suggestUrl
+    )
+      suggestUrl = template
+  }
+  if (!searchUrl) return null
+  const shortName = textOf(elements(doc, 'ShortName')[0])
+  const name = (shortName || fallbackName.trim() || engineHost({ searchUrl }) || '').slice(
+    0,
+    MAX_ENGINE_NAME
+  )
+  if (!name) return null
+  const images = elements(doc, 'Image')
+  const image = images.find((i) => i.attrs.width === '16' && i.attrs.height === '16') ?? images[0]
+  const favicon = image ? resolveHttp(textOf(image), baseUrl, true) : null
+  return { name, searchUrl, suggestUrl, favicon }
+}
+
+/**
+ * The engine a description makes, remembered as visited now: keyed by the site it searches
+ * (`discovered:<host>`), so a later visit updates the same entry.
+ */
+export function discoveredSearchEngine(
+  description: OpenSearchDescription,
+  now: number,
+  existing: readonly SearchEngine[]
+): SearchEngine | null {
+  const host = engineHost(description)
+  if (!host) return null
+  const id = `discovered:${host}`
+  const previous = existing.find((e) => e.id === id)
+  return {
+    id,
+    name: description.name,
+    searchUrl: description.searchUrl,
+    suggestUrl: description.suggestUrl,
+    keyword:
+      previous?.keyword ??
+      uniqueEngineKeyword(
+        description.name,
+        existing.filter((e) => e.id !== id)
+      ),
+    glyph: engineGlyph(description.name),
+    source: 'discovered',
+    favicon: description.favicon,
+    visitedAt: now
+  }
+}
+
+/**
+ * `engine` (a discovered one) joins or refreshes the user's list: a site that already has an
+ * engine – shipped or added by hand – offers nothing new; otherwise the entry with its id is
+ * replaced and the discovered ones are capped to the newest, the default (`keep`) never dropped.
+ */
+export function rememberDiscoveredEngine(
+  user: readonly SearchEngine[],
+  engine: SearchEngine,
+  keep?: string
+): SearchEngine[] {
+  const host = engineHost(engine)
+  const owned = [...DEFAULT_SEARCH_ENGINES, ...user.filter((e) => e.source !== 'discovered')]
+  if (host && owned.some((e) => engineHost(e) === host)) return [...user]
+  const rest = user.filter((e) => e.id !== engine.id)
+  return sanitizeSearchEngines([...rest, engine], keep)
+}
+
+interface XmlElement {
+  attrs: Record<string, string>
+  inner: string
+}
+
+/** Every element with the local name `name` (any namespace prefix), in document order. */
+function elements(doc: string, name: string): XmlElement[] {
+  const out: Array<XmlElement & { at: number }> = []
+  const open = new RegExp(`<(?:[\\w.-]+:)?${name}(\\s[^<>]*?)?(/?)>`, 'gi')
+  const close = new RegExp(`</(?:[\\w.-]+:)?${name}\\s*>`, 'gi')
+  for (let m = open.exec(doc); m; m = open.exec(doc)) {
+    const attrs = attributesOf(m[1] ?? '')
+    if (m[2] === '/') {
+      out.push({ attrs, inner: '', at: m.index })
+      continue
+    }
+    close.lastIndex = open.lastIndex
+    const end = close.exec(doc)
+    if (!end) break
+    out.push({ attrs, inner: doc.slice(open.lastIndex, end.index), at: m.index })
+    open.lastIndex = close.lastIndex
+  }
+  return out
+}
+
+function attributesOf(text: string): Record<string, string> {
+  const attrs: Record<string, string> = {}
+  const re = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    attrs[m[1].replace(/^[\w.-]+:/, '').toLowerCase()] = decodeXml(m[2] ?? m[3] ?? '')
+  }
+  return attrs
+}
+
+/** An element's text: CDATA unwrapped, entities decoded, nested tags dropped, trimmed. */
+function textOf(el: XmlElement | undefined): string {
+  if (!el) return ''
+  const cdata = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(el.inner)
+  const raw = cdata ? cdata[1] : decodeXml(el.inner.replace(/<[^>]*>/g, ''))
+  return raw.replace(/\s+/g, ' ').trim()
+}
+
+function decodeXml(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (whole, code: string) => {
+    const c = code.toLowerCase()
+    if (c === 'amp') return '&'
+    if (c === 'lt') return '<'
+    if (c === 'gt') return '>'
+    if (c === 'quot') return '"'
+    if (c === 'apos') return "'"
+    const n = c.startsWith('#x') ? parseInt(c.slice(2), 16) : parseInt(c.slice(1), 10)
+    return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : whole
+  })
+}
+
+/**
+ * A `Url` element's template as an engine template: `{searchTerms}` becomes `%s`, optional
+ * parameters go, `Param` children join the query; null when a required parameter other than the
+ * search terms is left, when the terms are missing, or when the result is not `http(s)`.
+ */
+function openSearchTemplate(url: XmlElement, baseUrl: string): string | null {
+  let template = url.attrs.template ?? ''
+  const params = elements(url.inner, 'Param')
+    .filter((p) => p.attrs.name)
+    .map((p) => `${encodeURIComponent(p.attrs.name)}=${p.attrs.value ?? ''}`)
+  if (params.length) template += (template.includes('?') ? '&' : '?') + params.join('&')
+  if (!template) return null
+  // The core's placeholder is `%s`; a literal `%s` in a template is not one Chrome honours either.
+  template = template.replace(/\{searchTerms\??\}/gi, '%s')
+  template = template.replace(
+    /\{(?:startIndex|startPage|count|language|inputEncoding|outputEncoding)\}/gi,
+    ''
+  )
+  template = template.replace(/\{[^{}]*\?\}/g, '')
+  if (/\{[^{}]*\}/.test(template)) return null
+  if (!template.includes('%s')) return null
+  const resolved = resolveHttp(template, baseUrl, false)
+  return resolved && !searchTemplateProblem(resolved) ? resolved : null
+}
+
+/** `value` as an absolute `http(s)` address (or a data image, where allowed), else null. */
+function resolveHttp(value: string, baseUrl: string, allowData: boolean): string | null {
+  const v = value.trim()
+  if (!v || v.length > MAX_ENGINE_URL) return null
+  if (allowData && /^data:image\//i.test(v)) return v.length <= MAX_FAVICON ? v : null
+  try {
+    // `%s` survives `new URL` untouched: it is a valid percent-escape only when a hex pair follows.
+    const url = new URL(v, baseUrl)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    return url.href
+  } catch {
+    return null
+  }
 }
 
 /**

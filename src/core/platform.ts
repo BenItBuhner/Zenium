@@ -9,7 +9,9 @@
  * import from `electron`, `node:*` or the DOM.
  */
 import type {
+  AppWindowInfo,
   CertificateDetails,
+  ClipboardPeekKind,
   ColorScheme,
   ContentCover,
   DownloadItem,
@@ -20,6 +22,7 @@ import type {
   HapticKind,
   HostCapabilities,
   KeyBinding,
+  MenuGlyph,
   NavigationSnapshot,
   NewTabPageAction,
   NewTabPageCommand,
@@ -31,6 +34,7 @@ import type {
   Platform as PlatformOs,
   Rect,
   ResourceSnapshot,
+  ScreenCaptureSource,
   SharePayload,
   ShortcutAction,
   SidePanelInfo,
@@ -38,10 +42,12 @@ import type {
   SyncScope,
   SyncStatus,
   Tab,
+  ThumbnailPicture,
   WindowChrome,
   WindowMaterial
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
+import type { DisplayMode } from '../shared/displayMode'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
@@ -54,9 +60,24 @@ import type {
   EngineTransport
 } from '../shared/translateEngine'
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
+import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
+import type { PdfRenderOptions, PrinterDescription, PrintJobOptions } from '../shared/print'
+import type { PdfViewerReport } from '../shared/pdfViewerProtocol'
+import type {
+  MediaReport,
+  MediaSessionAction,
+  MediaSessionHostMessage,
+  MediaSessionInfo
+} from '../shared/mediaSession'
+import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
+import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
+import type { VoiceStartOutcome } from '../shared/voice'
+import type { SpellcheckDictionaryStatus } from '../shared/spellcheck'
+import type { GeoPosition, GeolocationErrorCode, WifiAccessPoint } from '../shared/geolocation'
+import type { ShareFile } from '../shared/share'
 import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import type { AgentHttpRequest, AgentHttpResponse } from './agent/http'
@@ -140,12 +161,40 @@ export interface PageMessage {
     | 'forms'
     /** The page script posted the web app manifest, or the site's `beforeinstallprompt` moves. */
     | 'webapp'
+    /** The `Notification` polyfill asks or shows (hosts whose engine hides the API). */
+    | 'notification'
+    /** A `zen://reader` page's toolbar changed the text preferences (`reader`). */
+    | 'reader'
+    /** The PDF viewer document (`zen://pdf`) reports where it stands (`shared/pdfPage.ts`). */
+    | 'pdf'
+    /**
+     * The page links an OpenSearch description (`<link rel="search"
+     * type="application/opensearchdescription+xml">`): `url` is the description's absolute
+     * address, `title` the link's title if any. The core fetches and parses it (`shared/search`).
+     */
+    | 'opensearch'
+    /** The page called `navigator.share` (`shared/share`): a share sheet request. */
+    | 'share'
+    /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
+    | 'geolocation'
+    /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
+    | 'readAloud'
   url?: string
+  /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
+  title?: string
   x?: number
   y?: number
   background?: boolean
   /** `media`: whether any media element is currently playing. */
   playing?: boolean
+  /**
+   * `media`: the page's media in full – the element playing, its position, the page's
+   * `navigator.mediaSession` metadata and handlers – from hosts whose page script tracks it
+   * (Android); the OS media controls are fed from it.
+   */
+  media?: MediaReport
+  /** `notification`: what the `Notification` polyfill asks (see `shared/notifications`). */
+  notification?: NotificationPageRequest
   /** `zap`: CSS selector of the element the user picked in Boost zap mode. */
   selector?: string
   /** `interstitial`: the button pressed on a Zenium warning page (see `shared/zenPages`). */
@@ -162,18 +211,60 @@ export interface PageMessage {
   webapp?: 'manifest' | 'deferred' | 'prompt'
   manifestUrl?: string
   manifest?: RawWebAppManifest | null
+  /** `reader`: the changed keys, as the page sent them (the core validates them). */
+  reader?: unknown
+  /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
+  pdf?: PdfViewerReport
+  /** `share`: what the page asked to share (validated by the core). */
+  share?: unknown
+  /** `geolocation`: the shim's request (validated by the core). */
+  geolocation?: unknown
+  /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
+  readAloud?: unknown
 }
 
-/** Messages the browser posts into a page for its page script (the web-app polyfill). */
-export interface PageHostMessage {
+/** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
+export interface WebAppHostMessage {
   type: 'webapp'
-  /**
-   * `installable`: fire `beforeinstallprompt`; `result`: settle a pending `prompt()` with
-   * `outcome`; `installed`: fire `appinstalled`.
-   */
   action: 'installable' | 'result' | 'installed'
   outcome?: 'accepted' | 'dismissed'
 }
+
+/** How a `navigator.share` call ended: the page's promise resolves (`shared`) or rejects. */
+export interface ShareHostMessage {
+  type: 'share'
+  id: string
+  result: 'shared' | 'aborted'
+}
+
+/** A position, or an error, for one request of the page's geolocation shim. */
+export interface GeolocationHostMessage {
+  type: 'geolocation'
+  id: string
+  position?: GeoPosition
+  error?: { code: GeolocationErrorCode; message: string }
+}
+
+/** The page's `display-mode` changed (`shared/displayMode`): its window went fullscreen, or it moved. */
+export interface DisplayModeHostMessage {
+  type: 'display-mode'
+  mode: DisplayMode
+}
+
+/**
+ * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
+ * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
+ * the notification polyfill's answers and events, a share call's outcome, a position, the
+ * page's display mode, read aloud's extraction request and highlight.
+ */
+export type PageHostMessage =
+  | WebAppHostMessage
+  | MediaSessionHostMessage
+  | NotificationHostMessage
+  | ShareHostMessage
+  | GeolocationHostMessage
+  | DisplayModeHostMessage
+  | ReadAloudHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -197,9 +288,18 @@ export interface LoadDetails {
 }
 
 export interface PageContextParams {
-  /** Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it. */
+  /**
+   * Click position in the view's coordinates (DIP), as the host's `context-menu` event gives it;
+   * for the keyboard (Shift+F10, the Menu key) Chromium reports the caret or the focused
+   * element's middle.
+   */
   x: number
   y: number
+  /**
+   * What asked for the menu, as Chromium names it (`menuSourceType`): `'keyboard'` opens the
+   * menu at `x`,`y` with its first item selected; a pointer opens it at the pointer.
+   */
+  menuSourceType?: MenuSourceType
   linkURL: string
   /** Text of the clicked link (Edge's "Copy link text"); empty for image links. */
   linkText?: string
@@ -227,6 +327,20 @@ export interface PageContextParams {
     canSelectAll: boolean
   }
 }
+
+/** Chromium's `ui::MenuSourceType` names, as Electron's `context-menu` event reports them. */
+export type MenuSourceType =
+  | 'none'
+  | 'mouse'
+  | 'keyboard'
+  | 'touch'
+  | 'touchMenu'
+  | 'longPress'
+  | 'longTap'
+  | 'touchHandle'
+  | 'stylus'
+  | 'adjustSelection'
+  | 'adjustSelectionReset'
 
 /** Chromium's media flags of a clicked media element (the subset the menus read). */
 export interface MediaContextFlags {
@@ -257,9 +371,11 @@ export const CHROME_MENU_TARGETS: readonly ChromeMenuTarget[] = ['urlbar', 'urlp
  * (`data-zen-menu` in the renderer; null when none).
  */
 export interface ChromeContextParams {
-  /** Click position in chrome CSS pixels. */
+  /** Click position in chrome CSS pixels (the caret or the focused element's middle for the keyboard). */
   x: number
   y: number
+  /** Raised by Shift+F10 or the Menu key: the menu opens at `x`,`y` with its first item selected. */
+  keyboard?: boolean
   /** `data-zen-menu` of the innermost marked element under the pointer, or null. */
   target: ChromeMenuTarget | null
   /** Tab the marked element acts on (`data-zen-menu-tab`); null for a new-tab URL bar. */
@@ -342,6 +458,11 @@ export interface AgentCaptureOptions {
   format: 'jpeg' | 'png'
 }
 
+/** What `TabView.screenshot` saves: the visible area (default) or the whole page. */
+export interface ScreenshotOptions {
+  fullPage?: boolean
+}
+
 export interface AgentCapture {
   /** Base64 image data (no `data:` prefix). */
   data: string
@@ -358,6 +479,14 @@ export interface TabViewEvents {
   onProgress(progress: number): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
+  /**
+   * The page is about to navigate its main frame to `url` on its own – a link, a script, a form
+   * submission (not a load the browser asked for, and not a server redirect, which hosts report
+   * as part of the navigation it belongs to). Returns true when the browser takes the navigation
+   * over and the host must cancel it: an app window's page leaving the app's scope opens in a
+   * browser tab instead (MW-23). Hosts that cannot intercept navigations need not call it.
+   */
+  onWillNavigate(url: string): boolean
   onTitleUpdated(title: string): void
   onFaviconUpdated(favicons: string[]): void
   /**
@@ -386,6 +515,11 @@ export interface TabViewEvents {
   onDevtoolsClosed(): void
   onFoundInPage(result: FindResultInfo): void
   onZoomChanged(direction: 'in' | 'out'): void
+  /**
+   * The view took the keyboard – the user clicked or tabbed into the page, or the core gave it
+   * the focus. Hosts that can tell fire it; the chrome lets go of its focused control.
+   */
+  onFocused?(): void
   onContextMenu(params: PageContextParams): void
   /** Returns true when the key was consumed by a browser shortcut. */
   onKey(input: KeyEventInput): boolean
@@ -440,6 +574,9 @@ export interface WindowOpenTicket {
   adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
+/** The cascade origin of a stylesheet a host injects into a page (`TabView.insertCSS`). */
+export type InsertedCssOrigin = 'user' | 'author'
+
 /**
  * One live web page. Mirrors the subset of Electron's `WebContentsView` + `WebContents` the core
  * uses; on Android every method is a call into the Kotlin host.
@@ -485,8 +622,14 @@ export interface TabView {
    * is gone; hosts without frames run it in the main frame.
    */
   executeJavaScript(code: string, frameId?: number): Promise<unknown>
-  /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
-  insertCSS(css: string): Promise<string>
+  /**
+   * Inject a stylesheet; resolves with a key for `removeInsertedCSS`. `origin` is the sheet's
+   * cascade origin on hosts that distinguish one (Electron; absent, `user`, under the page's own
+   * rules); `author` for rules Blink honours only from author sheets – `::highlight()` among
+   * them (a highlight rule in a user-origin sheet registers but never paints). Hosts that inject
+   * a `<style>` element (Android) are author-origin either way.
+   */
+  insertCSS(css: string, origin?: InsertedCssOrigin): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
   sendPageFlags(flags: PageFlags): void
   /**
@@ -553,13 +696,25 @@ export interface TabView {
   reloadFrame?(frameId: number): void
   /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
   clearCache?(): Promise<void>
+  /** Print through the engine's own flow: Electron's system dialog, Android's print manager. */
   print(): void
+  /**
+   * Render the page to a PDF with the preview's options (`pdfRenderOptions` in
+   * `shared/print.ts`): Electron's `webContents.printToPDF`. Resolves with the document's bytes;
+   * rejects when the engine could not render (a page that is gone, a print already running).
+   * Hosts without it have no print preview (`capabilities.printPreview` off).
+   */
+  printToPDF?(options: PdfRenderOptions): Promise<Uint8Array>
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
   snapshot(): Promise<string | null>
-  /** Full-resolution PNG saved to the downloads location; resolves with the saved path. */
-  screenshot(fileName: string): Promise<string | null>
+  /**
+   * Full-resolution PNG saved to the downloads location; resolves with the saved path. The
+   * visible area, or with `fullPage` the whole document beyond the viewport (hosts that cannot
+   * paint beyond it – the debugger taken by DevTools – save the visible area instead).
+   */
+  screenshot(fileName: string, options?: ScreenshotOptions): Promise<string | null>
   copyImageAt(x: number, y: number): Promise<boolean>
   replaceMisspelling(word: string): void
   addWordToDictionary(word: string): void
@@ -701,6 +856,13 @@ export interface WindowHost {
    * chrome's own context menus; hosts whose chrome draws its menus itself leave it out.
    */
   menuTargetAt?(x: number, y: number): Promise<{ target: string; tabId: string | null } | null>
+  /**
+   * Show the popup surface – a second chrome document (`index.html?surface=autofill`) floated
+   * above the page views – at `bounds` (window CSS pixels), or take it down with null. It never
+   * takes the keyboard when shown; the page the picker hangs from keeps it. Hosts without a
+   * layered view (`HostCapabilities.popupSurface` false) leave this out.
+   */
+  setPopupSurface?(bounds: Rect | null): void
 }
 
 export interface WindowCreateInit {
@@ -717,6 +879,11 @@ export interface WindowCreateInit {
   backgroundColor: string
   /** Colours for native caption buttons drawn over the chrome. */
   captionColors: CaptionColors
+  /**
+   * The web app of a standalone window (`chrome` `app`): hosts show its icon on the frame and
+   * in the taskbar where they can; null for browser windows.
+   */
+  app: AppWindowInfo | null
 }
 
 export interface WindowHostFactory {
@@ -766,6 +933,12 @@ export interface MenuItemTemplate {
    * (recently closed entries, `chrome.contextMenus` items).
    */
   icon?: string | null
+  /**
+   * An icon-row item of a renderer-drawn menu (the phone app menu's first group, design language
+   * v2 §9.3): the chrome draws the glyph in a 44 px button named by `label`. Native menu hosts
+   * have no such row and ignore it; the phone layout alone builds one.
+   */
+  glyph?: MenuGlyph
   submenu?: MenuItemTemplate[]
   click?: () => void
   /**
@@ -794,6 +967,7 @@ export type MenuSource =
   | 'history'
   | 'download'
   | 'urlbar'
+  | 'translate'
 
 export interface MenuPopupOptions {
   source: MenuSource
@@ -847,9 +1021,13 @@ export interface SaveTextFileOptions {
 
 export interface DialogHost {
   confirm(options: ConfirmOptions, win?: ZenWindow): Promise<boolean>
-  /** Let the user pick text files (e.g. CSS mods); resolves with their contents. */
+  /**
+   * Let the user pick text files (e.g. CSS mods); resolves with their contents. `maxBytes` lifts
+   * a host's default size cap for files that are legitimately large (a bookmarks HTML with its
+   * favicons inline); a file over the cap is left out of the result.
+   */
   pickTextFiles(
-    options: { title: string; extensions: string[] },
+    options: { title: string; extensions: string[]; maxBytes?: number },
     win?: ZenWindow
   ): Promise<PickedTextFile[]>
   /** Save text where the user chooses (bookmark export); false when cancelled or failed. */
@@ -893,6 +1071,26 @@ export interface ClipboardHost {
    * cannot clear, and the core says so in the copy toast.
    */
   clearText?(expected: string): Promise<void>
+  /**
+   * What the clipboard holds, from its DESCRIPTION alone (Android's
+   * `getPrimaryClipDescription()`: mime types, the system's URL classification, the sensitive
+   * flag, the timestamp) – never its content, which Android 12+ announces to the user with a
+   * toast. Hosts with it get the URL bar's "Link you copied" / "Text you copied" row; `none`
+   * for an empty, stale (over ten minutes), sensitive or unreadable clip.
+   */
+  peek?(): Promise<ClipboardPeekKind>
+  /**
+   * The clipboard's text, read ONCE when the user reveals or picks the clipboard row (the
+   * system may toast the read); '' when it holds none.
+   */
+  read?(): Promise<string>
+  /**
+   * The clip on the clipboard now was OPENED through the row (the pick, not a reveal): `peek`
+   * answers `none` for it until the clipboard changes (Chrome's `SuppressClipboardContent`),
+   * so the row does not offer the same link again on the next focus. Hosts without it offer it
+   * again.
+   */
+  markUsed?(): void
 }
 
 export interface ShellHost {
@@ -906,6 +1104,44 @@ export interface ShellHost {
   share?(payload: SharePayload): Promise<void>
   /** The OS screen for which links open in this app (`capabilities.appLinkSettings`). */
   openAppLinkSettings?(): void
+  /**
+   * The OS screen where encrypted DNS is set for every app (Android's Private DNS); for hosts
+   * without a resolver of their own (`capabilities.secureDns` false).
+   */
+  openPrivateDnsSettings?(): void
+  /**
+   * The OS's keyboard settings (Android's "On-screen keyboard"), where the spell checker that
+   * checks the WebView's fields is chosen; for hosts without a spellchecker of the browser's own.
+   */
+  openKeyboardSettings?(): void
+}
+
+/**
+ * The host's spellchecker: Chromium's per-session Hunspell checker on Electron (Windows, Linux;
+ * dictionaries download from Chromium's CDN on a language's first use), the OS's checker with the
+ * OS's languages on macOS. Android's WebView has none of the browser's own – the system spell
+ * checker service the keyboard settings name checks its fields – so that host leaves this out,
+ * and Settings shows the limit with `ShellHost.openKeyboardSettings`.
+ */
+export interface SpellcheckHost {
+  /**
+   * The host follows the OS's languages and ignores the list it is given (macOS): the languages
+   * are shown, not chosen.
+   */
+  readonly systemLanguages: boolean
+  /** The UI languages (BCP-47), most preferred first: a fresh profile checks in the first with a dictionary. */
+  readonly locales: readonly string[]
+  /** Every dictionary code the host can check in (`session.availableSpellCheckerLanguages`). */
+  availableLanguages(): string[]
+  /** Check (or stop checking) the fields, in these languages, in every session present and future. */
+  apply(enabled: boolean, languages: readonly string[]): void
+  /** A dictionary's download and initialisation as Chromium reports them, by language code. */
+  onDictionaryStatus(listener: (code: string, status: SpellcheckDictionaryStatus) => void): void
+  /** The custom dictionary – the words "Add to Dictionary" collected – one per profile. */
+  listWords(): Promise<string[]>
+  /** False when the word was there already (or is not a word). */
+  addWord(word: string): Promise<boolean>
+  removeWord(word: string): Promise<boolean>
 }
 
 /**
@@ -941,6 +1177,15 @@ export interface NetHost {
       headers?: Record<string, string>
       /** Overall time limit; hosts default to a few seconds (suggestions, Live Folders). */
       timeoutMs?: number
+      /**
+       * The most body bytes the host reads: a body past it fails the fetch (`ok: false`) with
+       * the download stopped there, so a caller's cap (an OpenSearch description's 64 KB)
+       * bounds the transfer and not only what is kept of it. Unset: the host's own limit.
+       */
+      maxBytes?: number
+      /** `POST` with `body` (the network location query); GET without. */
+      method?: 'GET' | 'POST'
+      body?: string
     }
   ): Promise<{
     ok: boolean
@@ -995,6 +1240,14 @@ export interface DownloadHost {
    */
   deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'>
   open(item: DownloadItem): Promise<void>
+  /**
+   * Chrome's "Open with": the system's chooser of apps for the file, whatever the default is
+   * (the PDF viewer's escape to another app). Hosts without a chooser leave it out and the core
+   * opens the file as `open` would.
+   */
+  openWith?(item: DownloadItem): Promise<void>
+  /** The system share sheet with the file itself (`capabilities.share`); hosts without one leave it out. */
+  share?(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
   chooseDirectory?(win?: ZenWindow): Promise<string | null>
@@ -1205,6 +1458,12 @@ export interface ExtensionHost {
   /** Move the open popup view (and show it once the renderer's frame has popped in). */
   resizePopup(bounds: Rect, visible: boolean): void
   closePopup(): void
+  /**
+   * Whether an action popup is up right now. Chrome refuses `chrome.action.openPopup()` while
+   * one shows ("Failed to open popup."): a popup whose worker answers its first message with
+   * `openPopup` would otherwise replace itself forever.
+   */
+  popupOpen(): boolean
   /** The `chrome.sidePanel` a window shows beside its page right now (for `UIState.sidePanel`). */
   sidePanel(win: ZenWindow): SidePanelInfo | null
   /** Open an extension's side panel in `win`, or close it when that extension's panel is showing. */
@@ -1253,7 +1512,11 @@ export interface PopupFrame {
   radius: number
 }
 
-/** Cross-device sync through a shared folder; Electron only for now. */
+/**
+ * Cross-device sync through a shared folder, as the chrome's `sync.*` commands see it. The
+ * core's `sync/engine.ts` implements it on top of a host's `SyncPlatformHost`; hosts without
+ * one get the built-in stand-in (`NoSync`).
+ */
 export interface SyncHost {
   start(): void
   status(): SyncStatus
@@ -1264,10 +1527,59 @@ export interface SyncHost {
   ): Promise<void>
   setScope(patch: Partial<SyncScope>): void
   setDeviceName(name: string): void
+  /** Re-point a configured device at a folder (after `folderLost`, or to move); the key stays. */
+  setFolder(folder: string, win: ZenWindow): Promise<void>
   syncNow(): Promise<void>
   confirmMerge(merge: boolean): Promise<void>
   disconnect(wipeRemote: boolean): void
   flushSync(): void
+}
+
+/**
+ * The bytes of a sync folder: text documents by name inside the folder's `zenium-sync`
+ * directory (`core/sync/transport.ts` has the full contract and the shared helpers).
+ */
+export interface SyncTransport {
+  list(): Promise<string[]>
+  read(name: string): Promise<string | null>
+  write(name: string, text: string): Promise<void>
+  remove(name: string): Promise<void>
+  removeAll(): Promise<void>
+  watch?(onChange: () => void): () => void
+}
+
+/** A host's own scrypt (Node's native one is quicker than the shared JavaScript implementation). */
+export type SyncScryptFn = (
+  passphrase: Uint8Array,
+  salt: Uint8Array,
+  params: { N: number; r: number; p: number; dkLen: number }
+) => Promise<Uint8Array>
+
+/**
+ * What the platform-neutral sync engine needs from a host: a folder picker, a name for this
+ * device, and a transport for the folder the user picked. The passphrase prompt, the merge
+ * question and every other piece of UI are the chrome's.
+ */
+export interface SyncPlatformHost {
+  /**
+   * The platform's folder picker: an absolute path on desktop, a persisted document-tree URI
+   * on Android (opaque to the core), or null when the user dismissed it.
+   */
+  chooseFolder(win: ZenWindow): Promise<string | null>
+  /** The folder as the user knows it (the path itself; a tree's display name), for the status. */
+  folderName?(folder: string): Promise<string>
+  /** What this device is called until the user renames it (the hostname; `Build.MODEL`). */
+  deviceNameDefault(): string
+  createTransport(folder: string): SyncTransport
+  /** Native scrypt, when the host has one; must equal the shared implementation bit for bit. */
+  scrypt?: SyncScryptFn
+  /**
+   * How often the engine re-reads the folder on its own; the default (45 s) suits a desktop
+   * whose transport also watches. 0 leaves polling to the transport's `watch`.
+   */
+  pollMs?: number
+  /** False while the app is in the background: the poll skips its turn (Android, no service). */
+  foreground?(): boolean
 }
 
 /**
@@ -1496,12 +1808,321 @@ export interface ShortcutRequest {
 }
 
 /**
- * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`). `pin` resolves once
- * the request reached the launcher; the launcher's confirmation arrives later through
- * `Browser.webApps.onPinned` because the system dialog has no cancel callback.
+ * Launcher shortcuts (Android's `ShortcutManagerCompat.requestPinShortcut`; on desktop a
+ * launcher – Start menu / desktop `.lnk`, `.desktop` entry, `.app` bundle – that runs the app in
+ * a window of its own, `zenium --app=<url>`). `pin` resolves once the request reached the
+ * launcher; the launcher's confirmation arrives later through `Browser.webApps.onPinned` because
+ * Android's system dialog has no cancel callback (desktop hosts confirm as soon as the files are
+ * written, with the icon they kept).
  */
 export interface ShortcutHost {
   pin(request: ShortcutRequest): Promise<boolean>
+  /**
+   * Remove the launcher `pin` made for `id` (its files and icon). Hosts whose launcher owns its
+   * shortcuts (Android) leave it out; the core then only forgets the record.
+   */
+  unpin?(id: string): Promise<void>
+}
+
+/**
+ * Voice search on a host with a speech recogniser (Android's `SpeechRecognizer`, `Voice.kt`).
+ * `start` asks for the microphone – the runtime permission prompt may show – and starts the
+ * recogniser in the user's language; while it listens the host raises `voice.event`s, which the
+ * platform hands to the window (`Browser.emit`). One session at a time: a start while one runs
+ * cancels the first.
+ */
+export interface VoiceHost {
+  start(): Promise<VoiceStartOutcome>
+  cancel(): void
+  /** The app's system settings screen, for a microphone refused for good. */
+  openSettings(): void
+}
+
+/**
+ * Tab card thumbnails the host keeps on disk, one picture per tab (`thumbnail.*` in `Commands`).
+ * The host captures on its own – a page leaving the screen, the app going to the background,
+ * the cover it takes for a sheet – and raises `thumbnail.captured` to the window; the chrome
+ * reads a card's picture when it shows the card, and says which pictures are to go.
+ */
+export interface ThumbnailHost {
+  /** How wide a card is, in device pixels: what captures are scaled to. */
+  configure(width: number): void
+  /** The persisted picture of a tab at `url`, or null when there is none (or none of that page). */
+  load(tabId: string, url: string): Promise<ThumbnailPicture | null>
+  /**
+   * The tab left `url`: its picture of that page is not to be shown again (one of another page,
+   * a newer capture the word overtook, stays). Without `url` the tab is gone for good, and so
+   * is whatever picture is under its id.
+   */
+  drop(tabId: string, url?: string): void
+  /** Once at boot: every picture but those of `keep` (the session's tabs) goes. */
+  sweep(keep: readonly string[]): void
+}
+
+/**
+ * QR scanning on a host with a back camera (Android's camera2 behind `QrScan.kt`). `start` asks
+ * for the camera – the runtime permission prompt may show – and opens it into a native preview
+ * the host lays over the sheet's slot (`layout`); while it scans the host raises `qr.event`s,
+ * which the platform hands to the window (`Browser.emit`). One session at a time: a start while
+ * one runs cancels the first.
+ */
+export interface QrScanHost {
+  start(): Promise<QrStartOutcome>
+  cancel(): void
+  layout(slot: { rect: Rect; radius: number; visible: boolean }): void
+  setTorch(on: boolean): void
+  /** The app's system settings screen, for a camera refused for good. */
+  openSettings(): void
+}
+
+/**
+ * The host side of the print preview (`capabilities.printPreview`; `core/print.ts`): the
+ * system's printers, the job that takes the rendered document to one, and the file Save as PDF
+ * writes. The render itself is the tab's (`TabView.printToPDF`), as the engine hangs it on the
+ * page.
+ */
+export interface PrintingHost {
+  /** The system's printers (`webContents.getPrintersAsync`), the default one flagged. */
+  printers(): Promise<PrinterDescription[]>
+  /**
+   * Send `document` – the PDF the preview rendered, its pages laid out for the paper the job
+   * names – to the printer the job names, without asking anything more (the preview asked
+   * everything; Electron prints it silently from Chromium's PDF viewer, page for page). Resolves
+   * once the job is handed to the system; rejects with the engine's reason when it is not.
+   */
+  print(document: Uint8Array, job: PrintJobOptions): Promise<void>
+  /**
+   * Save as PDF: ask where to save – Chrome's save dialog, with `defaultName` filled in – and
+   * write `bytes` there. Resolves with the file's path, or null when the dialog was dismissed.
+   */
+  savePdf(
+    bytes: Uint8Array,
+    options: { defaultName: string },
+    win?: ZenWindow
+  ): Promise<string | null>
+}
+
+/**
+ * The OS media controls on a host whose engine feeds none of its own (the Android WebView), or
+ * whose own instance Zenium replaces (Linux MPRIS, so the desktop sees "Zenium" and one player;
+ * Windows' SMTC and macOS's Now Playing stay Chromium's). The core resolves one session – the
+ * page playing, or the last one that did – from the pages' reports and hands it over; the host
+ * shows it (a `MediaSessionCompat` behind a media-style notification, the lock screen and the
+ * headset buttons; a D-Bus player) and sends the controls' actions back through
+ * `Browser.mediaSession.act`.
+ */
+export interface MediaSessionHost {
+  /** Show `session` on the OS controls, or take them down with null. */
+  update(session: MediaSessionInfo | null): void
+  /**
+   * Put the window into the OS's picture-in-picture for the video of `session`'s tab
+   * (`enterPictureInPictureMode` on Android). Resolves false when the OS refused (no video, PiP
+   * off for the app, another app's window on top); hosts without it leave it out.
+   */
+  enterPictureInPicture?(session: MediaSessionInfo): Promise<boolean>
+}
+
+/** What the read-aloud core asks the speech host to say an utterance with. */
+export interface SpeechUtteranceOptions {
+  /** The voice's id (`ReadAloudVoice.id`), or null for the engine's default for `lang`. */
+  voiceId: string | null
+  /** BCP-47 tag of the utterance's text ('' when unknown). */
+  lang: string
+  /** 0.5–4 (`READ_ALOUD_RATES`). */
+  rate: number
+}
+
+/** What a speech host reports about an utterance it was given. */
+export interface SpeechHostEvent {
+  type: 'start' | 'word' | 'end' | 'error'
+  /** `word`: where the word starts in the utterance's text. */
+  charIndex?: number
+  /** `word`: how many characters the word spans (hosts that cannot tell leave it out). */
+  length?: number
+  /** `error`: the host's message. */
+  message?: string
+}
+
+/**
+ * The speech engine behind read aloud (`capabilities.readAloud`): the voices on the device, one
+ * utterance at a time – the core speaks a sentence per utterance – and the utterance's events
+ * back. Desktop: an adapter over the hidden `speechSynthesis` page (`main/platform/speech.ts`);
+ * Android: `TextToSpeech` (the Android program's host half). Hosts without one leave it out.
+ */
+export interface SpeechHost {
+  voices(): Promise<ReadAloudVoice[]>
+  /**
+   * Optional: ask the engine to list its voices again (a `readAloud.voices` re-ask after an empty
+   * first answer, a picker's refresh); hosts without it answer `voices()` again.
+   */
+  refreshVoices?(): Promise<ReadAloudVoice[]>
+  onVoicesChanged(listener: () => void): void
+  /** Speak one utterance now (any utterance in progress is replaced); events name `utteranceId`. */
+  speak(utteranceId: string, text: string, options: SpeechUtteranceOptions): void
+  /** Optional: get the next utterance ready so it starts without a gap after the current one ends. */
+  prepare?(utteranceId: string, text: string, options: SpeechUtteranceOptions): void
+  stop(): void
+  /** Hosts without it: the core stops and resumes from the sentence's start. */
+  pause?(): void
+  resume?(): void
+  /**
+   * `word` events carry `charIndex` / `length` within the utterance's text; a host that cannot
+   * report words sends none (the core then highlights sentences only). The core needs no
+   * `sentence` events: one sentence per utterance.
+   */
+  onEvent(listener: (utteranceId: string, event: SpeechHostEvent) => void): void
+}
+
+/** One notification a page shows, as the host posts it under the site's channel. */
+export interface WebNotificationRequest {
+  /** Browser-wide id (the tab's id and the page's own), what the host's events name. */
+  id: string
+  /** The origin of the page (the channel's identity and the notification's sub text). */
+  origin: string
+  tabId: string
+  /** The page's URL: what a tap opens when the tab (or the core) is gone by then. */
+  url: string
+  title: string
+  body: string
+  /** Absolute URL of the icon, '' for none; the host fetches and decodes it. */
+  icon: string
+  /** The page's tag: a notification with the same one under the same origin replaces it. */
+  tag: string
+  silent: boolean
+  requireInteraction: boolean
+  /** With a tag: alert again on the replace (else the replace is quiet). */
+  renotify: boolean
+  /** Epoch ms shown as the notification's time. */
+  timestamp: number
+}
+
+/**
+ * Web Notifications on a host whose engine has no `Notification` for pages (the Android
+ * WebView): the page script polyfills the API and the core routes it here – one notification
+ * channel per site (Chrome Android's), the shade's tap and swipe reported back through
+ * `Browser.webNotifications.onHostEvent`. Desktop hosts leave it out: Chromium shows theirs.
+ */
+export interface WebNotificationHost {
+  /** Post (or replace, by origin and tag) a notification; resolves false when the OS refused. */
+  show(request: WebNotificationRequest): Promise<boolean>
+  /** Take a notification down without an event (the page's `close()`). */
+  close(id: string): void
+  /** The site's permission was withdrawn: its notifications and its channel go. */
+  forgetOrigin(origin: string): void
+  /**
+   * The app itself may post notifications (Android 13+'s runtime permission): ask once the
+   * site was allowed, so the first notification is not lost to a prompt. Resolves the grant.
+   */
+  ensureAllowed(): Promise<boolean>
+}
+
+/**
+ * The private session as a host shows it outside the chrome (Android: Chrome's "Close all
+ * Incognito tabs" notification while private tabs are open, gone with the last of them). Hosts
+ * with private windows leave it out; the window is the session's presence there.
+ */
+export interface PrivateSessionHost {
+  /** How many private tabs are open now (0: the session ended, the wipe is on its way). */
+  setOpenTabs(count: number): void
+}
+
+export type { MediaSessionAction }
+
+// ---------------------------------------------------------------------------
+// Screen capture, share sheet, network location (desktop platform rows)
+// ---------------------------------------------------------------------------
+
+/**
+ * The host's side of screen capture (MW-19): it lists what can be shared and hands the picked
+ * source to the engine. The core owns the picker (`ScreenCaptureService`), one request at a time
+ * per tab.
+ */
+export interface ScreenCaptureHost {
+  /**
+   * The screens and windows the OS offers right now, with thumbnails. On Wayland the portal's
+   * own dialog is what the user sees; the list then holds the one source it granted.
+   */
+  sources(kinds: Array<'screen' | 'window'>): Promise<ScreenCaptureSource[]>
+  /** Whether a screen share may come with the system's audio (Windows' loopback). */
+  systemAudio(): boolean
+}
+
+/**
+ * Extras behind the chrome's share sheet (`capabilities.shareSheet`): the files a page shared
+ * go to the downloads folder, and an OS with a share sheet of its own (macOS) offers it too.
+ */
+export interface ShareSheetHost {
+  /** Write shared files to the downloads folder; resolves with where they landed. */
+  saveFiles(files: ShareFile[]): Promise<string[]>
+  /**
+   * The OS's share sheet for the payload, anchored to the window (macOS's `ShareMenu`);
+   * resolves once the sheet is up. Hosts without one leave it out and the chrome offers no
+   * "More…" row.
+   */
+  system?(
+    payload: { title: string; text: string; url: string; files: ShareFile[] },
+    win: ZenWindow
+  ): Promise<void>
+}
+
+/**
+ * What a network location provider needs from the host (MW-04, Linux): the Wi-Fi networks in
+ * range. Hosts whose engine locates on its own (Windows, macOS, Android) leave the whole host out.
+ */
+export interface GeolocationHost {
+  /** The access points in range (BSSID, signal, frequency); empty when there is no Wi-Fi or no scanner. */
+  scanWifi(): Promise<WifiAccessPoint[]>
+}
+
+export type ImportFileKind = 'file' | 'dir' | 'symlink' | 'missing'
+
+/** A SQLite database opened read-only on a copy of a browser's file (`ImportHost.openSqlite`). */
+export interface ImportDatabase {
+  /** Every row of a `SELECT`; column names as keys, SQLite's values (numbers, strings, blobs as bytes, null). */
+  all(sql: string): Record<string, unknown>[]
+  close(): void
+}
+
+export interface ImportTempCopy {
+  /** The temporary directory holding the copies; the core removes it with `removeTemp`. */
+  dir: string
+  /** The copy of each requested path in order, null for a source that does not exist. */
+  copies: (string | null)[]
+}
+
+/**
+ * The file access the import from other browsers needs (desktop hosts; `core/import`). Every
+ * path decision – where Chrome, Edge, Firefox and Safari keep their profiles, which files hold
+ * what, how a running browser shows – is the core's; the host only reads, lists, copies and opens.
+ * Databases are never opened in place: the core copies them (with their `-wal` / `-journal`
+ * companions) into a temp dir first, the way Chrome's importer does, so the source browser's own
+ * locks are the only thing that can refuse the read.
+ */
+export interface ImportHost {
+  /** The user's home directory. */
+  readonly homeDir: string
+  /** The process environment (`LOCALAPPDATA`, `APPDATA`, `XDG_CONFIG_HOME`). */
+  readonly env: Readonly<Record<string, string | undefined>>
+  /** What is at `path`, without following a symlink (Chrome's `SingletonLock` is one). */
+  stat(path: string): Promise<ImportFileKind>
+  readText(path: string): Promise<string>
+  readBytes(path: string): Promise<Uint8Array>
+  /** The entries of a directory (names, not paths); empty when it does not exist. */
+  list(dir: string): Promise<string[]>
+  /**
+   * Copy the files that exist among `paths` into a fresh temporary directory. Throws when a copy
+   * fails for a reason other than the source missing (a browser holding an exclusive lock).
+   */
+  copyToTemp(paths: string[]): Promise<ImportTempCopy>
+  removeTemp(dir: string): Promise<void>
+  /** Open a database read-only (`node:sqlite`); the core always passes a temp copy. */
+  openSqlite(path: string): Promise<ImportDatabase>
+  /**
+   * The OS keyring secret Chrome / Chromium / Edge encrypt their v11 (Linux) and v10 (macOS)
+   * logins with ("Chrome Safe Storage"), or null when the OS has none to give (Windows, no
+   * `secret-tool`, a locked keyring).
+   */
+  safeStorageSecret(browser: 'chrome' | 'chromium' | 'edge'): Promise<string | null>
 }
 
 export interface Platform {
@@ -1541,14 +2162,41 @@ export interface Platform {
   readonly newTabBackground?: NewTabBackgroundHost
   /** Home-screen shortcuts; hosts without it hide "Add to Home screen". */
   readonly shortcuts?: ShortcutHost
+  /** Voice search through the device's recogniser; omit when `capabilities.voiceSearch` is off. */
+  readonly voice?: VoiceHost
+  /** Tab card thumbnails kept across restarts; hosts without it show placeholder cards. */
+  readonly thumbnails?: ThumbnailHost
+  /** QR scanning through the device's back camera; omit when `capabilities.qrScan` is off. */
+  readonly qrScan?: QrScanHost
+  /** OS media controls fed by the core (Android); hosts whose engine feeds them itself leave it out. */
+  readonly mediaSession?: MediaSessionHost
+  /** The speech engine behind read aloud (`capabilities.readAloud`); hosts without one leave it out. */
+  readonly speech?: SpeechHost
+  /** Web Notifications for pages of a host whose engine lacks the API (Android). */
+  readonly webNotifications?: WebNotificationHost
+  /** The private session's presence outside the chrome (Android's notification); optional. */
+  readonly privateSession?: PrivateSessionHost
   /** Source of Mozilla's Readability library for Reader View, or null when unavailable. */
   readabilitySource(file: 'Readability.js' | 'Readability-readerable.js'): string | null
   /** Offline page translation; hosts without it report the feature as unavailable. */
   readonly translate?: TranslateHost
+  /** Spell checking of text fields; hosts without a checker of their own leave it out. */
+  readonly spellcheck?: SpellcheckHost
+  /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
+  readonly printing?: PrintingHost
+  /** Screens, windows and tabs a page may capture (`capabilities.screenCapture`). */
+  readonly screenCapture?: ScreenCaptureHost
+  /** Extras of the chrome's share sheet: saving shared files, the OS's own sheet where there is one. */
+  readonly shareSheet?: ShareSheetHost
+  /** A network location source's inputs (the Wi-Fi networks in range) for hosts whose engine has no location provider. */
+  readonly geolocation?: GeolocationHost
+  /** The folder picker, device name and folder transport behind cross-device sync (`capabilities.sync`). */
+  readonly sync?: SyncPlatformHost
+  /** Other browsers' profiles on this machine (desktop); hosts without it import from files only. */
+  readonly importHost?: ImportHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost
-  createSync?(browser: Browser): SyncHost
   createAgentTransport?(browser: Browser): AgentTransport
   createUpdateHost?(browser: Browser): UpdateHost
 }

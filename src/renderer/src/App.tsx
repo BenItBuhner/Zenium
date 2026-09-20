@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Minimize } from 'lucide-react'
 import type { Events, Rect, UIState } from '@shared/types'
+import { PRIVATE_CONTAINER_ID } from '@shared/types'
 import type { ResolvedTheme } from '@shared/theme'
 import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
@@ -25,11 +26,13 @@ import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
+import { Announcer } from './components/Announcer'
+import { AppTitleBar } from './components/app/AppTitleBar'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
 import { FindBar } from './components/content/FindBar'
-import { DragLayer } from './components/DragLayer'
+import { ChromeDropLayer, DragLayer } from './components/DragLayer'
 import { PopupFrame } from './components/extensions/PopupFrame'
 import { ModStyles } from './components/ModStyles'
 import { Onboarding } from './components/overlays/Onboarding'
@@ -62,6 +65,8 @@ export function App(): JSX.Element {
       )}
       {/* The extension popup's frame is a popover: it renders through the chrome layer. */}
       <PopupFrame />
+      {/* The one status region a screen reader hears tab switches, downloads, find and zoom from. */}
+      <Announcer />
     </>
   )
 }
@@ -73,7 +78,11 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   const settings = state.settings
   const compact = settings.compactMode
   const sidebarSide = settings.sidebarSide
-  const popupChrome = state.window.chrome === 'popup'
+  // One-row windows: a page's sized popup with its read-only toolbar, and a web app's
+  // standalone window with its title bar (`AppTitleBar`); neither has a sidebar or a bookmarks
+  // bar, and neither hides its row.
+  const appWindow = state.window.chrome === 'app' ? state.window.app : null
+  const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
   // Blank / private windows never show onboarding (it belongs to the main profile window).
   const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
   const htmlFullscreen = state.window.htmlFullscreenTabId !== null
@@ -205,14 +214,24 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             style={{ height: overlay.height, minHeight: 'env(titlebar-area-height, 0px)' }}
           />
         )}
-        {showToolbar && (
-          <Toolbar
+        {showToolbar && appWindow ? (
+          <AppTitleBar
             state={state}
             tab={tab}
+            app={appWindow}
             trailingInset={captionInset}
             leadingInset={macPopupInset}
-            showWindowControls={popupChrome}
           />
+        ) : (
+          showToolbar && (
+            <Toolbar
+              state={state}
+              tab={tab}
+              trailingInset={captionInset}
+              leadingInset={macPopupInset}
+              showWindowControls={popupChrome}
+            />
+          )
         )}
         {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">
@@ -262,6 +281,7 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
       )}
 
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
+      <ChromeDropLayer />
       <TabHoverCard state={state} />
       {onboarding && <Onboarding state={state} />}
     </div>
@@ -440,9 +460,11 @@ function useGlobalKeys(state: UIState): void {
     return () => window.removeEventListener('keydown', onKey)
   }, [state.glance])
 
-  // A multi-selection belongs to one space; drop it when the space changes.
+  // A multi-selection belongs to one space; drop it when the space changes. So does the tab
+  // strip's roving tab stop: the new space's active row is the stop (lib/tabStrip.ts).
   useEffect(() => {
     clearTabSelection()
+    if (uiStore.get().stripFocus !== null) uiStore.set({ stripFocus: null })
   }, [state.activeSpaceId])
 
   // Sidebar collapse toggle (Zen's "Toggle Sidebar" action).
@@ -460,18 +482,20 @@ function useGlobalKeys(state: UIState): void {
  * Closing the bar first keeps the toggle from swallowing the request while it is open.
  * The phone opens its own new tab page instead (the WebView has no `zen://newtab` yet) – grown
  * out of the control that asked for it when the event says where that was (`detail.origin`,
- * window coordinates).
+ * window coordinates), and a private one when the event names the private container
+ * (`detail.containerId`; the tabs quick menu and the overview's private pane).
  */
 function useNewTabEvent(): void {
   useEffect(() => {
     const onNewTab = (e: Event): void => {
+      const detail = (e as CustomEvent<{ origin?: Rect; containerId?: string } | undefined>).detail
       if (isPhone()) {
-        const origin = (e as CustomEvent<{ origin?: Rect } | undefined>).detail?.origin ?? null
-        void openNewTabPage(origin)
+        void openNewTabPage(detail?.origin ?? null, { containerId: detail?.containerId })
         return
       }
       closeUrlbar()
-      run('tab.new', undefined)
+      if (detail?.containerId === PRIVATE_CONTAINER_ID) run('tab.newPrivate', {})
+      else run('tab.new', undefined)
     }
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)

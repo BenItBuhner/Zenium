@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
@@ -22,6 +23,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -39,7 +41,11 @@ import kotlin.math.roundToInt
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
  *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
  *
- * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run).
+ * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run). A demo
+ * that is the second act of another – the process was stopped between them (`am force-stop`
+ * from the workflow script: the instrumentation shares the process, so no driver survives that)
+ * and this one proves what came back – passes `keepProfile`: the profile and the app's caches
+ * are left as the first act's process left them, and only the handshake directory is reset.
  * `uiAutomationFlags` go to [android.app.Instrumentation.getUiAutomation]: by default connecting
  * suspends every other accessibility service for the run, and a demo that wants TalkBack to stay
  * up passes [UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES].
@@ -48,7 +54,8 @@ abstract class DemoHarness(
     private val stateAsset: String?,
     private val shotPrefix: String,
     handshakeDir: String,
-    uiAutomationFlags: Int = 0
+    uiAutomationFlags: Int = 0,
+    private val keepProfile: Boolean = false
 ) {
     protected val instrumentation = InstrumentationRegistry.getInstrumentation()
     protected val ui: UiAutomation = instrumentation.getUiAutomation(uiAutomationFlags)
@@ -88,7 +95,9 @@ abstract class DemoHarness(
 
     /**
      * Seed, launch, warm up, hand over to the recorder, run the sequence. Fails once the
-     * recording is done when a touch a step injected did not take ([touchFault]).
+     * recording is done when a touch a step injected did not take ([touchFault]). The stills
+     * are flushed whether the sequence ran through or threw, so a failed run keeps the
+     * evidence it took on the way ([awaitShots]).
      */
     protected fun runDemo() {
         val info = ui.serviceInfo
@@ -105,7 +114,13 @@ abstract class DemoHarness(
         measure()
         warmUp()
         handshake()
-        demo()
+        try {
+            demo()
+        } finally {
+            // A sequence that threw (a driver's `error(...)`) still lands its stills before the
+            // instrumentation's exit takes the process, and with them the frames of the failure.
+            awaitShots()
+        }
         // Tell the recorder to stop while the app is still on screen: the instrumentation's exit
         // kills the process, and the launcher must not be the last frame.
         File(out, "done").writeText("done\n")
@@ -119,11 +134,13 @@ abstract class DemoHarness(
     // --- setup -----------------------------------------------------------------------------------
 
     private fun seedProfile() {
-        val zen = File(app.filesDir, "zen").apply { mkdirs() }
-        zen.listFiles()?.forEach { it.delete() }
-        if (stateAsset != null) {
-            File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
-            seedMore(zen)
+        if (!keepProfile) {
+            val zen = File(app.filesDir, "zen").apply { mkdirs() }
+            zen.listFiles()?.forEach { it.delete() }
+            if (stateAsset != null) {
+                File(zen, "state.json").writeText(patchState(readAsset(stateAsset)))
+                seedMore(zen)
+            }
         }
         out.deleteRecursively()
         out.mkdirs()
@@ -281,12 +298,29 @@ abstract class DemoHarness(
      */
     protected fun settle() = SystemClock.sleep(4_500)
 
+    /**
+     * A still of the screen as it is now. The frame is taken here (the compositor's, some
+     * 100 ms); its PNG encode, a second or two of the emulator's CPU for a 720x1600 frame, runs
+     * on one background thread in the order the stills were taken, so a driver racing a clock
+     * (a toast's five seconds) does not spend it here. [runDemo] waits for the encodes. Until
+     * #207 the encode ran here, an implicit one-to-two-second pause after every still: a step
+     * that reads the chrome right after a still and needs the screen to have moved on since
+     * must wait for that itself (poll for the change, or [settle]), not lean on the still.
+     */
     protected fun shot(name: String) {
         val bitmap = ui.takeScreenshot() ?: return
-        File(out, "$shotPrefix-$name.png").outputStream().use {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+        val file = File(out, "$shotPrefix-$name.png")
+        shotEncoder.execute {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
         }
-        bitmap.recycle()
+    }
+
+    private val shotEncoder = Executors.newSingleThreadExecutor()
+
+    /** Every still taken so far is on disk. */
+    protected fun awaitShots() {
+        shotEncoder.submit {}.get(2, TimeUnit.MINUTES)
     }
 
     /** Breadth-first search of the active window for a node labelled `label` (aria-label or text). */
@@ -329,11 +363,18 @@ abstract class DemoHarness(
     /**
      * The first labelled node in any window on screen, not just the active one: a popup such as
      * the text selection's floating toolbar (Copy, Share, Select all) is a window of its own.
+     * With `packageName`, only that package's windows are walked: every node read is a binder
+     * round trip, and the app's own WebView tree runs to thousands, so a look for something of
+     * the system's (the picture-in-picture menu, which hides itself after a few seconds) must
+     * not walk the app's tree first.
      */
-    protected fun findInWindows(matches: (String) -> Boolean): AccessibilityNodeInfo? {
+    protected fun findInWindows(matches: (String) -> Boolean): AccessibilityNodeInfo? = findInWindows(null, matches)
+
+    protected fun findInWindows(packageName: String?, matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val accept = labelled(matches)
         for (window in ui.windows) {
             val root = window.root ?: continue
+            if (packageName != null && root.packageName?.toString() != packageName) continue
             findNodesWhere(root, firstOnly = true, accept).firstOrNull()?.let { return it }
         }
         return null
@@ -557,6 +598,106 @@ abstract class DemoHarness(
         return touchTap(node)
     }
 
+    /**
+     * A real touch on the first node whose label or text `matches`, found again right before the
+     * finger lands. A node held across a wait, a screenshot or a script can be gone from the
+     * WebView's tree by the time it is touched (Blink rebuilds the nodes under a list that
+     * re-renders, as the suggestions do while their requests answer), and [touchTap] on a stale
+     * node touches nothing. Up to three fresh finds within `timeoutMs`; false when none is on
+     * screen in time or none stays put for the touch.
+     *
+     * Opt-in, like [awaitClipboardOverlayGone]: nothing in the harness calls either, and
+     * [touchTap], [touchTapLabel] and [awaitNode] are as they were, so a driver that does not
+     * call them runs exactly as before. A driver whose list re-renders under its finger calls
+     * this in place of an `awaitNode` + `touchTap` pair (OmniboxDemo; its fallback to the DOM's
+     * rect when the tree has lost the node is the driver's own, not the harness's).
+     */
+    protected fun touchTapFresh(timeoutMs: Long = 8_000, matches: (String) -> Boolean): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        repeat(3) { attempt ->
+            val left = deadline - SystemClock.uptimeMillis()
+            if (left <= 0) return false
+            val node = awaitNode(left, matches) ?: return false
+            if (touchTap(node)) return true
+            Log.w(tag, "the node went stale before the touch (attempt ${attempt + 1}); finding it again")
+            SystemClock.sleep(300)
+        }
+        return false
+    }
+
+    /**
+     * Wait for the system's clipboard overlay (Android 13+, SystemUI's "ClipboardOverlay" window:
+     * the copied text's preview chip with its actions – share, send to a nearby device – along the
+     * bottom of the screen over the phone bar, up for some six seconds after every copy) to go, so
+     * the next touch near the bottom lands in the app and not on one of the chips (a touch on the
+     * nearby-device chip sent the clip to Nearby Share, whose set-up sheet paused the app).
+     * `copiedAt` is [SystemClock.uptimeMillis] at the copy; `target` is where the finger will land
+     * (the pill by default).
+     *
+     * The overlay is a full-screen TYPE_SCREENSHOT window, and the accessibility tree gives it
+     * neither a title (only panels and accessibility overlays carry their WindowManager title over)
+     * nor a type it names, so a wait on the title saw nothing and returned at once. It is told by
+     * its place instead: a window of another package than the app's and the keyboard's (or one the
+     * tree has no root for) whose bounds reach over the part of `target` inside [touchable]. The
+     * clipping matters: the system bars' windows lie outside the touchable band by construction,
+     * but the pill's rect from the tree reaches into the navigation bar's window (run 4: the bar's
+     * `Rect(0, 1516 - 720, 1600)` over a pill ending at 1550 held the wait to its timeout, though
+     * the touch itself lands inside the band). As the belt, the wait also runs the overlay's own
+     * clock out – it never returns before [CLIPBOARD_OVERLAY_MS] have passed since the copy – so a
+     * window the tree never reports is waited out all the same. True once nothing foreign is over
+     * the target with the clock run out, within `timeoutMs`; false with it still there (logged),
+     * for the caller to say so and go on.
+     *
+     * Opt-in: no touch helper waits for the overlay on its own, so a driver that copies nothing,
+     * or touches nowhere near the bottom after a copy, is unaffected; a driver that copies and then
+     * touches there calls this between the two (OmniboxDemo, between the link menu's copy and the
+     * pill).
+     */
+    protected fun awaitClipboardOverlayGone(copiedAt: Long, target: Rect = pill, timeoutMs: Long = 15_000): Boolean {
+        val clock = copiedAt + CLIPBOARD_OVERLAY_MS
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        var seen: String? = null
+        while (true) {
+            val now = SystemClock.uptimeMillis()
+            val over = foreignWindowsOver(target)
+            if (over.isNotEmpty()) seen = over.joinToString()
+            if (over.isEmpty() && now >= clock) {
+                Log.i(
+                    tag,
+                    if (seen == null) "nothing over $target since the copy (${now - copiedAt} ms)"
+                    else "the window over $target is gone (was $seen; ${now - copiedAt} ms after the copy)"
+                )
+                return true
+            }
+            if (now >= deadline) {
+                Log.w(tag, "still a window over $target $timeoutMs ms on: $seen")
+                return false
+            }
+            SystemClock.sleep(250)
+        }
+    }
+
+    /**
+     * The windows a touch on `target` could land in instead of the app's: every window the tree
+     * lists whose bounds reach over the part of `target` inside [touchable] (a finger only lands
+     * there; the system bars' windows sit outside the band), except the app's own and the
+     * keyboard's. Each as "package bounds" ("?" for a window the tree has no root, so no package,
+     * for). Empty for a target wholly outside the band.
+     */
+    private fun foreignWindowsOver(target: Rect): List<String> {
+        val band = Rect(target)
+        if (!band.intersect(touchable)) return emptyList()
+        val found = ArrayList<String>()
+        for (window in ui.windows) {
+            if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+            val pkg = window.root?.packageName?.toString()
+            if (pkg == app.packageName) continue
+            val bounds = Rect().also { window.getBoundsInScreen(it) }
+            if (Rect.intersects(bounds, band)) found += "${pkg ?: "?"} $bounds"
+        }
+        return found
+    }
+
     /** Poll up to `timeoutMs` for the first node whose label or text `matches`, with bounds on screen. */
     protected fun awaitNode(timeoutMs: Long = 8_000, matches: (String) -> Boolean): AccessibilityNodeInfo? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -639,18 +780,85 @@ abstract class DemoHarness(
         app.startActivity(intent)
     }
 
+    // --- the URL field ---------------------------------------------------------------------------
+
+    /** The URL field is open in the chrome (`uiStore.urlbar.open`), off the chrome's own store, never the tree. */
+    protected fun urlbarOpen(): Boolean =
+        chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
+
+    /** One reading of the field for [closeUrlField]: the store first, then the host's route for a back, then the keyboard. */
+    private fun readUrlField(): UrlFieldClose.Field =
+        UrlFieldClose.Field(open = urlbarOpen(), chromeHandlesBack = chromeSurfaceUp(), imeUp = imeShown())
+
+    /** The page the driver is on, for [closeUrlField]'s before-and-after: the core's active tab and the host's view for it. */
+    protected fun currentPage(): UrlFieldClose.Page {
+        val tab = activeCoreTab()
+        val tabId = tab?.optString("id")?.takeIf { it.isNotEmpty() }
+        var view: TabWebView? = null
+        if (tabId != null) instrumentation.runOnMainSync { view = (activity as? MainActivity)?.host?.tabs?.get(tabId) }
+        var index = -1
+        view?.let { v -> instrumentation.runOnMainSync { index = v.copyBackForwardList().currentIndex } }
+        return UrlFieldClose.Page(tabId, tab?.optString("url"), viewUp = view != null, historyIndex = index)
+    }
+
     /**
-     * Close the urlbar when it is open (the first run ends in it, with the keyboard up, hiding the
-     * page, the bar and the menu button). Back takes the keyboard first, then the field; the bar's
-     * address pill coming back is the sign it is gone.
+     * Close the URL field when it is open (the first run ends in it, with the keyboard up, hiding
+     * the page, the bar and the menu button), by the chrome's state: a back goes in only while the
+     * chrome's store says the field is open AND the host says it would hand that back to the
+     * chrome, one per such reading, each given [UrlFieldClose.BACK_WAIT_MS] to take (the keyboard
+     * goes first when it is up, then the field). Never a second back blind: the old close read
+     * the address pill off the accessibility tree, which trailed a frame on the fifth bar-hide
+     * run's retry (#200), and its second back went to the page's tab at its first page and put a
+     * new tab page in the demo tab's place. The page the driver was on is read before and after
+     * ([currentPage]); the [UrlFieldClose.Outcome] says whether the field closed and whether the
+     * page is still there, by name, for the driver's claim – a lost page fails a claim, it does
+     * not derail the run. The decisions are [UrlFieldClose]'s (HarnessLogic.kt), tested on the JVM.
      */
-    protected fun closeUrlbar() {
-        repeat(3) {
-            if (findByLabelPrefix(PILL_LABEL) != null) return
-            back()
-            SystemClock.sleep(1_200)
+    protected fun closeUrlField(): UrlFieldClose.Outcome {
+        var field = readUrlField()
+        if (!field.open) return UrlFieldClose.NOT_OPEN
+        val before = currentPage()
+        var backs = 0
+        var hostWaitedMs = 0L
+        var gaveUp: String? = null
+        loop@ while (true) {
+            when (val move = UrlFieldClose.nextMove(field, backs, hostWaitedMs)) {
+                UrlFieldClose.Move.Done -> break@loop
+                is UrlFieldClose.Move.GiveUp -> {
+                    gaveUp = move.reason
+                    break@loop
+                }
+                UrlFieldClose.Move.AwaitHost -> {
+                    SystemClock.sleep(150)
+                    hostWaitedMs += 150
+                    field = readUrlField()
+                }
+                is UrlFieldClose.Move.PressBack -> {
+                    val pressed = field
+                    back()
+                    backs++
+                    Log.i(tag, "closeUrlField: back $backs, for ${if (move.keyboard) "the keyboard" else "the field"}")
+                    val deadline = SystemClock.uptimeMillis() + UrlFieldClose.BACK_WAIT_MS
+                    do {
+                        SystemClock.sleep(150)
+                        field = readUrlField()
+                    } while (!UrlFieldClose.backTook(pressed, field) && SystemClock.uptimeMillis() < deadline)
+                    hostWaitedMs = 0
+                }
+            }
         }
-        if (findByLabelPrefix(PILL_LABEL) == null) Log.w(tag, "the urlbar stayed open")
+        val outcome = UrlFieldClose.outcome(before, currentPage(), field, backs, gaveUp)
+        if (outcome.ok) Log.i(tag, "closeUrlField: ${outcome.describe()}") else Log.e(tag, "closeUrlField: ${outcome.describe()}")
+        return outcome
+    }
+
+    /**
+     * The old name, for a driver branch in flight that still calls it; gone next release. Every
+     * driver in this tree calls [closeUrlField] and reads its outcome.
+     */
+    @Deprecated("Blind backs closed a tab under tree lag (#200): use closeUrlField(), which closes by the chrome's state and reports the page.", ReplaceWith("closeUrlField()"))
+    protected fun closeUrlbar() {
+        closeUrlField()
     }
 
     // --- the keyboard ----------------------------------------------------------------------------
@@ -751,6 +959,51 @@ abstract class DemoHarness(
         return result
     }
 
+    /**
+     * Put the chrome's toasts on record: a MutationObserver in the chrome notes the text of every
+     * toast card (`ToastCard`'s `.zen-message-toast`) into `window.__demoToasts` as it appears,
+     * so [toastSeen] answers for a toast that lived shorter than a poll or left before the tree
+     * listed it. A plain toast lives 2.8 s (`TOAST_DURATION`), and on the emulator's software GPU
+     * the accessibility tree trails the screen by more than that, so a toast the recording shows
+     * can be gone before the tree ever lists it (the QR demo's first-refusal toast, second run).
+     * Call it before the step whose toast is checked; each call clears the record. The tree
+     * stays the way to TOUCH a toast's action.
+     */
+    protected fun watchToasts() {
+        chromeJs(
+            "(function(){window.__demoToasts=[];if(window.__demoToastWatch)return;" +
+                "var note=function(){document.querySelectorAll('.zen-message-toast .zen-message-text')" +
+                ".forEach(function(e){var t=e.textContent.trim();" +
+                "if(window.__demoToasts.indexOf(t)<0)window.__demoToasts.push(t)})};" +
+                "window.__demoToastWatch=new MutationObserver(note);" +
+                "window.__demoToastWatch.observe(document.body,{childList:true,subtree:true,characterData:true});" +
+                "note()})()"
+        )
+    }
+
+    /** Whether a toast reading `text` is up now or has been on record since [watchToasts]. */
+    protected fun toastSeen(text: String): Boolean =
+        chromeJs(
+            "(function(){var t=${JSONObject.quote(text)};" +
+                "if(window.__demoToasts&&window.__demoToasts.indexOf(t)>=0)return true;" +
+                "return Array.prototype.some.call(" +
+                "document.querySelectorAll('.zen-message-toast .zen-message-text')," +
+                "function(e){return e.textContent.trim()===t})})()"
+        ) == "true"
+
+    /**
+     * Poll [toastSeen] for `text` up to `timeoutMs`; false when no such toast came. (Named for the
+     * record it reads: `TabCloseDemo` has an `awaitToast` of its own that reads the live DOM.)
+     */
+    protected fun awaitToastSeen(text: String, timeoutMs: Long = 8_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (toastSeen(text)) return true
+            SystemClock.sleep(150)
+        }
+        return toastSeen(text)
+    }
+
     /** Run a core command through `window.zen.invoke` and wait for its promise; the result as JSON text. */
     protected fun coreInvoke(name: String, args: String = "null"): String {
         chromeJs(
@@ -760,6 +1013,11 @@ abstract class DemoHarness(
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             val raw = chromeJs("window.__demo===undefined?'':window.__demo")
+            // "" is a chrome that did not answer the poll (its renderer busy or blocked): not an answer yet.
+            if (raw.isEmpty()) {
+                SystemClock.sleep(100)
+                continue
+            }
             val value = (JSONTokener(raw).nextValue() as? String).orEmpty()
             if (value.startsWith("ERR:")) error("$name failed: ${value.removePrefix("ERR:")}")
             if (value.isNotEmpty()) return value
@@ -782,6 +1040,58 @@ abstract class DemoHarness(
             return state.getJSONObject("tabs").optJSONObject(tabId)
         }
         return null
+    }
+
+    /**
+     * Two fingers on a horizontal line through (`cx`, `cy`), `fromSpan` px apart, moving to
+     * `toSpan` apart over `durationMs` in real time: a pinch out when the span grows, in when it
+     * shrinks. Injected as one multi-pointer gesture, so the page sees a genuine two-touch
+     * sequence (touchstart with two touches, touchmove, the fingers lifting one after the other).
+     */
+    protected fun pinch(cx: Float, cy: Float, fromSpan: Float, toSpan: Float, durationMs: Long) {
+        val downTime = SystemClock.uptimeMillis()
+        fun inject(action: Int, count: Int, span: Float) {
+            val half = span / 2
+            val properties = Array(count) { i ->
+                MotionEvent.PointerProperties().apply {
+                    id = i
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }
+            }
+            val coords = Array(count) { i ->
+                MotionEvent.PointerCoords().apply {
+                    x = if (i == 0) cx - half else cx + half
+                    y = cy
+                    pressure = 1f
+                    size = 1f
+                }
+            }
+            val event = MotionEvent.obtain(
+                downTime, SystemClock.uptimeMillis(), action, count, properties, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+            )
+            try {
+                ui.injectInputEvent(event, false)
+            } finally {
+                event.recycle()
+            }
+        }
+        val second = 1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT
+        inject(MotionEvent.ACTION_DOWN, 1, fromSpan)
+        SystemClock.sleep(30)
+        inject(MotionEvent.ACTION_POINTER_DOWN or second, 2, fromSpan)
+        val steps = max(1L, durationMs / STEP_MS)
+        val start = SystemClock.uptimeMillis()
+        for (i in 1..steps) {
+            val due = start + (durationMs * i) / steps
+            val now = SystemClock.uptimeMillis()
+            if (due > now) SystemClock.sleep(due - now)
+            inject(MotionEvent.ACTION_MOVE, 2, fromSpan + (toSpan - fromSpan) * i / steps)
+        }
+        SystemClock.sleep(40)
+        inject(MotionEvent.ACTION_POINTER_UP or second, 2, toSpan)
+        SystemClock.sleep(20)
+        inject(MotionEvent.ACTION_UP, 1, toSpan)
     }
 
     /**
@@ -870,6 +1180,11 @@ abstract class DemoHarness(
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L
+        /**
+         * How long SystemUI keeps the clipboard overlay up after a copy (`ClipboardOverlayController`'s
+         * six seconds), with a margin for its exit animation.
+         */
+        private const val CLIPBOARD_OVERLAY_MS = 7_000L
         /** The 3-button navigation bar's window, in dp, whatever inset it reports (see [touchable]). */
         private const val NAV_BAR_WINDOW_DP = 48
         /** Past the 8 CSS px slop at any plausible density, hardly visible on the track. */

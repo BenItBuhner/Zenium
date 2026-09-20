@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MessageRouter, NO_RECEIVER, type Endpoint, type RouterOutbox } from '../router'
+import {
+  MessageRouter,
+  NO_RECEIVER,
+  PORT_CLOSED,
+  type Endpoint,
+  type RouterOutbox
+} from '../router'
 
 const EXT = 'eimadpbcbfnmbkopoojfekhnkhdbieeh'
 
@@ -98,6 +104,29 @@ describe('runtime.sendMessage', () => {
     expect(take('cs')).toEqual([{ t: 'reply', id: 3, ok: true, result: null }])
   })
 
+  it('reports a port the listeners let close to a sender that passed a callback', () => {
+    // Chrome's OneTimeMessageHandler::DisconnectOpener: the callback form takes a closed port
+    // as "The message port closed before a response was received." (it asked for a response),
+    // the promise form as delivery; "nobody listens" stays the receiving-end error for both.
+    const { router, take } = setup()
+    router.register(endpoint('cs'))
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+
+    router.handle('cs', { t: 'msg', id: 1, target: { extensionId: null }, data: 1, callback: true })
+    const [deliver] = take('bg')
+    router.handle('bg', { t: 'msgReply', id: deliver.id, handled: false, listeners: true })
+    expect(take('cs')).toEqual([{ t: 'reply', id: 1, ok: false, error: PORT_CLOSED }])
+
+    router.handle('cs', { t: 'msg', id: 2, target: { extensionId: null }, data: 1, callback: true })
+    const [deliver2] = take('bg')
+    router.handle('bg', { t: 'msgReply', id: deliver2.id, handled: true, willRespond: true })
+    router.unregister('bg')
+    expect(take('cs')).toEqual([{ t: 'reply', id: 2, ok: false, error: PORT_CLOSED }])
+
+    router.handle('cs', { t: 'msg', id: 3, target: { extensionId: null }, data: 1, callback: true })
+    expect(take('cs')).toEqual([{ t: 'reply', id: 3, ok: false, error: NO_RECEIVER }])
+  })
+
   it('waits for an asynchronous sendResponse', () => {
     const { router, take } = setup()
     router.register(endpoint('cs'))
@@ -157,6 +186,77 @@ describe('tabs.sendMessage', () => {
 
     router.handle('bg', { t: 'msg', id: 3, target: { tabId: 9 }, data: 'hi' })
     expect(take('bg').at(-1)).toEqual({ t: 'reply', id: 3, ok: false, error: 'No tab with id: 9.' })
+  })
+
+  it("reaches the tab's user-script worlds too, never the extension's own pages", () => {
+    const { router, take } = setup()
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+    router.register(endpoint('popup', { context: 'popup', tabId: null }))
+    router.register(endpoint('top', { frameId: 0 }))
+    // Tampermonkey's content.js: a `runtime.onMessage` listener in the USER_SCRIPT world.
+    router.register(endpoint('world', { context: 'userScript', frameId: 0 }))
+
+    router.handle('bg', { t: 'msg', id: 1, target: { tabId: 1, options: null }, data: 'hi' })
+    expect(take('top')).toHaveLength(1)
+    const [deliver] = take('world')
+    expect(deliver).toMatchObject({ t: 'deliver', data: 'hi' })
+    // Sent by the background: not a user script's message, so the world's onMessage hears it.
+    expect(deliver.userScript).toBeUndefined()
+    expect(take('popup')).toEqual([])
+
+    // A runtime.sendMessage from the world lands on the pages alone, flagged as a user script's.
+    router.handle('world', { t: 'msg', id: 1, target: {}, data: 'up', userScript: true })
+    expect(take('bg').at(-1)).toMatchObject({ t: 'deliver', data: 'up', userScript: true })
+    expect(take('popup').at(-1)).toMatchObject({ t: 'deliver', data: 'up', userScript: true })
+    expect(take('top')).toEqual([])
+  })
+
+  it("an extension page open as a tab is the tab's sender and hears the tab's messages; a popup is neither", () => {
+    const { router, take } = setup()
+    const pageUrl = `https://${EXT}.ext.zenium.invalid/pages/options.html`
+    router.register(endpoint('bg', { context: 'background', tabId: null }))
+    router.register(endpoint('popup', { context: 'popup', tabId: null }))
+    // Vimium's options page in a tab: its own frontend script asks the background
+    // `initializeFrame`, which answers nothing to a sender without a tab.
+    router.register(endpoint('options', { context: 'page', tabId: 'tab-1', url: pageUrl }))
+    router.register(
+      endpoint('frame', { context: 'page', tabId: 'tab-1', frameId: 3, url: `${pageUrl}?frame` })
+    )
+
+    router.handle('options', { t: 'msg', id: 1, target: {}, data: { handler: 'initializeFrame' } })
+    const [deliver] = take('bg')
+    // The page names itself as Chrome spells it; `origin` is the one its `location` reads.
+    expect(deliver.sender).toEqual({
+      id: EXT,
+      url: `chrome-extension://${EXT}/pages/options.html`,
+      origin: `https://${EXT}.ext.zenium.invalid`,
+      tab: { id: 1, url: 'https://page.example/' },
+      frameId: 0,
+      documentId: 'options',
+      documentLifecycle: 'active'
+    })
+    // The page's own iframe carries its frame id; the popup has no tab and no frame.
+    router.handle('frame', { t: 'msg', id: 2, target: {}, data: 'sub' })
+    expect((take('bg')[0].sender as Record<string, unknown>).frameId).toBe(3)
+    router.handle('popup', { t: 'msg', id: 3, target: {}, data: 'pop' })
+    const fromPopup = take('bg')[0].sender as Record<string, unknown>
+    expect(fromPopup.tab).toBeUndefined()
+    expect(fromPopup.frameId).toBeUndefined()
+
+    // tabs.sendMessage to the tab reaches the page hosted in it (and its frame on request).
+    for (const ep of ['options', 'frame', 'popup']) take(ep)
+    router.handle('bg', { t: 'msg', id: 4, target: { tabId: 1, options: null }, data: 'hi' })
+    expect(take('options')).toHaveLength(1)
+    expect(take('frame')).toHaveLength(1)
+    expect(take('popup')).toEqual([])
+    router.handle('bg', {
+      t: 'msg',
+      id: 5,
+      target: { tabId: 1, options: { frameId: 3 } },
+      data: 'hi'
+    })
+    expect(take('options')).toEqual([])
+    expect(take('frame')).toHaveLength(1)
   })
 })
 

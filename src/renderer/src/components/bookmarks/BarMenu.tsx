@@ -4,6 +4,14 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { BookmarkNode, Rect } from '@shared/types'
 import { BOOKMARKS_BAR_ID, type BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
+import { pathForFile } from '@renderer/lib/dnd'
+import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
+import {
+  contextMenuAnchor,
+  mnemonicActivates,
+  mnemonicKey,
+  mnemonicMatch
+} from '@renderer/lib/menuKeys'
 import { SPRING_SNAPPY, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import {
   ChromePortal,
@@ -14,6 +22,7 @@ import {
   viewportSize,
   type DismissReason
 } from '@renderer/lib/portals'
+import { browserStore } from '@renderer/lib/ui'
 import { BookmarkIcon } from './BookmarkRow'
 import { useScrolled } from './popover'
 import { nodeLabel } from './tree'
@@ -264,8 +273,18 @@ export function BarMenu({
         // Tab wraps inside the popover (§9.22): it walks the rows like the arrows do.
         if (n) setActive((a) => (a + (e.shiftKey ? n - 1 : 1)) % n)
         break
-      default:
-        return
+      default: {
+        // A letter, as in Chrome's native menus: the next row whose name starts with it; the
+        // only such row opens (a bookmark in this tab, a folder's level) off macOS.
+        const letter = mnemonicKey(e)
+        const match = letter === null ? null : mnemonicMatch(items.map(nodeLabel), letter, active)
+        if (!match) return
+        const node = items[match.index]
+        if (match.unique && node && mnemonicActivates(browserStore.get().state?.platform))
+          activate(node, false)
+        else setActive(() => match.index)
+        break
+      }
     }
     e.preventDefault()
     e.stopPropagation()
@@ -277,11 +296,50 @@ export function BarMenu({
     run('bookmark.contextMenu', {
       ids: node ? [node.id] : [],
       folderId,
-      x: e.clientX,
-      y: e.clientY,
+      ...contextMenuAnchor(e),
       surface: 'bar'
     })
   }
+
+  // ---------------------------------------------------------------------------
+  // Drops from outside: a link or URL text from a page, a file from the OS (HTML5 drag)
+  // ---------------------------------------------------------------------------
+
+  // The panel files the drop where the pointer is – beside a row, into a folder row, at the end
+  // of the list – by the rule a chip drag follows (`useBarDrag`), and shows it the same way. The
+  // data is sealed until the drop: text that is not an address is let go then.
+  const [external, setExternal] = useState<PanelTarget | null>(null)
+  const externalTargetAt = (x: number, y: number): PanelTarget | null => {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-bar-drop]')
+    if (!el || !panelRef.current?.contains(el)) return null
+    return panelTargetFor(tree, el, y)
+  }
+  const onDragOver = (e: React.DragEvent): void => {
+    if (payloadKind(e.dataTransfer.types) === null) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setExternal(externalTargetAt(e.clientX, e.clientY))
+  }
+  const onDragLeave = (e: React.DragEvent): void => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    setExternal(null)
+  }
+  const onDrop = (e: React.DragEvent): void => {
+    if (payloadKind(e.dataTransfer.types) === null) return
+    e.preventDefault()
+    setExternal(null)
+    const target = externalTargetAt(e.clientX, e.clientY)
+    const dropped = droppedBookmark(e.dataTransfer, pathForFile)
+    if (!target || !dropped) return
+    run('bookmark.create', {
+      parentId: target.kind === 'folder' ? target.folderId : target.parentId,
+      index: target.kind === 'row' ? target.index : undefined,
+      title: dropped.title,
+      url: dropped.url,
+      type: 'url'
+    })
+  }
+  const shownTarget = dropTarget ?? external
 
   const renderLevel = (
     list: BookmarkNode[],
@@ -326,7 +384,7 @@ export function BarMenu({
               tabIndex={-1}
               data-bar-drop={live ? `row:${node.id}` : undefined}
               data-active={live && i === active}
-              data-target={dropTarget?.kind === 'folder' && dropTarget.folderId === node.id}
+              data-target={shownTarget?.kind === 'folder' && shownTarget.folderId === node.id}
               data-lifted={node.id === liftedId}
               className="zen-bm-popover-row"
               title={node.url ?? undefined}
@@ -344,8 +402,8 @@ export function BarMenu({
             </button>
           )
         })}
-        {live && dropTarget?.kind === 'row' && dropTarget.parentId === folderId && (
-          <RowInsertLine target={dropTarget} />
+        {live && shownTarget?.kind === 'row' && shownTarget.parentId === folderId && (
+          <RowInsertLine target={shownTarget} />
         )}
       </div>
     </>
@@ -361,10 +419,13 @@ export function BarMenu({
         }
         tabIndex={-1}
         data-bar-panel
-        data-append-target={dropTarget?.kind === 'append' && dropTarget.parentId === folderId}
+        data-append-target={shownTarget?.kind === 'append' && shownTarget.parentId === folderId}
         className="zen-bm-popover zen-animate-pop fixed z-[80] flex flex-col outline-none"
         style={popoverStyle(box)}
         onKeyDown={onKeyDown}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
       >
         <div ref={enteringRef} className="zen-bm-menu-level flex min-h-0 flex-col">
           {renderLevel(items, title, true)}
@@ -381,6 +442,37 @@ export function BarMenu({
       </div>
     </ChromePortal>
   )
+}
+
+/** Where a drop lands in a panel: beside a row, into a folder row, or at the end of the list. */
+type PanelTarget = Exclude<BarDropTarget, { kind: 'slot' }>
+
+/**
+ * The target under the pointer in a panel, read off the row (or the list's free space) the
+ * pointer is over: the middle half of a folder row files the drop inside it, the halves of any
+ * row are the slots before and after it (the rule `useBarDrag` follows for a chip).
+ */
+function panelTargetFor(tree: BookmarkTree, el: HTMLElement, y: number): PanelTarget | null {
+  const [kind, id] = (el.dataset.barDrop ?? '').split(':')
+  if (kind === 'list') {
+    const folder = tree.get(id)
+    return folder?.type === 'folder' ? { kind: 'append', parentId: id } : null
+  }
+  if (kind !== 'row') return null
+  const row = tree.get(id)
+  if (!row || row.parentId === null) return null
+  const rect = el.getBoundingClientRect()
+  const frac = (y - rect.top) / Math.max(1, rect.height)
+  if (row.type === 'folder' && frac >= 0.25 && frac <= 0.75) return { kind: 'folder', folderId: id }
+  const after = frac > 0.5
+  const at = tree.children(row.parentId).findIndex((n) => n.id === id)
+  return {
+    kind: 'row',
+    parentId: row.parentId,
+    index: at === -1 ? tree.children(row.parentId).length : at + (after ? 1 : 0),
+    rowId: id,
+    position: after ? 'after' : 'before'
+  }
 }
 
 /**

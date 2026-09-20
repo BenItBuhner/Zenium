@@ -41,7 +41,8 @@ export function electronSpeechEngine(): SpeechEngine {
       case 'voices':
         voiceList = report.voices
         markVoicesListed?.()
-        for (const listener of voicesListeners) listener()
+        // A copy: a one-shot listener (`refreshVoices`) takes itself out as it runs.
+        for (const listener of [...voicesListeners]) listener()
         return
       case 'event':
         for (const listener of eventListeners) listener(report.id, report.event)
@@ -110,6 +111,23 @@ export function electronSpeechEngine(): SpeechEngine {
       }
       return voiceList
     },
+    refreshVoices: async () => {
+      await ensure()
+      // The page reads `getVoices()` again and reports; the answer is that report, or the last
+      // list when none comes in time.
+      await new Promise<void>((resolve) => {
+        const done = (): void => {
+          clearTimeout(timer)
+          const at = voicesListeners.indexOf(done)
+          if (at !== -1) voicesListeners.splice(at, 1)
+          resolve()
+        }
+        const timer = setTimeout(done, VOICES_TIMEOUT_MS)
+        voicesListeners.push(done)
+        send({ kind: 'voices' })
+      })
+      return voiceList
+    },
     onEvent: (listener) => {
       eventListeners.push(listener)
     },
@@ -117,4 +135,16 @@ export function electronSpeechEngine(): SpeechEngine {
       voicesListeners.push(listener)
     }
   }
+}
+
+let shared: SpeechEngine | null = null
+
+/**
+ * The one engine of the process: `chrome.tts` and read aloud (`platform/speech.ts`) speak
+ * through the same hidden page, so there is one `speechSynthesis`, one voice list and one
+ * event stream (the two tell their utterances apart by id).
+ */
+export function sharedSpeechEngine(): SpeechEngine {
+  shared ??= electronSpeechEngine()
+  return shared
 }

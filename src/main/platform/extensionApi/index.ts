@@ -31,14 +31,21 @@ import type { PermissionSet } from '../../../core/extensions/api/permissions'
 import type { InvokeResult } from '../../../core/extensions/api/shim'
 import {
   API_SPEC,
+  CONTENT_SETTINGS_INTERNAL_METHODS,
   PRIVACY_INTERNAL_METHODS,
+  PROXY_INTERNAL_METHODS,
   STORAGE_INTERNAL_METHODS,
   STORAGE_METHODS,
+  TAB_CAPTURE_INTERNAL_METHODS,
   USER_SCRIPTS_INTERNAL_METHODS,
   WEB_REQUEST_INTERNAL_METHODS,
   isSpecMethod
 } from '../../../core/extensions/api/spec'
 import { CONTENT_SCRIPT_PRELUDE_FILE } from '../../../core/extensions/api/contentScriptStorage'
+import {
+  hasWithheldPermissions,
+  noWithheldPermissions
+} from '../../../core/extensions/withheldPermissions'
 import {
   USER_SCRIPTS_CHANNELS,
   USER_SCRIPTS_SHIM,
@@ -75,20 +82,31 @@ import { electronAuthWindowHost } from './identityBridge'
 import { ManagementApi } from './management'
 import { ApiModel, type ModelSnapshot } from './model'
 import { NotificationsApi } from './notifications'
+import { OffscreenApi } from './offscreen'
+import { electronOffscreenDocumentHost } from './offscreenBridge'
 import { OmniboxApi } from './omnibox'
 import { PermissionsApi } from './permissions'
 import { PrivacyApi } from './privacy'
+import { ProxyApi } from './proxy'
+import { ContentSettingsApi } from './contentSettings'
 import { RuntimeApi } from './runtime'
+import { SearchProviderApi } from './searchProvider'
 import { SessionsApi } from './sessions'
 import { SidePanelApi } from './sidePanel'
+import { DebuggerApi } from './debugger'
 import { electronPanelViewHost } from './sidePanelBridge'
 import { ApiStore } from './store'
 import { StorageApi } from './storage'
 import { TabGroupsApi } from './tabGroups'
+import { SystemDisplayApi } from './systemDisplay'
+import { electronDisplayScreen } from './systemDisplayBridge'
+import { SystemStorageApi } from './systemStorage'
+import { TabCaptureApi } from './tabCapture'
+import { electronStreamRegistrar } from './tabCaptureBridge'
 import { TabsApi } from './tabs'
 import { TopSitesApi } from './topSites'
 import { TtsApi } from './tts'
-import { electronSpeechEngine } from './ttsBridge'
+import { sharedSpeechEngine } from './ttsBridge'
 import { UserScriptsApi } from './userScripts'
 import {
   ApiError,
@@ -185,16 +203,26 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
   readonly declarativeNetRequest: DeclarativeNetRequestHostApi
   readonly webRequest: WebRequestApi
   readonly privacy: PrivacyApi
+  readonly proxy: ProxyApi
+  readonly contentSettings: ContentSettingsApi
   readonly bookmarks: BookmarksApi
   readonly history: HistoryApi
   readonly downloads: DownloadsApi
   /** `chrome.sessions` (recently closed); `sessions` is taken by the engine's session manager. */
   readonly recentlyClosed: SessionsApi
   readonly topSites: TopSitesApi
+  readonly systemDisplay: SystemDisplayApi
+  readonly systemStorage: SystemStorageApi
   readonly tabGroups: TabGroupsApi
   readonly sidePanel: SidePanelApi
+  readonly offscreen: OffscreenApi
+  /** `chrome.tabCapture` and `chrome.desktopCapture`; the platform's media permission gate. */
+  readonly tabCapture: TabCaptureApi
+  readonly debugger: DebuggerApi
   readonly identity: IdentityApi
   readonly omnibox: OmniboxApi
+  /** `chrome_settings_overrides.search_provider`: manifest-driven, no namespace of its own. */
+  readonly searchProvider: SearchProviderApi
   readonly browsingData: BrowsingDataApi
   readonly tts: TtsApi
   readonly userScripts: UserScriptsApi
@@ -255,6 +283,9 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.webNavigation = new WebNavigationApi(this)
     this.contextMenus = new ContextMenusApi(this, this.activeTab)
     this.sidePanel = new SidePanelApi(this, electronPanelViewHost(this.model))
+    this.offscreen = new OffscreenApi(electronOffscreenDocumentHost())
+    this.tabCapture = new TabCaptureApi(this, this.activeTab, electronStreamRegistrar())
+    this.debugger = new DebuggerApi(this)
     this.commands = new CommandsApi(this, this.action, this.activeTab, this.sidePanel)
     this.notifications = new NotificationsApi(this)
     this.cookies = new CookiesApi(this)
@@ -267,16 +298,26 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     )
     this.webRequest = new WebRequestApi(this)
     this.privacy = new PrivacyApi(this)
+    this.proxy = new ProxyApi(this, {
+      configure: (hook) =>
+        this.sessions.configure((ses, containerId) =>
+          hook(ses, containerId === PRIVATE_CONTAINER_ID)
+        )
+    })
+    this.contentSettings = new ContentSettingsApi(this)
     this.bookmarks = new BookmarksApi(this)
     this.history = new HistoryApi(this)
     this.downloads = new DownloadsApi(this, downloadBridge)
     this.recentlyClosed = new SessionsApi(this)
     this.topSites = new TopSitesApi(this)
+    this.systemDisplay = new SystemDisplayApi(this, electronDisplayScreen())
+    this.systemStorage = new SystemStorageApi(this)
     this.tabGroups = new TabGroupsApi(this)
     this.identity = new IdentityApi(electronAuthWindowHost(this.model))
     this.omnibox = new OmniboxApi(this)
+    this.searchProvider = new SearchProviderApi(this)
     this.browsingData = new BrowsingDataApi(this, electronDataClearer)
-    this.tts = new TtsApi(this, electronSpeechEngine())
+    this.tts = new TtsApi(this, sharedSpeechEngine())
     this.userScripts = new UserScriptsApi(this, this.webNavigation)
     this.namespaces = {
       tabs: { ...this.tabs.handlers, ...this.tabGroups.tabHandlers },
@@ -296,13 +337,21 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       declarativeNetRequest: this.declarativeNetRequest.handlers,
       webRequest: this.webRequest.handlers,
       privacy: this.privacy.handlers,
+      proxy: this.proxy.handlers,
+      contentSettings: this.contentSettings.handlers,
       bookmarks: this.bookmarks.handlers,
       history: this.history.handlers,
       downloads: this.downloads.handlers,
       sessions: this.recentlyClosed.handlers,
       topSites: this.topSites.handlers,
+      'system.display': this.systemDisplay.handlers,
+      'system.storage': this.systemStorage.handlers,
       tabGroups: this.tabGroups.handlers,
       sidePanel: this.sidePanel.handlers,
+      offscreen: this.offscreen.handlers,
+      tabCapture: this.tabCapture.handlers,
+      desktopCapture: this.tabCapture.desktopHandlers,
+      debugger: this.debugger.handlers,
       identity: this.identity.handlers,
       omnibox: this.omnibox.handlers,
       browsingData: this.browsingData.handlers,
@@ -388,6 +437,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         // privacy values.
         this.declarativeNetRequest.installOrderChanged()
         this.privacy.installOrderChanged()
+        this.proxy.installOrderChanged()
+        this.contentSettings.installOrderChanged()
         return
       case 'enabled':
         this.tellOthers('onEnabled', event.id)
@@ -400,6 +451,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         else this.privateAllowed.delete(event.id)
         this.declarativeNetRequest.sessionsChanged(event.id)
         this.privacy.privateAccessChanged()
+        this.proxy.privateAccessChanged()
         return
       case 'allowUserScripts':
         this.userScripts.setAllowed(event.id, event.allowed)
@@ -409,6 +461,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
         this.privateAllowed.delete(event.id)
         this.runtime.openUninstallUrl(event.id)
         this.privacy.forget(event.id)
+        this.proxy.forget(event.id)
+        this.contentSettings.forget(event.id)
         this.userScripts.uninstalled(event.id)
         this.store.forget(event.id)
         this.declarativeNetRequest.uninstalled(event.id)
@@ -450,14 +504,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     // A line from a worker whose wrapper was replaced meanwhile (the error console asks the
     // engine for one, which creates it bare) is the moment to wire the replacement.
     ses.serviceWorkers.on('console-message', (_event, { versionId }) => {
-      if (this.wiredWorkers.current(versionId, ses)) return
       if (isExtensionWorkerRunning(ses, versionId)) this.acquireWorker(versionId, ses)
     })
-    // A message from a worker whose wrapper is gone would otherwise fail before any handler of
-    // this router could see it: the wrapper is recreated, wired, ahead of Electron's dispatch.
-    acquireOnIncomingIpc(ses, (versionId) => {
-      if (!this.wiredWorkers.current(versionId, ses)) this.acquireWorker(versionId, ses)
-    })
+    // A message from a worker whose wrapper is gone from Electron's map (destroyed, or evicted by
+    // the finalizer of an older wrapper of the version) would otherwise fail before any handler
+    // of this router could see it: the map is checked and the wrapper recreated, wired, ahead of
+    // Electron's dispatch.
+    acquireOnIncomingIpc(ses, (versionId) => this.acquireWorker(versionId, ses))
     // Workers already running when the session is attached never announce themselves again.
     for (const versionId of runningExtensionWorkers(ses)) {
       if (this.acquireWorker(versionId, ses)) this.registry.workerStatus(versionId, ses, 'running')
@@ -510,13 +563,14 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
    */
   private shimOptionsFor(sender: Sender | null): HostShimOptions {
     try {
-      const extensionId = this.contextFor(sender).extensionId
+      const { extensionId, extension } = this.contextFor(sender)
       return {
         toggles: this.userScripts.togglesFor(extensionId),
-        storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null
+        storagePrelude: this.preluded.has(extensionId) ? CONTENT_SCRIPT_PRELUDE_FILE : null,
+        withheld: hasWithheldPermissions(extension.withheld) ? extension.withheld : null
       }
     } catch {
-      return { toggles: { userScripts: false }, storagePrelude: null }
+      return { toggles: { userScripts: false }, storagePrelude: null, withheld: null }
     }
   }
 
@@ -541,7 +595,8 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       manifest: ext.manifest as ExtensionManifest,
       path: ext.path,
       sessions: [ses],
-      unpacked: isUnpacked(info)
+      unpacked: isUnpacked(info),
+      withheld: info?.withheld ?? noWithheldPermissions()
     }
     this.extensions.set(ext.id, loaded)
     if (existsSync(join(ext.path, CONTENT_SCRIPT_PRELUDE_FILE))) this.preluded.add(ext.id)
@@ -554,9 +609,13 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.commands.load(loaded)
     this.sidePanel.load(loaded)
     this.omnibox.load(loaded)
+    this.searchProvider.load(loaded)
     // After the permissions: the state exists only for extensions holding the permission.
     this.declarativeNetRequest.load(loaded)
     this.privacy.load(ext.id)
+    this.proxy.load(ext.id)
+    this.contentSettings.load(ext.id)
+    this.systemDisplay.load(loaded)
     this.userScripts.load(loaded, info?.allowUserScripts === true)
     // Existing tabs, bookmarks, downloads and folders are the baseline, not a burst of `onCreated`.
     if (!this.snapshot) {
@@ -586,12 +645,19 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     this.permissions.unload(ext.id)
     this.commands.unload(ext.id)
     this.sidePanel.unload(ext.id)
+    this.offscreen.unload(ext.id)
+    this.tabCapture.unload(ext.id)
+    this.debugger.unload(ext.id)
+    this.systemDisplay.unload()
     this.identity.unload(ext.id)
     this.omnibox.unload(ext.id)
+    this.searchProvider.unload(ext.id)
     this.tts.unload(ext.id)
     this.declarativeNetRequest.unload(ext.id)
     this.webRequest.unload(ext.id)
     this.privacy.unload(ext.id)
+    this.proxy.unload(ext.id)
+    this.contentSettings.unload(ext.id)
     this.userScripts.unload(ext.id)
     this.contextMenus.forget(ext.id)
     this.notifications.forget(ext.id)
@@ -680,10 +746,17 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
             ? (WEB_REQUEST_INTERNAL_METHODS as readonly string[]).includes(method)
             : routed === 'privacy'
               ? (PRIVACY_INTERNAL_METHODS as readonly string[]).includes(method)
-              : routed === 'userScripts' &&
-                  (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
-                ? true
-                : isSpecMethod(API_SPEC, namespace, method)
+              : routed === 'proxy'
+                ? (PROXY_INTERNAL_METHODS as readonly string[]).includes(method)
+                : routed === 'contentSettings'
+                  ? (CONTENT_SETTINGS_INTERNAL_METHODS as readonly string[]).includes(method)
+                  : routed === 'userScripts' &&
+                      (USER_SCRIPTS_INTERNAL_METHODS as readonly string[]).includes(method)
+                    ? true
+                    : routed === 'tabCapture' &&
+                        (TAB_CAPTURE_INTERNAL_METHODS as readonly string[]).includes(method)
+                      ? true
+                      : isSpecMethod(API_SPEC, namespace, method)
       const handlers = this.namespaces[routed]
       if (!known || !handlers || !Object.prototype.hasOwnProperty.call(handlers, method)) {
         throw new ApiError(`${namespace}.${method} is not available in Zenium.`)
@@ -768,6 +841,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
     if (this.views.tabIdForWebContents(wc) || this.model.popupForTabId(wc.id)) return 'tab'
     if (wc.getType() === 'backgroundPage') return 'background'
     if (this.sidePanel.hosts(wc)) return 'other'
+    if (this.offscreen.hosts(wc)) return 'offscreen'
     const popup = this.action.clickState(ctx.extensionId, ctx.window ?? this.lastWindow()).popup
     if (popup && hello.url.split('#')[0] === extensionUrl(ctx.extensionId, popup)) return 'popup'
     return ctx.window ? 'popup' : 'other'
@@ -997,6 +1071,7 @@ export class ExtensionApiHost implements ApiHost, ExtensionApiHooks {
       if (next.tabs.has(zenId)) continue
       this.action.tabRemoved(before.chrome.id)
       this.activeTab.tabRemoved(before.chrome.id)
+      this.tabCapture.tabRemoved(before.chrome.id)
       this.declarativeNetRequest.tabRemoved(before.chrome.id)
       this.sidePanel.tabRemoved(before.chrome.id)
     }

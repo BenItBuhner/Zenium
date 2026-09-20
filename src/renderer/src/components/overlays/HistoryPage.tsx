@@ -11,10 +11,12 @@ import {
   X
 } from 'lucide-react'
 import type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, UIState } from '@shared/types'
-import { getHost } from '@shared/url'
+import { presentedUrl } from '@shared/url'
+import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { dayLabel } from '@shared/dayKey'
 import { cmd, onEvent, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -437,11 +439,12 @@ function VisitRow({
   onOpen: (url: string, newTab: boolean) => void
   onRemove: (id: string) => void
 }): JSX.Element {
-  const host = getHost(visit.url).replace(/^www\./, '') || visit.url
+  const extensions = useExtensionList()
+  const host = presentedHost(visit.url, extensions) || presentedUrl(visit.url)
   const title = visit.title || host
   const contextMenu = (e: MouseEvent): void => {
     e.preventDefault()
-    run('history.contextMenu', { visitId: visit.id, url: visit.url })
+    run('history.contextMenu', { visitId: visit.id, url: visit.url, ...contextMenuAnchor(e) })
   }
   return (
     <li className="zen-history-row group" data-selected={selected} onContextMenu={contextMenu}>
@@ -456,7 +459,7 @@ function VisitRow({
       <button
         type="button"
         className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-        title={visit.url}
+        title={presentedUrl(visit.url)}
         onClick={(e) => {
           if (e.shiftKey) onToggle(visit.id, !selected)
           else onOpen(visit.url, e.ctrlKey || e.metaKey)
@@ -534,6 +537,7 @@ function escapeRegExp(s: string): string {
 // ---------------------------------------------------------------------------
 
 function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Element {
+  const extensions = useExtensionList()
   return (
     <section aria-label="Recently closed" className="px-4 pb-2">
       <header className="zen-history-heading px-2">
@@ -550,7 +554,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
       </header>
       <ul>
         {entries.map((entry) => {
-          const host = entry.url ? getHost(entry.url).replace(/^www\./, '') : ''
+          const host = entry.url ? presentedHost(entry.url, extensions) : ''
           const restore = (): void => {
             run('session.restoreClosed', { id: entry.id })
             closeOverlay()
@@ -567,7 +571,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-                title={entry.url ?? undefined}
+                title={entry.url ? presentedUrl(entry.url) : undefined}
                 onClick={restore}
               >
                 <span className="truncate">

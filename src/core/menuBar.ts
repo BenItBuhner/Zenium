@@ -116,7 +116,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Email Page Link…', action: 'page.emailLink', enabled: web },
       { type: 'separator' },
-      { label: 'Print…', action: 'page.print', enabled: Boolean(active) }
+      { label: 'Print…', action: 'page.printPreview', enabled: Boolean(active) }
     ]
   }
 
@@ -277,6 +277,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Select Next Tab', action: 'tab.next', enabled: Boolean(active) },
       { label: 'Select Previous Tab', action: 'tab.prev', enabled: Boolean(active) },
+      { label: 'Search Tabs…', action: 'tab.search', enabled: Boolean(win) },
       { type: 'separator' },
       { label: 'Next Space', action: 'space.next', enabled: Boolean(win) && !local },
       { label: 'Previous Space', action: 'space.prev', enabled: Boolean(win) && !local },

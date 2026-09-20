@@ -23,6 +23,30 @@ export interface ExtensionRuntimeHooks {
    * `allowPrivate` or the manifest-derived fields after a reload. The runtime re-reads what it configures from them.
    */
   reconfigure(record: ExtensionRecord): Promise<void>
+  /**
+   * The extensions the store is about to attach: at construction the enabled records, before
+   * the browser restores its windows, so a restored tab on an extension page is held rather
+   * than answered with nothing while the attach is still reading files; `[]` once the start is
+   * over, so a page held for an extension that did not come up fails. Nothing to do for a host
+   * whose pages cannot ask ahead of the runtime.
+   */
+  expect?(ids: string[]): void
+  /**
+   * Chrome's `ShouldDelayExtensionUpdate` for a running extension the store downloaded an
+   * update for: with a persistent background page, true while the page listens for
+   * `runtime.onUpdateAvailable` (the extension applies the update itself with
+   * `runtime.reload()`); otherwise true while the extension is busy (a page of its own open,
+   * its worker or event page running). A delayed update is staged on the record and applied
+   * once this turns false (`RuntimeStoreLink.idle`), at `runtime.reload()`, when the user asks
+   * for it, or at the next start. Without the hook nothing delays: updates land at once.
+   */
+  delaysUpdate?(id: string): boolean
+  /**
+   * An update was staged: `runtime.onUpdateAvailable` with the new version's manifest (Chrome's
+   * `details`, `version` among them) to the extension's contexts, its background woken for it
+   * when it registered a listener.
+   */
+  updateAvailable?(id: string, details: Record<string, unknown>): void
 }
 
 /** Before the runtime lands (or on hosts that only manage packages): installs are files and records. */

@@ -6,7 +6,6 @@ import type {
   ResourceSnapshot,
   SidePanelInfo,
   Suggestion,
-  SyncScope,
   SyncStatus
 } from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
@@ -21,12 +20,18 @@ import type {
   TabView,
   UpdateHost
 } from './platform'
+import { defaultScope } from './sync/records'
 import type { ZenWindow } from './window'
+
+/** How often the sleeping-tabs timeout is checked on hosts without a resource governor. */
+export const SLEEP_CHECK_MS = 30_000
 
 /**
  * Governor for hosts without process metrics or a DevTools protocol (Android). Background loads
- * start immediately, nothing is ever frozen or throttled; only Zen's plain tab-unloading timeout
- * is honoured, the same way it was before the governor existed.
+ * start immediately, nothing is ever frozen or throttled; sleeping tabs are the plain timeout
+ * (`tabs.unloadInactive`, checked every half minute so the shortest timeout on Edge's ladder,
+ * 30 seconds, is honoured) plus the host's memory-pressure signal
+ * (`tabs.unloadForMemoryPressure`, from `onTrimMemory`).
  */
 export class NoopGovernor implements Governor {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -34,7 +39,9 @@ export class NoopGovernor implements Governor {
   constructor(private readonly browser: Browser) {}
 
   start(): void {
-    if (!this.timer) this.timer = setInterval(() => this.browser.tabs.unloadInactive(), 60_000)
+    if (!this.timer) {
+      this.timer = setInterval(() => this.browser.tabs.unloadInactive(), SLEEP_CHECK_MS)
+    }
   }
 
   stop(): void {
@@ -143,6 +150,9 @@ export class NoExtensions implements ExtensionHost {
   }
   resizePopup(): void {}
   closePopup(): void {}
+  popupOpen(): boolean {
+    return false
+  }
   sidePanel(): SidePanelInfo | null {
     return null
   }
@@ -175,19 +185,6 @@ export class NoExtensions implements ExtensionHost {
   flushSync(): void {}
 }
 
-const DEFAULT_SCOPE: SyncScope = {
-  spaces: true,
-  folders: true,
-  pinnedTabs: true,
-  essentials: true,
-  openTabs: false,
-  containers: true,
-  bookmarks: true,
-  settings: true,
-  shortcuts: true,
-  boosts: true
-}
-
 /** Hosts without a shared-folder sync transport. */
 export class NoSync implements SyncHost {
   constructor(private readonly browser: Browser) {}
@@ -198,9 +195,11 @@ export class NoSync implements SyncHost {
     return {
       enabled: false,
       folder: null,
+      folderName: null,
+      folderLost: false,
       deviceId: '',
       deviceName: '',
-      scope: { ...DEFAULT_SCOPE },
+      scope: defaultScope(),
       lastSyncAt: null,
       lastError: null,
       syncing: false,
@@ -220,6 +219,7 @@ export class NoSync implements SyncHost {
 
   setScope(): void {}
   setDeviceName(): void {}
+  async setFolder(): Promise<void> {}
   async syncNow(): Promise<void> {}
   async confirmMerge(): Promise<void> {}
   disconnect(): void {}

@@ -1,5 +1,5 @@
 import type { Browser } from './browser'
-import type { ZenWindow } from './window'
+import { surfaceMounted, type ZenWindow } from './window'
 import type {
   ChromeContextParams,
   MenuItemTemplate,
@@ -9,13 +9,25 @@ import type {
 } from './platform'
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
+import { internalPageOf } from '../shared/internalPages'
 import { bindingFor, toAccelerator } from '../shared/shortcuts'
-import { displayUrl, getDomain, inputToUrl, isNavigableUrl } from '../shared/url'
+import {
+  BLANK_URL,
+  NEW_TAB_URL,
+  displayUrl,
+  getDomain,
+  inputToUrl,
+  isNavigableUrl,
+  isWebPageUrl
+} from '../shared/url'
 import {
   DEFAULT_CONTAINER_ID,
+  type AppWindowInfo,
   type BookmarkNode,
   type BookmarksBarMode,
   type DownloadDeleteFileResult,
+  type MenuAnchor,
+  type MenuItemDescriptor,
   type Rect,
   type Settings,
   type Shortcut,
@@ -27,11 +39,71 @@ import { spaceLabel } from '../shared/defaults'
 import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
+import { languageName, sortedByName } from '../shared/languageNames'
+import { serialiseMenu } from './rendererMenus'
+import { dictionaryFor } from '../shared/spellcheck'
+import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
+import { folderTabs } from './model'
 
 type Template = MenuItemTemplate[]
+
+/** Where a selection action was invoked from: the page context menu or the host's floating toolbar. */
+type SelectionSurface = 'menu' | 'toolbar'
+
+/** One thing to do with selected text; see `Menus.selectionActions`. */
+interface SelectionAction {
+  /** Stable name a toolbar host hands back (`runSelectionAction`). */
+  id: string
+  /** The context menu's label (Chrome's wording: `Search Google for "…"`). */
+  label: string
+  /** The floating toolbar's title: short, Title Case. */
+  title: string
+  /** Whether the page context menu lists it. */
+  menu: boolean
+  /** Whether the floating toolbar lists it (on hosts that have one). */
+  toolbar: boolean
+  run(surface: SelectionSurface): void
+}
+
+/** Where the selection was asked about, for the actions that place something. */
+interface SelectionPlaces {
+  /**
+   * Where the context menu's click landed, in CSS pixels of the page view; absent for a text
+   * field's selection and for the toolbar.
+   */
+  at?: { x: number; y: number }
+  /** Where the selection sits in the page, 0…1 of its width and height (the toolbar's touch). */
+  origin?: { x: number; y: number }
+}
+
+/** What a toolbar host draws for one action: the id it names back and the title it shows. */
+export interface SelectionToolbarItem {
+  id: string
+  title: string
+}
+
+/**
+ * The toolbar's order, by id: what a 412 dp phone fits in the bar first (after the system's Copy:
+ * the search or the glance, then Share) and the widest, Translate, last, so that at most one of
+ * Zenium's items sits behind the overflow; an id not named here goes after them, in the order
+ * of `Menus.selectionActions`. The menu keeps that order throughout (Translate Selection before
+ * Share, as on the desktop).
+ */
+const SELECTION_TOOLBAR_ORDER: readonly string[] = [
+  'search',
+  'glance',
+  'share',
+  'translate',
+  'readAloud'
+]
+
+function toolbarRank(id: string): number {
+  const rank = SELECTION_TOOLBAR_ORDER.indexOf(id)
+  return rank === -1 ? SELECTION_TOOLBAR_ORDER.length : rank
+}
 
 /** How long state changes are batched before the menu bar is rebuilt from them. */
 const APPLICATION_MENU_DEBOUNCE_MS = 80
@@ -74,6 +146,8 @@ export function tidySeparators(template: Template): Template {
 const SELECTION_LABEL_MAX = 50
 /** Chrome lists at most five spelling suggestions. */
 const SPELLING_SUGGESTIONS_MAX = 5
+/** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
+const SPELLCHECK_MENU_LANGUAGES_MAX = 8
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -86,6 +160,13 @@ export class Menus {
   /** What the host's menu bar shows right now, so it is only rebuilt when that changes. */
   private applicationMenuSignature: string | null = null
   private applicationMenuTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * The extension action menu last handed to a renderer as data (`extensionActionMenuItems`):
+   * its items' handlers by id, live until the next request retires them.
+   */
+  private actionMenuHandlers: { id: string; handlers: Map<string, () => void> } | null = null
+  private actionMenuSeq = 0
 
   /**
    * Give hosts with a menu bar (macOS) the application menu: every item's chord from the active
@@ -118,16 +199,30 @@ export class Menus {
     }, APPLICATION_MENU_DEBOUNCE_MS)
   }
 
-  private popup(
-    template: Template,
-    win: ZenWindow,
-    source: MenuSource,
-    anchor?: { x?: number; y?: number; keyboard?: boolean }
-  ): void {
+  private popup(template: Template, win: ZenWindow, source: MenuSource, anchor?: MenuAnchor): void {
     const items = withAccelerators(tidySeparators(template), this.browser.state.shortcuts, (a) =>
       this.browser.actions.run(a, { sourceTabId: null, win })
     )
     this.browser.platform.menus.popup(items, { source, win, ...anchor })
+  }
+
+  /**
+   * Where a page's menu opens for Shift+F10 or the Menu key (Chrome's rule): at the caret or the
+   * focused element, where Chromium reports the event, with the first item selected. The
+   * event's coordinates are the view's; the window's come from where the chrome placed it. A
+   * pointer's menu opens at the pointer, which the host does by itself.
+   */
+  private pageAnchor(tabId: string, params: PageContextParams, win: ZenWindow): MenuAnchor {
+    if (params.menuSourceType !== 'keyboard') return {}
+    const rect = win.viewRect(tabId)
+    return rect
+      ? { x: rect.x + params.x, y: rect.y + params.y, keyboard: true }
+      : { keyboard: true }
+  }
+
+  /** The chrome document's own: the event's coordinates are the window's already. */
+  private chromeAnchor(params: ChromeContextParams): MenuAnchor {
+    return params.keyboard ? { x: params.x, y: params.y, keyboard: true } : {}
   }
 
   private containerSubmenu(onPick: (containerId: string) => void): Template {
@@ -186,8 +281,12 @@ export class Menus {
       const tail =
         selection && !params.misspelledWord ? this.selectionGroup(tab, selection, win).slice(1) : []
       groups.push(this.editGroup(params, { tail }))
+      // Chrome's "Spell check" submenu, its own group after the editing items, on hosts with a
+      // spellchecker of the browser's own.
+      const spellcheck = this.spellcheckSubmenu(win)
+      if (spellcheck) groups.push([spellcheck])
     } else if (selection) {
-      groups.push(this.selectionGroup(tab, selection, win))
+      groups.push(this.selectionGroup(tab, selection, win, { x: params.x, y: params.y }))
     }
     if (plainPage) groups.push(this.navigationGroup(tab, view, win), this.pageGroup(tab, win))
     // Extension items sit where Chrome puts them: after the browser's own entries, before the
@@ -214,7 +313,7 @@ export class Menus {
       })
     }
     groups.push(developer)
-    this.popup(joinGroups(groups), win, 'page')
+    this.popup(joinGroups(groups), win, 'page', this.pageAnchor(tabId, params, win))
   }
 
   /**
@@ -328,6 +427,14 @@ export class Menus {
             click: () => this.browser.openUrlInWindow(url, 'private', win)
           }
         )
+      }
+      // Hosts that keep private browsing in tabs (Android): Chrome's "Open in Incognito tab",
+      // second item; the link opens in the private container of this window, in front.
+      if (caps.privateTabs) {
+        open.push({
+          label: 'Open Link in Private Tab',
+          click: () => tabs.newPrivateTab(url, win)
+        })
       }
       open.push(
         {
@@ -540,9 +647,65 @@ export class Menus {
     if (items.length === 0) items.push({ label: 'No Spelling Suggestions', enabled: false })
     items.push({
       label: 'Add to Dictionary',
-      click: () => view.addWordToDictionary(params.misspelledWord)
+      // The profile's one custom dictionary (every session), not this view's session alone.
+      click: () => void this.browser.spellcheck.addWord(params.misspelledWord, view)
     })
     return items
+  }
+
+  /**
+   * Chrome's "Spell check" submenu of an editable field: the languages the fields are checked
+   * in (checked) and the user's other languages with a dictionary (unchecked), each a toggle;
+   * then "Check the spelling of text fields" and the way to Settings › Languages. Null on a host
+   * without a spellchecker of its own (Android) and on one that follows the OS's languages
+   * (macOS), where the item would have nothing to offer.
+   */
+  private spellcheckSubmenu(win: ZenWindow): MenuItemTemplate | null {
+    const { spellcheck, state, translate } = this.browser
+    const status = spellcheck.uiState()
+    if (!status.available || status.systemLanguages) return null
+    const checked = new Set(spellcheck.languages())
+    const available = status.languages.map((l) => l.code)
+    // The user's languages: the ones checked now, the UI locales' dictionaries and the
+    // languages they read (the translate preferences), in that order, without repeats.
+    const candidates = [
+      ...checked,
+      ...this.browser.platform.spellcheck!.locales,
+      ...translate.uiState().preferences.preferred
+    ]
+    const codes: string[] = []
+    for (const candidate of candidates) {
+      const code = dictionaryFor(candidate, available)
+      if (code && !codes.includes(code)) codes.push(code)
+      if (codes.length === SPELLCHECK_MENU_LANGUAGES_MAX) break
+    }
+    const nameOf = new Map(status.languages.map((l) => [l.code, l.name]))
+    const enabled = state.settings.spellcheck.enabled
+    const languages: Template = codes.map((code) => ({
+      label: nameOf.get(code) ?? code,
+      type: 'checkbox',
+      checked: checked.has(code),
+      enabled,
+      click: () => spellcheck.setLanguage(code, !checked.has(code))
+    }))
+    return {
+      label: 'Spell Check',
+      submenu: [
+        ...languages,
+        ...(languages.length > 0 ? [{ type: 'separator' as const }] : []),
+        {
+          label: 'Check the Spelling of Text Fields',
+          type: 'checkbox',
+          checked: enabled,
+          click: () => spellcheck.setEnabled(!enabled)
+        },
+        { type: 'separator' },
+        {
+          label: 'Language Settings',
+          click: () => void this.browser.pages.open('settings', 'languages', win)
+        }
+      ]
+    }
   }
 
   /**
@@ -575,39 +738,183 @@ export class Menus {
 
   /**
    * Selected text: Copy, then either "Go to <url>" when the selection reads as an address or
-   * `Search <engine> for "…"` (a new tab next to this one, like Chrome).
+   * `Search <engine> for "…"` (a new tab next to this one, like Chrome), Translate Selection
+   * where the click landed (`at`; the page's own selection, not a text field's), Share.
    */
-  private selectionGroup(tab: Tab, selection: string, win: ZenWindow): Template {
-    const { tabs, state } = this.browser
-    const engine =
-      state.searchEngines.find((e) => e.id === state.settings.searchEngineId) ??
-      state.searchEngines[0]
-    const open = (url: string): void =>
+  private selectionGroup(
+    tab: Tab,
+    selection: string,
+    win: ZenWindow,
+    at?: { x: number; y: number }
+  ): Template {
+    const items: Template = [{ label: 'Copy', role: 'copy' }]
+    for (const action of this.selectionActions(tab, selection, win, { at })) {
+      if (action.menu) items.push({ label: action.label, click: () => action.run('menu') })
+    }
+    return items
+  }
+
+  /**
+   * What can be done with selected page text, the one list both surfaces draw from: the page
+   * context menu (`selectionGroup`, its `label`, in this order) and – on hosts with
+   * `capabilities.selectionToolbar` – the system's floating toolbar over the selection (`title`,
+   * short and Title Case, the toolbar has room for a handful of words; its order is
+   * `SELECTION_TOOLBAR_ORDER`). An action names the surfaces it belongs on; a future item needs
+   * an entry here and nothing else. The toolbar's search opens its tab in the background: the
+   * reader keeps their place and the result waits next door.
+   */
+  private selectionActions(
+    tab: Tab,
+    selection: string,
+    win: ZenWindow,
+    { at, origin = { x: 0.5, y: 0.5 } }: SelectionPlaces = {}
+  ): SelectionAction[] {
+    const { tabs, state, translate } = this.browser
+    const engine = state.defaultSearchEngine()
+    // The toolbar's tab opens in the background, with this tab as its opener: a back on it
+    // returns here, like a link's "Open Link in New Tab" (the menu's opens in front, like Chrome).
+    const open = (url: string, surface: SelectionSurface): void =>
       void tabs.createTab(
-        { url, active: true, afterTabId: tab.id, containerId: tab.containerId },
+        {
+          url,
+          active: surface === 'menu',
+          afterTabId: tab.id,
+          containerId: tab.containerId,
+          openerTabId: tab.id
+        },
         win
       )
     const asUrl = selectionUrl(selection)
-    const items: Template = [{ label: 'Copy', role: 'copy' }]
+    const actions: SelectionAction[] = []
     if (asUrl) {
-      items.push({
+      // The menu's item for an address; the toolbar previews it in a glance instead (Chrome's
+      // toolbar has no item for an address either, and the toolbar's width is a handful of words).
+      actions.push({
+        id: 'go',
         label: `Go to ${clipLabel(displayUrl(asUrl), SELECTION_LABEL_MAX)}`,
-        click: () => open(asUrl)
+        title: 'Open in New Tab',
+        menu: true,
+        toolbar: false,
+        run: (surface) => open(asUrl, surface)
       })
+      // Glance previews the address over the page: the toolbar's own item (the menu's link
+      // items offer it for links). Off with the setting, and never on top of another glance.
+      if (state.settings.glanceEnabled && !win.glance) {
+        actions.push({
+          id: 'glance',
+          label: 'Open in Glance',
+          title: 'Open in Glance',
+          menu: false,
+          toolbar: true,
+          run: () => tabs.openGlance(asUrl, tab.id, clamp01(origin.x), clamp01(origin.y), win)
+        })
+      }
     } else if (engine) {
+      // The toolbar names the engine the search goes through, as the menu does (Chrome's
+      // pattern); Zenium is the browser, not an engine.
       const short = clipLabel(selection, SELECTION_LABEL_MAX)
-      items.push({
+      actions.push({
+        id: 'search',
         label: `Search ${engine.name} for “${short}”`,
-        click: () => open(buildSearchUrl(engine, selection))
+        title: `Search ${engine.name}`,
+        menu: true,
+        toolbar: true,
+        run: (surface) => open(buildSearchUrl(engine, selection), surface)
+      })
+    }
+    // The services core's selection translation: the menu offers it for the page's own selection
+    // (a text field's comes without `at`) and puts the popover where the click landed; the
+    // toolbar's touch anchors nothing, so the phone shows its sheet.
+    if (translate.available) {
+      actions.push({
+        id: 'translate',
+        label: 'Translate Selection',
+        title: 'Translate',
+        menu: at !== undefined,
+        toolbar: true,
+        run: (surface) =>
+          void translate.showSelection(
+            tab.id,
+            selection,
+            surface === 'menu' ? (at ?? null) : null,
+            win
+          )
       })
     }
     if (state.capabilities.share) {
-      items.push({
+      actions.push({
+        id: 'share',
         label: 'Share…',
-        click: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
+        title: 'Share',
+        menu: true,
+        toolbar: true,
+        run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    return items
+    // Listen to a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection' }`, the
+    // core's model takes the selection from the page and reads it alone (Chrome's behaviour;
+    // Edge reads on past it to the article's end, which is an ask on the model's `selection`
+    // source). Hosts with a speech host; any page, since a selection is text to read whether
+    // or not the page is an article. The phone's item, on both of its surfaces: the player it
+    // starts is the phone's docked one, and the desktop's read aloud is the services program's
+    // own UI, so the desktop's context menu is left without it. Worded "Listen", the app
+    // menu's own verb ("Listen to This Page"), so that beside the system's process-text item
+    // ("Read aloud", Google's, which stays) the pair reads as two things (the lead, #240).
+    if (win.formFactor === 'phone' && this.browser.readAloud.available) {
+      actions.push({
+        id: 'readAloud',
+        label: 'Listen',
+        title: 'Listen',
+        menu: true,
+        toolbar: true,
+        run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection' })
+      })
+    }
+    return actions
+  }
+
+  /**
+   * Zenium's items for the host's floating selection toolbar over `selection` in `tabId`, in
+   * order: the id the host hands back to `runSelectionAction` and the title it shows (and reads
+   * out). Empty on hosts without the toolbar (`capabilities.selectionToolbar`), whose menus carry
+   * the same actions, and for a tab that is gone.
+   */
+  selectionToolbar(tabId: string, selection: string): SelectionToolbarItem[] {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const text = clipSelection(selection)
+    if (!state.capabilities.selectionToolbar || !tab || !text.trim()) return []
+    const win = tabs.windowFor(tabId)
+    return this.selectionActions(tab, text, win)
+      .filter((action) => action.toolbar)
+      .sort((a, b) => toolbarRank(a.id) - toolbarRank(b.id))
+      .map(({ id, title }) => ({ id, title }))
+  }
+
+  /**
+   * The toolbar item `id` was touched with `selection` selected (the host reads the selection
+   * again at the touch, so the text is the one on screen): run it. The list is built afresh
+   * from the text, so an id the text no longer warrants (an address that stopped being one)
+   * does nothing. `origin` is where the selection sits in the page, 0…1 of its width and
+   * height, for the glance to grow out of.
+   */
+  runSelectionAction(
+    tabId: string,
+    id: string,
+    selection: string,
+    origin?: { x: number; y: number }
+  ): boolean {
+    const { tabs, state } = this.browser
+    const tab = tabs.tab(tabId)
+    const text = clipSelection(selection)
+    if (!state.capabilities.selectionToolbar || !tab || !text.trim()) return false
+    const win = tabs.windowFor(tabId)
+    const action = this.selectionActions(tab, text, win, { origin }).find(
+      (candidate) => candidate.toolbar && candidate.id === id
+    )
+    if (!action) return false
+    action.run('toolbar')
+    return true
   }
 
   /** Back, Forward, Reload / Stop – and the way out of fullscreen while the page is in it. */
@@ -646,11 +953,12 @@ export class Menus {
     return items
   }
 
-  /** The page's own actions: bookmark, save, print, screenshot, Reader View. */
+  /** The page's own actions: bookmark, save, print, screenshot, Reader View, Translate Page. */
   private pageGroup(tab: Tab, win: ZenWindow): Template {
-    const { state, reader } = this.browser
-    const run = (action: 'page.savePage' | 'page.print' | 'page.screenshot'): void =>
-      this.browser.actions.run(action, { sourceTabId: tab.id, win })
+    const { state, reader, translate } = this.browser
+    const run = (
+      action: 'page.savePage' | 'page.printPreview' | 'page.screenshot' | 'page.captureFullPage'
+    ): void => this.browser.actions.run(action, { sourceTabId: tab.id, win })
     const readerOpen = reader.isReaderUrl(tab.url)
     return [
       {
@@ -660,15 +968,35 @@ export class Menus {
       },
       { label: 'Save Page As…', action: 'page.savePage', click: () => run('page.savePage') },
       ...(state.capabilities.print
-        ? [{ label: 'Print…', action: 'page.print' as const, click: () => run('page.print') }]
+        ? [
+            {
+              label: 'Print…',
+              action: 'page.printPreview' as const,
+              click: () => run('page.printPreview')
+            }
+          ]
         : []),
       { label: 'Take Screenshot', action: 'page.screenshot', click: () => run('page.screenshot') },
+      {
+        label: 'Capture Full Page',
+        action: 'page.captureFullPage',
+        click: () => run('page.captureFullPage')
+      },
       {
         label: readerOpen ? 'Exit Reader View' : 'Enter Reader View',
         enabled: readerOpen || reader.canRead(tab),
         action: 'page.readerMode',
         click: () => reader.toggle(tab.id, win)
-      }
+      },
+      ...(translate.available
+        ? [
+            {
+              label: 'Translate Page',
+              enabled: translate.canTranslate(tab.id),
+              click: () => void translate.open(tab.id, win)
+            }
+          ]
+        : [])
     ]
   }
 
@@ -704,9 +1032,10 @@ export class Menus {
   async showChromeContextMenu(params: ChromeContextParams, win: ZenWindow): Promise<void> {
     const { tabs, state } = this.browser
     const tab = params.tabId ? tabs.tab(params.tabId) : undefined
+    const anchor = this.chromeAnchor(params)
     if (params.target === 'reload') {
       if (!tab || !state.devtoolsOpenFor.has(tab.id)) return
-      this.popup(this.reloadItems(tab), win, 'urlbar')
+      this.popup(this.reloadItems(tab), win, 'urlbar', anchor)
       return
     }
     if (params.target === 'urlbar' || params.target === 'urlpill') {
@@ -747,14 +1076,15 @@ export class Menus {
           click: () => void this.browser.pages.open('settings', 'search', win)
         }
       ])
-      this.popup(joinGroups(groups), win, 'urlbar')
+      this.popup(joinGroups(groups), win, 'urlbar', anchor)
       return
     }
     if (params.isEditable) {
-      this.popup(this.editGroup(params), win, 'urlbar')
+      this.popup(this.editGroup(params), win, 'urlbar', anchor)
       return
     }
-    if (params.selectionText.trim()) this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar')
+    if (params.selectionText.trim())
+      this.popup([{ label: 'Copy', role: 'copy' }], win, 'urlbar', anchor)
   }
 
   /** Chrome's "Always show full URLs": the address pill's elision setting (`showFullUrls`). */
@@ -800,7 +1130,7 @@ export class Menus {
    * The context menu of an extension's toolbar button: Chrome's layout of the extension's own
    * `contextMenus` items (`action` / `browser_action` contexts) above the browser's entries.
    */
-  showExtensionActionMenu(id: string, win: ZenWindow, anchor?: { x: number; y: number }): void {
+  showExtensionActionMenu(id: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { extensions } = this.browser
     const info = extensions.list().find((entry) => entry.id === id)
     if (!info) return
@@ -825,6 +1155,42 @@ export class Menus {
       }
     )
     this.popup(template, win, 'app', anchor)
+  }
+
+  /**
+   * The extension's own items of its action's context menu as data, for a chrome that draws the
+   * menu itself (the phone's long-press menu sheet, which puts them above its own rows as
+   * `showExtensionActionMenu` does): the `contextMenus` items with the `action` context in
+   * Chrome's layout, serialised like a renderer-drawn menu. Their `click`s are kept by id for
+   * `runExtensionActionMenuItem`; a new request retires the previous ones (a menu can only be
+   * open once at a time). Empty for an extension the browser does not know or that adds none.
+   */
+  extensionActionMenuItems(id: string, win: ZenWindow): MenuItemDescriptor[] {
+    const { extensions } = this.browser
+    if (!extensions.list().some((entry) => entry.id === id)) {
+      this.actionMenuHandlers = null
+      return []
+    }
+    const own = extensions.actionContextMenuItems(id, win)
+    const { items, handlers } = serialiseMenu(own, `action_${++this.actionMenuSeq}`)
+    this.actionMenuHandlers = { id, handlers }
+    return items
+  }
+
+  /**
+   * The user picked `itemId` of the menu `extensionActionMenuItems` last answered for `id`: its
+   * click runs – the host fires `contextMenus.onClicked` with `OnClickData` for the `action`
+   * context and the active tab, as a pick in the native menu does. A stale or unknown id is
+   * nothing (the menu the pick came from was retired).
+   */
+  runExtensionActionMenuItem(id: string, itemId: string): void {
+    const open = this.actionMenuHandlers
+    if (!open || open.id !== id) return
+    const handler = open.handlers.get(itemId)
+    if (!handler) return
+    // One pick per menu: the sheet has gone by now, its handles with it.
+    this.actionMenuHandlers = null
+    handler()
   }
 
   /** Zen 1.20: Boosts live in the page context menu (and the site control button). */
@@ -905,7 +1271,7 @@ export class Menus {
   // Tabs
   // ---------------------------------------------------------------------------
 
-  showTabContextMenu(tabId: string, win: ZenWindow): void {
+  showTabContextMenu(tabId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const tab = tabs.tab(tabId)
     if (!tab) return
@@ -1014,26 +1380,35 @@ export class Menus {
       ...(local
         ? []
         : [
-            {
-              label: 'Move to Folder',
-              enabled: !tab.essential && !tab.pinned,
-              submenu: [
-                ...folders.map((f) => ({
-                  label: `${f.icon} ${f.name}`,
-                  type: 'checkbox' as const,
-                  checked: tab.folderId === f.id,
-                  click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
-                })),
-                ...(folders.length ? [{ type: 'separator' as const }] : []),
-                {
-                  label: 'New Folder…',
+            // Chrome's group items (context-menus-91): "Add tab to new group" while the space
+            // has no folder, else "Add tab to group ›" – a new folder first, then the space's
+            // folders, the tab's own checked – and "Remove from group" beside it.
+            folders.length === 0
+              ? {
+                  label: 'Add Tab to New Folder',
+                  enabled: !tab.essential && !tab.pinned,
                   click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                }
+              : {
+                  label: 'Move to Folder',
+                  enabled: !tab.essential && !tab.pinned,
+                  submenu: [
+                    {
+                      label: 'New Folder…',
+                      click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                    },
+                    { type: 'separator' as const },
+                    ...folders.map((f) => ({
+                      label: `${f.icon} ${f.name}`,
+                      type: 'checkbox' as const,
+                      checked: tab.folderId === f.id,
+                      click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
+                    }))
+                  ]
                 },
-                ...(tab.folderId
-                  ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
-                  : [])
-              ]
-            },
+            ...(tab.folderId
+              ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
+              : []),
             {
               label: 'Add Route for Domain',
               enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
@@ -1042,12 +1417,14 @@ export class Menus {
           ]),
       ...(caps.windows
         ? [
+            // Chrome's pair (tabs-23, context-menus-93): the second lists the other windows by
+            // their active tab, most recently focused first, and is greyed with none to go to.
             {
               label: 'Move Tab to New Window',
               click: () => void tabs.moveTabToNewWindow(tabId, null, win)
             },
             {
-              label: 'Move to Window',
+              label: 'Move Tab to Another Window',
               enabled: otherWindows.length > 0,
               submenu: otherWindows.map((w) => ({
                 label: this.windowLabel(w),
@@ -1134,11 +1511,11 @@ export class Menus {
         ? [{ label: 'Remove Tab', click: () => void tabs.requestClose(tabId, true, win) }]
         : [])
     ]
-    this.popup(template, win, 'tab')
+    this.popup(template, win, 'tab', anchor)
   }
 
   /** Zen: select several tabs (Ctrl / Shift+click) and act on all of them at once. */
-  showSelectionContextMenu(tabIds: string[], win: ZenWindow): void {
+  showSelectionContextMenu(tabIds: string[], win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const m = state.model
     const selected = tabIds
@@ -1237,11 +1614,12 @@ export class Menus {
         }
       ],
       win,
-      'selection'
+      'selection',
+      anchor
     )
   }
 
-  showNewTabContextMenu(win: ZenWindow): void {
+  showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()
     const local = Boolean(win.localSpace)
@@ -1288,7 +1666,8 @@ export class Menus {
         }
       ],
       win,
-      'newtab'
+      'newtab',
+      anchor
     )
   }
 
@@ -1323,7 +1702,7 @@ export class Menus {
   // Spaces & folders
   // ---------------------------------------------------------------------------
 
-  showSpaceContextMenu(spaceId: string, win: ZenWindow): void {
+  showSpaceContextMenu(spaceId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = state.model.spaces.find((s) => s.id === spaceId)
     if (!space) return
@@ -1366,7 +1745,8 @@ export class Menus {
         }
       ],
       win,
-      'space'
+      'space',
+      anchor
     )
   }
 
@@ -1375,23 +1755,34 @@ export class Menus {
     if (win) this.browser.tabs.switchSpace(spaceId, win)
   }
 
-  /** How a window is named in "Move to Window": its active tab, like Chrome's submenu. */
-  private windowLabel(win: ZenWindow): string {
+  /** How a window is named in "Move Tab to Another Window" and tab search: its active tab, like Chrome's submenu. */
+  windowLabel(win: ZenWindow): string {
     const title = this.browser.tabs.activeTitleFor(win)?.trim()
     const label = title ? (title.length > 60 ? `${title.slice(0, 57)}…` : title) : 'Empty window'
     return win.isPrivate ? `${label} (Private)` : label
   }
 
-  showFolderContextMenu(folderId: string, win: ZenWindow): void {
+  showFolderContextMenu(folderId: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { state } = this.browser
     const folder = state.model.folders[folderId]
     if (!folder) return
     const live = this.browser.liveFolders.get(folderId)
+    const count = folderTabs(state.model, folderId).length
     this.popup(
       [
+        // Chrome's group editor bubble (tabs-13): name, colour and the group's actions in one
+        // surface beside the header; the desktop chrome draws it, the phone its group sheet.
+        {
+          label: 'Edit Folder…',
+          click: () => this.browser.emit('folder.edit', { folderId }, win)
+        },
         {
           label: 'Rename Folder…',
           click: () => this.browser.emit('folder.startRename', { folderId }, win)
+        },
+        {
+          label: 'New Tab in Folder',
+          click: () => this.browser.newTabInFolder(folderId, win)
         },
         {
           label: folder.collapsed ? 'Expand Folder' : 'Collapse Folder',
@@ -1434,11 +1825,18 @@ export class Menus {
               }
             ]) as Template),
         { type: 'separator' },
+        // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
-        { label: 'Delete Folder', click: () => this.browser.deleteFolder(folderId, false) }
+        {
+          label: count
+            ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
+            : 'Delete Folder',
+          click: () => this.browser.deleteFolder(folderId, false)
+        }
       ],
       win,
-      'folder'
+      'folder',
+      anchor
     )
   }
 
@@ -1455,7 +1853,7 @@ export class Menus {
   showBookmarkContextMenu(
     ids: string[],
     folderId: string,
-    anchor: { x: number; y: number },
+    anchor: MenuAnchor & { x: number; y: number },
     win: ZenWindow,
     surface: 'manager' | 'bar' = 'manager'
   ): void {
@@ -1665,7 +2063,7 @@ export class Menus {
   // ---------------------------------------------------------------------------
 
   /** Context menu of one visit on the history page. */
-  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow): void {
+  showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
     const host = getDomain(url)
@@ -1704,7 +2102,8 @@ export class Menus {
         }
       ],
       win,
-      'history'
+      'history',
+      anchor
     )
   }
 
@@ -1871,23 +2270,29 @@ export class Menus {
   /**
    * "Add to Home screen" on hosts that pin shortcuts, for web pages outside private windows.
    * Inside the scope of an app that is already on the Home screen the item reads
-   * "Open <app>" and goes to the app's start URL instead (PWA-11).
+   * "Open <app>" and goes to the app's start URL instead (PWA-11). The install item is offered
+   * only where the window's chrome has an install surface up to take it (`ChromeSurface`: the
+   * phone's sheet; the desktop's dialog is UI work to come, and its menu item comes with it).
    */
   private homeScreenItems(active: Tab | undefined, win: ZenWindow): Template {
     const { webApps } = this.browser
     if (!active || !webApps.canPin(active, win)) return []
+    const surface = webApps.surface
     const pinned = webApps.pinnedFor(active.url)
     if (pinned) {
+      // Desktop: "Open in <app>" launches the app's own window (Chrome); the phone goes to the
+      // app's start URL in this tab.
       return [
         {
-          label: `Open ${pinned.name}`,
-          click: () => this.browser.tabs.navigate(active.id, pinned.startUrl)
+          label: openAppMenuLabel(surface, pinned.name),
+          click: () => webApps.launch(pinned.id, win)
         }
       ]
     }
+    if (!surfaceMounted(win, 'install')) return []
     return [
       {
-        label: 'Add to Home Screen',
+        label: installMenuLabel(surface, active.webApp),
         click: () => webApps.openInstall(active.id, win)
       }
     ]
@@ -1915,21 +2320,41 @@ export class Menus {
     const anchor = options.anchor
       ? { x: options.anchor.x, y: options.anchor.y + options.anchor.height }
       : undefined
-    const { pageControls } = this.browser
-    /** Where Reset Zoom goes: the default zoom for a web page, 100 percent for any other page. */
-    const defaultZoom =
-      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
-    /** The factor the user set (before the system font size), so Reset compares like with like. */
-    const zoomSet = active
-      ? pageControls.remembersZoom(active)
-        ? pageControls.siteZoomOf(active)
-        : active.zoom
-      : 1
+    // A web app's standalone window has Chrome's web-app menu, not the browser's.
+    if (win.chrome === 'app' && win.app) {
+      this.showWebAppMenu(win, win.app, active, { ...anchor, keyboard: options.keyboard })
+      return
+    }
     this.popup(
       [
+        // Chrome's icon row heads the phone's menu (TB-08): Forward, the star, Download page,
+        // Page info and Reload / Stop, which the chrome draws as a row of icon buttons from each
+        // item's glyph. The desktop's native menu has no such row and is unchanged.
+        ...when(phone, ...this.phoneIconRow(active, win), { type: 'separator' }),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
-        // Phone slot: "New Private Tab" goes here once Android has private tabs (Chrome: New
-        // Incognito tab, second item).
+        // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
+        // switcher searches on its own.
+        ...desktop({
+          label: 'Search Tabs…',
+          action: 'tab.search',
+          click: () => this.browser.emit('tabsearch.open', undefined, win)
+        }),
+        // Hosts without private windows (Android) keep the private session in tabs: New Private
+        // Tab is Chrome's second item, and Close Private Tabs ends the session; with no private
+        // tab open it is greyed, not gone (design language v2 §9.17: a menu row whose count is
+        // zero is disabled), so the menu keeps its shape from one opening to the next.
+        ...when(
+          caps.privateTabs,
+          {
+            label: 'New Private Tab',
+            click: () => tabs.newPrivateTab(undefined, win)
+          },
+          {
+            label: 'Close Private Tabs',
+            enabled: tabs.privateTabs().length > 0,
+            click: () => tabs.closePrivateTabs(win)
+          }
+        ),
         ...when(!local, {
           label: 'New Space…',
           action: 'space.new',
@@ -1958,21 +2383,14 @@ export class Menus {
         {
           label: 'Bookmarks',
           submenu: [
-            // The phone has its star flow (a toast with Edit, the editor for a page that is
-            // bookmarked already); desktop keeps the toggle, whose star bubble names and files it.
-            phone
-              ? {
-                  label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark This Page',
-                  action: 'bookmark.add',
-                  enabled: Boolean(active && !active.url.startsWith('zen://')),
-                  click: () => active && this.browser.starTab(active.id, win)
-                }
-              : {
-                  label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
-                  action: 'bookmark.add',
-                  enabled: Boolean(active && !active.url.startsWith('zen://')),
-                  click: () => active && this.browser.toggleBookmark(active.id, win)
-                },
+            // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
+            // the desktop keeps the toggle here, whose star bubble names and files it.
+            ...desktop({
+              label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
+              action: 'bookmark.add',
+              enabled: Boolean(active && !active.url.startsWith('zen://')),
+              click: () => active && this.browser.toggleBookmark(active.id, win)
+            }),
             {
               label: 'Bookmark All Tabs…',
               action: 'bookmark.allTabs',
@@ -2012,6 +2430,13 @@ export class Menus {
           label: 'Passwords',
           click: () => this.browser.emit('overlay.open', { kind: 'passwords' }, win)
         }),
+        // The phone's way to the extensions' actions (Firefox for Android's Extensions item, in
+        // the library block before the management page): the chrome's sheet of one row per
+        // action. The desktop has the toolbar buttons and the puzzle panel; its menu is unchanged.
+        ...when(phone && caps.extensions, {
+          label: 'Extensions',
+          click: () => this.browser.emit('extensions.open', undefined, win)
+        }),
         ...when(caps.extensions, {
           label: 'Add-ons and Themes',
           action: 'addons.open',
@@ -2035,29 +2460,7 @@ export class Menus {
         // Chrome's zoom row (- / percentage / +): a native menu has no inline controls, so the
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
-        ...when(!caps.pageControls, {
-          label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
-          submenu: [
-            {
-              label: 'Zoom In',
-              action: 'zoom.in',
-              enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
-              click: () => active && tabs.adjustZoom(active.id, 1)
-            },
-            {
-              label: 'Zoom Out',
-              action: 'zoom.out',
-              enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
-              click: () => active && tabs.adjustZoom(active.id, -1)
-            },
-            {
-              label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
-              action: 'zoom.reset',
-              enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
-              click: () => active && tabs.resetZoom(active.id)
-            }
-          ]
-        }),
+        ...when(!caps.pageControls, this.zoomSubmenu(active)),
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',
@@ -2078,6 +2481,27 @@ export class Menus {
           enabled: Boolean(active) && this.browser.reader.canRead(active),
           click: () => active && this.browser.reader.toggle(active.id, win)
         },
+        // Edge's Immersive Reader has "Text preferences" on its toolbar; here the item sits under
+        // Reader View while an article is open, and the chrome shows the popover (a mouse) or
+        // the sheet (a phone) that the reader page's own toolbar mirrors.
+        ...when(Boolean(active) && this.browser.reader.isReaderUrl(active!.url), {
+          label: 'Text Preferences…',
+          click: () => active && this.browser.emit('reader.preferences', { tabId: active.id }, win)
+        }),
+        // Chrome's "Listen to this page" (A11Y-06; Title Case like the menu's other items): the
+        // phone's menu on hosts with a speech host, enabled by the reader core's readability
+        // signal exactly as Reader View is (`reader.canRead`: the page is readerable, or it is
+        // the reader's own document, which the core then reads as `source: 'reader'`).
+        ...when(phone && this.browser.readAloud.available, {
+          label: 'Listen to This Page',
+          enabled: Boolean(active) && this.browser.reader.canRead(active),
+          click: () => active && void this.browser.readAloud.start({ tabId: active.id })
+        }),
+        ...when(this.browser.translate.available, {
+          label: 'Translate Page…',
+          enabled: Boolean(active) && this.browser.translate.canTranslate(active!.id),
+          click: () => active && void this.browser.translate.open(active.id, win)
+        }),
         ...when(caps.share, {
           label: 'Share…',
           enabled: Boolean(active) && /^https?:/i.test(active!.url),
@@ -2086,18 +2510,20 @@ export class Menus {
         ...this.homeScreenItems(active, win),
         ...when(caps.print, {
           label: 'Print…',
-          action: 'page.print',
+          action: 'page.printPreview',
           enabled: Boolean(active),
           click: () =>
-            active && this.browser.actions.run('page.print', { sourceTabId: active.id, win })
+            active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
         }),
-        {
+        // The phone's save is the icon row's Download Page (TB-08, `phoneIconRow`), the one entry
+        // Chrome's menu has for it; the desktop keeps the text item.
+        ...desktop({
           label: 'Save Page As…',
           action: 'page.savePage',
           enabled: Boolean(active),
           click: () =>
             active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
-        },
+        }),
         {
           label: 'Take Screenshot',
           action: 'page.screenshot',
@@ -2105,8 +2531,16 @@ export class Menus {
           click: () =>
             active && this.browser.actions.run('page.screenshot', { sourceTabId: active.id, win })
         },
+        {
+          label: 'Capture Full Page',
+          action: 'page.captureFullPage',
+          enabled: Boolean(active),
+          click: () =>
+            active &&
+            this.browser.actions.run('page.captureFullPage', { sourceTabId: active.id, win })
+        },
         // Phone slot: "Add to Home Screen" (W1-7) goes here, ahead of the page controls.
-        ...when(caps.pageControls, ...this.pageControlItems(active)),
+        ...when(caps.pageControls || caps.darkenSites, ...this.pageControlItems(active)),
         { type: 'separator' },
         ...when(caps.resourceGovernor, {
           label: 'Resources',
@@ -2160,24 +2594,217 @@ export class Menus {
   }
 
   /**
+   * Chrome's icon row at the head of the phone's app menu (matrix TB-08): Forward, the bookmark
+   * star, Download page, Page info and Reload / Stop, each an item with a `glyph` the chrome draws
+   * as a 44 px icon button (design language v2 §9.3) named by its label. Every button runs what
+   * the bar's own button for it runs – the row consumes the core's commands and adds none – and a
+   * button whose action has nowhere to go (Forward on the last entry, Download off the web) is
+   * disabled rather than dropped (§9.30), so the row keeps its shape from one opening to the next.
+   */
+  private phoneIconRow(active: Tab | undefined, win: ZenWindow): Template {
+    const { tabs } = this.browser
+    return [
+      {
+        label: 'Forward',
+        glyph: 'forward',
+        action: 'nav.forward',
+        enabled: Boolean(active?.canGoForward),
+        click: () => active && tabs.goForward(active.id)
+      },
+      // The star (TB-16), with Chrome's flow as the phone's Bookmarks submenu ran it before: a
+      // page that is not bookmarked is saved and toasted with Edit, a bookmarked one opens its
+      // editor. `checked` is the fill; the label says which of the two a press does (§9.13's
+      // words, Chrome's: "Bookmark" outlined, "Edit Bookmark" filled). A plain item, not a
+      // checkbox (a stateful glyph, not a toggle): a press never unchecks it, and the mouse
+      // popover would otherwise mark a checked action row.
+      {
+        label: active?.bookmarked ? 'Edit Bookmark' : 'Bookmark',
+        glyph: 'star',
+        action: 'bookmark.add',
+        checked: Boolean(active?.bookmarked),
+        enabled: Boolean(active) && this.browser.bookmarkable(active!.url),
+        click: () => active && this.browser.starTab(active.id, win)
+      },
+      // Chrome's Download keeps the page for later; `page.savePage` is the core's way (the host
+      // writes an archive into Downloads and files it there). A page of the web only.
+      {
+        label: 'Download Page',
+        glyph: 'download',
+        action: 'page.savePage',
+        enabled: Boolean(active) && isWebPageUrl(active!.url),
+        click: () =>
+          active && this.browser.actions.run('page.savePage', { sourceTabId: active.id, win })
+      },
+      // Page info: the site information sheet the pill's site chip opens (the chrome's; the core
+      // asks for it as it asks for the zoom sheet). None for a blank or new tab, which have no
+      // page, nor for a registered internal page (Settings), which has no site (§10.1).
+      {
+        label: 'Page Info',
+        glyph: 'info',
+        enabled: Boolean(active) && hasSiteInfo(active!),
+        click: () => active && this.browser.emit('siteInfo.open', { tabId: active.id }, win)
+      },
+      // Reload and Stop share the last slot, as they share the bar's button: Stop while the page
+      // loads, Reload otherwise. The menu is a picture of the moment it opened, like any menu.
+      active?.loading
+        ? { label: 'Stop', glyph: 'stop', action: 'nav.stop', click: () => tabs.stop(active.id) }
+        : {
+            label: 'Reload',
+            glyph: 'reload',
+            action: 'nav.reload',
+            enabled: Boolean(active),
+            click: () => active && tabs.reload(active.id)
+          }
+    ]
+  }
+
+  /**
+   * The zoom submenu of the desktop menus: its label carries the live percentage, its Reset
+   * says where it goes – the default zoom for a web page, 100 percent for any other page – and
+   * each step is greyed at the range's end. The factor compared is the one the user set (before
+   * the system font size), so Reset compares like with like.
+   */
+  private zoomSubmenu(active: Tab | undefined): MenuItemTemplate {
+    const { pageControls, tabs } = this.browser
+    const defaultZoom =
+      active && pageControls.remembersZoom(active) ? pageControls.settings.zoom : 1
+    const zoomSet = active
+      ? pageControls.remembersZoom(active)
+        ? pageControls.siteZoomOf(active)
+        : active.zoom
+      : 1
+    return {
+      label: active ? `Zoom (${formatZoom(active.zoom)})` : 'Zoom',
+      submenu: [
+        {
+          label: 'Zoom In',
+          action: 'zoom.in',
+          enabled: Boolean(active) && zoomSet < ZOOM_CEILING - 0.005,
+          click: () => active && tabs.adjustZoom(active.id, 1)
+        },
+        {
+          label: 'Zoom Out',
+          action: 'zoom.out',
+          enabled: Boolean(active) && zoomSet > ZOOM_FLOOR + 0.005,
+          click: () => active && tabs.adjustZoom(active.id, -1)
+        },
+        {
+          label: active ? `Reset Zoom (${formatZoom(defaultZoom)})` : 'Reset Zoom',
+          action: 'zoom.reset',
+          enabled: Boolean(active) && Math.abs(zoomSet - defaultZoom) >= 0.005,
+          click: () => active && tabs.resetZoom(active.id)
+        }
+      ]
+    }
+  }
+
+  /**
+   * The "⋯" menu of a web app's standalone window (MW-23; Chrome's web-app menu, from the title
+   * bar's button): Copy URL and Open in Zenium – the page in a tab of the browser window behind
+   * the app, where an out-of-scope link goes –, the zoom submenu, Find in Page and Print, and
+   * Uninstall for a window an installed app owns, behind the host's confirmation (Chrome asks
+   * too); the app's windows close with the record. Nothing of the browser's: no tabs, spaces,
+   * windows, library or settings – the window is the app's.
+   */
+  private showWebAppMenu(
+    win: ZenWindow,
+    app: AppWindowInfo,
+    active: Tab | undefined,
+    anchor: MenuAnchor
+  ): void {
+    const { state, tabs } = this.browser
+    const caps = state.capabilities
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    this.popup(
+      [
+        {
+          label: 'Copy URL',
+          action: 'tab.copyUrl',
+          enabled: Boolean(active),
+          click: () => active && tabs.copyUrl(active.id)
+        },
+        {
+          label: 'Open in Zenium',
+          enabled: Boolean(active),
+          click: () => {
+            if (!active) return
+            const target = this.browser.browserWindowFor(win)
+            tabs.createTab({ url: active.url, active: true }, target)
+            target.host.show()
+            target.host.focus()
+          }
+        },
+        { type: 'separator' },
+        this.zoomSubmenu(active),
+        { type: 'separator' },
+        {
+          label: 'Find in Page…',
+          action: 'find.open',
+          enabled: Boolean(active),
+          click: () => this.browser.actions.run('find.open', { sourceTabId: null, win })
+        },
+        // Zenium's preview (CT-06), as the browser's menu opens it; the engine's own flow where a
+        // host has no preview.
+        ...when(caps.print, {
+          label: 'Print…',
+          action: 'page.printPreview',
+          enabled: Boolean(active),
+          click: () =>
+            active && this.browser.actions.run('page.printPreview', { sourceTabId: active.id, win })
+        }),
+        ...when(app.appId !== null, { type: 'separator' } as MenuItemTemplate, {
+          label: `Uninstall ${app.name}…`,
+          click: () => void this.uninstallApp(app, win)
+        })
+      ],
+      win,
+      'app',
+      anchor
+    )
+  }
+
+  /** The menu's Uninstall: the host's confirmation first, then the record and its launcher go. */
+  private async uninstallApp(app: AppWindowInfo, win: ZenWindow): Promise<void> {
+    if (app.appId === null) return
+    let ok = false
+    try {
+      ok = await this.browser.platform.dialogs.confirm(
+        {
+          message: `Uninstall ${app.name}?`,
+          detail: `${app.name} and its launcher will be removed from this computer. Its windows close.`,
+          okLabel: 'Uninstall',
+          cancelLabel: 'Cancel',
+          danger: true
+        },
+        win
+      )
+    } catch {
+      ok = false
+    }
+    if (ok) await this.browser.webApps.uninstall(app.appId)
+  }
+
+  /**
    * Chrome's page controls in the app menu, closing the page group as "Desktop site" does in
    * Chrome: "Desktop Site" is the per-site checkbox, and while sites are darkened "Dark Theme for
    * This Site" is its exception. Both act on the active tab's site, so they wait for a web page.
    */
   private pageControlItems(active: Tab | undefined): Template {
-    const { pageControls } = this.browser
+    const { pageControls, state } = this.browser
     const web = Boolean(active) && siteKey(active!.url) !== null
-    const items: Template = [
-      {
+    const items: Template = []
+    if (state.capabilities.pageControls) {
+      items.push({
         label: 'Desktop Site',
         type: 'checkbox',
         enabled: web,
         checked: web && pageControls.isDesktop(active!),
         click: () =>
           active && pageControls.setDesktopSite(active.id, !pageControls.isDesktop(active))
-      }
-    ]
-    if (pageControls.settings.darkenSites) {
+      })
+    }
+    // The per-site exception shows once the setting is on, on every host that can darken.
+    if (state.capabilities.darkenSites && pageControls.settings.darkenSites) {
       items.push({
         label: 'Dark Theme for This Site',
         type: 'checkbox',
@@ -2206,6 +2833,102 @@ export class Menus {
     ]
   }
 
+  /**
+   * The translation options of a tab, from the bar's "⋯" button (Firefox's gear menu, Chrome's
+   * "⋮"): the languages to translate from and into – the bar has menulists for these on the
+   * desktop, the phone's bar leaves them to this menu – the always / never rules for the page's
+   * language and its site, the auto-offer switch and the Languages settings.
+   */
+  showTranslateMenu(
+    tabId: string,
+    anchor: { x: number; y: number } | undefined,
+    win: ZenWindow
+  ): void {
+    const { translate } = this.browser
+    const tab = this.browser.tabs.tab(tabId)
+    if (!tab || !translate.available) return
+    const state = translate.tabState(tabId)
+    const prefs = translate.preferences
+    const source = state?.source ?? null
+    const target = state?.target ?? null
+    const site = translate.siteOf(tabId)
+    const rule = source ? translate.languageRule(source) : 'ask'
+    const languages = sortedByName(translate.uiState().languages)
+    const running = state?.status === 'translating' || state?.status === 'translated'
+    /** Re-translate right away while a translation shows; otherwise only change the offer. */
+    const retarget = (patch: { source?: string; target?: string }): void => {
+      if (running) void translate.translatePage(tabId, patch).catch(() => undefined)
+      else translate.retarget(tabId, patch)
+    }
+    const languageMenu = (
+      current: string | null,
+      except: string | null,
+      pick: (code: string) => void
+    ): Template =>
+      languages
+        .filter((code) => code !== except)
+        .map((code) => ({
+          label: languageName(code),
+          type: 'radio' as const,
+          checked: code === current,
+          click: () => pick(code)
+        }))
+    const template: Template = [
+      {
+        label: 'Translate To',
+        submenu: languageMenu(target, source, (code) => retarget({ target: code }))
+      },
+      {
+        label: source ? `Page Is in ${languageName(source)}` : 'Page Language',
+        submenu: languageMenu(source, target, (code) => retarget({ source: code }))
+      },
+      { type: 'separator' },
+      ...(source
+        ? [
+            {
+              label: `Always Translate ${languageName(source)}`,
+              type: 'checkbox' as const,
+              checked: rule === 'always',
+              click: () => {
+                translate.setLanguageRule(source, rule === 'always' ? 'ask' : 'always')
+                if (rule !== 'always' && !running)
+                  void translate.translatePage(tabId).catch(() => undefined)
+              }
+            },
+            {
+              label: `Never Translate ${languageName(source)}`,
+              type: 'checkbox' as const,
+              checked: rule === 'never',
+              click: () => translate.setLanguageRule(source, rule === 'never' ? 'ask' : 'never')
+            }
+          ]
+        : []),
+      ...(site
+        ? [
+            {
+              label: 'Never Translate This Site',
+              type: 'checkbox' as const,
+              checked: prefs.neverTranslateSites.includes(site),
+              click: () => translate.setSiteRule(tabId, !prefs.neverTranslateSites.includes(site))
+            }
+          ]
+        : []),
+      { type: 'separator' },
+      {
+        label: 'Offer to Translate Pages',
+        type: 'checkbox',
+        checked: prefs.autoOffer,
+        click: () => translate.setPreferences({ autoOffer: !prefs.autoOffer })
+      },
+      { type: 'separator' },
+      {
+        label: 'Language Settings…',
+        click: () => void this.browser.pages.open('settings', 'languages', win)
+      }
+    ]
+    this.popup(template, win, 'translate', anchor)
+  }
+
   describe(url: string): string {
     return displayUrl(url)
   }
@@ -2230,6 +2953,16 @@ export function joinGroups(groups: MenuItemTemplate[][]): MenuItemTemplate[] {
 /** URLs a "Save … As…" can fetch into a file (the engine downloads these schemes). */
 export function isDownloadable(url: string): boolean {
   return /^(https?|ftp|file|blob|data):/i.test(url)
+}
+
+/**
+ * A tab the chrome's site information sheet has something to say about – the pill's site chip's
+ * rule: no registered internal page (Settings, which has no site, design language v2 §10.1), and
+ * no blank or new tab, which have no page at all. Every other document – a site, an error page
+ * standing in for one, an extension's page, a local file – gets the sheet.
+ */
+export function hasSiteInfo(tab: Pick<Tab, 'url'>): boolean {
+  return internalPageOf(tab.url) === null && tab.url !== BLANK_URL && tab.url !== NEW_TAB_URL
 }
 
 /**
@@ -2263,6 +2996,21 @@ export function selectionUrl(selection: string): string | null {
   if (!text || text.length > 2048) return null
   const url = inputToUrl(text)
   return url && /^https?:/i.test(url) ? url : null
+}
+
+function clamp01(value: number): number {
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5
+}
+
+/**
+ * The most of a selection the toolbar's entry points take from a host (the Android host cuts
+ * at the same length, `SelectionToolbar.SELECTION_MAX_CHARS`): a query or a share needs no more,
+ * and a host's text is not to be trusted with the length.
+ */
+export const SELECTION_TEXT_MAX = 10_000
+
+function clipSelection(selection: string): string {
+  return selection.length > SELECTION_TEXT_MAX ? selection.slice(0, SELECTION_TEXT_MAX) : selection
 }
 
 /** Entries the back/forward list shows at most. */

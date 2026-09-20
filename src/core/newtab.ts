@@ -24,7 +24,7 @@ import type {
   Tab,
   TopSite
 } from '../shared/types'
-import type { SafeBrowsingHit } from '../shared/privacy'
+import { privateThirdPartyCookieStatus, type SafeBrowsingHit } from '../shared/privacy'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import { NEW_TAB_URL, inputToUrl, isNewTabUrl } from '../shared/url'
 import { resolveTheme, themeCssVariables } from '../shared/theme'
@@ -87,6 +87,9 @@ export class ForwardingEvents implements TabViewEvents {
   onNavigated(url: string, inPage: boolean): void {
     this.target?.onNavigated(url, inPage)
   }
+  onWillNavigate(url: string): boolean {
+    return this.target?.onWillNavigate(url) ?? false
+  }
   onTitleUpdated(title: string): void {
     this.target?.onTitleUpdated(title)
   }
@@ -139,6 +142,9 @@ export class ForwardingEvents implements TabViewEvents {
   }
   onKey(input: KeyEventInput): boolean {
     return this.target?.onKey(input) ?? false
+  }
+  onFocused(): void {
+    this.target?.onFocused?.()
   }
   onTargetUrl(url: string): void {
     this.target?.onTargetUrl(url)
@@ -336,6 +342,7 @@ export class NewTabService {
   /**
    * The settings resolved for a page: the preset's sections (`newTabSections`, never `modules`
    * directly), the grid's mode – `hidden` while the shortcuts section is off – and what to paint.
+   * A private page also carries its "Block third-party cookies" switch's position and lock.
    */
   private build(theme: SpaceTheme | null, isPrivate: boolean): NewTabPageState {
     const settings = this.settings
@@ -347,7 +354,7 @@ export class NewTabService {
     // A private window's page has no tiles: neither what was browsed elsewhere nor the user's
     // own shortcuts – its explainer stands where the grid would (design language v2 §9.29).
     const shortcuts = !isPrivate && shortcutsMode !== 'hidden' ? this.shortcuts() : []
-    return {
+    const state: NewTabPageState = {
       light: this.variant(theme, false),
       dark: this.variant(theme, true),
       colorScheme: this.browser.state.settings.colorScheme,
@@ -361,6 +368,14 @@ export class NewTabService {
       backgroundImage,
       canPickImage: Boolean(host?.pick)
     }
+    // The same answer `ProtectionService.status()` gives the chrome (`PrivacyStatus`), read from
+    // the settings it is computed from: a settings commit re-pushes the page, so a global-mode
+    // change in Settings locks or unlocks the switch on a live private page at once.
+    if (isPrivate)
+      state.privateThirdPartyCookies = privateThirdPartyCookieStatus(
+        this.browser.state.settings.privacy
+      )
+    return state
   }
 
   private variant(theme: SpaceTheme | null, dark: boolean): NewTabThemeVariant {
@@ -487,6 +502,15 @@ export class NewTabService {
         // The one route for internal pages (`PageService`): the Settings tab at its New Tab
         // section on a page-tab host, opened by this tab; the overlay where pages are overlays.
         this.browser.pages.open('settings', 'newtab', win, tabId)
+        return
+      case 'set-private-third-party-cookies':
+        // Only a private page has the switch. On writes `block`, off writes `allow` – never
+        // `default`, so the choice survives a later change of the global mode. The same path as
+        // the `privacy.setThirdPartyCookiesPrivate` command: the sanitiser, the flags push to
+        // the hosts and the commit happen there, and the commit re-pushes this page's state. A
+        // write while `locked` is not refused: the engine stores it for when the lock lifts.
+        if (tab.containerId !== PRIVATE_CONTAINER_ID || typeof action.blocked !== 'boolean') return
+        this.browser.protection.setThirdPartyCookiesPrivate(action.blocked ? 'block' : 'allow', win)
         return
     }
   }

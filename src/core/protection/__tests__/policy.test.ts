@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { RequestContext } from '../../blocking/rules'
-import type { PrivacyFlags } from '../../../shared/privacy'
+import type {
+  PrivacyFlags,
+  ThirdPartyCookieMode,
+  ThirdPartyCookiePrivateMode
+} from '../../../shared/privacy'
 import { blocksThirdPartyCookies, plaintextAllowed, signalHeaders } from '../policy'
 
 const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
@@ -8,6 +12,7 @@ const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
   httpsOnly: 'ask',
   httpsOnlyAllowed: [],
   thirdPartyCookies: 'block-private',
+  thirdPartyCookiesPrivate: 'default',
   thirdPartyCookieExceptions: [],
   gpc: false,
   dnt: false,
@@ -72,6 +77,59 @@ describe('blocksThirdPartyCookies', () => {
         ctx('https://tracker.example/p.gif', { documentUrl: 'https://shop.example/' })
       )
     ).toBe(true)
+  })
+
+  // The same table as PrivacyFlagsTest.kt's: [global mode, private override, regular, private].
+  const table: Array<[ThirdPartyCookieMode, ThirdPartyCookiePrivateMode, boolean, boolean]> = [
+    ['allow', 'default', false, false],
+    ['allow', 'allow', false, false],
+    ['allow', 'block', false, true],
+    ['block-private', 'default', false, true],
+    ['block-private', 'allow', false, false],
+    ['block-private', 'block', false, true],
+    ['block', 'default', true, true],
+    ['block', 'allow', true, true],
+    ['block', 'block', true, true]
+  ]
+
+  it.each(table)(
+    'global %s with private %s: regular %s, private %s',
+    (thirdPartyCookies, thirdPartyCookiesPrivate, regular, isPrivate) => {
+      const f = flags({ thirdPartyCookies, thirdPartyCookiesPrivate })
+      const third = ctx('https://tracker.example/p.gif')
+      expect(blocksThirdPartyCookies(f, third)).toBe(regular)
+      expect(blocksThirdPartyCookies(f, { ...third, isPrivate: false })).toBe(regular)
+      expect(blocksThirdPartyCookies(f, { ...third, isPrivate: true })).toBe(isPrivate)
+    }
+  )
+
+  it('applies the private override only to third-party requests, and keeps the exceptions', () => {
+    const f = flags({
+      thirdPartyCookies: 'allow',
+      thirdPartyCookiesPrivate: 'block',
+      thirdPartyCookieExceptions: ['sso.example']
+    })
+    const isPrivate = { isPrivate: true }
+    expect(blocksThirdPartyCookies(f, ctx('https://tracker.example/p.gif', isPrivate))).toBe(true)
+    expect(blocksThirdPartyCookies(f, ctx('https://cdn.news.example/a.js', isPrivate))).toBe(false)
+    expect(
+      blocksThirdPartyCookies(f, ctx('https://news.example/', { type: 'main_frame', ...isPrivate }))
+    ).toBe(false)
+    expect(blocksThirdPartyCookies(f, ctx('https://login.sso.example/x', isPrivate))).toBe(false)
+    expect(
+      blocksThirdPartyCookies(
+        f,
+        ctx('https://tracker.example/p.gif', { documentUrl: 'https://sso.example/', ...isPrivate })
+      )
+    ).toBe(false)
+    // A private `allow` over `block-private` spares the same request the default would block.
+    const allowed = flags({ thirdPartyCookies: 'block-private', thirdPartyCookiesPrivate: 'allow' })
+    expect(blocksThirdPartyCookies(flags(), ctx('https://tracker.example/p.gif', isPrivate))).toBe(
+      true
+    )
+    expect(blocksThirdPartyCookies(allowed, ctx('https://tracker.example/p.gif', isPrivate))).toBe(
+      false
+    )
   })
 })
 
