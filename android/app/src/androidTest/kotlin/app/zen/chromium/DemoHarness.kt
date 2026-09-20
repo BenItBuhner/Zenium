@@ -780,18 +780,85 @@ abstract class DemoHarness(
         app.startActivity(intent)
     }
 
+    // --- the URL field ---------------------------------------------------------------------------
+
+    /** The URL field is open in the chrome (`uiStore.urlbar.open`), off the chrome's own store, never the tree. */
+    protected fun urlbarOpen(): Boolean =
+        chromeJs("((((window.__zenStores||{}).ui||{get:function(){return {}}}).get()||{}).urlbar||{}).open===true") == "true"
+
+    /** One reading of the field for [closeUrlField]: the store first, then the host's route for a back, then the keyboard. */
+    private fun readUrlField(): UrlFieldClose.Field =
+        UrlFieldClose.Field(open = urlbarOpen(), chromeHandlesBack = chromeSurfaceUp(), imeUp = imeShown())
+
+    /** The page the driver is on, for [closeUrlField]'s before-and-after: the core's active tab and the host's view for it. */
+    protected fun currentPage(): UrlFieldClose.Page {
+        val tab = activeCoreTab()
+        val tabId = tab?.optString("id")?.takeIf { it.isNotEmpty() }
+        var view: TabWebView? = null
+        if (tabId != null) instrumentation.runOnMainSync { view = (activity as? MainActivity)?.host?.tabs?.get(tabId) }
+        var index = -1
+        view?.let { v -> instrumentation.runOnMainSync { index = v.copyBackForwardList().currentIndex } }
+        return UrlFieldClose.Page(tabId, tab?.optString("url"), viewUp = view != null, historyIndex = index)
+    }
+
     /**
-     * Close the urlbar when it is open (the first run ends in it, with the keyboard up, hiding the
-     * page, the bar and the menu button). Back takes the keyboard first, then the field; the bar's
-     * address pill coming back is the sign it is gone.
+     * Close the URL field when it is open (the first run ends in it, with the keyboard up, hiding
+     * the page, the bar and the menu button), by the chrome's state: a back goes in only while the
+     * chrome's store says the field is open AND the host says it would hand that back to the
+     * chrome, one per such reading, each given [UrlFieldClose.BACK_WAIT_MS] to take (the keyboard
+     * goes first when it is up, then the field). Never a second back blind: the old close read
+     * the address pill off the accessibility tree, which trailed a frame on the fifth bar-hide
+     * run's retry (#200), and its second back went to the page's tab at its first page and put a
+     * new tab page in the demo tab's place. The page the driver was on is read before and after
+     * ([currentPage]); the [UrlFieldClose.Outcome] says whether the field closed and whether the
+     * page is still there, by name, for the driver's claim – a lost page fails a claim, it does
+     * not derail the run. The decisions are [UrlFieldClose]'s (HarnessLogic.kt), tested on the JVM.
      */
-    protected fun closeUrlbar() {
-        repeat(3) {
-            if (findByLabelPrefix(PILL_LABEL) != null) return
-            back()
-            SystemClock.sleep(1_200)
+    protected fun closeUrlField(): UrlFieldClose.Outcome {
+        var field = readUrlField()
+        if (!field.open) return UrlFieldClose.NOT_OPEN
+        val before = currentPage()
+        var backs = 0
+        var hostWaitedMs = 0L
+        var gaveUp: String? = null
+        loop@ while (true) {
+            when (val move = UrlFieldClose.nextMove(field, backs, hostWaitedMs)) {
+                UrlFieldClose.Move.Done -> break@loop
+                is UrlFieldClose.Move.GiveUp -> {
+                    gaveUp = move.reason
+                    break@loop
+                }
+                UrlFieldClose.Move.AwaitHost -> {
+                    SystemClock.sleep(150)
+                    hostWaitedMs += 150
+                    field = readUrlField()
+                }
+                is UrlFieldClose.Move.PressBack -> {
+                    val pressed = field
+                    back()
+                    backs++
+                    Log.i(tag, "closeUrlField: back $backs, for ${if (move.keyboard) "the keyboard" else "the field"}")
+                    val deadline = SystemClock.uptimeMillis() + UrlFieldClose.BACK_WAIT_MS
+                    do {
+                        SystemClock.sleep(150)
+                        field = readUrlField()
+                    } while (!UrlFieldClose.backTook(pressed, field) && SystemClock.uptimeMillis() < deadline)
+                    hostWaitedMs = 0
+                }
+            }
         }
-        if (findByLabelPrefix(PILL_LABEL) == null) Log.w(tag, "the urlbar stayed open")
+        val outcome = UrlFieldClose.outcome(before, currentPage(), field, backs, gaveUp)
+        if (outcome.ok) Log.i(tag, "closeUrlField: ${outcome.describe()}") else Log.e(tag, "closeUrlField: ${outcome.describe()}")
+        return outcome
+    }
+
+    /**
+     * The old name, for a driver branch in flight that still calls it; gone next release. Every
+     * driver in this tree calls [closeUrlField] and reads its outcome.
+     */
+    @Deprecated("Blind backs closed a tab under tree lag (#200): use closeUrlField(), which closes by the chrome's state and reports the page.", ReplaceWith("closeUrlField()"))
+    protected fun closeUrlbar() {
+        closeUrlField()
     }
 
     // --- the keyboard ----------------------------------------------------------------------------

@@ -286,7 +286,8 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         check("the sheet is up from the omnibox (phase ${phase()})", up)
         check("the keyboard is down under the sheet", awaitIme(false, 6_000))
         if (!up) {
-            closeUrlbar()
+            val close = closeUrlField()
+            check("the URL field closes and the page stays (${close.describe()})", close.ok)
             return
         }
         fake.ready()

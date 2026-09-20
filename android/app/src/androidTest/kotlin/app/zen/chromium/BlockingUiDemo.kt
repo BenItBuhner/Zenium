@@ -103,7 +103,8 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         SystemClock.sleep(800)
         ensureDemoTab()
         note("warm-up: the Settings chunk ${if (painted) "painted" else "did NOT paint"} off camera")
-        closeUrlbar()
+        val close = closeUrlField()
+        if (!close.ok) note("warm-up: ${close.describe()}")
         Log.i(tag, "warm-up done")
     }
 

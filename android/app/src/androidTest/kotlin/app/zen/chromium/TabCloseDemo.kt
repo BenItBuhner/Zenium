@@ -511,7 +511,10 @@ class TabCloseDemo : DemoHarness("overview-demo-state.json", "tab-close", "tabcl
      */
     private fun openOverview() {
         for (attempt in 0 until OPEN_ATTEMPTS) {
-            closeUrlbar()
+            // The Tabs button is on the bar, under the URL field when that is up: the shared close
+            // (by the chrome's state), with a page it moved named in the record.
+            val close = closeUrlField()
+            if (!close.ok) finding("  (attempt ${attempt + 1}: ${close.describe()})")
             val tabs = findNode { it.startsWith("Tabs (") }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
                 ?: domRect("[aria-label^=\"Tabs (\"]")
             if (tabs != null) {

@@ -383,7 +383,8 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         check("the sheet scans from the omnibox (phase ${phase()})", up)
         check("the keyboard is down under the sheet", awaitIme(false, 6_000))
         if (!up) {
-            closeUrlbar()
+            val close = closeUrlField()
+            check("the URL field closes and the page stays (${close.describe()})", close.ok)
             return
         }
         SystemClock.sleep(1_500)
@@ -409,7 +410,8 @@ class QrDemo : DemoHarness("qr-demo-state.json", "android-qr", "qr-demo") {
         val up = awaitPhase(setOf("scanning"), 10_000)
         check("the sheet scans (phase ${phase()})", up)
         if (!up) {
-            closeUrlbar()
+            val close = closeUrlField()
+            check("the URL field closes and the page stays (${close.describe()})", close.ok)
             return
         }
         SystemClock.sleep(1_500)

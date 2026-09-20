@@ -5,7 +5,10 @@
 # artifacts directory.
 #
 # Which demo runs is chosen through the environment (defaults are the URL-pill gesture demo):
-#   DEMO_CLASS  – instrumentation class to run
+#   DEMO_CLASS  – instrumentation class to run; a comma-separated list runs the classes in that
+#                 order on the one boot (`am instrument -e class a,b`), the demo driver last:
+#                 the classes ahead of it must leave its `record` handshake (below) within the
+#                 300 s allowed for it, and its `done` ends the recording
 #   DEMO_DIR    – handshake directory under the app's files/
 #   DEMO_OUT    – where the artifacts go
 #   DEMO_VIDEO  – file name of the recording
