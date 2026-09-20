@@ -1,4 +1,4 @@
-import type { SearchEngine, Suggestion } from '../shared/types'
+import { PRIVATE_CONTAINER_ID, type SearchEngine, type Suggestion } from '../shared/types'
 import {
   SEARCH_SCOPES,
   buildSearchUrl,
@@ -81,7 +81,7 @@ export class SuggestionService {
     const state = this.browser.state
     const engines = state.searchEngines
     const defaultEngine = engines.find((e) => e.id === state.settings.searchEngineId) ?? engines[0]
-    const isPrivate = win.isPrivate
+    const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
 
     if (!query) return isPrivate ? [] : await this.emptyState()
@@ -399,6 +399,20 @@ export class SuggestionService {
     return out
   }
 
+  /**
+   * Whether the omnibox is a private one: its window is private (a desktop private window), or
+   * the tab it serves is in the private container – a phone private tab, whose window is never
+   * private. Either way nothing typed leaves the device and nothing of the profile is shown:
+   * no engine suggest requests, no answers, no history or bookmark rows, no zero-suggest
+   * (Chrome's incognito omnibox sends no suggest requests). Tab rows stay, as in a private
+   * window.
+   */
+  private privateContext(currentTabId: string | null, win: ZenWindow): boolean {
+    if (win.isPrivate) return true
+    const tab = currentTabId ? this.browser.state.model.tabs[currentTabId] : undefined
+    return tab?.containerId === PRIVATE_CONTAINER_ID
+  }
+
   /** Open tabs this window can show (private tabs stay private), as "Switch to tab" rows. */
   private tabRows(
     query: string,
@@ -514,7 +528,7 @@ export class SuggestionService {
       rows.push(...this.tabRows(terms || '', currentTabId, win, MAX_ROWS))
       return finish(rows, query)
     }
-    if (win.isPrivate) return []
+    if (this.privateContext(currentTabId, win)) return []
     rows.push({
       id: 'scope',
       kind: 'search',

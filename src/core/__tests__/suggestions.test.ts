@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { HostCapabilities, Suggestion } from '../../shared/types'
+import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Suggestion } from '../../shared/types'
 import { BOOKMARKS_BAR_ID, OTHER_BOOKMARKS_ID } from '../../shared/bookmarks'
 import type { NetHost, StoreIO } from '../platform'
 import type { Browser } from '../browser'
@@ -575,5 +575,74 @@ describe('SuggestionService: rows and limits', () => {
     expect(rows.map((r) => r.targetId)).toEqual(['tab_real'])
     const scoped = await suggestions.suggest('@tabs new', null, win)
     expect(scoped.filter((r) => r.kind === 'tab').map((r) => r.targetId)).toEqual(['tab_real'])
+  })
+})
+
+/*
+ * The phone has no private window: a private tab lives in the private container inside a regular
+ * window, so the private decision is keyed on the tab the omnibox serves as well as on the
+ * window. Chrome's incognito omnibox sends no suggest requests and shows nothing of the profile.
+ */
+describe('SuggestionService: a private tab in a regular window', () => {
+  function withTabs(): ReturnType<typeof setup> & { privateTab: string; regularTab: string } {
+    const s = setup('synced', { online: true })
+    const { state, bookmarks, history, net } = s
+    const space = state.model.spaces[0]
+    for (const [id, containerId] of [
+      ['tab_private', PRIVATE_CONTAINER_ID],
+      ['tab_regular', space.containerId]
+    ]) {
+      const tab = createTabRecord({
+        id,
+        url: 'https://open.example/',
+        title: 'Open',
+        spaceId: space.id,
+        containerId
+      })
+      state.model.tabs[tab.id] = tab
+      space.tabIds.push(tab.id)
+    }
+    bookmarks.create({ title: 'Secret bookmark', url: 'https://marks.example/secret' })
+    history.visit('https://secret.example/2', 'Secret 2', null)
+    net.routes.push({ match: 'q=secret', body: ['secret', ['secret garden', 'secret santa']] })
+    return { ...s, privateTab: 'tab_private', regularTab: 'tab_regular' }
+  }
+
+  it('asks the engine nothing and shows no history, bookmarks or zero-suggest from a private tab', async () => {
+    const { suggestions, win, net, privateTab } = withTabs()
+    expect(win.isPrivate).toBe(false)
+
+    const rows = await suggestions.suggest('secret', privateTab, win)
+    expect(net.requests).toEqual([])
+    expect(rows.some((r) => r.kind === 'history' || r.kind === 'bookmark')).toBe(false)
+    expect(rows.some((r) => r.title === 'secret garden' || r.kind === 'entity')).toBe(false)
+    // The verbatim search stays: what is typed still goes to the engine on Enter.
+    expect(rows.some((r) => r.kind === 'search' && r.title === 'secret')).toBe(true)
+
+    expect(await suggestions.suggest('', privateTab, win)).toEqual([])
+    expect(await suggestions.suggest('@history secret', privateTab, win)).toEqual([])
+    expect(await suggestions.suggest('@bookmarks secret', privateTab, win)).toEqual([])
+    expect(net.requests).toEqual([])
+  })
+
+  it('still offers Switch to tab rows from a private tab, as a private window does', async () => {
+    const { suggestions, win, privateTab } = withTabs()
+    const rows = await suggestions.suggest('open', privateTab, win)
+    expect(rows.filter((r) => r.kind === 'tab').map((r) => r.targetId)).toEqual(['tab_regular'])
+  })
+
+  it('leaves a regular tab in the same window as it was: history, bookmarks, zero-suggest and the engine', async () => {
+    const { suggestions, win, net, regularTab } = withTabs()
+
+    const rows = await suggestions.suggest('secret', regularTab, win)
+    expect(rows.some((r) => r.kind === 'history')).toBe(true)
+    expect(rows.some((r) => r.kind === 'bookmark')).toBe(true)
+    expect(rows.some((r) => r.title === 'secret garden')).toBe(true)
+    expect(net.requests.some((u) => u.includes('q=secret'))).toBe(true)
+
+    const empty = await suggestions.suggest('', regularTab, win)
+    expect(empty.map((r) => r.kind)).toEqual(['history'])
+    // Nothing named, the window's own answer holds too.
+    expect((await suggestions.suggest('', null, win)).length).toBe(1)
   })
 })
