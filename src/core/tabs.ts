@@ -468,6 +468,8 @@ export class TabManager {
           this.browser.security.cancelForTab(tabId)
           this.browser.permissionPrompts.cancelForTab(tabId)
           this.browser.permissions.onTabNavigated(tabId, url)
+          // Whatever the PDF viewer reported was about the document before this one.
+          this.browser.pdf.onNavigated(tabId)
         }
         if (v) this.onNavigated(tabId, v, url, inPage)
       },
@@ -984,6 +986,7 @@ export class TabManager {
     this.browser.screenCapture.cancelForTab(tabId)
     this.browser.shares.cancelForTab(tabId)
     this.browser.geolocation.onTabGone(tabId)
+    this.browser.readAloud.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
     this.owners.delete(tabId)
     if (!view.isDestroyed()) {

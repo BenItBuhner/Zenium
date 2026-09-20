@@ -73,11 +73,14 @@ import {
   previewVoiceScript,
   type PreviewExtensionPage
 } from './preview'
+import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
+import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  type PreviewDownloadSpec,
   type PreviewMediaVariant,
   type PreviewPrivateSurface,
   type PreviewState,
@@ -89,8 +92,11 @@ import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 /** A pause between steps for a sheet to mount, slide in and settle before the next tap. */
 const STEP_SETTLE_MS = 450
 
-/** The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`, …). */
-const SHEET_SURFACE = /^settings-(options|field|confirm|form|item|detail):/
+/**
+ * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
+ * …) and the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …).
+ */
+const SHEET_SURFACE = /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -124,7 +130,10 @@ const QR_EVENT_MARGIN_MS = 250
  * `url=<page>`, and the overview's Tabs and Private panes; see `PREVIEW_PRIVATE_SURFACES`;
  * `private=new` and `private=<url>` still read),
  * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
- * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
+ * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `pdf=<variant>` (the
+ * active tab navigated to a sample PDF, which the viewer page shows with its bar under the
+ * pages; `find=<text>` opens the find bar over it, `then=` steps press the bar's controls; see
+ * `previewPdf.ts`), `find=<text>` (the find
  * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
  * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
  * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
@@ -206,10 +215,12 @@ function apply(browser: Browser, spec: string): void {
     // or picker of the previous state is gone with them – and before the group goes, since
     // they hang from the tab that was active in it. A private tab a previous state opened goes
     // too (its session ends, as when the user closes the last one): the next state starts on
-    // the regular tabs, and an "empty" pane is empty.
+    // the regular tabs, and an "empty" pane is empty. A tab a `pdf=` state turned to the viewer
+    // goes back to its page, unless the next state is another document for the same viewer.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
+      .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(() => closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest))))
   })
 }
@@ -269,6 +280,129 @@ async function openExtensionPage(id: string, path: string): Promise<void> {
       return tab !== null && tab.id === tabId && !tab.loading
     }, resolve)
   )
+}
+
+// ---------------------------------------------------------------------------
+// The PDF viewer
+// ---------------------------------------------------------------------------
+
+/** How long the viewer document gets to report before the state is reported reached anyway. */
+const PDF_REPORT_TIMEOUT_MS = 6000
+/** The page the tab a `pdf=<variant>` state turned to the viewer was on, put back before the next state. */
+let previewPdfReturn: { tabId: string; url: string } | null = null
+
+/**
+ * The active tab navigated to a PDF: the stand-in downloader (`previewDownloads.ts`) announces
+ * the response as the tab's own navigation and completes it at once – the bytes are the sample
+ * document's (`previewPdf.ts`), which the dev server answers the viewer page with – and the core
+ * turns the tab to the viewer (`core/pdf.ts`), whose bar is up under the pages. The state is
+ * reached once the document has reported past loading (its pages, its password prompt or its
+ * failure); the `slow` document is held back by the server, so its state is the bar loading.
+ * Then the find bar opens over the viewer, or the steps press the bar's controls.
+ */
+function reachPdf(
+  tab: Tab,
+  target: Extract<PreviewState, { kind: 'pdf' }>,
+  finish: () => void
+): void {
+  const state = browserStore.get().state
+  if (state && !isPdfViewerTab(state, tab.id) && previewPdfReturn?.tabId !== tab.id)
+    previewPdfReturn = { tabId: tab.id, url: tab.url }
+  clearPdfReport(tab.id)
+  const filename = PREVIEW_PDF_FILES[target.variant]
+  const download: PreviewDownloadSpec = {
+    filename,
+    url: `https://harbour.example/notices/${filename}`,
+    mimeType: 'application/pdf',
+    totalBytes: previewPdf(target.variant).length,
+    receivedBytes: 0,
+    bytesPerSecond: 2_400_000,
+    paused: false,
+    error: null,
+    deleted: false,
+    private: false,
+    sourceTabId: tab.id,
+    navigation: true
+  }
+  window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: download }))
+  // The viewer says nothing while it loads: the `slow` document's state is the bar up loading.
+  const reported = (): boolean => {
+    if (target.variant === 'slow') return true
+    const report = pdfViewerStore.get().reports[tab.id]
+    return report !== undefined && report.state !== 'loading'
+  }
+  const then = (): void => {
+    const query = target.find
+    if (query !== undefined) {
+      uiStore.set({ findOpen: true, findTabId: tab.id })
+      // The bar mounts on the next render; type into it the way a keyboard would, then wait for
+      // the viewer's tally: it grows as the pages are read, and the state is the count settled.
+      requestAnimationFrame(() => {
+        if (query) type('input[aria-label="Find in page"]', query)
+        const counted = (): boolean => {
+          const find = pdfViewerStore.get().reports[tab.id]?.find
+          return !query || (find?.query === query && !find.searching)
+        }
+        whenPdf(tab.id, counted, 'the viewer did not finish its search', () =>
+          afterFrames(2, () => steps(target.then ?? [], finish))
+        )
+      })
+      return
+    }
+    const list = target.then ?? []
+    if (list.length === 0) finish()
+    else setTimeout(() => steps(list, finish), STEP_SETTLE_MS)
+  }
+  // The tab turns to the viewer page once the transfer is done and the core has it (the bar
+  // mounts with it); the document reports from inside the page after that.
+  whenState(
+    (s) => isPdfViewerTab(s, tab.id),
+    () =>
+      whenPdf(tab.id, reported, 'the viewer document did not report', () => afterFrames(2, then))
+  )
+}
+
+/**
+ * `fn` once the viewer store satisfies `test` – now, or as the viewer's reports come – or after
+ * `PDF_REPORT_TIMEOUT_MS` anyway (with `why` in the console), so a document that never says
+ * cannot hold the captures up.
+ */
+function whenPdf(tabId: string, test: () => boolean, why: string, fn: () => void): void {
+  if (test()) {
+    fn()
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    fn()
+  }
+  const unsubscribe = pdfViewerStore.subscribe(() => {
+    if (test()) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn(`[zen preview] ${why} (tab ${tabId}); reporting the spec reached anyway`)
+    settle()
+  }, PDF_REPORT_TIMEOUT_MS)
+}
+
+/**
+ * The tab a previous `pdf=` state turned to the viewer goes back to the page it was on (the
+ * viewer's bar leaves with it), so the next state starts on a page. Bounded: waits for the
+ * address to turn, not for the page to load.
+ */
+async function leavePdf(): Promise<void> {
+  const made = previewPdfReturn
+  previewPdfReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId]) return
+  clearPdfReport(made.tabId)
+  if (!isPdfViewerTab(state, made.tabId)) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
@@ -551,6 +685,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'pdf' && tab) {
+    seed()
+    reachPdf(tab, target, () => done(spec))
   } else if (target.kind === 'reader' && tab && state) {
     // Reader View is a web page's: a Settings tab left active by a previous state is not the one
     // to read, so a site's tab in the space is made active first. The stand-in host cannot run
@@ -1285,7 +1422,11 @@ function failLoad(tabId: string, code: number, url: string): void {
 /** Type `text` into the first element matching `selector` the way a keyboard would. */
 function type(selector: string, text: string): void {
   const input = document.querySelector<HTMLInputElement>(selector)
-  if (!input || input.value === text) return
+  if (input) typeInto(input, text)
+}
+
+function typeInto(input: HTMLInputElement, text: string): void {
+  if (input.value === text) return
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, text)
   input.dispatchEvent(new Event('input', { bubbles: true }))

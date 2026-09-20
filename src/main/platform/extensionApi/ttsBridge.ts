@@ -118,3 +118,15 @@ export function electronSpeechEngine(): SpeechEngine {
     }
   }
 }
+
+let shared: SpeechEngine | null = null
+
+/**
+ * The one engine of the process: `chrome.tts` and read aloud (`platform/speech.ts`) speak
+ * through the same hidden page, so there is one `speechSynthesis`, one voice list and one
+ * event stream (the two tell their utterances apart by id).
+ */
+export function sharedSpeechEngine(): SpeechEngine {
+  shared ??= electronSpeechEngine()
+  return shared
+}

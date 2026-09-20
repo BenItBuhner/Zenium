@@ -116,7 +116,7 @@ export function applicationMenu(browser: Browser): Template {
       { type: 'separator' },
       { label: 'Email Page Link…', action: 'page.emailLink', enabled: web },
       { type: 'separator' },
-      { label: 'Print…', action: 'page.print', enabled: Boolean(active) }
+      { label: 'Print…', action: 'page.printPreview', enabled: Boolean(active) }
     ]
   }
 

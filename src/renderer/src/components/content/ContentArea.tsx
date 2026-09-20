@@ -9,6 +9,7 @@ import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
+import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { activeTab, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { barStateOf } from '@renderer/lib/translate'
@@ -22,6 +23,7 @@ import { Urlbar } from '../urlbar/Urlbar'
 import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
+import { PdfViewerBar } from '../pdf/PdfViewerBar'
 import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
@@ -116,6 +118,17 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The load bar is the phone's (and Android's at any width); the desktop program has not adopted
   // it yet, so Electron's wide layout renders the frame alone as it did.
   const loadBar = phone || state.platform === 'android'
+
+  // The inline PDF viewer's bar (CT-02) docks where the find bar and the zoom sheet do, one of
+  // the three at a time: the find bar over a viewer tab searches the document itself and takes
+  // the slot over while it is up; a page shown in another window has no controls here.
+  const pdfBar =
+    state.capabilities.pdfViewer &&
+    tab !== null &&
+    !foreign &&
+    !ui.findOpen &&
+    !ui.zoomTabId &&
+    isPdfViewerTab(state, tab.id)
 
   // Overlays are hosted beside the frame, not inside it: on phones the frame recedes (scales to
   // .97) under a sheet, and a sheet mounted within it would shrink with the page – its 44 px
@@ -224,6 +237,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
         {ui.zoomTabId && state.capabilities.pageControls && (
           <ZoomSheet state={state} tabId={ui.zoomTabId} />
         )}
+        {pdfBar && tab && <PdfViewerBar key={tab.id} state={state} tabId={tab.id} />}
         {/* The autofill picker of a host without a popup surface docks here, above the keyboard. */}
         <PickerStrip state={state} />
       </div>

@@ -172,7 +172,9 @@ export function androidCapabilities({
     selectionToolbar: true,
     // One document: the picker is drawn in the chrome, above the keyboard.
     popupSurface: false,
-    qrScan: false
+    qrScan: false,
+    // No speech host yet: the Android program adds `Platform.speech` over `TextToSpeech` (W3-7).
+    readAloud: false
   }
 }
 

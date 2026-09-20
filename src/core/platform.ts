@@ -70,6 +70,7 @@ import type {
   MediaSessionInfo
 } from '../shared/mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
+import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
@@ -175,6 +176,8 @@ export interface PageMessage {
     | 'share'
     /** The page's `navigator.geolocation` shim asks for, watches or drops a position (`shared/geolocation`). */
     | 'geolocation'
+    /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
+    | 'readAloud'
   url?: string
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
@@ -215,6 +218,8 @@ export interface PageMessage {
   share?: unknown
   /** `geolocation`: the shim's request (validated by the core). */
   geolocation?: unknown
+  /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
+  readAloud?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
@@ -249,7 +254,7 @@ export interface DisplayModeHostMessage {
  * Messages the browser posts into a page for its page scripts (`TabView.postToPage`): the
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
  * the notification polyfill's answers and events, a share call's outcome, a position, the
- * page's display mode.
+ * page's display mode, read aloud's extraction request and highlight.
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -258,6 +263,7 @@ export type PageHostMessage =
   | ShareHostMessage
   | GeolocationHostMessage
   | DisplayModeHostMessage
+  | ReadAloudHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -567,6 +573,9 @@ export interface WindowOpenTicket {
   adopt(view: TabView): { tab: Tab; events: TabViewEvents }
 }
 
+/** The cascade origin of a stylesheet a host injects into a page (`TabView.insertCSS`). */
+export type InsertedCssOrigin = 'user' | 'author'
+
 /**
  * One live web page. Mirrors the subset of Electron's `WebContentsView` + `WebContents` the core
  * uses; on Android every method is a call into the Kotlin host.
@@ -612,8 +621,14 @@ export interface TabView {
    * is gone; hosts without frames run it in the main frame.
    */
   executeJavaScript(code: string, frameId?: number): Promise<unknown>
-  /** Inject a stylesheet; resolves with a key for `removeInsertedCSS`. */
-  insertCSS(css: string): Promise<string>
+  /**
+   * Inject a stylesheet; resolves with a key for `removeInsertedCSS`. `origin` is the sheet's
+   * cascade origin on hosts that distinguish one (Electron; absent, `user`, under the page's own
+   * rules); `author` for rules Blink honours only from author sheets – `::highlight()` among
+   * them (a highlight rule in a user-origin sheet registers but never paints). Hosts that inject
+   * a `<style>` element (Android) are author-origin either way.
+   */
+  insertCSS(css: string, origin?: InsertedCssOrigin): Promise<string>
   removeInsertedCSS(key: string): Promise<void>
   sendPageFlags(flags: PageFlags): void
   /**
@@ -1837,6 +1852,52 @@ export interface MediaSessionHost {
   enterPictureInPicture?(session: MediaSessionInfo): Promise<boolean>
 }
 
+/** What the read-aloud core asks the speech host to say an utterance with. */
+export interface SpeechUtteranceOptions {
+  /** The voice's id (`ReadAloudVoice.id`), or null for the engine's default for `lang`. */
+  voiceId: string | null
+  /** BCP-47 tag of the utterance's text ('' when unknown). */
+  lang: string
+  /** 0.5–4 (`READ_ALOUD_RATES`). */
+  rate: number
+}
+
+/** What a speech host reports about an utterance it was given. */
+export interface SpeechHostEvent {
+  type: 'start' | 'word' | 'end' | 'error'
+  /** `word`: where the word starts in the utterance's text. */
+  charIndex?: number
+  /** `word`: how many characters the word spans (hosts that cannot tell leave it out). */
+  length?: number
+  /** `error`: the host's message. */
+  message?: string
+}
+
+/**
+ * The speech engine behind read aloud (`capabilities.readAloud`): the voices on the device, one
+ * utterance at a time – the core speaks a sentence per utterance – and the utterance's events
+ * back. Desktop: an adapter over the hidden `speechSynthesis` page (`main/platform/speech.ts`);
+ * Android: `TextToSpeech` (the Android program's host half). Hosts without one leave it out.
+ */
+export interface SpeechHost {
+  voices(): Promise<ReadAloudVoice[]>
+  onVoicesChanged(listener: () => void): void
+  /** Speak one utterance now (any utterance in progress is replaced); events name `utteranceId`. */
+  speak(utteranceId: string, text: string, options: SpeechUtteranceOptions): void
+  /** Optional: get the next utterance ready so it starts without a gap after the current one ends. */
+  prepare?(utteranceId: string, text: string, options: SpeechUtteranceOptions): void
+  stop(): void
+  /** Hosts without it: the core stops and resumes from the sentence's start. */
+  pause?(): void
+  resume?(): void
+  /**
+   * `word` events carry `charIndex` / `length` within the utterance's text; a host that cannot
+   * report words sends none (the core then highlights sentences only). The core needs no
+   * `sentence` events: one sentence per utterance.
+   */
+  onEvent(listener: (utteranceId: string, event: SpeechHostEvent) => void): void
+}
+
 /** One notification a page shows, as the host posts it under the site's channel. */
 export interface WebNotificationRequest {
   /** Browser-wide id (the tab's id and the page's own), what the host's events name. */
@@ -1983,6 +2044,8 @@ export interface Platform {
   readonly qrScan?: QrScanHost
   /** OS media controls fed by the core (Android); hosts whose engine feeds them itself leave it out. */
   readonly mediaSession?: MediaSessionHost
+  /** The speech engine behind read aloud (`capabilities.readAloud`); hosts without one leave it out. */
+  readonly speech?: SpeechHost
   /** Web Notifications for pages of a host whose engine lacks the API (Android). */
   readonly webNotifications?: WebNotificationHost
   /** The private session's presence outside the chrome (Android's notification); optional. */

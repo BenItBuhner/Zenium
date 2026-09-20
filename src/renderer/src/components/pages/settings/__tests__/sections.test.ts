@@ -94,7 +94,8 @@ const ANDROID: HostCapabilities = {
   shareSheet: false,
   selectionToolbar: true,
   popupSurface: false,
-  qrScan: false
+  qrScan: false,
+  readAloud: false
 }
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
