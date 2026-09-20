@@ -21,10 +21,6 @@ name: Android container rule demo
 # that PR and goes with its branch.
 on:
   workflow_dispatch:
-  # The one dispatch of the review scene, on the scratch branch alone; removed after the run.
-  push:
-    branches:
-      - cursor/pr232-phone-scene-ead3
 
 permissions:
   contents: read
