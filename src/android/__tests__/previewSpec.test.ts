@@ -255,6 +255,47 @@ describe('parsePreviewSpec', () => {
     expect(parsePreviewSpec('autofill=bogus')).toEqual({ kind: 'idle' })
   })
 
+  it('navigates the active tab to a sample PDF, the find bar and the steps taken along', () => {
+    expect(parsePreviewSpec('pdf=sample')).toEqual({ kind: 'pdf', variant: 'sample' })
+    for (const variant of ['sample', 'locked', 'broken', 'slow'] as const) {
+      expect(parsePreviewSpec(`pdf=${variant}`)).toEqual({ kind: 'pdf', variant })
+    }
+    // `pdf` takes `find=` along as the bar over the viewer (empty opens it blank)...
+    expect(parsePreviewSpec('pdf=sample&find=tide')).toEqual({
+      kind: 'pdf',
+      variant: 'sample',
+      find: 'tide'
+    })
+    expect(parsePreviewSpec('pdf=sample&find=')).toEqual({
+      kind: 'pdf',
+      variant: 'sample',
+      find: ''
+    })
+    // ...and steps: the bar's controls, a sheet's rows, a password typed.
+    expect(parsePreviewSpec('pdf=locked&then=tap:Unlock;type:zenium;tap:Unlock')).toEqual({
+      kind: 'pdf',
+      variant: 'locked',
+      then: [
+        { kind: 'tap', text: 'Unlock' },
+        { kind: 'type', text: 'zenium' },
+        { kind: 'tap', text: 'Unlock' }
+      ]
+    })
+    // Behind autofill, ahead of a plain find.
+    expect(parsePreviewSpec('autofill=save-login&pdf=sample')).toEqual({
+      kind: 'autofill',
+      surface: 'save-login'
+    })
+    expect(parsePreviewSpec('pdf=bogus&find=x')).toEqual({ kind: 'find', text: 'x' })
+  })
+
+  it('types into the focused field as a step', () => {
+    expect(parsePreviewSteps('type:hello there;type: ;tap:Go')).toEqual([
+      { kind: 'type', text: 'hello there' },
+      { kind: 'tap', text: 'Go' }
+    ])
+  })
+
   it('asks for a sheet on its expanded detent', () => {
     expect(parsePreviewSpec('overlay=downloads&expand')).toEqual({
       kind: 'overlay',

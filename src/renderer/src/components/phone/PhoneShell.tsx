@@ -16,6 +16,7 @@ import {
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { barFade } from '@renderer/lib/motion/recede'
+import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { barStateOf, isTranslating, translateStateOf } from '@renderer/lib/translate'
@@ -422,8 +423,14 @@ export function PillContent({
   })
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const shown = (underFinger && state.tabs[underFinger]) || tab
-  // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the pill.
-  const url = shown ? displayHost(shown.url) : ''
+  // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the
+  // pill. The PDF viewer page reads as its document (the file's name, then the title the
+  // document names), the way Chrome's tab does; there is no site to show.
+  const url = shown
+    ? isPdfViewerTab(state, shown.id) && shown.title
+      ? shown.title
+      : displayHost(shown.url)
+    : ''
   // No lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to): the connection is not secure, as site information says.
   const secure = shown?.url.startsWith('https://') && !shown.certificateError

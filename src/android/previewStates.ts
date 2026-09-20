@@ -55,11 +55,14 @@ import {
   previewQrScript,
   previewVoiceScript
 } from './preview'
+import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { clearAutofill, stageAutofill } from './previewAutofill'
 import { PREVIEW_DOWNLOAD_EVENT } from './previewDownloads'
+import { PREVIEW_PDF_FILES, previewPdf } from './previewPdf'
 import {
   parsePreviewSeed,
   parsePreviewSpec,
+  type PreviewDownloadSpec,
   type PreviewState,
   type PreviewStep,
   type PreviewWebAppSurface
@@ -95,7 +98,10 @@ const QR_EVENT_MARGIN_MS = 250
  * into view), `prompt=<permission>` (the active page asks for that permission: the prompt sheet
  * is up), `private=new` or `private=<url>` (a private tab, blank or on that page),
  * `autofill=<surface>` (a save prompt, the passkey chooser, a picker strip or the vault
- * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `find=<text>` (the find
+ * passphrase dialog staged with sample data; see `PREVIEW_AUTOFILL`), `pdf=<variant>` (the
+ * active tab navigated to a sample PDF, which the viewer page shows with its bar under the
+ * pages; `find=<text>` opens the find bar over it, `then=` steps press the bar's controls; see
+ * `previewPdf.ts`), `find=<text>` (the find
  * bar with that text typed), `pull=<n>` (the page held pulled down at n percent of the
  * refresh threshold; `pull=refresh` lets go past it), `zoom=<factor>` (the page zoom sheet at
  * that factor), `error=<code>` (the active tab's load failed with that Chromium `net::` code,
@@ -162,11 +168,114 @@ function apply(browser: Browser, spec: string): void {
     if (seed.rules !== null) seedRules(browser, seed.rules)
     // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
     // or picker of the previous state is gone with them – and before the group goes, since
-    // they hang from the tab that was active in it.
+    // they hang from the tab that was active in it. A tab a `pdf=` state turned to the viewer
+    // goes back to its page, unless the next state is another document for the same viewer.
     void clearAutofill(browser)
       .then(dissolveGroup)
+      .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
       .then(() => closeSheets(() => reach(browser, spec, securityAtRest)))
   })
+}
+
+// ---------------------------------------------------------------------------
+// The PDF viewer
+// ---------------------------------------------------------------------------
+
+/** How long the viewer document gets to report before the state is reported reached anyway. */
+const PDF_REPORT_TIMEOUT_MS = 8000
+/** The page the tab a `pdf=<variant>` state turned to the viewer was on, put back before the next state. */
+let previewPdfReturn: { tabId: string; url: string } | null = null
+
+/**
+ * The active tab navigated to a PDF: the stand-in downloader (`previewDownloads.ts`) announces
+ * the response as the tab's own navigation and completes it at once – the bytes are the sample
+ * document's (`previewPdf.ts`), which the dev server answers the viewer page with – and the core
+ * turns the tab to the viewer (`core/pdf.ts`), whose bar is up under the pages. The state is
+ * reached once the document has reported past loading (its pages, its password prompt or its
+ * failure); the `slow` document is held back by the server, so its state is the bar loading.
+ * Then the find bar opens over the viewer, or the steps press the bar's controls.
+ */
+function reachPdf(
+  tab: Tab,
+  target: Extract<PreviewState, { kind: 'pdf' }>,
+  finish: () => void
+): void {
+  const state = browserStore.get().state
+  if (state && !isPdfViewerTab(state, tab.id) && previewPdfReturn?.tabId !== tab.id)
+    previewPdfReturn = { tabId: tab.id, url: tab.url }
+  clearPdfReport(tab.id)
+  const filename = PREVIEW_PDF_FILES[target.variant]
+  const download: PreviewDownloadSpec = {
+    filename,
+    url: `https://harbour.example/notices/${filename}`,
+    mimeType: 'application/pdf',
+    totalBytes: previewPdf(target.variant).length,
+    receivedBytes: 0,
+    bytesPerSecond: 2_400_000,
+    paused: false,
+    error: null,
+    deleted: false,
+    private: false,
+    sourceTabId: tab.id,
+    navigation: true
+  }
+  window.dispatchEvent(new CustomEvent(PREVIEW_DOWNLOAD_EVENT, { detail: download }))
+  const reported = (): boolean => {
+    const report = pdfViewerStore.get().reports[tab.id]
+    if (!report) return false
+    return target.variant === 'slow' || report.state !== 'loading'
+  }
+  const then = (): void => {
+    if (target.find !== undefined) {
+      uiStore.set({ findOpen: true, findTabId: tab.id })
+      // The bar mounts on the next render; type into it the way a keyboard would.
+      requestAnimationFrame(() => {
+        if (target.find) type('input[aria-label="Find in page"]', target.find)
+        steps(target.then ?? [], finish)
+      })
+      return
+    }
+    const list = target.then ?? []
+    if (list.length === 0) finish()
+    else setTimeout(() => steps(list, finish), STEP_SETTLE_MS)
+  }
+  if (reported()) {
+    afterFrames(2, then)
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    afterFrames(2, then)
+  }
+  const unsubscribe = pdfViewerStore.subscribe(() => {
+    if (reported()) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn(
+      '[zen preview] the viewer document did not report; reporting the spec reached anyway'
+    )
+    settle()
+  }, PDF_REPORT_TIMEOUT_MS)
+}
+
+/**
+ * The tab a previous `pdf=` state turned to the viewer goes back to the page it was on (the
+ * viewer's bar leaves with it), so the next state starts on a page. Bounded: waits for the
+ * address to turn, not for the page to load.
+ */
+async function leavePdf(): Promise<void> {
+  const made = previewPdfReturn
+  previewPdfReturn = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state || !state.tabs[made.tabId]) return
+  clearPdfReport(made.tabId)
+  if (!isPdfViewerTab(state, made.tabId)) return
+  await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
+  await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
@@ -372,6 +481,9 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (target.factor !== null) run('tab.setZoomFactor', { tabId: tab.id, factor: target.factor })
     openZoom(tab.id)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'pdf' && tab) {
+    seed()
+    reachPdf(tab, target, () => done(spec))
   } else if (target.kind === 'find' && tab) {
     uiStore.set({ findOpen: true, findTabId: tab.id })
     // The bar mounts on the next render; type into it the way a keyboard would.
@@ -920,10 +1032,26 @@ function failLoad(tabId: string, code: number, url: string): void {
 /** Type `text` into the first element matching `selector` the way a keyboard would. */
 function type(selector: string, text: string): void {
   const input = document.querySelector<HTMLInputElement>(selector)
-  if (!input || input.value === text) return
+  if (input) typeInto(input, text)
+}
+
+function typeInto(input: HTMLInputElement, text: string): void {
+  if (input.value === text) return
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, text)
   input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
+ * The field a `type:` step writes into: the one with focus (a sheet's field takes it as the sheet
+ * rises), else the first field of the sheet or dialog on top.
+ */
+function typingTarget(): HTMLInputElement | null {
+  const active = document.activeElement
+  if (active instanceof HTMLInputElement) return active
+  const sheets = document.querySelectorAll<HTMLElement>('.zen-sheet, [role="dialog"]')
+  const top = sheets[sheets.length - 1]
+  return top?.querySelector<HTMLInputElement>('input') ?? null
 }
 
 /** Take `list` in order, a settle between steps, then `then`. */
@@ -943,6 +1071,11 @@ function takeStep(step: PreviewStep): void {
     case 'tap':
       tap(step.text)
       return
+    case 'type': {
+      const input = typingTarget()
+      if (input) typeInto(input, step.text)
+      return
+    }
     case 'back':
       // One system back, committed: the top sheet, or the section over the landing, goes.
       dispatchBackEvent('start', { edge: 'left' })

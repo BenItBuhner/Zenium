@@ -4,7 +4,10 @@ import type { BootInfo } from './platform'
 import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
+import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
+import { pdfReportOf } from '@shared/pdfViewerProtocol'
 import { createPreviewDownloads } from './previewDownloads'
+import { previewPdfVariantOf } from './previewPdf'
 import { CHUNK_CHARS } from './storeIo'
 
 interface HostGlobal {
@@ -19,6 +22,10 @@ const STORAGE_PREFIX = 'zen-preview:'
 const RELOAD_DELAY_MS = 3000
 /** Where the dev server keeps the documents `view.loadHtml` shows (see `vite.android.config.ts`). */
 const PAGE_ROUTE = '/__zen/page/'
+/** Where the dev server serves the PDF viewer's files and its sample documents (`vite.android.config.ts`). */
+const PDF_ROUTE = '/__zen/pdf/'
+/** The viewer document's script, as the dev server serves it (a module under the Vite root, `src/android`). */
+const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
 /** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
 const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 /** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
@@ -168,6 +175,42 @@ export function createPreviewBridge(): NativeBridge {
     if (!stored.ok || frame.dataset.load !== id) return
     frame.src = PAGE_ROUTE + id
   }
+
+  /**
+   * The PDF viewer page (`zen://pdf`, `shared/pdfPage.ts`) as this host can show it: Kotlin loads
+   * the shell on the viewer's origin and answers its requests itself; here the shell's URLs are
+   * pointed at the dev server instead – the viewer's script as the module Vite serves, pdf.js's
+   * worker and data from the package, and the sample document behind the download's file name
+   * (`previewPdf.ts`) – and a relay is written into it that hands the viewer's reports (posted on
+   * its own window, which the page script would relay on a device) up to this host, which
+   * forwards them as the `pdf` page message the core listens for.
+   */
+  const pdfDocumentHtml = (html: string, path: string): string => {
+    const origin = location.origin
+    const variant = previewPdfVariantOf(path) ?? 'sample'
+    const relay = `<script>window.addEventListener('message',function(e){if(e.source===window&&e.data&&typeof e.data==='object'&&'zeniumPdf' in e.data)parent.postMessage(e.data,${JSON.stringify(origin)})})</script>`
+    return html
+      .split(pdfViewerAssetUrl(PDF_VIEWER_ASSETS.script))
+      .join(PDF_VIEWER_SCRIPT)
+      .split(pdfViewerAssetUrl(PDF_VIEWER_ASSETS.worker))
+      .join(`${origin}${PDF_ROUTE}viewer/${PDF_VIEWER_ASSETS.worker}`)
+      .split(pdfViewerDocumentUrl())
+      .join(`${origin}${PDF_ROUTE}document/${variant}`)
+      .replace('</head>', `${relay}</head>`)
+  }
+
+  // A viewer document's report, relayed by the script above: the tab is the frame it came from.
+  window.addEventListener('message', (e: MessageEvent<unknown>) => {
+    if (e.origin !== location.origin) return
+    const report = pdfReportOf(e.data)
+    if (!report) return
+    for (const [tabId, frame] of views) {
+      if (frame.contentWindow === e.source) {
+        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report })
+        return
+      }
+    }
+  })
 
   const params = new URLSearchParams(location.search)
   // `?sdk=32` stands in for an older release (below 33 the chrome confirms copies itself).
@@ -390,12 +433,17 @@ export function createPreviewBridge(): NativeBridge {
       const url = frame.dataset.url
       if (url) window.setTimeout(() => (frame.src = url), RELOAD_DELAY_MS)
     },
-    'view.loadHtml': ({ tabId, url, html }) => {
+    'view.loadHtml': ({ tabId, url, html, document }) => {
       const frame = views.get(String(tabId))
       if (!frame) return
       frame.dataset.url = String(url)
       cardTakenAt.delete(String(tabId))
-      void showDocument(frame, String(html))
+      // A PDF viewer page names the download's file (`views.ts` sends the document along for
+      // Kotlin to serve); here that picks the sample document the dev server answers with.
+      const pdf = document as { path?: unknown } | undefined
+      const shown =
+        pdf && typeof pdf.path === 'string' ? pdfDocumentHtml(String(html), pdf.path) : String(html)
+      void showDocument(frame, shown)
       viewEvent(String(tabId), 'navigated', { ...navState(frame), inPage: false })
     },
     'view.setBounds': ({ tabId, rect }) => {
@@ -499,8 +547,20 @@ export function createPreviewBridge(): NativeBridge {
           localStorage.removeItem(key)
       }
     },
-    'view.eval': () => {
-      throw new Error('not available in the preview host')
+    // A document this host served itself (a zen:// page, the PDF viewer) is same-origin and runs
+    // the code the way the WebView would; a live site's frame cannot be reached.
+    'view.eval': ({ tabId, code }) => {
+      const frame = views.get(String(tabId))
+      let target: (Window & { eval(code: string): unknown }) | null = null
+      try {
+        const win = frame?.contentWindow ?? null
+        // Reading the document of a cross-origin frame throws; a same-origin one answers.
+        if (win && win.document) target = win as Window & { eval(code: string): unknown }
+      } catch {
+        target = null
+      }
+      if (!target) throw new Error('not available in the preview host')
+      return target.eval(String(code))
     },
     // Page controls act inside the page WebViews; a cross-origin iframe offers no way in.
     'view.setZoom': () => undefined,

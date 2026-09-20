@@ -1,5 +1,6 @@
 import type { OverlayKind } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
+import { isPreviewPdfVariant, type PreviewPdfVariant } from './previewPdf'
 
 /**
  * The overlays a preview state may open by name. Settings (with the Shortcuts and Sync overlays,
@@ -24,11 +25,16 @@ export const PREVIEW_PULL_MAX = 2.5
 /**
  * A step taken on a page once it is open, in order: `tap` presses the first button whose label
  * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
- * asks first), `back` is one system back (the top sheet closes, a section pops), `overview` opens
- * the tab overview over the page, `urlbar` opens the pill for editing.
+ * asks first), `type` types into the field that has focus (else the first field of the sheet on
+ * top), `back` is one system back (the top sheet closes, a section pops), `overview` opens the
+ * tab overview over the page, `urlbar` opens the pill for editing.
  */
 export type PreviewStep =
-  { kind: 'tap'; text: string } | { kind: 'back' } | { kind: 'overview' } | { kind: 'urlbar' }
+  | { kind: 'tap'; text: string }
+  | { kind: 'type'; text: string }
+  | { kind: 'back' }
+  | { kind: 'overview' }
+  | { kind: 'urlbar' }
 
 /**
  * The "Add to Home screen" surfaces a preview state may raise on the active tab: the install
@@ -56,6 +62,10 @@ export interface PreviewDownloadSpec {
   deleted: boolean
   /** The file comes from the private container. */
   private: boolean
+  /** The tab whose own navigation produced the response (a PDF the viewer opens), if one did. */
+  sourceTabId?: string | null
+  /** The response came from the tab's navigation rather than a "Download link" (`core/pdf.ts`). */
+  navigation?: boolean
 }
 
 /** The most blocked pop-ups a preview seeds on the page (the list scrolls past a handful). */
@@ -145,6 +155,19 @@ export type PreviewState =
       kind: 'private'
       /** The page the private tab opens on; null for a blank one. */
       url: string | null
+    }
+  | {
+      /**
+       * The active tab navigated to a PDF (`pdf=<variant>`, one of `PREVIEW_PDF_VARIANTS`): the
+       * stand-in downloader completes the file and the core opens it in the viewer page, whose
+       * bar is up under the pages.
+       */
+      kind: 'pdf'
+      variant: PreviewPdfVariant
+      /** The find bar opened over the viewer with this typed (`find=`; empty opens it blank). */
+      find?: string
+      /** Steps taken once the document has reported (the bar's controls, its sheets' rows). */
+      then?: PreviewStep[]
     }
   | { kind: 'find'; text: string }
   | {
@@ -264,7 +287,10 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * prompt sheet), `private=new` for a blank private tab (`private=<url>` opens one on that page),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
- * `page`), `find=<text>` for the find bar with that text typed (`find=` opens it empty),
+ * `page`), `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
+ * (`sample`, `locked`, `broken`, `slow`; see `previewPdf.ts`; with `find=<text>` for the find
+ * bar over it and `then=<steps>` for the bar's controls: `tap:Contents`, `tap:Unlock;type:zenium`),
+ * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
  * `pull=<n>` for the active page held pulled down at n percent of the refresh threshold
  * (`pull=refresh` pulls past it and lets go), `zoom=<factor>` for the page zoom sheet with the
  * active tab's site at that factor (`zoom=` opens it as it is), `error=<code>` for the active
@@ -283,7 +309,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * the active page (the grid of cards, with whatever pictures the stand-in host has of the tabs).
  * When several are given, `page` wins over `group`, `group` over `overlay`, `overlay` over
  * `menu`, `menu` over the permission `prompt`, that over `private`, `private` over `autofill`,
- * `autofill` over `find`, `find` over `pull`, `pull` over `zoom`, `zoom` over `error`, `error`
+ * `autofill` over `pdf`, `pdf` over `find` (which it takes along), `find` over `pull`, `pull`
+ * over `zoom`, `zoom` over `error`, `error`
  * over the messages, the messages over `webapp`, `webapp` over `download`, `download` over
  * `popups`, `popups` over the security `prompt`, and that over `overview`. A leading `#` (the
  * URL hash as read) is ignored.
@@ -350,7 +377,15 @@ export function parsePreviewSpec(spec: string): PreviewState {
     if (then.length > 0) state.then = then
     return state
   }
+  const pdf = params.get('pdf')
   const find = params.get('find')
+  if (pdf !== null && isPreviewPdfVariant(pdf)) {
+    const state: Extract<PreviewState, { kind: 'pdf' }> = { kind: 'pdf', variant: pdf }
+    if (find !== null) state.find = find
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   if (find !== null) return { kind: 'find', text: find }
   const pull = params.get('pull')
   if (pull === 'refresh') return { kind: 'pull', progress: PREVIEW_PULL_MAX, released: true }
@@ -415,7 +450,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
   return { kind: 'idle' }
 }
 
-/** The `then=` list: `tap:<text>;back;overview;urlbar`; blanks and unknown steps are dropped. */
+/**
+ * The `then=` list: `tap:<text>;type:<text>;back;overview;urlbar`; blanks and unknown steps are
+ * dropped.
+ */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
   const steps: PreviewStep[] = []
@@ -424,6 +462,9 @@ export function parsePreviewSteps(list: string | null): PreviewStep[] {
     if (step.startsWith('tap:')) {
       const text = step.slice('tap:'.length).trim()
       if (text) steps.push({ kind: 'tap', text })
+    } else if (step.startsWith('type:')) {
+      const text = step.slice('type:'.length).trim()
+      if (text) steps.push({ kind: 'type', text })
     } else if (step === 'back' || step === 'overview' || step === 'urlbar') {
       steps.push({ kind: step })
     }
