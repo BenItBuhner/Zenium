@@ -44,7 +44,7 @@
 #                 same): a profiling driver measures frames, and the encoder would be a load of
 #                 its own on the emulator's cores; anything else records as before
 #   DEMO_PERFETTO_CONFIG – a Perfetto trace config (text proto) to push to the device as
-#                 /data/local/tmp/zen-perfetto.pbtx before the driver, which starts a detached
+#                 /data/misc/perfetto-configs/zen-perfetto.pbtx before the driver, which starts a detached
 #                 session from it (PerfCapture.kt); the traces it leaves under
 #                 /data/misc/perfetto-traces/zen-*.pftrace are pulled into the artifact
 #
@@ -224,10 +224,12 @@ for permission in ${DEMO_REVOKE:-}; do
   adb shell pm revoke "$app_id" "$permission"
 done
 
-# A profiling driver's system trace: the config goes where shell can read it, the traced daemon
-# is made sure of, and a session an earlier driver on this boot left detached is stopped.
+# A profiling driver's system trace: the config goes into /data/misc/perfetto-configs, the one
+# directory shell writes that the perfetto domain may read (SELinux denies it /data/local/tmp:
+# the baseline run's `Could not open ... Permission denied`), the traced daemon is made sure of,
+# and a session an earlier driver on this boot left detached is stopped.
 if [ -n "${DEMO_PERFETTO_CONFIG:-}" ]; then
-  adb push "$DEMO_PERFETTO_CONFIG" /data/local/tmp/zen-perfetto.pbtx
+  adb push "$DEMO_PERFETTO_CONFIG" /data/misc/perfetto-configs/zen-perfetto.pbtx
   adb shell setprop persist.traced.enable 1 || true
   adb shell perfetto --attach=zenperf --stop > /dev/null 2>&1 || true
   adb shell rm -f "/data/misc/perfetto-traces/zen-*.pftrace" > /dev/null 2>&1 || true

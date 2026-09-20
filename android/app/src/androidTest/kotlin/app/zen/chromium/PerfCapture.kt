@@ -39,10 +39,13 @@ import java.util.zip.GZIPOutputStream
  *    (`CLOCK_BOOTTIME`, [nowBoot]) and marked as an async slice under the app's atrace tag
  *    ([sceneBegin], [sceneEnd]) so the analysis cuts the trace per scene;
  *  - the WebViews' own Chromium trace through `android.webkit.TracingController` ([blinkStart],
- *    [blinkStop]): every WebView of the process – the chrome and the page – records `blink`, `cc`,
- *    `v8`, `renderer.scheduler`, `input` and the DevTools timeline categories, so the chrome
- *    renderer's main thread shows its style recalculation, layout, paint and script per frame.
- *    The JSON is written gzipped; its `ts` are `CLOCK_MONOTONIC` microseconds ([nowMono]).
+ *    [blinkStop]): every WebView of the process – the chrome and the page, which share the one
+ *    renderer process WebView runs per app, and so one main thread – records `blink`, `cc`,
+ *    `v8`, `renderer.scheduler`, `input` and the DevTools timeline categories, so that main
+ *    thread shows its style recalculation, layout, paint and script per frame, with
+ *    `blink.user_timing` marks the drivers plant telling the chrome's tasks from the page's
+ *    ([BLINK_CATEGORIES]). The JSON is written gzipped; its `ts` are `CLOCK_MONOTONIC`
+ *    microseconds ([nowMono]).
  *
  * [ViewCounters] counts, in process and for free, what the hypotheses are about: layout passes of
  * the window, draws, and changes of the page WebView's bounds.
@@ -77,15 +80,17 @@ class PerfCapture(private val ui: UiAutomation, val packageName: String, private
     /**
      * Start a detached Perfetto session named `key` writing to `output` (the config has
      * `write_into_file`, so the service owns the file and no client process has to live on).
-     * False when the session did not start (the output says why).
+     * False when the session did not start: `perfetto` reports its errors on stderr, which the
+     * shell here does not return, so the start is read off the trace file the service opens.
      */
     fun perfettoStart(key: String, output: String): Boolean {
         shell("setprop persist.traced.enable 1")
         val out = shell("perfetto -c $PERFETTO_CONFIG --txt -o $output --detach=$key")
         SystemClock.sleep(1_500)
-        val running = shell("perfetto --is_detached=$key")
-        Log.i(tag, "perfetto start: ${out.trim()} | detached: ${running.trim()}")
-        return !out.contains("error", ignoreCase = true) && !out.contains("failed", ignoreCase = true)
+        val listing = shell("ls -l $output")
+        val started = listing.contains(output) && !listing.contains("No such file")
+        Log.i(tag, "perfetto start: ${out.trim()} | trace file: ${listing.trim()}")
+        return started
     }
 
     /** Stop the detached session `key`; the service flushes the rest of the trace into the file. */
@@ -180,8 +185,12 @@ class PerfCapture(private val ui: UiAutomation, val packageName: String, private
     }
 
     companion object {
-        /** Where the workflow script leaves the trace config (`adb push`; shell can read it, the app cannot write there). */
-        const val PERFETTO_CONFIG = "/data/local/tmp/zen-perfetto.pbtx"
+        /**
+         * Where the workflow script leaves the trace config (`adb push`): the directory made for
+         * it, which shell writes and the perfetto domain reads (SELinux denies perfetto
+         * `/data/local/tmp`).
+         */
+        const val PERFETTO_CONFIG = "/data/misc/perfetto-configs/zen-perfetto.pbtx"
         /** The one directory the traced service and shell both write in; the script pulls `zen-*.pftrace` from it. */
         const val PERFETTO_DIR = "/data/misc/perfetto-traces"
         /** The prefix of the scene markers in the system trace. */
@@ -190,10 +199,17 @@ class PerfCapture(private val ui: UiAutomation, val packageName: String, private
          * The chrome's own trace categories: the renderer's high-level stages (`blink`: style,
          * layout, paint; `cc`: the compositor's frames; `v8`: script and GC; `renderer.scheduler`:
          * its tasks; `input`) plus the DevTools timeline, which names each frame's
-         * `UpdateLayoutTree` / `Layout` / `Paint` / `FunctionCall` the way the Performance panel does.
+         * `UpdateLayoutTree` / `Layout` / `Paint` / `FunctionCall` the way the Performance panel does,
+         * and `blink.user_timing`, whose events are `performance.mark()` calls named by their
+         * label. WebView's controller strips every event's arguments (its privacy filter), so the
+         * chrome and the page cannot be told apart by frame or URL – and they share ONE renderer
+         * process and ONE main thread (WebView runs a single renderer per app) – but a mark's name
+         * survives: the drivers plant marks in the chrome and in the page, and the analysis reads
+         * a task's owner off the marks inside it.
          */
         val BLINK_CATEGORIES = listOf(
             "blink",
+            "blink.user_timing",
             "cc",
             "v8",
             "renderer.scheduler",

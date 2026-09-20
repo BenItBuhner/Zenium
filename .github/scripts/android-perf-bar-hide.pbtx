@@ -1,6 +1,7 @@
 # Perfetto trace config for the Android performance drivers (PerfCapture.kt starts it as a
-# detached session; android-gesture-demo.sh pushes it to /data/local/tmp/zen-perfetto.pbtx when
-# DEMO_PERFETTO_CONFIG names it, and pulls the trace afterwards).
+# detached session; android-gesture-demo.sh pushes it to /data/misc/perfetto-configs/zen-perfetto.pbtx
+# when DEMO_PERFETTO_CONFIG names it – the directory the perfetto domain may read – and pulls
+# the trace afterwards).
 #
 # What is in the trace: the scheduler (which thread ran when, and who woke whom), the atrace
 # categories the method asks for – gfx, view (Choreographer#doFrame, traversal, measure, layout,

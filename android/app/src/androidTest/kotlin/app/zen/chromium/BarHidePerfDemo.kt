@@ -217,7 +217,8 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
                 "50/90/95/99th ${summary.optInt("p50")}/${summary.optInt("p90")}/${summary.optInt("p95")}/${summary.optInt("p99")} ms; " +
                 "window ${(endBoot - startBoot) / 1_000_000} ms; ui layouts ${views["layouts"]}, draws ${views["draws"]}, page bounds changes ${views["pageBounds"]}; " +
                 "chrome barScroll ${chrome.optInt("barScroll")}, root style writes ${chrome.optInt("styleWrites")}, data-bar-hidden flips ${chrome.optInt("hiddenFlips")}, " +
-                "host frames ${chrome.opt("hostFrames") ?: "?"}; page resizes ${pageCounts.optInt("resizes")}, scroll events ${pageCounts.optInt("scrolls")}, " +
+                "column resizes ${chrome.optInt("columnChanges")}, host frames ${chrome.opt("hostFrames") ?: "?"}; " +
+                "page resizes ${pageCounts.optInt("resizes")}, scroll events ${pageCounts.optInt("scrolls")}, " +
                 "innerHeight $innerBefore -> $innerAfter, scrollTop $scrollBefore -> $scrollAfter, hide $hideBefore -> $hideAfter"
         )
         return JSONObject()
@@ -341,22 +342,40 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
      * Counters in the chrome for what the hypotheses ask: how many `barScroll` reports the host
      * streamed in (a wrapper on `__zenHost.barScroll`), how many times the root's `style`
      * attribute was written (`--zen-bar-hide` per frame: a MutationObserver), how often
-     * `data-bar-hidden` flipped, and – where the injected bridge object lets its `call` be
-     * wrapped – how many `chrome.setBarHide` frames went back to the host.
+     * `data-bar-hidden` flipped, how often the content column (`main`) changed size (a
+     * ResizeObserver: the page WebView's frame follows it), and – where the injected bridge
+     * object lets its `call` be wrapped – how many `chrome.setBarHide` frames went back to the host.
+     *
+     * Each count also plants a mark in the Chromium trace (`performance.mark('zenperf c:…')`,
+     * category `blink.user_timing`; the name is all WebView's tracing controller keeps of it):
+     * the chrome and the page share one renderer main thread, and the analysis reads a task's
+     * or a frame's owner off the marks inside it – `c:scroll` a report arriving, `c:style` the
+     * variable written, `c:hidden` the flip, `c:column` the column's resize (delivered inside the
+     * chrome's own frame), `c:frame` the chrome's next animation frame after a write (inside that
+     * frame, where its style recalculation, layout and paint run). `console.timeStamp` doubles
+     * each mark as a `TimeStamp` instant of the DevTools timeline, the fallback should the marks'
+     * names not survive the controller's filter.
      */
     private fun installChromeCounters(): String = chromeJs(
         "(function(){if(window.__perf)return 'kept';" +
-            "var p=window.__perf={barScroll:0,styleWrites:0,hiddenFlips:0,hostFrames:0,wrapped:false};" +
-            "var h=window.__zenHost;if(h&&typeof h.barScroll==='function'){var o=h.barScroll;h.barScroll=function(){p.barScroll++;return o.apply(this,arguments)}}" +
+            "var p=window.__perf={barScroll:0,styleWrites:0,hiddenFlips:0,columnChanges:0,hostFrames:0,wrapped:false};" +
+            "var mark=function(l){try{performance.mark('zenperf c:'+l);console.timeStamp('zenperf c:'+l)}catch(e){}};" +
+            "var pending=false;var frame=function(){if(pending)return;pending=true;requestAnimationFrame(function(){pending=false;mark('frame')})};" +
+            "var h=window.__zenHost;if(h&&typeof h.barScroll==='function'){var o=h.barScroll;h.barScroll=function(){p.barScroll++;mark('scroll');return o.apply(this,arguments)}}" +
             "var n=window.__zenNative;if(n){try{var oc=n.call;var w=function(json){if(typeof json==='string'&&json.indexOf('chrome.setBarHide')>=0)p.hostFrames++;return oc.call(n,json)};" +
             "n.call=w;p.wrapped=(n.call===w)}catch(e){p.wrapError=String(e)}}" +
-            "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].attributeName;if(a==='style')p.styleWrites++;else if(a==='data-bar-hidden')p.hiddenFlips++}})" +
+            "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].attributeName;" +
+            "if(a==='style'){p.styleWrites++;mark('style');frame()}else if(a==='data-bar-hidden'){p.hiddenFlips++;mark('hidden');frame()}}})" +
             ".observe(document.documentElement,{attributes:true,attributeFilter:['style','data-bar-hidden']});" +
-            "return 'installed, native call wrapped: '+p.wrapped})()"
+            "var main=document.querySelector('main');if(main&&window.ResizeObserver)new ResizeObserver(function(){p.columnChanges++;mark('column')}).observe(main);" +
+            "return 'installed, native call wrapped: '+p.wrapped+', column observed: '+!!main})()"
     )
 
     private fun resetChromeCounters() {
-        chromeJs("window.__perf&&Object.assign(window.__perf,{barScroll:0,styleWrites:0,hiddenFlips:0,hostFrames:0})")
+        chromeJs(
+            "window.__perf&&Object.assign(window.__perf,{barScroll:0,styleWrites:0,hiddenFlips:0,columnChanges:0,hostFrames:0});" +
+                "performance.clearMarks()"
+        )
     }
 
     private fun readChromeCounters(): JSONObject {
@@ -368,15 +387,23 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         return json
     }
 
-    /** In the page: its `resize` events with the `innerHeight` each left, and its scroll events. */
+    /**
+     * In the page: its `resize` events with the `innerHeight` each left, and its scroll events,
+     * each marked in the Chromium trace as the page's (`zenperf p:resize`, `p:scroll`; both
+     * events are dispatched inside the page's own main-thread frame, so the frame reads as the
+     * page's). The scroll listener makes each scrolled frame a main-thread frame of the page, as
+     * a page with a scroll listener of its own (github.com has several) would have anyway; it is
+     * the same in a before and an after.
+     */
     private fun installPageCounters(): String = pageJs(
         "(function(){if(window.__perf)return 'kept';var p=window.__perf={resizes:0,heights:[window.innerHeight],scrolls:0};" +
-            "addEventListener('resize',function(){p.resizes++;if(p.heights.length<64)p.heights.push(window.innerHeight)});" +
-            "addEventListener('scroll',function(){p.scrolls++},{passive:true});return 'installed'})()"
+            "var mark=function(l){try{performance.mark('zenperf p:'+l)}catch(e){}};" +
+            "addEventListener('resize',function(){p.resizes++;if(p.heights.length<64)p.heights.push(window.innerHeight);mark('resize')});" +
+            "addEventListener('scroll',function(){p.scrolls++;mark('scroll')},{passive:true});return 'installed'})()"
     )
 
     private fun resetPageCounters() {
-        pageJs("window.__perf&&Object.assign(window.__perf,{resizes:0,heights:[window.innerHeight],scrolls:0})")
+        pageJs("window.__perf&&Object.assign(window.__perf,{resizes:0,heights:[window.innerHeight],scrolls:0});performance.clearMarks()")
     }
 
     private fun readPageCounters(): JSONObject {
@@ -447,10 +474,14 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         return awaitLoaded(url, timeoutMs)
     }
 
-    /** The tab's view reports `url` (or a redirect on the same host) fully loaded. */
+    /**
+     * The tab's view reports `url` fully loaded – or a redirect of it on the same site (the same
+     * last two labels of the host: Wikipedia sends the mobile host to `en.wikipedia.org` for this
+     * user agent, which is the same article).
+     */
     private fun awaitLoaded(url: String, timeoutMs: Long = 20_000): Boolean {
         val wanted = url.trimEnd('/')
-        val hostName = runCatching { java.net.URI(url).host }.getOrNull() ?: ""
+        val site = siteOf(url)
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         var last = ""
         while (SystemClock.uptimeMillis() < deadline) {
@@ -460,13 +491,19 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
                 val current = view?.url ?: ""
                 last = "$current @ ${view?.progress}"
                 loaded = view != null && view.progress == 100 &&
-                    (current.trimEnd('/') == wanted || (hostName.isNotEmpty() && current.contains("://$hostName")))
+                    (current.trimEnd('/') == wanted || (site.isNotEmpty() && siteOf(current) == site))
             }
             if (loaded) return true
             SystemClock.sleep(250)
         }
         finding("gave up waiting for $url (view at $last)")
         return false
+    }
+
+    /** The site of a URL: the last two labels of its host (`en.m.wikipedia.org` -> `wikipedia.org`), or "" without a host. */
+    private fun siteOf(url: String): String {
+        val hostName = runCatching { java.net.URI(url).host }.getOrNull() ?: return ""
+        return hostName.split('.').takeLast(2).joinToString(".")
     }
 
     // --- gfxinfo's summary, for the findings ----------------------------------------------------------------
