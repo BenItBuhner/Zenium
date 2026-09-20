@@ -157,10 +157,10 @@ describe('a tab on an extension page', () => {
     }
   })
 
-  it('falls back to the id while the chrome knows no extension by it', () => {
+  it('falls back to "Extension page", never the id, while the chrome knows no extension by it', () => {
     const h = harness([])
     const tab = h.open(SCHEME_URL)
-    expect(h.browser.tabs.tab(tab.id)?.title).toBe(ID)
+    expect(h.browser.tabs.tab(tab.id)?.title).toBe('Extension page')
   })
 
   it('copies and shares chrome-extension://<id>/<path>, never the emulated origin', () => {

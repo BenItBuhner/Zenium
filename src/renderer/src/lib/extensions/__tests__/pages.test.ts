@@ -38,20 +38,20 @@ describe('extensionPageChrome', () => {
     expect(chrome?.url).not.toContain('.ext.zenium.invalid')
   })
 
-  it('stands the id in for the name and the puzzle glyph for the icon while the extension is unknown', () => {
+  it('says "Extension page" for the name and leaves the puzzle glyph the icon while the extension is unknown', () => {
     // Removed, or not yet in the window's list: the page still reads as an extension's, never
     // as a website with a letter tile.
     for (const url of [SCHEME_URL, EMULATED_URL]) {
       expect(extensionPageChrome(url, [])).toEqual({
         id: ID,
         url: SCHEME_URL,
-        name: ID,
+        name: 'Extension page',
         icon: null,
         extension: null
       })
     }
     // A blank name is no name.
-    expect(extensionPageChrome(SCHEME_URL, [ext({ name: '  ' })])?.name).toBe(ID)
+    expect(extensionPageChrome(SCHEME_URL, [ext({ name: '  ' })])?.name).toBe('Extension page')
     // An extension without a manifest icon leaves the slot to the puzzle glyph.
     expect(extensionPageChrome(SCHEME_URL, [ext({ icon: null })])?.icon).toBeNull()
   })
@@ -74,7 +74,7 @@ describe('presentedHost', () => {
   it('shows the extension’s name where a row would show the host, and the host for any site', () => {
     expect(presentedHost(SCHEME_URL, [ext()])).toBe('Vimium')
     expect(presentedHost(EMULATED_URL, [ext()])).toBe('Vimium')
-    expect(presentedHost(EMULATED_URL, [])).toBe(ID)
+    expect(presentedHost(EMULATED_URL, [])).toBe('Extension page')
     expect(presentedHost('https://www.example.com/path', [ext()])).toBe('example.com')
   })
 })

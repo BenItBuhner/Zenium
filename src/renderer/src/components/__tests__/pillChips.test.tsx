@@ -586,11 +586,13 @@ describe('phone pill (PillContent)', () => {
     expect(el.querySelector('[data-translate]')).not.toBeNull()
   })
 
-  it('stands the id in for an extension the chrome does not know, still without a lock', () => {
+  it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
     const id = 'dbepggeogbaibhgnhhndojpepiihcmeb'
     const page = tab(`https://${id}.ext.zenium.invalid/pages/options.html`)
     const el = render(<PillContent state={state(page)} tab={page} space={space} interactive />)
-    expect(labels(focusable(el))).toEqual([`Address, ${id}`, 'Site information'])
+    expect(labels(focusable(el))).toEqual(['Address, Extension page', 'Site information'])
+    expect(el.textContent).toContain('Extension page')
+    expect(el.textContent).not.toContain(id)
     expect(el.textContent).not.toContain('.ext.zenium.invalid')
     // The puzzle glyph, not a letter of the id.
     expect(el.querySelector('svg.zen-ext-icon-glyph')).not.toBeNull()

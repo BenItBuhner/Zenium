@@ -13,7 +13,7 @@ import {
 } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { manageExtension } from '@renderer/lib/extensions/manage'
-import { extensionPageChrome } from '@renderer/lib/extensions/pages'
+import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
 import { dismissSiteInfo, refreshSiteInfo, siteInfoStore } from '@renderer/lib/siteInfo'
 import {
@@ -173,11 +173,11 @@ export function SiteInfoPopover({
               id={titleId}
               glyph={<Favicon tab={tab} size={16} />}
               title="Extension page"
-              description={`This is a page of the extension ${extension.name}`}
+              description={extensionPageLine(extension)}
             />
             <Body>
               <ListRow
-                label="Manage extension"
+                label={extension.extension ? 'Manage extension' : 'Manage extensions'}
                 chevron
                 onClick={() => {
                   onDismiss()

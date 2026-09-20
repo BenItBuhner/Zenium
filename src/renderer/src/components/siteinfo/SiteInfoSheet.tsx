@@ -46,7 +46,11 @@ import { describeNetError } from '@shared/zenPages'
 import { cmd } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { manageExtension } from '@renderer/lib/extensions/manage'
-import { extensionPageChrome, type ExtensionPageChrome } from '@renderer/lib/extensions/pages'
+import {
+  extensionPageChrome,
+  extensionPageLine,
+  type ExtensionPageChrome
+} from '@renderer/lib/extensions/pages'
 import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
@@ -525,7 +529,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
               <div className="flex flex-col pb-2">
                 <SheetRow
                   glyph={<Puzzle />}
-                  label="Manage extension"
+                  label={extension.extension ? 'Manage extension' : 'Manage extensions'}
                   onClick={() => {
                     dismissSiteInfo()
                     manageExtension(extension.id, tab.id)
@@ -627,7 +631,7 @@ function SheetTitle({
       ? state.containers.find((c) => c.id === tab.containerId)?.name
       : undefined
   const line = [
-    extension ? `This is a page of the extension ${extension.name}` : security.short,
+    extension ? extensionPageLine(extension) : security.short,
     security.certificate?.issuer || null,
     container
   ].filter((p): p is string => Boolean(p))

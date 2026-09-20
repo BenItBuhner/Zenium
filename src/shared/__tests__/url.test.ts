@@ -295,11 +295,12 @@ describe('extension pages (v2 §10.1 applied to chrome-extension://)', () => {
     expect(displayUrl(emulatedForm)).not.toContain('ext.zenium.invalid')
   })
 
-  it('has no host to show: the id stands in for it, and for a missing title', () => {
-    expect(displayHost(chromeForm)).toBe(id)
-    expect(displayHost(emulatedForm)).toBe(id)
-    expect(titleForUrl(chromeForm)).toBe(id)
-    expect(titleForUrl(emulatedForm)).toBe(id)
+  it('has no host to show: "Extension page" stands in for it and for a missing title, never the id', () => {
+    expect(displayHost(chromeForm)).toBe('Extension page')
+    expect(displayHost(emulatedForm)).toBe('Extension page')
+    expect(titleForUrl(chromeForm)).toBe('Extension page')
+    expect(titleForUrl(emulatedForm)).toBe('Extension page')
+    expect(displayHost(chromeForm)).not.toContain(id)
   })
 
   it('is typed and navigated like any address', () => {
