@@ -1,0 +1,80 @@
+name: Android private lock demo
+
+# Records "Lock private tabs when you leave Zenium" (INC-05, SET-17; Chrome's "Lock Incognito
+# tabs when you leave Chrome") on the phone on a hardware-accelerated Android emulator and
+# uploads the video, screenshots and findings. A device PIN is set for the run by the driver
+# (`locksettings set-pin 1234` through UiAutomation's shell, cleared at the end): the emulator has
+# no enrolled biometric, so `BiometricPrompt` with `BIOMETRIC_WEAK or DEVICE_CREDENTIAL` falls
+# back to the device credential – SystemUI's PIN view – which the driver answers as the passwords
+# demos do (the digits as key events, then Enter); nothing of the product is stubbed for it.
+# The scenes: the Settings switch under a finger confirmed by the prompt (on, a cancel, off and
+# on again with a private tab open, the prompt never arming the lock); Home and back to a private
+# page shows the lock cover over it with the host's own hide of the page view sampled every 8 ms
+# from the departure (no frame of the live page), the pill reading "Private tab", FLAG_SECURE up
+# as a release build has it, nothing of the page in the accessibility tree; the overview's
+# Private pane under its cover with the grid inert and every card a "Private tab", the Tabs pane
+# and a regular tab usable with the guard off; a locked private tab brought to the front kept
+# hidden by the host until the cover is up; Unlock under a finger (a cancel and a wrong PIN keep
+# the cover, the PIN lifts it on the spring with every `--zen-lock-p` write on record down to 0);
+# services' "Close all private tabs" card pressed in the shade while locked and the menu's Close
+# Private Tabs under the cover, both without a prompt; the #232 rider (a Settings tab opened from
+# a private tab sits on the Tabs pane with the regular surface and is usable under the lock); the
+# private media notification's tap under the lock (the view never shown before the cover); and
+# the screen lock cleared while the app is away (the lock lets go on return, the switch reads
+# disabled). A check that fails in the driver fails the run (private-lock-findings.txt in the
+# artifact).
+#
+# The engine, as the private tabs demo: private tabs run on a WebView profile of their own,
+# which needs WebViewFeature.MULTI_PROFILE, and the API 34 images' WebView 113 does not have it,
+# so the demo runs on an AOSP image with a Chromium snapshot SystemWebView.apk swapped in
+# (android-webview-swap.sh), under swiftshader_indirect (the snapshot WebView draws one chrome
+# frame every 1.3-3.5 s under the shared swangle default with a sheet up). Dispatch-only, like
+# the other demos: it takes about a quarter of an hour and says nothing about a change being
+# correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml; this
+# file picks the driver and the engine.
+on:
+  workflow_dispatch:
+  # Temporary: the branch's own runs while the private lock is on review (removed before merge).
+  push:
+    branches:
+      - cursor/android-private-tab-lock-913c
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-private-lock-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: private lock demo (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.PrivateLockDemo
+        DEMO_DIR=private-lock-demo
+        DEMO_OUT=artifacts/android-private-lock-demo
+        DEMO_VIDEO=android-private-lock-demo.mp4
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code.
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-private-lock-demo
+      artifact-path: artifacts/android-private-lock-demo/
+      timeout-minutes: 60
