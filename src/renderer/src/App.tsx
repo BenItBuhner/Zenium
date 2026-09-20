@@ -27,6 +27,7 @@ import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { Announcer } from './components/Announcer'
+import { AppTitleBar } from './components/app/AppTitleBar'
 import { BookmarksBar } from './components/bookmarks/BookmarksBar'
 import { captionBandInMain } from '@renderer/lib/layout'
 import { ContentArea } from './components/content/ContentArea'
@@ -77,8 +78,10 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
   const settings = state.settings
   const compact = settings.compactMode
   const sidebarSide = settings.sidebarSide
-  // Toolbar-only windows: a page's sized popup, and – until the app title bar lands – a web
-  // app's standalone window, which has no sidebar either.
+  // One-row windows: a page's sized popup with its read-only toolbar, and a web app's
+  // standalone window with its title bar (`AppTitleBar`); neither has a sidebar or a bookmarks
+  // bar, and neither hides its row.
+  const appWindow = state.window.chrome === 'app' ? state.window.app : null
   const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
   // Blank / private windows never show onboarding (it belongs to the main profile window).
   const onboarding = !settings.onboardingDone && state.window.kind === 'synced' && !popupChrome
@@ -211,14 +214,24 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
             style={{ height: overlay.height, minHeight: 'env(titlebar-area-height, 0px)' }}
           />
         )}
-        {showToolbar && (
-          <Toolbar
+        {showToolbar && appWindow ? (
+          <AppTitleBar
             state={state}
             tab={tab}
+            app={appWindow}
             trailingInset={captionInset}
             leadingInset={macPopupInset}
-            showWindowControls={popupChrome}
           />
+        ) : (
+          showToolbar && (
+            <Toolbar
+              state={state}
+              tab={tab}
+              trailingInset={captionInset}
+              leadingInset={macPopupInset}
+              showWindowControls={popupChrome}
+            />
+          )
         )}
         {showBar && <BookmarksBar state={state} tab={tab} />}
         <div className="relative min-h-0 flex-1">

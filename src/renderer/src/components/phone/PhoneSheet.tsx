@@ -2,6 +2,7 @@ import type { JSX, ReactNode, RefObject } from 'react'
 import { useEffect, useId, useRef } from 'react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useBackSurface } from '@renderer/lib/back'
+import { sheetInitialFocus } from '@renderer/lib/popover'
 import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { takeSheetOpener } from './phonePanel'
@@ -26,9 +27,12 @@ import { takeSheetOpener } from './phonePanel'
  *  - `first`: the first button of the body (a prompt's Cancel);
  *  - `dialog`: the sheet itself, for a form – its field is first in the order but a text field
  *    never takes the focus on its own on a phone (the keyboard would come up with the sheet), so
- *    the dialog does, named by its title.
+ *    the dialog does, named by its title;
+ *  - `checked`: a §9.13 picker's current option – the row that is checked or selected – else
+ *    the first row, else Cancel: the chassis's own order (`sheetInitialFocus`, lib/popover.ts,
+ *    what `BottomSheet` does for a sheet that names no focus), for a sheet of radio rows.
  */
-export type SheetFocus = 'first' | 'dialog'
+export type SheetFocus = 'first' | 'dialog' | 'checked'
 
 /**
  * The sheet's title in one of its two poses, the consumer's choice (§9.16, §9.23):
@@ -175,10 +179,13 @@ function useFocusOnOpen(body: RefObject<HTMLElement | null>, focus: SheetFocus):
   useEffect(() => {
     const el = body.current
     if (!el) return
+    const dialog = el.closest<HTMLElement>('[role="dialog"]')
     const target =
       focus === 'dialog'
-        ? el.closest<HTMLElement>('[role="dialog"]')
-        : el.querySelector<HTMLElement>('button:not(:disabled), a[href]')
+        ? dialog
+        : focus === 'checked'
+          ? dialog && sheetInitialFocus(dialog, el)
+          : el.querySelector<HTMLElement>('button:not(:disabled), a[href]')
     target?.focus({ preventScroll: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- on open only
   }, [])

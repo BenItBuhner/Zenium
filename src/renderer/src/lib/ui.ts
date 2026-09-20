@@ -244,6 +244,8 @@ export interface UiState {
   securityPromptOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
+  /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
+  screenPickerOpen: boolean
   /** A window-modal question ("Close N tabs?", "Quit Zenium?") is up over the whole window. */
   windowPromptOpen: boolean
   /**
@@ -462,6 +464,7 @@ export const uiStore = createStore<UiState>(
     blockedPopupsPanel: null,
     securityPromptOpen: false,
     pageDialogOpen: false,
+    screenPickerOpen: false,
     windowPromptOpen: false,
     starDialog: null,
     zoomBubble: null,
@@ -823,6 +826,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -880,6 +884,7 @@ export function invalidateSnapshot(): void {
     !ui.securityPromptOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
+    !ui.screenPickerOpen &&
     !ui.windowPromptOpen &&
     !ui.downloadsOpen &&
     !ui.defaultBrowserPrompt &&
@@ -1073,13 +1078,12 @@ export function closeBookmarkChrome(
   if (!opts.keepFocus) returnFocusToPage()
 }
 
-/** The "Add to Home screen" sheet dims the page behind it like a menu: the snapshot comes first. */
+/**
+ * The install prompt – the phone's "Add to Home screen" sheet, the desktop's "Install app" /
+ * "Create shortcut" dialog (`InstallLayer`, `InstallDialogLayer`; the host's chrome mounts the
+ * one that is its surface) – dims the page behind it like a menu: the snapshot comes first.
+ */
 export async function openInstallSheet(prompt: WebAppInstallPrompt): Promise<void> {
-  // The sheet is the Home-screen install's (the phone's chassis); a desktop install gets its own
-  // dialog, still to land – until it does, a desktop prompt is not shown here. (The core sends
-  // none to a window without an install surface up; this keeps the sheet off the desktop even
-  // should one arrive.)
-  if (prompt.surface === 'desktop') return
   await captureActiveTab(prompt.tabId)
   run('focus.chrome', undefined)
   uiStore.set({ install: prompt, drawerOpen: false })
@@ -1492,6 +1496,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.securityPromptOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
+    ui.screenPickerOpen ||
     ui.windowPromptOpen ||
     ui.downloadsOpen ||
     ui.defaultBrowserPrompt ||

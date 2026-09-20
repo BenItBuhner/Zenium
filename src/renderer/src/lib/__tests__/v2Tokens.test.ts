@@ -103,9 +103,28 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
   ['.zen-page-host {', ' * History page (design language v2 draft'],
+  // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
+  // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
+  // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
+  ['.zen-install-dialog-body {', "/*\n   * The desktop's share popover"],
+  // The desktop's share popover (components/share/SharePopover.tsx, MW-21): the preview, the QR
+  // card, the targets' hairline, and its unlayered two-line modifier on the shared row (§9.34).
+  ['.zen-share-body {', '@layer components {\n  /*\n   * The screen-capture picker'],
+  // The screen-capture picker (components/screenCapture/ScreenPicker.tsx, MW-19): the panes'
+  // hairline, the fixed list box with its spinner and empty line, the source cards, the footer,
+  // and its unlayered centring of the shared checkbox (§9.34).
+  ['.zen-scpick-panes {', "@layer components {\n  /*\n   * The desktop's media hub"],
+  // The desktop's media hub (components/media/MediaHubPopover.tsx, MediaHubButton.tsx, MW-16):
+  // the players (the artwork tile is the media sheet's `.zen-media-art`, below), the title
+  // pair's press fill, the seek row's times, the transport, the toolbar button's dot.
+  ['.zen-mhub-body {', '@layer components {\n  /*\n   * The media sheet'],
   // "Add to Home screen": what the install and name-edit sheets add to the chassis – app tile,
   // name and origin, the name field's label, the screenshot strip (components/phone/InstallSheet.tsx).
-  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back']
+  ['.zen-install-body {', '/*\n * A sheet coming up pushes the page back'],
+  // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
+  // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
+  // and line from the scale.
+  ['.zen-app-titlebar {', '.zen-tab {']
 ]
 
 /**
@@ -397,6 +416,90 @@ describe('token families (§9.29)', () => {
 })
 
 /**
+ * The desktop platform's surfaces (MW-16 media hub, MW-19 screen picker, MW-21 share popover,
+ * MW-22 install dialog, MW-23 app title bar): their blocks in main.css, by the start marker of
+ * their `V2_SURFACES` entry, and the renderer files they are drawn from.
+ */
+const DESKTOP_PLATFORM_BLOCKS = [
+  '.zen-install-dialog-body {',
+  '.zen-share-body {',
+  '.zen-scpick-panes {',
+  '.zen-mhub-body {',
+  '.zen-app-titlebar {'
+]
+const DESKTOP_PLATFORM_FILES = [
+  'components/install/InstallDialog.tsx',
+  'components/share/SharePopover.tsx',
+  'components/screenCapture/ScreenPicker.tsx',
+  'components/media/MediaHubButton.tsx',
+  'components/media/MediaHubPopover.tsx',
+  'components/app/AppTitleBar.tsx',
+  'lib/qr.ts',
+  'lib/share.ts',
+  'lib/screenPicker.ts',
+  'lib/mediaHub.ts',
+  'lib/media.ts',
+  'hooks/useMediaSeek.ts'
+]
+
+/**
+ * Content drawn inside chrome – favicons, thumbnails, artwork, a QR symbol – keeps its own
+ * colours and is exempt from the token rule by name (§9.29). Every literal colour one of the
+ * files above states, in order, with its reason. A literal not named here fails the guard; a
+ * name whose literal is gone fails it too, so the list cannot outlive the code.
+ */
+const CONTENT_COLOURS: ReadonlyArray<
+  readonly [file: string, literals: readonly string[], reason: string]
+> = [
+  [
+    'components/share/SharePopover.tsx',
+    ['#fff', '#000'],
+    "the share popover's QR symbol: black modules on a white tile in both themes, because a scanner reads it and a theme does not (§9.29, the design lead's ruling on #245)"
+  ]
+]
+
+describe('content pixels inside chrome (§9.29)', () => {
+  const LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|\bcolor-mix\(/gi
+  /** A file's source without its block and line comments, so prose states no colour. */
+  const code = (text: string): string =>
+    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('are the only literal colours the desktop platform’s surfaces state, each exempt by name', () => {
+    // The rules read tokens only.
+    for (const start of DESKTOP_PLATFORM_BLOCKS) {
+      const surface = V2_SURFACES.find(([s]) => s === start)
+      expect(surface, `v2 surface "${start}"`).toBeDefined()
+      const from = css.indexOf(start)
+      const to = css.indexOf(surface![1], from)
+      expect(from, start).toBeGreaterThanOrEqual(0)
+      expect(to, start).toBeGreaterThan(from)
+      expect(code(css.slice(from, to)).match(LITERAL) ?? [], `${start} states a colour`).toEqual([])
+    }
+    // The components and their helpers: what each states is what is named for it, nothing else.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    for (const [file] of CONTENT_COLOURS)
+      expect(DESKTOP_PLATFORM_FILES, `${file} is not a desktop platform file`).toContain(file)
+    for (const file of DESKTOP_PLATFORM_FILES) {
+      const found = code(readFileSync(join(root, file), 'utf8')).match(LITERAL) ?? []
+      const named = CONTENT_COLOURS.find(([f]) => f === file)?.[1] ?? []
+      expect(found, `${file}: literal colours not exempt by name`).toEqual([...named])
+    }
+  })
+
+  it('draw the QR symbol black on its white tile in both themes, the colours the symbol’s own', () => {
+    const share = readFileSync(
+      fileURLToPath(new URL('../../components/share/SharePopover.tsx', import.meta.url)),
+      'utf8'
+    )
+    // The tile's white under the whole symbol and the modules' black, stated once each on no
+    // theme condition: the SVG is content and does not read `data-theme`.
+    expect(share).toMatch(/<rect width=\{QR_INNER\} height=\{QR_INNER\} fill="#fff" \/>/)
+    expect(share).toMatch(/<path d=\{qr\.path\} fill="#000" \/>/)
+    expect(share).not.toMatch(/data-theme|prefers-color-scheme|--v2-page|--v2-text\b/)
+  })
+})
+
+/**
  * The stylesheet without its comments, so braces in prose do not count, and the number of
  * `{` blocks still open at `index` in it: 0 means the rule sits outside every `@layer`.
  */
@@ -546,6 +649,87 @@ describe('the v2 primitives (§9.34)', () => {
   it('pad the row with the --v2-row-pad token, not a local knob', () => {
     expect(block('.zen-v2-row')).toMatch(/padding: var\(--v2-row-pad\) 16px/)
     expect(css).not.toMatch(/--zen-settings-pad/)
+  })
+
+  it('grow a one-line row around its control by 4 above and below (§9.21): one unlayered mark on the row rule', () => {
+    // pr-228 nit 2: `--v2-row-pad` around a 32 / 40 control measured 44 / 64. The control row is
+    // the row primitive with `data-control` – padding 4, the base `min-height` still the row's –
+    // so a 32 control makes 40 and a 40 one 48, a 28 / 44 icon button 36 / 52, and a text-only
+    // row stays 32 / 44. It states the padding and nothing else: the geometry is the row rule's.
+    expect(block('.zen-v2-row[data-control]').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  padding-block: 4px;'
+    ])
+    expect(ruleAt('.zen-v2-row[data-control]')).toBeGreaterThan(ruleAt('.zen-v2-row'))
+    expect(nesting(ruleAt('.zen-v2-row[data-control]'))).toBe(0)
+    // `ListRow` leaves the numbers to it: no utility height or padding on the row.
+    const primitives = readFileSync(
+      fileURLToPath(new URL('../../components/siteControls/primitives.tsx', import.meta.url)),
+      'utf8'
+    )
+    const from = primitives.indexOf('export function ListRow(')
+    expect(from).toBeGreaterThanOrEqual(0)
+    const listRow = primitives.slice(from, primitives.indexOf('\n}\n', from))
+    expect(listRow).not.toMatch(/min-h-\[|py-\[|py-\d/)
+    expect(listRow).toMatch(/data-control=\{controlRow\}/)
+  })
+
+  it('draw the radio’s checked dot at §9.14’s 6 px: the inset ring is (box − 2 − 6) / 2 inside the 1 px border', () => {
+    // (box − 6) / 2 measured a 4 px dot (the #235 ruling): the inset shadow starts inside the
+    // border, so the border's 2 comes off the box before the dot does.
+    const checked = block(
+      ".zen-v2-radio[aria-checked='true'],\n[aria-checked='true'] > .zen-v2-radio"
+    )
+    expect(checked).toMatch(
+      /box-shadow: inset 0 0 0 calc\(\(var\(--v2-checkbox\) - 2px - 6px\) \/ 2\) var\(--v2-accent\)/
+    )
+    expect(css.match(/calc\(\(var\(--v2-checkbox\) - 6px\) \/ 2\)(?! - 1px)/g) ?? []).toHaveLength(
+      0
+    )
+  })
+
+  it('let a field’s invalid state win over its focus ring (§9.12): the ring in the danger ink, on the shared field and the phone field alike', () => {
+    // Dark's inset ring (−2, §1) lay over the 1 px danger border and hid it: focused and invalid,
+    // the ring is `--v2-danger` – its 2 px, offset and shape the shared ring's – so the field
+    // reads invalid either way, in light and in dark. The invalid rule re-inks the ring through
+    // its token, the chrome's seam for re-inking a shared rule, and every form of the ring reads
+    // that token (the shared ring, its coarse-pointer form, the base layer's), so no rule of the
+    // field's needs the ring forms' weight – no `:root` bump, no `outline-color` restatement.
+    expect(block(".zen-v2-field[aria-invalid='true']").match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+      '  --v2-ring: var(--v2-danger);',
+      '  border-color: var(--v2-danger);'
+    ])
+    expect(nesting(ruleAt(".zen-v2-field[aria-invalid='true']"))).toBe(0)
+    expect(css).not.toMatch(/:root \.zen-v2-field/)
+    expect(css).not.toMatch(/\.zen-v2-field\[aria-invalid='true'\]:focus-visible/)
+    // The token is the one the ring forms draw with, declared once for the chrome and once here.
+    expect(css.match(/--v2-ring:/g)).toHaveLength(2)
+    expect(
+      block(
+        "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
+      )
+    ).toMatch(/outline: 2px solid var\(--v2-ring\)/)
+    expect(block(':focus-visible', css.indexOf('@layer base {'))).toMatch(
+      /outline: 2px solid var\(--v2-ring\)/
+    )
+    // The phone field (phonePanels.css) reads the same two states off the input it wraps, where
+    // the ARIA state sits, in the same tokens – its ring re-inked by `outline-color`, since the
+    // wrapper's clear button would inherit the token.
+    const panels = readFileSync(
+      fileURLToPath(new URL('../../components/phone/phonePanels.css', import.meta.url)),
+      'utf8'
+    )
+    const rule = (selector: string): string => {
+      const at = panels.indexOf(`${selector} {`)
+      expect(at, selector).toBeGreaterThanOrEqual(0)
+      return panels.slice(at, panels.indexOf('}', at))
+    }
+    expect(rule(".zen-phone-field:has(> input[aria-invalid='true'])")).toMatch(
+      /border-color: var\(--v2-danger\)/
+    )
+    expect(rule(".zen-phone-field:has(> input[aria-invalid='true']):focus-within")).toMatch(
+      /outline-color: var\(--v2-danger\)/
+    )
+    expect(rule('.zen-phone-field:focus-within')).toMatch(/outline: 2px solid var\(--v2-ring\)/)
   })
 
   it('gate the row’s hover fill, press fill and pointer cursor on [data-static], as part of the one row rule', () => {

@@ -19,14 +19,15 @@ const NAME_FIELD_ID = 'zen-install-name'
 /**
  * "Add to Home screen" while a prompt is open, in the frame dialog host `TabDialogs` mounts. The
  * sheet is the install surface of a one-window host (`ChromeSurface`: the core sends an install
- * prompt only to a window with one up); a desktop's installs get their own dialog, so on a host
- * with windows this layer registers nothing and the core settles a site's `prompt()` as dismissed
- * until that dialog lands.
+ * prompt only to a window with one up); a desktop's installs get their own dialog
+ * (`install/InstallDialog.tsx`, the surface on hosts with windows), so on such a host this layer
+ * registers nothing and shows nothing.
  */
 export function InstallLayer({ state }: { state: UIState }): JSX.Element | null {
-  useChromeSurface('install', !state.capabilities.windows)
+  const phone = !state.capabilities.windows
+  useChromeSurface('install', phone)
   const prompt = uiStore.use((s) => s.install)
-  return prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
+  return phone && prompt ? <InstallSheet key={prompt.tabId} prompt={prompt} /> : null
 }
 
 /**
@@ -57,8 +58,6 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   })
 
   const name = title.trim() || prompt.title
-  // Desktop speaks of installing (Chrome's "Install app" / "Create shortcut"), the phone of the
-  // Home screen, until the desktop's own dialog lands.
   const copy = installSheetCopy(prompt.surface, info)
   const add = async (): Promise<void> => {
     if (accepted.current) return
@@ -193,40 +192,50 @@ export function AppIcon({
 const SHOT_HEIGHT = 240
 
 /** Width for a screenshot from its declared `sizes`, before the image itself has loaded. */
-function shotWidth(shot: WebAppScreenshot): number | null {
+function shotWidth(shot: WebAppScreenshot, height: number): number | null {
   const m = shot.sizes ? /^(\d+)x(\d+)/.exec(shot.sizes) : null
   if (!m) return null
   const w = Number(m[1])
   const h = Number(m[2])
   if (!w || !h) return null
-  return Math.round((SHOT_HEIGHT * w) / h)
+  return Math.round((height * w) / h)
 }
 
 /**
  * The manifest's screenshots as a horizontal strip of bordered cards: fixed height, natural
- * width, one snap stop per shot and fading edges where more is hidden. Phone-shaped (`narrow`)
- * shots are shown when the manifest has any; the rest only otherwise.
+ * width, one snap stop per shot and fading edges where more is hidden. The shots for this
+ * chrome's shape are shown when the manifest marks any – `narrow` (phone-shaped) in the phone's
+ * sheet, `wide` in the desktop's dialog, as Chrome picks them for its two install dialogs – and
+ * the rest only otherwise.
  */
-function ScreenshotStrip({ shots }: { shots: WebAppScreenshot[] }): JSX.Element {
+export function ScreenshotStrip({
+  shots,
+  formFactor = 'narrow',
+  height = SHOT_HEIGHT
+}: {
+  shots: WebAppScreenshot[]
+  formFactor?: 'narrow' | 'wide'
+  height?: number
+}): JSX.Element {
   const fadeRef = useFadeEdges<HTMLDivElement>({ axis: 'x', size: 20 })
   const visible = useMemo(() => {
-    const narrow = shots.filter((s) => s.formFactor === 'narrow')
-    return narrow.length ? narrow : shots
-  }, [shots])
+    const shaped = shots.filter((s) => s.formFactor === formFactor)
+    return shaped.length ? shaped : shots
+  }, [shots, formFactor])
   return (
     <div ref={fadeRef} className="zen-install-shots" role="list" aria-label="Screenshots">
       {visible.map((shot) => (
         <figure
           key={shot.src}
           role="listitem"
-          className={cn('zen-install-shot', !shotWidth(shot) && 'min-w-[96px]')}
-          data-sized={shotWidth(shot) ? '' : undefined}
-          style={{ height: SHOT_HEIGHT, width: shotWidth(shot) ?? undefined }}
+          className={cn('zen-install-shot', !shotWidth(shot, height) && 'min-w-[96px]')}
+          data-sized={shotWidth(shot, height) ? '' : undefined}
+          style={{ height, width: shotWidth(shot, height) ?? undefined }}
         >
           <img
             src={shot.src}
             alt={shot.label ?? ''}
-            height={SHOT_HEIGHT}
+            height={height}
             loading="lazy"
             decoding="async"
             draggable={false}
