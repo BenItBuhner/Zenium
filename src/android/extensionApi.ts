@@ -18,6 +18,7 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
@@ -537,7 +538,7 @@ export class ExtensionApi {
       case 'userScripts':
         return this.userScriptsCall(ext, method, args)
       case 'runtime':
-        return this.runtimeCall(ext, method)
+        return this.runtimeCall(ext, method, args)
       case 'declarativeNetRequest':
         return this.host.dnr.call(ext, method, args)
       case 'notifications':
@@ -1219,8 +1220,57 @@ export class ExtensionApi {
       case 'resetWorldConfiguration':
         await this.host.setUserScriptMessaging(id, false)
         return undefined
+      case 'execute':
+        return this.executeUserScript(ext, normalizeInjection(args[0]))
     }
     throw new Error(`chrome.userScripts.${method} ${NOT_IMPLEMENTED}`)
+  }
+
+  /**
+   * `userScripts.execute(injection)` (Chrome 135): the sources run in order in the target frames,
+   * in the extension's user-script world (the scope its registered scripts share, with that
+   * world's `chrome`: messaging only, and only once configured) or in the main world, through the
+   * `scripting.executeScript` path; one result per frame, the last source's value, in Chrome's
+   * `InjectionResult` shape. A document id names nothing here (the runtime reports none), so a
+   * `documentIds` target fails as an unknown document does in Chrome. `injectImmediately` makes
+   * no difference: an injection runs as soon as the frame can take it, as `executeScript` does.
+   */
+  private async executeUserScript(
+    ext: AttachedExtension,
+    injection: UserScriptInjection
+  ): Promise<unknown> {
+    const id = ext.record.id
+    const tab = this.tabs.tabFor(ext, injection.target.tabId)
+    if (injection.target.documentIds) {
+      const missing = injection.target.documentIds[0] ?? ''
+      throw new Error(`No document with id ${missing} in tab with id ${injection.target.tabId}`)
+    }
+    const frames = this.targetFrames(ext, tab, {
+      frameIds: injection.target.frameIds,
+      allFrames: injection.target.allFrames
+    })
+    const payload = {
+      world: injection.world === 'MAIN' ? 'MAIN' : 'USER_SCRIPT',
+      messaging: this.host.userScriptMessaging(id)
+    }
+    const results = await this.injectFrames(frames, async (frameId) => {
+      let value: unknown = undefined
+      for (const source of injection.js) {
+        value = await this.host.exec({
+          extensionId: id,
+          tabId: tab.id,
+          frameId,
+          kind: 'js',
+          payload,
+          code: 'code' in source ? source.code : null,
+          files: 'file' in source ? [source.file] : null,
+          funcSource: null,
+          args: null
+        })
+      }
+      return value
+    })
+    return results.map((r) => ({ frameId: r.frameId, documentId: '', result: r.value }))
   }
 
   private async register(
@@ -1274,7 +1324,11 @@ export class ExtensionApi {
 
   // --- runtime ---------------------------------------------------------------
 
-  private async runtimeCall(ext: AttachedExtension, method: string): Promise<unknown> {
+  private async runtimeCall(
+    ext: AttachedExtension,
+    method: string,
+    args: unknown[]
+  ): Promise<unknown> {
     const id = ext.record.id
     switch (method) {
       case 'openOptionsPage':
@@ -1287,10 +1341,10 @@ export class ExtensionApi {
       // Chrome 109+ hands the callback one `{ status, version }`; the promise form resolves with it.
       case 'requestUpdateCheck':
         return this.host.requestUpdateCheck(id)
-      case 'getContexts':
+      case 'getContexts': {
         // An extension page's URL as Chrome spells it (`extensionUrls.ts`); its origin stays the
         // served one, what `location.origin` answers inside the page, as for a message sender.
-        return this.host.router.of(id).map((e) => ({
+        const contexts: ExtensionContext[] = this.host.router.of(id).map((e) => ({
           contextId: e.id,
           contextType: contextTypeOf(e.context),
           documentId: e.id,
@@ -1304,6 +1358,8 @@ export class ExtensionApi {
           tabId: e.tabId ? this.tabs.chromeIdFor(e.tabId) : -1,
           windowId: 1
         }))
+        return filterContexts(contexts, asRecord(args[0]))
+      }
       // No native messaging hosts on the phone: Chrome's answer for a host that does not exist.
       case 'sendNativeMessage':
       case 'connectNative':
@@ -1641,6 +1697,48 @@ export function contextTypeOf(context: EngineContextKind): string {
     default:
       return 'TAB'
   }
+}
+
+/** One `runtime.getContexts` answer (Chrome's `ExtensionContext`). */
+export interface ExtensionContext {
+  contextId: string
+  contextType: string
+  documentId: string
+  documentOrigin: string
+  documentUrl: string
+  frameId: number
+  incognito: boolean
+  tabId: number
+  windowId: number
+}
+
+/**
+ * `runtime.getContexts(filter)`: every property of Chrome's `ContextFilter` that is given keeps
+ * only the contexts whose value is among the listed ones (`incognito` a single boolean); an
+ * empty filter keeps them all. Tampermonkey asks for `OFFSCREEN_DOCUMENT` contexts to know
+ * whether to create its offscreen document: with the filter ignored it never did.
+ */
+export function filterContexts(
+  contexts: ExtensionContext[],
+  filter: Record<string, unknown>
+): ExtensionContext[] {
+  const listed = (name: string, value: unknown): boolean => {
+    const wanted = filter[name]
+    if (!Array.isArray(wanted)) return true
+    return wanted.some((entry) => entry === value)
+  }
+  return contexts.filter(
+    (context) =>
+      listed('contextIds', context.contextId) &&
+      listed('contextTypes', context.contextType) &&
+      listed('documentIds', context.documentId) &&
+      listed('documentOrigins', context.documentOrigin) &&
+      listed('documentUrls', context.documentUrl) &&
+      listed('frameIds', context.frameId) &&
+      listed('tabIds', context.tabId) &&
+      listed('windowIds', context.windowId) &&
+      (typeof filter.incognito !== 'boolean' || filter.incognito === context.incognito)
+  )
 }
 
 /**

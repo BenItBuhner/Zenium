@@ -4,6 +4,7 @@ import type { Any } from '../extensionIsolation'
 import {
   decodePayload,
   encodePayload,
+  readBlobs,
   importScriptsFor,
   installServiceWorkerClient,
   installServiceWorkerGlobals,
@@ -137,6 +138,52 @@ describe('service-worker payloads', () => {
     const shared = { x: 1 }
     expect(encodePayload([shared, shared])).toEqual([{ x: 1 }, { x: 1 }])
   })
+
+  it('carries an ArrayBuffer, a typed array and a DataView as their bytes, rebuilt as the same kind', () => {
+    const buffer = new Uint8Array([1, 2, 3, 250]).buffer
+    const view = new Uint16Array([7, 65535])
+    const sub = new Uint8Array(new Uint8Array([9, 8, 7, 6]).buffer, 1, 2)
+    const encoded = encodePayload({ buffer, view, sub, dv: new DataView(buffer) })
+    const decoded = decodePayload(JSON.parse(JSON.stringify(encoded))) as {
+      buffer: ArrayBuffer
+      view: Uint16Array
+      sub: Uint8Array
+      dv: DataView
+    }
+    expect(decoded.buffer).toBeInstanceOf(ArrayBuffer)
+    expect(Array.from(new Uint8Array(decoded.buffer))).toEqual([1, 2, 3, 250])
+    expect(decoded.view).toBeInstanceOf(Uint16Array)
+    expect(Array.from(decoded.view)).toEqual([7, 65535])
+    // A view over part of a buffer travels as the bytes it covers.
+    expect(Array.from(decoded.sub)).toEqual([8, 7])
+    expect(decoded.dv).toBeInstanceOf(DataView)
+    expect(decoded.dv.getUint8(3)).toBe(250)
+  })
+
+  it('carries a Blob and a File with their type and name once read, or as JSON does without a list', async () => {
+    const blob = new Blob(['// ==UserScript==\n'], { type: 'text/javascript' })
+    const file = new File([new Uint8Array([0, 255])], 'a.bin', {
+      type: 'application/octet-stream',
+      lastModified: 5
+    })
+    const blobs: Array<{ blob: Blob; slot: Record<string, unknown> }> = []
+    const encoded = encodePayload({ action: 'objectURL', blob, file }, [], new Set(), blobs)
+    expect(blobs.map((b) => b.blob)).toEqual([blob, file])
+    await readBlobs(blobs)
+    const decoded = decodePayload(JSON.parse(JSON.stringify(encoded))) as { blob: Blob; file: File }
+    expect(decoded.blob).toBeInstanceOf(Blob)
+    expect(decoded.blob.type).toBe('text/javascript')
+    expect(await decoded.blob.text()).toBe('// ==UserScript==\n')
+    expect(decoded.file).toBeInstanceOf(File)
+    expect([decoded.file.name, decoded.file.type, decoded.file.lastModified]).toEqual([
+      'a.bin',
+      'application/octet-stream',
+      5
+    ])
+    expect(Array.from(new Uint8Array(await decoded.file.arrayBuffer()))).toEqual([0, 255])
+    // Without a list to enter it in, a Blob is what JSON keeps of it.
+    expect(JSON.parse(JSON.stringify(encodePayload({ blob })))).toEqual({ blob: {} })
+  })
 })
 
 describe('navigator.serviceWorker in a page and the worker globals, joined by the relay', () => {
@@ -214,6 +261,47 @@ describe('navigator.serviceWorker in a page and the worker globals, joined by th
     expect(pongs).toEqual(['pong'])
     await (clients.openWindow as (u: string) => Promise<unknown>)('/manage.html')
     expect(opened).toEqual([`${ORIGIN}/manage.html`])
+    channel.port1.close()
+  })
+
+  it('a Blob the worker hands a page arrives as a Blob, after a read, in the order of the sends', async () => {
+    // Tampermonkey's worker: `client.postMessage({ action: 'objectURL', blob }, [port2])` to its
+    // offscreen document, which answers `{ result: { url } }` on the port; a `Blob` cannot be
+    // JSON and the worker has no `URL.createObjectURL` of its own.
+    const { page, worker, wire } = pair()
+    const clients = worker.clients as Any
+    const [client] = (await (clients.matchAll as () => Promise<Any[]>)()) as Any[]
+    const container = (page.navigator as Any).serviceWorker as Any
+    const got: unknown[] = []
+    container.onmessage = (event: MessageEvent): void => {
+      const data = event.data as { action: string; blob?: Blob }
+      got.push(data)
+      if (data.blob) {
+        void data.blob.text().then((text) => {
+          event.ports[0].postMessage({ result: { url: `blob:${text.length}` } })
+        })
+      }
+    }
+    const channel = new MessageChannel()
+    const answers: unknown[] = []
+    channel.port1.onmessage = (m: MessageEvent): void => {
+      answers.push(m.data)
+    }
+    const post = client.postMessage as (m: unknown, t?: unknown[]) => void
+    post({ action: 'objectURL', blob: new Blob(['abc'], { type: 'text/plain' }) }, [channel.port2])
+    // Sent after the blob's message and without a blob of its own: it must still arrive second.
+    post({ action: 'config' })
+    expect(wire.filter((w) => w === 'worker post')).toHaveLength(0)
+    await until(() => answers.length === 1)
+    expect((got[0] as { action: string }).action).toBe('objectURL')
+    expect((got[0] as { blob: Blob }).blob).toBeInstanceOf(Blob)
+    expect((got[0] as { blob: Blob }).blob.type).toBe('text/plain')
+    expect(got[1]).toEqual({ action: 'config' })
+    expect(answers).toEqual([{ result: { url: 'blob:3' } }])
+    // With nothing to read and nothing waiting, a send goes out at once.
+    const before = wire.length
+    post({ action: 'ping' })
+    expect(wire.length).toBe(before + 1)
     channel.port1.close()
   })
 

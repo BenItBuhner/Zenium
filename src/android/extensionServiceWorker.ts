@@ -21,8 +21,13 @@ import type { Any } from './extensionIsolation'
  * port named inside the data as `{ __zenPort: n }` (its place in the transfer list) and resolved
  * to the port that arrives at that place, as structured clone hands the receiver the very object
  * of `event.ports` (Stylus's page answers a worker's `getWorkerPort` with `{ id, res: port }` and
- * `[port]` transferred; the worker then calls `res.postMessage`), the rest is what JSON keeps
- * (Stylus answers `{ id, res, err: [Error, {...}] }`).
+ * `[port]` transferred; the worker then calls `res.postMessage`), binary data as base64
+ * (`{ __zenBytes }` for an `ArrayBuffer` or a view of one, `{ __zenBlob }` for a `Blob` or `File`,
+ * rebuilt with their type and name: Tampermonkey's worker hands its offscreen document the
+ * userscript's `Blob` over `client.postMessage` for a `URL.createObjectURL` the worker has not),
+ * the rest is what JSON keeps (Stylus answers `{ id, res, err: [Error, {...}] }`). A `Blob` is
+ * read asynchronously, so a payload carrying one goes out once read, and the relay keeps its
+ * sends in the order of the calls, as a port delivers them.
  */
 
 /** What both sides send the runtime; `t: 'sw'`, `token` and `ep` are stamped by the caller. */
@@ -48,23 +53,68 @@ type Send = (message: ServiceWorkerMessage) => void
 
 const ERROR_KEY = '__zenErr'
 const PORT_KEY = '__zenPort'
+const BYTES_KEY = '__zenBytes'
+const BLOB_KEY = '__zenBlob'
 
 const isMessagePort = (value: unknown): value is MessagePort =>
   typeof MessagePort === 'function' && value instanceof MessagePort
 
+const isBlob = (value: unknown): value is Blob =>
+  typeof Blob === 'function' && value instanceof Blob
+
+/** The typed-array and DataView constructors a `{ __zenBytes }` view is rebuilt with, by name. */
+const VIEWS: Record<string, (buffer: ArrayBuffer) => ArrayBufferView> = {
+  Int8Array: (b) => new Int8Array(b),
+  Uint8Array: (b) => new Uint8Array(b),
+  Uint8ClampedArray: (b) => new Uint8ClampedArray(b),
+  Int16Array: (b) => new Int16Array(b),
+  Uint16Array: (b) => new Uint16Array(b),
+  Int32Array: (b) => new Int32Array(b),
+  Uint32Array: (b) => new Uint32Array(b),
+  Float32Array: (b) => new Float32Array(b),
+  Float64Array: (b) => new Float64Array(b),
+  BigInt64Array: (b) => new BigInt64Array(b),
+  BigUint64Array: (b) => new BigUint64Array(b),
+  DataView: (b) => new DataView(b)
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + 0x8000)))
+  return btoa(binary)
+}
+
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(new ArrayBuffer(binary.length))
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+/** A `Blob`'s place in a payload: its slot is filled with the bytes once the blob is read. */
+interface BlobSlot {
+  blob: Blob
+  slot: Record<string, unknown>
+}
+
 /**
- * Errors survive the JSON trip, a port of `transfer` travels as its place in the list; anything
- * else is what JSON keeps. A port outside the transfer list is the platform's `DataCloneError`.
+ * Errors survive the JSON trip, a port of `transfer` travels as its place in the list, an
+ * `ArrayBuffer` or a view of one as base64 with the view's name; a `Blob` is entered in `blobs`
+ * with the slot its bytes fill once read (`readBlobs`), or is what JSON keeps (`{}`) when no list
+ * is given. Anything else is what JSON keeps. A port outside the transfer list is the platform's
+ * `DataCloneError`.
  */
 export function encodePayload(
   value: unknown,
   transfer: readonly MessagePort[] = [],
-  seen = new Set<object>()
+  seen = new Set<object>(),
+  blobs?: BlobSlot[]
 ): unknown {
   if (value instanceof Error) {
     const own: Record<string, unknown> = {}
     for (const key of Object.keys(value))
-      own[key] = encodePayload((value as unknown as Any)[key], transfer, seen)
+      own[key] = encodePayload((value as unknown as Any)[key], transfer, seen, blobs)
     return { [ERROR_KEY]: { name: value.name, message: value.message, stack: value.stack, own } }
   }
   if (value === null || typeof value !== 'object') return value
@@ -73,19 +123,50 @@ export function encodePayload(
     if (at < 0) throw new DOMException('A MessagePort could not be cloned.', 'DataCloneError')
     return { [PORT_KEY]: at }
   }
+  if (value instanceof ArrayBuffer)
+    return { [BYTES_KEY]: { b64: bytesToBase64(new Uint8Array(value)) } }
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView
+    const name = (Object.getPrototypeOf(view) as { constructor: { name: string } }).constructor.name
+    return {
+      [BYTES_KEY]: {
+        b64: bytesToBase64(new Uint8Array(view.buffer, view.byteOffset, view.byteLength)),
+        view: name in VIEWS ? name : 'Uint8Array'
+      }
+    }
+  }
+  if (isBlob(value)) {
+    if (!blobs) return value
+    const slot: Record<string, unknown> = { type: value.type }
+    if (typeof File === 'function' && value instanceof File) {
+      slot.name = value.name
+      slot.lastModified = value.lastModified
+    }
+    blobs.push({ blob: value, slot })
+    return { [BLOB_KEY]: slot }
+  }
   if (seen.has(value)) throw new Error('postMessage: the value has a cycle and cannot be cloned')
   seen.add(value)
   try {
-    if (Array.isArray(value)) return value.map((item) => encodePayload(item, transfer, seen))
+    if (Array.isArray(value)) return value.map((item) => encodePayload(item, transfer, seen, blobs))
     const proto = Object.getPrototypeOf(value) as object | null
     if (proto !== Object.prototype && proto !== null) return value
     const out: Record<string, unknown> = {}
     for (const key of Object.keys(value))
-      out[key] = encodePayload((value as Record<string, unknown>)[key], transfer, seen)
+      out[key] = encodePayload((value as Record<string, unknown>)[key], transfer, seen, blobs)
     return out
   } finally {
     seen.delete(value)
   }
+}
+
+/** Reads every blob `encodePayload` entered and fills its slot with the base64 of its bytes. */
+export async function readBlobs(blobs: readonly BlobSlot[]): Promise<void> {
+  await Promise.all(
+    blobs.map(async ({ blob, slot }) => {
+      slot.b64 = bytesToBase64(new Uint8Array(await blob.arrayBuffer()))
+    })
+  )
 }
 
 /** The payload as the far side sent it, `ports` being the ports that arrived with it, in order. */
@@ -106,6 +187,22 @@ export function decodePayload(value: unknown, ports: readonly MessagePort[] = []
   }
   if (typeof record[PORT_KEY] === 'number' && keys.length === 1) {
     return ports[record[PORT_KEY]] ?? null
+  }
+  const bytes = record[BYTES_KEY]
+  if (bytes && typeof bytes === 'object' && keys.length === 1) {
+    const b = bytes as { b64?: string; view?: string }
+    const buffer = base64ToBytes(typeof b.b64 === 'string' ? b.b64 : '').buffer
+    if (typeof b.view !== 'string') return buffer
+    return (VIEWS[b.view] ?? VIEWS.Uint8Array)(buffer)
+  }
+  const blob = record[BLOB_KEY]
+  if (blob && typeof blob === 'object' && keys.length === 1) {
+    const b = blob as { b64?: string; type?: string; name?: string; lastModified?: number }
+    const part = base64ToBytes(typeof b.b64 === 'string' ? b.b64 : '')
+    const type = typeof b.type === 'string' ? b.type : ''
+    if (typeof b.name === 'string' && typeof File === 'function')
+      return new File([part], b.name, { type, lastModified: b.lastModified })
+    return new Blob([part], { type })
   }
   const out: Record<string, unknown> = {}
   for (const key of keys) out[key] = decodePayload(record[key], ports)
@@ -130,6 +227,9 @@ function transferredPorts(transfer: unknown): MessagePort[] {
 class PortRelay {
   private readonly bound = new Map<string, MessagePort>()
   private seq = 0
+  /** Sends waiting on a blob read, in order; a send with nothing to read goes out at once. */
+  private queue: Promise<void> = Promise.resolve()
+  private waiting = 0
 
   constructor(
     private readonly send: Send,
@@ -145,11 +245,41 @@ class PortRelay {
     })
   }
 
-  /** A `postMessage` payload with its transfer list, as the wire carries them. */
-  encode(message: unknown, transfer: unknown): { data: unknown; ports: string[] } {
+  /**
+   * A `postMessage`: the payload with its transfer list goes out as `frame` wraps them. What
+   * cannot be cloned throws here, as the platform's `postMessage` does; the ports are bound at
+   * once (they are the far side's from this call on); a payload with a `Blob` in it goes out
+   * once the blob is read, and every later send of this relay waits behind it, so the order of
+   * the calls is the order on the wire.
+   */
+  post(
+    message: unknown,
+    transfer: unknown,
+    frame: (encoded: { data: unknown; ports: string[] }) => ServiceWorkerMessage
+  ): void {
     const ports = transferredPorts(transfer)
-    const data = encodePayload(message, ports)
-    return { data, ports: this.outbound(ports) }
+    const blobs: BlobSlot[] = []
+    const data = encodePayload(message, ports, new Set(), blobs)
+    const ids = this.outbound(ports)
+    if (blobs.length === 0 && this.waiting === 0) {
+      this.send(frame({ data, ports: ids }))
+      return
+    }
+    this.waiting++
+    const read = blobs.length > 0 ? readBlobs(blobs) : Promise.resolve()
+    this.queue = this.queue.then(async () => {
+      try {
+        await read
+        this.send(frame({ data, ports: ids }))
+      } catch (error) {
+        console.error(
+          '[Zenium] service worker relay: a Blob of a postMessage could not be read',
+          error
+        )
+      } finally {
+        this.waiting--
+      }
+    })
   }
 
   inbound(ids: unknown): MessagePort[] {
@@ -185,14 +315,11 @@ class PortRelay {
   private bind(id: string, port: MessagePort): void {
     this.bound.set(id, port)
     port.onmessage = (event: MessageEvent): void => {
-      let encoded: { data: unknown; ports: string[] }
       try {
-        encoded = this.encode(event.data, event.ports)
+        this.post(event.data, event.ports, (encoded) => ({ op: 'port', port: id, ...encoded }))
       } catch (error) {
         console.error('[Zenium] service worker port relay', error)
-        return
       }
-      this.send({ op: 'port', port: id, ...encoded })
     }
     port.onmessageerror = (): void => {
       console.warn('[Zenium] service worker port relay: a message could not be deserialised')
@@ -235,13 +362,13 @@ function messageEvent(data: unknown, ports: MessagePort[], origin: string, sourc
 }
 
 const clientPostMessage =
-  (send: Send, relay: PortRelay, to: string) =>
+  (relay: PortRelay, to: string) =>
   (message: unknown, transfer?: unknown): void => {
-    send({ op: 'post', to, ...relay.encode(message, transfer) })
+    relay.post(message, transfer, (encoded) => ({ op: 'post', to, ...encoded }))
   }
 
 /** A `WindowClient` as the worker sees one of its pages. */
-function windowClient(info: ClientInfo, send: Send, relay: PortRelay): Any {
+function windowClient(info: ClientInfo, relay: PortRelay): Any {
   const client: Any = {
     id: info.id,
     url: info.url,
@@ -251,7 +378,7 @@ function windowClient(info: ClientInfo, send: Send, relay: PortRelay): Any {
     visibilityState: info.visible ? 'visible' : 'hidden',
     ancestorOrigins: [],
     lifecycleState: 'active',
-    postMessage: clientPostMessage(send, relay, info.id),
+    postMessage: clientPostMessage(relay, info.id),
     focus: () => Promise.resolve(client),
     navigate: () => Promise.reject(new TypeError('navigate is not supported on Zenium for Android'))
   }
@@ -380,12 +507,12 @@ export function installServiceWorkerGlobals(
       const type = query?.type ?? 'window'
       if (type !== 'window' && type !== 'all') return []
       const infos = await listClients()
-      return infos.map((info) => windowClient(info, send, relay))
+      return infos.map((info) => windowClient(info, relay))
     },
     get: async (id: unknown) => {
       const infos = await listClients()
       const info = infos.find((entry) => entry.id === String(id))
-      return info ? windowClient(info, send, relay) : undefined
+      return info ? windowClient(info, relay) : undefined
     },
     claim: () => Promise.resolve(),
     openWindow: (url: unknown) => {
@@ -419,7 +546,6 @@ export function installServiceWorkerGlobals(
             focused: message.focused === true,
             visible: message.visible !== false
           },
-          send,
           relay
         )
         const ports = relay.inbound(message.ports)
@@ -508,7 +634,7 @@ export function installServiceWorkerClient(
     scriptURL: options.scriptUrl,
     state: 'activated',
     postMessage: (message: unknown, transfer?: unknown): void => {
-      send({ op: 'post', ...relay.encode(message, transfer) })
+      relay.post(message, transfer, (encoded) => ({ op: 'post', ...encoded }))
     }
   })
   handlerProperties(worker, ['onstatechange', 'onerror'])

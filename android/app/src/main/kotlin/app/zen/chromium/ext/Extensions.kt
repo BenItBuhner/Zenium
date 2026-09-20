@@ -163,6 +163,12 @@ class Extensions(private val host: Host) {
     }
 
     @Volatile private var served: Map<String, Served> = emptyMap()
+    /**
+     * Tab pages requested on an extension's origin before its configure (a restored tab at
+     * boot): held on an empty document and loaded again when the extension is served, failed
+     * when it is not coming (see [HeldPages]).
+     */
+    private val heldPages = HeldPages<TabWebView>()
     /** Per extension, the units currently installed on every tab (main thread). */
     private val units = LinkedHashMap<String, List<ScriptUnit>>()
     /**
@@ -308,6 +314,14 @@ class Extensions(private val host: Host) {
             "ext.open" -> open(args.str("id"), args.str("path"), reply)
             "ext.configure" -> configure(args, reply)
             "ext.detach" -> { detachExtension(args.str("id")); reply(null) }
+            "ext.expect" -> {
+                // The extensions the core is about to configure (told before it restores the
+                // windows), or, with an empty list once its start is over, none: a page still
+                // held for an extension that is not coming fails now.
+                val ids = args.arr("ids").let { a -> List(a.length()) { i -> a.optString(i, "") }.filter(VALID_ID::matches) }
+                for (held in heldPages.expect(ids)) failHeld(held)
+                reply(null)
+            }
             "ext.observeRequests" -> { observeRequests = args.bool("on"); reply(null) }
             "ext.send" -> { send(args.str("ep"), args.str("message")); reply(null) }
             "ext.background.start" -> { startBackground(args.str("id")); reply(null) }
@@ -448,6 +462,10 @@ class Extensions(private val host: Host) {
                 for (view in host.tabs.all()) installExtension(view, servedNow, unitsNow)
                 configureStats[id] = stats
                 flushNotificationEvents(id)
+                // A tab that asked for one of the extension's pages before this: the empty
+                // document it holds is loaded again, now that the origin answers (units first,
+                // so the page's document-start script is the extension's).
+                releaseHeld(id)
                 Log.i(
                     TAG,
                     "configured ${id.take(8)} ${servedNow.version}: ${unitsNow.size} unit(s), " +
@@ -497,6 +515,7 @@ class Extensions(private val host: Host) {
     private fun detachExtension(id: String) {
         units.remove(id)
         served = served - id
+        for (held in heldPages.dropped(id)) failHeld(held)
         for (view in handlers.keys.toList()) removeExtension(view, id)
         stopBackground(id)
         closeOffscreen(id)
@@ -1029,9 +1048,12 @@ class Extensions(private val host: Host) {
         val hostName = url.host ?: return null
         if (hostName.endsWith(ORIGIN_SUFFIX)) {
             val id = hostName.removeSuffix(ORIGIN_SUFFIX)
-            val ext = served[id] ?: return notFound()
+            // A tab's document on an origin the runtime does not serve: held while the core is
+            // about to configure the extension, failed as Chrome fails it otherwise; anything
+            // else of an unserved extension (a frame, a resource) is simply not there.
+            val ext = served[id] ?: return if (tab != null && request.isForMainFrame) unservedPage(request, tab, id) else notFound()
             // Chrome does not load a chrome-extension:// URL in incognito for an extension not allowed there.
-            if (tab?.isPrivateTab == true && !ext.allowPrivate) return notFound()
+            if (tab?.isPrivateTab == true && !ext.allowPrivate) return if (request.isForMainFrame) refusedPage(tab, url.toString()) else notFound()
             val path = (url.path ?: "/").trimStart('/')
             val origin = "https://$hostName/"
             val ownPage = tab != null && (
@@ -1213,6 +1235,54 @@ class Extensions(private val host: Host) {
     }
 
     private fun notFound() = response("text/plain", 404, "Not Found", ByteArray(0))
+
+    /**
+     * A tab's document on the origin of an extension that is not served (network thread). While
+     * the core is about to configure the extension the page is held: an empty document under
+     * the page's URL, loaded again from [releaseHeld] once the configure completes. Otherwise it
+     * fails like a page of an extension Chrome has not enabled, `ERR_BLOCKED_BY_CLIENT`, through
+     * the core's error page: the empty document stands under the URL as WebView's own error
+     * page does for a failed load, and the tab steps over it on the way back.
+     */
+    private fun unservedPage(request: WebResourceRequest, tab: TabWebView, id: String): WebResourceResponse {
+        val href = request.url.toString()
+        if (heldPages.expects(id)) {
+            heldPages.hold(id, tab, href)
+            // The configure may have completed between the served check and the hold; then the
+            // real answer, and no reload of a page that loads on its own.
+            if (served[id] == null) return heldPage()
+            heldPages.unhold(id, tab, href)
+            return intercept(request, tab, null) ?: notFound()
+        }
+        return refusedPage(tab, href)
+    }
+
+    /** The empty document a refused page shows; the tab fails the load as the document starts. */
+    private fun refusedPage(tab: TabWebView, href: String): WebResourceResponse {
+        tab.refuseExtensionPage(href)
+        return heldPage()
+    }
+
+    private fun heldPage(): WebResourceResponse = response("text/html", 200, "OK", HELD_PAGE_HTML.toByteArray())
+
+    /** The pages held for `id`, loaded again now that its origin answers (main thread). */
+    private fun releaseHeld(id: String) {
+        val tabs = host.tabs.all()
+        for (held in heldPages.served(id)) {
+            val view = held.view
+            // A tab that moved on, or went, keeps its own page.
+            if (view !in tabs || view.currentUrl != held.url) continue
+            Log.i(TAG, "reloading a held page of ${id.take(8)}: ${held.url.take(80)}")
+            view.reload()
+        }
+    }
+
+    /** A page held for an extension that is not coming: it fails (main thread). */
+    private fun failHeld(held: HeldPages.Held<TabWebView>) {
+        val view = held.view
+        if (view !in host.tabs.all() || view.currentUrl != held.url) return
+        view.failExtensionPage(held.url)
+    }
 
     /**
      * A record's directory, or null when the path is not a directory under the store's install
@@ -1425,6 +1495,13 @@ class Extensions(private val host: Host) {
         )
         const val ORIGIN_SUFFIX = ".ext.zenium.invalid"
         const val GENERATED_BACKGROUND = "_generated_background_page.html"
+        /**
+         * The document a tab shows while its extension page is held (or is being failed): empty,
+         * in the page's colour scheme, so it reads as a page still loading, not as a page.
+         */
+        const val HELD_PAGE_HTML =
+            "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+                "<style>:root{color-scheme:light dark}</style></head><body></body></html>"
         /** The id prefix of the extensions' rule sets in the engine (`engineSetId` in `core/extensions/dnr/sink.ts`). */
         const val EXT_SET_PREFIX = "ext:"
         val VALID_ID = Regex("^[a-p]{32}$")

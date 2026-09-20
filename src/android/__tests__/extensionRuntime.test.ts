@@ -230,6 +230,16 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     ])
   })
 
+  it('expect names the extensions about to be attached to Kotlin, ahead of the environment handshake', () => {
+    const h = harness()
+    h.runtime.expect([ID, 'b'.repeat(32)])
+    h.runtime.expect([])
+    // Sent as-is (fire and forget): the constructor runs before the windows are restored, and a
+    // restored tab's document request must find the ids already on the Kotlin side.
+    expect(h.kt.calledWith('ext.expect')).toEqual([{ ids: [ID, 'b'.repeat(32)] }, { ids: [] }])
+    expect(h.kt.calledWith('ext.env')).toEqual([])
+  })
+
   it('detach drops the endpoints and tells Kotlin; forget takes the persisted state and storage along', async () => {
     const h = harness()
     await h.runtime.attach(record(h))
@@ -1109,6 +1119,21 @@ describe('AndroidExtensionRuntime: an extension page open as a tab', () => {
     expect(contexts.find((c) => c.contextId === 'pop1')?.documentUrl).toBe(
       `chrome-extension://${ID}/popup.html`
     )
+    // The filter keeps only the listed values (Tampermonkey asks for OFFSCREEN_DOCUMENT contexts
+    // before creating its offscreen document: with the filter ignored it never created one).
+    const byType = async (types: string[]): Promise<string[]> =>
+      (
+        (await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: types }])).result as Array<
+          Record<string, unknown>
+        >
+      ).map((c) => String(c.contextId))
+    expect(await byType(['OFFSCREEN_DOCUMENT'])).toEqual([])
+    expect(await byType(['POPUP'])).toEqual(['pop1'])
+    expect((await byType(['TAB', 'BACKGROUND'])).sort()).toEqual(['bg1', 'docP.1', 'docQ.1'])
+    const byTab = (
+      await call(h, 'bg1', 'runtime', 'getContexts', [{ contextTypes: ['TAB'], frameIds: [0] }])
+    ).result as Array<Record<string, unknown>>
+    expect(byTab.map((c) => c.contextId)).toEqual(['docP.1'])
     // The background's tabs.sendMessage to the tab reaches the page and its frame, not the popup.
     const tabId = h.runtime.api.tabs.chromeIdFor('t1')
     message(h, 'bg1', { t: 'msg', id: 10, target: { tabId, options: null }, data: 'hi' })
@@ -1179,6 +1204,50 @@ describe('AndroidExtensionRuntime: chrome.userScripts', () => {
     expect(h.runtime.userScriptMessaging(ID)).toBe(false)
     const off = JSON.parse(String(userUnit().config)) as Record<string, unknown>
     expect(off.userScriptMessaging).toBe(false)
+  })
+
+  it('execute runs the sources in order in the user-script world of the target frames and answers per frame', async () => {
+    const h = harness()
+    await h.runtime.attach(
+      record(h, {}, manifest({ permissions: ['storage', 'userScripts', 'scripting'] }))
+    )
+    backgroundUp(h, 'bg1')
+    await call(h, 'bg1', 'userScripts', 'configureWorld', [{ messaging: true }])
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    h.kt.execAnswer = (args) => `${String(args.code ?? (args.files as string[])[0])}!`
+    const ran = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: 'first()' }, { file: 'lib.js' }, { code: 'last()' }] }
+    ])
+    expect(ran.error).toBeUndefined()
+    expect(ran.result).toEqual([{ frameId: 0, documentId: '', result: 'last()!' }])
+    const execs = h.kt.calledWith('ext.exec')
+    expect(execs).toHaveLength(3)
+    expect(execs.map((e) => e.code ?? (e.files as string[])[0])).toEqual([
+      'first()',
+      'lib.js',
+      'last()'
+    ])
+    // The user-script world, with the messaging switch the extension set, not the content world.
+    expect(execs.map((e) => e.payload)).toEqual(
+      Array<unknown>(3).fill({ world: 'USER_SCRIPT', messaging: true })
+    )
+    expect(execs.every((e) => e.tabId === 't1' && e.doc === null)).toBe(true)
+    // The main world on request; a bad injection is refused before anything runs.
+    const main = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId }, js: [{ code: '1' }], world: 'MAIN' }
+    ])
+    expect(main.error).toBeUndefined()
+    expect(h.kt.calledWith('ext.exec').at(-1)?.payload).toEqual({
+      world: 'MAIN',
+      messaging: true
+    })
+    const bad = await call(h, 'bg1', 'userScripts', 'execute', [{ target: { tabId }, js: [] }])
+    expect(String(bad.error)).toContain('js')
+    expect(h.kt.calledWith('ext.exec')).toHaveLength(4)
+    const noTab = await call(h, 'bg1', 'userScripts', 'execute', [
+      { target: { tabId: 9999 }, js: [{ code: '1' }] }
+    ])
+    expect(String(noTab.error)).toContain('No tab with id')
   })
 })
 
@@ -1439,6 +1508,108 @@ describe('AndroidExtensionRuntime: runtime.requestUpdateCheck', () => {
     const found = await call(h, 'bg1', 'runtime', 'requestUpdateCheck', [])
     expect(found.result).toEqual({ status: 'update_available', version: '2.0.0' })
     expect(asked).toEqual([ID])
+  })
+})
+
+describe('AndroidExtensionRuntime: runtime.onUpdateAvailable and the idle word to the store', () => {
+  function storeOf(h: Harness): string[] {
+    const idle: string[] = []
+    h.runtime.store = {
+      record: () => undefined,
+      records: () => [],
+      reload: async () => {},
+      remove: async () => {},
+      requestUpdateCheck: async () => ({ status: 'no_update' }),
+      idle: (id) => idle.push(id)
+    }
+    return idle
+  }
+
+  it("delays an update while the worker runs or a page of the extension's own is open, not for content scripts", async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    // The attach starts the worker (Chrome's start at browser start): busy from the first moment.
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    expect(h.runtime.isIdle(ID)).toBe(false)
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    backgroundUp(h, 'bg1')
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    // The worker idles out and is reported gone: idle, and the store hears it once.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(h.runtime.background.state(ID)).toBe('stopped')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID])
+    // A popup keeps the extension busy; a content script does not.
+    hello(h, 'pop1', 'popup', { url: `https://${ID}.ext.zenium.invalid/popup.html` })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    hello(h, 'doc1.n.abcdefgh', 'content')
+    h.runtime.onGone(['pop1'])
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    expect(idle).toEqual([ID, ID])
+    // A content script going says nothing: it never made the extension busy.
+    h.runtime.onGone(['doc1.n.abcdefgh'])
+    expect(idle).toEqual([ID, ID])
+    // Not attached, nothing delays.
+    await h.runtime.detach(ID)
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+  })
+
+  it('a background going while a page stays open is no idle yet; the page closing is', async () => {
+    const h = harness()
+    const idle = storeOf(h)
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    h.tick(30_000)
+    h.runtime.onGone(['bg1'])
+    expect(idle).toEqual([])
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    h.runtime.onGone(['opt1'])
+    expect(idle).toEqual([ID])
+  })
+
+  it("raises runtime.onUpdateAvailable with the staged manifest in the extension's contexts and wakes a worker that listened for it", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1', ['runtime.onUpdateAvailable'])
+    hello(h, 'opt1', 'page', { url: `https://${ID}.ext.zenium.invalid/options.html` })
+    message(h, 'opt1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    const details = { manifest_version: 3, name: 'Sample', version: '1.1.0' }
+    h.runtime.updateAvailable(ID, details)
+    expect(events(h, 'bg1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    expect(events(h, 'opt1', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // Stopped, the worker persisted the listener: the event starts it and waits for ready.
+    h.tick(30_000)
+    h.runtime.onGone(['bg1', 'opt1'])
+    h.runtime.updateAvailable(ID, details)
+    expect(h.runtime.background.state(ID)).toBe('starting')
+    backgroundUp(h, 'bg2', ['runtime.onUpdateAvailable'])
+    expect(events(h, 'bg2', 'runtime.onUpdateAvailable')).toMatchObject([{ args: [details] }])
+    // An extension the runtime does not run hears nothing.
+    h.runtime.updateAvailable(ID2, details)
+  })
+
+  it('with a persistent page, delays only while the page listens for runtime.onUpdateAvailable', async () => {
+    const h = harness()
+    const mv2 = manifest({
+      manifest_version: 2,
+      permissions: ['storage', 'https://example.com/*'],
+      host_permissions: undefined,
+      background: { scripts: ['bg.js'], persistent: true },
+      action: undefined,
+      browser_action: { default_popup: 'popup.html' }
+    })
+    await h.runtime.attach(record(h, {}, mv2))
+    backgroundUp(h, 'bg1')
+    // Running but not listening: Chrome installs at once, the page restarts anyway.
+    expect(h.runtime.background.kind(ID)).toBe('persistent')
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: true })
+    expect(h.runtime.delaysUpdate(ID)).toBe(true)
+    message(h, 'bg1', { t: 'listen', event: 'runtime.onUpdateAvailable', on: false })
+    expect(h.runtime.delaysUpdate(ID)).toBe(false)
   })
 })
 

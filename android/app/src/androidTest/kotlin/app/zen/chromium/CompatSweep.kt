@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.Debug
 import android.os.SystemClock
 import android.util.Log
+import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -18,6 +19,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.webkit.WebViewCompat
 import app.zen.chromium.blocking.Blocking
+import app.zen.chromium.ext.ExtensionUrls
 import app.zen.chromium.ext.ExtensionWebView
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,6 +28,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
@@ -205,7 +208,114 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             beat()
             snap("addons-all")
         }
+        // Last, as it starts the browser over: the restored extension-page tab.
+        if (chromeAnswers()) {
+            runCatching { restoredOptionsTab() }.onFailure {
+                Log.e(TAG, "the restored options tab check threw", it)
+                results.optJSONObject("restoredOptionsTab")?.put("crash", it.toString()) ?: results.put("restoredOptionsTab", JSONObject().put("crash", it.toString()))
+            }
+        }
         results.put("finishedAt", System.currentTimeMillis())
+    }
+
+    /**
+     * The restored extension-page tab: an options page open as a tab when the session ends must
+     * come back rendered, with the runtime attached, when the browser starts again. The core
+     * restores its windows (the active tab's view loads at once) before `extensions.start()`
+     * configures the runtime, so the restored tab asks for its document before its extension is
+     * served; the runtime holds the document and loads it again once the extension's configure
+     * completes (`Extensions.kt`, `HeldPages`). The start-over is forced with a second
+     * [launch]: a new activity, so a new host, a new chrome and a new core that reads the session
+     * back from disk (the process stays: the instrumentation shares it). The row is the first
+     * whose options page graded `P`, enabled again for this.
+     */
+    private fun restoredOptionsTab() {
+        val report = JSONObject()
+        results.put("restoredOptionsTab", report)
+        val entry = (0 until rows.length()).map { rows.getJSONObject(it) }.firstOrNull { row ->
+            row.optJSONObject("options")?.optString("verdict") == "P" && row.optJSONObject("options")?.optJSONObject("detail")?.optString("page", "")?.isNotEmpty() == true
+        }
+        if (entry == null) {
+            report.put("verdict", "n/m").put("note", "no row's options page graded P in this run")
+            return
+        }
+        val id = entry.getString("id")
+        val page = entry.getJSONObject("options").getJSONObject("detail").getString("page").trimStart('/')
+        val url = "chrome-extension://$id/$page"
+        report.put("id", id).put("name", entry.optString("name")).put("url", url)
+        val factor = speedFactor(entry)
+        report.put("speedFactor", factor)
+        coreInvoke("extension.setEnabled", JSONObject().put("id", id).put("enabled", true).toString())
+        poll(scaled(20_000, factor), 400) { extensions().firstOrNull { it.getString("id") == id }?.takeIf { it.getBoolean("enabled") } }
+            ?: error("$id did not come back enabled")
+        closeExtraTabs()
+        val tabId = createTab(url)
+        showTab(tabId)
+        val view = waitForView(tabId)
+        val drawn = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(view)) true else null }
+        SystemClock.sleep(1_200)
+        snap("restored-options-before")
+        report.put("before", json(tabEval(view, RESTORED_PAGE_REPORT)).put("rendered", drawn == true))
+        if (drawn != true) {
+            report.put("verdict", "n/m").put("note", "the options page did not render as a tab before the restart")
+            return
+        }
+        // The session file must name the tab before the start-over, or nothing is restored. The
+        // core writes it on a cadence; the wait scales with the job like the step's other waits
+        // (a 156 job at x3.1 rendered the page and missed a fixed 10 s here).
+        val state = File(app.filesDir, "zen/state.json")
+        val persistDeadline = scaled(10_000, factor)
+        val persisted = poll(persistDeadline, 300) { if (state.isFile && state.readText().contains(url)) true else null }
+        report.put("persisted", persisted == true)
+        if (persisted != true) {
+            report.put("verdict", "n/m").put("note", "the session file did not name the tab within ${persistDeadline / 1000} s")
+            return
+        }
+        Log.i(TAG, "RESTORE: starting the browser over with $url active")
+        val since = SystemClock.uptimeMillis()
+        launch()
+        report.put("relaunchMs", SystemClock.uptimeMillis() - since)
+        // The restored session's active tab is the options page, in whichever of the two
+        // spellings the core carries for it (the session file names Chrome's; the tab model
+        // takes the WebView's served origin back at the commit: `TabWebView.doUpdateVisitedHistory`
+        // reports the raw URL over `navState()`'s presented one), as the core's own
+        // `extensionPageOf` treats them.
+        val restoredTab = poll(30_000, 500) {
+            runCatching { activeCoreTab() }.getOrNull()?.takeIf { ExtensionUrls.present(it.optString("url")).startsWith(url) }
+        }
+        if (restoredTab == null) {
+            report.put("verdict", "F").put("note", "no active tab on $url within 30 s of the restart; tabs: ${runCatching { tabUrls() }.getOrNull()}")
+            snap("restored-options-tab")
+            return
+        }
+        val restoredId = restoredTab.optString("id")
+        report.put("restoredTabId", restoredId).put("restoredUrl", restoredTab.optString("url"))
+        val restored = waitForView(restoredId)
+        val rendered = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (rendered(restored)) true else null }
+        report.put("renderedMs", SystemClock.uptimeMillis() - since)
+        // A page may keep itself out of sight until its background answers (uBO Lite's dashboard
+        // stays `body.loading`, visibility hidden and so without innerText, until its worker's
+        // `getOptionsPageData` resolves, and on a restart the worker loads its rulesets first):
+        // the screenshot waits for visible text, the page as the user sees it, and the report
+        // says when it came.
+        val visible = poll(scaled(OPTIONS_TIMEOUT_MS, factor), 500) { if (visibleText(restored)) true else null }
+        report.put("visible", visible == true).put("visibleMs", SystemClock.uptimeMillis() - since)
+        SystemClock.sleep(1_500)
+        snap("restored-options-tab")
+        val after = json(tabEval(restored, RESTORED_PAGE_REPORT))
+        val console = consoleOf(restored)
+        report.put("after", after).put("console", JSONArray(console.takeLast(20)))
+        val attached = after.optString("runtimeId") == id
+        val verdict = if (rendered == true && attached && visible == true) "P" else if (rendered == true) "PARTIAL" else "F"
+        report.put("verdict", verdict).put(
+            "note",
+            if (rendered == true) "the restored tab rendered ${after.optInt("els")} elements ${report.optLong("renderedMs") / 1000} s after the restart" +
+                (if (visible == true) ", visible text ${report.optLong("visibleMs") / 1000} s after it" else ", no visible text within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the render") +
+                (if (attached) ", chrome.runtime.id is the extension's" else ", but chrome.runtime.id reads ${after.optString("runtimeId")}")
+            else "the restored tab did not render within ${scaled(OPTIONS_TIMEOUT_MS, factor) / 1000} s of the restart: ${after.toString().take(300)}"
+        )
+        Log.i(TAG, "RESTORE ${entry.optString("name")}: $verdict – ${report.optString("note")}")
+        write()
     }
 
     // --- one extension ---------------------------------------------------------------------------
@@ -767,18 +877,26 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         coreInvoke("extension.setAllowUserScripts", JSONObject().put("id", row.id).put("allowed", true).toString())
         SystemClock.sleep(2_500)
         val extra = JSONObject()
+        val factor = speedFactor(entry)
+        extra.put("speedFactor", factor)
+        val since = StepEvidence(row)
         val before = tabUrls().keys
         createTab("$BASE/hello.user.js")
-        val installTab = poll(30_000, 500) {
+        val installTab = poll(scaled(30_000, factor), 500) {
             tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && installPage.containsMatchIn(it.value) }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         if (installTab == null) {
-            return Grade("F", "install page never appeared within 30 s: tabs=${tabUrls().values.joinToString().take(200)}", extra)
+            since.record(extra, "afterOpen")
+            return Grade("F", "install page never appeared within ${scaled(30_000, factor) / 1000} s: tabs=${tabUrls().values.joinToString().take(200)}", extra)
         }
         extra.put("installUrl", installTab.value)
         val installView = waitForView(installTab.key)
-        SystemClock.sleep(3_500)
+        // The manager's page asks its background for the script's data and sits on a spinner
+        // until the answer comes: the Install button showing, not a fixed wait, is the cue.
+        val readyAt = SystemClock.elapsedRealtime()
+        val ready = pollExpr(installView, USERSCRIPT_INSTALL_PAGE_STATE, scaled(20_000, factor))
+        extra.put("installPage", ready.put("readyMs", SystemClock.elapsedRealtime() - readyAt).put("console", JSONArray(consoleOf(installView).takeLast(8))))
         snap("${entry.optString("slug")}-userscript-install")
         val click = json(
             tabEval(
@@ -791,10 +909,22 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         )
         extra.put("click", click)
         val clicked = SystemClock.elapsedRealtime()
+        SystemClock.sleep(1_000)
+        if (installTab.key in tabUrls()) {
+            // What the page shows a second after the click: its spinner back up, the button's
+            // state, its console; the manager's answer to the click comes from its background.
+            snap("${entry.optString("slug")}-userscript-after-click")
+            extra.put("installPageAfterClick", json(tabEval(installView, USERSCRIPT_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+        }
         // The manager closes its install tab once the script is stored; that is the install landing.
-        val installTabGone = poll(USERSCRIPT_INSTALL_MS, 250) { if (installTab.key !in tabUrls()) true else null } == true
+        val installWaitMs = scaled(USERSCRIPT_INSTALL_MS, factor)
+        val installTabGone = poll(installWaitMs, 250) { if (installTab.key !in tabUrls()) true else null } == true
         extra.put("installTabClosedMs", if (installTabGone) SystemClock.elapsedRealtime() - clicked else JSONObject.NULL)
-        if (!installTabGone) SystemClock.sleep(1_000)
+        if (!installTabGone) {
+            SystemClock.sleep(1_000)
+            extra.put("installPageAtDeadline", json(tabEval(installView, USERSCRIPT_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+        }
+        since.record(extra, "afterInstall")
         val bg = backgroundView(row.id)
         if (bg != null) {
             tabEval(bg, "(function(){window.__us=null;Promise.resolve().then(function(){return chrome.userScripts.getScripts()}).then(function(s){window.__us=JSON.stringify({registered:s.length})},function(e){window.__us=JSON.stringify({error:String(e&&e.message||e)})})})()")
@@ -804,26 +934,156 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "dataset: (document.documentElement && document.documentElement.dataset.userscript) || null})"
         val target = createTab("$BASE/us-target.html")
         val targetView = waitForView(target)
-        val deadline = SystemClock.elapsedRealtime() + USERSCRIPT_EFFECT_MS
-        var page = pollExpr(targetView, marker, USERSCRIPT_FIRST_LOAD_MS)
+        val deadline = SystemClock.elapsedRealtime() + scaled(USERSCRIPT_EFFECT_MS, factor)
+        var page = pollExpr(targetView, marker, scaled(USERSCRIPT_FIRST_LOAD_MS, factor))
         extra.put("target", page)
         if (!page.optBoolean("pass")) {
             // The script may have landed after the first document loaded: one reload, same deadline.
+            extra.put("targetErrorsFirstLoad", targetErrors(targetView))
             tabEval(targetView, "location.reload()")
             SystemClock.sleep(1_000)
             page = pollExpr(targetView, marker, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(3_000))
             extra.put("targetReload", page)
         }
         extra.put("targetConsole", JSONArray(consoleOf(targetView).takeLast(10)))
+        // The fixture keeps its uncaught errors with their stacks (`window.__errors`): a console
+        // line names a file and a line, the frames say whose code threw.
+        extra.put("targetErrors", targetErrors(targetView))
+        since.record(extra, "atEnd")
         val readings = "first load ${extra.optJSONObject("target")?.toString()?.take(120)}" +
             (extra.optJSONObject("targetReload")?.let { ", after reload ${it.toString().take(120)}" } ?: "")
         return Grade(
             if (page.optBoolean("pass")) "P" else "F",
-            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), install click ${click.toString().take(120)}, " +
-                "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${USERSCRIPT_INSTALL_MS / 1000} s"}, " +
-                "userScripts: ${extra.opt("userScripts")}, target page: $readings",
+            "install page opened (${installTab.value.substringAfter(".ext.zenium.invalid").take(50)}), ready after ${ready.optLong("readyMs")} ms ${if (ready.optBoolean("pass")) "" else "(still waiting: ${ready.optString("text").take(60)}) "}" +
+                "install click ${click.toString().take(120)}, " +
+                "install tab ${if (installTabGone) "closed after ${extra.opt("installTabClosedMs")} ms" else "still open after ${installWaitMs / 1000} s (${extra.optJSONObject("installPageAtDeadline")?.optString("text")?.take(60)})"}, " +
+                "userScripts: ${extra.opt("userScripts")}, target page: $readings" +
+                (extra.optJSONArray("targetErrors")?.takeIf { it.length() > 0 }?.let { "; first error: ${it.optJSONObject(0)?.optString("message")?.take(80)}" } ?: "") +
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: ${speedNote(entry)})" else "",
             extra
         )
+    }
+
+    /**
+     * The page's uncaught errors and their stacks: the fixture's own (`window.__errors`, from its
+     * first inline script on), the runtime's debug capture (`__zenExtStats.errors`, from
+     * document start on, with the throwing inline script's source for an error a console line
+     * gives as `<document URL>:1`) and the errors of the sub-frames the runtime left alone
+     * (`__zenExtStats.frameErrors`: an error inside such a frame never reaches the page's own
+     * `error` listeners), each marked with where it was kept. One `stats` entry carries the
+     * frames the runtime left alone and the shield's state; without the runtime's capture on the
+     * page (no `__zenExtStats`), one `none` entry says so.
+     */
+    private fun targetErrors(view: WebView): JSONArray {
+        // tabEval hands a string result back unquoted: the array's text itself.
+        val text = tabEval(
+            view,
+            "JSON.stringify([].concat((window.__errors||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='page';return e})," +
+                "((window.__zenExtStats&&window.__zenExtStats.errors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='runtime';return e})," +
+                "((window.__zenExtStats&&window.__zenExtStats.frameErrors)||[]).slice(0,6).map(function(e){e=Object.assign({},e);e.kept='frame';return e})," +
+                "window.__zenExtStats?[{kept:'stats',untouchedFrames:window.__zenExtStats.untouchedFrames||[],trustedTypes:window.__zenExtStats.trustedTypes,applied:window.__zenExtStats.applied,groups:(window.__zenExtStats.groups||[]).length}]" +
+                ":[{kept:'none',message:'no __zenExtStats on the page'}]))"
+        )
+        return runCatching { JSONArray(text) }.getOrElse { JSONArray().put(JSONObject().put("kept", "unread").put("message", text.take(300))) }
+    }
+
+    /**
+     * How much slower this job runs than the 113 job at normal speed, the larger of two readings,
+     * bounded so a wait never grows past four times its size (a core check's fixed waits scale
+     * by it, so a slow job does not fail a working runtime):
+     *  - the row's own store install against about 8 s on the 113 job (6.8-11 s in round 3's
+     *    runs; 12-18 s on a 156 job at its normal speed, 25-29 s on round 2's slow final run);
+     *  - the app's UI frame interval against about 100 ms on the 113 job. Every bridge hop between
+     *    an extension's page, the core and its worker takes a turn of the UI thread
+     *    (`evaluateJavascript`, the reply proxy's `postMessage`), so a handshake of many hops runs
+     *    at one hop per frame: on the 156 job's snapshot WebView a frame took about 830 ms in
+     *    round 3's mid run (`Choreographer: Skipped 49 frames` all run long) and Stylus's install
+     *    page needed 21 s for the 25 hops of its build before its Install button was armed, where
+     *    the 113 job needs under a second. The install time alone (x1.7 there) does not see this.
+     * Measured once per row and kept on its entry (`speed`).
+     */
+    private fun speedFactor(entry: JSONObject): Double {
+        entry.optJSONObject("speed")?.let { return it.optDouble("factor", 1.0) }
+        val installMs = entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms", 0L) ?: 0L
+        val installRatio = if (installMs <= 0L) 1.0 else installMs.toDouble() / NOMINAL_INSTALL_MS
+        val frameMs = frameIntervalMs()
+        val frameRatio = if (frameMs <= 0L) 1.0 else frameMs.toDouble() / NOMINAL_FRAME_MS
+        val factor = maxOf(installRatio, frameRatio).coerceIn(1.0, 4.0)
+        entry.put("speed", JSONObject().put("installMs", installMs).put("frameMs", frameMs).put("installRatio", installRatio).put("frameRatio", frameRatio).put("factor", factor))
+        Log.i(TAG, "SPEED ${entry.optString("name")}: install ${installMs} ms (x${"%.2f".format(installRatio)}), frame ${frameMs} ms (x${"%.2f".format(frameRatio)}) -> waits x${"%.2f".format(factor)}")
+        return factor
+    }
+
+    /**
+     * The UI thread's frame interval right now: the mean gap between [FRAME_PROBE_FRAMES]
+     * consecutive Choreographer frames (a redraw is requested so frames come even when nothing
+     * animates), or the time the probe waited when fewer frames came; 0 when none did.
+     */
+    private fun frameIntervalMs(): Long {
+        val stamps = CopyOnWriteArrayList<Long>()
+        val done = CountDownLatch(1)
+        val started = SystemClock.uptimeMillis()
+        instrumentation.runOnMainSync {
+            val choreographer = Choreographer.getInstance()
+            val callback = object : Choreographer.FrameCallback {
+                override fun doFrame(frameTimeNanos: Long) {
+                    stamps.add(frameTimeNanos / 1_000_000)
+                    if (stamps.size > FRAME_PROBE_FRAMES) done.countDown()
+                    else {
+                        activity.window.decorView.invalidate()
+                        choreographer.postFrameCallback(this)
+                    }
+                }
+            }
+            activity.window.decorView.invalidate()
+            choreographer.postFrameCallback(callback)
+        }
+        done.await(FRAME_PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val list = stamps.toList()
+        return when {
+            list.size >= 2 -> (list.last() - list.first()) / (list.size - 1)
+            list.isEmpty() -> 0L
+            else -> SystemClock.uptimeMillis() - started
+        }
+    }
+
+    private fun scaled(ms: Long, factor: Double): Long = (ms * factor).toLong()
+
+    /** The two readings behind the row's speed factor, for a grade's note. */
+    private fun speedNote(entry: JSONObject): String {
+        val speed = entry.optJSONObject("speed") ?: return "install took ${entry.optJSONObject("install")?.optJSONObject("detail")?.optLong("ms")} ms"
+        return "install took ${speed.optLong("installMs")} ms, a UI frame ${speed.optLong("frameMs")} ms"
+    }
+
+    /**
+     * What the extension's background and the bridge said during one core step: the console lines
+     * the background view added and the bridge trace lines of the extension since the step began
+     * (a `runtime.sendMessage` shows as `msg type=<its discriminator>`, its answer as `msgReply`,
+     * a relayed service-worker port as `sw`), so a handshake that stopped can be placed.
+     */
+    private inner class StepEvidence(private val row: Row) {
+        private val consoleFrom = backgroundView(row.id)?.let { consoleOf(it).size } ?: 0
+        /** Trace lines start with `uptimeMillis`; the ring drops old lines, so the time, not the index, marks the step's start. */
+        private val startedAt = SystemClock.uptimeMillis()
+
+        private fun traceLines(): List<String> {
+            var list: List<String> = emptyList()
+            instrumentation.runOnMainSync { list = host.extensions.traceSnapshot(row.id) }
+            return list.filter { (it.substringBefore(' ').toLongOrNull() ?: Long.MAX_VALUE) >= startedAt }
+        }
+
+        fun record(extra: JSONObject, at: String) {
+            val bg = backgroundView(row.id)
+            val console = bg?.let { consoleOf(it).drop(consoleFrom) } ?: emptyList()
+            val trace = traceLines()
+            extra.put(
+                "bg" + at.replaceFirstChar { it.uppercase() },
+                JSONObject()
+                    .put("console", JSONArray(console.takeLast(15)))
+                    .put("bridge", JSONArray(trace.takeLast(40)))
+                    .put("bridgeLines", trace.size)
+            )
+        }
     }
 
     /**
@@ -958,33 +1218,58 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /** Stylus: a `.user.css` opens its install page, the style installs, the page it targets turns red. */
     private fun stylus(row: Row, entry: JSONObject): Grade {
         val extra = JSONObject()
+        val factor = speedFactor(entry)
+        extra.put("speedFactor", factor)
+        val since = StepEvidence(row)
         val before = tabUrls().keys
         createTab("$BASE/hello.user.css")
-        val installTab = poll(25_000, 500) {
+        val installTab = poll(scaled(25_000, factor), 500) {
             tabUrls().entries.firstOrNull { it.key !in before && it.value.contains(".ext.zenium.invalid/") && it.value.contains("install-usercss") }
         }
         extra.put("tabsAfterOpen", JSONArray(tabUrls().values.toList()))
         var click = JSONObject().put("clicked", false)
+        var ready = JSONObject()
         if (installTab != null) {
             val installView = waitForView(installTab.key)
-            SystemClock.sleep(3_500)
+            // The page parses the usercss in a worker of its own origin reached through the
+            // service worker (round 2, 8.6): `getInstallCode`, `build`, then the button's `onclick`
+            // is assigned. The button is in the HTML from the start, enabled and visible, so the
+            // handler being armed is the cue (round 3's mid run on the 156 job clicked a button
+            // without one, 21 s of hops before the build came back), not the button, not a wait.
+            val readyAt = SystemClock.elapsedRealtime()
+            ready = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE, scaled(20_000, factor))
+            extra.put("installPage", ready.put("readyMs", SystemClock.elapsedRealtime() - readyAt).put("console", JSONArray(consoleOf(installView).takeLast(8))))
             snap("${entry.optString("slug")}-usercss-install")
             for (i in 0 until 10) {
-                click = json(tabEval(installView, "(function(){var b=document.querySelector('button.install');if(!b||b.offsetParent===null||b.disabled)return JSON.stringify({clicked:false,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null});b.click();return JSON.stringify({clicked:true})})()"))
+                click = json(tabEval(installView, "(function(){var b=document.querySelector('button.install');if(!b||b.offsetParent===null||b.disabled||typeof b.onclick!=='function')return JSON.stringify({clicked:false,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,armed:!!b&&typeof b.onclick==='function'});b.click();return JSON.stringify({clicked:true})})()"))
                 if (click.optBoolean("clicked")) break
                 SystemClock.sleep(1_000)
             }
-            SystemClock.sleep(3_000)
+            SystemClock.sleep(1_000)
+            // A second after the click: the button (Stylus disables it and relabels it once the
+            // style is saved), the page's message box, its console; the save itself is the
+            // page-to-service-worker `usercss.install` round trip.
+            snap("${entry.optString("slug")}-usercss-after-click")
+            extra.put("installPageAfterClick", json(tabEval(installView, STYLUS_INSTALL_PAGE_STATE)).put("console", JSONArray(consoleOf(installView).takeLast(8))))
+            // The style's save (the `usercss.install` round trip, several hops) and the broadcast
+            // to the open tabs, scaled with the job.
+            val landed = pollExpr(installView, STYLUS_INSTALL_PAGE_STATE.replace("pass:!!b&&b.offsetParent!==null&&!b.disabled&&armed", "pass:!!b&&(b.disabled||/installed/i.test(b.textContent||''))"), scaled(8_000, factor))
+            extra.put("installPageLanded", landed)
+            since.record(extra, "afterInstall")
         }
         extra.put("installClick", click)
         val tab = createTab("$BASE/page-a.html?stylus")
         val view = waitForView(tab)
-        val found = pollExpr(view, "JSON.stringify({pass: getComputedStyle(document.body).backgroundColor === 'rgb(255, 0, 0)', bg: getComputedStyle(document.body).backgroundColor, styles: document.querySelectorAll('style.stylus, style[id^=\"stylus\"]').length})", 12_000)
+        val found = pollExpr(view, "JSON.stringify({pass: getComputedStyle(document.body).backgroundColor === 'rgb(255, 0, 0)', bg: getComputedStyle(document.body).backgroundColor, styles: document.querySelectorAll('style.stylus, style[id^=\"stylus\"]').length})", scaled(12_000, factor))
         extra.put("page", found)
         if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
         return Grade(
             if (found.optBoolean("pass")) "P" else "F",
-            "usercss install page ${if (installTab != null) "opened" else "did not open within 25 s (tabs: ${tabUrls().values.joinToString().take(120)})"}, install ${click.toString().take(100)}, page: ${found.toString().take(120)}",
+            "usercss install page ${if (installTab != null) "opened, ready after ${ready.optLong("readyMs")} ms${if (ready.optBoolean("pass")) "" else " (button not up: ${ready.toString().take(100)})"}" else "did not open within ${scaled(25_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(120)})"}, " +
+                "install ${click.toString().take(100)}, after the click: ${extra.optJSONObject("installPageLanded")?.let { "button ${if (it.optBoolean("disabled")) "disabled" else "enabled"} \"${it.optString("label").take(30)}\"${it.optString("message").takeIf { m -> m.isNotEmpty() && m != "null" }?.let { m -> ", message \"${m.take(60)}\"" } ?: ""}" } ?: "n/a"}, " +
+                "page: ${found.toString().take(120)}" +
+                if (factor > 1.0) " (waits x${"%.1f".format(factor)}: ${speedNote(entry)})" else "",
             extra
         )
     }
@@ -1165,6 +1450,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     /** The document has content: text, or more than a handful of elements (an icon-only popup). */
     private fun rendered(view: WebView): Boolean =
         tabEval(view, "String(!!document.body && (document.body.innerText.trim().length > 0 || document.body.querySelectorAll('*').length > 3))", 5) == "true"
+
+    /** The document shows text (innerText leaves out what visibility hides): the page as seen. */
+    private fun visibleText(view: WebView): Boolean =
+        tabEval(view, "String(!!document.body && document.body.innerText.trim().length > 20)", 5) == "true"
 
     private fun sheetSize(view: WebView): JSONObject {
         val report = JSONObject()
@@ -1778,6 +2067,33 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         /** The marker on the target's first document; the rest of [USERSCRIPT_EFFECT_MS] goes to the reload. */
         private const val USERSCRIPT_FIRST_LOAD_MS = 20_000L
         private const val USERSCRIPT_EFFECT_MS = 45_000L
+        /** A store install of these rows on the 113 job at normal speed; a row's own install against it is the job's speed factor ([speedFactor]). */
+        private const val NOMINAL_INSTALL_MS = 8_000L
+        /** The 113 job's UI frame interval (`app_time_stats avg=99-134ms` in round 3's runs). */
+        private const val NOMINAL_FRAME_MS = 100L
+        private const val FRAME_PROBE_FRAMES = 4
+        private const val FRAME_PROBE_TIMEOUT_MS = 8_000L
+        /**
+         * A userscript manager's install page: whether its Install button is up and its spinner
+         * down (Tampermonkey's `ask.html` shows "Please wait..." while its background answers),
+         * the button's state, the page's text.
+         */
+        private const val USERSCRIPT_INSTALL_PAGE_STATE =
+            "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
+                "var isInstall=function(n){return /^(install|confirm installation)$/i.test(label(n))&&visible(n)};" +
+                "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
+                "var hit=buttons.find(isInstall)||nodes.find(isInstall);var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
+                "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),disabled:!!hit.disabled}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
+        /** Stylus's install page: its `button.install` (present, shown, enabled, label, classes), its message box, the page's text. */
+        /**
+         * Stylus's install page: the Install button (in the HTML from the start; `armed` once the
+         * page assigned its `onclick`, after its `build` came back from the worker), the page's
+         * message box, its text.
+         */
+        private const val STYLUS_INSTALL_PAGE_STATE =
+            "(function(){var b=document.querySelector('button.install');var armed=!!b&&typeof b.onclick==='function';var m=document.querySelector('#message-box, .message-box, #message-box-contents');var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!b&&b.offsetParent!==null&&!b.disabled&&armed,armed:armed,present:!!b,disabled:b?b.disabled:null,hidden:b?b.offsetParent===null:null,label:b?(b.textContent||'').trim():null,classes:b?String(b.className):null,title:document.title," +
+                "message:m?(m.textContent||'').replace(/\\s+/g,' ').trim().slice(0,160):null,text:text.slice(0,160),readyState:document.readyState})})()"
         /**
          * What an account-backed extension's sign-in surface says (the account rows' core grade,
          * [popupLogin]); whole words, so a product name is not one ("Contact 1Password Support").
@@ -1853,6 +2169,11 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "var css=Array.prototype.slice.call(document.styleSheets).map(function(x){return x.href?x.href.replace(location.origin,''):'inline'});" +
                 "var c=typeof chrome==='object'&&chrome?Object.keys(chrome).sort():null;var rt=c&&chrome.runtime?{id:chrome.runtime.id,hasSendMessage:typeof chrome.runtime.sendMessage}:null;" +
                 "return JSON.stringify({readyState:document.readyState,url:location.href,title:document.title,scripts:s.slice(0,30),styleSheets:css.slice(0,15),chrome:c,runtime:rt,bodyHtml:document.body?document.body.innerHTML.length:-1,bodyStart:document.body?document.body.innerHTML.replace(/\\s+/g,' ').slice(0,300):'',hidden:document.body?document.body.hidden:null,bodyDisplay:document.body?getComputedStyle(document.body).display:null,visibility:document.visibilityState})})()"
+        /** An extension page's document after a restart: its size, its `readyState`, and the runtime's word on whose page it is. */
+        private const val RESTORED_PAGE_REPORT =
+            "(function(){var c=typeof chrome==='object'&&chrome&&chrome.runtime?chrome.runtime:null;" +
+                "return JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,els:document.body?document.body.querySelectorAll('*').length:0," +
+                "text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):'',runtimeId:c?String(c.id):null,getURL:c&&typeof c.getURL==='function'?c.getURL('x.html'):null})})()"
         /** What one extension's world sees on a page: the bootstrap's statistics and its `chrome`. */
         private const val WORLD_REPORT =
             "JSON.stringify({stats: window.__zenExtStats || null, chrome: typeof chrome, runtimeId: (typeof chrome === 'object' && chrome && chrome.runtime) ? chrome.runtime.id : null})"

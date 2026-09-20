@@ -64,6 +64,10 @@ export function createScopeProxy(realWindow: object, builtins: Set<PropertyKey>)
         return proxy
       if (!builtins.has(key)) return undefined
       const value = win[key]
+      // In an isolated world `window.top` and `window.parent` are the world's own global when
+      // they are this frame's (the top frame: `window === window.top`, the idiom content scripts
+      // tell the top frame by); another frame's window stays the page's, as Chrome shows it.
+      if ((key === 'top' || key === 'parent') && value === realWindow) return proxy
       if (typeof value === 'function' && typeof key === 'string') {
         const fn = value as { prototype?: unknown }
         // Methods (no `prototype`, lower-case name) need `this === window`; constructors keep identity.

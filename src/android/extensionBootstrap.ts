@@ -1,5 +1,6 @@
 import type {
   BootConfig,
+  BootErrorStat,
   BootGroup,
   BootStats,
   ContentBootConfig,
@@ -7,7 +8,8 @@ import type {
   IsolationMode,
   UnitWorld
 } from '@core/extensions/runtime/boot'
-import { contentScriptAppliesTo, type FrameContext } from '@core/extensions/api/matchPattern'
+import type { FrameContext } from '@core/extensions/api/matchPattern'
+import { decideFrameBoot } from '@core/extensions/runtime/frameBoot'
 import {
   capturePrimordials,
   createEmulatedEngine,
@@ -255,6 +257,71 @@ declare const __zenExtBoot: Boot
     return { url, isTopFrame, precursorUrl }
   }
 
+  /**
+   * Debug: one uncaught error as the sweep reads it, with the stack and, for an inline script
+   * (`document.currentScript` without `src`, still running while the event is dispatched), the
+   * source around the throw; `frame` names a sub-frame's document, null for this one.
+   */
+  function bootErrorStat(event: Event, frame: string | null): BootErrorStat | null {
+    if (!('message' in event) || typeof event.message !== 'string') return null
+    const err = event as ErrorEvent
+    const cause = err.error as { stack?: unknown } | null | undefined
+    let inline: string | null = null
+    const current = document.currentScript
+    if (current && !(current as HTMLScriptElement).src) {
+      const text = current.textContent ?? ''
+      let at = 0
+      for (let line = 1; line < err.lineno && at >= 0; line += 1) at = text.indexOf('\n', at) + 1
+      at = Math.max(0, at + err.colno - 1)
+      inline = text.slice(Math.max(0, at - 240), at) + ' >>> ' + text.slice(at, at + 160)
+    }
+    return {
+      message: err.message,
+      source: err.filename,
+      line: err.lineno,
+      column: err.colno,
+      stack:
+        cause && typeof cause === 'object' && typeof cause.stack === 'string'
+          ? cause.stack.slice(0, 1200)
+          : null,
+      at: performance.now(),
+      inline,
+      frame
+    }
+  }
+
+  /**
+   * Debug: the uncaught errors of a sub-frame this copy leaves alone go onto the parent's stats
+   * (`frameErrors`). Such an error never reaches the parent's `error` listeners, and its console
+   * line does not name the frame; the frame's own window is where it can be caught, and a
+   * listener there leaves the frame's globals and prototypes as they were.
+   */
+  function watchUntouchedFrame(frame: FrameContext): void {
+    const parentStatsNow = (): BootStats | undefined => {
+      try {
+        return (window.parent as unknown as { __zenExtStats?: BootStats }).__zenExtStats
+      } catch {
+        return undefined
+      }
+    }
+    const stats = parentStatsNow()
+    if (stats) {
+      const seen = (stats.untouchedFrames ??= [])
+      if (seen.length < 24) seen.push(`${frame.url} < ${frame.precursorUrl ?? '-'}`)
+    }
+    window.addEventListener(
+      'error',
+      (event) => {
+        const parentStats = parentStatsNow()
+        if (!parentStats) return
+        const list = (parentStats.frameErrors ??= [])
+        const record = bootErrorStat(event, frame.url)
+        if (record && list.length < 12) list.push(record)
+      },
+      true
+    )
+  }
+
   function makeEngine(
     ext: ExtensionBoot,
     context: EngineContextKind,
@@ -474,6 +541,17 @@ declare const __zenExtBoot: Boot
   const content: ContentBootConfig = boot.config
   const unitWorld = content.world
   const frame = frameContext()
+  // Chrome's rules for this frame (frameBoot.ts). In the main world of a frame Chrome would not
+  // inject into (an about:blank / javascript: / srcdoc / data: sub-frame under the `with`
+  // fallback with no declaration opting in) this copy leaves nothing behind: no transport, no
+  // slots, no listeners. A later unit that does inject there installs the runtime itself.
+  const first = decideFrameBoot(content.extension, frame, content.late === true)
+  if (!first.touch) {
+    if (boot.debug && !frame.isTopFrame) watchUntouchedFrame(frame)
+    return
+  }
+  /** The frame's prototypes stay the page's: no Trusted Types shield here (frameBoot.ts). */
+  const pristine = first.pristine
   const attached: ExtensionBoot[] = []
 
   /**
@@ -530,12 +608,25 @@ declare const __zenExtBoot: Boot
         trustedTypes: null
       }
     : null
-  if (stats)
+  if (stats) {
     Object.defineProperty(g, '__zenExtStats', {
       value: stats,
       enumerable: false,
       configurable: true
     })
+    // The document's first uncaught errors, for the compat sweep: a console line gives an inline
+    // script's error as `<document URL>:1`, which tells neither the code nor the caller; the
+    // event still carries the stack, and the script element still runs while it is dispatched.
+    const errors: BootErrorStat[] = (stats.errors = [])
+    window.addEventListener(
+      'error',
+      (event) => {
+        const record = bootErrorStat(event, null)
+        if (record && errors.length < 12) errors.push(record)
+      },
+      true
+    )
+  }
 
   /**
    * A real isolated world enforces the page's Trusted Types CSP on the world's own DOM sinks
@@ -554,7 +645,9 @@ declare const __zenExtBoot: Boot
     let result: ShieldResult = { policy: false, patched: 0 }
     if (isolation === 'world')
       result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`)
-    else {
+    else if (pristine) {
+      /* a frame on an inherited origin keeps the page's sinks; its content scripts write under the page's policy */
+    } else {
       const ownCaller = ownScriptMatcher(Error)
       if (ownCaller)
         result = installTrustedTypesShield(realWindow, `zenium-ext-${ext.id.slice(0, 8)}`, {
@@ -697,8 +790,15 @@ declare const __zenExtBoot: Boot
       code?: unknown
       remove?: unknown
       world?: unknown
+      messaging?: unknown
     }
-    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, contentUnit)
+    // `userScripts.execute` runs in the user-script world: the scope its registered scripts
+    // share, with the `chrome` that world was configured (`messaging`), not the content script's.
+    const unit: UnitContext =
+      options.world === 'USER_SCRIPT'
+        ? { world: 'user', messaging: options.messaging === true }
+        : contentUnit
+    const scope = scopeFor(ext, options.world === 'MAIN' ? 'none' : ext.isolation, unit)
     if (kind === 'css') {
       const key = `${ext.id}/#${String(options.id ?? options.code ?? '')}`
       if (options.remove) removeCss(key)
@@ -726,9 +826,7 @@ declare const __zenExtBoot: Boot
    */
   const apply = (ext: ExtensionBoot, late: boolean, unit: UnitContext, started: number): void => {
     if (!attached.some((e) => e.id === ext.id)) attached.push(ext)
-    const due: BootGroup[] = []
-    if (!late)
-      for (const group of ext.groups) if (contentScriptAppliesTo(group, frame)) due.push(group)
+    const due = decideFrameBoot(ext, frame, late).groups
     if (stats) stats.matchMs += performance.now() - started
     if (late) scopeFor(ext, ext.isolation === 'none' ? 'with' : ext.isolation, contentUnit)
     for (const group of due) {
