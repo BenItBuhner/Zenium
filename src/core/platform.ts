@@ -179,6 +179,11 @@ export interface PageMessage {
     | 'geolocation'
     /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
     | 'readAloud'
+    /**
+     * One frame's live capture state – camera, microphone, display sharing, picture-in-picture
+     * (`shared/captureState`); the tab's alert indicator is folded from every frame's (tabs-43).
+     */
+    | 'capture-state'
   url?: string
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
@@ -223,6 +228,8 @@ export interface PageMessage {
   geolocation?: unknown
   /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
   readAloud?: unknown
+  /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
+  capture?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */

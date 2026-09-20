@@ -71,6 +71,12 @@ import { safeOrigin } from './permissions'
 import { certificateSiteOf } from './security'
 import { openedWindowKind, planWindowOpen } from './windowOpen'
 import { parseDropKey } from './tabDrag'
+import {
+  reportIsLive,
+  sanitiseCaptureReport,
+  tabAlertFor,
+  type CaptureStateReport
+} from '../shared/captureState'
 
 export type { PageFlags } from './platform'
 
@@ -112,6 +118,12 @@ export class TabManager {
   private readonly closeIntents = new Map<string, TabFocusOptions>()
   /** How the next committed navigation of a tab came about (for the history record). */
   private readonly pendingTransition = new Map<string, HistoryTransition>()
+  /**
+   * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
+   * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
+   * frame that stops leaves the others' state standing.
+   */
+  private readonly captureReports = new Map<string, Map<string, CaptureStateReport>>()
 
   constructor(private readonly browser: Browser) {}
 
@@ -476,6 +488,9 @@ export class TabManager {
           this.browser.permissions.onTabNavigated(tabId, url)
           // Whatever the PDF viewer reported was about the document before this one.
           this.browser.pdf.onNavigated(tabId)
+          // The old document's frames took their camera and PiP with them (their own
+          // all-clear may not have crossed before the renderer went).
+          this.clearCaptureState(tabId)
         }
         if (v) this.onNavigated(tabId, v, url, inPage)
       },
@@ -558,6 +573,8 @@ export class TabManager {
         if (reason === 'clean-exit') return
         const tab = this.tab(tabId)
         if (!tab) return
+        // The renderer took every frame's capture with it.
+        this.clearCaptureState(tabId)
         const title = tab.customTitle ?? tab.title
         const outOfMemory = reason === 'oom' || reason === 'memory-eviction'
         const visible = this.allVisibleTabIds().has(tabId)
@@ -998,11 +1015,50 @@ export class TabManager {
     }
   }
 
+  /**
+   * A frame's `capture-state` report (tabs-43): kept by the frame's id while something is live,
+   * dropped when nothing is; the tab's `alert` is folded from all of them with Chrome's priority
+   * (recording > capturing > picture-in-picture) and the row repaints when it changes.
+   */
+  onCaptureState(tabId: string, raw: unknown): void {
+    const tab = this.tab(tabId)
+    const report = sanitiseCaptureReport(raw)
+    if (!tab || !report || !this.views.has(tabId)) return
+    let frames = this.captureReports.get(tabId)
+    if (reportIsLive(report)) {
+      if (!frames) {
+        frames = new Map()
+        this.captureReports.set(tabId, frames)
+      }
+      frames.set(report.id, report)
+    } else if (frames) {
+      frames.delete(report.id)
+      if (frames.size === 0) this.captureReports.delete(tabId)
+    }
+    this.refreshAlert(tabId)
+  }
+
+  /** Forget every frame's capture report of a tab (its document, renderer or page is gone). */
+  private clearCaptureState(tabId: string): void {
+    if (!this.captureReports.delete(tabId)) return
+    this.refreshAlert(tabId)
+  }
+
+  private refreshAlert(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    const alert = tabAlertFor(this.captureReports.get(tabId)?.values() ?? [])
+    if ((tab.alert ?? null) === alert) return
+    tab.alert = alert
+    this.browser.state.commitVolatile()
+  }
+
   destroyView(tabId: string): void {
     const view = this.views.get(tabId)
     if (!view) return
     this.views.delete(tabId)
     this.httpsUpgraded.delete(tabId)
+    this.clearCaptureState(tabId)
     this.browser.protection.safeBrowsing.forgetTab(tabId)
     this.browser.externalProtocols.cancelForTab(tabId)
     this.pendingTransition.delete(tabId)

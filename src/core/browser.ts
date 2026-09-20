@@ -2138,6 +2138,10 @@ export class Browser {
       this.popups.activate(tabId)
       return
     }
+    if (message.type === 'capture-state') {
+      this.tabs.onCaptureState(tabId, message.capture)
+      return
+    }
     if (message.type === 'popup-blocked') {
       if (typeof message.url === 'string') this.popups.record(tabId, message.url)
       return

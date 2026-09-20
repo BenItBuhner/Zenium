@@ -35,6 +35,7 @@ import type {
   ReadAloudVoicesResult
 } from './readAloud'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
+import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFileInfo } from './share'
 
@@ -381,6 +382,13 @@ export interface Tab {
   canGoForward: boolean
   audible: boolean
   muted: boolean
+  /**
+   * The tab's alert indicator above audio (tabs-43, Chrome's priority): the page uses the camera
+   * or microphone (`recording`), shares a screen, window or tab (`capturing`), or plays
+   * picture-in-picture (`pip`). Folded from every frame's `capture-state` report; a session's
+   * own (not persisted, cleared on load). Absent on records older than the field.
+   */
+  alert?: TabAlert | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**

@@ -115,6 +115,7 @@ export function createTabRecord(
     canGoForward: false,
     audible: false,
     muted: init.muted ?? false,
+    alert: null,
     discarded: init.discarded ?? true,
     frozen: false,
     cpuThrottle: 1,
