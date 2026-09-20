@@ -54,7 +54,8 @@ const DESKTOP: HostCapabilities = {
   shareSheet: false,
   selectionToolbar: false,
   popupSurface: true,
-  qrScan: false
+  qrScan: false,
+  readAloud: false
 }
 
 const ANDROID: HostCapabilities = {

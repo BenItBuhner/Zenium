@@ -97,6 +97,8 @@ import { ElectronScreenCapture } from './screenCapture'
 import { ElectronShareSheet } from './shareSheet'
 import { ElectronGeolocation } from './geolocation'
 import { ElectronMpris } from './mpris'
+import { ElectronSpeechHost } from './speech'
+import { sharedSpeechEngine } from './extensionApi/ttsBridge'
 
 export const ELECTRON_CAPABILITIES: HostCapabilities = {
   windowControls: true,
@@ -152,7 +154,9 @@ export const ELECTRON_CAPABILITIES: HostCapabilities = {
   // The autofill picker floats in a `WebContentsView` above the pages (`ElectronWindow.setPopupSurface`).
   popupSurface: true,
   // No camera to scan with on the desktop hosts; the camera buttons stay away.
-  qrScan: false
+  qrScan: false,
+  // Chromium's `speechSynthesis` behind a hidden page (`platform/speech.ts`).
+  readAloud: true
 }
 
 /**
@@ -197,6 +201,8 @@ export class ElectronPlatform implements Platform {
   readonly geolocation = new ElectronGeolocation()
   /** Linux: Zenium as an MPRIS player on the session bus (MW-18). */
   readonly mediaSession?: ElectronMpris
+  /** Read aloud's voices and utterances over the hidden `speechSynthesis` page (CT-12 / CT-13). */
+  readonly speech: ElectronSpeechHost = new ElectronSpeechHost(sharedSpeechEngine())
   readonly newTabBackground: ElectronNewTabBackground
   /** Taskbar progress, dock badge and completion notifications for downloads. */
   downloadsShell: ElectronDownloadsShell | null = null

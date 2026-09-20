@@ -7,6 +7,7 @@ import {
   READER_WIDTH_LABELS,
   type ReaderPreferences
 } from '../shared/reader'
+import { READ_ALOUD_SENTENCE_HIGHLIGHT, READ_ALOUD_WORD_HIGHLIGHT } from '../shared/readAloud'
 
 function escapeHtml(s: string): string {
   return s.replace(
@@ -56,6 +57,10 @@ const STYLE = `
   article blockquote { margin: 1.2em 0; padding: 0 0 0 1em; border-left: 3px solid var(--border); color: var(--muted); }
   article table { border-collapse: collapse; font-size: 0.9em; } article td, article th { border: 1px solid var(--border); padding: 6px 10px; }
   article h2, article h3 { line-height: 1.3; margin-top: 1.6em; }
+  ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.32); }
+  ::highlight(${READ_ALOUD_WORD_HIGHLIGHT}) { background-color: rgba(255, 149, 0, 0.6); }
+  :root[data-theme='dark'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); }
+  @media (prefers-color-scheme: dark) { :root[data-theme='auto'] ::highlight(${READ_ALOUD_SENTENCE_HIGHLIGHT}) { background-color: rgba(255, 214, 10, 0.22); } }
   @media print { .toolbar { display: none; } }
 `
 

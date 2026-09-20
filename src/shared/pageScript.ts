@@ -14,6 +14,8 @@ import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
 import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
 import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPrompt'
+import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
+import { installReadAloud } from './readAloudScript'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -50,6 +52,7 @@ export interface PageScriptMessage {
     | 'reader'
     | 'pdf'
     | 'opensearch'
+    | 'readAloud'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
@@ -73,6 +76,8 @@ export interface PageScriptMessage {
   reader?: unknown
   /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
   pdf?: PdfViewerReport
+  /** `readAloud`: the answer to a `readAloud.extract` request (`readAloudScript.ts`). */
+  readAloud?: ReadAloudExtraction
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -84,10 +89,11 @@ export interface WebAppHostMessage {
 
 /**
  * Browser → page messages the script answers: the web-app polyfill, the media session's
- * actions and the notification polyfill's answers (mirrors `PageHostMessage` in the core).
+ * actions, the notification polyfill's answers and read aloud's requests (mirrors
+ * `PageHostMessage` in the core).
  */
 export type PageScriptHostMessage =
-  WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage
+  WebAppHostMessage | MediaSessionHostMessage | NotificationHostMessage | ReadAloudHostMessage
 
 /**
  * The IPC channel the browser posts `PageHostMessage`s into a page on (Electron's
@@ -138,6 +144,12 @@ export interface PageScriptTransport {
    * inline (Android, whose script is in the page's world already).
    */
   installInstallPromptShim?(events: InstallPromptShimEvents): void
+  /**
+   * Hosts with a speech engine (`capabilities.readAloud`): the script answers the browser's
+   * `readAloud.extract` request with the page's text as blocks and paints its
+   * `readAloud.highlight` messages (`readAloudScript.ts`).
+   */
+  onReadAloud?(listener: (message: ReadAloudHostMessage) => void): void
 }
 
 /** Keys that never count as a gesture in Chromium's user-activation model. */
@@ -204,6 +216,11 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
   if (transport.discoverSearchEngines) installOpenSearch(transport)
+  if (transport.onReadAloud)
+    installReadAloud({
+      send: transport.send.bind(transport),
+      onReadAloud: transport.onReadAloud.bind(transport)
+    })
 
   window.addEventListener(
     'click',

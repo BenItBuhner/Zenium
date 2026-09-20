@@ -84,7 +84,8 @@ const DESKTOP: HostCapabilities = {
   shareSheet: false,
   selectionToolbar: false,
   popupSurface: true,
-  qrScan: false
+  qrScan: false,
+  readAloud: false
 }
 
 /**
@@ -134,7 +135,8 @@ const ANDROID: HostCapabilities = {
   shareSheet: false,
   selectionToolbar: true,
   popupSurface: false,
-  qrScan: false
+  qrScan: false,
+  readAloud: false
 }
 
 function memoryIo(): StoreIO {
