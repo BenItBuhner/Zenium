@@ -88,6 +88,14 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!--
+          Read aloud (ReadAloud.kt): on Android 11+ TextToSpeech finds the device's speech engines
+          (getEngines, the default engine the constructor binds) only when the app declares it
+          wants to see them; without this the engine list is empty and Listen to this page never shows.
+        -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <!--
