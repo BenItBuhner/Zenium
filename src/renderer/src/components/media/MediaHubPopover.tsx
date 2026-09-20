@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useMediaSeek } from '@renderer/hooks/useMediaSeek'
 import {
   Music,
   Pause,
@@ -16,16 +17,8 @@ import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { anchorOf, placeUnder } from '@renderer/lib/anchor'
 import { run } from '@renderer/lib/api'
-import {
-  closeMediaHub,
-  formatMediaTime,
-  handlesAction,
-  livePosition,
-  mediaDetail,
-  mediaHubEntries,
-  mediaHubUi,
-  mediaTitle
-} from '@renderer/lib/mediaHub'
+import { formatMediaTime, handlesAction, mediaDetail } from '@renderer/lib/media'
+import { closeMediaHub, mediaHubEntries, mediaHubUi, mediaTitle } from '@renderer/lib/mediaHub'
 import { useLightDismiss } from '@renderer/lib/popoverStore'
 import {
   ChromePortal,
@@ -45,10 +38,6 @@ import { MEDIA_HUB_BUTTON } from './MediaHubButton'
 const TITLE_ID = 'zen-mhub-title'
 /** Rows with trailing controls: the 400 popover (§9.20). */
 const WIDTH = POPOVER_WIDTH.form
-/** How often the position display moves on while the media plays. */
-const TICK_MS = 250
-/** The slider's resolution: a tenth of a second, so a scrub lands where the pointer is. */
-const SCRUB_STEP_S = 0.1
 
 /** The hub while it is open, above whichever shell is up (mounted once in `Root`). */
 export function MediaHubLayer(): JSX.Element | null {
@@ -149,7 +138,7 @@ function Player({
   const [broken, setBroken] = useState(false)
   const artwork = media.artwork && !broken ? media.artwork : null
   const title = mediaTitle(media, tab)
-  const detail = mediaDetail(media, tab)
+  const detail = mediaDetail(media, tab, title)
   return (
     <section
       className="zen-mhub-player"
@@ -207,48 +196,12 @@ function Player({
  * The seek row (§10.4's slider row): where playback stands, carried forward from the report
  * while it plays, at the track's start and the duration at its end in tabular numerals, the
  * range between them. A drag on the thumb scrubs; letting go seeks there, and the display holds
- * the target until the page reports the new position. Absent for a stream without a duration.
+ * the target until the page reports the new position (`useMediaSeek`, the state the phone's
+ * sheet draws its row from too). Absent for a stream without a duration.
  */
 function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
-  const duration = media.position?.duration ?? 0
-  const [now, setNow] = useState(() => Date.now())
-  /** The thumb under the pointer (seconds), or null while it rests. */
-  const [scrub, setScrub] = useState<number | null>(null)
-  /** A seek sent, with the report it was sent against; shown until the page's report moves on. */
-  const [pending, setPending] = useState<{ at: number; positionAt: number | undefined } | null>(
-    null
-  )
-  /**
-   * Where the pointer last put the thumb. Radix commits the value it last *rendered*, and a
-   * pointer move is a continuous update React may not have drawn when the pointer lifts (a slow
-   * renderer holds a frame of moves back), so the seek goes where the pointer last was, not
-   * where the thumb was last painted.
-   */
-  const slid = useRef<number | null>(null)
-  /** A key's step commits first and reports its change after; that change is no scrub. */
-  const committed = useRef<number | null>(null)
-
-  // The clock ticks only while the media plays and nothing scrubs; the first tick comes a
-  // quarter second after playback resumes, and until then a stale `now` shows the reported
-  // position itself (the extrapolation never runs backwards).
-  useEffect(() => {
-    if (!media.playing || scrub !== null) return
-    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS)
-    return () => window.clearInterval(timer)
-  }, [media.playing, scrub])
-
+  const { duration, shown, slider } = useMediaSeek(media)
   if (!(duration > 0)) return null
-  const live = livePosition(media, now)
-  // A seek stands on screen while the page has not answered it (a new report answers it).
-  const held = pending && pending.positionAt === media.positionAt ? pending.at : null
-  const shown = scrub ?? held ?? live
-
-  const seekTo = (at: number): void => {
-    const target = Math.min(duration, Math.max(0, at))
-    setPending({ at: target, positionAt: media.positionAt })
-    run('media.action', { tabId: media.tabId, action: 'seekto', seekTime: target })
-  }
-
   return (
     <div className="zen-mhub-seek" data-media-seek="">
       <span className="zen-mhub-time" aria-hidden>
@@ -259,28 +212,8 @@ function SeekRow({ media }: { media: MediaState }): JSX.Element | null {
         className="zen-zoom-slider min-w-0 flex-1"
         aria-label="Position"
         aria-valuetext={`${formatMediaTime(shown)} of ${formatMediaTime(duration)}`}
-        min={0}
-        max={duration}
-        step={SCRUB_STEP_S}
-        value={[Math.min(duration, shown)]}
         data-media-position=""
-        onValueChange={([at]) => {
-          if (at === undefined) return
-          if (at === committed.current) {
-            committed.current = null
-            return
-          }
-          slid.current = at
-          setScrub(at)
-        }}
-        onValueCommit={([at]) => {
-          const target = slid.current ?? at
-          slid.current = null
-          setScrub(null)
-          if (target === undefined) return
-          committed.current = target
-          seekTo(target)
-        }}
+        {...slider}
       />
       <span className="zen-mhub-time" aria-hidden>
         {formatMediaTime(duration)}
