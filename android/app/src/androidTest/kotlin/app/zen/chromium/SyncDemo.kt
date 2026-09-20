@@ -173,13 +173,19 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         }
         if (awaitPage(SETTINGS_URL, 12_000) == null) error("Settings did not come up")
         SystemClock.sleep(1_200)
+        // The landing's Sync row is the last of Zen's second run and sits at the chrome's bottom
+        // bar on a 720x1600 window: the second run's finger, at the middle of the row's part
+        // inside the touchable window, landed on the bar and opened the URL field
+        // (35532029145). A page row is touched inside the page's band, above the bar
+        // ([touchPageRow]), once the chrome has scrolled it there ([rowBounds]).
         if (rowBounds("Sync", 8_000) == null) {
             note("  no Sync category on the landing")
-        } else if (!touchTapLabelExpecting("Sync", "the tab is at the Sync section", prefix = true) {
-                activeCoreTab()?.optString("url") == SECTION_URL
-            }
-        ) {
+        } else if (touchPageRow("Sync") == null) {
+            touchFault("no finger on the landing's Sync row: no part of it is inside the page's band")
+        } else if (!awaitSettled({ activeCoreTab()?.optString("url") == SECTION_URL }, 5_000)) {
+            touchFault("a touch on the landing's Sync row did not take: the tab is not at the Sync section within 5000 ms")
             note("  the landing's Sync row did not take the tab to the section")
+            recoverUrlField("the landing's Sync row")
         } else {
             note("  the touch on the landing's Sync row took: the tab is at the section")
         }
@@ -704,20 +710,22 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     /**
      * Press the row reading `label` on the PAGE (never a sheet's) and wait for `settled`. The
-     * finger goes in once the row is scrolled into view and its bounds hold still, inside the
-     * touchable window ([touchTapLabel]); when the change never comes, a second finger at the
-     * row's own rectangle in the chrome (`data-row` is the row's id): the tree trails the screen
-     * by seconds on the software-rendered emulator and reports a scrolled row where it was, the
-     * stated reason a page row keeps a second touch – a real one, never a click through the tree,
-     * and noted when it was needed. False when the row is not there or the change never came.
+     * finger goes in once the row is scrolled into the page's band and its bounds hold still
+     * ([touchPageRow]); when the change never comes, a second finger at the row's own rectangle
+     * in the chrome (`data-row` is the row's id): the tree trails the screen by seconds on the
+     * software-rendered emulator and reports a scrolled row where it was, the stated reason a
+     * page row keeps a second touch – a real one, never a click through the tree, and noted when
+     * it was needed. A first finger that opened the URL field instead (it landed on the bar) is
+     * undone before the second. False when the row is not there or the change never came.
      */
     private fun tapRow(label: String, rowId: String, timeoutMs: Long = 6_000, settled: () -> Boolean): Boolean {
         if (settled()) return true
         if (rowBounds(label, 8_000) == null) Log.w(tag, "no row reading '$label' in the tree") else {
             SystemClock.sleep(400)
-            if (touchTapLabel(label, prefix = true) && awaitSettled(settled, timeoutMs)) return true
+            if (touchPageRow(label) != null && awaitSettled(settled, timeoutMs)) return true
             Log.w(tag, "'$label' did not take at the tree's bounds; tapping the chrome's own rectangle")
             note("  ('$label' did not take at the tree's bounds; a second finger at the chrome's rectangle)")
+            recoverUrlField("the '$label' row")
         }
         val point = chromePoint("[data-row=${JSONObject.quote(rowId)}]") ?: run {
             Log.w(tag, "no row $rowId in the chrome")
@@ -729,23 +737,30 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
 
     /**
      * The bounds of the first node whose accessible text reads `text` – exactly or as a prefix: a
-     * Settings row is one button whose text runs its label and description together. Polls,
-     * since the tree trails the screen on the emulator; a node the list holds below the fold is
-     * scrolled into view first.
+     * Settings row is one button whose text runs its label and description together – once the
+     * row is inside the page's band ([pageBand]): the part of the window above the chrome's bottom
+     * bar, which the page runs under. A row the tree reports inside the window but under the bar
+     * is not on screen for a finger (the second run's finger on the landing's Sync row, at
+     * 1461–1541 with the bar from ~1460, opened the URL field, 35532029145), so the row is
+     * scrolled to the middle of the page first, through the chrome's own scroll
+     * ([revealInChrome]; the tree's `ACTION_SHOW_ON_SCREEN` when the chrome has no such row),
+     * up to twice; a row taller than the band is taken once its middle is in it. Polls, since the
+     * tree trails the screen on the emulator.
      */
     private fun rowBounds(text: String, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        var revealed = false
+        var reveals = 0
         do {
             val node = findNode { it == text || it.startsWith(text) }
             if (node != null) {
                 val bounds = Rect().also { node.getBoundsInScreen(it) }
-                val onScreen = bounds.width() > 0 && bounds.height() > 0 &&
-                    bounds.centerY() in 0 until height && bounds.centerX() in 0 until width
-                if (onScreen) return bounds
-                if (!revealed) {
-                    revealed = true
-                    node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                val band = pageBand()
+                val sized = bounds.width() > 0 && bounds.height() > 0 && bounds.centerX() in 0 until width
+                if (sized && bounds.top >= band.top && bounds.bottom <= band.bottom) return bounds
+                if (sized && reveals >= 2 && bounds.centerY() in band.top until band.bottom) return bounds
+                if (reveals < 2) {
+                    reveals++
+                    if (!revealInChrome(text)) node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
                     SystemClock.sleep(1_000)
                     continue
                 }
@@ -756,6 +771,79 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     }
 
     private fun revealRow(text: String): Rect? = rowBounds(text, 6_000)
+
+    /**
+     * Scroll the page row whose text starts with `text` to the middle of its list, in the chrome:
+     * the first `data-row` row or landing category that is laid out, not inert (the landing stays
+     * in the document behind a section) and reads so. True when the chrome had such a row.
+     */
+    private fun revealInChrome(text: String): Boolean {
+        val raw = chromeJs(
+            "(function(){var t=${JSONObject.quote(text)};var all=document.querySelectorAll('[data-row], .zen-settings-category');" +
+                "for(var i=0;i<all.length;i++){var e=all[i];if(e.closest('[inert]'))continue;var r=e.getBoundingClientRect();if(!r.width||!r.height)continue;" +
+                "var s=(e.textContent||'').replace(/\\s+/g,' ').trim();if(s===t||s.indexOf(t)===0){e.scrollIntoView({block:'center'});return true}}return false})()"
+        )
+        return raw == "true"
+    }
+
+    /**
+     * The part of the window a page row can be touched in: the touchable window down to the top
+     * of the chrome's bottom bar, read off the chrome ([barTop]). The bar is the chrome's own
+     * layer over the page's bottom, and a finger there is the bar's (the URL field opens).
+     */
+    private fun pageBand(): Rect = Rect(touchable.left, touchable.top, touchable.right, barTop())
+
+    /** The screen y the chrome's bottom bar begins at; the touchable window's bottom when there is no bar at the bottom edge. */
+    private fun barTop(): Int {
+        val raw = chromeJs(
+            "(function(){var b=document.querySelector('.zen-phone-bar[data-edge=\"bottom\"]');if(!b)return null;" +
+                "var r=b.getBoundingClientRect();return r.height>0?r.top:null})()"
+        )
+        val top = raw.toDoubleOrNull() ?: return touchable.bottom
+        var origin = IntArray(2)
+        instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+        return (origin[1] + top * density).toInt().coerceIn(touchable.top, touchable.bottom)
+    }
+
+    /**
+     * A real touch on the page row reading `label` (or starting with it): the node found afresh,
+     * its bounds once they hold still ([steadyBounds]), the finger at the middle of their part
+     * inside the page's band ([pageBand]) – the harness's own [touchTapLabel] aims inside the
+     * touchable window, which on the phone runs on under the chrome's bottom bar. Where the
+     * finger landed, or null (nothing touched, and a log line) when nothing reads the label in
+     * time or no part of the row is inside the band.
+     */
+    private fun touchPageRow(label: String): PointF? {
+        val node = awaitNode(4_000) { it == label || it.startsWith(label) } ?: run {
+            Log.w(tag, "nothing on screen reads '$label'")
+            return null
+        }
+        val bounds = steadyBounds(node) ?: run {
+            Log.w(tag, "the '$label' row went away before the touch")
+            return null
+        }
+        val band = pageBand()
+        val reach = Rect(bounds)
+        if (bounds.isEmpty || !reach.intersect(band)) {
+            Log.w(tag, "no part of '$label' at $bounds is inside the page's band $band")
+            return null
+        }
+        val point = PointF(reach.exactCenterX(), reach.exactCenterY())
+        Log.i(tag, "touch at ${point.x},${point.y} on '${node.text ?: node.contentDescription}' (bounds $bounds, band $band)")
+        Finger().tap(point.x, point.y)
+        return point
+    }
+
+    /**
+     * Undo a finger that opened the URL field instead of pressing `what` (it landed on the
+     * chrome's bottom bar): the field closed the harness's way ([closeUrlField]), the outcome in
+     * the notes. Nothing when the field is not open.
+     */
+    private fun recoverUrlField(what: String) {
+        val close = closeUrlField()
+        if (close == UrlFieldClose.NOT_OPEN) return
+        note("  (the finger meant for $what opened the URL field; ${close.describe()})")
+    }
 
     private fun rowText(text: String): String? =
         findNode { it.startsWith(text) }?.let { it.text ?: it.contentDescription }?.toString()
