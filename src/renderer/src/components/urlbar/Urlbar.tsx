@@ -1160,7 +1160,7 @@ function SuggestionRow({
     return (
       <li
         role="presentation"
-        className="zen-suggestion zen-suggestion-sheet flex h-11 shrink-0 items-center pr-2.5"
+        className="zen-suggestion zen-suggestion-sheet flex shrink-0 items-center pr-2.5"
         data-selected={selected}
         data-kind={item.kind}
       >
@@ -1168,7 +1168,7 @@ function SuggestionRow({
           id={id}
           role="option"
           aria-selected={selected}
-          className="flex h-full min-w-0 flex-1 cursor-default items-center gap-3 pl-2.5"
+          className="flex min-w-0 flex-1 cursor-default items-center gap-3 self-stretch pl-2.5"
           {...pointerProps}
         >
           {icon}

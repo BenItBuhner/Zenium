@@ -187,30 +187,43 @@
   /* Remaining radii: checkbox 2, inner boxes and context menus 6 (§2). */
   --v2-radius-checkbox: 2px;
   --v2-radius-inner: 6px;
+  /*
+   * The system font size (A11Y-05, `lib/textScale.ts`): the host draws the chrome's text at
+   * `--zen-text-zoom` (Android: the chrome WebView's `textZoom`, 1.3 at Large, 1.8 at Android 14's
+   * 200 percent), a zoom of the text alone – the font tokens below stay in CSS px and the host
+   * zooms them; only the line boxes and the rows built on them read this factor, so text grows
+   * inside a growing line while controls, glyphs and box-to-box distances hold. The bold-text
+   * setting is a weight adjustment (300 when on) the weight tokens add to themselves. Both sit
+   * on the root's inline style; hosts that scale no text leave the defaults and the same pixels.
+   */
+  --zen-text-zoom: 1;
+  --zen-font-weight-adjustment: 0;
   /* Type scale (§4): hierarchy by size, weights 400 / 600, buttons 500. */
   --v2-font-title: 22px;
   --v2-font-heading: 17px;
   --v2-font-body: 15px;
   --v2-font-small: 13px;
-  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20. */
-  --v2-line-title: 28px;
-  --v2-line-heading: 22px;
-  --v2-line-body: 20px;
+  /* Fixed line boxes per size (§4): 22 → 28, 17 → 22, 15 → 20, 13 → 20, each at the text zoom. */
+  --v2-line-title: calc(28px * var(--zen-text-zoom));
+  --v2-line-heading: calc(22px * var(--zen-text-zoom));
+  --v2-line-body: calc(20px * var(--zen-text-zoom));
   /* 13 px text sits on the same 20 px line as 15 px text (v2 §4, §9.2): 18 is not used. */
-  --v2-line-small: 20px;
-  --v2-weight-body: 400;
-  --v2-weight-button: 500;
-  --v2-weight-heading: 600;
-  /* Density (§5, §9.2–9.3): rows and controls; phones override below. */
-  --v2-row: 32px;
-  --v2-row-two-line: 52px;
+  --v2-line-small: calc(20px * var(--zen-text-zoom));
+  --v2-weight-body: calc(400 + var(--zen-font-weight-adjustment));
+  --v2-weight-button: calc(500 + var(--zen-font-weight-adjustment));
+  --v2-weight-heading: calc(600 + var(--zen-font-weight-adjustment));
+  /* Density (§5, §9.2–9.3): rows and controls; phones override below. A row is its body line
+     plus the row padding on both sides (§9.2: 20 + 12 = 32, two lines 20 + 20 + 12 = 52), so it
+     grows from its line box at a larger text size while the control heights hold. */
+  --v2-row: calc(var(--v2-line-body) + 12px);
+  --v2-row-two-line: calc(var(--v2-line-body) + var(--v2-line-small) + 12px);
   /* A row's vertical padding (§9.34): what is left of the row around its body line, halved – 6
      on a mouse, 12 on a phone through the phone block's `--v2-row`, which this calc reads. */
   --v2-row-pad: calc((var(--v2-row) - var(--v2-line-body)) / 2);
   --v2-control: 32px;
   --v2-checkbox: 16px;
   --v2-nav-item: 34px;
-  --v2-menu-row: 31px;
+  --v2-menu-row: calc(var(--v2-line-body) + 11px);
   --v2-icon-button: 28px;
   --v2-icon: 16px;
   --v2-icon-stroke: 1.5;
@@ -247,13 +260,13 @@
 :root[data-pointer='coarse'] {
   --v2-radius-control: 6px;
 }
-/* Phones scale hit targets, not the vocabulary (§5, §9.3). */
+/* Phones scale hit targets, not the vocabulary (§5, §9.3); rows are the line box plus 24. */
 :root[data-form-factor='phone'] {
-  --v2-row: 44px;
-  --v2-row-two-line: 64px;
+  --v2-row: calc(var(--v2-line-body) + 24px);
+  --v2-row-two-line: calc(var(--v2-line-body) + var(--v2-line-small) + 24px);
   --v2-control: 40px;
   --v2-checkbox: 20px;
-  --v2-menu-row: 44px;
+  --v2-menu-row: calc(var(--v2-line-body) + 24px);
   --v2-icon-button: 44px;
   --v2-icon: 20px;
   --v2-icon-stroke: 1.75;
@@ -5834,9 +5847,6 @@
 :root[data-pointer='coarse'] .zen-kbd-hint {
   display: none;
 }
-:root[data-pointer='coarse'] .zen-suggestion {
-  height: 44px;
-}
 :root[data-pointer='coarse'] button:focus-visible,
 :root[data-pointer='coarse'] [role='button']:focus-visible {
   outline: none;
@@ -6105,6 +6115,12 @@
 }
 .zen-v2-icon-button.zen-omnibox-refine:active:not(:disabled) {
   background: var(--v2-control-fill);
+}
+/* The sheet's suggestion rows: 44 at the default text size (the phone row, §5), and taller from
+   the line box as the system font size grows (A11Y-05) – the body line plus 24, like `--v2-row`
+   on a phone, on any coarse pointer. */
+:root[data-pointer='coarse'] .zen-suggestion {
+  min-height: calc(var(--v2-line-body) + 24px);
 }
 
 /* ---------------------------------------------------------------------------
