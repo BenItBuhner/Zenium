@@ -10,6 +10,7 @@ import {
   decideHidden
 } from '@renderer/lib/cover'
 import { useViewport } from '@renderer/lib/formFactor'
+import { landingStore, notePlacements } from '@renderer/lib/fullscreenLanding'
 import {
   glanceRect,
   placementsFor,
@@ -218,6 +219,9 @@ export function useLayoutReporter(
       if (key === lastSent.current) return
       lastSent.current = key
       run('layout.report', report)
+      // The return from a page's fullscreen (lib/fullscreenLanding.ts) lands on a placement
+      // laid out on settled insets, drawn by the host at its size.
+      notePlacements(report.placements, landingStore.get().settling)
     }
     evaluate()
     const unsubscribe = followsCover ? coverStore.subscribe(evaluate) : null

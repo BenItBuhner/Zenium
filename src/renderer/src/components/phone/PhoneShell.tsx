@@ -193,9 +193,9 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   }, [edge, htmlFullscreen, onboarding, stripUp, borderless])
   useEffect(() => () => setBarHideContext({ present: false }), [])
   // Back from a page's fullscreen (MED-01) the chrome – bar, pill and frame – fades in over
-  // 120 ms, opacity alone: the page is laid out once, as the chrome's frames are placed.
+  // 120 ms, opacity alone, once the page's view has landed (`lib/fullscreenLanding.ts`).
   const windowRef = useRef<HTMLDivElement | null>(null)
-  useFullscreenReturn(windowRef, htmlFullscreen)
+  useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(

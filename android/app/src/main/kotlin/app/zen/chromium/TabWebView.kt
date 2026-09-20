@@ -552,6 +552,7 @@ class TabWebView(
             lastDeviceWidth = css
             onPageRulesChanged()
         }
+        host.viewSized(this, w, h)
     }
 
     /**

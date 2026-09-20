@@ -173,6 +173,11 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     private var fullscreenVideoFromFrame = false
     /** The activity's orientation is the fullscreen video's ([FullscreenOrientation]); given back on exit. */
     private var fullscreenOrientationHeld = false
+    /**
+     * The bars' way back after a fullscreen: the chrome holds its return fade while they settle
+     * (MED-01, v2 §11.5). [MainActivity] carries its word on every `insets`.
+     */
+    val landing = FullscreenLanding()
     override var immersive = false
         private set
     /**
@@ -718,6 +723,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         fullscreenCallback = callback
         fullscreenLayer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         fullscreenLayer.visibility = View.VISIBLE
+        // The window the exit comes back to: the bars as they stand before they hide.
+        landing.onEnter(activity.landingWindow())
         setSystemBarsHidden(true)
         // The fullscreen layer covers the picture-in-picture window as it is; the tab's view need not.
         if (tabs.filling == tab.tabId) tabs.fillWindow(null)
@@ -750,6 +757,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         if (media.pictureInPictureTab == tab.tabId && tabs.get(tab.tabId) != null) tabs.fillWindow(tab.tabId)
         // A hint standing over the page (the first-time exit hint, GN-20) leaves with the fullscreen.
         tab.postToPage(json("type" to "hint", "hint" to null).toString())
+        // The bars are on their way back: said before the exit itself, so the chrome's return
+        // fade waits for the page's landing rather than starting over its first inline layout.
+        activity.onFullscreenExit()
         chrome.viewEvent(tab.tabId, "leaveFullscreen", null)
         back.refresh()
         media.onFullscreenChanged()
@@ -1229,6 +1239,41 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         }
         view.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
             override fun onComplete(requestId: Long) = onFrame()
+        })
+    }
+
+    /** Per tab: the serial of the last size change whose frame the chrome has not been told of yet. */
+    private val unreportedSizes = HashMap<String, Long>()
+    private var sizeSeq = 0L
+
+    /**
+     * `tab`'s view was laid out at a new size: tell the chrome once the frame showing the page at
+     * that size is on screen (`view.sized`, CSS px; the renderer's `lib/fullscreenLanding.ts`
+     * starts the chrome's return fade from it). As for a view coming back in [reportDrawn], the
+     * page's own visual-state callback says when it has content at the size, and the frames are
+     * counted from there; a renderer that never answers is not waited on past
+     * [PageVisibility.DRAWN_DEADLINE_MS]. A newer size for the same view overtakes the report.
+     */
+    override fun viewSized(tab: TabWebView, widthPx: Int, heightPx: Int) {
+        val tabId = tab.tabId
+        val change = ++sizeSeq
+        unreportedSizes[tabId] = change
+        val d = activity.resources.displayMetrics.density
+        val payload = json("tabId" to tabId, "width" to widthPx / d, "height" to heightPx / d)
+        val report = Runnable {
+            if (unreportedSizes[tabId] == change) {
+                unreportedSizes.remove(tabId)
+                chrome.hostEvent("view.sized", payload)
+            }
+        }
+        main.postDelayed(report, PageVisibility.DRAWN_DEADLINE_MS)
+        tab.postVisualStateCallback(change, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                afterFrames(2) {
+                    main.removeCallbacks(report)
+                    report.run()
+                }
+            }
         })
     }
 

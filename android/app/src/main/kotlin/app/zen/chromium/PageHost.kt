@@ -120,6 +120,13 @@ interface PageHost {
      * (MED-01); the default leaves it.
      */
     fun fullscreenVideo(tab: TabWebView, active: Boolean, videoWidth: Int, videoHeight: Int, mainFrame: Boolean) {}
+    /**
+     * The page view was laid out at a new size (device px). The browser's host tells the chrome
+     * once the frame at that size is drawn (`view.sized`), for the chrome's return from a
+     * fullscreen to fade in on the page's landing (MED-01); a host without a chrome has no one
+     * to tell.
+     */
+    fun viewSized(tab: TabWebView, widthPx: Int, heightPx: Int) {}
     /** Leave the host's own fullscreen (a back while [immersive]); a host without one has nothing to do. */
     fun leaveImmersive() {}
     fun openExternal(url: String)

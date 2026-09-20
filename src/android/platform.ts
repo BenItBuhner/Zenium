@@ -352,7 +352,12 @@ export interface BootInfo {
 
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
 export interface HostEventPayloads {
-  insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * The window's safe-area insets, and whether the system bars are still on their way back from
+   * a page's fullscreen (`FullscreenLanding.kt`): the chrome's return fade waits while they are
+   * (`lib/fullscreenLanding.ts`). Absent from a host without the word.
+   */
+  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
   /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
   environment: PageEnvironment
   focus: { focused: boolean }
@@ -387,6 +392,11 @@ export interface HostEventPayloads {
   memoryPressure: { level: 'low' | 'critical' }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * A page view laid out at a new size (CSS px) has drawn the page at it (`Host.viewSized`):
+   * the chrome's return from a fullscreen fades in on the page's landing (`lib/fullscreenLanding.ts`).
+   */
+  'view.sized': { tabId: string; width: number; height: number }
   /** Kotlin took a tab card picture and has it on disk (`Thumbnails.kt`). */
   'thumbnail.captured': ThumbnailPicture & { tabId: string }
   /**
@@ -1281,6 +1291,9 @@ export class AndroidPlatform implements Platform {
         return
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
+        return
+      case 'view.sized':
+        this.events.send('view.sized', payload as HostEventPayloads['view.sized'])
         return
       case 'thumbnail.captured':
         this.events.send('thumbnail.captured', payload as HostEventPayloads['thumbnail.captured'])

@@ -4440,8 +4440,13 @@ export interface Events {
   /** History changed: visits are throttled to twice a second, deletions arrive at once. */
   'history.changed': { kind: 'visit' | 'delete' | 'clear' }
   'session.recentlyClosedChanged': void
-  /** Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts). */
-  insets: { top: number; right: number; bottom: number; left: number }
+  /**
+   * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
+   * from the Android host – whether the system bars are still on their way back from a page's
+   * fullscreen (`settling`): the chrome's return fade waits while they are
+   * (`lib/fullscreenLanding.ts`). A host without the word leaves it out.
+   */
+  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
   /**
    * The core placed the page views as a `layout.report` asked: `hid` and `shown` name the tabs
    * whose views it took down or brought back under that report (a tab without a view, or one
@@ -4455,6 +4460,12 @@ export interface Events {
    * the swap between the live page and its cover.
    */
   'view.drawn': { tabId: string; visible: boolean }
+  /**
+   * The host has drawn `tabId`'s page view at a new size (CSS px) – raised by the Android host
+   * after every change of the view's size, once the page has content at it – for the chrome's
+   * return from a page's fullscreen to fade in on the page's landing (`lib/fullscreenLanding.ts`).
+   */
+  'view.sized': { tabId: string; width: number; height: number }
   /**
    * The host took a card thumbnail of `tabId`'s page (it left the screen, the app went to the
    * background, a sheet's cover was captured) and has it on disk: the chrome's copy for its

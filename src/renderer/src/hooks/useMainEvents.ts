@@ -9,6 +9,7 @@ import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
 import { isPhone, viewportStore } from '@renderer/lib/formFactor'
+import { noteInsetsSettling, noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
@@ -37,6 +38,7 @@ import {
   openUrlbar,
   openZoom,
   overlayAvailable,
+  contentAreaStore,
   pushToast,
   showExternalProtocol,
   showMenu,
@@ -336,6 +338,10 @@ export function useMainEvents(): void {
         root.setProperty('--zen-inset-right', `${insets.right}px`)
         root.setProperty('--zen-inset-bottom', `${insets.bottom}px`)
         root.setProperty('--zen-inset-left', `${insets.left}px`)
+        // The bars' way back from a page's fullscreen (lib/fullscreenLanding.ts): the content
+        // area's rect, set as it is measured, is the layout's mark; the chrome's return fade
+        // waits for the settled insets to have had their layout.
+        noteInsetsSettling(insets.settling, () => contentAreaStore.get().area)
       }),
       // Where the chrome lies under the pages, the swap between a live page and its cover is
       // timed from these (lib/pageView.ts); the desktop hosts swap the moment they are asked.
@@ -345,6 +351,8 @@ export function useMainEvents(): void {
       onEvent('view.drawn', ({ tabId, visible }) => {
         if (followsCover()) onViewDrawn(tabId, visible)
       }),
+      // The host drew a page view at a new size: the return from a fullscreen lands on it.
+      onEvent('view.sized', ({ tabId, width, height }) => noteViewSized(tabId, width, height)),
       // Tab card pictures (lib/thumbnails.ts): the host's captures, the tabs' navigations and
       // closes, and the card width the host scales its captures to – on the host that keeps
       // them (the chrome under the pages); the desktop hosts have no pictures to be told about.
