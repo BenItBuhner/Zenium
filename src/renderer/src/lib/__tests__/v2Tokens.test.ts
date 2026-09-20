@@ -95,8 +95,7 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/
   // PrivateLockCover.tsx, INC-05 / SET-17): the panel-toned base under a locked private tab's
   // blurred picture. Its block ends where the phone sheet chassis begins.
-  ['.zen-private-lock {', '/*
-   * The phone sheet chassis'],
+  ['.zen-private-lock {', '/*\n   * The phone sheet chassis'],
   // The zen-v2-* controls inside the chassis (components/newtab/CustomizeSheet.tsx): the
   // description and the control row; the rows, heading, switch and card radio are the shared
   // primitives below (§9.34, the Settings tab's block).
