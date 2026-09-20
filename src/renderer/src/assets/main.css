@@ -3350,10 +3350,12 @@
   }
 
   /*
-   * Desktop popovers (§9.20): a folder's panel, the overflow panel and the star bubble. One of
-   * three fixed widths (set in script), the top border flush with the bar or pill the anchor
-   * sits in, radius 8 on the panel surface with the panel shadow, no scrim. The body scrolls
-   * under a sticky header once the content passes 60% of the window.
+   * Desktop popovers (§9.20): the star bubble (at the form width) and the other bubbles on this
+   * chassis – downloads, tab search, the folder editor, blocked pop-ups, share. One of the fixed
+   * widths (set in script), the top border flush with the bar or pill the anchor sits in, radius
+   * 8 on the panel surface with the panel shadow, no arrow, no scrim. The body scrolls under a
+   * sticky title block once the content passes 60% of the window. The bar's folder panels are
+   * menus (`.zen-bm-panel` below), not this.
    */
   .zen-bm-popover {
     border-radius: 8px;
@@ -3629,39 +3631,6 @@
     font-size: 13px;
   }
 
-  /*
-   * The folder field's popup (§9.13 menulist popup): a panel under the trigger, radius 12,
-   * padding 6, 28px rows at radius 6, the current option marked with a trailing 16px check.
-   */
-  .zen-bm-listbox {
-    padding: 6px;
-    border-radius: 12px;
-    corner-shape: var(--zen-corner);
-    overflow: hidden;
-    background: var(--v2-panel);
-    border: 1px solid var(--v2-border);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  .zen-bm-option {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: 6px;
-    color: var(--v2-text);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: left;
-    outline: none;
-  }
-  .zen-bm-option:hover,
-  .zen-bm-option:focus-visible {
-    background: var(--v2-fill);
-  }
-
   /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
   .zen-bm-star {
     opacity: 0.7;
@@ -3835,32 +3804,60 @@
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
 
-  /* The folder chooser's rows inside a dialog: single line, 32 tall; the keyboard's row is ringed. */
-  .zen-bm-pick-row {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 32px;
-    padding-right: 8px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    font-size: 13px;
-  }
-  .zen-bm-pick-row:hover {
-    background: var(--v2-fill);
+  /*
+   * The folder chooser (components/bookmarks/FolderChooser.tsx; §9.21, §9.6, §9.30): the tree in
+   * the folder menulist's place in the star bubble and the dialogs, its rows the shared
+   * `.zen-v2-row` – here only what the primitive does not say. The tree steps out of the form's
+   * 16 gutter to the body's edge, so its rows stand where a popover's rows stand (the ring-room
+   * modifier on the shared body puts them `--v2-ring-room` in, their content at 16), leaves the
+   * ring the same room above and below its own clip, and scrolls past eight rows. A row leads
+   * with its twisty – 20 around a 16 chevron that turns down while the folder is open – and the
+   * 16 folder glyph, 4 apart, each level 16 further in; the chosen row is on `--v2-selected`, a
+   * row that cannot be chosen at 40%; a new folder's name is typed in place, the 24 editor
+   * centred on the row's 20 line. The ring is the shared one, on the row itself.
+   */
+  .zen-bm-pick-tree {
+    min-height: 0;
+    max-height: calc(8 * var(--v2-row) + 2 * var(--v2-ring-room));
+    margin-inline: -16px;
+    padding-block: var(--v2-ring-room);
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
   .zen-bm-pick-row[aria-selected='true'] {
-    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+    background: var(--v2-selected);
   }
-  .zen-bm-pick-row[data-off='true'] {
+  .zen-bm-pick-row[aria-disabled='true'] {
     opacity: 0.4;
   }
-  .zen-bm-pick-row:has(:focus-visible) {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: -2px;
+  .zen-bm-pick-lead {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
   }
-  .zen-bm-pick-row :focus-visible {
-    outline: none;
+  .zen-bm-pick-lead .lucide {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+  }
+  .zen-bm-pick-twisty {
+    display: flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-bm-pick-twisty .lucide {
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-bm-pick-twisty .lucide[data-open] {
+    transform: rotate(90deg);
+  }
+  .zen-bm-pick-rename {
+    margin-block: -2px;
   }
 
   /* Breadcrumb segments: buttons and drop-into targets. */
