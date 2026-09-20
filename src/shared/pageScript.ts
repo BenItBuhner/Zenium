@@ -12,6 +12,7 @@ import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
 import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
+import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -46,6 +47,7 @@ export interface PageScriptMessage {
     | 'webapp'
     | 'notification'
     | 'reader'
+    | 'pdf'
   url?: string
   x?: number
   y?: number
@@ -65,6 +67,8 @@ export interface PageScriptMessage {
   notification?: NotificationPageRequest
   /** `reader`: the text preferences a `zen://reader` page's toolbar changed (a partial). */
   reader?: unknown
+  /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
+  pdf?: PdfViewerReport
 }
 
 /** Browser → page messages for the web-app polyfill (mirrors `PageHostMessage` in the core). */
@@ -171,6 +175,7 @@ export function installPageScript(transport: PageScriptTransport): void {
   if (transport.reportBlockedPopups) installPopupObserver(transport)
   installInterstitialRelay(transport)
   installReaderRelay(transport)
+  installPdfViewerRelay(transport)
   if (transport.onHint) installHint(transport.onHint.bind(transport))
   if (transport.onWebApp) installWebApp(transport)
 
@@ -344,6 +349,20 @@ function installReaderRelay(transport: PageScriptTransport): void {
     const patch = data && typeof data === 'object' ? data[READER_MESSAGE_KEY] : undefined
     if (!patch || typeof patch !== 'object') return
     transport.send({ type: 'reader', reader: patch })
+  })
+}
+
+/**
+ * The PDF viewer document (`zen://pdf`, `pdfPage.ts`) posts its state on its window; only a
+ * document of the viewer's own origin – one the host itself served – may relay it, so a web page
+ * cannot pose as the viewer to the chrome's PDF controls.
+ */
+function installPdfViewerRelay(transport: PageScriptTransport): void {
+  if (location.origin !== PDF_VIEWER_ORIGIN) return
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== window) return
+    const report = pdfReportOf(e.data)
+    if (report) transport.send({ type: 'pdf', pdf: report })
   })
 }
 

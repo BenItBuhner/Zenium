@@ -21,6 +21,8 @@ const DESKTOP: HostCapabilities = {
   resourceGovernor: true,
   sync: true,
   print: true,
+  printPreview: true,
+  pdfViewer: false,
   agents: true,
   updates: true,
   share: false,

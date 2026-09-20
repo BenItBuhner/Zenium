@@ -210,6 +210,8 @@ export function createPreviewDownloads(
     }),
     'download.discard': () => undefined,
     'download.open': () => undefined,
+    'download.openWith': () => undefined,
+    'download.share': () => undefined,
     // The engine's existence check and Delete file (#166), against the files pretended so far:
     // a path is there unless it went, and deleting a gone one says so.
     'download.exists': ({ savePath }) => !gone.has(String(savePath)),

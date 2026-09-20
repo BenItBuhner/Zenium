@@ -57,6 +57,8 @@ import type {
 import type { UpdateAsset, UpdateProgress, UpdateRelease, UpdateTarget } from '../shared/updates'
 import type { QrStartOutcome } from '../shared/qrScan'
 import type { InterstitialAction } from '../shared/interstitial'
+import type { PdfRenderOptions, PrinterDescription, PrintJobOptions } from '../shared/print'
+import type { PdfViewerReport } from '../shared/pdfViewerProtocol'
 import type {
   MediaReport,
   MediaSessionAction,
@@ -155,6 +157,8 @@ export interface PageMessage {
     | 'notification'
     /** A `zen://reader` page's toolbar changed the text preferences (`reader`). */
     | 'reader'
+    /** The PDF viewer document (`zen://pdf`) reports where it stands (`shared/pdfPage.ts`). */
+    | 'pdf'
   url?: string
   x?: number
   y?: number
@@ -187,6 +191,8 @@ export interface PageMessage {
   manifest?: RawWebAppManifest | null
   /** `reader`: the changed keys, as the page sent them (the core validates them). */
   reader?: unknown
+  /** `pdf`: the viewer's state (page count and page, zoom, find results, the outline). */
+  pdf?: PdfViewerReport
 }
 
 /** Browser → page for the web-app polyfill. */
@@ -590,7 +596,15 @@ export interface TabView {
   reloadFrame?(frameId: number): void
   /** Drop the HTTP cache of the page's session ("Empty Cache and Hard Reload"); optional. */
   clearCache?(): Promise<void>
+  /** Print through the engine's own flow: Electron's system dialog, Android's print manager. */
   print(): void
+  /**
+   * Render the page to a PDF with the preview's options (`pdfRenderOptions` in
+   * `shared/print.ts`): Electron's `webContents.printToPDF`. Resolves with the document's bytes;
+   * rejects when the engine could not render (a page that is gone, a print already running).
+   * Hosts without it have no print preview (`capabilities.printPreview` off).
+   */
+  printToPDF?(options: PdfRenderOptions): Promise<Uint8Array>
   /** Save the page (host decides where / whether to ask); resolves with the saved path or null. */
   savePage(suggestedName: string): Promise<string | null>
   /** Downscaled JPEG data URL of the current paint, for the dimmed preview behind overlays. */
@@ -1082,6 +1096,14 @@ export interface DownloadHost {
    */
   deleteFile(item: DownloadItem): Promise<'deleted' | 'missing' | 'failed'>
   open(item: DownloadItem): Promise<void>
+  /**
+   * Chrome's "Open with": the system's chooser of apps for the file, whatever the default is
+   * (the PDF viewer's escape to another app). Hosts without a chooser leave it out and the core
+   * opens the file as `open` would.
+   */
+  openWith?(item: DownloadItem): Promise<void>
+  /** The system share sheet with the file itself (`capabilities.share`); hosts without one leave it out. */
+  share?(item: DownloadItem): Promise<void>
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
   chooseDirectory?(win?: ZenWindow): Promise<string | null>
@@ -1643,6 +1665,33 @@ export interface QrScanHost {
 }
 
 /**
+ * The host side of the print preview (`capabilities.printPreview`; `core/print.ts`): the
+ * system's printers, the job that takes the rendered document to one, and the file Save as PDF
+ * writes. The render itself is the tab's (`TabView.printToPDF`), as the engine hangs it on the
+ * page.
+ */
+export interface PrintingHost {
+  /** The system's printers (`webContents.getPrintersAsync`), the default one flagged. */
+  printers(): Promise<PrinterDescription[]>
+  /**
+   * Send `document` – the PDF the preview rendered, its pages laid out for the paper the job
+   * names – to the printer the job names, without asking anything more (the preview asked
+   * everything; Electron prints it silently from Chromium's PDF viewer, page for page). Resolves
+   * once the job is handed to the system; rejects with the engine's reason when it is not.
+   */
+  print(document: Uint8Array, job: PrintJobOptions): Promise<void>
+  /**
+   * Save as PDF: ask where to save – Chrome's save dialog, with `defaultName` filled in – and
+   * write `bytes` there. Resolves with the file's path, or null when the dialog was dismissed.
+   */
+  savePdf(
+    bytes: Uint8Array,
+    options: { defaultName: string },
+    win?: ZenWindow
+  ): Promise<string | null>
+}
+
+/**
  * The OS media controls on a host whose engine feeds none of its own (the Android WebView; the
  * desktop's Chromium drives SMTC / Now Playing / MPRIS itself). The core resolves one session –
  * the page playing, or the last one that did – from the pages' reports and hands it over; the
@@ -1770,6 +1819,8 @@ export interface Platform {
   readonly translate?: TranslateHost
   /** Spell checking of text fields; hosts without a checker of their own leave it out. */
   readonly spellcheck?: SpellcheckHost
+  /** The print preview's printers and Save as PDF; omit when `capabilities.printPreview` is off. */
+  readonly printing?: PrintingHost
   /** Host-backed services; omit for the built-in no-op versions. */
   createGovernor?(browser: Browser): Governor
   createExtensions?(browser: Browser): ExtensionHost

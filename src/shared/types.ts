@@ -27,6 +27,8 @@ import type { QrEvent, QrStartOutcome } from './qrScan'
 import type { MediaPositionInfo, MediaSessionAction } from './mediaSession'
 import type { SpellcheckSettings, SpellcheckStatus } from './spellcheck'
 import type { ReaderPreferences } from './reader'
+import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
+import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 
 export type Platform = 'linux' | 'win32' | 'darwin' | 'android'
 
@@ -77,6 +79,20 @@ export interface HostCapabilities {
   sync: boolean
   /** Pages can be printed. */
   print: boolean
+  /**
+   * The host renders pages to PDF with the preview's options and lists the system's printers
+   * (`TabView.printToPDF`, `Platform.printing`), so Ctrl+P opens Zenium's print preview – the
+   * `zen://print` page (`shared/print.ts`, `core/print.ts`). Off, printing goes to the system
+   * dialog (`TabView.print`), as Android's print flow does.
+   */
+  printPreview: boolean
+  /**
+   * The host shows PDF documents inline in a tab through Zenium's own viewer, the `zen://pdf`
+   * page (Android, whose WebView cannot draw a PDF: a PDF the page navigates to is downloaded
+   * and opened there instead of the system chooser). Desktop hosts draw PDFs with Chromium's
+   * viewer and leave this off.
+   */
+  pdfViewer: boolean
   /** The host can run the MCP server that lets AI agents control the browser. */
   agents: boolean
   /** The host checks GitHub Releases for new versions and can fetch / apply them. */
@@ -1430,6 +1446,8 @@ export type ShortcutAction =
   | 'page.openFile'
   | 'page.emailLink'
   | 'page.print'
+  /** Zenium's print preview (`zen://print`); the system dialog on a host without one. */
+  | 'page.printPreview'
   | 'page.viewSource'
   | 'page.fullscreen'
   | 'page.readerMode'
@@ -2175,6 +2193,8 @@ export type OverlayKind =
   | 'live-folder'
   | 'sync'
   | 'passwords'
+  /** The print preview (`zen://print`) on a host without page tabs: a tab-modal dialog over the page. */
+  | 'print'
 
 export interface WindowState {
   id: string
@@ -3369,7 +3389,49 @@ export interface Commands {
    * page beyond the viewport (Edge's "Capture full page"; the visible area when the host cannot).
    */
   'page.screenshot': { args: { tabId: string; fullPage?: boolean }; result: void }
+  /** Print through the system dialog (Ctrl+Shift+P; Ctrl+P too on a host without the preview). */
   'page.print': { args: { tabId: string }; result: void }
+  /**
+   * Open Zenium's print preview for the tab (`zen://print`; `capabilities.printPreview`): the
+   * page's overlay on the desktop. A host without the preview gets the system dialog instead.
+   */
+  'page.printPreview': { args: { tabId: string }; result: void }
+  // ---- Print preview (`core/print.ts`, `shared/print.ts`) -------------------------------------
+  /**
+   * The preview's session for a tab: the page's title and address, the system's printers and
+   * the settings the preview opens with (Chrome's sticky settings over the defaults). Null for a
+   * tab that cannot be printed (no page, a chrome page) or a host without the preview.
+   */
+  'print.session': { args: { tabId: string }; result: PrintSessionInfo | null }
+  /**
+   * Render the preview with `settings`: the page as a PDF, base64. `pageCount` is what the
+   * chrome learned from an earlier render (the pages picked need it); unknown, every page is
+   * rendered.
+   */
+  'print.preview': {
+    args: { tabId: string; settings: PrintSettings; pageCount?: number | null }
+    result: PrintPreviewResult
+  }
+  /**
+   * Print or save with `settings`, for a document of `pageCount` pages: a printer gets the job
+   * silently, Save as PDF asks where to save and lists the file in Downloads. The sticky part
+   * of the settings is remembered either way.
+   */
+  'print.run': {
+    args: { tabId: string; settings: PrintSettings; pageCount: number }
+    result: PrintRunResult
+  }
+  /** The preview closed without printing (Cancel, Escape, the tab going away). */
+  'print.close': { args: { tabId: string }; result: void }
+  // ---- PDF viewer (`zen://pdf`, `capabilities.pdfViewer`) -------------------------------------
+  /** Chrome's "Open with": the system chooser for the PDF the tab shows. */
+  'pdf.openWith': { args: { tabId: string }; result: void }
+  /** The system share sheet with the PDF file the tab shows. */
+  'pdf.share': { args: { tabId: string }; result: void }
+  /** What the viewer in the tab last reported (page, zoom, find, outline); null before it did. */
+  'pdf.state': { args: { tabId: string }; result: PdfViewerReport | null }
+  /** Drive the viewer in the tab (zoom, fit, go to a page, find, rotate); false when it has none. */
+  'pdf.command': { args: { tabId: string; command: PdfViewerCommand }; result: boolean }
   'page.savePage': { args: { tabId: string }; result: void }
   'page.viewSource': { args: { tabId: string }; result: void }
   /** Page context menu requested from the chrome side (touch long-press forwarded by the host). */
@@ -3826,7 +3888,10 @@ export interface Events {
    * chrome shows it over the page, prefilled with `title` and `url`.
    */
   'newtab.shortcutDialog': { tabId: string; id: string | null; title: string; url: string }
-  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string }
+  /** `tabId`: the tab the overlay is about (the print preview prints it), else the active one. */
+  'overlay.open': { kind: OverlayKind; folderId?: string; section?: string; tabId?: string }
+  /** The PDF viewer document in a tab reported where it stands (`shared/pdfViewerProtocol.ts`). */
+  'pdf.changed': { tabId: string; report: PdfViewerReport }
   /**
    * Show the find bar for a tab with `text` in its field (the tab's last query, else the
    * profile's, else the page's selection when it is short; empty for a first search), the text

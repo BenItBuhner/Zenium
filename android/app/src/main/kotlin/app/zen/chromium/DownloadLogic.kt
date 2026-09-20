@@ -148,6 +148,17 @@ object DownloadLogic {
         return safe
     }
 
+    /**
+     * The disposition type of a Content-Disposition header – `inline` or `attachment`, case
+     * aside – or null for a header without one (or none at all). Chrome saves an `attachment`
+     * without opening it; a PDF sent `inline` (or with no word on it) opens in the viewer.
+     */
+    fun dispositionType(header: String?): String? {
+        if (header.isNullOrBlank()) return null
+        val type = header.substringBefore(';').trim().lowercase(Locale.ROOT)
+        return type.takeIf { it == "inline" || it == "attachment" }
+    }
+
     /** `attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf; filename="fallback.pdf"` → `résumé.pdf`. */
     fun dispositionFilename(header: String?): String? {
         if (header.isNullOrBlank()) return null

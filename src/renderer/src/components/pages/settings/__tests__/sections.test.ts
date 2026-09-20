@@ -67,6 +67,8 @@ const ANDROID: HostCapabilities = {
   resourceGovernor: false,
   sync: false,
   print: true,
+  printPreview: false,
+  pdfViewer: true,
   agents: true,
   updates: true,
   share: true,
