@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab audio fixture</title>
+  </head>
+  <body style="background: #ffffff; color: #111; font: 18px system-ui; padding: 40px">
+    <h1>Tab audio fixture</h1>
+    <p>
+      This tab plays a quiet 440 Hz tone through Web Audio from the moment it loads (a click on the
+      button starts it again where autoplay needs a gesture). Extensions that capture the tab's
+      audio (<code>chrome.tabCapture</code>: a per-tab volume control, a song recogniser, a
+      recorder) have something to capture here.
+    </p>
+    <p>
+      Tone: <span id="state">starting</span>, context <span id="ctx">-</span>, elapsed
+      <span id="elapsed">0</span> s
+    </p>
+    <button id="start" type="button">Start tone</button>
+    <video id="clip" src="/clip.mp4" controls width="320" height="240" loop style="display: block; margin-top: 24px"></video>
+    <script>
+      var ctx = null
+      var startedAt = 0
+      function set(id, text) {
+        document.getElementById(id).textContent = text
+      }
+      function start() {
+        if (ctx) return
+        ctx = new (window.AudioContext || window.webkitAudioContext)()
+        var osc = ctx.createOscillator()
+        var gain = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.value = 440
+        gain.gain.value = 0.05
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.start()
+        startedAt = Date.now()
+        window.__tone = { context: ctx, oscillator: osc }
+        set('state', 'playing')
+        set('ctx', ctx.state)
+        ctx.onstatechange = function () {
+          set('ctx', ctx.state)
+        }
+        setInterval(function () {
+          set('elapsed', String(Math.round((Date.now() - startedAt) / 1000)))
+        }, 1000)
+      }
+      document.getElementById('start').addEventListener('click', function () {
+        if (ctx && ctx.state === 'suspended') ctx.resume()
+        else start()
+      })
+      start()
+      var clip = document.getElementById('clip')
+      clip.volume = 0.2
+      clip.play().catch(function () {})
+    </script>
+  </body>
+</html>
