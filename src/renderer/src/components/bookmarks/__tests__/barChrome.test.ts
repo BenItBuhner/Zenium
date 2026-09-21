@@ -39,12 +39,16 @@ describe('the bookmarks bar chrome (§9.3, §9.29)', () => {
     expect(rule('.zen-toolbar-button')).toContain('border-radius: 6px')
     // No radius of its own: the button's 6 is §9.3's since the shell pass.
     expect(css).not.toMatch(/\.zen-bm-overflow \{/)
-    expect(rule('.zen-bm-overflow:hover:not(:disabled)')).toContain(
-      'background: var(--v2-window-fill)'
-    )
-    expect(
-      rule(".zen-bm-overflow:active:not(:disabled),\n  .zen-bm-overflow[aria-expanded='true']")
-    ).toContain('background: var(--v2-window-fill-hover)')
+    const hover = '.zen-bm-overflow:hover:not(:disabled)'
+    expect(rule(hover)).toContain('background: var(--v2-window-fill)')
+    // The open state (`aria-expanded`) is written at the hover's specificity (0,3,0) and after
+    // it, so the pressed fill holds while the pointer is still on the » that opened the panel –
+    // `[aria-expanded='true']` alone (0,2,0) lost to the hover (the Xvfb drive's finding).
+    const open =
+      ".zen-bm-overflow:active:not(:disabled),\n  .zen-bm-overflow[aria-expanded='true']:not(:disabled)"
+    expect(rule(open)).toContain('background: var(--v2-window-fill-hover)')
+    expect(css.indexOf(`${open} {`)).toBeGreaterThan(css.indexOf(`${hover} {`))
+    expect(css).not.toMatch(/\.zen-bm-overflow\[aria-expanded='true'\] \{/)
   })
 
   it('draws every glyph on the bar at the toolbar stroke', () => {

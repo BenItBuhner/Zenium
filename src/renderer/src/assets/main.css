@@ -3699,12 +3699,14 @@
   /*
    * The overflow » (§9.3): the toolbar button – radius 6 is the button's own since shell pass
    * 7(a) – in the window fills the chips take, lit with the pressed fill while its panel is open.
+   * The open state carries `:not(:disabled)` too so it outranks the hover: the pointer is still on
+   * the » that opened the panel, and the hover's chip fill would otherwise win on specificity.
    */
   .zen-bm-overflow:hover:not(:disabled) {
     background: var(--v2-window-fill);
   }
   .zen-bm-overflow:active:not(:disabled),
-  .zen-bm-overflow[aria-expanded='true'] {
+  .zen-bm-overflow[aria-expanded='true']:not(:disabled) {
     background: var(--v2-window-fill-hover);
     opacity: 1;
     transform: none;
