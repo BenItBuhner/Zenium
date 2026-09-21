@@ -112,7 +112,9 @@ function shippedStylesheet(): string {
 
 const host = (): HTMLElement => mount!.querySelector<HTMLElement>('.zen-frame-dialogs')!
 const hostScrim = (): HTMLElement => host().querySelector<HTMLElement>('.zen-frame-scrim')!
-const wrapper = (): HTMLElement => mount!.querySelector<HTMLElement>('.zen-settings-sheet-layer')!
+/** The slot's child for the (first) sheet: `BottomSheet`'s own layer, which `PhoneSheet` returns to the slot. */
+const wrapper = (): HTMLElement =>
+  mount!.querySelector<HTMLElement>('.zen-frame-dialogs-slot > [data-sheet-layer]')!
 const options = (): HTMLElement[] => [...mount!.querySelectorAll<HTMLElement>('[role="radio"]')]
 
 /**
@@ -246,14 +248,18 @@ describe('a hosted Settings sheet under a finger', () => {
     expect(host().getAttribute('data-sheet')).toBe('true')
     expect(host().getAttribute('data-open')).toBe('true')
     expect(host().hasAttribute('data-sheet-up')).toBe(false)
-    // So its wrapper, the slot's child, says so – or the cut for the slot's other children
-    // takes the pointer from the whole sheet, and the finger finds the host's scrim instead.
+    // So the slot's child – the chassis's own layer, nothing of the Settings tab's around it –
+    // says so, or the cut for the slot's other children takes the pointer from the whole sheet,
+    // and the finger finds the host's scrim instead.
+    const layer = wrapper()
+    expect(layer.classList.contains('zen-settings-sheet-layer')).toBe(false)
+    expect(layer.querySelector('.zen-sheet.zen-settings-sheet')).not.toBeNull()
     expect(underFinger(duckduckgo!)).toBe(duckduckgo)
-    wrapper().removeAttribute('data-sheet-layer')
-    expect(pointerEvents(wrapper())).toBe('none')
+    layer.removeAttribute('data-sheet-layer')
+    expect(pointerEvents(layer)).toBe('none')
     expect(underFinger(duckduckgo!)).toBe(hostScrim())
-    wrapper().setAttribute('data-sheet-layer', 'true')
-    expect(pointerEvents(wrapper())).toBe('auto')
+    layer.setAttribute('data-sheet-layer', 'true')
+    expect(pointerEvents(layer)).toBe('auto')
 
     expect(tap(duckduckgo!)).toBe(duckduckgo)
     expect(onChange).toHaveBeenCalledTimes(1)
@@ -329,8 +335,10 @@ describe('a hosted Settings sheet under a finger', () => {
     await settle()
     rest()
     // Two layers on the chassis, lowest first: the details sheet, then the console over it,
-    // each on a §9.23 title block (both carry a description).
-    const layers = [...mount!.querySelectorAll<HTMLElement>('.zen-settings-sheet-layer')]
+    // each on a §9.23 title block (both carry a description), the shared `PhoneSheet`'s.
+    const layers = [
+      ...mount!.querySelectorAll<HTMLElement>('.zen-frame-dialogs-slot > [data-sheet-layer]')
+    ]
     expect(layers).toHaveLength(2)
     const titles = layers.map((l) => l.querySelector('.zen-sheet-title-block h2')?.textContent)
     expect(titles).toEqual(['Dark Reader', 'Errors'])

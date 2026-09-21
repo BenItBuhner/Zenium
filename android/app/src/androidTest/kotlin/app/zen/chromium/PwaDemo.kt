@@ -320,11 +320,15 @@ class PwaDemo : DemoHarness("pwa-demo-state.json", "android-pwa", "pwa-demo") {
         return false
     }
 
-    /** Whether the install (or name-edit) sheet is mounted in the chrome, waiting up to `timeoutMs`. */
+    /**
+     * Whether the install (or name-edit) sheet is mounted in the chrome, waiting up to `timeoutMs`:
+     * the shared phone sheet with the install sheet's own class on its panel (its title carries a
+     * generated id, not a fixed one).
+     */
     private fun awaitSheet(timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (json("String(!!document.getElementById('zen-install-title'))") == "true") return true
+            if (json("String(!!document.querySelector('.zen-sheet.zen-install-sheet'))") == "true") return true
             SystemClock.sleep(200)
         }
         return false

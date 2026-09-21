@@ -173,10 +173,16 @@
   --v2-nav-active: #e9ecf2;
   /* Focus ring and text selection: one accent, one rule (§1, §9.6). */
   --v2-ring: var(--v2-accent);
+  /* The ring's offset from the control's edge, by control and the same in both themes (§1,
+     Firefox's `--focus-outline-offset` / `--focus-outline-inset`): 2 outside on buttons,
+     checkboxes, radios, switches, menulists and rows – this default – and −2 inside on a text
+     field and the URL field, which set it on themselves, where an outside ring would clip. The
+     shared `zen-v2-` ring below reads it, so a control moves its ring through the token at its
+     own rule's weight, as the invalid field re-inks it through `--v2-ring`. */
+  --v2-ring-offset: 2px;
   /* The room a clipped list leaves a row's ring (§1, §9.20; pr-245 chassis (b)): the ring's
-     width past the row's edge – its 2 px at the shared rule's offset 0 (light; dark's -2 lies
-     inside the row). When §1's +2 outside lands on rows, the room grows to 4 with it. */
-  --v2-ring-room: 2px;
+     width past the row's edge – its 2 px at the row's offset of 2 outside, so 4. */
+  --v2-ring-room: 4px;
   --v2-selection: color-mix(in srgb, var(--v2-accent) 30%, transparent);
   /* A selected row (selection mode, a picked item), not text selection: the accent at 12 % (§9.6). */
   --v2-selected: color-mix(in srgb, var(--v2-accent) 12%, transparent);
@@ -332,8 +338,15 @@
 }
 
 /*
- * One focus ring for every v2 control (§1, §9.6): 2px accent, offset 0 in light and -2 in dark, on
- * any element whose class starts with zen-v2-. Coarse pointers keep it: the generic suppressor
+ * One focus ring for every v2 control (§1, §9.6): 2 px in `--v2-ring`, at `--v2-ring-offset`
+ * from the control's edge, on any element whose class starts with zen-v2-. The offset is the
+ * control's, the same in both themes (§1; the #247 chassis note): 2 outside – the token's
+ * default – on buttons, checkboxes, radios, switches, menulists and rows, and −2 inside on a
+ * text field (`.zen-v2-field` sets the token on itself), where an outside ring would clip. A
+ * control whose fill is the accent when on – the primary button, a checked checkbox, switch or
+ * radio – draws the same ring: at 2 outside it stands off its own fill by the 2 px of the surface
+ * between them, so the accent reads against the accent as Firefox's primary buttons ring outside
+ * their fill (§4, the #251 ruling; a11y-10). Coarse pointers keep it: the generic suppressor
  * further down (`button:focus-visible { outline: none }`) does not apply to v2 controls.
  */
 [class^='zen-v2-']:focus-visible,
@@ -341,25 +354,7 @@
 :root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,
 :root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible {
   outline: 2px solid var(--v2-ring);
-  outline-offset: 0;
-}
-:root[data-theme='dark'] [class^='zen-v2-']:focus-visible,
-:root[data-theme='dark'] [class*=' zen-v2-']:focus-visible {
-  outline-offset: -2px;
-}
-/*
- * A v2 control that is the accent when on – the primary button, a checked checkbox, a switch or
- * a radio that is itself the control – would draw dark's inset ring (the accent again, 2 px
- * inside its edge) on its own fill and show nothing (a11y-10): on those the ring stays outside
- * the edge in dark as it does in light, on the surface around them (the zoom slider's accent
- * thumb does the same in its own rule).
- */
-:root[data-theme='dark'] .zen-v2-button[data-primary]:focus-visible,
-:root[data-theme='dark'] .zen-v2-checkbox:checked:focus-visible,
-:root[data-theme='dark'] .zen-v2-checkbox[aria-checked='true']:focus-visible,
-:root[data-theme='dark'] .zen-v2-switch[aria-checked='true']:focus-visible,
-:root[data-theme='dark'] .zen-v2-radio[aria-checked='true']:focus-visible {
-  outline-offset: 0;
+  outline-offset: var(--v2-ring-offset);
 }
 
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
@@ -3043,6 +3038,24 @@
     gap: 4px;
     padding: 16px;
   }
+  /*
+   * A prompt about Zenium itself (the default-browser promo) carries the 48 px app icon above
+   * its title block instead of an inline glyph (§9.23; `PhoneSheet`'s `appIcon`): at the block's
+   * 16 from the sheet's edges, 16 to the title through the block's own padding – the desktop
+   * prompt's form (`.zen-default-browser-prompt-icon`). Content drawn inside chrome: the icon
+   * keeps its own colours (§9.29).
+   */
+  .zen-sheet-app-icon {
+    display: flex;
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    margin: 16px 16px 0;
+  }
+  .zen-sheet-app-icon > * {
+    width: 100%;
+    height: 100%;
+  }
   .zen-sheet-title-block h2 {
     display: flex;
     align-items: center;
@@ -3365,9 +3378,6 @@
   }
   .zen-siteinfo-row[data-danger] {
     color: var(--v2-danger);
-  }
-  .zen-siteinfo-row[data-control] {
-    min-height: 40px;
   }
   .zen-siteinfo-row > svg,
   .zen-siteinfo-glyph > svg {
@@ -4146,13 +4156,12 @@
 /*
  * The keyboard on the address (F6, Tab) rings the whole pill, as Chrome's location bar does (§1
  * ring): the address button fills the pill and, in a narrow sidebar, may have no width of its
- * own left next to the chips, so a ring on the button alone can be a sliver or nothing.
+ * own left next to the chips, so a ring on the button alone can be a sliver or nothing. The
+ * ring is the URL field's inset one (§1: −2 on text fields and the URL field, in both themes –
+ * the −2 measured on Zen's URL bar field): the pill fills its bar to the edge.
  */
 .zen-pill:has(> button:focus-visible) {
   outline: 2px solid var(--v2-ring);
-  outline-offset: 0;
-}
-:root[data-theme='dark'] .zen-pill:has(> button:focus-visible) {
   outline-offset: -2px;
 }
 .zen-pill > button:focus-visible {
@@ -6585,8 +6594,14 @@
   font-weight: var(--v2-weight-heading);
 }
 
-/* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
+/*
+ * The shared v2 field (§9.12): the control height, a hairline, the page behind it. A text
+ * field's ring is the inset one (§1: −2 on text fields and the URL field, where a field that
+ * fills its column to a clipping edge would lose an outside ring): the field sets the shared
+ * ring's offset token on itself, the leaf input, and the `zen-v2-` ring rule above reads it.
+ */
 .zen-v2-field {
+  --v2-ring-offset: -2px;
   display: block;
   width: 100%;
   height: var(--v2-control);
@@ -6609,8 +6624,8 @@
 /*
  * Invalid (§9.12): the danger border, and the ring's token re-inked so that, focused, the
  * invalid state wins over the ring. A text field's ring is the inset one (§1: −2 on text
- * fields, where an outside ring would clip), which in dark lies over the 1 px danger border and
- * hid it; the ring takes the danger ink itself (§1: status ink is shared by both families;
+ * fields, where an outside ring would clip), which lies over the 1 px danger border and would
+ * hide it; the ring takes the danger ink itself (§1: status ink is shared by both families;
  * §9.12: the validation reads in `--v2-danger`), its 2 px, offset and shape the shared ring's,
  * so the field reads invalid focused or not, in light and in dark – Firefox's in-content fields
  * colour the focus outline the same way (`:user-invalid:focus-visible`). The token rather than
@@ -6730,12 +6745,13 @@
   box-shadow: 0 0 0 2px var(--v2-accent);
 }
 /*
- * The picked card already wears the accent 2 px outside its edge; the shared ring at offset 0
- * lands on the same pixels, so the keyboard on the picked card showed nothing. Its ring goes
- * inside the edge instead (as it does in dark), leaving both visible (a11y-10).
+ * The picked card already wears the accent 2 px outside its edge; the shared ring's 2 outside
+ * would lie right against it – one 4 px band, no ring to see. Its ring goes inside the edge
+ * instead, leaving both visible (a11y-10): the offset token, which the shared ring reads at any
+ * pointer (an `outline-offset` here would lose to the ring's coarse-pointer form).
  */
-.zen-v2-card-radio[aria-checked='true']:focus-visible {
-  outline-offset: -2px;
+.zen-v2-card-radio[aria-checked='true'] {
+  --v2-ring-offset: -2px;
 }
 /*
  * The group editor's colour swatches (components/sidebar/GroupEditorBubble.tsx; §9.14's swatch
@@ -6769,12 +6785,12 @@
     0 0 0 4px var(--v2-accent);
 }
 /*
- * The picked swatch's accent ring fills the target's outer 2 px, where the shared ring lands in
- * dark (and the card radio's inset rule above would put it); the keyboard's ring on the picked
- * swatch goes 2 px outside the target instead – a second ring with the panel between (a11y-10).
+ * The picked swatch's accent ring fills the target's outer 2 px, where the card radio's inset
+ * rule above would put the keyboard's ring; on the picked swatch it goes 2 px outside the target
+ * as on every other control – a second ring with the panel between (a11y-10).
  */
-.zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']:focus-visible {
-  outline-offset: 2px;
+.zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true'] {
+  --v2-ring-offset: 2px;
 }
 @media (hover: hover) {
   .zen-v2-card-radio.zen-group-editor-swatch:hover {
@@ -7447,7 +7463,22 @@
  * button that is the target, an info row as the static form (`data-static`, §9.34) – so no rule
  * here states the row's geometry; `zen-settings-row` is the page's hook for what is its own:
  * label 15 on the first line, description 13/69 % under it, at most two lines.
+ *
+ * The row's ring sits inside its edge (§1, the reason the field's does): the page's rows and
+ * the sheets' option rows run edge to edge inside a clipping scroll body, so the shared 2
+ * outside would lose both sides and leave two bars – as the phone list's rows found
+ * (phonePanels.css). The row moves the shared ring through the offset token, as the field does
+ * – set on the rows that ARE the target, the `button` rows (the pressable row, an option sheet's
+ * radio row), never on `.zen-settings-row` itself: the token inherits, and the desktop's static
+ * rows (§10.5) hold a menulist, a button, a field or a checkbox in their slot (`.zen-settings-
+ * control-row`, `.zen-settings-check-row`), each ringing at its own offset – 2 outside, the
+ * field's own −2. A `button` holds no interactive content, so nothing inside these two rows can
+ * take the inherited inset (v2Tokens.test.ts pins both selectors to `button` elements).
  */
+.zen-settings-row-pressable,
+.zen-settings-radio-row {
+  --v2-ring-offset: -2px;
+}
 .zen-settings-row-text {
   display: flex;
   min-width: 0;
@@ -7888,24 +7919,21 @@
 }
 
 /*
- * The sheets a row opens (§9.13, §9.16, §9.23–9.25) on the phone chassis (`.zen-sheet` above:
- * the neutral surface, radius 12, the 48 header, §9.7's hairline once the body has scrolled, the
- * one black scrim): a title block in place of the header when the sheet has a description. The
- * layer lives in the frame's dialog host, outside the page host, so it states the page's type
- * and row padding itself.
- */
-.zen-settings-sheet-layer {
-  font-size: var(--v2-font-body);
-  line-height: var(--v2-line-body);
-  user-select: none;
-}
-/*
- * The edge takes no layout (§9.25: 16 from the sheet's outer edge, border included, to every
- * text and control edge): the chassis border goes and a pseudo-element draws the same hairline
- * on the top and sides, following the radius, so a row's 16 gutter is 16 from the outer edge.
+ * The sheets a row opens (§9.13, §9.16, §9.23–9.25): the phone's shared `PhoneSheet`
+ * (components/phone/PhoneSheet.tsx) on the chassis (`.zen-sheet` above: the neutral surface,
+ * radius 12, the 48 header or the title block when the sheet has a description, §9.7's hairline
+ * once the body has scrolled, the one black scrim), with this class on the panel for what is the
+ * Settings tab's. The sheet lives in the frame's dialog host, outside the page host, so the panel
+ * states the page's type itself. The edge takes no layout (§9.25: 16 from the sheet's outer
+ * edge, border included, to every text and control edge): the chassis border goes and a
+ * pseudo-element draws the same hairline on the top and sides, following the radius, so a row's
+ * 16 gutter is 16 from the outer edge.
  */
 .zen-sheet.zen-settings-sheet {
   border: 0;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
 }
 .zen-sheet.zen-settings-sheet::before {
   content: '';
