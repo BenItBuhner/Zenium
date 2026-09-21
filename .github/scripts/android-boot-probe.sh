@@ -79,12 +79,14 @@ if [ ! -f "$before_apk" ]; then
   exit 1
 fi
 
-# One probe pass: install the APK, warm a profile up, then boot and measure twice.
+# One probe pass: install the APK, warm a profile up, then boot and measure twice. `-d` lets the
+# branch's APK follow main's when main's release bump is ahead of the branch (a debuggable package
+# may go down in version code; the profile is cleared right after either way).
 probe() {
   local label=$1 apk=$2 run
   echo "=== $label: $apk"
-  adb install -r -g "$apk"
-  adb install -r -g "$test_apk"
+  adb install -r -d -g "$apk"
+  adb install -r -d -g "$test_apk"
   adb shell am force-stop "$app_id" || true
   adb shell pm clear "$app_id" > /dev/null || true
   adb logcat -c || true
