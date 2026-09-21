@@ -201,7 +201,12 @@ const V2_FILES: ReadonlyArray<string> = [
   // notices in the panel family and the deemphasised ink, the outline rows' page numbers and
   // selected fill, the password sheet's error line in the danger ink.
   'components/pdf/PdfViewerBar.tsx',
-  'components/pdf/PdfSheets.tsx'
+  'components/pdf/PdfSheets.tsx',
+  // Settings > Import's dialog (ID-23's UI): the choice and checkbox rows' heights, the running
+  // browser line in the warn / danger ink, the notes and the results in the deemphasised ink;
+  // a result's glyph (the dialog's and the pane's Last import row) in the danger ink on failure.
+  'components/import/ImportDialog.tsx',
+  'components/import/ResultGlyph.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */

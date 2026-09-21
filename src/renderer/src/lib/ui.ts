@@ -320,6 +320,11 @@ export interface UiState {
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
   /**
+   * Chrome's "Import bookmarks and settings" dialog is up over Settings (or the page); `source`
+   * is the `ImportSource.id` it opens on (the first-run offer's pick), else the first browser.
+   */
+  importDialog: { source: string | null } | null
+  /**
    * Zenium's print preview (`zen://print`, `print/PrintPreviewDialog`): a frame dialog over the
    * page in `tabId`, which it renders to a PDF and shows, with Chrome's options beside it.
    */
@@ -505,6 +510,7 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    importDialog: null,
     printPreview: null,
     autofillPrompt: null,
     autofillPromptCollapsed: null,
@@ -862,6 +868,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.autofillEdit &&
@@ -920,6 +927,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.stageActive &&
@@ -1540,6 +1548,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.importDialog !== null ||
     ui.printPreview !== null ||
     ui.autofillPrompt !== null ||
     ui.stageActive ||
@@ -1715,6 +1724,31 @@ export async function openClearBrowsingData(activeTabId: string | null): Promise
 export function closeClearBrowsingData(): void {
   if (!uiStore.get().clearBrowsingDataOpen) return
   uiStore.set({ clearBrowsingDataOpen: false })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
+ * Chrome's "Import bookmarks and settings" (`import/ImportDialog`, ID-23): a dialog through the
+ * frame dialog host, over the Settings tab on its Import category where its rows live – or over
+ * the page when a menu asks for it before Settings is up, whose snapshot then has to exist
+ * first for the scrim to dim (a chrome page has none to take, and stays drawn under the dialog).
+ * `source` preselects a browser profile (the first-run offer's pick). `lib/pages.ts`'s
+ * `openImportSurface` brings Settings up first.
+ */
+export async function openImportDialog(
+  activeTabId: string | null,
+  source: string | null = null
+): Promise<void> {
+  if (uiStore.get().importDialog) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ importDialog: { source } })
+}
+
+export function closeImportDialog(): void {
+  if (!uiStore.get().importDialog) return
+  uiStore.set({ importDialog: null })
   invalidateSnapshot()
   returnFocusToPage()
 }

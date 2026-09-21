@@ -565,6 +565,8 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Allow agents to run JavaScript in pages'
   ],
   passwords: ['Manage passwords', 'Offer to save passwords', 'Ask again before showing or copying'],
+  // #259's Import (ID-23): the pane's two dialog rows; the last import's one row comes and goes.
+  import: ['Bookmarks, history and passwords', 'Bookmarks HTML or passwords CSV'],
   security: ['meet.example', 'Forget sign-ins and certificates'],
   sync: [
     'Sync now',
@@ -639,6 +641,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Privacy signals'
   ],
   sync: ['Sync across devices', 'This device', 'Devices', 'What to sync'],
+  import: ['Import from another browser', 'Import from a file'],
   security: ['Site permissions', 'This session'],
   passwords: ['Password manager', 'Saving', 'Security']
 }
@@ -683,6 +686,7 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Passwords',
       'Security',
       'Sync',
+      'Import',
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',

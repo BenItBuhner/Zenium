@@ -379,7 +379,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
   'Bookmarks > -',
-  'Bookmarks > Import Bookmarks…',
+  'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
   'History',
   'Recently Closed',

@@ -10,6 +10,7 @@ import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useImportSources } from '@renderer/lib/importSources'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
@@ -71,6 +72,9 @@ export function DesktopSettings({
   const autofill = useAutofillSettings(state, sectionId === 'autofill')
   // The custom dictionary's words the same way, while Languages is the open category.
   const dictionary = useDictionaryWords(sectionId === 'languages' && state.spellcheck.available)
+  // The browsers on this computer likewise, while Import is the open category: its pane names
+  // them (a phone in landscape draws the phone's file rows there, and asks nothing).
+  const importSources = useImportSources(sectionId === 'import' && formFactor !== 'phone')
   const ctx: SectionContext = {
     state,
     tab,
@@ -84,7 +88,8 @@ export function DesktopSettings({
       void openOverlay('boosts', tabId)
     },
     autofill,
-    dictionary
+    dictionary,
+    importSources
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

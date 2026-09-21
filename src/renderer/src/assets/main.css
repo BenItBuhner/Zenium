@@ -6886,6 +6886,14 @@
 .zen-v2-field.zen-print-control {
   width: 160px;
 }
+/*
+ * The import dialog's From and Profile menulists (components/import/ImportDialog.tsx) take the
+ * same column – one width for the form's two controls, the print preview's 160 – for the same
+ * reason: each menulist would otherwise size to its own text and the column read ragged.
+ */
+.zen-v2-menulist.zen-import-control {
+  width: 160px;
+}
 .zen-v2-menulist[data-placeholder] {
   color: var(--v2-text-deemphasized);
 }

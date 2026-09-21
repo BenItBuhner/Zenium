@@ -11,6 +11,7 @@ import type {
   UIState
 } from '@shared/types'
 import type { Browser } from '@core/browser'
+import { fileSources } from '@core/import/sources'
 import { READER_URL_PREFIX } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
@@ -164,9 +165,11 @@ const QR_EVENT_MARGIN_MS = 250
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
  * `translate=<status>` (the active page `offered` for translation, `translated`, `translating`
  * or `error`, or `idle` for none; the bar stays down unless `&bar`; see `seedTranslate`),
- * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page)
- * and `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
- * shield row with its count and the translate row are in it, OMN-02).
+ * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page),
+ * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
+ * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
+ * last import that failed before any kind ran, for Settings › Import's Last import group; see
+ * `seedImport`).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -197,6 +200,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedImport()
     unseedTranslate()
     unseedFavicon()
     unseedMedia()
@@ -566,12 +570,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const blocking = params.get('blocking')
   const blocked = Number(params.get('blocked'))
   const extensions = params.get('extensions')
+  const lastImport = params.get('import')
   const translate = params.get('translate')
   const favicon = params.get('favicon')
   const seed = (): void => {
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
+    if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
   }
@@ -1452,6 +1458,60 @@ export function extensionsFixture(state: UIState, variant: string, now: number):
     extensionUpdates: {
       lastCheckedAt: variant === 'empty' ? null : now - 2 * HOUR_MS,
       checking: variant === 'checking'
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The last import, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the import state the current spec holds over the core's pushes. */
+let importSeed: (() => void) | null = null
+
+/**
+ * Settings > Import's Last import group in a state the stand-in host cannot reach through its
+ * file input (ID-23, PR #259): the chrome's copy of the browser state is patched with a finished
+ * import and patched again over every state the core pushes while the spec stands, as the
+ * request state is. Variant: `failed` – a run-level failure, the outer catch of
+ * `ImportService.run` when the picker's bridge call rejects before any kind ran, so the failure
+ * is the headline row's label in the danger ink over the neutral caption (§9.33). The results a
+ * real file gives (what came in, a kind that failed) need no seed: the driver feeds the file.
+ */
+function seedImport(variant: string): void {
+  unseedImport()
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = importFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  importSeed = browserStore.subscribe(patch)
+}
+
+/** Stop holding a seeded import state over the core's pushes. */
+function unseedImport(): void {
+  importSeed?.()
+  importSeed = null
+}
+
+export function importFixture(state: UIState, variant: string, now: number): UIState {
+  if (variant !== 'failed') return state
+  const [bookmarksFile] = fileSources(false)
+  return {
+    ...state,
+    import: {
+      source: bookmarksFile!,
+      kinds: ['bookmarks'],
+      status: 'failed',
+      current: null,
+      results: {},
+      error: 'The file picker could not be opened.',
+      folderId: null,
+      startedAt: now - 3000,
+      finishedAt: now - 2000
     }
   }
 }
