@@ -12,6 +12,7 @@ import {
   recedeFrame,
   recedeScale,
   registerRecedeLayer,
+  registerRecedeSurface,
   type RecedeHandle,
   type RecedeLayerFrame
 } from '../motion/recede'
@@ -377,4 +378,118 @@ describe('the registry', () => {
     a.release()
     expect(recedeVar()).toBe('')
   })
+
+  it('sets the root attribute once, not per frame: a frame that changes only the value touches only the value', async () => {
+    const h = layer()
+    const attributes: string[] = []
+    const observer = new MutationObserver((records) => {
+      for (const r of records) if (r.attributeName) attributes.push(r.attributeName)
+    })
+    observer.observe(root(), { attributes: true })
+    h.progress(0.25)
+    h.progress(0.5)
+    h.progress(0.75)
+    // Flush the observer (records are delivered as microtasks).
+    await Promise.resolve()
+    observer.disconnect()
+    // Setting an attribute to what it already is still counts as a change to the style
+    // invalidator and the accessibility tree: `data-receding` is touched on the first and the
+    // last frame only.
+    expect(attributes.filter((a) => a === 'data-receding')).toEqual([])
+  })
+})
+
+/*
+ * Where the value goes (PERF-2, PR #269). Written every frame on the root as an inherited
+ * custom property, `--zen-recede` had the whole chrome document's style recalculated every
+ * frame of a sheet's motion: 5 ms of style per frame of the menu's open and 9 to 11 ms of its
+ * close on the emulator, 1 ms with that write muted. So main.css registers it non-inheriting,
+ * the root keeps the one readable number, and each surface a rule reads it on takes the same
+ * value on its own inline style: registered by its component (`registerRecedeSurface`), or
+ * tagged `data-recede-surface` and found when a sheet registers.
+ */
+describe('the surfaces', () => {
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+
+  it('a registered surface carries the value from registration, every frame, and drops it on release', () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    try {
+      const release = registerRecedeSurface(el)
+      // No sheet: nothing written (the property's initial 0 stands).
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      const h = layer()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.0000')
+      h.progress(0.5)
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.5000')
+      expect(recedeVar()).toBe('0.5000')
+      release()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      h.progress(0.75)
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      // A release is idempotent.
+      release()
+    } finally {
+      el.remove()
+    }
+  })
+
+  it('a surface registering under a sheet already up takes the current value at once, and loses it when the stack empties', () => {
+    const h = layer()
+    h.progress(0.8)
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    try {
+      const release = registerRecedeSurface(el)
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.8000')
+      h.release()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      release()
+    } finally {
+      el.remove()
+    }
+  })
+
+  it('an element tagged data-recede-surface is found when a sheet registers and written like a registered one', () => {
+    const el = document.createElement('div')
+    el.setAttribute('data-recede-surface', '')
+    document.body.appendChild(el)
+    try {
+      const h = layer()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.0000')
+      h.progress(0.3)
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.3000')
+      h.release()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      // Tagged and registered both: written once per frame, dropped once.
+      const release = registerRecedeSurface(el)
+      const again = layer()
+      again.progress(0.6)
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.6000')
+      release()
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('')
+      again.progress(0.7)
+      // Still tagged: the tag keeps it on the stack's list until the stack empties.
+      expect(el.style.getPropertyValue('--zen-recede')).toBe('0.7000')
+    } finally {
+      el.remove()
+    }
+  })
+
+  it('the stylesheet registers the per-frame values non-inheriting, the recede with an initial 0', () => {
+    const folded = css.replace(/\s+/g, ' ')
+    expect(folded).toContain(
+      "@property --zen-recede { syntax: '<number>'; inherits: false; initial-value: 0; }"
+    )
+    expect(folded).toContain(
+      "@property --zen-layer-recede { syntax: '<number>'; inherits: false; initial-value: 0; }"
+    )
+    expect(folded).toMatch(/@property --zen-layer-scale \{ syntax: '\*'; inherits: false; \}/)
+    expect(folded).toMatch(/@property --zen-layer-radius \{ syntax: '\*'; inherits: false; \}/)
+  })
+
+  // Which elements the stylesheets read the value on, and that each is registered by its
+  // component (or tagged), is `recedeSurfaces.test.ts`'s: derived from the stylesheets and paired
+  // over the components' source, so a new reader without its `useRecedeSurface`, or a component
+  // dropping its hook, fails there. The hook's runtime is `hooks/__tests__/useRecedeSurface.test.tsx`'s.
 })

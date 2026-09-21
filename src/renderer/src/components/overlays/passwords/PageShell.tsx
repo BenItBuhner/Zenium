@@ -2,6 +2,7 @@ import type { JSX, ReactNode, RefObject } from 'react'
 import { useRef } from 'react'
 import { ChevronLeft, X } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { useBackDismissal } from '@renderer/lib/back'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -33,6 +34,8 @@ export function PageShell({
 }): JSX.Element {
   const phone = usePhone()
   const pageRef = useRef<HTMLDivElement>(null)
+  // The page recedes under a sheet stacked on it (passwords.css reads `--zen-recede` on it).
+  useRecedeSurface(pageRef)
   useBackDismissal('overlay', {
     travel: 360,
     render: (v) => {

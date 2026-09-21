@@ -5971,7 +5971,33 @@
  * further (design language v2 draft §11.1, §11.2). The frame is promoted only while a sheet is
  * up (`data-receding`). Under `prefers-reduced-motion` the value is still written but the gain
  * is 0: the page does not recede and the bar does not fade (§11.3); the sheet's spring jumps.
+ *
+ * The per-frame values are registered non-inheriting: a custom property that inherits and
+ * changes on an element every frame has that element's whole subtree recalculated every frame
+ * – on the root, the whole chrome (5 to 11 ms of style per frame on the emulator, PERF-2's
+ * profile, PR #269). `--zen-recede` is written on the root (the one readable number) and on
+ * each surface that moves on it (`registerRecedeSurface`, recede.ts); the rules below read it
+ * on those surfaces. `--zen-layer-recede` and what the sheet derives from it are written and
+ * read on the sheet itself (and the frame dialog slot). Anything else reading them sees 0 / 1.
  */
+@property --zen-recede {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --zen-layer-recede {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+@property --zen-layer-scale {
+  syntax: '*';
+  inherits: false;
+}
+@property --zen-layer-radius {
+  syntax: '*';
+  inherits: false;
+}
 :root {
   --zen-recede-gain: 1;
 }

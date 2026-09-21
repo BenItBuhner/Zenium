@@ -4,7 +4,7 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
-import { chromeUnderPages } from '@renderer/lib/cover'
+import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
@@ -13,6 +13,7 @@ import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { barStateOf } from '@renderer/lib/translate'
 import {
   captureActiveTab,
@@ -59,6 +60,9 @@ interface Props {
 export function ContentArea({ state, ui }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const sidePanelRef = useRef<HTMLDivElement>(null)
+  // The frame recedes under a phone sheet (main.css reads `--zen-recede` on it, §11.1).
+  const frameRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(frameRef)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
   const glanceActive = ui.glanceActive
@@ -130,8 +134,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // omnibox cover the frame whole and take it over as they take the snapshot over.
   const lockCover =
     usePrivateCoverUp(state) && tab !== null && !staged && !(phone && ui.urlbar.open)
+  // Where the chrome lies under the page views, a capture of the active page is mounted the
+  // moment it exists, whether or not anything covers the page yet: under the live page nothing
+  // of it shows, and it is painted by the time a sheet asks for the page to go (`coverPrimed`,
+  // lib/cover.ts) – the capture `prepareMenu` takes as the finger lands on the menu button.
+  const primed = ui.snapshot !== null && coverPrimed(state.platform, ui.snapshotTabId, tab?.id)
   const showSnapshot =
-    (contentHidden || glanceActive) &&
+    (contentHidden || glanceActive || primed) &&
     Boolean(tab) &&
     !pageTab &&
     !staged &&
@@ -192,6 +201,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div
+        ref={frameRef}
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
         // A phone panel takes the whole frame (OverlayShell): what it covers – a chrome page's

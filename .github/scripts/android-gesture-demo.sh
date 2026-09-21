@@ -35,6 +35,11 @@
 #   JANK_GATE   – `soft` (the default) or `hard`: how the harness's jank budget acts on a scene
 #                 over its budget (DemoHarness.measureFrames; the shared workflow's `jank-gate`
 #                 input). Passed to the instrumentation as the `jankGate` argument.
+#   DEMO_ARGS   – further instrumentation arguments, as `am instrument` takes them (`-e cycles 3
+#                 -e live 0`), for drivers that read their own (the profiling drivers)
+#   DEMO_HANDSHAKE_S – how long the driver's warm-up may take before the `record` handshake (300 s
+#                 by default; the profiling drivers run their measured scenes in the warm-up so
+#                 the recorder is not part of the measurement, and take longer)
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -218,12 +223,12 @@ logcat_pid=$!
 
 jank_gate=${JANK_GATE:-soft}
 echo "jank gate: $jank_gate"
-# shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags, split on purpose
-adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" -e jankGate "$jank_gate" "$runner" > "$out/instrument.txt" 2>&1 &
+# shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags and DEMO_ARGS a list of `-e key value` words, split on purpose
+adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" -e jankGate "$jank_gate" ${DEMO_ARGS:-} "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
 ready=0
-for _ in $(seq 1 1200); do
+for _ in $(seq 1 $(( ${DEMO_HANDSHAKE_S:-300} * 4 ))); do
   if adb shell run-as "$app_id" test -f "files/$demo_dir/record" 2>/dev/null; then
     ready=1
     break
