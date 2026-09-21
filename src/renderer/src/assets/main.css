@@ -8253,17 +8253,16 @@
   min-height: 0;
   flex-direction: column;
 }
-/* The column scrolls on its own, with the page family's thin overlay scrollbar (§9.20). */
+/*
+ * The column scrolls on its own. Its bar is the chassis' §9.20 overlay scrollbar (the base-layer
+ * rule on every scroller of a mouse's chrome, in the page ink here): nothing to state.
+ */
 .zen-page-scroll {
   position: relative;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-.zen-page-host,
-.zen-page-host * {
-  scrollbar-color: color-mix(in srgb, var(--v2-text) 30%, transparent) transparent;
 }
 /*
  * The header: sticky at the column's top on the page tone; the hairline is its own `::after`,
