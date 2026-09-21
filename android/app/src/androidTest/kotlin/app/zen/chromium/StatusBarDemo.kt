@@ -43,6 +43,16 @@ import kotlin.math.roundToInt
 class StatusBarDemo : MediaDemoBase("android-status-bar") {
     override val tag = "StatusBarDemo"
     private val assertive = InstrumentationRegistry.getArguments().getString("assert") == "true"
+    /**
+     * How a cold chrome boot is brought about (`-e relaunch quiet|clear`). `quiet` finishes the
+     * old activity, lets its teardown land and re-seeds the session before the launch, so the
+     * page is live in every boot still. `clear` starts the new activity over the old one
+     * (`FLAG_ACTIVITY_CLEAR_TASK`, the old host torn down while the new chrome boots), the way
+     * run 35550794593 relaunched: the busier process makes the unfixed chrome's drop the rule
+     * (six boots of seven there against two of nine quiet), at the price of the seeded tab (the
+     * old core's last write is a session with its tabs closed). The `before` take uses it.
+     */
+    private val relaunchMode = InstrumentationRegistry.getArguments().getString("relaunch") ?: "quiet"
     private var failures = 0
     private var checks = 0
 
@@ -388,11 +398,18 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
      * as run 2's tabless relaunches showed; the session is written after that, before the launch.
      */
     private fun relaunch(dock: String, scheme: String) {
-        val old = activity
-        instrumentation.runOnMainSync { old.finish() }
-        poll(10_000) { old.isDestroyed }
-        SystemClock.sleep(1_500)
-        File(app.filesDir, "zen/state.json").writeText(seedState(readAsset("media-demo-state.json"), dock, scheme))
+        if (relaunchMode == "clear") {
+            // The running core persists the dock and the scheme itself; the new activity comes
+            // up over it and the old host is torn down under the new chrome's boot.
+            setDock(dock)
+            setScheme(scheme)
+        } else {
+            val old = activity
+            instrumentation.runOnMainSync { old.finish() }
+            poll(10_000) { old.isDestroyed }
+            SystemClock.sleep(1_500)
+            File(app.filesDir, "zen/state.json").writeText(seedState(readAsset("media-demo-state.json"), dock, scheme))
+        }
         launch()
         ensureForeground()
         poll(20_000) { chromeJs("typeof window.zen") == "\"object\"" }

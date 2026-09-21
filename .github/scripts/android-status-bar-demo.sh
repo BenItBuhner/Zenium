@@ -66,9 +66,12 @@ adb shell dumpsys webviewupdate | grep -E "Current WebView package" | tee -a "$o
 test_apk=$(find android/app/build/outputs/apk/androidTest/debug -name '*.apk' -print -quit)
 echo "driver: $test_apk"
 
-# Install `apk`, run the driver with `assert` while recording into `take`'s directory.
+# Install `apk`, run the driver with `assert` and its relaunch mode while recording into `take`'s
+# directory. The before take relaunches with the old host torn down under the new boot (`clear`,
+# the driver's header says why); the after take finishes the old activity first (`quiet`), so its
+# stills carry the page.
 run_take() {
-  local take=$1 apk=$2 assert=$3
+  local take=$1 apk=$2 assert=$3 relaunch=$4
   local dir="$out/$take" video="android-status-bar-$take.mp4"
   mkdir -p "$dir"
   echo "==== take $take: $apk (assert=$assert)"
@@ -85,7 +88,7 @@ run_take() {
 
   adb shell run-as "$app_id" rm -rf "files/$demo_dir" || true
 
-  adb shell am instrument -w -e class app.zen.chromium.StatusBarDemo -e assert "$assert" "$runner" > "$dir/instrument.txt" 2>&1 &
+  adb shell am instrument -w -e class app.zen.chromium.StatusBarDemo -e assert "$assert" -e relaunch "$relaunch" "$runner" > "$dir/instrument.txt" 2>&1 &
   local driver_pid=$!
 
   local ready=0
@@ -153,14 +156,14 @@ if [ -n "${BEFORE_APK_DIR:-}" ]; then
     exit 1
   fi
   echo "before: $before_apk"
-  run_take before "$before_apk" false || echo "the before take reported failures (expected where the bug reproduces)"
+  run_take before "$before_apk" false clear || echo "the before take reported failures (expected where the bug reproduces)"
   adb shell am force-stop "$app_id" || true
   sleep 2
 fi
 
 apk=$(find android/app/build/outputs/apk/debug -name '*.apk' -print -quit)
 echo "app: $apk"
-run_take after "$apk" "${STATUS_BAR_ASSERT:-false}" || status=$?
+run_take after "$apk" "${STATUS_BAR_ASSERT:-false}" quiet || status=$?
 
 kill "$monitor_pid" 2> /dev/null || true
 grep -q '^OK (' "$out/after/instrument.txt"
