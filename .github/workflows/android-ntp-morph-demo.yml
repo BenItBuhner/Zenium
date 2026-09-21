@@ -18,11 +18,14 @@ name: Android new tab page morph demo
 #             rising and on the scrim to dismiss it, a second tap on the double mid-flight
 #             (nothing), the predictive back gesture committing mid-flight, a tap on the double on
 #             its way back, the gesture on the landed omnibox pulled / cancelled / committed, the
-#             gfxinfo frame cost of a round trip, and the overflow question (eight tiles, the system
-#             font size at 1.3, landscape); then FakeboxMorphReducedDemo.
+#             morph's frame cost for the perf program's table (the opening and the closing spring
+#             at each dock, unsampled, through DemoHarness.measureFrames with the chrome WebView's
+#             trace: ntp-morph-open-<edge> / ntp-morph-close-<edge>), and the overflow question
+#             (eight tiles, the system font size at 1.3, landscape); then FakeboxMorphReducedDemo.
 #  - private: the private page turned to landscape, where the explainer makes the page overflow
 #             past the travel – a steady finger scrolling the field to the pill's slot and back at
-#             both docks, a tap on the docked pill, a tap part way through the scrub – on an AOSP
+#             both docks, a tap on the docked pill, a tap part way through the scrub, the scrub's
+#             frame cost at each dock (ntp-scrub-<edge>, the same finger traced) – on an AOSP
 #             image with the Chromium snapshot SystemWebView.apk swapped in (private tabs need
 #             MULTI_PROFILE, which the API 34 image's WebView 113 lacks; the private demo's recipe,
 #             swiftshader_indirect included: the snapshot WebView under swangle draws one chrome
@@ -31,7 +34,10 @@ name: Android new tab page morph demo
 # Dispatch-only, like the other demos: about half an hour, and it says nothing about a change
 # being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
 # this file picks the drivers and the engines. One more boot per act when the emulator itself went
-# away under the driver, never when the driver failed.
+# away under the driver, never when the driver failed. The measured scenes' frame statistics
+# (frames.jsonl under each driver's directory) are rendered into the job summary by the shared
+# workflow and kept as its jank-report artifact; the gate is the shared default, soft (reported,
+# never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
 on:
   workflow_dispatch:
 

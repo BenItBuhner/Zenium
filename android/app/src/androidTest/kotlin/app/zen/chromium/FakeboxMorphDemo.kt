@@ -9,13 +9,16 @@ import org.junit.runner.RunWith
  * the field at rest at both docks and on the scrim to dismiss it, the keyboard rising under the
  * bottom dock, a second tap on the double mid-flight (nothing), the predictive back gesture
  * committing mid-flight, a tap on the double on its way back, the gesture on the landed
- * omnibox pulled / cancelled / committed, the `gfxinfo` frame cost of a round trip, and the
- * overflow question (eight tiles, the system font size at 1.3, landscape). Judged frame by frame;
- * see [FakeboxMorphDemoBase] for the scenes and the checks. `android-ntp-morph-demo.yml` runs it
- * first on the API 34 image's own WebView, as the other phone demos run.
+ * omnibox pulled / cancelled / committed, the morph's frame cost for the perf program's table
+ * (`ntp-morph-open-<edge>` / `ntp-morph-close-<edge>`, `DemoHarness.measureFrames` with the
+ * chrome WebView's trace, unsampled), and the overflow question (eight tiles, the system font
+ * size at 1.3, landscape). Judged frame by frame; see [FakeboxMorphDemoBase] for the scenes and
+ * the checks. `android-ntp-morph-demo.yml` runs it first on the API 34 image's own WebView, as
+ * the other phone demos run.
  *
  * Handshake under `files/ntp-morph-demo/`; stills `morph-*.png`, findings `morph-findings.txt`,
- * the sampler's rows `morph-frames-<scene>.txt`.
+ * the sampler's rows `morph-frames-<scene>.txt`, the frame statistics `frames.jsonl` / `frames.txt`
+ * and the traces `trace-<scene>.json.gz`.
  */
 @RunWith(AndroidJUnit4::class)
 class FakeboxMorphDemo : FakeboxMorphDemoBase(scrub = false, reduced = false, shotPrefix = "morph", handshakeDir = "ntp-morph-demo") {
@@ -48,9 +51,10 @@ class FakeboxMorphReducedDemo : FakeboxMorphDemoBase(scrub = false, reduced = tr
 /**
  * The scroll scrub on the private page turned to landscape (the explainer makes it overflow past
  * the travel, which the space page in portrait never does): a steady finger carries the field to
- * the pill's slot and back at both docks, a tap on the docked pill opens the bar plainly, and a
- * tap part way through the scrub morphs from the scrubbed pose and returns to it. Private tabs
- * need `WebViewFeature.MULTI_PROFILE`, so the
+ * the pill's slot and back at both docks, a tap on the docked pill opens the bar plainly, a
+ * tap part way through the scrub morphs from the scrubbed pose and returns to it, and the scrub's
+ * frame cost at each dock goes into the perf program's table (`ntp-scrub-<edge>`, the same finger
+ * unsampled and traced). Private tabs need `WebViewFeature.MULTI_PROFILE`, so the
  * workflow runs this driver on an AOSP image with the Chromium snapshot WebView swapped in (the
  * private demo's recipe).
  *

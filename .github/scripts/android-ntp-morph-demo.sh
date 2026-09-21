@@ -2,8 +2,10 @@
 # Runs on the workflow runner once the emulator has booted: the new tab page morph drivers
 # (FakeboxMorphDemoBase.kt), two on the one boot, each through android-gesture-demo.sh, so that one
 # job records the motion and its reduced-motion form on the same engine. Each driver's recording,
-# stills, findings and per-frame rows land under its own directory of the artifact; summary.txt at
-# the root says which passed, and the script fails when any did not.
+# stills, findings, per-frame rows and frame statistics (frames.jsonl / frames.txt and the traces
+# of the scenes it measured through DemoHarness.measureFrames; the shared workflow renders every
+# frames.jsonl under the artifact into the job summary) land under its own directory of the
+# artifact; summary.txt at the root says which passed, and the script fails when any did not.
 #
 #   MORPH_ACT   – which act this boot records:
 #                 `space`   FakeboxMorphDemo then FakeboxMorphReducedDemo (the space page in

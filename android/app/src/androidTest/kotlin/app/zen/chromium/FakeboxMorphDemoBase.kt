@@ -28,13 +28,16 @@ import kotlin.math.roundToInt
  *    the field at rest with the bar docked below – the field flies to the omnibox above the
  *    keyboard, whose rise moves the target under the segment – and its dismissal from open by a
  *    finger on the scrim; a second tap on the double mid-flight (nothing: the flight goes on to
- *    land); the same round trip unsampled for the `gfxinfo` frame cost; with the keyboard out of the way (the
+ *    land); with the keyboard out of the way (the
  *    IME disabled for the scene, since a back with it up goes to it), the predictive back gesture
  *    committing while the field is still flying (a dismissal mid-flight), a tap on the double on
  *    its way back (the closing turning round into an opening), and the gesture on the landed
  *    omnibox: pulled and held, let go at the edge (cancelled, the field springs back), pulled and
- *    committed (the field is already home: the bar closes at once); then the bar docked above,
- *    the tap and the dismissal again; last the coordinator's question – how often does the
+ *    committed (the field is already home: the bar closes at once), and the morph's frame cost
+ *    for the perf program's table – the opening and the closing spring measured unsampled by the
+ *    harness's one instrument ([morphCost]: `measureFrames` with the chrome WebView's trace); then
+ *    the bar docked above, the tap and the dismissal again and the cost again; last the
+ *    coordinator's question – how often does the
  *    scrub engage on the space page? – measured: the page's overflow in portrait with the most
  *    visited row full (eight tiles, the cap), again under the system font size at 1.3 (the
  *    chrome's text does not follow it today, so the answer is expected to be the same), and
@@ -47,7 +50,8 @@ import kotlin.math.roundToInt
  *    carried along the line to the pill's slot, rounding as it goes, and hands over over the last
  *    three tenths – a tap on the docked pill (the plain open: nothing left to morph), then the
  *    scroll back, and a tap on the field part way (from a scrubbed pose) with its dismissal back
- *    to that pose. It needs the Chromium snapshot WebView (private tabs
+ *    to that pose; and the scrub's frame cost at each dock ([scrubCost], the same finger
+ *    unsampled and traced). It needs the Chromium snapshot WebView (private tabs
  *    need `MULTI_PROFILE`, which the API 34 image's WebView 113 lacks), the private demo's recipe.
  *  - [FakeboxMorphReducedDemo] and [FakeboxMorphScrubReducedDemo] (`reduced = true`) run the
  *    tap and the dismissal (and, on the private page, from a scrubbed pose) in a FRESH process
@@ -198,31 +202,38 @@ abstract class FakeboxMorphDemoBase(
         finding("\nend: ${describeActive()}; ${failures.size} check(s) failed")
     }
 
-    /** The space page in portrait: both docks, the keyboard, the back gesture, the turn, the frame cost, the overflow question. */
+    /**
+     * The space page in portrait: both docks, the keyboard, the back gesture, the turn, the morph's
+     * frame cost (with the keyboard disabled, among the back gesture scenes), the overflow question.
+     */
     private fun morphScenes() {
         tapAndDismiss("bottom-rest", edge = "bottom", keyboard = true, dismiss = "scrim")
         retapMidFlight("bottom-retap")
-        frameCost("bottom-cost")
         disableIme()
         midFlightBack("bottom-midflight-back")
         turnRound("bottom-turn")
         pulled("bottom-pulled")
+        morphCost("bottom")
         enableIme()
         dock("top")
         tapAndDismiss("top-rest", edge = "top", keyboard = true, dismiss = "scrim")
-        frameCost("top-cost")
+        disableIme()
+        morphCost("top")
+        enableIme()
         dock("bottom")
         portraitOverflow()
         landscapeOverflow()
     }
 
-    /** The private page in landscape: the scrub at both docks, to the slot and back, and a tap part way. */
+    /** The private page in landscape: the scrub at both docks, to the slot and back, a tap part way, and the scrub's frame cost. */
     private fun scrubScenes() {
         scrubToDock("bottom-scrub", edge = "bottom")
         tapPartWay("bottom-partway", edge = "bottom")
+        scrubCost("bottom")
         dock("top")
         scrubToDock("top-scrub", edge = "top")
         tapPartWay("top-partway", edge = "top")
+        scrubCost("top")
         dock("bottom")
     }
 
@@ -349,29 +360,96 @@ abstract class FakeboxMorphDemoBase(
     }
 
     /**
-     * The frame cost of a round trip (the reviewer's criterion for the run): `gfxinfo` reset, a
-     * tap, the landing, the dismissal, the return, then the stats – with the sampler off, so the
-     * numbers are the morph's own. On the emulator's software GPU the numbers say what the chrome
-     * asked for per frame, not what a phone would take.
+     * The morph's frame cost, for the perf program's table (PERF-3): two `spring` scenes per dock
+     * through [measureFrames], the harness's one instrument – `ntp-morph-open-<edge>`, a real
+     * finger on the field at rest, the flight, the landing; `ntp-morph-close-<edge>`, a back from
+     * open, the flight home – each with the chrome WebView's trace around it. HWUI's frame times
+     * are the emulator's software GPU's and are reported, never judged (the harness floor); the
+     * trace's renderer main-thread columns are the ones that carry over to a phone – layouts and
+     * paints per frame, main-thread ms per frame, long tasks – and the double is laid out per frame
+     * by design (§11.8's exception): this is its measured price. The scenes run with the keyboard
+     * disabled, so the frames are the morph's and not the keyboard's inset animation's (the judged
+     * `-rest` scenes carry the keyboard), and unsampled: the sampler's reads per frame, or a poll of
+     * the machine, are renderer work the trace would count as the chrome's (the harness's rule:
+     * the finger and the wait alone inside the window; the bar-hide and sheet drivers wait a fixed
+     * time the same way). The window is [COST_WINDOW_MS] from the touch, sized from the emulator's
+     * flights in runs 1 and 2 (the opening 4.0 to 5.4 s after the tap on the API 34 image's WebView,
+     * the closing 3.6 s; the Chromium 156 WebView about half that), the tail of it idle: the per-frame
+     * columns dilute a little toward idle, never up. The machine is read after the window: the field
+     * must have landed inside it, or the record covers part of the motion and the check says so.
      */
-    private fun frameCost(scene: String) {
-        section("$scene: the frame cost of a tap and a dismissal (gfxinfo, unsampled)")
+    private fun morphCost(edge: String) {
+        val open = "ntp-morph-open-$edge"
+        val close = "ntp-morph-close-$edge"
+        section("$open, $close: the morph's frame cost for the perf table (measureFrames, unsampled, traced, the keyboard disabled)")
+        awaitShots()
         settleAtRest()
-        shell("dumpsys gfxinfo ${app.packageName} reset")
-        val started = SystemClock.uptimeMillis()
-        tapField()
-        awaitPhase("open", 8_000)
-        awaitIme(shown = true, timeoutMs = 4_000)
-        SystemClock.sleep(400)
-        closeUrlField()
-        awaitPhase("rest", 6_000)
-        val took = SystemClock.uptimeMillis() - started
-        SystemClock.sleep(300)
-        val stats = shell("dumpsys gfxinfo ${app.packageName}")
-        val summary = gfxSummary(stats)
-        finding("  round trip $took ms: $summary")
-        File(out, "$shotPrefix-gfxinfo-$scene.txt").writeText(stats)
+        val p = fieldPoint() ?: run {
+            finding("  no field to tap: the cost scenes skipped")
+            return
+        }
+        val opening = measureFrames(open, JankBudget.Kind.SPRING, trace = true) {
+            Finger().tap(p.x, p.y)
+            SystemClock.sleep(COST_WINDOW_MS)
+        }
+        var phase = phaseNow()
+        finding("  $open: ${costLines(opening)}")
+        check(open, "the field had landed when the ${COST_WINDOW_MS} ms window closed", phase.startsWith("open"), "phase $phase")
+        if (!awaitPhase("open", 6_000)) {
+            finding("  the field never landed: the closing not measured")
+            closeUrlField()
+            awaitPhase("rest", 6_000)
+            return
+        }
+        SystemClock.sleep(600)
+        val closing = measureFrames(close, JankBudget.Kind.SPRING, trace = true) {
+            back()
+            SystemClock.sleep(COST_WINDOW_MS)
+        }
+        phase = phaseNow()
+        finding("  $close: ${costLines(closing)}")
+        check(close, "the field was home when the ${COST_WINDOW_MS} ms window closed", phase.startsWith("rest"), "phase $phase")
+        if (!awaitPhase("rest", 6_000)) closeUrlField()
     }
+
+    /**
+     * The scrub's frame cost (`gesture`), the same instrument: the steady finger of [scrubToDock]
+     * carrying the field the whole travel to the pill's slot in one stroke, unsampled and traced –
+     * at a bottom dock the field is content riding one to one with the pill's words fading in, at
+     * a top dock the double laid out per frame along the line (§11.8), which is what the scene
+     * prices. The finger holds still before it lifts (no fling: the window ends with the finger's
+     * motion); the page goes back to the top by the store afterwards, no claim riding on it.
+     */
+    private fun scrubCost(edge: String) {
+        val scene = "ntp-scrub-$edge"
+        section("$scene: the scrub's frame cost for the perf table (measureFrames, unsampled, traced)")
+        awaitShots()
+        settleAtRest()
+        val g = geometry()
+        val overflow = readGeometry().optDouble("overflow")
+        if (overflow < g.travel + 8) {
+            finding("  the page overflows by ${"%.1f".format(overflow)} CSS px, short of the travel ${"%.1f".format(g.travel)}: not measured")
+            return
+        }
+        val x = width * 0.5f
+        val startY = touchable.exactCenterY() + touchable.height() * 0.2f
+        val total = (g.travel + 40f) * density
+        val measured = measureFrames(scene, JankBudget.Kind.GESTURE, trace = true) {
+            val f = Finger()
+            f.down(x, startY)
+            f.moveBy(0f, -total, 1_800)
+            f.hold(400)
+            f.up()
+        }
+        SystemClock.sleep(600)
+        val docked = snapshot()
+        finding("  scrolled to ${"%.1f".format(docked.optDouble("sc"))} CSS px, look '${docked.optString("lk")}'; $scene: ${costLines(measured)}")
+        check(scene, "the finger carried the field to the slot", docked.optString("lk") == "docked", "look '${docked.optString("lk")}' at ${"%.1f".format(docked.optDouble("sc"))} CSS px")
+        settleAtRest()
+    }
+
+    /** A measured scene's summary line and its trace line (the table's first two), for the findings. */
+    private fun costLines(scene: FrameStats.Scene): String = scene.table().lines().take(2).joinToString(" | ") { it.trim() }
 
     /**
      * The predictive back gesture committing while the field is still flying: a tap, and the
@@ -946,6 +1024,13 @@ abstract class FakeboxMorphDemoBase(
 
     /** A real finger on the middle of the page's field (its DOM box: the tree trails the page on the emulator). */
     private fun tapField(): PointF? {
+        val p = fieldPoint() ?: return null
+        Finger().tap(p.x, p.y)
+        return p
+    }
+
+    /** The middle of the field as it stands (the double's when a scrubbed double is drawn), in window px; null with no field. */
+    private fun fieldPoint(): PointF? {
         val s = snapshot()
         val target = s.optJSONObject("pf")?.takeIf { s.optString("lk") != "scrub" || s.optJSONObject("d") == null } ?: s.optJSONObject("d") ?: s.optJSONObject("pf") ?: run {
             Log.w(tag, "no field to tap")
@@ -953,7 +1038,6 @@ abstract class FakeboxMorphDemoBase(
         }
         val p = PointF(((target.getDouble("x") + target.getDouble("w") / 2) * density).toFloat(), ((target.getDouble("y") + target.getDouble("h") * 0.5) * density).toFloat())
         if (!touchable.contains(p.x.roundToInt(), p.y.roundToInt())) Log.w(tag, "the field's middle $p is outside the touchable window $touchable")
-        Finger().tap(p.x, p.y)
         return p
     }
 
@@ -1055,13 +1139,6 @@ abstract class FakeboxMorphDemoBase(
     private fun webViewVersion(): String =
         runCatching { app.packageManager.getPackageInfo(android.webkit.WebView.getCurrentWebViewPackage()!!.packageName, 0).versionName ?: "?" }.getOrDefault("?")
 
-    /** The lines of `dumpsys gfxinfo` that carry the frame cost: frames, janky share, percentiles. */
-    private fun gfxSummary(stats: String): String {
-        val wanted = listOf("Total frames rendered", "Janky frames", "50th percentile", "90th percentile", "95th percentile", "99th percentile", "Number Missed Vsync", "Number Slow UI thread", "Number Slow draw")
-        val lines = stats.lines().map { it.trim() }.filter { line -> wanted.any { line.startsWith(it) } }
-        return if (lines.isEmpty()) "no gfxinfo stats (${stats.length} chars)" else lines.joinToString("; ")
-    }
-
     // --- the core --------------------------------------------------------------------------------
 
     private fun describeActive(): String = activeCoreTab().let { "active ${it?.optString("id")} ${it?.optString("url")}, ${coreState().getJSONObject("tabs").length()} tabs" }
@@ -1104,6 +1181,13 @@ abstract class FakeboxMorphDemoBase(
         private const val RETAP_LEAD = 0.15f
         /** How far through the travel the page is scrolled for a tap part way. */
         private const val PART_WAY = 0.45f
+        /**
+         * The measured window of a cost scene ([morphCost]) from the touch: the flight and its
+         * landing with nothing read from the chrome meanwhile. The emulator's flights in runs 1
+         * and 2: the opening landed 4.0 to 5.4 s after the tap on the API 34 image's WebView and
+         * 2.0 to 2.8 s on the Chromium 156 one, the closing came home in 3.6 s and 2.2 s.
+         */
+        private const val COST_WINDOW_MS = 7_000L
         private val STAMP = Regex("\"\\{\\{now(?:-(\\d+)h)?\\}\\}\"")
 
         /**
