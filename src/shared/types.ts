@@ -35,6 +35,7 @@ import type {
   ReadAloudVoicesResult
 } from './readAloud'
 import type { PrintPreviewResult, PrintRunResult, PrintSessionInfo, PrintSettings } from './print'
+import type { TabAlert } from './captureState'
 import type { PdfViewerCommand, PdfViewerReport } from './pdfViewerProtocol'
 import type { ShareFileInfo } from './share'
 
@@ -372,6 +373,13 @@ export interface Tab {
   folderId: string | null
   loading: boolean
   /**
+   * The load is still waiting for the server's first response (tabs-41): true from the start of
+   * a load until its document commits, when the row's throbber turns from Chrome's muted
+   * "waiting" spin to the accent "loading" spin; false outside a load. A session's own (not
+   * persisted). Absent on records older than the field.
+   */
+  waiting?: boolean
+  /**
    * How far the current load has come, 0…1, for the progress bar. Hosts that measure it
    * (Android's `onProgressChanged`) report it as it grows; others only mark 0 at the start and
    * 1 at the end.
@@ -381,6 +389,13 @@ export interface Tab {
   canGoForward: boolean
   audible: boolean
   muted: boolean
+  /**
+   * The tab's alert indicator above audio (tabs-43, Chrome's priority): the page uses the camera
+   * or microphone (`recording`), shares a screen, window or tab (`capturing`), or plays
+   * picture-in-picture (`pip`). Folded from every frame's `capture-state` report; a session's
+   * own (not persisted, cleared on load). Absent on records older than the field.
+   */
+  alert?: TabAlert | null
   /** True when the tab has no live WebContents (Zen calls these "pending"/unloaded tabs). */
   discarded: boolean
   /**
@@ -1607,6 +1622,8 @@ export type ShortcutAction =
   | 'split.horizontal'
   | 'split.unsplit'
   | 'split.newEmpty'
+  | 'split.nextPane'
+  | 'split.prevPane'
   | 'tab.copyUrl'
   | 'tab.copyUrlMarkdown'
   | 'tab.togglePin'
@@ -1960,6 +1977,13 @@ export interface Settings {
   hideToolbarOnScroll: boolean
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
+  /**
+   * Split view drag and drop (split-12): a tab dragged to an edge of the page opens in a split
+   * view there – the four edge zones over the page. Off, the edges are plain page (the drag
+   * tears the tab off there, as it does past the zones); the panes of a split on screen stay
+   * targets. Absent in profiles from before it existed (read as true).
+   */
+  splitEdgeZones: boolean
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
@@ -1979,6 +2003,14 @@ export interface Settings {
    */
   searchEngines?: SearchEngine[]
   searchSuggestions: boolean
+  /**
+   * Suggestion privacy (omnibox-45, Chrome's "Autocomplete searches and URLs", Edge's per-source
+   * switches): rows from the browsing history (and the inline address completion), and rows
+   * from the bookmarks. Absent in profiles from before they existed (read as on). Private
+   * windows show neither whatever these say.
+   */
+  historySuggestions?: boolean
+  bookmarkSuggestions?: boolean
   /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
    * eliding them at rest. Absent in profiles from before it existed (read as false).
@@ -2985,8 +3017,17 @@ export interface Suggestion {
   inline?: boolean
   /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
   relevance?: number
-  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  /**
+   * The row can be removed by the user (Shift+Delete, the hover X; omnibox-22): a history row,
+   * a remembered search, an omnibox row its extension marked deletable
+   * (`omnibox.onDeleteSuggestion`). Bookmarks and open tabs are not, as in Chrome.
+   */
   deletable?: boolean
+  /**
+   * The section the row is listed under (zero-suggest's "Recent searches", omnibox-20): the
+   * popup draws a heading where a new group starts. Rows without one are in no section.
+   */
+  group?: string
 }
 
 export interface CommandDescriptor {
@@ -3409,6 +3450,11 @@ export interface Commands {
   'split.resize': { args: { groupId: string; sizes: number[] }; result: void }
   'split.newEmpty': { args: void; result: void }
   'split.addTab': { args: { groupId: string; tabId: string }; result: void }
+  /**
+   * "Choose a tab" in an empty pane (split-04): `tabId` takes the pane over from the blank tab
+   * `paneTabId` shown there, which closes. False when nothing changed.
+   */
+  'split.pickTab': { args: { paneTabId: string; tabId: string }; result: boolean }
 
   'glance.open': {
     args: { url: string; parentTabId: string; originX: number; originY: number }
@@ -3427,17 +3473,45 @@ export interface Commands {
     result: void
   }
 
-  'urlbar.suggest': { args: { query: string; tabId: string | null }; result: Suggestion[] }
+  'urlbar.suggest': {
+    args: {
+      query: string
+      tabId: string | null
+      /**
+       * The bar is in keyword or search mode for this engine (tab-to-search, Ctrl+K, the `?`
+       * prefix; omnibox-08, -26): `query` is what to search, never an address, and the rows are
+       * that engine's – no address, history, bookmark or tab rows.
+       */
+      engineId?: string
+    }
+    result: Suggestion[]
+  }
   'urlbar.submit': {
     args: {
       input: string
       newTab: boolean
       tabId: string | null
-      /** Alt+Enter in Firefox → open in new tab; Shift+Enter → new window (ignored). */
+      /** Alt+Shift+Enter, Ctrl+click, a middle click: a tab behind the current one. */
       background?: boolean
+      /** Shift+Enter, Ctrl+Shift+Enter, Shift+click: a new window of this window's kind. */
+      newWindow?: boolean
+      /**
+       * What the user typed before choosing this destination, for the shortcuts provider
+       * (omnibox-03): the next typing of it boosts the destination. Absent when nothing was
+       * typed (a zero-suggest pick) or the pick is not one to learn from.
+       */
+      learn?: {
+        typed: string
+        /** The row's title, shown on the boosted row; the query for a search. */
+        title: string
+        /** A search or an address; left to the core for the verbatim text. */
+        kind?: 'url' | 'search'
+      }
     }
     result: void
   }
+  /** The X on a remembered search (a shortcut row, omnibox-22): forget every shortcut to `url`. */
+  'urlbar.forgetShortcut': { args: { url: string }; result: void }
   'urlbar.runCommand': { args: { action: string }; result: void }
   /**
    * Chrome's URL-bar menu items: the clipboard's text goes where typed text would (a URL

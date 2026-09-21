@@ -84,6 +84,9 @@ export class ForwardingEvents implements TabViewEvents {
   onProgress(progress: number): void {
     this.target?.onProgress(progress)
   }
+  onStartNavigation(url: string, sameDocument: boolean): void {
+    this.target?.onStartNavigation?.(url, sameDocument)
+  }
   onNavigated(url: string, inPage: boolean): void {
     this.target?.onNavigated(url, inPage)
   }
@@ -106,8 +109,8 @@ export class ForwardingEvents implements TabViewEvents {
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void {
     this.target?.onUnsafeNavigation(url, hit)
   }
-  onCrashed(reason: CrashReason): void {
-    if (this.target) this.target.onCrashed(reason)
+  onCrashed(reason: CrashReason, exitCode?: number): void {
+    if (this.target) this.target.onCrashed(reason, exitCode)
     else if (reason !== 'clean-exit') this.gone()
   }
   onAudioStateChanged(audible: boolean): void {

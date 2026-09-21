@@ -1,4 +1,5 @@
 import type { Container, Space, Tab, UIState } from '@shared/types'
+import { isBlankTabUrl } from '@shared/url'
 
 export function activeSpace(state: UIState): Space {
   return state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
@@ -51,6 +52,18 @@ export function visibleTabIds(state: UIState): string[] {
     if (group) return group.tabIds
   }
   return [tab.id]
+}
+
+/**
+ * Whether `tabId` is an empty pane of the split on screen (split-04): a blank tab of the active
+ * tab's split. The chrome draws that pane itself – its field, its "Choose a tab" button and the
+ * URL bar floating in it – and places no view there (`useLayoutReporter`).
+ */
+export function isEmptySplitPane(state: UIState, tabId: string | null | undefined): boolean {
+  const tab = tabId ? state.tabs[tabId] : undefined
+  if (!tab?.splitGroupId || !isBlankTabUrl(tab.url)) return false
+  const group = state.splitGroups[tab.splitGroupId]
+  return Boolean(group && group.tabIds.length > 1 && activeTab(state)?.splitGroupId === group.id)
 }
 
 export function tabTitle(tab: Tab): string {
