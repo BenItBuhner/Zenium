@@ -317,10 +317,15 @@ function installHostGlobal(
   const parse = <T>(json: string | null | undefined): T =>
     (json === null || json === undefined || json === '' ? undefined : JSON.parse(json)) as T
   let queued: Array<(platform: AndroidPlatform) => void> | null = []
-  const withPlatform = (deliver: (platform: AndroidPlatform) => void): void => {
+  /** What waited, by name, for the boot log below (`hostEvent` and `viewEvent` name theirs). */
+  const queuedNames: string[] = []
+  const withPlatform = (deliver: (platform: AndroidPlatform) => void, name = ''): void => {
     const platform = platformRef.current
     if (platform && queued === null) deliver(platform)
-    else queued?.push(deliver)
+    else {
+      queued?.push(deliver)
+      if (name) queuedNames.push(name)
+    }
   }
   const host: HostGlobal = {
     resolve: (id, json) => bridge.resolve(id, json),
@@ -336,7 +341,7 @@ function installHostGlobal(
             tabId,
             (payload as ViewEventPayloads['navigated'] | undefined)?.inPage === true
           )
-      }),
+      }, `view.${name}`),
     hostEvent: (name, json) =>
       withPlatform((platform) => {
         // The host's own toasts go straight to the chrome's cards (the renderer is in reach here,
@@ -353,7 +358,7 @@ function installHostGlobal(
         // A configuration change: the host has re-zoomed the chrome's text already, and the
         // line boxes follow the factor it reports (`lib/textScale.ts`).
         if (name === 'environment') applyTextScale(payload as HostEventPayloads['environment'])
-      }),
+      }, name),
     onKey: (tabId, json) =>
       queued === null
         ? (platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false)
@@ -388,6 +393,13 @@ function installHostGlobal(
       const platform = platformRef.current
       const pending = queued ?? []
       queued = null
+      // On the record (logcat `ZenChrome`): what the host sent while the boot fetched its
+      // deferred documents. An `insets` here is the one the chrome used to lose – delivered
+      // before React had subscribed; the bus keeps it now (`InProcessEvents`).
+      if (pending.length > 0)
+        console.debug(
+          `[zen] boot: ${pending.length} host message(s) waited for the core: ${queuedNames.join(', ')}`
+        )
       if (platform) for (const deliver of pending) deliver(platform)
     }
   }
