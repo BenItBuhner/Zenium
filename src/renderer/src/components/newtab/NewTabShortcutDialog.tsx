@@ -135,7 +135,7 @@ export function NewTabShortcutDialog({
             <span
               id="zen-ntp-shortcut-error"
               role="alert"
-              className="flex items-center gap-2 text-[13px] leading-[20px] text-[var(--v2-danger)]"
+              className="flex items-center gap-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-danger)]"
             >
               <CircleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
               {shownError}
