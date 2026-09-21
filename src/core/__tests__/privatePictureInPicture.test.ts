@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { Browser } from '../browser'
-import type {
-  HostCapabilities,
-  Platform,
-  StoreIO,
-  TabView,
-  TabViewHost,
-  WindowHost
-} from '../platform'
-import { PRIVATE_CONTAINER_ID, type Tab } from '../../shared/types'
+import type { Platform, StoreIO, TabView, TabViewHost, WindowHost } from '../platform'
+import { PRIVATE_CONTAINER_ID, type HostCapabilities, type Tab } from '../../shared/types'
 
 /**
  * Picture-in-picture is withheld from private tabs, as Chrome withholds it from Incognito: a
