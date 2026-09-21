@@ -1356,7 +1356,7 @@ describe('the section model', () => {
       checked: true
     })
     expect(leak.description).toBe(
-      'After you sign in, Zenium checks the password against known breaches. The password itself never leaves this device.'
+      'Checks passwords you sign in with against known breaches. They never leave this device.'
     )
     if (leak.kind !== 'switch') throw new Error('not a switch')
     leak.onChange(false)
