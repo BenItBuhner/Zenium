@@ -1155,10 +1155,7 @@ describe('the v2 primitives (§9.34)', () => {
     // class of the surface's.
     const details = readFileSync(join(root, 'components/extensions/ExtensionDetails.tsx'), 'utf8')
     expect(details).toMatch(/className="zen-v2-link"/)
-    const login = readFileSync(
-      join(root, 'components/overlays/passwords/LoginDetail.tsx'),
-      'utf8'
-    )
+    const login = readFileSync(join(root, 'components/overlays/passwords/LoginDetail.tsx'), 'utf8')
     expect(login).toMatch(/className="zen-v2-link min-w-0 max-w-full"\n\s+data-touch=""/)
     expect(login).toMatch(/<ExternalLink \/>/)
   })
