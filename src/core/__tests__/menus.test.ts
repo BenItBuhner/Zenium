@@ -1299,6 +1299,27 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Save Video As…').enabled).toBe(false)
   })
 
+  it("withholds Picture-in-Picture from a private tab's video (Chrome withholds it from Incognito)", () => {
+    const h = pageHarness()
+    const priv = h.browser.tabs.createTab(
+      { url: PAGE_URL, active: true, containerId: PRIVATE_CONTAINER_ID },
+      h.win
+    )
+    h.browser.menus.showPageContextMenu(
+      priv.id,
+      pageParams({
+        mediaType: 'video',
+        srcURL: 'https://example.com/clip.mp4',
+        mediaFlags: VIDEO_FLAGS
+      }),
+      h.win
+    )
+    const labels = topLabels(h.shown())
+    expect(labels).toContain('Show Controls')
+    expect(labels).not.toContain('Picture-in-Picture')
+    expect(labels).not.toContain('Exit Picture-in-Picture')
+  })
+
   it('gives audio the same menu without Picture-in-Picture', () => {
     const menu = pageHarness().menu(
       pageParams({
@@ -1652,7 +1673,7 @@ describe('the selection toolbar', () => {
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
   })
 
-  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection', async () => {
+  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection reading on', async () => {
     expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
       []
     )
@@ -1675,7 +1696,7 @@ describe('the selection toolbar', () => {
     ).not.toContain('Listen')
     // The desktop's right-click menu on a selection carries it too (the reader UI PR's desktop
     // player), and without an engine it does not; its item reads on from the selection to the
-    // document's end (Edge's, the model's `selection-on`) where the phone's reads it alone.
+    // document's end (Edge's, the model's `selection-on`), as the phone's does.
     expect(pageHarness(DESKTOP).menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
       'Listen'
     )
@@ -1698,8 +1719,9 @@ describe('the selection toolbar', () => {
           call.includes('"then":"document"')
       )
     ).toBe(true)
-    // The touch starts the core's one session from the selection: the page script is asked for
-    // the selection's text (the model reads the selection alone, as Chrome does).
+    // The touch starts the core's one session from the selection and reads on: the page script
+    // is asked for the selection's text and then the document's after it (`then: 'document'`,
+    // EDGE-11's "read aloud from here"; Chrome would read the selection alone).
     h.viewCalls.length = 0
     expect(h.browser.menus.runSelectionAction(h.tabId, 'readAloud', 'quantum foam')).toBe(true)
     await settle()
@@ -1709,7 +1731,8 @@ describe('the selection toolbar', () => {
         (call) =>
           call.startsWith('postToPage(') &&
           call.includes('"action":"extract"') &&
-          call.includes('"from":"selection"')
+          call.includes('"from":"selection"') &&
+          call.includes('"then":"document"')
       )
     ).toBe(true)
   })

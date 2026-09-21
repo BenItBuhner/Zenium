@@ -369,6 +369,12 @@ describe('the media sheet', () => {
     expect(q('[data-testid="media-pip"]')).toBeNull()
   })
 
+  it("offers no picture-in-picture for a private tab's video (withheld, as Chrome does in Incognito)", async () => {
+    await open(state([track({ video: true, private: true, title: '', artist: '' })]))
+    expect(q('[data-testid="media-transport"]')).not.toBeNull()
+    expect(q('[data-testid="media-pip"]')).toBeNull()
+  })
+
   it('offers Switch to tab only while another tab is on screen, and switches', async () => {
     await open(state([track()]))
     expect(q('[data-testid="media-switch-tab"]')).toBeNull()

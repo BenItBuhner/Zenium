@@ -228,6 +228,13 @@ describe('MediaHubPopover', () => {
     expect(panel.contains(document.activeElement)).toBe(true)
   })
 
+  it("offers no picture-in-picture for a private tab's video (withheld, as Chrome does in Incognito)", async () => {
+    await open(
+      stateWith([track({ tabId: 't2', video: true, private: true, title: '', artist: '' })])
+    )
+    expect(hub()!.querySelector('[data-media-pip]')).toBeNull()
+  })
+
   it('offers no picture-in-picture where the host has none', async () => {
     await open(stateWith([track({ video: true })], false))
     expect(hub()!.querySelector('[data-media-pip]')).toBeNull()

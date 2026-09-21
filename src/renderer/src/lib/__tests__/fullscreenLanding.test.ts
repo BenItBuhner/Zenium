@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   beginLanding,
   hasLanded,
+  landingLost,
   landingReported,
   landingStore,
   markPlacementsSettled,
@@ -23,7 +24,7 @@ const inline = { x: 6, y: 48, width: 399, height: 756 }
 const drawn = { width: 399, height: 756 }
 
 function reset(): void {
-  landingStore.set({ settling: undefined, placed: new Map(), sized: new Map() })
+  landingStore.set({ settling: undefined, placed: new Map(), sized: new Map(), reports: 0 })
 }
 
 /** A frame clock in hand: `requestAnimationFrame` runs its callbacks on `tick()`. */
@@ -105,6 +106,40 @@ describe('the landing', () => {
     noteViewSized('t2', 2, 2)
     notePlacements([{ tabId: 't1', rect: inline }], false)
     expect([...landingStore.get().sized.keys()]).toEqual(['t1'])
+  })
+
+  it('is lost once a report since it began leaves the tab out – and not before', () => {
+    // The tab is gone at the exit (window.close() in fullscreen, a close from the host): the
+    // chrome's next placements name whoever has the screen, or nothing, and never the tab.
+    noteInsetsSettling(false)
+    notePlacements([{ tabId: 't1', rect: inline }], false)
+    const since = beginLanding('t1')
+    // Nothing reported since: the tab's absence is the landing's own emptiness, not a loss.
+    expect(landingLost(landingStore.get(), 't1', since)).toBe(false)
+    // The bars on their way, or not: a report without the tab is the loss either way.
+    notePlacements([{ tabId: 't2', rect: inline }], true)
+    expect(landingLost(landingStore.get(), 't1', since)).toBe(true)
+    expect(hasLanded(landingStore.get(), 't1')).toBe(false)
+    // A report that names the tab is not a loss: the landing is on its way as before.
+    const again = beginLanding('t1')
+    notePlacements([{ tabId: 't1', rect: inline }], true)
+    expect(landingLost(landingStore.get(), 't1', again)).toBe(false)
+    // An empty report counts: the last tab gone, the chrome asking for no view at all.
+    notePlacements([], true)
+    expect(landingLost(landingStore.get(), 't1', again)).toBe(true)
+  })
+
+  it('counts placement reports alone, not the host’s sizes or the bars settling', () => {
+    const frames = fakeFrames()
+    const since = beginLanding('t1')
+    noteViewSized('t1', drawn.width, drawn.height)
+    noteInsetsSettling(true)
+    noteInsetsSettling(false)
+    frames.tick()
+    frames.tick()
+    markPlacementsSettled()
+    expect(landingStore.get().reports).toBe(since)
+    expect(landingLost(landingStore.get(), 't1', since)).toBe(false)
   })
 })
 

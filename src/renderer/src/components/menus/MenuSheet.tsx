@@ -1,15 +1,14 @@
 import type { JSX } from 'react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info, Star } from 'lucide-react'
+import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info } from 'lucide-react'
 import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
-import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { ReloadStopGlyph } from '../phone/BarGlyphs'
+import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
@@ -187,11 +186,11 @@ function MenuBottomSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
  * fill; disabled at .4, §9.30) named by the item's label (§9.22), drawing the glyph the core
  * named. Picking it slides the sheet away and then runs the item, as a text row does.
  *
- * The star is the row's one stateful glyph: `checked` is the page's bookmark. A press on an
- * unfilled star fills it at once, on the fill's spring, as the sheet starts to leave – the core
- * saves the bookmark once the sheet is gone (`pickMenuItem` runs the item then), so the fill
- * would otherwise land on a sheet nobody can see. A filled star opens the bookmark's editor
- * (Chrome's flow) and stays filled.
+ * The star is the row's one stateful glyph (`StarGlyph`, shared with the bar's Bookmark):
+ * `checked` is the page's bookmark. A press on an unfilled star fills it at once, on the fill's
+ * spring, as the sheet starts to leave – the core saves the bookmark once the sheet is gone
+ * (`pickMenuItem` runs the item then), so the fill would otherwise land on a sheet nobody can
+ * see. A filled star opens the bookmark's editor (Chrome's flow) and stays filled.
  */
 function IconRowButton({
   item,
@@ -237,53 +236,6 @@ function MenuGlyphView({ glyph }: { glyph: Exclude<MenuGlyph, 'star'> }): JSX.El
     case 'stop':
       return <ReloadStopGlyph loading={glyph === 'stop'} />
   }
-}
-
-/**
- * `SPRING_SNAPPY` for the fill's 0…1 value. The shared spring's rest thresholds are in px and
- * px/s (`restDelta` .4, `restSpeed` 8), so on a unit value they would call the fill settled at
- * 60 percent and snap it to the end – a five-frame ramp and a cut, not a spring; a hundredth of
- * each lets the fill run to rest as a position does (22 frames at 60 Hz, .9 at 200 ms, at rest
- * by 370 ms, no frame stepping more than .13). `BarPreview`'s presence spring takes the same
- * numbers.
- */
-const SPRING_FILL: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpeed: 0.08 }
-
-/**
- * The star with its fill: the outline, and over it a filled star whose opacity and scale one
- * `SPRING_SNAPPY` spring (`SPRING_FILL`, its rest at the unit's scale) writes per frame (design
- * language v2 §11: transform and opacity only, one interruptible spring – a change of mind before
- * it lands retargets the same motion; reduced motion jumps to the end). It opens at rest where
- * the bookmark is, with no motion of its own.
- */
-function StarGlyph({ filled }: { filled: boolean }): JSX.Element {
-  const fill = useRef<HTMLSpanElement>(null)
-  const spring = useRef<SpringAnimation | null>(null)
-  useEffect(() => {
-    const el = fill.current
-    if (!el) return
-    const paint = (x: number): void => {
-      el.style.opacity = String(Math.max(0, Math.min(1, x)))
-      el.style.transform = `scale(${0.6 + 0.4 * x})`
-    }
-    const to = filled ? 1 : 0
-    if (!spring.current) {
-      spring.current = new SpringAnimation(SPRING_FILL, paint, paint)
-      paint(to)
-      spring.current.start(to, 0, to)
-    } else spring.current.retarget(to)
-  }, [filled])
-  useEffect(() => () => void spring.current?.stop(), [])
-  return (
-    <span className="zen-menu-star" aria-hidden>
-      <span>
-        <Star />
-      </span>
-      <span ref={fill} className="zen-menu-star-fill">
-        <Star fill="currentColor" />
-      </span>
-    </span>
-  )
 }
 
 /** Rows between separators form a group; the separators themselves are not drawn. */
