@@ -1,8 +1,9 @@
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
 import type { Rect, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
+import { stageStore } from '@renderer/lib/gestures/stage'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { activeTab } from '@renderer/lib/selectors'
 import { type UiState } from '@renderer/lib/ui'
@@ -13,6 +14,7 @@ import { MessageLayer } from '../messages/MessageLayer'
 import { ModStyles } from '../ModStyles'
 import { Onboarding } from '../overlays/Onboarding'
 import { PhoneStage } from '../phone/PhoneStage'
+import { SpacesDrawer } from '../phone/SpacesDrawer'
 import { useFullscreenReturn } from '../phone/useFullscreenReturn'
 import { Sidebar } from '../sidebar/Sidebar'
 import { TabDialogs } from '../TabDialogs'
@@ -27,7 +29,7 @@ import {
   tabletDrawerStore
 } from './tabletChrome'
 import { TabletToolbar } from './TabletToolbar'
-import { useSidebarSwipe } from './useSidebarSwipe'
+import { type SidebarSwipeHandlers, useSidebarSwipe } from './useSidebarSwipe'
 
 interface Props {
   state: UIState
@@ -152,9 +154,9 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         data-shell-chrome
         className={cn('relative flex min-h-0 flex-1', side === 'right' && 'flex-row-reverse')}
       >
-        <div className="zen-tablet-sidebar relative flex h-full shrink-0" {...swipe}>
+        <TabletSidebarColumn swipe={swipe}>
           <Sidebar state={state} isDark={isDark} compact={rail} navRow={false} />
-        </div>
+        </TabletSidebarColumn>
         <main
           className="relative flex min-w-0 flex-1 flex-col"
           style={{
@@ -181,6 +183,9 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
         </main>
       </div>
       <PhoneStage state={state} edge="top" />
+      {/* The overview's Spaces button opens the phone's Spaces drawer over it (the sidebar, which
+          has the spaces, is under the overview by then). */}
+      {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
       {ui.urlbar.open && (
         <Urlbar
           key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
@@ -196,6 +201,39 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
       {ui.drag && <DragLayer state={state} drag={ui.drag} />}
       <ChromeDropLayer />
       {onboarding && <Onboarding state={state} />}
+    </div>
+  )
+}
+
+/**
+ * The docked sidebar's column. Under the tab overview it gives way: the overview draws over the
+ * whole window below the toolbar on the window's own texture, as the phone's does, so the
+ * column fades out with the overview's progress (the same curve the overview fades in on) and
+ * takes no taps while any of the overview is up. The subscription is this component's, so the
+ * shell above does not re-render per frame of the pull.
+ */
+function TabletSidebarColumn({
+  swipe,
+  children
+}: {
+  swipe: SidebarSwipeHandlers
+  children: ReactNode
+}): JSX.Element {
+  const p = stageStore.use((s) => s.overview.progress)
+  const up = stageStore.use((s) => s.overview.phase !== 'closed')
+  const shown = up ? 1 - Math.min(1, Math.max(0, p) * 1.6) : 1
+  return (
+    <div
+      className="zen-tablet-sidebar relative flex h-full shrink-0"
+      style={{
+        opacity: shown,
+        visibility: shown === 0 ? 'hidden' : undefined,
+        pointerEvents: up ? 'none' : undefined
+      }}
+      aria-hidden={up || undefined}
+      {...swipe}
+    >
+      {children}
     </div>
   )
 }

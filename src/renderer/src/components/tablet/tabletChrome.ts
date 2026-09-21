@@ -1,5 +1,6 @@
 import { run } from '@renderer/lib/api'
 import { pushBackSurface } from '@renderer/lib/back'
+import { stageStore } from '@renderer/lib/gestures/stage'
 import { SPRING_GENTLE, SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { createStore } from '@renderer/lib/store'
 import { holdFloatingChrome, uiStore } from '@renderer/lib/ui'
@@ -204,6 +205,15 @@ if (!flags.__zenTabletDrawerWired) {
   uiStore.subscribe(() => {
     const ui = uiStore.get()
     if ((ui.urlbar.open || ui.overlay !== 'none') && tabletDrawerStore.get().phase !== 'closed') {
+      dismissTabletDrawer()
+    }
+  })
+  // The tab overview pulled down from the toolbar takes the whole window below it (GN-27).
+  stageStore.subscribe(() => {
+    if (
+      stageStore.get().overview.phase !== 'closed' &&
+      tabletDrawerStore.get().phase !== 'closed'
+    ) {
       dismissTabletDrawer()
     }
   })

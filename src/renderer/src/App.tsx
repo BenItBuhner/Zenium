@@ -573,15 +573,17 @@ function useNewTabEvent(): void {
  * overview, a tab switch in flight – belongs to the touch layouts and lives in `stageStore`, not
  * in a shell: a tablet window narrowed into the phone chrome (or widened back) swaps its shell
  * with the overview still open, drawn by the next shell's stage at the next frame. Only the
- * desktop layout, which has no stage, takes it down. A drawer is one shell's: the phone's Spaces
- * drawer has no tablet counterpart (the tablet's sidebar shows the spaces) and the tablet's
- * sidebar drawer none on the phone, so each is dropped, without motion, by the layout that has
- * no place for it – else the stale one would be a back surface with nothing on screen.
+ * desktop layout, which has no stage, takes it down – with the Spaces drawer, which both touch
+ * shells mount over the overview. The tablet's sidebar drawer is the tablet shell's alone (the
+ * phone has no sidebar), so the phone and the desktop drop it, without motion – else the stale
+ * one would be a back surface with nothing on screen.
  */
 function useStageContinuity(formFactor: FormFactor): void {
   useEffect(() => {
-    if (formFactor === 'desktop') dismissStage()
-    if (formFactor !== 'phone') dismissSpacesDrawer()
+    if (formFactor === 'desktop') {
+      dismissStage()
+      dismissSpacesDrawer()
+    }
     if (formFactor !== 'tablet') dismissTabletDrawer()
   }, [formFactor])
 }
