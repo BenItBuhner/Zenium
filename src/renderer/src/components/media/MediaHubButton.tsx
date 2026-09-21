@@ -1,13 +1,44 @@
 import type { JSX } from 'react'
 import { SquarePlay } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { mediaHubEntries, mediaHubLabel, mediaHubUi, toggleMediaHub } from '@renderer/lib/mediaHub'
+import {
+  mediaHubEntries,
+  mediaHubLabel,
+  mediaHubUi,
+  mediaPlaying,
+  toggleMediaHub
+} from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
+import { APP_MENU_BUTTON } from '@renderer/lib/shortcuts'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
 /** The button the hub's popover hangs from and returns the keyboard to (§9.22). */
 export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
+
+/**
+ * The control the hub's popover hangs from and gives the keyboard back to: its toolbar button
+ * while that is in the row, else the "⋯" menu button – the hub folds into the app menu's "Now
+ * Playing" row at the 240 sidebar (design language v2 §9.29), and the row's pick opens the hub
+ * from there. Looked up on each use: the row remounts its buttons with the tab and the width.
+ */
+export function mediaHubAnchor(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON) ??
+    document.querySelector<HTMLElement>(APP_MENU_BUTTON)
+  )
+}
+
+/**
+ * The accent dot that says something plays: on the hub's toolbar button, and – the same dot,
+ * the same token – on the "⋯" menu button while a session is live, Firefox's badge on its menu
+ * button (§9.29), since the menu's "Now Playing" row is where the hub goes when the button has
+ * folded. Decorative: the button it sits on names the state.
+ */
+export function MediaLiveDot({ state }: { state: UIState }): JSX.Element | null {
+  if (!mediaPlaying(state)) return null
+  return <span className="zen-mhub-dot" aria-hidden />
+}
 
 /**
  * Chrome's global media controls button (MW-16) in the toolbar row: there while any tab has
@@ -33,7 +64,7 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
       onClick={() => toggleMediaHub({ fromKeyboard: openedFromKeyboard() })}
     >
       <SquarePlay className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-      {entries.some((m) => m.playing) && <span className="zen-mhub-dot" aria-hidden />}
+      <MediaLiveDot state={state} />
     </button>
   )
 }

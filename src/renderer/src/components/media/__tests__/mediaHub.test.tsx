@@ -11,10 +11,10 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
-import { mediaHubUi } from '@renderer/lib/mediaHub'
+import { mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
-import { MediaHubButton } from '../MediaHubButton'
+import { MediaHubButton, MediaLiveDot } from '../MediaHubButton'
 import { MediaHubLayer } from '../MediaHubPopover'
 
 /*
@@ -383,5 +383,100 @@ describe('MediaHubPopover', () => {
     expect(mediaHubUi.get().open).toBe(false)
     expect(hub()).toBeNull()
     expect(q('[data-zen-media-hub-button]')).toBeNull()
+  })
+})
+
+/*
+ * The hub folded into the app menu (design language v2 §9.29): at the 240 sidebar the toolbar
+ * button gives way to a "Now Playing" row at the menu's top (the core's, `core/menus.ts`) and
+ * the "⋯" menu button carries the hub's accent dot while something plays. The row's pick opens
+ * this same popover from the "⋯" button, which then anchors it: placement, light dismiss and
+ * the keyboard's return.
+ */
+describe('the hub from the app menu (§9.29)', () => {
+  /** The "⋯" button in a 40 px bar across a 1024 window, in the bar's trailing half. */
+  function mountMenuButton(): HTMLButtonElement {
+    const bar = document.createElement('div')
+    bar.setAttribute('data-bar', '')
+    bar.getBoundingClientRect = () =>
+      ({ x: 0, y: 0, left: 0, top: 0, right: 1024, bottom: 40, width: 1024, height: 40 }) as DOMRect
+    const button = document.createElement('button')
+    button.setAttribute('data-zen-app-menu-button', '')
+    button.getBoundingClientRect = () =>
+      ({ x: 980, y: 6, left: 980, top: 6, right: 1008, bottom: 34, width: 28, height: 28 }) as DOMRect
+    bar.appendChild(button)
+    document.body.appendChild(bar)
+    return button
+  }
+
+  afterEach(() => {
+    document.querySelector('[data-bar]')?.remove()
+  })
+
+  it('draws the dot on the menu button while anything plays, the hub button’s dot and token, and not otherwise', () => {
+    render(<MediaLiveDot state={stateWith([])} />)
+    expect(q('.zen-mhub-dot')).toBeNull()
+    render(<MediaLiveDot state={stateWith([track({ playing: false })])} />)
+    expect(q('.zen-mhub-dot')).toBeNull()
+    render(<MediaLiveDot state={stateWith([track()])} />)
+    const dot = q('.zen-mhub-dot')!
+    expect(dot).not.toBeNull()
+    expect(dot.getAttribute('aria-hidden')).toBe('true')
+    // Media of a tab that is gone lights nothing.
+    render(<MediaLiveDot state={stateWith([track({ tabId: 'closed' })])} />)
+    expect(q('.zen-mhub-dot')).toBeNull()
+  })
+
+  it('opens from the row’s pick hanging from the "⋯" button when the toolbar button has folded, with every player', async () => {
+    const button = mountMenuButton()
+    const state = stateWith([track(), track({ tabId: 't2', title: 'A film', video: true, session: false })])
+    browserStore.set({ state })
+    // The folded row: no hub button in it, the layer alone.
+    render(<MediaHubLayer />)
+    expect(q('[data-zen-media-hub-button]')).toBeNull()
+    act(() => openMediaHub({ fromKeyboard: true }))
+    await settle()
+    const popover = hub()!
+    expect(popover).not.toBeNull()
+    // Flush under the bar's bottom edge, end-aligned with the button (its trailing half): the
+    // 400 popover's right edge on the button's.
+    expect(popover.style.top).toBe('40px')
+    expect(popover.style.left).toBe('608px')
+    expect(popover.style.width).toBe('400px')
+    // The whole hub, not one player: both cards and their transports.
+    expect(document.querySelectorAll('[data-media-player]').length).toBe(2)
+    expect(document.querySelectorAll('[data-media-transport]').length).toBe(2)
+    // Escape puts the keyboard on the button the hub hung from.
+    act(() => {
+      popover.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(mediaHubUi.get().open).toBe(false)
+    expect(hub()).toBeNull()
+    expect(document.activeElement).toBe(button)
+  })
+
+  it('still hangs from the toolbar button while that is in the row', async () => {
+    mountMenuButton()
+    const state = stateWith([track()])
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <MediaHubLayer />
+      </>
+    )
+    act(() => openMediaHub({ fromKeyboard: true }))
+    await settle()
+    expect(hub()).not.toBeNull()
+    // Not the "⋯" button's box: the toolbar button (unmeasured here) is the anchor.
+    expect(hub()!.style.top).not.toBe('40px')
+    act(() => {
+      hub()!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.activeElement).toBe(q('[data-zen-media-hub-button]'))
   })
 })

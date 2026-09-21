@@ -28,6 +28,13 @@ export function useChord(action: ShortcutAction): string | null {
 export const APP_MENU_EVENT = 'zen-app-menu'
 
 /**
+ * The sidebar's "⋯" menu button: what the media hub's popover hangs from, and returns the
+ * keyboard to, where the hub's toolbar button has folded into the menu's "Now Playing" row
+ * (design language v2 §9.29).
+ */
+export const APP_MENU_BUTTON = '[data-zen-app-menu-button]'
+
+/**
  * Open the application menu from its button – hanging off the button's bottom edge like
  * Chrome's and Firefox's do – or at the pointer when the button is not on screen. From the
  * keyboard the first item starts selected, so the arrow keys and Enter work at once.

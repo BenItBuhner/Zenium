@@ -15,6 +15,7 @@ import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
+import { openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   configureThumbnails,
@@ -174,6 +175,14 @@ export function useMainEvents(): void {
         // switcher's own search.
         if (isPhone()) return
         toggleTabSearch()
+      }),
+      onEvent('mediahub.open', () => {
+        // The app menu's "Now Playing" row (§9.29): the hub's popover from its toolbar button,
+        // or from the "⋯" button where the toolbar button has folded. A menu command, not a
+        // press on the surface: the core focused the chrome for it, so the page has no focus to
+        // get back and the popover takes the keyboard as it does when opened from the keyboard.
+        if (isPhone()) return
+        openMediaHub({ fromKeyboard: true })
       }),
       onEvent('menu.app', () => {
         // The menu button claims the request when it is on screen (it takes the focus and opens

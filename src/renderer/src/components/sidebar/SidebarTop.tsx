@@ -57,9 +57,9 @@ import { WindowControls } from '../WindowControls'
 import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
-import { MediaHubButton } from '../media/MediaHubButton'
+import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
-import { mediaHubVisible } from '@renderer/lib/mediaHub'
+import { mediaHubVisible, mediaPlaying } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -617,15 +617,24 @@ export function NavRow({
         }
         compact={compact}
       />
+      {/*
+        The "⋯" carries the media hub's accent dot while something plays (design language v2
+        §9.29: the hub folds into the menu's "Now Playing" row at the 240 sidebar, and the dot on
+        the menu button is Firefox's badge saying so); the name says it for the tree. The dot
+        shows with the toolbar button's own until the width tier folds that button.
+      */}
       <button
         ref={menuButton}
         type="button"
-        className="zen-toolbar-button"
+        data-zen-app-menu-button
+        className="zen-toolbar-button relative"
         title={hint('Menu', state, 'menu.app')}
+        aria-label={mediaPlaying(state) ? 'Menu, media playing' : undefined}
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
         <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
+        <MediaLiveDot state={state} />
       </button>
     </div>
   )
