@@ -1485,6 +1485,26 @@ describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: tabs.highlight', () => {
+  it('makes the tab at the first index active and answers the window, and names an index with no tab', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tabs.t2 = makeTab('t2', 'https://two.example/')
+    h.notifyState()
+    expect(h.active.id).toBe('t1')
+    const highlighted = await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: [1, 0] }])
+    expect(h.active.id).toBe('t2')
+    expect((highlighted.result as { tabs: unknown[] }).tabs).toHaveLength(2)
+    const single = await call(h, 'bg1', 'tabs', 'highlight', [{ windowId: 1, tabs: 0 }])
+    expect(single.ok).toBe(true)
+    expect(h.active.id).toBe('t1')
+    expect(String((await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: 7 }])).error)).toContain(
+      'No tab at index: 7.'
+    )
+  })
+})
+
 describe('AndroidExtensionRuntime: tabs.getCurrent', () => {
   it('answers the tab an extension page is open in, as it does a content script, and nothing for a popup or worker', async () => {
     const h = harness()

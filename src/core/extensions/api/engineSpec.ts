@@ -709,7 +709,6 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
  */
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
-  'tabs.highlight',
   'tabs.setZoomSettings',
   'fontSettings.setFont',
   'fontSettings.clearFont',

@@ -783,6 +783,21 @@ export class ExtensionApi {
         for (const id of list) tabs.closeTab(ids.tabFor(ext, id).id, true, win)
         return undefined
       }
+      case 'highlight': {
+        // Chrome selects the tabs at these indices and makes the first of them active; the phone
+        // has one selection, the active tab, so the first index names it (FireShot goes back to
+        // the captured tab this way; Chrome's index is the position among the window's tabs).
+        const info = asRecord(args[0])
+        const indices = (Array.isArray(info.tabs) ? info.tabs : [info.tabs])
+          .map((value) => asNumber(value))
+          .filter((value): value is number => value !== null && Number.isInteger(value))
+        if (indices.length === 0) throw new Error('No highlighted tab')
+        const visible = ids.visibleTabs(ext)
+        const first = visible[indices[0]]
+        if (!first) throw new Error(`No tab at index: ${indices[0]}.`)
+        tabs.activateTab(first.id, win)
+        return ids.chromeWindow(ext)
+      }
       case 'reload': {
         const target = targetOrActive(args[0])
         if (target) tabs.reload(target.id, Boolean(asRecord(args[1]).bypassCache))
