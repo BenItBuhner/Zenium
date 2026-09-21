@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
 import { bannerSlots, coverFor } from './stack'
@@ -34,6 +35,19 @@ export function MessageLayer(): JSX.Element | null {
   const travel = useCallback((progress: number): void => {
     stackRef.current?.style.setProperty('--zen-uncover', progress.toFixed(3))
   }, [])
+  // The bar that hides on scroll (lib/barHide.ts) writes its progress on both containers per
+  // frame; the stylesheet moves the one on the bar's edge with the bar (the toast under a bottom
+  // bar, the stack under a top one), by transform, so the cards ride the bar and nothing here is
+  // laid out per frame.
+  const bindStack = useBarHideBinding()
+  const bindToasts = useBarHideBinding()
+  const stackRefs = useCallback(
+    (el: HTMLDivElement | null): void => {
+      stackRef.current = el
+      bindStack(el)
+    },
+    [bindStack]
+  )
   useEffect(() => claimMessageCards(), [])
 
   const live = banners.filter((b) => !b.leaving)
@@ -53,7 +67,7 @@ export function MessageLayer(): JSX.Element | null {
   return (
     <div className="zen-message-layer" data-surface="page">
       {banners.length > 0 && (
-        <div ref={stackRef} className="zen-message-stack" style={{ height: stackHeight }}>
+        <div ref={stackRefs} className="zen-message-stack" style={{ height: stackHeight }}>
           {banners.map((b, i) => (
             <BannerCard
               key={b.id}
@@ -68,7 +82,7 @@ export function MessageLayer(): JSX.Element | null {
         </div>
       )}
       {toasts.length > 0 && (
-        <div className="zen-message-toasts">
+        <div ref={bindToasts} className="zen-message-toasts">
           {toasts.map((t) => (
             <ToastCard key={t.id} toast={t} onMeasure={measure} />
           ))}

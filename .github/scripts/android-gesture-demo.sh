@@ -40,6 +40,13 @@
 #   DEMO_HANDSHAKE_S – how long the driver's warm-up may take before the `record` handshake (300 s
 #                 by default; the profiling drivers run their measured scenes in the warm-up so
 #                 the recorder is not part of the measurement, and take longer)
+#   DEMO_RECORD – `0` runs the driver without screenrecord (the handshake is answered all the
+#                 same): a profiling driver measures frames, and the encoder would be a load of
+#                 its own on the emulator's cores; anything else records as before
+#   DEMO_PERFETTO_CONFIG – a Perfetto trace config (text proto) to push to the device as
+#                 /data/misc/perfetto-configs/zen-perfetto.pbtx before the driver, which starts a detached
+#                 session from it (PerfCapture.kt); the traces it leaves under
+#                 /data/misc/perfetto-traces/zen-*.pftrace are pulled into the artifact
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
@@ -217,6 +224,17 @@ for permission in ${DEMO_REVOKE:-}; do
   adb shell pm revoke "$app_id" "$permission"
 done
 
+# A profiling driver's system trace: the config goes into /data/misc/perfetto-configs, the one
+# directory shell writes that the perfetto domain may read (SELinux denies it /data/local/tmp:
+# the baseline run's `Could not open ... Permission denied`), the traced daemon is made sure of,
+# and a session an earlier driver on this boot left detached is stopped.
+if [ -n "${DEMO_PERFETTO_CONFIG:-}" ]; then
+  adb push "$DEMO_PERFETTO_CONFIG" /data/misc/perfetto-configs/zen-perfetto.pbtx
+  adb shell setprop persist.traced.enable 1 || true
+  adb shell perfetto --attach=zenperf --stop > /dev/null 2>&1 || true
+  adb shell rm -f "/data/misc/perfetto-traces/zen-*.pftrace" > /dev/null 2>&1 || true
+fi
+
 adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
@@ -249,8 +267,18 @@ fi
 
 # screenrecord stops itself after three minutes: record in parts of 170 s until the driver says
 # it is done (it stays alive a little longer so the app is still on screen) or dies, and join
-# the parts afterwards. A demo within one part gets its one file, as before.
+# the parts afterwards. A demo within one part gets its one file, as before. With DEMO_RECORD=0
+# nothing records: the handshake is answered and the driver waited for, no encoder runs.
 (
+  if [ "${DEMO_RECORD:-1}" = 0 ]; then
+    echo "not recording (DEMO_RECORD=0)"
+    adb shell run-as "$app_id" touch "files/$demo_dir/recording"
+    while kill -0 "$driver_pid" 2>/dev/null; do
+      if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null; then break; fi
+      sleep 1
+    done
+    exit 0
+  fi
   part=0
   while [ "$part" -lt 5 ]; do
     if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2>/dev/null; then break; fi
@@ -304,15 +332,23 @@ elif [ "${#parts[@]}" -gt 1 ]; then
 fi
 # Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump,
 # the frame statistics: frames.jsonl and frames.txt, the raw framestats-*.txt dumps, the scenes'
-# WebView traces trace-*.json.gz).
+# WebView traces trace-*.json.gz; a profiling driver's JSON and its WebView traces).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png | *.jpg | *.txt | *.jsonl | *.json.gz) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
+    *.png | *.jpg | *.txt | *.jsonl | *.json | *.json.gz | *.csv) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
 if [ -f "$out/frames.txt" ]; then
   echo "== frame statistics (frames.txt)"
   cat "$out/frames.txt"
+fi
+# The system trace a profiling driver left (a session it did not get to stop is stopped first).
+if [ -n "${DEMO_PERFETTO_CONFIG:-}" ]; then
+  adb shell perfetto --attach=zenperf --stop > /dev/null 2>&1 || true
+  sleep 2
+  for name in $(adb shell ls /data/misc/perfetto-traces/ 2>/dev/null | tr -d '\r' | grep '^zen-.*\.pftrace$'); do
+    adb pull "/data/misc/perfetto-traces/$name" "$out/$name" || echo "::warning::could not pull $name"
+  done
 fi
 
 cat "$out/instrument.txt"

@@ -109,10 +109,58 @@ function classTokens(node: ts.Node): string[] {
   return tokens
 }
 
-/** What a `ref` expression binds: the identifier itself, or the `x.current = el` targets of a callback. */
-function boundRefs(expr: ts.Expression): string[] {
-  if (ts.isIdentifier(expr)) return [expr.text]
+/**
+ * What a `ref` expression binds: the identifier itself, or the `x.current = el` targets of a
+ * callback – written inline, or declared in the component (`scope`) as `const setEl =
+ * useCallback((el) => { x.current = el; other(el) }, […])`, the stable shape of a callback ref
+ * (an inline one changes identity every render, and React unbinds and rebinds the element).
+ */
+function boundRefs(expr: ts.Expression, scope: ts.Node | null): string[] {
+  if (ts.isIdentifier(expr)) {
+    const declared = scope ? declaredCallback(scope, expr.text) : null
+    return declared ? assignedRefs(declared) : [expr.text]
+  }
   if (!ts.isArrowFunction(expr) && !ts.isFunctionExpression(expr)) return []
+  return assignedRefs(expr)
+}
+
+/**
+ * The function `name` is declared as under `scope`: `const name = (el) => …`, or
+ * `const name = useCallback((el) => …, deps)`; null when `name` is declared any other way
+ * (a `useRef`, a prop).
+ */
+function declaredCallback(
+  scope: ts.Node,
+  name: string
+): ts.ArrowFunction | ts.FunctionExpression | null {
+  let found: ts.ArrowFunction | ts.FunctionExpression | null = null
+  const visit = (n: ts.Node): void => {
+    if (found) return
+    if (
+      ts.isVariableDeclaration(n) &&
+      ts.isIdentifier(n.name) &&
+      n.name.text === name &&
+      n.initializer
+    ) {
+      let init: ts.Expression = n.initializer
+      if (
+        ts.isCallExpression(init) &&
+        ts.isIdentifier(init.expression) &&
+        init.expression.text === 'useCallback' &&
+        init.arguments[0]
+      )
+        init = init.arguments[0]
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) found = init
+      return
+    }
+    ts.forEachChild(n, visit)
+  }
+  visit(scope)
+  return found
+}
+
+/** The `x.current = el` targets in a callback ref's body, `el` its parameter. */
+function assignedRefs(expr: ts.ArrowFunction | ts.FunctionExpression): string[] {
   const param = expr.parameters[0]?.name
   if (!param || !ts.isIdentifier(param)) return []
   const out: string[] = []
@@ -149,8 +197,9 @@ interface Surface {
   tagged: boolean
   /**
    * The identifiers the element's `ref` binds: the identifier passed as `ref`, or those a
-   * callback ref assigns its element to (`ref={(el) => { barRef.current = el; other(el) }}`,
-   * the shape for two bindings on one element). Empty with no `ref`, or one of another shape.
+   * callback ref assigns its element to (`ref={(el) => { barRef.current = el; other(el) }}`
+   * inline, or that callback declared in the component with `useCallback`: the shape for two
+   * bindings on one element). Empty with no `ref`, or one of another shape.
    */
   refs: string[]
   refText: string | null
@@ -189,14 +238,15 @@ function inspect(source: ts.SourceFile, readerClasses: ReadonlySet<string>): Fin
           ref?.initializer && ts.isJsxExpression(ref.initializer)
             ? ref.initializer.expression
             : undefined
+        const scope = component(node)
         surfaces.push({
           line: line(node),
           tag: node.tagName.getText(source),
           classes,
           tagged: attribute(node, 'data-recede-surface') !== undefined,
-          refs: expr ? boundRefs(expr) : [],
+          refs: expr ? boundRefs(expr, scope) : [],
           refText: expr ? expr.getText(source) : null,
-          component: component(node)
+          component: scope
         })
       }
     } else if (
@@ -234,7 +284,7 @@ function faults(path: string, { surfaces, registrations }: Findings): string[] {
       out.push(
         s.refText === null
           ? `${path}:${s.line}: <${s.tag} ${classes}> is read \`--zen-recede\` on and carries no ref: pass one to useRecedeSurface(ref), or tag the element data-recede-surface`
-          : `${path}:${s.line}: <${s.tag} ${classes}> has ref={${s.refText}}: not an identifier the component passes to useRecedeSurface, nor a callback assigning its element to one (\`(el) => { ref.current = el; … }\`)`
+          : `${path}:${s.line}: <${s.tag} ${classes}> has ref={${s.refText}}: not an identifier the component passes to useRecedeSurface, nor a callback assigning its element to one (\`(el) => { ref.current = el; … }\`, inline or through useCallback)`
       )
       continue
     }
