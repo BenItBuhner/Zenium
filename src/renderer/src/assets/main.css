@@ -2235,6 +2235,17 @@
       rgb(var(--zen-fg-rgb) / 0.07) 100%
     );
   }
+  /*
+   * A locked private tab's picture (INC-05, `TabPreview` while `privateLockStore` holds the
+   * lock): blurred to colour wherever a card shows it – the overview's Private pane, the hero,
+   * the switch stage's track – scaled a little past its box so the blur's soft edge is clipped
+   * and not seen. The lock cover's own picture (`.zen-private-lock-picture`, below) drives the
+   * same blur from its lift progress.
+   */
+  .zen-tab-preview-masked {
+    filter: blur(12px);
+    transform: scale(1.1);
+  }
 
   /*
    * Tab overview cards: title row above the thumbnail. Every card has the same elevation – the
@@ -2595,6 +2606,57 @@
    */
   .zen-overview-pane {
     animation: zen-fade 120ms var(--zen-ease);
+  }
+
+  /*
+   * The lock cover of "Lock private tabs when you leave Zenium" (INC-05 / SET-17,
+   * `PrivateLockCover`; Chrome's locked Incognito view): over a locked private tab in the
+   * content frame, and over the overview's Private pane. An opaque cover in the panel tone
+   * (§9.19: "an opaque `--v2-panel` where there is no picture"; it never relies on blurring what
+   * lies under it – a `backdrop-filter` reads nothing through a composited layer such as the
+   * overview's `will-change`, and the pane's card titles read through a tint): over a private
+   * tab the tab's last picture (`.zen-private-lock-picture`, the masked `TabPreview`) lies on
+   * the base blurred to colour, and a veil in the window's solid tone over it; the Private
+   * pane, the private new tab page and a tab never pictured have the base alone under the
+   * veil. The blur is the chrome's, drawn over the tab's picture rather than the live view: the
+   * page view is hidden under the lock, so there is nothing live to blur and nothing to leak,
+   * and every API level gets the same cover. On it, §9.17's cover form of the page block – the
+   * 20 px mask, the title 17/600 on `--v2-line-heading`, one primary button 8 below, no
+   * description – with its middle at 45% of the height, in the window family
+   * (`data-surface="window"`), which the private theme paints as the tab in view is private
+   * (§9.19); the button keeps the primitive's `--v2-accent` mix, as the private new tab page's
+   * switch does. The lift after a pass runs on `--zen-lock-p` (1 → 0, `SPRING_LIFT`, §11.6): the
+   * veil and the block fade, the blur and the picture's overscale dissolve to the sharp
+   * picture, which is what the page comes back in place of; nothing on the cover slides.
+   */
+  .zen-private-lock {
+    --zen-lock-p: 1;
+    --zen-lock-blur: 18px;
+    z-index: 5;
+    overflow: hidden;
+    color: var(--zen-fg);
+    background: var(--v2-panel);
+    corner-shape: var(--zen-corner);
+  }
+  .zen-private-lock-picture {
+    filter: blur(calc(var(--zen-lock-blur) * var(--zen-lock-p)));
+    transform: scale(calc(1 + 0.08 * var(--zen-lock-p)));
+  }
+  .zen-private-lock-veil {
+    background: color-mix(in srgb, var(--zen-bg-solid) 62%, transparent);
+    opacity: var(--zen-lock-p);
+  }
+  .zen-private-lock-block {
+    opacity: var(--zen-lock-p);
+    transform: translateY(-50%);
+  }
+  .zen-private-lock-title {
+    font-size: var(--v2-font-heading);
+    line-height: var(--v2-line-heading);
+    font-weight: 600;
+  }
+  .zen-private-lock[data-leaving] {
+    pointer-events: none;
   }
 
   /*

@@ -11,6 +11,7 @@ import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useImportSources } from '@renderer/lib/importSources'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
@@ -85,6 +86,10 @@ export function DesktopSettings({
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
+  // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch: a
+  // phone in landscape draws that row through these panes (the phone host's word; a desktop
+  // host never shows the row).
+  const screenLock = privateLockStore.use((s) => s.screenLock)
   const ctx: SectionContext = {
     state,
     tab,
@@ -98,6 +103,7 @@ export function DesktopSettings({
       void openOverlay('boosts', tabId)
     },
     autofill,
+    screenLock,
     readAloudVoices,
     dictionary,
     importSources

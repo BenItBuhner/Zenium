@@ -850,6 +850,35 @@ describe('phone pill (PillContent)', () => {
       expect(slot.querySelector('svg.lucide-venetian-mask')).toBeNull()
       expect(slot.querySelector('img')).not.toBeNull()
     })
+
+    /*
+     * Under the lock (INC-05, §9.19): the pill reads the placeholder "Private tab" behind the one
+     * mask – the same glyph, still in the leading slot – and announces one thing, the unlock;
+     * there is no site-information control for a page nothing may be read of, no host, no lock
+     * and no other chip.
+     */
+    it('locked, it reads "Private tab" behind the one mask and announces the unlock alone – no site-information chip', async () => {
+      const { applyPrivateLock, resetPrivateLock } = await import('@renderer/lib/privateLock')
+      try {
+        act(() => applyPrivateLock({ locked: true, screenLock: true }))
+        const el = render(
+          <PillContent state={state(privatePage)} tab={privatePage} space={space} interactive />
+        )
+        expect(labels(focusable(el))).toEqual(['Private tab locked, unlock'])
+        expect(el.querySelector('[data-site-info]')).toBeNull()
+        expect(el.querySelector('[data-pill-chip]')).toBeNull()
+        expect(el.textContent).toBe('Private tab')
+        expect(el.textContent).not.toContain('example.com')
+        const masks = el.querySelectorAll('svg.lucide-venetian-mask')
+        expect(masks).toHaveLength(1)
+        const slot = masks[0].closest<HTMLElement>('.order-first')!
+        expect(slot.hasAttribute('data-private-mark')).toBe(true)
+        expect(slot.getAttribute('aria-hidden')).toBe('true')
+        expect(el.querySelector('[data-private-locked]')).not.toBeNull()
+      } finally {
+        act(() => resetPrivateLock())
+      }
+    })
   })
 
   it('draws the ghost pill with nothing focusable or announced', () => {

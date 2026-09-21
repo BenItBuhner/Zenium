@@ -1,9 +1,10 @@
 import type { CSSProperties, JSX } from 'react'
 import { useRef } from 'react'
-import { Moon, X } from 'lucide-react'
+import { Moon, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
+import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { tabTitle } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Favicon } from '../sidebar/Favicon'
@@ -66,6 +67,9 @@ export function OverviewCard({
   const departing = departStore.use((s) => s.hidden.has(tab.id))
   const cellRef = useRef<HTMLDivElement>(null)
   const visible = useOnScreen(cellRef, CARD_LOOKAHEAD)
+  // A locked private tab's card is named the placeholder, as its title row reads (§9.19).
+  const masked = useTabMasked(tab)
+  const name = masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)
   const style: CSSProperties = {}
   if (hidden || departing || held === 'dropping') style.opacity = 0
   else if (held !== 'idle') style.opacity = 0.35
@@ -86,8 +90,9 @@ export function OverviewCard({
         )}
         data-active={active}
         data-discarded={tab.discarded || undefined}
+        data-masked={masked || undefined}
         style={style}
-        aria-label={tabCardLabel(tabTitle(tab), position, count, active, tab.discarded === true)}
+        aria-label={tabCardLabel(name, position, count, active, tab.discarded === true)}
         onPointerDown={handlers.onPointerDown}
         onPointerMove={handlers.onPointerMove}
         onPointerUp={handlers.onPointerUp}
@@ -113,7 +118,7 @@ export function OverviewCard({
           type="button"
           className="zen-toolbar-button zen-overview-card-close absolute right-0 top-0 h-8 w-8 rounded-[10px]"
           style={style}
-          aria-label={closeTabLabel(tabTitle(tab))}
+          aria-label={closeTabLabel(name)}
           onClick={(e) => {
             e.stopPropagation()
             onClose(tab)
@@ -129,7 +134,9 @@ export function OverviewCard({
 /**
  * Title row and thumbnail – shared with the ghost of a card in the hand and a card on its way
  * out, which show the close button (so the card looks the same) without it doing anything.
- * `visible` is the grid's word on whether the card is on screen (a ghost always is).
+ * `visible` is the grid's word on whether the card is on screen (a ghost always is). A locked
+ * private tab's row reads "Private tab" behind the mask in place of its favicon and title
+ * (`useTabMasked`, §9.19), as the pill does; its picture is masked by `TabPreview`.
  */
 export function CardBody({
   tab,
@@ -145,6 +152,7 @@ export function CardBody({
   closable?: boolean | 'space'
   visible?: boolean
 }): JSX.Element {
+  const masked = useTabMasked(tab)
   return (
     <>
       {/*
@@ -155,10 +163,14 @@ export function CardBody({
       */}
       <header className="zen-overview-card-header flex shrink-0 items-center gap-2 pl-3 pr-0">
         <span className="zen-overview-card-favicon flex shrink-0">
-          <Favicon tab={tab} size={16} />
+          {masked ? (
+            <VenetianMask className="h-4 w-4 opacity-60" strokeWidth={1.75} aria-hidden />
+          ) : (
+            <Favicon tab={tab} size={16} />
+          )}
         </span>
         <span className="zen-overview-card-title min-w-0 flex-1 truncate text-[13px] font-medium">
-          {tabTitle(tab)}
+          {masked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(tab)}
         </span>
         {tab.discarded && (
           // A sleeping page (CT-22): the moon the sidebar's row shows, at the deemphasised

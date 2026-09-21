@@ -18,6 +18,7 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import { applyPrivateLock, setPrivateLockHost } from '@renderer/lib/privateLock'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
   dispatchBarNavigation,
@@ -138,6 +139,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
   syncPrivateSurface(bridge)
+  syncPrivateLock(bridge, boot, platform)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
@@ -242,6 +244,29 @@ function syncPrivateSurface(bridge: Bridge): void {
   send(privateSurfaceNow())
 }
 
+/**
+ * "Lock private tabs when you leave Zenium" (`lib/privateLock.ts`, `PrivateLock.kt`): the host
+ * holds the lock and shows the system's prompt; the chrome draws the cover. The Settings switch
+ * is mirrored to the host off the state, as pull-to-refresh is (the host arms the lock from it
+ * as the window leaves), whether a screen lock is set is read off the boot payload here, and the
+ * host's word on the lock arrives as `private.lock` (`installHostGlobal`). The lock is never on
+ * at boot: it lives in the host's memory, and a start is a fresh one.
+ */
+function syncPrivateLock(bridge: Bridge, boot: BootInfo, platform: AndroidPlatform): void {
+  setPrivateLockHost({
+    unlock: (reason) => bridge.call<{ locked: boolean }>('private.unlock', { reason }),
+    verify: (reason) => bridge.call<boolean>('reauth.verify', { reason })
+  })
+  applyPrivateLock({ locked: false, screenLock: boot.screenLock === true })
+  let last: boolean | null = null
+  platform.events.on('state', (state: UIState) => {
+    const enabled = state.privateLockOnLeave
+    if (enabled === last) return
+    last = enabled
+    bridge.send('private.setLockOnLeave', { enabled })
+  })
+}
+
 /** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
 function computedTokenColor(token: string): string | null {
   const probe = document.createElement('span')
@@ -342,7 +367,13 @@ function installHostGlobal(
             (payload as ViewEventPayloads['navigated'] | undefined)?.inPage === true
           )
       }, `view.${name}`),
-    hostEvent: (name, json) =>
+    hostEvent: (name, json) => {
+      // The private lock is the chrome's alone (`lib/privateLock.ts`): its store takes the
+      // host's word as it comes, the core having no part in it.
+      if (name === 'private.lock') {
+        applyPrivateLock(parse<HostEventPayloads['private.lock'] | undefined>(json) ?? {})
+        return
+      }
       withPlatform((platform) => {
         // The host's own toasts go straight to the chrome's cards (the renderer is in reach here,
         // not in the platform): the file chooser's camera refused, Open settings when for good.
@@ -358,7 +389,8 @@ function installHostGlobal(
         // A configuration change: the host has re-zoomed the chrome's text already, and the
         // line boxes follow the factor it reports (`lib/textScale.ts`).
         if (name === 'environment') applyTextScale(payload as HostEventPayloads['environment'])
-      }, name),
+      }, name)
+    },
     onKey: (tabId, json) =>
       queued === null
         ? (platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false)

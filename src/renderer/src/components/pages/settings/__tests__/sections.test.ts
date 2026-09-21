@@ -329,14 +329,16 @@ type DictionaryWords = Parameters<typeof buildSection>[1]['dictionary']
  * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
  * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the speech
  * engine's voices are still on their way (null) unless `readAloudVoices` brings the list; the
- * custom dictionary has no words unless `dictionary` brings some.
+ * custom dictionary has no words unless `dictionary` brings some; the device has a screen lock
+ * unless `screenLock` says not.
  */
 function context(
   s: UIState = state(),
   pointer = false,
   autofill: Partial<AutofillData> = {},
   readAloudVoices: VoicesData = null,
-  dictionary: Partial<DictionaryWords> = {}
+  dictionary: Partial<DictionaryWords> = {},
+  screenLock = true
 ): {
   ctx: Parameters<typeof buildSection>[1]
   patches: Partial<Settings>[]
@@ -358,7 +360,8 @@ function context(
     boost: (tabId) => boosted.push(tabId),
     autofill: { ...idleAutofillSettings(), ...autofill },
     readAloudVoices,
-    dictionary: { ...idleDictionaryWords(), ...dictionary }
+    dictionary: { ...idleDictionaryWords(), ...dictionary },
+    screenLock
   }
   return {
     ctx,
@@ -568,7 +571,8 @@ describe('the section model', () => {
       'https-only',
       'https-only-sites',
       'secure-dns',
-      'signals'
+      'signals',
+      'private-lock'
     ])
   })
 
@@ -595,6 +599,70 @@ describe('the section model', () => {
       context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
     )
     expect(findRow(desktop.groups, 'confirm-close-all')).toBeNull()
+  })
+
+  it('carries "Lock private tabs when you leave Zenium" in Privacy and Security, device-local and off by default, confirmed by the device before the core keeps it (INC-05, SET-17)', async () => {
+    const { privateLockStore, resetPrivateLock, setPrivateLockHost } =
+      await import('@renderer/lib/privateLock')
+    resetPrivateLock()
+    const verify = vi.fn(async () => true)
+    setPrivateLockHost({ verify, unlock: async () => ({ locked: false }) })
+    privateLockStore.set({ screenLock: true })
+    try {
+      const privacy = section('privacy', state({ privateLockOnLeave: false }))
+      // The last group of the category, Chrome's position (after Do Not Track), its own heading.
+      const group = privacy.groups.at(-1)!
+      expect(group).toMatchObject({ id: 'private-lock', heading: 'Private tabs' })
+      const lock = row(privacy, 'private-lock-on-leave')
+      if (lock.kind !== 'switch') throw new Error('not a switch')
+      expect(lock.label).toBe('Lock private tabs when you leave Zenium')
+      expect(lock.description).toBe('Use your screen lock to see them again.')
+      expect(lock.checked).toBe(false)
+      expect(lock.disabled).toBe(false)
+      // The switch is `state.privateLockOnLeave` (BrowserState.privateDevice), not a setting: the
+      // change is the device's confirmation, then the core's device-local command – no
+      // `settings.update` patch.
+      lock.onChange(true)
+      await vi.waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith('private.setLockOnLeave', { enabled: true })
+      )
+      expect(verify).toHaveBeenCalledTimes(1)
+      expect(
+        section('privacy', state({ privateLockOnLeave: true })).groups.at(-1)!.rows[0]
+      ).toMatchObject({
+        checked: true
+      })
+      // The landing's search finds it by Chrome's name for it too.
+      expect(searchRows([privacy], 'incognito').map((r) => r.row.id)).toEqual([
+        'private-lock-on-leave'
+      ])
+
+      // No screen lock on the device: the row is disabled at .4 (§9.30), its description says why,
+      // and the change is not made.
+      const bare = buildSection(
+        PAGE.sections.find((x) => x.id === 'privacy')!,
+        context(state(), false, {}, null, {}, false).ctx
+      )
+      const disabled = row(bare, 'private-lock-on-leave')
+      if (disabled.kind !== 'switch') throw new Error('not a switch')
+      expect(disabled.disabled).toBe(true)
+      expect(disabled.description).toBe('Needs a screen lock on this device.')
+      privateLockStore.set({ screenLock: false })
+      invoke.mockClear()
+      disabled.onChange(true)
+      await Promise.resolve()
+      expect(invoke).not.toHaveBeenCalled()
+
+      // Phone-host-only, as `confirmCloseAll`: a windowed host's private window has no lock.
+      const desktop = buildSection(
+        PAGE.sections.find((x) => x.id === 'privacy')!,
+        context(state({ platform: 'linux', capabilities: { ...ANDROID, windows: true } })).ctx
+      )
+      expect(findRow(desktop.groups, 'private-lock-on-leave')).toBeNull()
+      expect(desktop.groups.some((g) => g.id === 'private-lock')).toBe(false)
+    } finally {
+      resetPrivateLock()
+    }
   })
 
   it('carries #129’s session rows where the desktop panel has them: Tabs, on a windowed host only', () => {
@@ -1444,7 +1512,8 @@ describe('the section model', () => {
       'https-only',
       'https-only-sites',
       'secure-dns',
-      'signals'
+      'signals',
+      'private-lock'
     ])
     expect(privacy.groups.every(groupShows)).toBe(true)
 
@@ -3334,7 +3403,10 @@ describe('searching the rows', () => {
     expect(at('cookies')).toBe(at('clear-data') + 1)
     expect(at('cookies-add-site')).toBe(at('sites-permissions') - 1)
     expect(at('https-only')).toBe(at('sites-own') + 1)
-    expect(at('signals')).toBe(ids.length - 1)
+    // The signals close the protection groups; after them only the private-tab lock (INC-05,
+    // Chrome's Incognito lock after Do Not Track).
+    expect(at('signals')).toBe(ids.length - 2)
+    expect(at('private-lock')).toBe(ids.length - 1)
     // The remembered per-site answers are the Security section's (#62), not a privacy group.
     expect(ids).not.toContain('permissions')
     expect(privacy.groups.every(groupShows)).toBe(true)

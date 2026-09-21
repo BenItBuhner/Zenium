@@ -16,8 +16,10 @@ import { READER_URL_PREFIX } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
-import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
+import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
+import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
+import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
 import { Download, Smartphone, Star } from 'lucide-react'
@@ -171,7 +173,11 @@ const QR_EVENT_MARGIN_MS = 250
  * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
  * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
  * last import that failed before any kind ran, for Settings › Import's Last import group; see
- * `seedImport`).
+ * `seedImport`). `lock=on` puts the private tabs' lock on once the state is up (the lock cover
+ * over a private tab in front or over the Private pane, INC-05: `private=page&lock=on`,
+ * `private=overview&lock=on`, `private=newtab&lock=on`), and `screenlock=off` says the device
+ * has no screen lock (Settings' "Lock private tabs when you leave Zenium" disabled with its
+ * description, SET-17).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -236,6 +242,18 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
+    // The private tabs' lock a previous spec put on comes off at once (no lift: the cover goes
+    // with the private tab, below), and the device's screen lock is as the spec says or as the
+    // stand-in host reported it at boot.
+    liftLanded()
+    hostScreenLock ??= privateLockStore.get().screenLock
+    privateLockStore.set({
+      locked: false,
+      lifting: false,
+      prompting: false,
+      confirming: false,
+      screenLock: seed.screenLock ?? hostScreenLock
+    })
     // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
     // or picker of the previous state is gone with them – and before the group goes, since
     // they hang from the tab that was active in it. A private tab a previous state opened goes
@@ -586,9 +604,14 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
   }
+  const lock = parsePreviewSeed(spec).lock
   const finish = (): void => {
     seed()
-    done(spec)
+    if (!lock) {
+      done(spec)
+      return
+    }
+    lockPrivateTabs(() => afterFrames(2, () => done(spec)))
   }
 
   if (target.kind === 'autofill') {
@@ -1894,6 +1917,52 @@ function whenState(test: (state: UIState) => boolean, fn: () => void): void {
 
 /** The page a private tab is put on when the state names none. */
 const PRIVATE_PAGE = 'https://example.com/'
+
+/** The device's screen lock as the stand-in host reported it at boot, put back after a `screenlock=` spec. */
+let hostScreenLock: boolean | null = null
+
+/** How long the stand-in host gets to picture the private page before the lock goes on without one. */
+const LOCK_PICTURE_TIMEOUT_MS = 2500
+
+/**
+ * `lock=on`: the private tabs' lock as the host puts it on when the app is left with the switch
+ * on and private tabs open (`PrivateLock.kt`). The device takes the pictures of the pages on
+ * screen as it leaves (`Host.onPause`, `TabWebView.captureThumbnail`, of a painted document), so
+ * a private tab in front has its last picture for the cover to blur: the stand-in host is asked
+ * for the same copy once the page has loaded and painted (`overlay.snapshot`, the cover's
+ * capture; a site's frame cannot be read and answers nothing, `PREVIEW_SAMPLE_ORIGIN`'s page
+ * can), then the lock comes on through the store as `private.lock` would set it. Under the
+ * overview no picture is asked for: the pane's cards lie under the veil themselves. `then` runs
+ * once the cover is asked for.
+ */
+function lockPrivateTabs(then: () => void): void {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  const lock = (): void => {
+    applyPrivateLock({ locked: true })
+    then()
+  }
+  if (!tab || !isPrivateTab(tab) || isEmptyTabUrl(tab.url) || overviewIsOpen()) {
+    lock()
+    return
+  }
+  const loaded = (s: UIState): boolean => {
+    const now = activeTab(s)
+    return now !== null && now.id === tab.id && !now.loading
+  }
+  untilState(loaded, () =>
+    afterFrames(2, () => {
+      const picture = cmd('overlay.snapshot', { tabId: tab.id }).catch(() => null)
+      const late = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), LOCK_PICTURE_TIMEOUT_MS)
+      )
+      void Promise.race([picture, late]).then((data) => {
+        if (typeof data === 'string' && data) rememberThumbnail(tab.id, data)
+        lock()
+      })
+    })
+  )
+}
 
 /**
  * A private tab and the overview's panes, the way the app reaches them: the tab through
