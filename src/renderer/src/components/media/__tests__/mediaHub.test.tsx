@@ -479,4 +479,30 @@ describe('the hub from the app menu (§9.29)', () => {
     })
     expect(document.activeElement).toBe(q('[data-zen-media-hub-button]'))
   })
+
+  it('hangs from the "⋯" button when the toolbar button is in the row but a stylesheet has folded it', async () => {
+    const button = mountMenuButton()
+    const state = stateWith([track()])
+    browserStore.set({ state })
+    render(
+      <>
+        <MediaHubButton state={state} />
+        <MediaHubLayer />
+      </>
+    )
+    // A width tier's fold from CSS rather than an unmount: the button is there without a box.
+    const hubButton = q<HTMLElement>('[data-zen-media-hub-button]')!
+    hubButton.style.display = 'none'
+    expect(hubButton.checkVisibility()).toBe(false)
+    act(() => openMediaHub({ fromKeyboard: true }))
+    await settle()
+    expect(hub()!.style.top).toBe('40px')
+    expect(hub()!.style.left).toBe('608px')
+    act(() => {
+      hub()!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+    expect(document.activeElement).toBe(button)
+  })
 })
