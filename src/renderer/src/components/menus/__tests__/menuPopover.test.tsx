@@ -180,7 +180,7 @@ describe('the popover menu', () => {
     expect(calls('menu.close')).toEqual([['menu.close', { menuId: 'menu_1' }]])
   })
 
-  it('Escape closes a menu the keyboard opened onto the control that opened it, the page not taking the keyboard; one the pointer opened hands the keyboard back to the page', () => {
+  it('Escape closes the menu onto the control that had the focus as it opened – from the keyboard or the pointer – the page not taking the keyboard; the page takes it back only when it had it (§9.22)', () => {
     const control = document.createElement('button')
     document.body.appendChild(control)
     try {
@@ -194,7 +194,20 @@ describe('the popover menu', () => {
       root = null
       expect(document.activeElement).toBe(control)
       expect(calls('focus.content')).toEqual([])
+      // By pointer from the same control (a press focuses the button): the panel has the
+      // focus, Escape hands it back to the control all the same.
       show(tabMenu({ id: 'menu_2' }))
+      expect(document.activeElement).toBe(menus()[0])
+      key('Escape')
+      expect(uiStore.get().menu).toBeNull()
+      act(() => root!.unmount())
+      root = null
+      expect(document.activeElement).toBe(control)
+      expect(calls('focus.content')).toEqual([])
+      // Nothing of the chrome's focused (the page had the keyboard): the page takes it back.
+      control.blur()
+      expect(document.activeElement).toBe(document.body)
+      show(tabMenu({ id: 'menu_3' }))
       expect(document.activeElement).toBe(menus()[0])
       key('Escape')
       expect(uiStore.get().menu).toBeNull()

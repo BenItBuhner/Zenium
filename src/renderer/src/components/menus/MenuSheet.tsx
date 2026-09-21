@@ -369,12 +369,12 @@ function menuRows(panel: HTMLElement | null | undefined): HTMLElement[] {
  * the arrows, Home and End move within the level, Right opens a submenu row's panel on its first
  * row, Left and Backspace close the deepest level onto the row that opened it (at the root, the
  * menu), a letter goes to or runs the row it names (mnemonics, a11y-08), Enter and Space run the
- * row; Escape closes the deepest level, then the menu – a menu the keyboard opened closing onto
- * the control that opened it, which keeps the keyboard (the page does not take it back), as
- * `LocalMenu` does through `usePopover`; a menu the pointer opened hands it back to the page.
- * Light dismiss is the chrome layer's (§9.20 amended): a press outside the cascade, a scroll, a
- * resize or another popover closes it. The host is told of a pick (`pickMenuItem`) and of a
- * close (`closeMenu`).
+ * row; Escape closes the deepest level, then the menu – onto the control that opened it when a
+ * control of the chrome's had the focus as the menu came (the ··· the pointer pressed or the
+ * keyboard opened from), which keeps the keyboard, as `LocalMenu` does through `usePopover`;
+ * the page takes it back only when it had it (§9.22). Light dismiss is the chrome layer's
+ * (§9.20 amended): a press outside the cascade, a scroll, a resize or another popover closes
+ * it. The host is told of a pick (`pickMenuItem`) and of a close (`closeMenu`).
  */
 function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
@@ -392,13 +392,12 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const groupRef = useRef<HTMLDivElement>(null)
   const panelEls = useRef<(HTMLDivElement | null)[]>([])
 
-  // The control the keyboard opened the menu from – what had the focus as the menu mounted –
-  // for Escape's way back (§9.22). None when the pointer opened it or nothing of the chrome's
-  // had the focus (the page did): the page takes the keyboard back then, as after any overlay.
+  // The control the menu opened from – what had the focus as the menu mounted, the ··· the
+  // pointer pressed or the keyboard opened from – for Escape's way back (§9.22, as `usePopover`
+  // reads it). None when nothing of the chrome's had the focus (the page did, or a control the
+  // press did not focus): the page takes the keyboard back then, as after any overlay.
   const [opener] = useState<HTMLElement | null>(() =>
-    fromKeyboard &&
-    document.activeElement instanceof HTMLElement &&
-    document.activeElement !== document.body
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
       ? document.activeElement
       : null
   )
