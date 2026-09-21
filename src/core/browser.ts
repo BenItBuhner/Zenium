@@ -172,6 +172,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'overlay.open',
   'find.open',
   'zoom.open',
+  'mediahub.open',
   'siteInfo.open',
   'extensions.open',
   'reader.preferences',
@@ -2509,8 +2510,12 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
-      'app.menu': ({ anchor, keyboard }, win) =>
-        this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
+      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) =>
+        this.menus.showAppMenu(win, {
+          anchor,
+          keyboard: Boolean(keyboard),
+          mediaHubFolded: Boolean(mediaHubFolded)
+        }),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),

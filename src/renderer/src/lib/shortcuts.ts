@@ -1,6 +1,7 @@
 import type { ShortcutAction, UIState } from '@shared/types'
 import { shortcutHint, withShortcutHint } from '@shared/shortcuts'
 import { run } from './api'
+import { mediaHubFolded } from './mediaHub'
 import { browserStore } from './ui'
 
 /** `Label (Ctrl+R)` from the active key table: tooltips never quote a chord the user rebound. */
@@ -30,7 +31,9 @@ export const APP_MENU_EVENT = 'zen-app-menu'
 /**
  * Open the application menu from its button – hanging off the button's bottom edge like
  * Chrome's and Firefox's do – or at the pointer when the button is not on screen. From the
- * keyboard the first item starts selected, so the arrow keys and Enter work at once.
+ * keyboard the first item starts selected, so the arrow keys and Enter work at once. The request
+ * says whether the media hub's toolbar button has folded (design language v2 §9.29): the core
+ * builds the menu without the toolbar's width, and the "Now Playing…" row is the folded state's.
  */
 export function openAppMenu(button: HTMLElement | null, keyboard = false): void {
   const rect = button?.getBoundingClientRect()
@@ -38,5 +41,5 @@ export function openAppMenu(button: HTMLElement | null, keyboard = false): void 
     rect && rect.width > 0
       ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
       : undefined
-  run('app.menu', { anchor, keyboard })
+  run('app.menu', { anchor, keyboard, mediaHubFolded: mediaHubFolded() })
 }
