@@ -254,7 +254,8 @@ function desktopState(): UIState {
       lastError: null,
       syncing: false,
       devices: [{ id: 'other', name: 'Phone', lastSeen: NOW - 120_000 }],
-      pendingMerge: false
+      pendingMerge: false,
+      remoteTabsVersion: 0
     },
     agents: [],
     agentServer: {
