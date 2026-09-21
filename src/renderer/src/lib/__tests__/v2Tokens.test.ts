@@ -342,6 +342,18 @@ describe('design language v2 tokens', () => {
       ).not.toContain(name)
   })
 
+  // §9.29: the window's fills are Zen's `--zen-toolbar-element-bg` – 8% of the ink in light, 15%
+  // in dark – with the hover one step above each; a dark fill at .1 left a secondary button on a
+  // mid-tone band fifteen units from it (#281).
+  it("draws the window fills at Zen's alphas: 8 / 14 in light, 15 / 20 in dark", () => {
+    const lightBlock = block(':root', lightBlockStart)
+    const darkBlock = block(":root[data-theme='dark']", lightStart)
+    expect(lightBlock).toContain('--v2-window-fill: rgb(var(--zen-fg-rgb) / 0.08);')
+    expect(lightBlock).toContain('--v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.14);')
+    expect(darkBlock).toContain('--v2-window-fill: rgb(var(--zen-fg-rgb) / 0.15);')
+    expect(darkBlock).toContain('--v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.2);')
+  })
+
   it('scales hit targets on phones without touching the vocabulary', () => {
     for (const name of [
       '--v2-row',
