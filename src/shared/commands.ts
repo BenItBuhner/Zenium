@@ -1,11 +1,16 @@
 import type { CommandDescriptor, FormFactor, HostCapabilities } from './types'
 
 /**
- * The layouts with a sidebar and a window of their own: what Compact Mode, the sidebar toggles,
- * Split View and Fullscreen act on. The phone layout has none of these, so those commands would
- * do nothing there.
+ * The layouts with a sidebar and a window of their own: what the sidebar toggles, Split View and
+ * Fullscreen act on. The phone layout has none of these, so those commands would do nothing
+ * there.
  */
 const SIDEBAR_LAYOUTS: FormFactor[] = ['desktop', 'tablet']
+/**
+ * The desktop layout alone: Zen's compact mode hides the sidebar for a hover to reveal, which a
+ * finger cannot; the tablet collapses its sidebar to the icon rail from the toolbar instead.
+ */
+const DESKTOP_LAYOUT: FormFactor[] = ['desktop']
 
 /**
  * Zen's "Command Bar": actions that can be run by typing their name into the URL bar.
@@ -16,14 +21,14 @@ export const URLBAR_COMMANDS: CommandDescriptor[] = [
     label: 'Toggle Compact Mode',
     keywords: ['compact', 'mode', 'hide sidebar'],
     action: 'compact.toggle',
-    layouts: SIDEBAR_LAYOUTS
+    layouts: DESKTOP_LAYOUT
   },
   {
     id: 'compact-sidebar',
     label: 'Toggle Floating Sidebar',
     keywords: ['sidebar', 'floating'],
     action: 'compact.toggleSidebar',
-    layouts: SIDEBAR_LAYOUTS
+    layouts: DESKTOP_LAYOUT
   },
   {
     id: 'sidebar',

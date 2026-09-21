@@ -25,14 +25,32 @@ interface Props {
   /** Floating over the content (compact mode hover reveal). */
   floating?: boolean
   onPointerLeave?: () => void
+  /**
+   * Collapsed to the icon rail, or expanded: by default the `sidebarExpanded` setting. The
+   * tablet shell decides for itself (a narrow window keeps the rail docked and floats the
+   * expanded sidebar over the page).
+   */
+  compact?: boolean
+  /**
+   * Whether the navigation row (Back, Forward, Reload, the pill) is drawn at the top of the
+   * sidebar: by default the single-toolbar layout's. The tablet shell has a toolbar row of its
+   * own and passes false.
+   */
+  navRow?: boolean
 }
 
 export const COLLAPSED_WIDTH = 56
 
-export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX.Element {
+export function Sidebar({
+  state,
+  isDark,
+  floating,
+  onPointerLeave,
+  compact = !state.settings.sidebarExpanded,
+  navRow
+}: Props): JSX.Element {
   const space = activeSpace(state)
   const tab = activeTab(state)
-  const compact = !state.settings.sidebarExpanded
   const local = isLocalWindow(state)
   const width = compact ? COLLAPSED_WIDTH : 'var(--zen-sidebar-width)'
   const activeIndex = Math.max(
@@ -40,7 +58,7 @@ export function Sidebar({ state, isDark, floating, onPointerLeave }: Props): JSX
     state.spaces.findIndex((s) => s.id === state.activeSpaceId)
   )
   const essentials = local ? [] : essentialsFor(state, space)
-  const showToolbar = state.settings.toolbarLayout !== 'multiple'
+  const showToolbar = navRow ?? state.settings.toolbarLayout !== 'multiple'
   const side = state.settings.sidebarSide
   // Touch screens have no hover target for the resize handle; the width is a setting there.
   const { coarse } = useViewport()
