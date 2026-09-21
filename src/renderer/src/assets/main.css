@@ -6182,14 +6182,22 @@
 
 /*
  * The bar hides on scroll (lib/barHide.ts, Chrome / Edge parity; design language v2 draft
- * §11.5, chrome that hides on scroll): `--zen-bar-hide` on the root is 0 with the bar in place
- * and 1 with it off its edge, written per frame as the page scrolls and by the spring that
- * snaps it. The bar slides by the band the page gains (the whole bar
- * band – the row and, while the active tab is grouped, the tab-group strip (`--zen-phone-band`,
- * #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one to one with the page's
- * edge, and is clipped at the line where the system inset begins (the clip grows with the
- * travel, since it moves with the bar): the chrome is drawn edge to edge, so a bar that only slid
- * would stay in view under a status bar or a gesture bar. Slide and clip, no fade: the band's
+ * §11.5, chrome that hides on scroll): `--zen-bar-hide` is 0 with the bar in place and 1 with
+ * it off its edge, written per frame as the page scrolls and by the spring that snaps it – on
+ * the bar element itself (`bindBarHide`), where it is registered below as a property of that one
+ * element (`inherits: false`): a frame's write recalculates the bar's own style and nothing
+ * under or beside it. (Written on the root, as #200 had it, every frame recalculated the style
+ * of the whole chrome: the bar hide profile's H4, #270.) The bar slides by the band the page
+ * gains (the whole bar band – the row and, while the active tab is grouped, the tab-group strip
+ * (`--zen-phone-band`, #202) – minus the gutter the page keeps, `--zen-bar-hide-travel`), one
+ * to one with the page's edge, on a promoted layer (`will-change: transform`): the frame's
+ * change is the layer's transform alone, no paint. It is clipped at the line where the system
+ * inset begins by a box that does not move – the bar's parent (`zen-phone-bar-clip`, PhoneShell)
+ * stands from that line to the window's far edge and clips its overflow; the bar sits in it at
+ * its usual place, its inset padding hanging past the line – because the chrome is drawn edge to
+ * edge, so a bar that only slid would stay in view under a status bar or a gesture bar. (A
+ * `clip-path` growing with the travel on the bar itself, #200's clip, is a mask that Blink paints
+ * again at every frame it changes: the profile's H4 again.) Slide and clip, no fade: the band's
  * outer gutter is the bar's own padding (the row's, or the strip's when there is one: the tray
  * sits a gutter in from the band's edge), so at the full travel the near edge of the pill – or of
  * the tray – lands on the inset line and only transparent padding is left in frame; a fade would
@@ -6199,20 +6207,93 @@
  * touches (the page has its band) but stays in the accessibility tree, where focus brings it
  * back. Under reduced motion the finger still moves the bar one to one; only the snap jumps.
  */
+@property --zen-bar-hide {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
 :root {
   --zen-bar-hide-travel: calc(var(--zen-phone-band) - var(--zen-padding));
-  --zen-bar-hide-shift: calc(var(--zen-bar-hide, 0) * var(--zen-bar-hide-travel));
+}
+:root[data-form-factor='phone'] .zen-phone-bar-clip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  overflow: clip;
+  /* The clip box spans the window: touches go through it to what is under, the bar alone takes them. */
+  pointer-events: none;
+}
+:root[data-form-factor='phone'] .zen-phone-bar-clip[data-edge='bottom'] {
+  top: 0;
+  bottom: var(--zen-inset-bottom);
+}
+:root[data-form-factor='phone'] .zen-phone-bar-clip[data-edge='top'] {
+  top: var(--zen-inset-top);
+  bottom: 0;
+}
+:root[data-form-factor='phone'] .zen-phone-bar {
+  pointer-events: auto;
+  will-change: transform;
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
-  transform: translate3d(0, var(--zen-bar-hide-shift), 0);
-  clip-path: inset(0 0 calc(var(--zen-inset-bottom) + var(--zen-bar-hide-shift)) 0);
+  transform: translate3d(0, calc(var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
 }
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='top'] {
-  transform: translate3d(0, calc(-1 * var(--zen-bar-hide-shift)), 0);
-  clip-path: inset(calc(var(--zen-inset-top) + var(--zen-bar-hide-shift)) 0 0 0);
+  transform: translate3d(0, calc(-1 * var(--zen-bar-hide) * var(--zen-bar-hide-travel)), 0);
 }
-:root[data-bar-hidden] .zen-phone-bar {
+:root[data-bar-hidden] .zen-phone-bar,
+:root[data-form-factor='phone'] .zen-phone-bar[aria-hidden='true'] {
   pointer-events: none;
+}
+
+/*
+ * The message frame (PhoneShell: the content frame's box, where the cards sit) on the bar's
+ * edge. At the shown rest its edge is the page's, a band in from the inset; at the hidden rest a
+ * gutter in – the same two boxes the content column takes (`edgePadding`). Between, the frame
+ * takes the tall box for the whole gesture (`data-bar-away` on the root, set the frame the bar
+ * leaves its shown rest and cleared the frame it is back: one layout of the frame at each, as
+ * the page itself is laid out tall once per hide), and the cards on that edge – the toast under
+ * a bottom bar, the banner stack under a top one – ride the bar by transform on their promoted
+ * container, `--zen-bar-hide` written on the container itself: a toast showing mid-gesture moves
+ * with the bar instead of jumping the band at the rest, and nothing is laid out in the frame.
+ * (#200 moved the frame's edge itself with the bar, `calc(band − shift)` per frame: a layout
+ * of the frame and its cards every frame, the profile's H3.) The one thing the tall box changes
+ * mid-gesture: a card leaving by that edge while the bar is between its rests is clipped at the
+ * gutter line rather than at the page's edge of the moment – it slides over the bar's band
+ * on its way out. At either rest the clip is the page's edge, as before.
+ */
+:root[data-form-factor='phone'] .zen-message-frame {
+  left: var(--zen-padding);
+  right: var(--zen-padding);
+}
+:root[data-form-factor='phone'] .zen-message-frame[data-edge='bottom'] {
+  top: calc(var(--zen-inset-top) + var(--zen-padding));
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-phone-band));
+}
+:root[data-form-factor='phone'] .zen-message-frame[data-edge='top'] {
+  top: calc(var(--zen-inset-top) + var(--zen-phone-band));
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-padding));
+}
+:root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-edge='bottom'] {
+  bottom: calc(var(--zen-inset-bottom) + var(--zen-padding));
+}
+:root[data-form-factor='phone'][data-bar-away] .zen-message-frame[data-edge='top'] {
+  top: calc(var(--zen-inset-top) + var(--zen-padding));
+}
+:root[data-form-factor='phone'] .zen-message-toasts,
+:root[data-form-factor='phone'] .zen-message-stack {
+  will-change: transform;
+}
+:root[data-form-factor='phone'][data-bar-away]
+  .zen-message-frame[data-edge='bottom']
+  .zen-message-toasts {
+  transform: translate3d(0, calc((var(--zen-bar-hide) - 1) * var(--zen-bar-hide-travel)), 0);
+}
+:root[data-form-factor='phone'][data-bar-away]
+  .zen-message-frame[data-edge='top']
+  .zen-message-stack {
+  transform: translate3d(0, calc((1 - var(--zen-bar-hide)) * var(--zen-bar-hide-travel)), 0);
 }
 
 /* Mobile hosts: keep the chrome out of the status bar, cutouts, gesture bar and keyboard. */

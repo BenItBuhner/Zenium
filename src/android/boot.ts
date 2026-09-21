@@ -324,7 +324,8 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
  */
 function syncBarHide(bridge: Bridge, boot: BootInfo): void {
   setBarHideHost({
-    apply: (frame) => bridge.send('chrome.setBarHide', frame ?? { enabled: false }),
+    // One way: a frame per scrolled frame, and no answer to run on the chrome's thread for each.
+    apply: (frame) => bridge.post('chrome.setBarHide', frame ?? { enabled: false }),
     // The chrome's console reaches the logcat (`ZenChrome`): each phase, and every move of the
     // bar that was not the finger's, on the record next to the host's own (`BarHide`, `ZenHost`).
     note: (reason) => console.debug(`bar hide: ${reason}`)

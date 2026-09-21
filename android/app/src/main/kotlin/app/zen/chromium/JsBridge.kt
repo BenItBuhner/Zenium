@@ -8,8 +8,9 @@ import org.json.JSONObject
 
 /**
  * `window.__zenNative` inside the chrome WebView. `call` is asynchronous and answered through
- * `__zenHost.resolve/reject`; `callSync` blocks the JS thread and is reserved for boot data and
- * last-chance persistence. Both arrive on WebView's bridge thread and are handed to the main thread.
+ * `__zenHost.resolve/reject`; `post` is asynchronous and one way (no answer at all); `callSync`
+ * blocks the JS thread and is reserved for boot data and last-chance persistence. All arrive on
+ * WebView's bridge thread and are handed to the main thread.
  */
 class JsBridge(private val host: Host) {
     private val main = Handler(Looper.getMainLooper())
@@ -33,6 +34,34 @@ class JsBridge(private val host: Host) {
             } catch (e: Exception) {
                 Log.w(TAG, "native $method failed", e)
                 host.chrome.reject(id, e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    /**
+     * One way: dispatched like [call], but nothing goes back to the chrome. For the commands the
+     * chrome sends every frame and whose answer it never reads (`chrome.setBarHide`, the bar
+     * hide's frame): each `resolve` of a [call] is an `evaluateJavascript` on the chrome's main
+     * thread, a task per frame beside the frame's own work (the bar hide profile, #270). A
+     * rejection or a failure is logged here instead.
+     */
+    @JavascriptInterface
+    fun post(json: String) {
+        val call = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            Log.w(TAG, "bad post payload", e)
+            return
+        }
+        val method = call.str("method")
+        val args = call.obj("args")
+        main.post {
+            try {
+                host.dispatch(method, args) { result ->
+                    if (result is Host.Rejection) Log.w(TAG, "native $method rejected: ${result.message}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "native $method failed", e)
             }
         }
     }

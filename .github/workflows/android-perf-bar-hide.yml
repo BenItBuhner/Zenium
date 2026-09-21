@@ -1,0 +1,74 @@
+name: Android bar hide profile
+
+# Profiles the phone bar hiding on scroll on a hardware-accelerated Android emulator (the
+# performance program's PERF-1, measured, not guessed): BarHidePerfDemo drives real touches – a
+# slow drag that hides the bar, a fling with it hidden, the return drag, three seconds of
+# continuous scroll with it hidden, and a control with the hiding turned off – over the
+# github.com repository page and a long article, each as a loopback copy and once live, and
+# captures per scene `dumpsys gfxinfo` frame stats, one Perfetto trace of the device and the
+# WebViews' own Chromium trace. The analysis step reads them with trace_processor and writes
+# `perf-report.md` (frames, janky share, the 50 / 90 / 95 / 99th percentiles, the long stage, the
+# chrome main thread's slices) into the artifact and the job summary. The build, the emulator and
+# its caches live in android-emulator-demo.yml; the recipe is the bar hide demo's, so a before
+# and an after on this one workflow are comparable. Dispatch-only.
+#
+# The emulator caveat: the hosted runner has no GPU, so the emulator composites in software and
+# every GPU-side number is inflated; a before and an after on this one recipe are the evidence,
+# and the main-thread work (the chrome renderer's style, layout, paint and script; the app's
+# traversals) is representative of a device.
+on:
+  workflow_dispatch:
+    inputs:
+      record:
+        description: Record the screen too (the encoder is a load of its own on the emulator; off for the numbers)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-perf-bar-hide-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile:
+    name: Bar hide profile
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BarHidePerfDemo
+        DEMO_DIR=perf-bar-hide
+        DEMO_OUT=artifacts/android-perf-bar-hide
+        DEMO_VIDEO=perf-bar-hide.mp4
+        DEMO_RECORD=${{ inputs.record && '1' || '0' }}
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-perf-bar-hide.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        python3 .github/scripts/android-perf-analyze.py artifacts/android-perf-bar-hide --summary "$GITHUB_STEP_SUMMARY"
+      artifact-name: android-perf-bar-hide
+      artifact-path: artifacts/android-perf-bar-hide/
+      timeout-minutes: 60
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  profile-again:
+    name: Bar hide profile, second boot
+    needs: profile
+    if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.BarHidePerfDemo
+        DEMO_DIR=perf-bar-hide
+        DEMO_OUT=artifacts/android-perf-bar-hide
+        DEMO_VIDEO=perf-bar-hide.mp4
+        DEMO_RECORD=${{ inputs.record && '1' || '0' }}
+        DEMO_PERFETTO_CONFIG=.github/scripts/android-perf-bar-hide.pbtx
+      post-script: |
+        python3 -m pip install --quiet --disable-pip-version-check perfetto
+        python3 .github/scripts/android-perf-analyze.py artifacts/android-perf-bar-hide --summary "$GITHUB_STEP_SUMMARY"
+      artifact-name: android-perf-bar-hide-second-boot
+      artifact-path: artifacts/android-perf-bar-hide/
+      timeout-minutes: 60
