@@ -2,6 +2,7 @@ package app.zen.chromium
 
 import android.content.ContentValues
 import android.graphics.Rect
+import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -26,11 +27,13 @@ import java.io.File
  *     already holds one bookmark, so the import lands in a folder as Chrome's does) and the one
  *     repeated URL counted a duplicate. The "Last import" group shows the result; a finger on
  *     "Show imported bookmarks" must open the bookmarks overlay on that folder (a claim of the
- *     run: the row found through the tree or, while the tree still trails the picker's leave,
- *     through the chrome's DOM – [awaitRow], [touchRowExpecting]), and a finger on the overlay's
- *     Close must take it down (read off the chrome's `overlay` state: the Import page under it is
- *     a surface of its own and stays up – [closeOverlay]); a finger on "Dismiss" must clear the
- *     group (`UIState.import` null again).
+ *     run), and a finger on the overlay's Close must take it down (read off the chrome's
+ *     `overlay` state: the Import page under it is a surface of its own and stays up –
+ *     [closeOverlay]); a finger on "Dismiss" must clear the group (`UIState.import` null again).
+ *     Every Settings row of the flow is found through the tree or, while the tree trails the
+ *     chrome (after the page's push over the landing, after the picker's leave), through the
+ *     chrome's DOM by its `data-row` id – [awaitRow], [touchRowExpecting]; the finger is real
+ *     either way and its result is asserted.
  *  2. A finger on "Import passwords from a file", the CSV in the picker: four logins added into
  *     a vault the plain Keystore key creates on the way (no device credential on the emulator),
  *     the repeated row a duplicate, the row without a password invalid.
@@ -182,14 +185,23 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
                 return
             }
         }
-        step.put("rowShown", revealRow(BOOKMARKS_ROW) != null)
+        // The row, in the tree or – once the tree has had its [TREE_PATIENCE_MS] – in the chrome's
+        // DOM ([awaitRow]): the fifth recording's tree held no row of the pushed page for the
+        // 10 s a tree-only find allowed, while the page stood in its still, the same trailing
+        // the result rows meet after the picker.
+        val bookmarksRow = awaitRow(BOOKMARKS_ROW, BOOKMARKS_ROW_ID, ROW_WAIT_MS)
+        step.put("rowShown", bookmarksRow != null)
         SystemClock.sleep(800)
         snap("settings-import")
+        if (bookmarksRow == null) {
+            fail("no '$BOOKMARKS_ROW' row in Settings > Import (tree or DOM) within $ROW_WAIT_MS ms")
+            return
+        }
 
         // A finger on the row: the system's document picker must come to the front. The row's
         // press, its busy state and the app going behind the picker are one scene.
         val pickerUp = scene("import-bookmarks-row-tap") {
-            touchTapLabelExpecting(BOOKMARKS_ROW, "the document picker is in front", timeoutMs = 12_000, prefix = true) {
+            touchRowExpecting(BOOKMARKS_ROW, bookmarksRow, "the document picker is in front", timeoutMs = 12_000) {
                 documentPickerShowing()
             }
         }
@@ -329,15 +341,19 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
     private fun passwordsSection() {
         val step = JSONObject()
         results.put("passwords", step)
-        if (revealRow(PASSWORDS_ROW) == null && !(openSettings("Import") && revealRow(PASSWORDS_ROW) != null)) {
-            fail("no '$PASSWORDS_ROW' row in Settings > Import")
+        // The row as the bookmarks one: the tree, or the chrome's DOM once the tree has had its
+        // time ([awaitRow]); the page pushed again first when it is not on screen.
+        var passwordsRow = awaitRow(PASSWORDS_ROW, PASSWORDS_ROW_ID, ROW_WAIT_MS)
+        if (passwordsRow == null && openSettings("Import")) passwordsRow = awaitRow(PASSWORDS_ROW, PASSWORDS_ROW_ID, ROW_WAIT_MS)
+        if (passwordsRow == null) {
+            fail("no '$PASSWORDS_ROW' row in Settings > Import (tree or DOM) within $ROW_WAIT_MS ms")
             return
         }
         SystemClock.sleep(600)
         val vaultBefore = coreState().optJSONObject("passwords")
         step.put("vaultBefore", vaultBefore ?: JSONObject.NULL)
         val pickerUp = scene("import-passwords-row-tap") {
-            touchTapLabelExpecting(PASSWORDS_ROW, "the document picker is in front", timeoutMs = 12_000, prefix = true) {
+            touchRowExpecting(PASSWORDS_ROW, passwordsRow, "the document picker is in front", timeoutMs = 12_000) {
                 documentPickerShowing()
             }
         }
@@ -395,8 +411,17 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         awaitIme(shown = true, timeoutMs = 6_000)
         SystemClock.sleep(600)
         instrumentation.sendStringSync(QUERY)
-        val listed = awaitNode(8_000) { it.contains(QUERY_TITLE) && !it.startsWith(QUERY) } != null
-        step.put("suggestionListed", listed)
+        // The suggestion row in the tree, or in the field's list by the chrome's DOM
+        // ([suggestionListed]): the list re-renders as its requests answer and the tree trails
+        // it, as everywhere else on this emulator; which of the two read it is in the results.
+        var inTree = false
+        var inDom = false
+        val listed = awaitHeld(8_000) {
+            inTree = findNode { it.contains(QUERY_TITLE) && !it.startsWith(QUERY) } != null
+            inDom = suggestionListed(QUERY_TITLE)
+            inTree || inDom
+        }
+        step.put("suggestionListed", listed).put("suggestionInTree", inTree).put("suggestionInDom", inDom)
         SystemClock.sleep(1_200)
         snap("urlbar-imported-bookmark")
         claim(listed, "the URL field lists the imported bookmark '$QUERY_TITLE' for '$QUERY'")
@@ -494,26 +519,75 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
      * ([revealRow]); then, once [TREE_PATIENCE_MS] have passed with the tree holding no such
      * row, the row read off the chrome's DOM by its `data-row` id ([domRowRect]). Null when
      * neither has it within `timeoutMs`. One read is not a verdict here, and the tree alone is
-     * not either: after the system's document picker has gone, the accessibility service's
-     * active window trails the app – the first recording read the result's rows 30 ms after the
-     * picker and found nothing its still shows; the second polled the tree 13 s and found neither
-     * Show imported bookmarks nor Dismiss, both on screen in the still, and found Dismiss at once
-     * after the page was left and pushed again. The chrome's own DOM is what the user sees.
+     * not either: the tree trails the chrome on the emulator's software GPU. After the system's
+     * document picker has gone, the accessibility service's active window trails the app – the
+     * first recording read the result's rows 30 ms after the picker and found nothing its still
+     * shows; the second polled the tree 13 s and found neither Show imported bookmarks nor
+     * Dismiss, both on screen in the still, and found Dismiss at once after the page was left and
+     * pushed again. After the Import page's push over the landing (Settings a tab since #193, the
+     * page a drill-in pane), the fifth recording's tree held none of the page's rows for the 10 s
+     * a tree-only find allowed, the page standing in its still the while. The chrome's own DOM is
+     * what the user sees.
+     *
+     * When the DOM has the row and the tree does not, UiAutomation's node cache is dropped once
+     * ([dropTreeCache]) and the tree read again: a row that reaches the tree then names the cache,
+     * not the WebView, as what held the old tree – logged either way, with what the tree reads at
+     * that moment ([treeLabels]), so the recording says which it was.
      */
     private fun awaitRow(label: String, rowId: String, timeoutMs: Long): Rect? {
         val started = SystemClock.uptimeMillis()
         val deadline = started + timeoutMs
+        var cacheDropped = false
         while (true) {
             if (findRowNode(label) != null) revealRow(label)?.let { return it }
             if (SystemClock.uptimeMillis() - started >= TREE_PATIENCE_MS) {
                 domRowRect(rowId)?.let { rect ->
-                    Log.i(tag, "row '$label' read off the chrome's DOM at $rect (the tree holds no such row: the active window trails the app after the picker)")
+                    if (!cacheDropped) {
+                        cacheDropped = true
+                        if (dropTreeCache() && findRowNode(label) != null) {
+                            Log.i(tag, "row '$label' reached the tree once UiAutomation's node cache was dropped: the cache held the old tree, not the WebView")
+                            revealRow(label)?.let { return it }
+                        }
+                    }
+                    Log.i(tag, "row '$label' read off the chrome's DOM at $rect (the tree holds no such row: it trails the chrome); the tree reads: ${treeLabels().joinToString(" | ")}")
                     return rect
                 }
             }
             if (SystemClock.uptimeMillis() >= deadline) return null
             SystemClock.sleep(300)
         }
+    }
+
+    /**
+     * UiAutomation's accessibility node cache dropped (API 34's `clearCache`), so the next read
+     * of the tree goes to the app rather than to what the cache kept of it; false where the
+     * platform has no such call or the cache was not cleared.
+     */
+    private fun dropTreeCache(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ui.clearCache()
+
+    /**
+     * What the tree reads right now for the app's windows: the first `limit` labelled nodes
+     * (content description, else text) breadth first, each cut to 60 characters – the log's
+     * word on whether a tree without a row still holds the surface under it or nothing of the
+     * chrome at all.
+     */
+    private fun treeLabels(limit: Int = 40): List<String> {
+        val labels = ArrayList<String>()
+        for (window in ui.windows) {
+            val root = window.root ?: continue
+            if (root.packageName?.toString() != app.packageName) continue
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var visited = 0
+            while (queue.isNotEmpty() && visited < 2_000 && labels.size < limit) {
+                val node = queue.removeFirst()
+                visited++
+                val label = node.contentDescription?.toString()?.takeIf { it.isNotBlank() } ?: node.text?.toString()
+                if (!label.isNullOrBlank()) labels += label.replace('\n', ' ').take(60)
+                for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+            }
+        }
+        return labels
     }
 
     /** The Settings row starting with `label` in the active window, or in any window of the app's. */
@@ -595,6 +669,16 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         instrumentation.runOnMainSync { (activity as? MainActivity)?.host?.chrome?.getLocationOnScreen(origin) }
         return origin
     }
+
+    /**
+     * Whether the URL field's list (`role="listbox"`, its `role="option"` rows) holds a row whose
+     * text has `title`, by the chrome's DOM.
+     */
+    private fun suggestionListed(title: String): Boolean =
+        chromeJs(
+            "(function(){var q=${JSONObject.quote(title)};var rows=document.querySelectorAll('[role=\"listbox\"] [role=\"option\"]');" +
+                "for(var i=0;i<rows.length;i++){if((rows[i].textContent||'').indexOf(q)>=0)return true}return false})()"
+        ).trim() == "true"
 
     /** Whether the core's bookmark tree (`UIState.bookmarks`, every node) holds a bookmark titled `title`. */
     private fun bookmarkTitled(title: String): Boolean {
@@ -790,6 +874,7 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         const val BOOKMARKS_ROW = "Import bookmarks from a file"
         const val BOOKMARKS_ROW_ID = "import-bookmarks-file"
         const val PASSWORDS_ROW = "Import passwords from a file"
+        const val PASSWORDS_ROW_ID = "import-passwords-file"
         const val SHOW_ROW = "Show imported bookmarks"
         const val SHOW_ROW_ID = "import-last-show"
         const val DISMISS_ROW = "Dismiss"
