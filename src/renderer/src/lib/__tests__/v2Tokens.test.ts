@@ -57,12 +57,20 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // the weight tokens while the setting is on; unlayered, between the focus ring and the first
   // components layer, so it is cut out before the ring's span.
   ['/*\n * The bold-text setting (A11Y-05', '@layer components {'],
+  // The overlay scrollbar's thumb (§9.20): the base-layer floor under every scroller of a mouse's
+  // chrome, reading the control role's ink (§9.29) at rest and the deemphasised ink under the
+  // pointer; it ends where the focus ring's comment begins.
+  ["  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb {", "/*\n * The chrome's focus ring"],
   // The chrome's focus ring (§1, a11y-10): the base-layer floor under every control of the chrome
-  // document, reading the ring token; it ends where the first components layer begins.
+  // document, reading the ring token, and the one text-selection rule after it (§9.6, reading
+  // `--v2-selection`); it ends where the first components layer begins.
   [" * The chrome's focus ring (v2 §1, a11y-10)", '@layer components {'],
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
+  // hairline in the border token once the body scrolls under it.
+  ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],
   // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
   // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
   // comment that ends them, so it is taken out first.
@@ -83,20 +91,20 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
   // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
   // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
-  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * The frame\'s strips – "Make Zenium'],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
-  ['.zen-privacy {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-privacy {', '/*\n * The frame\'s strips – "Make Zenium'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
-  ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-find-bar {', '/*\n * The frame\'s strips – "Make Zenium'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
   // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
   // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
   ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {'],
-  // Settings → Default Browser and the default-browser strip (components/overlays/
-  // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
-  ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The frame's strips (content/DefaultBrowserBanner.tsx, content/CrashRestoreBanner.tsx): the
+  // window-family band, its hairline and text, and the default-browser prompt's icon.
+  ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/
@@ -169,6 +177,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
+  // The page dialogs' message (alert, confirm, prompt): 13 px on the small line (§4, §9.2).
+  'components/dialogs/PageDialog.tsx',
   // The extension details page's error line in the danger ink (#68).
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
@@ -981,6 +991,133 @@ describe('the v2 primitives (§9.34)', () => {
       // The leading slot is not toned through the row: a lead glyph is a list's structural
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
+    }
+  })
+})
+
+describe('text selection (§9.6)', () => {
+  const rendererRoot = fileURLToPath(new URL('../../', import.meta.url))
+  /** Every renderer source file that could carry a stylesheet rule, main.css first. */
+  const sources = readdirSync(rendererRoot, { recursive: true, encoding: 'utf8' })
+    .map((f) => f.split('\\').join('/'))
+    .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+
+  it('is one rule, once, on the chrome document’s root: no component sets ::selection of its own', () => {
+    // main.css states the rule exactly once, as one selector list naming the window root and
+    // the chrome layer the popovers portal into (lib/portals.tsx) – the same chrome document.
+    const rules = [...bare.matchAll(/[^\n]*::selection[^{]*\{/g)].map((m) => m[0].trim())
+    expect(rules).toEqual(['.zen-window ::selection,\n.zen-chrome-layer ::selection {'])
+    // Its two declarations: the selection token (the accent at 30 %) and the text's own ink.
+    const at = bare.indexOf('.zen-window ::selection,')
+    const body = bare.slice(bare.indexOf('{', at) + 1, bare.indexOf('}', at))
+    expect(body.match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  background: var(--v2-selection);',
+      '  color: inherit;'
+    ])
+    // Unlayered: a layered copy anywhere would lose to it, so none can be the selection colour.
+    expect(nesting(at)).toBe(0)
+    // And no other renderer stylesheet or component carries one – the omnibox field's went with
+    // this rule. (zen://newtab is its own document and cannot link main.css; shared/newTabPage.ts
+    // writes the same rule into it, outside this tree.)
+    for (const file of sources) {
+      if (file === 'assets/main.css') continue
+      expect(
+        readFileSync(join(rendererRoot, file), 'utf8'),
+        `${file} sets ::selection`
+      ).not.toMatch(/::selection/)
+    }
+  })
+})
+
+describe('the overlay scrollbar (§9.20)', () => {
+  const rendererRoot = fileURLToPath(new URL('../../', import.meta.url))
+  const sources = readdirSync(rendererRoot, { recursive: true, encoding: 'utf8' })
+    .map((f) => f.split('\\').join('/'))
+    .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+  const desktop = ":root[data-pointer='fine'] "
+  /** The chassis rule's declarations for one `::-webkit-scrollbar` part, in source order. */
+  const part = (name: string): string[] => {
+    const at = bare.indexOf(`${desktop}::-webkit-scrollbar${name} {`)
+    expect(at, `the chassis states ::-webkit-scrollbar${name}`).toBeGreaterThanOrEqual(0)
+    // In the base layer, the floor under every scroller of the chrome document.
+    expect(nesting(at), `::-webkit-scrollbar${name} sits in @layer base`).toBe(1)
+    const body = bare.slice(bare.indexOf('{', at) + 1, bare.indexOf('}', at))
+    return (body.match(/^ {4}[a-z-]+:[^;]+;/gm) ?? []).map((d) => d.trim())
+  }
+
+  it('is one chassis rule on every scroller of a mouse’s chrome: an 8 gutter, no buttons, no track, the thumb the family’s ink at 30 %', () => {
+    expect(part('')).toEqual(['width: 8px;', 'height: 8px;', 'background: transparent;'])
+    expect(part('-button')).toEqual(['display: none;'])
+    // The track and the corner are one rule; the corner's selector is read here through the track's.
+    expect(part("-track,\n  :root[data-pointer='fine'] ::-webkit-scrollbar-corner")).toEqual([
+      'background: transparent;'
+    ])
+    // The thumb: the control role's ink (the page ink on a page, the theme's on the window,
+    // §9.29; the page ink where no family is set) at the spec's 30 %, a pill 1 inside the gutter.
+    expect(part('-thumb')).toEqual([
+      'border: 1px solid transparent;',
+      'border-radius: 4px;',
+      'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);',
+      'background-clip: padding-box;'
+    ])
+    // §9.20 (lead's #281 verdict): the thumb answers the pointer at 50 %, no size change; nothing
+    // under `:active`.
+    expect(part('-thumb:hover')).toEqual([
+      'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 50%, transparent);',
+      'background-clip: padding-box;'
+    ])
+    expect(bare).not.toMatch(/::-webkit-scrollbar-thumb:active/)
+  })
+
+  it('leaves the standard properties to a finger’s chrome alone: Chromium paints the parts only where both are auto', () => {
+    // The one `thin` and the one `scrollbar-color` in the renderer are the coarse pointer's
+    // (Android's WebView, whose bar is its own overlay); on the desktop neither is stated, since
+    // Chromium 121+ ignores every `::-webkit-scrollbar` part where either is not `auto`.
+    const coarse = bare.indexOf(":root[data-pointer='coarse'] * {")
+    expect(coarse).toBeGreaterThanOrEqual(0)
+    expect(nesting(coarse)).toBe(1)
+    const body = bare.slice(bare.indexOf('{', coarse) + 1, bare.indexOf('}', coarse))
+    expect(body).toContain('scrollbar-width: thin;')
+    expect(body).toContain('scrollbar-color: rgb(var(--zen-fg-rgb) / 0.25) transparent;')
+    for (const file of sources) {
+      const text = readFileSync(join(rendererRoot, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      const widths = [...text.matchAll(/scrollbar-width\s*:\s*([a-z]+)/g)].map((m) => m[1])
+      const colors = text.match(/scrollbar-color\s*:/g) ?? []
+      if (file === 'assets/main.css') {
+        expect(widths.filter((w) => w !== 'none')).toEqual(['thin'])
+        expect(colors).toHaveLength(1)
+      } else {
+        // A component hides a bar by design (`none`) or says nothing; it never thins or colours one.
+        expect(
+          widths.filter((w) => w !== 'none'),
+          `${file} sets scrollbar-width`
+        ).toEqual([])
+        expect(colors, `${file} sets scrollbar-color`).toHaveLength(0)
+      }
+      // No `::-webkit-scrollbar` styling of a component's own: only the chassis draws a bar, and a
+      // hidden bar's `display: none` companion is the most a component states.
+      const webkit = [
+        ...text.matchAll(/([^\n{]*)::-webkit-scrollbar[a-z-]*(?::hover)?[^{]*\{([^}]*)\}/g)
+      ]
+      for (const m of webkit) {
+        if (m[1].includes(desktop.trim())) continue
+        expect(m[2].trim(), `${file}: ${m[0].trim().split('\n')[0]}`).toBe('display: none;')
+      }
+    }
+  })
+
+  it('reaches the Settings tab’s panes: their hide is the phone’s only', () => {
+    // The nav column and the scroll pane said `scrollbar-width: none` for every pointer; the
+    // desktop's panes now draw the chassis bar and only a finger's Settings hides its own.
+    const at = bare.indexOf(":root[data-pointer='coarse'] .zen-settings-scroll,")
+    expect(at).toBeGreaterThanOrEqual(0)
+    expect(bare.slice(at, bare.indexOf('}', at))).toMatch(
+      /^:root\[data-pointer='coarse'\] \.zen-settings-scroll,\n:root\[data-pointer='coarse'\] \.zen-settings-nav \{\n {2}scrollbar-width: none;\n$/
+    )
+    for (const cls of ['.zen-settings-scroll', '.zen-settings-nav']) {
+      const from = bare.search(new RegExp(`^\\${cls} \\{`, 'm'))
+      expect(from, `${cls}'s own rule`).toBeGreaterThanOrEqual(0)
+      expect(bare.slice(from, bare.indexOf('}', from))).not.toMatch(/scrollbar/)
     }
   })
 })

@@ -183,7 +183,6 @@
   gap: 8px;
   padding: 0 var(--v2-card-padding);
   overflow-y: auto;
-  scrollbar-width: thin;
 }
 /* The footer (§9.20 form i): the body's last element, 16, the button hugging at the end, 16 to the edge. */
 .zen-translate-footer {
