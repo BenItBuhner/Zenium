@@ -27,6 +27,10 @@ import { ResultGlyph } from '../import/ResultGlyph'
  * frame dialog host over Settings. An import that finished while the dialog was away (or that
  * a phone's rows ran) shows as the last import's row until it is dismissed – its glyph and ink
  * the dialog's (`ResultGlyph`: a failure in the danger ink on glyph and label alike, §9.33).
+ * The glyph trails, before Dismiss: a status glyph leads only where every row of its list
+ * carries one (the Safety Check rows), and this row stands alone in a pane whose every other
+ * label sits on the one text edge – a leading glyph would indent its label 26 past them, the
+ * ragged edge §10.3 forbids (§9.33; the phone's Last import rows trail theirs the same way).
  * The phone's category is the Settings builder's (`pages/settings/sections.tsx`,
  * `importSection`): files only.
  */
@@ -94,16 +98,18 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
             <ListRow
               label={resultHeadline(last)}
               description={lastImportLine(last)}
-              leading={<ResultGlyph state={runOutcome(last)} />}
               danger={runOutcome(last) === 'error'}
               control
               trailing={
-                <V2Button
-                  onClick={() => run('import.dismiss', undefined)}
-                  data-testid="import-dismiss-last"
-                >
-                  Dismiss
-                </V2Button>
+                <>
+                  <ResultGlyph state={runOutcome(last)} />
+                  <V2Button
+                    onClick={() => run('import.dismiss', undefined)}
+                    data-testid="import-dismiss-last"
+                  >
+                    Dismiss
+                  </V2Button>
+                </>
               }
               data-testid="import-last"
             />
