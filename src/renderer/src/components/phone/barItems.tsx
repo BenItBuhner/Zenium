@@ -12,7 +12,6 @@ import {
   PanelRight,
   Plus,
   Share2,
-  Star,
   TextSearch
 } from 'lucide-react'
 import type { PhoneBarItemId, PhoneBarLayout, Tab, UIState } from '@shared/types'
@@ -30,9 +29,8 @@ import {
 } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
 import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
-import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
-import { ReloadStopGlyph, TabCountBadge } from './BarGlyphs'
+import { ReloadStopGlyph, StarGlyph, TabCountBadge } from './BarGlyphs'
 
 /**
  * The catalogue behind `settings.phoneBar`: what each control of the phone's bar is called,
@@ -115,18 +113,20 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
         favicon: tab.favicon ?? undefined
       })
   },
+  // The star follows the app menu's (#236, the lead's ruling for both): a stateful glyph on
+  // `bookmark.star`, not a toggle – outlined "Bookmark" on a page that is not bookmarked, filled
+  // "Edit Bookmark" once it is, no `aria-pressed` (a press does not flip a state and back: it
+  // saves and opens the edit flow, Chrome's and Firefox's toolbar stars; a toggle would remove
+  // the bookmark on the second tap with nothing to undo, while the editor offers Remove). The
+  // core saves at once and the state's flip fills the star on the menu star's spring, in parallel
+  // with what the command opens: the saved toast with its Edit on a fresh bookmark, the editor on
+  // a bookmarked page. The editor lists the item as "Bookmark this page", beside Bookmarks.
   bookmark: {
     id: 'bookmark',
     label: 'Bookmark this page',
-    name: ({ tab }) => (tab?.bookmarked ? 'Remove bookmark' : 'Bookmark this page'),
-    pressed: ({ tab }) => Boolean(tab?.bookmarked),
-    glyph: ({ tab }) => (
-      <Star
-        className={cn(glyph, 'transition-[fill] duration-[120ms]')}
-        fill={tab?.bookmarked ? 'currentColor' : 'none'}
-      />
-    ),
-    run: ({ tab }) => tab && run('bookmark.toggle', { tabId: tab.id })
+    name: ({ tab }) => (tab?.bookmarked ? 'Edit Bookmark' : 'Bookmark'),
+    glyph: ({ tab }) => <StarGlyph filled={Boolean(tab?.bookmarked)} />,
+    run: ({ tab }) => tab && run('bookmark.star', { tabId: tab.id })
   },
   bookmarks: {
     id: 'bookmarks',
