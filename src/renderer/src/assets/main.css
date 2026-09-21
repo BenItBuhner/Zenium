@@ -6000,6 +6000,20 @@
     transition: none;
     opacity: 0;
   }
+  /*
+   * Nothing the double flies over takes a tap until the landing: the suggestion list is rising
+   * in beneath it from four tenths and a row is hit-testable at any opacity, so a second tap
+   * where the field was a moment ago – a phone's impatient double tap lands 150 ms after the
+   * first, half the flight – would take a suggestion nobody can see yet (run 2's bottom-retap:
+   * the tap the emulator delivered late hit a row at .2 and navigated). The sheet itself keeps
+   * the pointer, so the tap ends there – nothing happens, as for a tap on the double mid-flight
+   * (`tapFakebox` at opening) – rather than reaching the scrim as a dismissal. The rows are live
+   * again from the frame the field lands (`open`).
+   */
+  :root[data-fakebox='opening'] .zen-omnibox-sheet > *,
+  :root[data-fakebox='closing'] .zen-omnibox-sheet > * {
+    pointer-events: none;
+  }
   :root[data-fakebox='open'] .zen-omnibox-sheet,
   :root[data-fakebox='open'] .zen-omnibox-field::before,
   :root[data-fakebox='open'] .zen-omnibox-field > * {
