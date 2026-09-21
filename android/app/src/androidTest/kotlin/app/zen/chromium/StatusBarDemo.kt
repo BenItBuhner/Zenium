@@ -273,7 +273,7 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         val pillTree = findByLabelPrefix(PILL_LABEL)
         note(
             "  window insets top=${insets.top} bottom=${insets.bottom} px (${insets.windowWidth}x${insets.windowHeight}); " +
-                "status bar visible=${statusBarsVisible()} lightIcons=${lightStatusBarIcons()}; " +
+                "status bar visible=${statusBarsVisible()} lightAppearance=${lightStatusBarIcons()}; " +
                 "chrome --zen-inset-top=${geometry.optString("insetTop")} --zen-inset-bottom=${geometry.optString("insetBottom")} " +
                 "data-dark=${geometry.optString("dark")} text-zoom=${geometry.optString("textZoom")}"
         )
@@ -321,8 +321,21 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         return origin
     }
 
-    /** The window's system bar insets, from the window itself. */
-    private fun windowBars(): Insets = windowInsets()
+    /**
+     * The window's insets as the app reads them (`MainActivity.applyInsets`: the system bars and
+     * the display cutout together), from the window itself.
+     */
+    private fun windowBars(): Insets {
+        var result = windowInsets()
+        instrumentation.runOnMainSync {
+            val root = activity.window.decorView
+            val bars = ViewCompat.getRootWindowInsets(root)
+                ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+                ?: return@runOnMainSync
+            result = Insets(result.windowWidth, result.windowHeight, bars.top, bars.bottom, result.tappableBottom)
+        }
+        return result
+    }
 
     private fun statusBarsVisible(): Boolean {
         var visible = false
@@ -332,7 +345,7 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         return visible
     }
 
-    /** Whether the status bar draws its icons for a light background (`isAppearanceLightStatusBars`). */
+    /** Whether the status bar is set for a light background, i.e. draws dark icons (`isAppearanceLightStatusBars`). */
     private fun lightStatusBarIcons(): Boolean {
         var light = false
         instrumentation.runOnMainSync {

@@ -111,7 +111,8 @@ run_take() {
   sleep 1
   adb shell run-as "$app_id" touch "files/$demo_dir/recording"
 
-  for _ in $(seq 1 1600); do
+  # Seven chrome boots and the scenes between them: the driver runs a good while.
+  for _ in $(seq 1 3600); do
     if adb shell run-as "$app_id" test -f "files/$demo_dir/done" 2> /dev/null; then
       break
     fi
