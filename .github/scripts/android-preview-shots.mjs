@@ -56,6 +56,9 @@
 //                      `&motion=reduced` (the script's key too) takes the still under
 //                      `prefers-reduced-motion: reduce`, emulated through DevTools for that
 //                      state alone, for a record of what holds still (§11.3).
+//                      `&focus=<selector>;<selector>` (the script's key too) gives the first
+//                      element the list matches the focus as a keyboard would, for a record
+//                      of its focus ring (§1: `:focus-visible`, not the finger's bare focus).
 //                      The label defaults to the state with punctuation turned into dashes.
 //                      Default: history:overlay=history,bookmarks:overlay=bookmarks,
 //                               downloads:overlay=downloads,find:find=coffee
@@ -589,6 +592,51 @@ async function inner(opts) {
     }
   }
 
+  // `focus=<selector>` in a state (the script's key, as `pressed` is; `;` between alternatives,
+  // the first match of the list takes it): the element takes the focus as a keyboard would have
+  // given it, for a record of its ring (§1: 2 outside or −2 inside, by control). Chromium
+  // matches `:focus-visible` on an element focused by script only when the last interaction was
+  // the keyboard's – the primer tap above made it a finger's – so a modifier key is pressed
+  // first (Shift alone moves nothing, opens nothing), then the element is focused without
+  // scrolling. Should the modality not carry (a key the chrome swallowed), `:focus-visible` is
+  // forced on the focused element through DevTools instead, as `pressed` forces `:active`.
+  // Returns the release, or null when the state names nothing.
+  const focus = async (state) => {
+    const selector = new URLSearchParams(state).get('focus')
+    if (!selector) return null
+    const list = JSON.stringify(selector.split(';').join(','))
+    const found = await js(`Boolean(document.querySelector(${list}))`)
+    if (!found) throw new Error(`focus: nothing matches ${selector}`)
+    const shift = { key: 'Shift', code: 'ShiftLeft', windowsVirtualKeyCode: 16 }
+    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 8, ...shift }, 3000)
+    await cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...shift }, 3000)
+    await js(`document.querySelector(${list}).focus({ preventScroll: true })`)
+    await sleep(250)
+    const taken = await js(`document.activeElement?.matches(${list}) === true`)
+    if (!taken) throw new Error(`focus: ${selector} did not take the focus`)
+    const visible = await js(`document.activeElement.matches(':focus-visible')`)
+    if (visible) return async () => {}
+    console.warn(`warning: focus: ${selector} took the focus without :focus-visible; forcing it`)
+    await cdp('DOM.enable')
+    await cdp('CSS.enable')
+    const { root } = await cdp('DOM.getDocument', { depth: 0 })
+    const { nodeIds } = await cdp('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: `${selector.split(';').join(':focus,')}:focus`
+    })
+    const force = (forcedPseudoClasses) =>
+      Promise.all(
+        nodeIds.map((nodeId) => cdp('CSS.forcePseudoState', { nodeId, forcedPseudoClasses }))
+      )
+    await force(['focus', 'focus-visible'])
+    await sleep(100)
+    return async () => {
+      await force([])
+      await cdp('CSS.disable')
+      await cdp('DOM.disable')
+    }
+  }
+
   // `motion=reduced` in a state (the script's key, as `pressed` is): the state is reached and the
   // still taken with `prefers-reduced-motion: reduce` emulated, so `reducedMotion()` and the
   // stylesheet's media query both see it; the emulation is lifted again before the next state.
@@ -827,6 +875,7 @@ async function inner(opts) {
     for (const { label, state } of states) {
       const file = path.join(opts.out, `${opts.prefix}${label}-${scheme}.png`)
       let release = null
+      let blur = null
       try {
         await pointerModality()
         await motion(state)
@@ -838,6 +887,7 @@ async function inner(opts) {
           `state ${state}`
         )
         await sleep(opts.settle)
+        blur = await focus(state)
         release = await press(state)
         const png = (await wc.capturePage()).toPNG()
         fs.writeFileSync(file, png)
@@ -849,6 +899,7 @@ async function inner(opts) {
         console.error(`failed ${label} ${scheme}: ${e.message}`)
       } finally {
         await release?.().catch((e) => console.warn(`release: ${e.message}`))
+        await blur?.().catch((e) => console.warn(`focus: ${e.message}`))
         await motionOff().catch((e) => console.warn(`motion: ${e.message}`))
       }
     }

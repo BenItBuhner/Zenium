@@ -11,13 +11,13 @@ import { PANEL_INSET, besideOrigin, layoutRect, placeBeside, rowRect } from '../
  */
 
 const viewport = { width: 1600, height: 1000 }
-/** The root panel: 260 wide under a chip, 10 rows of 31 in 4 + 1 of padding and border. */
-const parent: Rect = { x: 300, y: 36, width: 260, height: 320 }
-/** A folder row in it, 4 in from the panel's edges (the ring room), 31 tall, `i` rows down. */
+/** The root panel: 260 wide under a chip, 10 rows of 31 in 6 + 1 of padding and border. */
+const parent: Rect = { x: 300, y: 36, width: 260, height: 324 }
+/** A folder row in it, 6 in from the panel's edges (the menu's padding), 31 tall, `i` rows down. */
 const rowAt = (i: number): Rect => ({
-  x: parent.x + 1 + 4,
+  x: parent.x + 1 + 6,
   y: parent.y + PANEL_INSET + i * 31,
-  width: parent.width - 2 - 8,
+  width: parent.width - 2 - 12,
   height: 31
 })
 const size = { width: 240, height: 200 }
@@ -35,8 +35,8 @@ describe('placeBeside', () => {
     })
   })
 
-  it('the inset is the panel’s border plus the menu’s block padding, so row lines up with row', () => {
-    expect(PANEL_INSET).toBe(1 + 4)
+  it('the inset is the panel’s border plus the menu’s 6 padding, so row lines up with row', () => {
+    expect(PANEL_INSET).toBe(1 + 6)
   })
 
   it('flips to the parent’s leading edge when the trailing side would cross the margin', () => {
@@ -102,12 +102,13 @@ describe('placeBeside', () => {
   })
 
   it('flips above when the room below is under the floor, even with less room above than below', () => {
-    // A 250 tall window: 147 below the row (under the 160 floor), 128 above it.
+    // A 250 tall window: 149 below the row (under the 160 floor), 130 above it – the row's
+    // bottom plus the inset, less the margin.
     const small = { width: 1600, height: 250 }
     const row: Rect = { ...rowAt(0), y: 100 }
     const box = placeBeside(row, { ...parent, y: 40, height: 200 }, small, size)
     expect(box.side).toBe('above')
-    expect(box.maxHeight).toBe(128)
+    expect(box.maxHeight).toBe(row.y + row.height + PANEL_INSET - POPOVER_MARGIN)
   })
 
   it('is never taller than the window minus 16', () => {

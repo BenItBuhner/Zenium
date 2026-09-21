@@ -66,6 +66,8 @@ interface FakeNet {
   ranges: Record<string, string | null>
   probes: Record<string, boolean>
   requests: string[]
+  /** A range request waits on this before it answers: the check caught in flight. */
+  hold: Promise<void> | null
 }
 
 interface World {
@@ -116,11 +118,12 @@ function setup(
   }
   const confirm = vi.fn(async () => true)
   const toast = vi.fn()
-  const net: FakeNet = { ranges: {}, probes: {}, requests: [] }
+  const net: FakeNet = { ranges: {}, probes: {}, requests: [], hold: null }
   const fetchText = async (url: string): Promise<{ ok: boolean; status: number; text: string }> => {
     net.requests.push(url)
     const range = url.match(/\/range\/([0-9A-F]{5})$/i)
     if (range) {
+      if (net.hold) await net.hold
       const text = net.ranges[range[1].toUpperCase()]
       if (text === null) return { ok: false, status: 503, text: '' }
       return { ok: true, status: 200, text: text ?? '' }
@@ -1309,6 +1312,51 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     expect(w.passwords.store.get(saved.id)!.checkedAt).not.toBeNull()
   })
 
+  it('lists the tab under leakChecks while its check runs – a phone save sheet holds for it – and drops it with either verdict', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    w.addTab('t2', 'https://shop.example/login')
+    const commits = (): number => vi.mocked(w.browser.state.commitVolatile).mock.calls.length
+    expect(w.passwords.status().leakChecks).toEqual([])
+
+    // The breached sign-in: the check is on record from the moment it starts, before the network
+    // answers, and the chrome heard about it.
+    let release!: () => void
+    w.net.hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const before = commits()
+    w.event('t1', loginSubmit({ username: 'ada', password: 'password' }))
+    w.autofill.onNavigated('t1')
+    expect(w.passwords.status().leakChecks).toEqual(['t1'])
+    expect(commits()).toBeGreaterThan(before)
+    expect(w.passwords.status().leaks).toEqual([])
+    release()
+    await w.settle()
+    // Over: the warning is up and the check is gone, in one state; the save prompt beside it is
+    // the core's as before – the phone chrome is what holds the sheet.
+    expect(w.passwords.status().leakChecks).toEqual([])
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    expect(w.autofill.uiState().prompts.map((p) => p.kind)).toEqual(['save-login'])
+
+    // A clean sign-in: listed while it runs, gone once it answered, no warning.
+    w.net.hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    w.event('t2', loginSubmit({ username: 'bob', password: 'unique-and-clean-9f' }))
+    w.autofill.onNavigated('t2')
+    expect(w.passwords.status().leakChecks).toEqual(['t2'])
+    const during = commits()
+    release()
+    await w.settle()
+    expect(w.passwords.status().leakChecks).toEqual([])
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    // The chrome heard the check end even though nothing else changed.
+    expect(commits()).toBeGreaterThan(during)
+    w.net.hold = null
+  })
+
   it('warns nothing and records nothing when the range service cannot be reached, and tries again next time', async () => {
     const w = breachedWorld()
     w.net.ranges[BREACHED_PREFIX] = null
@@ -1416,6 +1464,34 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     await w.passwords.leakRespond(warning.id, 'ignore')
     expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).not.toBeNull()
     expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+  })
+
+  it('remembers an Ignore given before the login is saved – the phone’s order: the warning, Ignore, then the save sheet – on the login the prompt then creates', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    await signIn(w, 't1', 'password')
+    const [warning] = w.passwords.status().leaks
+    expect(warning).toMatchObject({ credentialId: null, username: 'ada' })
+    // Ignore first, with nothing saved yet: no login to write on, the warning goes.
+    await w.passwords.leakRespond(warning.id, 'ignore')
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.list()).toEqual([])
+    // Then Save on the deferred prompt: the login carries the count, the warning and the Ignore.
+    const [prompt] = w.autofill.uiState().prompts
+    expect(prompt.kind).toBe('save-login')
+    w.autofill.respond(prompt.id, { action: 'save' })
+    await w.settle()
+    const [saved] = w.passwords.store.list()
+    expect(saved).toMatchObject({ password: 'password', breached: 10_434_004 })
+    expect(saved.leakWarnedAt).not.toBeNull()
+    expect(saved.leakIgnoredAt).not.toBeNull()
+    // Ignored: Safety Check does not count it, and the same sign-in asks and warns no more.
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+    const before = rangeRequests(w).length
+    await signIn(w, 't1', 'password')
+    expect(rangeRequests(w)).toHaveLength(before)
+    expect(w.passwords.status().leaks).toEqual([])
   })
 
   it('takes Change password to the well-known page when the site serves one, else to the site, and opens the manager', async () => {

@@ -1028,6 +1028,11 @@ export interface PasswordsStatus {
   checkupSummary: CheckupSummary
   /** Sign-in leak warnings waiting for the user, oldest first (one per tab at most). */
   leaks: CredentialLeakWarning[]
+  /**
+   * Tabs whose sign-in leak check is still running (one per tab at most): a phone save sheet
+   * that has not risen yet holds a moment for the verdict, so a warning goes first as Chrome's.
+   */
+  leakChecks: string[]
 }
 
 /** Outcome of a command that needs the user to re-authenticate first. */
@@ -3311,6 +3316,12 @@ export interface MenuDescriptor {
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
+  /**
+   * Opened by the keyboard (a shortcut, Shift+F10, the Menu key): a popover menu starts with its
+   * first item focused so the arrow keys take over at once (v2 draft §9.22). Absent, the
+   * renderer reads it off the focused control (`openedFromKeyboard`).
+   */
+  keyboard?: boolean
 }
 
 // ---------------------------------------------------------------------------

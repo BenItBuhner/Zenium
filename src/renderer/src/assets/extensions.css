@@ -496,66 +496,11 @@
   }
 
   /*
-   * Menus: rows 31 with a 16 icon, label and a hint at 69%, hairline separators. Placed by
-   * `placePopover` (§9.20) at their intrinsic width; past its height ceiling the rows scroll.
+   * Menus are the chassis' `.zen-v2-menu` (§5, §6, §9.34: one unlayered rule set in main.css
+   * beside the menulist popup – the panel's 6 padding, 31 rows with a 16 glyph slot, the hint
+   * at 69%, the submenu chevron, hairline separators 6 above and below), so nothing here
+   * restates them; `LocalMenu` and the bookmarks bar's folder panels put the classes on.
    */
-  .zen-v2-menu {
-    display: flex;
-    flex-direction: column;
-    min-width: 232px;
-    max-width: 332px;
-    padding: 4px 0;
-    font-size: 14px;
-    line-height: 15px;
-    overflow-y: auto;
-  }
-  /* A context menu (a right-click) is radius 6 (§2); the popovers under a `···` stay at 8. */
-  .zen-v2-menu[data-context] {
-    border-radius: var(--v2-radius-inner);
-  }
-  .zen-v2-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: var(--v2-menu-row);
-    margin: 0 4px;
-    padding: 0 8px;
-    border-radius: var(--v2-radius-control);
-    color: inherit;
-    text-align: left;
-    white-space: nowrap;
-    transition: background 120ms var(--zen-ease);
-  }
-  .zen-v2-menu-item .lucide {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    flex-shrink: 0;
-  }
-  @media (hover: hover) {
-    .zen-v2-menu-item:hover:not(:disabled) {
-      background: var(--v2-fill);
-    }
-  }
-  .zen-v2-menu-item:active:not(:disabled) {
-    background: var(--v2-fill-hover);
-  }
-  .zen-v2-menu-item:disabled {
-    opacity: 0.4;
-  }
-  .zen-v2-menu-item[data-danger] {
-    color: var(--v2-danger);
-  }
-  .zen-v2-menu-separator {
-    height: 1px;
-    margin: 4px 0;
-    background: var(--v2-border);
-  }
-  .zen-v2-menu-hint {
-    margin-left: auto;
-    padding-left: 16px;
-    color: var(--v2-text-deemphasized);
-    font-variant-numeric: tabular-nums;
-  }
 
   /*
    * The phone sheets are the chassis' (`.zen-sheet`, `.zen-sheet-title`, `.zen-sheet-item`,

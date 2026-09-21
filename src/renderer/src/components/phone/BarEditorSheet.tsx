@@ -19,14 +19,14 @@ import {
   slotAtSequencePosition
 } from '@shared/phoneBar'
 import { cmd, run } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { browserStore, closeBarEditor, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { BarPreview } from './BarPreview'
 import { barContext, barItem, type BarItemContext } from './barItems'
+import { PhoneSheet } from './PhoneSheet'
 
 /** Height of a row in either list: what one step of a drag is worth. */
 const ROW = 44
@@ -84,7 +84,9 @@ export function BarEditorLayer(): JSX.Element | null {
  * closes on the snappy spring, a caret between the rows marks where they will land, and on
  * release every row springs to its new place. A tap on a row's trailing control adds or
  * removes it, and every change is saved at once (the bar behind updates with the rest of the
- * settings), so the sheet needs no Done.
+ * settings), so the sheet needs no Done. The phone's shared `PhoneSheet` over the viewport
+ * (`placement: 'viewport'`): not a frame dialog – it floats above whichever shell is up – but
+ * the same chassis, header (with Reset in the trailing slot), back gesture and Escape.
  */
 function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -444,23 +446,6 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
 
   // --- Sheet ------------------------------------------------------------------------------
 
-  useBackSurface({
-    name: 'bar-editor',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      sheet.current?.dismiss()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
-
   const ctx = barContext(state, false)
   const shown = held?.draft ?? layout
   const full = phoneBarCount(layout) >= capacity
@@ -476,17 +461,13 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      onDismissed={() => closeBarEditor()}
-      handleLabel="Resize editor"
-      className="zen-bar-editor"
-      labelledBy="zen-bar-editor-title"
-      header={
-        <>
-          <h2 id="zen-bar-editor-title" className="zen-sheet-title">
-            Navigation Bar
-          </h2>
+    <PhoneSheet
+      name="bar-editor"
+      placement="viewport"
+      title={{
+        pose: 'header',
+        text: 'Navigation Bar',
+        trailing: (
           <button
             type="button"
             className="zen-sheet-header-control"
@@ -497,8 +478,12 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
           >
             <RotateCcw className="h-5 w-5" strokeWidth={1.75} aria-hidden />
           </button>
-        </>
-      }
+        )
+      }}
+      onClose={() => closeBarEditor()}
+      handleLabel="Resize editor"
+      className="zen-bar-editor"
+      sheetRef={sheet}
     >
       <div
         ref={body}
@@ -613,7 +598,7 @@ function BarEditorSheet({ state }: { state: UIState }): JSX.Element {
           ))}
         </ul>
       </div>
-    </BottomSheet>
+    </PhoneSheet>
   )
 }
 

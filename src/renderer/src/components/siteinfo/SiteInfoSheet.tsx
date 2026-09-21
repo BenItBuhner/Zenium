@@ -186,7 +186,13 @@ function securityOf(tab: Tab, info: SiteInfo | null, site: SiteDescription): Sec
           }
         : {
             indicator,
-            tone: 'ok',
+            // Neutral, not ok (v2 §9.19): "secure" is the state of nearly every page, and a
+            // colour that is always on says nothing – the lock on the pill, in this title block
+            // and on the Connection row is the surface's own ink, as Firefox's, Zen's, Safari's
+            // and Chrome's have been since the green lock was retired. `--v2-ok` is for a check
+            // that passed or a result the user asked for; partly secure and insecure keep the
+            // warn ink, a failed certificate and a dangerous site the danger ink.
+            tone: 'neutral',
             short: 'Secure',
             headline: 'Connection is secure',
             detail: 'Everything you send to this site is encrypted on the way.',
@@ -281,7 +287,9 @@ function securityGlyph(
   if (security.indicator === 'extension') return <Puzzle {...props} aria-hidden />
   if (security.indicator === 'internal' || security.indicator === 'local')
     return <Globe {...props} aria-hidden />
-  return security.tone === 'ok' ? (
+  // The closed lock for an encrypted connection with nothing mixed in (its tone is neutral,
+  // §9.19); open for partly secure, insecure and a certificate that failed.
+  return security.indicator === 'secure' && security.tone !== 'warn' ? (
     <Lock {...props} aria-hidden />
   ) : (
     <LockOpen {...props} aria-hidden />
@@ -839,7 +847,7 @@ function SheetRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{label}</span>
         {description && (
-          <span className="zen-sheet-item-secondary block text-[13px] leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
             {description}
           </span>
         )}

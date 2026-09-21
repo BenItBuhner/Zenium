@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { languageCodeOf, offscreenUrl } from '../extensionApi'
+import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
@@ -1388,6 +1388,37 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
   })
 })
 
+describe('tabUrlFrom: the URL a tabs.create / tabs.update / windows.create names', () => {
+  const origin = `https://${ID}.ext.zenium.invalid`
+
+  it("a relative URL is a path of the extension's, against its root wherever the caller sits (Awesome Screenshot's editor, FireShot's result page)", () => {
+    expect(tabUrlFrom(ID, 'edit-react.html')).toBe(`chrome-extension://${ID}/edit-react.html`)
+    // FireShot's worker lives at scripts/fsServiceWorker.js and opens fsCaptured.html: Chrome's
+    // GetResourceURL knows the extension's root, not the caller's directory.
+    expect(tabUrlFrom(ID, 'fsCaptured.html?id=1')).toBe(
+      `chrome-extension://${ID}/fsCaptured.html?id=1`
+    )
+    expect(tabUrlFrom(ID, 'editor.html?shot=1#top')).toBe(
+      `chrome-extension://${ID}/editor.html?shot=1#top`
+    )
+    expect(tabUrlFrom(ID, '/index.html')).toBe(`chrome-extension://${ID}/index.html`)
+    expect(tabUrlFrom(ID, '//index.html')).toBe(`chrome-extension://${ID}/index.html`)
+    expect(tabUrlFrom(ID, 'pages/../other.html')).toBe(`chrome-extension://${ID}/other.html`)
+    expect(tabUrlFrom(ID, '../other.html')).toBe(`chrome-extension://${ID}/other.html`)
+  })
+
+  it('a fully-qualified URL goes through as it is, a value with no host too', () => {
+    expect(tabUrlFrom(ID, 'https://example.com/a?b#c')).toBe('https://example.com/a?b#c')
+    expect(tabUrlFrom(ID, `chrome-extension://${ID2}/page.html`)).toBe(
+      `chrome-extension://${ID2}/page.html`
+    )
+    expect(tabUrlFrom(ID, 'about:blank')).toBe('about:blank')
+    expect(tabUrlFrom(ID, `${origin}/served.html`)).toBe(`${origin}/served.html`)
+    // Chrome's own reading of a host without a scheme: a path of the extension's.
+    expect(tabUrlFrom(ID, 'www.example.com')).toBe(`chrome-extension://${ID}/www.example.com`)
+  })
+})
+
 describe('offscreenUrl and languageCodeOf', () => {
   it('maps the forms of createDocument({ url }) onto the served origin and refuses the rest', () => {
     const origin = `https://${ID}.ext.zenium.invalid`
@@ -1438,6 +1469,26 @@ describe('AndroidExtensionRuntime: tabs.detectLanguage', () => {
     // A page the extension cannot ask (no host permission, say) is undetermined, not an error.
     h.kt.failExec = () => 'Cannot access contents of the page.'
     expect((await call(h, 'bg1', 'tabs', 'detectLanguage', [])).result).toBe('und')
+  })
+})
+
+describe('AndroidExtensionRuntime: tabs.highlight', () => {
+  it('makes the tab at the first index active and answers the window, and names an index with no tab', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    h.tabs.t2 = makeTab('t2', 'https://two.example/')
+    h.notifyState()
+    expect(h.active.id).toBe('t1')
+    const highlighted = await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: [1, 0] }])
+    expect(h.active.id).toBe('t2')
+    expect((highlighted.result as { tabs: unknown[] }).tabs).toHaveLength(2)
+    const single = await call(h, 'bg1', 'tabs', 'highlight', [{ windowId: 1, tabs: 0 }])
+    expect(single.ok).toBe(true)
+    expect(h.active.id).toBe('t1')
+    expect(String((await call(h, 'bg1', 'tabs', 'highlight', [{ tabs: 7 }])).error)).toContain(
+      'No tab at index: 7.'
+    )
   })
 })
 
@@ -1731,6 +1782,53 @@ describe('AndroidExtensionRuntime: chrome.system.storage', () => {
     expect(await call(h, 'bg1', 'system.storage', 'getInfo', [])).toMatchObject({
       ok: false,
       error: "The extension does not have the 'system.storage' permission."
+    })
+  })
+})
+
+describe('AndroidExtensionRuntime: chrome.system.display', () => {
+  it('lists the phone\u2019s one screen in Chrome\u2019s shape, primary and internal, and follows it turning', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.display', 'storage'] })))
+    backgroundUp(h, 'bg1', ['system.display.onDisplayChanged'])
+    const info = (await call(h, 'bg1', 'system.display', 'getInfo', [])).result as Array<
+      Record<string, unknown>
+    >
+    expect(info).toHaveLength(1)
+    expect(info[0]).toMatchObject({
+      id: '1',
+      isPrimary: true,
+      isInternal: true,
+      isEnabled: true,
+      rotation: 0,
+      dpiX: 252,
+      bounds: { left: 0, top: 0, width: 412, height: 915 },
+      workArea: { left: 0, top: 0, width: 412, height: 915 },
+      hasTouchSupport: true,
+      modes: []
+    })
+    expect((await call(h, 'bg1', 'system.display', 'getDisplayLayout', [])).result).toEqual([])
+    expect(
+      await call(h, 'bg1', 'system.display', 'setMirrorMode', [{ mode: 'off' }])
+    ).toMatchObject({
+      ok: false,
+      error: 'Function available only on ChromeOS.'
+    })
+    h.turnScreen(90)
+    expect(events(h, 'bg1', 'system.display.onDisplayChanged')).toHaveLength(1)
+    const turned = (await call(h, 'bg1', 'system.display', 'getInfo', [])).result as Array<
+      Record<string, unknown>
+    >
+    expect(turned[0]).toMatchObject({ rotation: 90, bounds: { width: 915, height: 412 } })
+  })
+
+  it('refuses an extension that did not declare it with Chrome\u2019s no-permission error', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'system.display', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.display' permission."
     })
   })
 })

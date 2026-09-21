@@ -1,11 +1,34 @@
 import type { JSX } from 'react'
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info } from 'lucide-react'
-import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
+import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor, Rect } from '@shared/types'
+import { popOrigin } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
 import { isIconRow } from '@renderer/lib/menuIconRow'
+import { handleMenuKey } from '@renderer/lib/menuKeys'
+import {
+  HOVER_TO_OPEN_MS,
+  closedTo,
+  focusAfterClose,
+  focusAfterOpen,
+  openedAt,
+  type PathFocus
+} from '@renderer/lib/menuPath'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
+import { openedFromKeyboard } from '@renderer/lib/popover'
+import {
+  ChromePortal,
+  besideOrigin,
+  layoutRect,
+  placeBeside,
+  placePopover,
+  popoverStyle,
+  rowRect,
+  useLightDismiss,
+  viewportSize,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
@@ -13,8 +36,9 @@ import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 /**
  * Renders a `menu.show` descriptor for hosts without native popup menus. Touch gets a bottom
- * sheet with drill-in submenus; a mouse (DeX, tablets with a trackpad) gets an anchored popover
- * with flyout submenus, styled like the rest of Zen's panels.
+ * sheet with drill-in submenus; a mouse (DeX, tablets with a trackpad) gets the shared
+ * `.zen-v2-menu` popover with cascading submenus (`Popover` below), the vocabulary every menu
+ * the renderer draws shares with `LocalMenu` and the bookmarks bar's folder panels.
  */
 export function MenuSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const viewport = useViewport()
@@ -289,120 +313,379 @@ function sourceTitle(source: MenuDescriptor['source']): string {
 // Popover (mouse)
 // ---------------------------------------------------------------------------
 
-const ITEM_H = 28
-const SEP_H = 9
-const PAD = 6
-const MENU_W = 240
-
-function itemOffsets(items: MenuItemDescriptor[]): number[] {
-  const tops: number[] = []
-  let offset = PAD
-  for (const item of items) {
-    tops.push(offset)
-    offset += item.type === 'separator' ? SEP_H : ITEM_H
-  }
-  return tops
+/** One open panel of the cascade: the row whose submenu it lists (null at the root), and its rows. */
+interface Level {
+  parentId: string | null
+  items: MenuItemDescriptor[]
 }
 
+/** Where a level goes once measured, and where its pop grows from. */
+interface Placement {
+  box: PopoverBox
+  origin: string
+}
+
+/**
+ * Where the keyboard is to land once the level at `depth` stands: its first row (a level the
+ * keyboard opened), the row that had opened a deeper level (that level closed), or the panel
+ * itself, which hears the keys without highlighting a row (opened by the pointer, §9.22).
+ */
+type FocusWanted = PathFocus | { depth: number; target: 'panel' }
+
+/**
+ * The levels open for `path` – the ids of the submenu rows open at each depth – from the root's
+ * items down; a path through a row that has no submenu (or is disabled) stops there.
+ */
+function cascadeLevels(items: MenuItemDescriptor[], path: readonly string[]): Level[] {
+  const levels: Level[] = [{ parentId: null, items }]
+  for (const id of path) {
+    const row = levels[levels.length - 1].items.find((item) => item.id === id)
+    if (!row?.submenu || !row.enabled) break
+    levels.push({ parentId: id, items: row.submenu })
+  }
+  return levels
+}
+
+/** The rows of a panel, in order. */
+function menuRows(panel: HTMLElement | null | undefined): HTMLElement[] {
+  return [...(panel?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
+}
+
+/**
+ * The descriptor as the shared `.zen-v2-menu` (§4, §5, §6 menus; the vocabulary `LocalMenu` and
+ * the bookmarks bar's folder panels draw in), through the chrome layer: a `--v2-panel` at radius
+ * 8 – 6 for a context menu, every source but the `···`'s app menu (§2) – with 6 of padding and
+ * 31 rows at the 14 px chrome menu size, intrinsic within 232–332, hung from the point the
+ * descriptor names (a control's bottom-left, the pointer) by `placePopover` (§9.20: below and
+ * start-aligned, flipped or slid inside the window's 8 margin, never taller than the room). A
+ * checked row draws its check in the 16 glyph slot, a row with a favicon the favicon there; a
+ * submenu row trails the chevron and opens its panel beside the one it is in (`placeBeside`,
+ * `placePopover`'s cascade mode: first row on the row that opened it) after the pointer rests
+ * on it, or at once from the keyboard – the row keeping the fill while its panel stands
+ * (`aria-expanded`).
+ *
+ * The keyboard is §9.22's, Chrome's native menus as the rule book: opened from the keyboard the
+ * first row takes the focus, by pointer the panel itself does and Down starts at the first row;
+ * the arrows, Home and End move within the level, Right opens a submenu row's panel on its first
+ * row, Left and Backspace close the deepest level onto the row that opened it (at the root, the
+ * menu), a letter goes to or runs the row it names (mnemonics, a11y-08), Enter and Space run the
+ * row; Escape closes the deepest level, then the menu – onto the control that opened it when a
+ * control of the chrome's had the focus as the menu came (the ··· the pointer pressed or the
+ * keyboard opened from), which keeps the keyboard, as `LocalMenu` does through `usePopover`;
+ * the page takes it back only when it had it (§9.22). Light dismiss is the chrome layer's
+ * (§9.20 amended): a press outside the cascade, a scroll, a resize or another popover closes
+ * it. The host is told of a pick (`pickMenuItem`) and of a close (`closeMenu`).
+ */
 function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
-  useEscape(() => closeMenu())
-  // Anchor at the click that opened the menu (pointer position captured before the round trip).
-  const anchor = useMemo(
-    () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y }),
+  // Anchor at the point that opened the menu: the control's edge when the core named one, else
+  // the pointer position captured before the round trip.
+  const anchor = useMemo<Rect>(
+    () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y, width: 0, height: 0 }),
     [menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  const [fromKeyboard] = useState(() => menu.keyboard ?? openedFromKeyboard())
+  const context = menu.source !== 'app'
+
+  const [path, setPath] = useState<string[]>([])
+  const levels = useMemo(() => cascadeLevels(menu.items, path), [menu.items, path])
+  const groupRef = useRef<HTMLDivElement>(null)
+  const panelEls = useRef<(HTMLDivElement | null)[]>([])
+
+  // The control the menu opened from – what had the focus as the menu mounted, the ··· the
+  // pointer pressed or the keyboard opened from – for Escape's way back (§9.22, as `usePopover`
+  // reads it). None when nothing of the chrome's had the focus (the page did, or a control the
+  // press did not focus): the page takes the keyboard back then, as after any overlay.
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : null
+  )
+  const returning = useRef(false)
+  /** The keyboard closes the whole menu (Escape, Left or Backspace at the root). */
+  const closeFromKeyboard = (): void => {
+    returning.current = opener !== null && opener.isConnected
+    closeMenu(true, { keepKeyboard: returning.current })
+  }
+  useLayoutEffect(
+    () => () => {
+      // A layout cleanup runs before React removes the nodes: the focus, if it is still in the
+      // cascade, has not fallen to the body yet, and the opener can take it back in one step.
+      if (!returning.current || !opener?.isConnected) return
+      if (!groupRef.current?.contains(document.activeElement)) return
+      opener.focus({ preventScroll: true })
+    },
+    [opener]
+  )
+  const [focusWanted, setFocusWanted] = useState<FocusWanted | null>(() => ({
+    depth: 0,
+    target: fromKeyboard ? 'first' : 'panel'
+  }))
+  const onFocused = useCallback((): void => setFocusWanted(null), [])
+
+  const openLevel = useCallback((depth: number, rowId: string, focus: boolean): void => {
+    setFocusWanted(focus ? focusAfterOpen(depth) : null)
+    setPath((p) => openedAt(p, depth, rowId))
+  }, [])
+  /** Close the levels deeper than `depth` (level `depth` stays); `focus` lands on the row that opened them. */
+  const closeTo = useCallback(
+    (depth: number, focus: boolean): void => {
+      setFocusWanted(focus ? focusAfterClose(path, depth) : null)
+      setPath((p) => closedTo(p, depth))
+    },
+    [path]
+  )
+
+  useLightDismiss(groupRef, () => closeMenu())
+  useEscape(() => {
+    if (path.length) closeTo(path.length - 1, true)
+    else closeFromKeyboard()
+  })
+
+  // The pointer: a submenu row opens beside after a rest, any other row closes what is deeper.
+  const hover = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelHover = useCallback((): void => {
+    if (hover.current !== null) clearTimeout(hover.current)
+    hover.current = null
+  }, [])
+  useEffect(() => cancelHover, [cancelHover])
+  const hoverRow = (depth: number, item: MenuItemDescriptor): void => {
+    cancelHover()
+    const wanted = item.submenu && item.enabled ? item.id : null
+    if (wanted === (path[depth] ?? null)) return
+    hover.current = setTimeout(() => {
+      hover.current = null
+      if (wanted) openLevel(depth, wanted, false)
+      else closeTo(depth, false)
+    }, HOVER_TO_OPEN_MS)
+  }
+
+  const activate = (depth: number, item: MenuItemDescriptor, focus: boolean): void => {
+    cancelHover()
+    if (item.submenu) openLevel(depth, item.id, focus)
+    else pickMenuItem(item.id)
+  }
+
+  /** The level the keyboard is in: the one holding the focus, else the deepest. */
+  const focusedDepth = (): number => {
+    const active = document.activeElement
+    const at = panelEls.current.findIndex((el) => el?.contains(active))
+    return at === -1 ? levels.length - 1 : at
+  }
+
+  const onKeyDown = (e: React.KeyboardEvent): void => {
+    const depth = focusedDepth()
+    const rows = menuRows(panelEls.current[depth])
+    const at = rows.indexOf(document.activeElement as HTMLElement)
+    const current = at === -1 ? undefined : levels[depth]?.items.filter(isRow)[at]
+    switch (e.key) {
+      case 'ArrowRight':
+        if (current?.submenu && current.enabled) openLevel(depth, current.id, true)
+        break
+      case 'ArrowLeft':
+      case 'Backspace':
+        if (depth > 0) closeTo(depth - 1, true)
+        else closeFromKeyboard()
+        break
+      default:
+        // The arrows, Home, End and a letter, as in Chrome's native menus (lib/menuKeys.ts).
+        if (!handleMenuKey(e, rows, { mnemonics: true })) return
+        e.stopPropagation()
+        return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  // Placement: the root under its point, every other level beside the row that opened it.
+  const place = useCallback(
+    (depth: number, parentId: string | null, el: HTMLElement): Placement | null => {
+      const viewport = viewportSize()
+      const size = { width: el.offsetWidth, height: el.offsetHeight }
+      if (depth === 0 || parentId === null) {
+        const box = placePopover(anchor, anchor, viewport, { measured: size.width }, size.height)
+        return { box, origin: popOrigin(anchor, box) }
+      }
+      const parent = panelEls.current[depth - 1]
+      const row = parent?.querySelector<HTMLElement>(`[data-menu-row="${parentId}"]`)
+      if (!parent || !row) return null
+      const parentBox = layoutRect(parent)
+      const rowBox = rowRect(row, parent, parentBox)
+      const box = placeBeside(rowBox, parentBox, viewport, size)
+      const height = Math.min(size.height, box.maxHeight)
+      return { box, origin: besideOrigin(rowBox, box, viewport, height) }
+    },
+    [anchor]
+  )
+
+  return (
+    <ChromePortal>
+      <div ref={groupRef} className="contents" onKeyDown={onKeyDown}>
+        {levels.map((level, depth) => (
+          <MenuLevel
+            key={`${depth}/${level.parentId ?? ''}`}
+            ref={(el) => {
+              panelEls.current[depth] = el
+            }}
+            depth={depth}
+            level={level}
+            label={
+              depth === 0 ? (menu.title ?? sourceTitle(menu.source)) : levelTitle(levels, depth)
+            }
+            context={context}
+            openId={path[depth] ?? null}
+            focus={focusWanted?.depth === depth ? focusWanted.target : null}
+            onFocused={onFocused}
+            place={place}
+            onEnterPanel={cancelHover}
+            onHoverRow={hoverRow}
+            onActivate={(item, focus) => activate(depth, item, focus)}
+            onScrolled={() => closeTo(depth, false)}
+          />
+        ))}
+      </div>
+    </ChromePortal>
+  )
+}
+
+const isRow = (item: MenuItemDescriptor): boolean => item.type !== 'separator'
+
+/** A submenu level's name to the tree: the label of the row that opened it. */
+function levelTitle(levels: Level[], depth: number): string {
+  const parentId = levels[depth]?.parentId
+  const row = levels[depth - 1]?.items.find((item) => item.id === parentId)
+  return row?.label ?? 'Menu'
+}
+
+/**
+ * One panel of the cascade. It renders hidden at the window's origin first, so its intrinsic
+ * width and height can be measured (layout size, not the client rect the pop animation's first
+ * frame scales to .94), then takes the place `place` gives it; the placed width and height cap
+ * are lifted for the measure when its rows change. Once it stands it takes the focus asked of it.
+ */
+function MenuLevel({
+  ref,
+  depth,
+  level,
+  label,
+  context,
+  openId,
+  focus,
+  onFocused,
+  place,
+  onEnterPanel,
+  onHoverRow,
+  onActivate,
+  onScrolled
+}: {
+  ref: (el: HTMLDivElement | null) => void
+  depth: number
+  level: Level
+  label: string
+  context: boolean
+  /** The submenu row whose panel is open beside this one. */
+  openId: string | null
+  /** Where the keyboard lands once the panel stands, if it is this panel's turn. */
+  focus: FocusWanted['target'] | null
+  onFocused: () => void
+  place: (depth: number, parentId: string | null, el: HTMLElement) => Placement | null
+  onEnterPanel: () => void
+  onHoverRow: (depth: number, item: MenuItemDescriptor) => void
+  /** `focus`: the keyboard did it (Enter, a mnemonic), so a submenu's level takes the focus. */
+  onActivate: (item: MenuItemDescriptor, focus: boolean) => void
+  /** The rows scrolled: whatever stood beside one of them no longer lines up. */
+  onScrolled: () => void
+}): JSX.Element {
+  const el = useRef<HTMLDivElement | null>(null)
+  const { parentId, items } = level
+  const [placed, setPlaced] = useState<Placement | null>(null)
+  useLayoutEffect(() => {
+    const node = el.current
+    if (!node) return
+    node.style.width = ''
+    node.style.maxHeight = ''
+    setPlaced(place(depth, parentId, node))
+  }, [depth, parentId, items.length, place])
+  useLayoutEffect(() => {
+    const node = el.current
+    if (!node || !placed || !focus) return
+    const rows = menuRows(node)
+    const row =
+      focus === 'panel'
+        ? null
+        : focus === 'first'
+          ? rows[0]
+          : rows.find((r) => r.dataset.menuRow === focus.id)
+    ;(row ?? node).focus({ preventScroll: true })
+    onFocused()
+  }, [focus, onFocused, placed])
+  // The glyph slot stands before every label when any row of the level has something to put in
+  // it – a favicon, a check – so the labels share one edge.
+  const withGlyphs = items.some(
+    (item) => item.icon || item.type === 'checkbox' || item.type === 'radio'
   )
   return (
     <div
-      className="fixed inset-0 z-[90]"
-      onClick={() => closeMenu()}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        closeMenu()
+      ref={(node) => {
+        el.current = node
+        ref(node)
       }}
-    >
-      <MenuList items={menu.items} x={anchor.x} y={anchor.y} depth={0} />
-    </div>
-  )
-}
-
-function MenuList({
-  items,
-  x,
-  y,
-  depth
-}: {
-  items: MenuItemDescriptor[]
-  x: number
-  y: number
-  depth: number
-}): JSX.Element {
-  const ref = useRef<HTMLUListElement>(null)
-  const [open, setOpen] = useState<string | null>(null)
-  const [pos, setPos] = useState({ left: x, top: y })
-
-  // Keep the list inside the window.
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4))
-    const top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))
-    setPos({ left, top })
-  }, [x, y, items])
-
-  // Vertical offset of every item, so flyouts line up with the row that opened them.
-  const tops = useMemo(() => itemOffsets(items), [items])
-  return (
-    <ul
-      ref={ref}
-      className="zen-panel zen-animate-pop fixed select-none p-1.5"
-      style={{ left: pos.left, top: pos.top, width: MENU_W, zIndex: 91 + depth }}
-      onClick={(e) => e.stopPropagation()}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
+      role="menu"
+      aria-label={label}
+      tabIndex={-1}
+      className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
+      data-context={context || undefined}
+      style={{
+        ...(placed ? popoverStyle(placed.box) : { left: 0, top: 0 }),
+        visibility: placed ? 'visible' : 'hidden',
+        transformOrigin: placed?.origin
       }}
+      onPointerEnter={onEnterPanel}
+      onScroll={onScrolled}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      {items.map((item, index) => {
-        const itemTop = tops[index]
+      {items.map((item) => {
         if (item.type === 'separator')
-          return <li key={item.id} className="my-1 h-px bg-[var(--zen-border)]" />
-        const isOpen = open === item.id
+          return <div key={item.id} className="zen-v2-menu-separator" role="separator" />
+        const checkable = item.type === 'checkbox' || item.type === 'radio'
         return (
-          <li key={item.id} className="relative">
-            <button
-              type="button"
-              disabled={!item.enabled}
-              className={cn(
-                'flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px]',
-                'hover:bg-[var(--zen-element-bg-hover)] disabled:opacity-40',
-                isOpen && 'bg-[var(--zen-element-bg-hover)]',
-                item.danger && 'text-[var(--zen-danger)]'
-              )}
-              onPointerEnter={() => setOpen(item.submenu ? item.id : null)}
-              onClick={() => {
-                if (item.submenu) setOpen(item.id)
-                else pickMenuItem(item.id)
-              }}
-            >
-              <span className="w-3.5 shrink-0">
-                {item.type === 'checkbox' && item.checked && <Check className="h-3.5 w-3.5" />}
+          <button
+            key={item.id}
+            type="button"
+            role={
+              item.type === 'checkbox'
+                ? 'menuitemcheckbox'
+                : item.type === 'radio'
+                  ? 'menuitemradio'
+                  : 'menuitem'
+            }
+            tabIndex={-1}
+            data-menu-row={item.id}
+            data-danger={item.danger || undefined}
+            disabled={!item.enabled}
+            aria-checked={checkable ? item.checked : undefined}
+            aria-haspopup={item.submenu ? 'menu' : undefined}
+            aria-expanded={item.submenu ? openId === item.id : undefined}
+            className="zen-v2-menu-item"
+            onPointerEnter={() => onHoverRow(depth, item)}
+            // A click the keyboard made (Enter, Space, a mnemonic's: `detail` 0) is the
+            // keyboard's activation, so a submenu's level takes the focus.
+            onClick={(e) => onActivate(item, e.detail === 0)}
+          >
+            {withGlyphs && (
+              <span className="zen-v2-menu-glyph" aria-hidden>
+                {checkable && item.checked ? (
+                  <Check />
+                ) : item.icon ? (
+                  <img src={item.icon} alt="" className="h-4 w-4 rounded-sm" draggable={false} />
+                ) : null}
               </span>
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
-              {item.submenu && <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
-            </button>
-            {isOpen && item.submenu && item.enabled && (
-              <MenuList
-                items={item.submenu}
-                x={pos.left + MENU_W - 4}
-                y={pos.top + itemTop - PAD}
-                depth={depth + 1}
-              />
             )}
-          </li>
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {item.submenu && <ChevronRight className="zen-v2-menu-chevron" aria-hidden />}
+          </button>
         )
       })}
-    </ul>
+    </div>
   )
 }

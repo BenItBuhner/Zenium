@@ -44,6 +44,7 @@ import {
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
+import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -88,7 +89,9 @@ type GroupFunction = (
   self: unknown,
   globalThis: unknown,
   chrome: unknown,
-  browser: unknown
+  browser: unknown,
+  /** The host's mirror line calls it per top-level declaration of the files, after they ran (`TopLevelDeclarations.kt`). */
+  mirror: (name: string, value: unknown) => void
 ) => unknown
 
 interface Boot {
@@ -158,7 +161,13 @@ declare const __zenExtBoot: Boot
     }
   }
   if (!transport) return
-  const post = transport.post
+  /** Both directions of this copy's bridge traffic, exposed on the debug stats (`BootStats.bridge`). */
+  const bridgeTraffic = { hostBound: 0, pageBound: 0 }
+  const rawPost = transport.post
+  const post = (message: string): void => {
+    bridgeTraffic.hostBound++
+    rawPost(message)
+  }
   const primordials: Primordials = transport.primordials
   const sources: Record<string, GroupFunction> = Object.assign(
     Object.create(null) as Record<string, GroupFunction>,
@@ -174,6 +183,7 @@ declare const __zenExtBoot: Boot
   /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
   let scriptRecovery: ScriptRecovery | null = null
   transport.listen((event) => {
+    bridgeTraffic.pageBound++
     let message: Record<string, unknown>
     try {
       message = primordials.parse(event.data) as Record<string, unknown>
@@ -442,6 +452,18 @@ declare const __zenExtBoot: Boot
     // What the page spells `chrome-extension://<id>/...` by hand (a frame's src, an image's, a
     // script's) loads from the served origin: the WebView has no such scheme (extensionFrameUrls.ts).
     installExtensionUrlRewrite(window)
+    // The Web Speech API's synthesis, which Chrome's documents have and the WebView's do not,
+    // over the host's speech engine (extensionSpeechSynthesis.ts; Read&Write's speech frame).
+    // Not on the MV3 worker page: a service worker's global has none in Chrome.
+    if (!(context === 'background' && workerScript))
+      installSpeechSynthesis(pageWindow as unknown as Record<string, unknown>, {
+        call: (method, args) => engine.call('speechSynthesis', method, args),
+        onEvent: (listener) =>
+          engine.onHostEvent((ns, name, args) => {
+            if (ns === 'speechSynthesis') listener(name, args)
+          }),
+        listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
+      })
 
     if (context === 'background' && workerScript) {
       // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`
@@ -623,7 +645,8 @@ declare const __zenExtBoot: Boot
         bootMs: 0,
         applied: 0,
         groups: [],
-        trustedTypes: null
+        trustedTypes: null,
+        bridge: bridgeTraffic
       }
     : null
   if (stats) {
@@ -686,8 +709,32 @@ declare const __zenExtBoot: Boot
     chrome: unknown
     browser: unknown
     isolation: IsolationMode
+    /**
+     * What a script's top-level declaration becomes once the script ran: a property of the
+     * scope's `window`, as Chrome's world has `var`, `function`, `let`, `const` and `class` at
+     * a content script's top level as globals of the world, so the next injection of the same
+     * extension (Read Aloud's `content.js`, then `js/content/html-doc.js` declaring
+     * `readAloudDoc`; a `func` probe of `typeof brapi`) finds them by their bare names. The host
+     * scans each file as it assembles the script and ends the function literal with one guarded
+     * call per name (`TopLevelDeclarations.kt`); the function literal itself keeps a file's
+     * declarations as its locals, which the bootstrap cannot see. A browser global's name is
+     * left alone: the body already wrote through the proxy's setter (`with`) or shadowed it
+     * (world), and `window.location = location` again would navigate.
+     */
+    mirror: (name: string, value: unknown) => void
   }
   const scopes = new Map<string, Scope>()
+
+  const mirrorOnto = (target: Any): ((name: string, value: unknown) => void) => {
+    return (name, value) => {
+      if (typeof name !== 'string' || builtins.has(name)) return
+      try {
+        target[name] = value
+      } catch {
+        /* a non-writable global of the page's: Chrome's world would have shadowed it; the body did */
+      }
+    }
+  }
 
   /**
    * How a content script sees the world: `world` – this very global, `chrome` lives on it;
@@ -709,7 +756,8 @@ declare const __zenExtBoot: Boot
         window: realWindow,
         chrome: realWindow.chrome,
         browser: realWindow.browser,
-        isolation
+        isolation,
+        mirror: mirrorOnto(realWindow)
       }
       scopes.set(key, scope)
       return scope
@@ -735,7 +783,8 @@ declare const __zenExtBoot: Boot
       window: root,
       chrome: engine ? engine.chrome : undefined,
       browser: engine ? (root.browser ?? engine.chrome) : undefined,
-      isolation
+      isolation,
+      mirror: mirrorOnto(root)
     }
     scopes.set(key, scope)
     return scope
@@ -760,7 +809,7 @@ declare const __zenExtBoot: Boot
     if (fn) {
       const w = scope.window
       try {
-        fn.call(w, w, w, w, scope.chrome, scope.browser)
+        fn.call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
       } catch (e) {
         error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
         primordials.error(
@@ -825,7 +874,7 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
-    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser)
+    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
   }
 
   // --- matching and scheduling -----------------------------------------------------------------

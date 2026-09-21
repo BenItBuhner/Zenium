@@ -88,12 +88,14 @@ export function BarPreview({
           <BarButton id={id} ctx={ctx} inert />
         </div>
       ))}
+      {/* The pill's stand-in is a picture of the bar's pill: the same window-family fill (§9.29). */}
       <div
         ref={(el) => {
           if (el) nodes.current.set('pill', el)
           else nodes.current.delete('pill')
         }}
-        className="absolute left-0 top-1.5 flex h-11 items-center gap-2 overflow-hidden rounded-full bg-[var(--zen-element-bg)] px-3.5"
+        className="zen-phone-pill-docked absolute left-0 top-1.5 flex h-11 items-center gap-2 overflow-hidden rounded-full px-3.5"
+        data-surface="window"
         style={{ width: 0 }}
       >
         {!url && <Search className="h-4 w-4 shrink-0 opacity-60" />}

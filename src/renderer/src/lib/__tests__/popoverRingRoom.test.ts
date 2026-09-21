@@ -10,7 +10,9 @@ import { describe, expect, it } from 'vitest'
  * rule: the list leaves the ring its room – a row in the shared popover body stands
  * `--v2-ring-room` in from each side and gives that much back from its gutter, so its text stays
  * at 16 – and a list whose first row touches the body's edge (the downloads bubble's) leaves the
- * same room above it. These tests pin the token, the rule's place and shape, and model the
+ * same room above it. The omnibox dropdown's list (`.zen-omnibox-results`, shell pass 7(b)) is
+ * the same clipped scroller under the field and is the rule's second body. These tests pin the
+ * token, the rule's place and shape, and model the
  * geometry the way a reviewer measures it (box to box, §5) as far as a DOM without layout goes;
  * the pixels are the Xvfb drive's (`harness/linux/chassis-primitives.js`).
  */
@@ -75,31 +77,34 @@ const lightBlock = bare.slice(
   bare.indexOf('\n}', bare.indexOf('--v2-page:'))
 )
 const ROOM = px(/--v2-ring-room:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
-const ROW = '.zen-bm-popover-body .zen-v2-row'
+/** The shared ring's offset from a row's edge (§1: 2 outside on rows, `--v2-ring-offset`). */
+const OFFSET = px(/--v2-ring-offset:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
+/** How far the ring paints past the row's edge: its offset and its 2 px. */
+const REACH = OFFSET + 2
+const ROW = ':is(.zen-bm-popover-body, .zen-omnibox-results) .zen-v2-row'
 
 describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', () => {
-  it('has one token for the room, in the light block only: the ring’s 2 px past the row at the shared offset 0', () => {
-    expect(ROOM).toBe(2)
+  it('has one token for the room, in the light block only: the ring’s 2 px past the row at the shared offset of 2 outside, so 4', () => {
+    expect(OFFSET).toBe(2)
+    expect(ROOM).toBe(4)
     expect(bare.match(/--v2-ring-room:/g) ?? []).toHaveLength(1)
-    // The shared ring the room is measured against: 2 px, offset 0 in light, −2 (inside) in dark.
+    // The shared ring the room is measured against: 2 px at `--v2-ring-offset`, the same in both
+    // themes (§1; the #247 chassis note took the 0 light / −2 dark split out).
     const shared = bare.indexOf("[class^='zen-v2-']:focus-visible")
     expect(shared).toBeGreaterThan(0)
     const ring = bare.slice(shared, bare.indexOf('}', shared))
     expect(ring).toMatch(/outline: 2px solid var\(--v2-ring\)/)
-    expect(ring).toMatch(/outline-offset: 0;/)
-    const dark = bare.slice(
-      bare.indexOf(":root[data-theme='dark'] [class^='zen-v2-']:focus-visible"),
-      bare.indexOf('}', bare.indexOf(":root[data-theme='dark'] [class^='zen-v2-']:focus-visible"))
-    )
-    expect(dark).toMatch(/outline-offset: -2px;/)
-    const lightReach = 0 + 2
-    const darkReach = -2 + 2
-    expect(ROOM).toBeGreaterThanOrEqual(lightReach)
-    expect(ROOM).toBeGreaterThanOrEqual(darkReach)
+    expect(ring).toMatch(/outline-offset: var\(--v2-ring-offset\);/)
+    expect(bare).not.toMatch(/:root\[data-theme='dark'\] \[class\^='zen-v2-'\]:focus-visible/)
+    expect(ROOM).toBeGreaterThanOrEqual(REACH)
   })
 
   it('is one unlayered rule beside the row primitive, tokens only: the row stands in by the room and gives it back from its gutter', () => {
-    expect(bare.match(/\.zen-bm-popover-body \.zen-v2-row \{/g) ?? []).toHaveLength(1)
+    // One rule for both bodies: no second copy of the declarations for the omnibox's list.
+    expect(
+      bare.match(/\.zen-bm-popover-body(, \.zen-omnibox-results\))? \.zen-v2-row \{/g) ?? []
+    ).toHaveLength(1)
+    expect(bare.match(/\.zen-omnibox-results\)? \.zen-v2-row \{/g) ?? []).toHaveLength(1)
     const at = ruleAt(ROW)
     expect(nesting(at)).toBe(0)
     expect(at).toBeGreaterThan(ruleAt('.zen-v2-row'))
@@ -126,10 +131,10 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
     const width = resolve(value(ROW, 'width'), ROOM)
     const gutter = resolve(value(ROW, 'padding-inline'), ROOM)
     const row = { x0: clip.x0 + inset, x1: clip.x0 + inset + width }
-    expect(row).toEqual({ x0: 3, x1: 317 })
-    // The light ring, 2 px outside the row at offset 0: its outer edge on both sides lies on or
-    // inside the clip, so both sides paint – no longer two horizontal bars.
-    const reach = 0 + 2
+    expect(row).toEqual({ x0: 5, x1: 315 })
+    // The ring, 2 px at 2 outside the row: its outer edge on both sides lies on or inside the
+    // clip, so both sides paint – no longer two horizontal bars.
+    const reach = REACH
     expect(row.x0 - reach).toBeGreaterThanOrEqual(clip.x0)
     expect(row.x1 + reach).toBeLessThanOrEqual(clip.x1)
     // Box to box (§5): the row's text starts 16 from the panel's inner edge, where the title
@@ -172,13 +177,18 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
           <div class="zen-v2-control-row" id="control-row"></div>
         </div>
       </div>
+      <div class="zen-omnibox">
+        <ul class="zen-omnibox-results"><li class="zen-v2-row zen-omnibox-row" id="omnibox-row"></li></ul>
+        <div class="zen-omnibox-footer" id="omnibox-footer"></div>
+      </div>
       <div class="zen-page-host"><button class="zen-v2-row" id="page-row"></button></div>
       <div class="zen-bm-listbox"><button class="zen-bm-option" id="option"></button></div>`
-    for (const id of ['div-row', 'li-row', 'button-row'])
+    for (const id of ['div-row', 'li-row', 'button-row', 'omnibox-row'])
       expect(document.getElementById(id)!.matches(ROW), id).toBe(true)
     // A settings page's row keeps the primitive's edge-to-edge box; a control row (blocked
-    // pop-ups' entries, whose Open button carries the ring) and a listbox option are not rows.
-    for (const id of ['page-row', 'control-row', 'option'])
+    // pop-ups' entries, whose Open button carries the ring), a listbox option and the dropdown's
+    // hint strip are not rows.
+    for (const id of ['page-row', 'control-row', 'option', 'omnibox-footer'])
       expect(document.getElementById(id)!.matches(ROW), id).toBe(false)
     document.body.innerHTML = ''
   })

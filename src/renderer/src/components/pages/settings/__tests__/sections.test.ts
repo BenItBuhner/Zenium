@@ -1263,6 +1263,7 @@ describe('the section model', () => {
       'passwords-manage',
       'passwords-checkup',
       'passwords-offer-to-save',
+      'passwords-leak-detection',
       'passwords-reauth-grace',
       'passwords-protection',
       'passwords-lock',
@@ -1375,6 +1376,27 @@ describe('the section model', () => {
     offer.onChange(false)
     expect(c.patches.at(-1)).toEqual({
       passwords: { ...DEFAULT_SETTINGS.passwords, offerToSave: false }
+    })
+
+    // ID-31's switch opens Security with a one-line label (Chrome's wraps on a phone, §9.2)
+    // over a one-sentence description; it is on by default, as Chrome's.
+    const leak = row(passwords, 'passwords-leak-detection')
+    expect(leak).toMatchObject({
+      kind: 'switch',
+      label: 'Warn about exposed passwords',
+      checked: true
+    })
+    expect(leak.description).toBe(
+      'Zenium checks passwords you sign in with against known data breaches.'
+    )
+    if (leak.kind !== 'switch') throw new Error('not a switch')
+    leak.onChange(false)
+    expect(c.patches.at(-1)).toEqual({
+      passwords: { ...DEFAULT_SETTINGS.passwords, leakDetection: false }
+    })
+    const off = state({}, { passwords: { ...DEFAULT_SETTINGS.passwords, leakDetection: false } })
+    expect(row(section('passwords', off), 'passwords-leak-detection')).toMatchObject({
+      checked: false
     })
 
     const grace = row(passwords, 'passwords-reauth-grace')
@@ -1674,7 +1696,7 @@ describe('the section model', () => {
     )
   })
 
-  it('reads the last Safety check from the state: a row per area with its glyph, the reviews as sheets of sites, Extensions leaving for its category', () => {
+  it('reads the last Safety check from the state: a row per area with its glyph, the reviews as sheets of sites, Extensions leaving for its category', async () => {
     const result: SafetyCheckResult = {
       checkedAt: Date.now() - 60_000,
       updates: {
@@ -1780,8 +1802,50 @@ describe('the section model', () => {
     expect(invoke).toHaveBeenCalledWith('updates.download', undefined)
     const passwords = row(privacy, 'safety-check:passwords')
     if (passwords.kind !== 'action') throw new Error('not an action')
+    expect(passwords.description).toBe('3 passwords not checked yet')
+    // Nothing compromised: the description stays at 69% (no tone on the row).
+    expect(passwords.tone).toBeUndefined()
     passwords.onPress?.()
     expect(invoke).toHaveBeenCalledWith('passwords.checkupRun', undefined)
+
+    // The row reads the device's checkup summary (PS-20 / ID-19): the counts' sentence dated by
+    // the last run, and, while any login is compromised, Review leaving for the manager's
+    // checkup view in place of running the checkup again.
+    const compromised = section(
+      'privacy',
+      state({
+        lastSafetyCheck: {
+          ...result,
+          passwords: {
+            state: 'warning',
+            summary: '2 compromised passwords found; change them now',
+            compromised: 2,
+            weak: 1,
+            reused: 0,
+            known: true,
+            checkedAt: Date.now() - 3 * 3_600_000
+          }
+        },
+        passwords: { ...emptyPasswordsStatus(), locked: false, count: 3 }
+      } as Partial<UIState>)
+    )
+    const review = row(compromised, 'safety-check:passwords')
+    // The description is the status sentence, so the row carries the warning tone and the
+    // description takes the glyph's ink (§9.33; `data-tone` on the row, pr-261).
+    expect(review).toMatchObject({
+      kind: 'action',
+      label: 'Passwords',
+      description: '2 compromised passwords found; change them now · Last checked 3 h ago',
+      tone: 'warn',
+      leaves: 'chevron'
+    })
+    if (review.kind !== 'action') throw new Error('not an action')
+    invoke.mockClear()
+    review.onPress?.()
+    expect(invoke).not.toHaveBeenCalledWith('passwords.checkupRun', undefined)
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('passwords'))
+    expect(uiStore.get().overlaySection).toBe('checkup')
+    uiStore.set({ overlay: 'none', overlaySection: null })
 
     // The permissions review lists every site holding a permission, the flagged one first with
     // why; a site's row resets it after a confirmation and the check runs again.

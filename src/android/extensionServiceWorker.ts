@@ -707,6 +707,68 @@ interface WorkerOptions {
 }
 
 /**
+ * The interfaces a worker's global is an instance of, on the worker page: `WorkerGlobalScope`
+ * and `ServiceWorkerGlobalScope` (Chrome's chain: `ServiceWorkerGlobalScope` → `WorkerGlobalScope`
+ * → `EventTarget`), neither constructible (`Illegal constructor`, as the real ones). The page's
+ * `self` is a proxy over a Window whose prototype chain holds neither, so each constructor
+ * answers `instanceof` itself: true for the worker's global – the page's `self` / `globalThis`
+ * (the proxy) or the page window – false for anything else. Google Dictionary's worker guards
+ * its `importScripts('mustache.js')` with `typeof WorkerGlobalScope !== 'undefined' && self
+ * instanceof WorkerGlobalScope`, a Closure library's test for a worker; without the interfaces
+ * the guard read false, the template renderer never loaded and every lookup ended in
+ * `ReferenceError: Mustache is not defined`. Distinct from `typeof window`, which stays the
+ * page's (round 4, settled): only what a script reaches through `self` / `globalThis` is a worker's.
+ *
+ * With them the two interfaces a worker's `navigator` and `location` are instances of,
+ * `WorkerNavigator` and `WorkerLocation` (Chrome's worker has no `Navigator` or `Location`;
+ * the page's are what the worker page reaches, so each answers `instanceof` for that one
+ * object). Read&Write's worker routes a message to its handlers only `typeof WorkerGlobalScope
+ * !== 'undefined' && typeof importScripts === 'function' && navigator instanceof
+ * WorkerNavigator` (a bundled worker test); once `WorkerGlobalScope` existed the third clause
+ * threw `ReferenceError: WorkerNavigator is not defined` on every message and the toolbar's
+ * chain (worker, offscreen document, speech frame) never completed.
+ */
+export function installWorkerScopeInterfaces(target: Any): void {
+  const isWorkerGlobal = (value: unknown): boolean =>
+    value === target ||
+    value === Reflect.get(target, 'self') ||
+    value === Reflect.get(target, 'globalThis')
+  const scope = function WorkerGlobalScope(): never {
+    throw new TypeError('Illegal constructor')
+  }
+  Object.setPrototypeOf(scope.prototype, EventTarget.prototype)
+  Object.defineProperty(scope, Symbol.hasInstance, { value: isWorkerGlobal, configurable: true })
+  const serviceScope = function ServiceWorkerGlobalScope(): never {
+    throw new TypeError('Illegal constructor')
+  }
+  Object.setPrototypeOf(serviceScope.prototype, scope.prototype)
+  Object.setPrototypeOf(serviceScope, scope)
+  Object.defineProperty(serviceScope, Symbol.hasInstance, {
+    value: isWorkerGlobal,
+    configurable: true
+  })
+  const oneOf = (name: string, key: 'navigator' | 'location'): (() => never) => {
+    const ctor = {
+      [name]: function (): never {
+        throw new TypeError('Illegal constructor')
+      }
+    }[name] as () => never
+    Object.defineProperty(ctor, Symbol.hasInstance, {
+      value: (value: unknown): boolean =>
+        value !== undefined && value !== null && value === Reflect.get(target, key),
+      configurable: true
+    })
+    return ctor
+  }
+  define(target, {
+    WorkerGlobalScope: scope,
+    ServiceWorkerGlobalScope: serviceScope,
+    WorkerNavigator: oneOf('WorkerNavigator', 'navigator'),
+    WorkerLocation: oneOf('WorkerLocation', 'location')
+  })
+}
+
+/**
  * The worker page's side: `self.clients`, `self.registration`, `self.serviceWorker`,
  * `skipWaiting`, and the `message` events clients raise (`self.onmessage` in a classic script's
  * global scope). Returns the receiver for `{ t: 'sw' }` messages and the lifecycle runner.
@@ -788,6 +850,7 @@ export function installServiceWorkerGlobals(
     confirm: undefined,
     prompt: undefined
   })
+  installWorkerScopeInterfaces(target)
 
   const receive = (message: Record<string, unknown>): void => {
     switch (message.op) {

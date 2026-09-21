@@ -25,8 +25,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * each site its own host – and `0.0.0.0` listens on every interface, for a demo whose site must
  * NOT be the loopback (an insecure origin: the device's own network address, [siteAddress]). A
  * path in `delays` answers that many milliseconds late: a slow script or image, for a page that
- * takes its time to load. A path in `cuts` is a file whose server drops the connection ([Cut]):
- * what the downloads demos need from the runner's Node server, served from the device instead.
+ * takes its time to load. A path in `redirects` answers `303 See Other` to the location it maps
+ * to, whatever the method: a sign-in form's POST landing on its welcome page the way a real
+ * site's does (a request body is read to its `Content-Length` first, so the connection closes
+ * cleanly). A path in `cuts` is a file whose server drops the connection ([Cut]): what the
+ * downloads demos need from the runner's Node server, served from the device instead.
  */
 class DemoServer(
     private val port: Int,
@@ -34,6 +37,7 @@ class DemoServer(
     private val address: String = "127.0.0.1",
     private val delays: Map<String, Long> = emptyMap(),
     private val cacheable: Set<String> = emptySet(),
+    private val redirects: Map<String, String> = emptyMap(),
     private val cuts: Map<String, Cut> = emptyMap()
 ) : Thread("demo-server-$address-$port") {
     /**
@@ -102,14 +106,36 @@ class DemoServer(
             val request = it.getInputStream().bufferedReader()
             val line = request.readLine() ?: return
             var range: String? = null
+            var contentLength = 0
             while (true) {
                 val header = request.readLine()
                 if (header.isNullOrEmpty()) break
                 if (header.startsWith("Range:", ignoreCase = true)) range = header.substringAfter(':').trim()
+                if (header.startsWith("Content-Length:", ignoreCase = true)) {
+                    contentLength = header.substringAfter(':').trim().toIntOrNull() ?: 0
+                }
+            }
+            // A body left unread when the socket closes goes back as a reset, which the WebView
+            // reports over the response it already has: read it (a form's fields) and drop it.
+            var unread = contentLength
+            val scratch = CharArray(4096)
+            while (unread > 0) {
+                val n = request.read(scratch, 0, minOf(unread, scratch.size))
+                if (n < 0) break
+                unread -= n
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
             delays[path]?.let { Thread.sleep(it) }
+            val out = it.getOutputStream()
+            redirects[path]?.let { location ->
+                out.write(
+                    ("HTTP/1.1 303 See Other\r\nLocation: $location\r\nContent-Length: 0\r\n" +
+                        "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray()
+                )
+                out.flush()
+                return
+            }
             val route = routes[path]
             val (type, body) = route ?: ("text/plain; charset=utf-8" to "no such page: $path\n".toByteArray())
             // A media element fetches its file in byte ranges (the header, then the part it plays,
@@ -127,7 +153,6 @@ class DemoServer(
                 Log.i("DemoServer", "$path: response $n of ${c.responses} dies ${if (part == null) "after ${c.at} bytes" else "after its headers"}")
                 if (part == null) c.at else 0
             }
-            val out = it.getOutputStream()
             val head = StringBuilder()
             if (part != null) {
                 val (from, to) = part

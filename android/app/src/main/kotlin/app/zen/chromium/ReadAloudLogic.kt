@@ -95,6 +95,21 @@ object ReadAloudLogic {
     fun speechRate(rate: Double): Float =
         if (rate.isNaN() || rate.isInfinite()) 1f else rate.coerceIn(MIN_RATE, MAX_RATE).toFloat()
 
+    /**
+     * The pitch the engine is set to for `chrome.tts`'s (0–2, 1 the voice's own; read aloud
+     * sends none): `setPitch` refuses anything at or under 0, so the floor is just above it; 1
+     * for anything that is not a number.
+     */
+    fun speechPitch(pitch: Double): Float =
+        if (pitch.isNaN() || pitch.isInfinite()) 1f else pitch.coerceIn(MIN_PITCH, MAX_PITCH).toFloat()
+
+    /** The utterance's volume for `KEY_PARAM_VOLUME` (0–1, 1 full; read aloud sends none): 1 for anything that is not a number. */
+    fun speechVolume(volume: Double): Float =
+        if (volume.isNaN() || volume.isInfinite()) 1f else volume.coerceIn(0.0, 1.0).toFloat()
+
+    const val MIN_PITCH = 0.1
+    const val MAX_PITCH = 2.0
+
     /** An utterance longer than the engine takes (`getMaxSpeechInputLength`) is cut there rather than refused. */
     fun clip(text: String, max: Int): String = if (max > 0 && text.length > max) text.substring(0, max) else text
 
@@ -110,10 +125,11 @@ object ReadAloudLogic {
 
     /**
      * What an utterance is handed to the engine with – the voice (`voiceId`, else the language's
-     * default), the language and the engine's rate ([speechRate]) – remembered per utterance, so
-     * a `speak` for one the engine already has can tell whether the core changed its mind.
+     * default), the language, the engine's rate ([speechRate]) and, for `chrome.tts`, its pitch
+     * ([speechPitch]) and volume ([speechVolume]) – remembered per utterance, so a `speak` for
+     * one the engine already has can tell whether the core changed its mind.
      */
-    data class Options(val voiceId: String?, val lang: String, val rate: Float)
+    data class Options(val voiceId: String?, val lang: String, val rate: Float, val pitch: Float = 1f, val volume: Float = 1f)
 
     /**
      * The one-utterance queue's rule. The core speaks one sentence per utterance: `speak`
@@ -170,6 +186,27 @@ object ReadAloudLogic {
 
     fun errorEvent(utteranceId: String, message: String): JSONObject =
         json("utteranceId" to utteranceId, "type" to "error", "message" to message)
+
+    /**
+     * An utterance the engine dropped before its end – replaced by another speaker's `speak`
+     * (`QUEUE_FLUSH`), or cut by a `stop` – as `SpeechHostEvent` spells it: an `error` whose
+     * message is `interrupted` (`SPEECH_INTERRUPTED`, `src/core/platform.ts`; the desktop's
+     * speech host reports the same). Read aloud and `chrome.tts` share the engine, so each
+     * hears of what the other took from it; the one who asked for the stop or the flush knows
+     * and drops the report about its own utterance.
+     */
+    fun interruptedEvent(utteranceId: String): JSONObject = errorEvent(utteranceId, INTERRUPTED)
+
+    const val INTERRUPTED = "interrupted"
+
+    /**
+     * Which utterances a `speak` with [plan] takes from the engine: on a FLUSH, the current one
+     * and everything queued behind it, except the utterance being (re)spoken itself (a restart
+     * with new options is not an interruption); nothing on an ADD or an IGNORE.
+     */
+    fun dropped(plan: SpeakPlan, utteranceId: String, current: String?, queued: Collection<String>): List<String> =
+        if (plan != SpeakPlan.FLUSH) emptyList()
+        else (listOfNotNull(current) + queued).filter { it != utteranceId }
 
     /** `TextToSpeech.ERROR_*` by the name `speech.event` carries; codes newer than this list read as `unknown`. */
     fun errorName(code: Int): String = when (code) {

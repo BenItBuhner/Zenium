@@ -154,6 +154,15 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      */
     val reauth = Reauth(activity) { ok -> onPromptAnswered(ok) }
     val vault = VaultKeystore(activity, reauth, io, main)
+    /**
+     * Test hook, debug builds only: where every core fetch goes instead of its own origin
+     * (`net.fetch`: the checkup's range queries, search suggestions, filter lists), the path and
+     * query kept and the meant origin in an `x-zen-origin` header ([NetOrigin]) – the desktop's
+     * `ZEN_NET_ORIGIN`, so a demo driver's page server answers deterministically (a fixture
+     * sign-in judged against a stand-in range API, never the real one). Null in every normal run;
+     * a release build never reads it. An instrumentation driver sets it on the activity's host.
+     */
+    @Volatile var netOriginOverride: String? = null
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
     /** Home-screen shortcuts; the launcher's confirmations reach it through `ShortcutPinnedReceiver`. */
@@ -735,7 +744,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * Keep a WebView alive without showing it (extension background pages). It sits behind the
      * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
-     * renderer and gets background timer throttling, which a background page must not.
+     * renderer and gets background timer throttling, which a background page must not. The view
+     * itself records no draw (`ExtensionWebView.onDraw`), so it costs the chrome's frames nothing.
      */
     fun attachHidden(view: View) {
         root.addView(view, 0, FrameLayout.LayoutParams(1, 1))
@@ -1223,11 +1233,13 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             val result = runCatching {
                 val timeout = if (timeoutMs > 0) timeoutMs else 2500
                 val cap = if (maxBytes > 0) maxBytes else BootHandoff.NET_BODY_LIMIT
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                val redirected = NetOrigin.redirect(url, if (BuildConfig.DEBUG) netOriginOverride else null)
+                val conn = (URL(redirected.url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeout
                     readTimeout = timeout
                     requestMethod = if (method == "POST") "POST" else "GET"
                     for (key in headers.keys()) setRequestProperty(key, headers.str(key))
+                    redirected.origin?.let { setRequestProperty("x-zen-origin", it) }
                     if (method == "POST") {
                         doOutput = true
                         outputStream.use { it.write((requestBody ?: "").toByteArray()) }

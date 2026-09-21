@@ -365,6 +365,7 @@ function DesktopRowView({
           row={row}
           caption={caption}
           description={row.description}
+          leading={row.leading}
           destructive={row.destructive}
           busy={row.busy}
           haspopup={row.confirm || row.form ? 'dialog' : undefined}

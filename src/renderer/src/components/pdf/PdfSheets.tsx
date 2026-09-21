@@ -402,7 +402,7 @@ export function PdfPasswordSheet({
             <p
               id={errorId}
               role="alert"
-              className="flex items-start gap-2 text-[13px] leading-5 text-[var(--v2-danger)]"
+              className="flex items-start gap-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-danger)]"
             >
               <CircleAlert
                 className="mt-0.5 h-4 w-4 shrink-0 [stroke-width:var(--v2-icon-stroke)]"

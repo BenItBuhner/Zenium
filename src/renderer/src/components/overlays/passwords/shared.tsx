@@ -5,28 +5,16 @@ import type {
   JSX,
   ReactNode,
   Ref,
-  RefObject,
   TextareaHTMLAttributes
 } from 'react'
-import { useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, CircleAlert, ExternalLink, Search } from 'lucide-react'
-import type { Rect } from '@shared/types'
+import { useId, useImperativeHandle, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, CircleAlert, ExternalLink, Search } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
-import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
-import {
-  ChromePortal,
-  FrameDialogPortal,
-  POPOVER_WIDTH,
-  placePopover,
-  popoverStyle,
-  toRect,
-  useAnchorRect,
-  useFrameDialog,
-  useLightDismiss,
-  viewportSize
-} from '@renderer/lib/portals'
+import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
+import { MenulistPopover } from '../../menus/MenulistPopover'
 import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
 import { usePhone } from './lib'
 
@@ -35,7 +23,7 @@ import { usePhone } from './lib'
  * language v2 draft §9.34 – `.zen-v2-button`, `.zen-v2-icon-button`, `.zen-v2-field`,
  * `.zen-v2-row`, `.zen-v2-checkbox`, `.zen-v2-radio`, `.zen-v2-switch`, `.zen-v2-menulist`,
  * `.zen-v2-heading`, `.zen-v2-badge`; the form field, the title block, the dialog and the
- * menulist popup of extensions.css; the sheet chassis of main.css). They add behaviour – roles,
+ * menulist popup of main.css; the sheet chassis of main.css). They add behaviour – roles,
  * `aria-*`, the busy state, the keyboard – and carry no styling of their own; what is this
  * surface's (the rows' bleed, the controls inside them, the site tile, the status glyph, the
  * secret) is a `zen-v2-pw-*` modifier in passwords.css. Sizes come from the `--v2-*` density
@@ -175,7 +163,8 @@ export function Field({
 }: {
   id: string
   label: string
-  description?: string
+  /** Text, or a node when the text needs a class (a live count in `tabular-nums`, §4). */
+  description?: ReactNode
   error?: string | null
   actions?: ReactNode
   className?: string
@@ -230,21 +219,22 @@ interface MenulistOption<T extends string> {
 
 /**
  * The menulist (§6, §9.13): main.css's `.zen-v2-menulist` trigger, a field with a chevron. On the
- * desktop its list is a popover in the chrome layer (`ChromePortal`, lib/portals.tsx) placed by
- * `placePopover` (§9.20): flush under the trigger, its start edge on the trigger's – or its end
- * edge, when the trigger sits in the trailing half of its row – kept 8 px inside the window, 320
- * wide (a list without trailing controls, never fitted to its options or the window), at most
- * 60 % of the window tall before it scrolls. The layer's light dismiss closes it (a press
- * anywhere outside is consumed, the trigger's own press closes without reopening, a scroll, a
- * resize or another popover opening closes it too). On a phone it is never a popover: the list
- * is a picker sheet on the shared `BottomSheet` in the frame's dialog host – 44 px rows with a
- * radio glyph on the current option, picking one closes it – the top of a depth-two stack over
- * the manager's page (§9.24); a menulist whose row has a `description` makes it the sheet's
- * title block (§9.13). Either way the open list is the topmost surface and takes the keyboard
- * (§9.22): focus lands on the current option, arrows move, Enter or Space picks, Escape and the
- * system back close it and hand focus back to the trigger, and nothing under it hears the key
- * – the popover through `usePopover`, the sheet through its chassis. On a phone settings view
- * the trigger itself is not drawn (§10.4): `ChoiceRow` opens the same sheet from a value row.
+ * desktop its list is the shared `MenulistPopover` (components/menus): a `--v2-panel` popover in
+ * the chrome layer flush under the trigger – its start edge on the trigger's, or its end edge
+ * when the trigger sits in the trailing half of its column (§9.20) – kept 8 px inside the
+ * window, as wide as the trigger at least and as its longest option at most (§9.13), at most
+ * 60 % of the window tall before it scrolls, flipped above near the bottom. The layer's light
+ * dismiss closes it (a press anywhere outside is consumed, the trigger's own press closes without
+ * reopening, a scroll, a resize or another popover opening closes it too). On a phone it is never
+ * a popover: the list is a picker sheet on the shared `BottomSheet` in the frame's dialog host –
+ * 44 px rows with a radio glyph on the current option, picking one closes it – the top of a
+ * depth-two stack over the manager's page (§9.24); a menulist whose row has a `description` makes
+ * it the sheet's title block (§9.13). Either way the open list is the topmost surface and takes
+ * the keyboard (§9.22): focus lands on the current option, arrows move, letters type ahead,
+ * Enter or Space picks, Escape and the system back close it and hand focus back to the trigger,
+ * and nothing under it hears the key – the popover through `usePopover`, the sheet through its
+ * chassis. On a phone settings view the trigger itself is not drawn (§10.4): `ChoiceRow` opens
+ * the same sheet from a value row.
  */
 export function Menulist<T extends string>({
   value,
@@ -269,13 +259,14 @@ export function Menulist<T extends string>({
   className?: string
 }): JSX.Element {
   const phone = usePhone()
-  const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
+  // Open: the trigger's box as the list's anchor on the desktop, a flag for the phone's sheet.
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
+  const open = anchor !== null
   const listId = useId()
   // One surface name per instance: with a shared name, the first menulist on the view would
   // claim the back gesture for a list that is not its own.
   const surface = `passwords-menu-${listId}`
-  const close = (): void => setOpen(false)
+  const close = (): void => setAnchor(null)
   const current = options.find((o) => o.value === value)
   const list = {
     id: listId,
@@ -290,7 +281,6 @@ export function Menulist<T extends string>({
   return (
     <>
       <button
-        ref={trigger}
         type="button"
         role="combobox"
         aria-label={label}
@@ -303,18 +293,35 @@ export function Menulist<T extends string>({
           title ? 'zen-v2-pw-menulist-title' : 'zen-v2-pw-menulist-inline',
           className
         )}
-        onClick={() => setOpen((o) => !o)}
+        onClick={(e) => setAnchor(open ? null : anchorOf(e.currentTarget))}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
           e.preventDefault()
-          setOpen(true)
+          if (!open) setAnchor(anchorOf(e.currentTarget))
         }}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
         <ChevronDown aria-hidden />
       </button>
-      {open &&
-        (phone ? <MenulistSheet {...list} /> : <MenulistPopover {...list} anchor={trigger} />)}
+      {anchor &&
+        (phone ? (
+          <MenulistSheet {...list} />
+        ) : (
+          <MenulistPopover
+            id={listId}
+            anchor={anchor}
+            label={label}
+            value={value}
+            options={options}
+            surface={surface}
+            className="zen-v2-pw"
+            onPick={(next) => {
+              close()
+              onChange(next)
+            }}
+            onClose={close}
+          />
+        ))}
     </>
   )
 }
@@ -332,88 +339,6 @@ interface OpenList<T extends string> {
   onPick: (value: T) => void
   /** The list is gone (a pick, Escape, the back gesture, a dismiss); unmount it. */
   onClose: () => void
-}
-
-/**
- * The open desktop list: a listbox in the chrome layer on the shared panel and popup classes
- * (`.zen-v2-panel`, `.zen-v2-menulist-popup`, `.zen-v2-menulist-option` in extensions.css),
- * hanging under its trigger. The keyboard is `usePopover`'s (focus on the current option, Tab
- * wraps, Escape closes and returns focus to the trigger) and `useArrowKeys`'.
- */
-function MenulistPopover<T extends string>({
-  id,
-  label,
-  surface,
-  anchor,
-  options,
-  value,
-  onPick,
-  onClose
-}: OpenList<T> & { anchor: RefObject<HTMLButtonElement | null> }): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const anchorRect = useAnchorRect(anchor)
-  // A menulist's list sizes to its rows (§9.20): its height is measured once, laid out but not
-  // yet shown, so `placePopover` keeps a list that fits below the trigger there.
-  const [height, setHeight] = useState<number | null>(null)
-  useLayoutEffect(() => {
-    if (height === null && ref.current) setHeight(ref.current.offsetHeight)
-  }, [height])
-  // The fixed 320 of §9.20: a list without trailing controls, never fitted.
-  const width = POPOVER_WIDTH.list
-  const box =
-    anchorRect && height !== null
-      ? placePopover(
-          anchorRect,
-          menulistBar(anchor.current, anchorRect),
-          viewportSize(),
-          width,
-          height
-        )
-      : null
-  usePopover(ref, {
-    onClose,
-    active: box !== null,
-    initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]'),
-    returnTo: anchor
-  })
-  useArrowKeys(ref, '.zen-v2-menulist-option')
-  useLightDismiss(ref, onClose, { anchor })
-  useBackSurface({ name: surface, onCommit: onClose })
-  const pick = (next: T): void => {
-    onPick(next)
-    onClose()
-  }
-  return (
-    <ChromePortal>
-      <div
-        ref={ref}
-        id={id}
-        role="listbox"
-        aria-label={label}
-        className="zen-v2-pw zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
-        data-side={box?.side}
-        // Until its rows and the anchor have been measured it is laid out but not shown.
-        style={box ? popoverStyle(box) : { visibility: 'hidden', width }}
-      >
-        {options.map((o) => {
-          const selected = o.value === value
-          return (
-            <button
-              key={o.value}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              className="zen-v2-menulist-option"
-              onClick={() => pick(o.value)}
-            >
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-              {selected && <Check />}
-            </button>
-          )
-        })}
-      </div>
-    </ChromePortal>
-  )
 }
 
 /**
@@ -640,18 +565,6 @@ function HostedPromptSheet({
       </BottomSheet>
     </div>
   )
-}
-
-/**
- * The bar a menulist hangs from, for `placePopover`: horizontally the row or header it sits in
- * – its end edge aligns when the trigger is in that row's trailing half (§9.20) – and vertically
- * the trigger itself, so the list is flush under the control at gap 0, not under the row's padding.
- */
-function menulistBar(trigger: HTMLElement | null, anchor: Rect): Rect {
-  const row = trigger?.closest('.zen-v2-row, .zen-v2-pw-header-row') ?? trigger?.parentElement
-  if (!row) return anchor
-  const r = toRect(row.getBoundingClientRect())
-  return { x: r.x, width: r.width, y: anchor.y, height: anchor.height }
 }
 
 /** A list of rows: the shared rows bleeding 16 into the gutter, so their text sits on it (passwords.css). */
