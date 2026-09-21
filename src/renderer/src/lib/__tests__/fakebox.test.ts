@@ -468,7 +468,11 @@ describe('the well (main.css): the words on the handover alone', () => {
  */
 describe('the layout the morph measures (main.css): no transition under reduced motion', () => {
   const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
-  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'))
+  const reduced = css.slice(
+    css.indexOf(
+      '@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'
+    )
+  )
   const rule = (selector: string): string => {
     const at = reduced.indexOf(`${selector} {`)
     expect(at, `a reduced-motion rule for ${selector}`).toBeGreaterThan(-1)
@@ -476,15 +480,23 @@ describe('the layout the morph measures (main.css): no transition under reduced 
   }
 
   it('the content column, the bar clip and the bar cut to the new dock', () => {
-    expect(rule(":root[data-form-factor='phone'] .zen-content-column")).toContain('transition-property: none !important')
-    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar-clip")).toContain('transition-property: none !important')
-    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar")).toContain('transition-property: opacity !important')
+    expect(rule(":root[data-form-factor='phone'] .zen-content-column")).toContain(
+      'transition-property: none !important'
+    )
+    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar-clip")).toContain(
+      'transition-property: none !important'
+    )
+    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar")).toContain(
+      'transition-property: opacity !important'
+    )
   })
 
   it('the bar’s opacity rule after the value’s jump still transitions, and is the one written before the bar’s own', () => {
     // The morph's fade of the bar over the opening (`transition: opacity 120ms`) must come before
     // the bar's rule at equal specificity, so `opacity` is what both leave as the property.
-    const fade = reduced.indexOf(":root[data-fakebox='opening'] .zen-phone-bar, :root[data-fakebox='opening'] .zen-ntp-fades")
+    const fade = reduced.indexOf(
+      ":root[data-fakebox='opening'] .zen-phone-bar, :root[data-fakebox='opening'] .zen-ntp-fades"
+    )
     const bar = reduced.indexOf(":root[data-form-factor='phone'] .zen-phone-bar {")
     expect(fade).toBeGreaterThan(-1)
     expect(bar).toBeGreaterThan(fade)
@@ -504,18 +516,25 @@ describe('the layout the morph measures (main.css): no transition under reduced 
  */
 describe('the page under the omnibox (main.css): its visibility cuts under reduced motion', () => {
   const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
-  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'))
+  const reduced = css.slice(
+    css.indexOf(
+      '@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'
+    )
+  )
   const rule = (from: string, selector: string): string => {
     const at = from.indexOf(`${selector} {`)
     expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
     return from.slice(at, from.indexOf('}', at))
   }
-  const page = ":root[data-form-factor='phone'] .zen-ntp, :root[data-form-factor='phone'] .zen-ntp *"
+  const page =
+    ":root[data-form-factor='phone'] .zen-ntp, :root[data-form-factor='phone'] .zen-ntp *"
   const fades = ":root[data-form-factor='phone'] .zen-ntp-fades"
 
   it('the page and everything in it transition nothing', () => {
     // The property that made the rule necessary: the page waits under the omnibox unpainted.
-    expect(rule(css, ":root[data-form-factor='phone'] .zen-ntp[data-hidden]")).toContain('visibility: hidden')
+    expect(rule(css, ":root[data-form-factor='phone'] .zen-ntp[data-hidden]")).toContain(
+      'visibility: hidden'
+    )
     expect(rule(reduced, page)).toContain('transition-property: none !important')
   })
 
