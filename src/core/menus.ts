@@ -856,23 +856,25 @@ export class Menus {
         run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    // Listen to a selection (EDGE-11 / GN-13). Hosts with a speech host; any page, since a
-    // selection is text to read whether or not the page is an article. Worded "Listen", the
-    // app menu's own verb ("Listen to This Page"), so that beside the system's process-text
-    // item ("Read aloud", Google's, which stays) the pair reads as two things (the lead, #240).
-    // The phone's item, on both of its surfaces, reads the selection alone (Chrome's behaviour,
-    // as W3-7 built it); the desktop's right-click item reads on from the selection to the
-    // document's end (Edge's "Read aloud selection", the model's `selection-on` of #257), since
-    // a mouse selection is mostly a place to start from. Both dock the shared player.
+    // Listen from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection-on' }`,
+    // the core's model takes the selection from the page, reads it first and then reads on
+    // through the rest of the document after it – the main content when the page is readerable
+    // (Edge's "Read aloud from here"; Chrome reads the selection alone, and stopping at the
+    // selection's end left a mid-article start with nothing to follow). Hosts with a speech
+    // host; any page, since a selection is text to read whether or not the page is an article.
+    // The phone's item, on both of its surfaces, and the desktop's right-click item (#265) read
+    // on the same way, since a selection is mostly a place to start from; both dock the shared
+    // player, which shows where the reading is. Worded "Listen", the app menu's own verb
+    // ("Listen to This Page"), so that beside the system's process-text item ("Read aloud",
+    // Google's, which stays) the pair reads as two things (the lead, #240).
     if (this.browser.readAloud.available) {
-      const from = win.formFactor === 'phone' ? 'selection' : 'selection-on'
       actions.push({
         id: 'readAloud',
         label: 'Listen',
         title: 'Listen',
         menu: true,
         toolbar: true,
-        run: () => void this.browser.readAloud.start({ tabId: tab.id, from })
+        run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection-on' })
       })
     }
     return actions
