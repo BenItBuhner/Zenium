@@ -138,6 +138,45 @@ describe('createPreviewDownloads: the downloader retrying its own network failur
     })
   })
 
+  it("Resume of a transfer interrupted for good runs on from the partial the stand-in parked, at the spec's speed; Retry writes over it from zero", () => {
+    const s = stage()
+    start(s, spec({ error: 'network-disconnected', retrying: 5, bytesPerSecond: 200 }))
+    vi.advanceTimersByTime(2000 + 4000 + 8000)
+    const done = s.events.find((e) => e.name === 'download.done')
+    expect(done?.payload).toMatchObject({ state: 'interrupted', receivedBytes: 400 })
+    const savePath = String(done?.payload['savePath'])
+    expect(savePath).toBe('/storage/emulated/0/Download/firmware.bin.zeniumdownload')
+
+    // The core describes the record it hands back – its paths, not its bytes – as Kotlin gets it.
+    s.handlers['download.resume']({
+      id: 'd1',
+      savePath,
+      filename: 'firmware.bin',
+      url: spec({}).url
+    })
+    const restarted = s.events.at(-1)
+    expect(restarted?.payload).toMatchObject({ resumes: 'd1', savePath, canResume: true })
+    s.handlers['download.bind']({ token: String(restarted?.payload['token']), id: 'd1' })
+    const settled = s.events.filter((e) => e.name === 'download.progress').at(-1)
+    expect(settled?.payload).toMatchObject({ state: 'progressing', receivedBytes: 400 })
+    // 600 bytes left at the spec's 200 B/s: three seconds, not the default speed from zero.
+    vi.advanceTimersByTime(3000)
+    const finished = s.events.filter((e) => e.name === 'download.done').at(-1)
+    expect(finished?.payload).toMatchObject({ state: 'completed', receivedBytes: 1000 })
+
+    start(s, spec({ filename: 'over.bin', receivedBytes: 300, error: 'server-failed' }), 'd2')
+    const over = s.events.at(-1)
+    expect(over?.payload).toMatchObject({
+      state: 'interrupted',
+      canResume: true,
+      receivedBytes: 300
+    })
+    s.handlers['download.retry']({ id: 'd2', savePath: String(over?.payload['savePath']) })
+    s.handlers['download.bind']({ token: String(s.events.at(-1)?.payload['token']), id: 'd2' })
+    const fresh = s.events.filter((e) => e.name === 'download.progress').at(-1)
+    expect(fresh?.payload).toMatchObject({ state: 'progressing', receivedBytes: 0 })
+  })
+
   it('Resume during the countdown drops the attempt waiting and plays the transfer on from its bytes', () => {
     const s = stage()
     start(s, spec({ error: 'network-timeout', retrying: 3 }))

@@ -53,6 +53,13 @@ export function createPreviewDownloads(
   const playing = new Map<string, Playing>()
   /** Final paths of finished files that are gone again: deleted, or never there (`deleted`). */
   const gone = new Set<string>()
+  /**
+   * The stand-in's disk: the partial files of transfers interrupted with something to resume, by
+   * their `.zeniumdownload` path – what `Downloads.kt` finds on disk when the core hands a record
+   * back to resume (the core describes the record, not its bytes) – with the spec that was
+   * playing, so the resumed transfer runs on from those bytes at its speed.
+   */
+  const parked = new Map<string, { spec: PreviewDownloadSpec; received: number }>()
   let sequence = 0
 
   const emit = (name: string, payload: Record<string, unknown>): void =>
@@ -97,6 +104,7 @@ export function createPreviewDownloads(
     const canResume =
       state === 'interrupted' && ((error ?? '').startsWith('network-') || p.received > 0)
     const keepFile = state === 'completed' || canResume
+    if (canResume) parked.set(partialPath(p), { spec: p.spec, received: p.received })
     emit('download.done', {
       token: p.token,
       state,
@@ -234,25 +242,31 @@ export function createPreviewDownloads(
       stop(previous)
       playing.delete(previous.token)
     }
-    const spec: PreviewDownloadSpec = previous?.spec ?? {
-      filename: String(args['finalName'] || args['filename'] || 'download'),
-      url: String(args['url'] ?? ''),
-      mimeType: String(args['mimeType'] ?? 'application/octet-stream'),
-      totalBytes: Number(args['totalBytes']) || 0,
-      receivedBytes: 0,
-      bytesPerSecond: 2_400_000,
-      paused: false,
-      error: null,
-      deleted: false,
-      private: args['private'] === true,
-      sourceTabId: null,
-      navigation: false
-    }
+    // A record interrupted for good is no longer playing: its partial file is what is left of
+    // it, found by the path the core describes, and picked up (Resume) or written over (Retry).
+    const savePath = typeof args['savePath'] === 'string' ? args['savePath'] : ''
+    const partial = parked.get(savePath)
+    parked.delete(savePath)
+    const spec: PreviewDownloadSpec = previous?.spec ??
+      partial?.spec ?? {
+        filename: String(args['finalName'] || args['filename'] || 'download'),
+        url: String(args['url'] ?? ''),
+        mimeType: String(args['mimeType'] ?? 'application/octet-stream'),
+        totalBytes: Number(args['totalBytes']) || 0,
+        receivedBytes: 0,
+        bytesPerSecond: 2_400_000,
+        paused: false,
+        error: null,
+        deleted: false,
+        private: args['private'] === true,
+        sourceTabId: null,
+        navigation: false
+      }
     // The transfer the spec had failing, pausing or losing its file has done that once; it runs
     // on from here (a Resume during the countdown drops the attempt waiting: `stop` above), and
     // the file it writes is there again.
     const running = { ...spec, paused: false, error: null, retrying: 0, deleted: false }
-    const received = fromScratch ? 0 : (previous?.received ?? 0)
+    const received = fromScratch ? 0 : (previous?.received ?? partial?.received ?? 0)
     gone.delete(`${downloadsDir}/${spec.filename}`)
     announce(running, id, received)
   }
