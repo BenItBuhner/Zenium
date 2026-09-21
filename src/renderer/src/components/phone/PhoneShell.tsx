@@ -442,8 +442,8 @@ export function PhoneBar({
         <div
           className={cn(
             'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
-            pillLook === 'docked' &&
-              'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
+            // The resting pill's fill and pressed fill are the window family's (§9.29; main.css).
+            pillLook === 'docked' && 'zen-phone-pill-docked',
             pillLook !== 'docked' && 'zen-pill-well',
             pillLook === 'well-target' && 'zen-pill-well-target'
           )}
@@ -528,7 +528,6 @@ export function PillContent({
     activeTabId: tab?.id ?? null
   })
   const drawn = pillChipsDrawn(chips)
-  const spaceLabel = state.spaces.length > 1 ? space.icon || space.name : null
   // What TalkBack hears at the address, the pill's one stop (`phoneAddressLabel`): the host,
   // the connection's state as the core derives it (`securityIndicator`; spoken here even while
   // the pill draws no lock, A11Y-01), then the states of the chips the sheet carries, in the
@@ -565,7 +564,9 @@ export function PillContent({
         className="order-first -ml-3 -mr-3.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
       >
         {privateMark ? (
-          <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+          // Identity, like the favicon it stands in for: the full window ink (§9.19, §9.29), not
+          // a deemphasised state.
+          <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
         ) : (
           <Favicon tab={shown} size={16} />
         )}
@@ -602,15 +603,13 @@ export function PillContent({
         badge would cost the host its room on a phone; badges are for lists that mix private and
         normal items.
       */}
+      {/*
+        Nothing after the chips (§9.29, Bennett's rule: the favicon or mask, the host and one
+        glyph): the space is told by the window's own colour and said by the address for TalkBack
+        (`spaceName`); the 11 px label that used to trail here was off §4's scale and a fourth
+        thing in the pill.
+      */}
       <ChipRun chips={drawn} interactive={interactive} />
-      {spaceLabel && (
-        <span
-          className="max-w-[64px] shrink-0 truncate text-[11px] text-[var(--zen-muted)]"
-          aria-hidden="true"
-        >
-          {spaceLabel}
-        </span>
-      )}
     </span>
   )
 }

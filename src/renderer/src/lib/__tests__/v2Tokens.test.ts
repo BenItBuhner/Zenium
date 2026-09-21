@@ -33,6 +33,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The phone's resting pill (components/phone/PhoneShell.tsx, pillChips.tsx; §9.29, the shell
+  // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the
+  // lock, a paused state) in the deemphasised window ink.
+  ['.zen-phone-pill-docked {', '.zen-pill-well {'],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,

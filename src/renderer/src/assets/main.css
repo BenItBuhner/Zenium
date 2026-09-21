@@ -1972,6 +1972,23 @@
     pointer-events: none;
   }
   /*
+   * The resting pill (components/phone/PhoneShell.tsx; v2 §9.29, the shell pass): a window
+   * surface, so its fill and its pressed fill are the window family's control roles, and its
+   * quiet chips – the lock, a paused state – take the deemphasised window ink at 69% (§9.19:
+   * "secure" is the state of nearly every page and carries no colour); the favicon, the mask
+   * and the host stay full ink. The tint takes the theme's ink and has no transition of its
+   * own (§11.6).
+   */
+  .zen-phone-pill-docked {
+    background: var(--v2-control-fill);
+  }
+  .zen-phone-pill-docked:active {
+    background: var(--v2-control-fill-hover);
+  }
+  .zen-phone-pill .zen-pill-quiet {
+    color: var(--v2-control-text-deemphasized);
+  }
+  /*
    * The slot an address pill left behind while it is being carried: a shallow well. Its tint
    * takes the theme's ink, so it has no transition of its own: a theme blend moves the token
    * (v2 §11.6, nothing tweens per element on the phone), and the target tint is a cut.

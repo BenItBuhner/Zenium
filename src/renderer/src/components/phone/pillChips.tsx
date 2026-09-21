@@ -144,9 +144,11 @@ export function phonePillChips(
           popup="dialog"
           expanded={ctx.siteInfoOpen}
           data-site-info
-          className={CHIP_CLASS}
+          // Quiet: the deemphasised window ink (§9.19, §9.29), never a status colour – "secure"
+          // is the state of nearly every page.
+          className={cn(CHIP_CLASS, 'zen-pill-quiet')}
         >
-          <Lock className="h-3.5 w-3.5 opacity-50" />
+          <Lock className="h-3.5 w-3.5" />
         </PillChip>
       )
     })
@@ -253,7 +255,10 @@ export function phonePillChips(
           data-media
           data-testid="media-chip"
           data-state={session.playing ? 'playing' : 'paused'}
-          className={cn(CHIP_CLASS, session.playing ? 'text-[var(--zen-accent)]' : 'opacity-50')}
+          className={cn(
+            CHIP_CLASS,
+            session.playing ? 'text-[var(--zen-accent)]' : 'zen-pill-quiet'
+          )}
         >
           <AudioLines className="h-3.5 w-3.5" />
         </PillChip>
