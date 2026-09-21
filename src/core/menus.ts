@@ -55,6 +55,7 @@ import {
   runFromMenuBar,
   splitViewSubmenu
 } from './menuBar'
+import { isSendableUrl } from './sync/sendTab'
 import { folderTabs, tabVisibleIn } from './model'
 
 type Template = MenuItemTemplate[]
@@ -255,6 +256,37 @@ export class Menus {
         label: spaceLabel(s),
         click: () => onPick(s.id)
       }))
+  }
+
+  /**
+   * Chrome's "Send to your devices" (ID-27) for a tab's page, in the shape Chrome's page menu
+   * gives it: with one other device the item names it – "Send to Laptop" – and sends on the
+   * click; with more, "Send to Your Devices" opens the devices, most recently seen first, one
+   * row each (on the phone the menu sheet's own drill-in level is that picker, §9.24's one sheet
+   * over the menu). Sync off, or no other device yet, and there is no item: an action with
+   * nothing to send to is not drawn disabled (§10.4). Only a web page travels (`isSendableUrl`,
+   * the engine's rule): an internal or extension page keeps the item, disabled, so the page
+   * reads as the reason. The engine confirms the hand-over with its toast, "Sent to Laptop".
+   */
+  private sendToDevicesItems(tab: Tab | undefined, win: ZenWindow): Template {
+    if (!tab) return []
+    const sync = this.browser.sync.status()
+    if (!sync.enabled || sync.devices.length === 0) return []
+    const enabled = isSendableUrl(tab.url)
+    const send = (deviceId: string): void =>
+      void this.browser.sync.sendTab({ deviceId, url: tab.url, tabId: tab.id }, win)
+    const devices = [...sync.devices].sort((a, b) => b.lastSeen - a.lastSeen)
+    if (devices.length === 1) {
+      const [device] = devices
+      return [{ label: `Send to ${device.name}`, enabled, click: () => send(device.id) }]
+    }
+    return [
+      {
+        label: 'Send to Your Devices',
+        enabled,
+        submenu: devices.map((device) => ({ label: device.name, click: () => send(device.id) }))
+      }
+    ]
   }
 
   // ---------------------------------------------------------------------------
@@ -1536,7 +1568,9 @@ export class Menus {
               )
           }
         ]
-      }
+      },
+      // Beside Share, where the link leaves the tab (Firefox's "Send Tab to Device" sits here).
+      ...this.sendToDevicesItems(tab, win)
     ]
 
     const closeGroup: Template = [
@@ -2657,6 +2691,10 @@ export class Menus {
       enabled: Boolean(active) && /^https?:/i.test(active!.url),
       click: () => active && this.browser.shareTab(active.id, win)
     })
+    // "Send to your devices" beside Share (Chrome's phone menu keeps it in its share sheet,
+    // which is the system's here): one device names it; several open the picker sheet on the
+    // phone, a submenu on the sidebar layouts.
+    const sendToDevices = this.sendToDevicesItems(active, win)
     const homeScreen = this.homeScreenItems(active, win)
     const print = when(caps.print, {
       label: 'Print…',
@@ -2770,6 +2808,7 @@ export class Menus {
           ...listen,
           ...translate,
           ...share,
+          ...sendToDevices,
           ...homeScreen,
           ...print,
           screenshot,
@@ -2824,6 +2863,7 @@ export class Menus {
         ...print,
         savePageAs,
         ...share,
+        ...sendToDevices,
         ...translate,
         readerView,
         ...textPreferences,

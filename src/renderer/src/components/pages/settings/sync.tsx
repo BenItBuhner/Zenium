@@ -196,18 +196,14 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       rows: [
         ...[...sync.devices]
           .sort((a, b) => b.lastSeen - a.lastSeen)
-          .map(
-            (device): SettingsRow => ({
-              kind: 'info',
-              id: `sync-device:${device.id}`,
-              label: device.name,
-              keywords: ['device', 'last seen'],
-              // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
-              trailing: (
-                <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
-              )
-            })
-          ),
+          .map((device): SettingsRow => ({
+            kind: 'info',
+            id: `sync-device:${device.id}`,
+            label: device.name,
+            keywords: ['device', 'last seen'],
+            // The last-seen age trails the name in the summary's 13 at 69 %, `tabular-nums` (§4).
+            trailing: <span className="zen-settings-summary">{relativeTime(device.lastSeen)}</span>
+          })),
         // The devices' tabs follow the devices (§9.17: a group's next row is its action); with
         // no device there is nothing to list, so the row is not drawn disabled on the first
         // screen – it appears when its state does (§10.4).
