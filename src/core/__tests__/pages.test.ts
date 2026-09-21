@@ -1273,6 +1273,38 @@ describe('a restored session', () => {
   })
 })
 
+describe('a closed page tab (Recently closed, Ctrl+Shift+T)', () => {
+  it('lands in Recently closed under its title and address, and comes back as a page on its query', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', {
+      id: 'history',
+      query: { q: 'zen' }
+    }) as string
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://history?q=zen')
+    f.browser.tabs.closeTab(id, true, f.win)
+    expect(f.browser.tabs.tab(id)).toBeUndefined()
+    // The entry the chrome lists (the History page's group, the tab search popover), whose
+    // favicon slot draws the page's glyph from the address: no icon was ever fetched.
+    const [entry] = f.browser.session.summaries()
+    expect(entry).toMatchObject({
+      kind: 'tab',
+      title: 'History',
+      url: 'zen://history?q=zen',
+      favicon: null
+    })
+    f.browser.session.reopenClosed(f.win)
+    const back = activeTab(f)
+    expect(back?.url).toBe('zen://history?q=zen')
+    expect(back?.title).toBe('History')
+    expect(back && f.browser.pages.isChromePage(back)).toBe(true)
+    expect(f.viewsFor).not.toContain(back?.id)
+    // It is the window's History tab again: the shortcut re-focuses it rather than opening another.
+    expect(f.browser.pages.open('history', undefined, f.win)).toBe(back?.id)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://history'))).toHaveLength(1)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Document pages: the same route with a page view (the new tab page, once the desktop
 // registers it). Tried here with a registry the desktop's entries would look like.

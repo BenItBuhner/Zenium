@@ -359,6 +359,11 @@ describe('the History page tab (§10.1)', () => {
     expect(text(group.querySelector('h2'))).toBe('Recently closed')
     const row = group.querySelector('[data-closed-id="c1"]')!
     expect(text(row.querySelector('.zen-page-row-label'))).toBe('Settings')
+    // A closed page tab carries its registered glyph in the favicon slot (§10.1), not the globe.
+    const glyph = row.querySelector('.zen-page-row-lead svg')!
+    expect(glyph.classList.contains('lucide-settings')).toBe(true)
+    expect(glyph.classList.contains('zen-page-row-glyph')).toBe(true)
+    expect(row.querySelector('.zen-page-row-favicon-fallback')).toBeNull()
     await act(async () => row.querySelector<HTMLButtonElement>('button[data-row-focus]')!.click())
     expect(calls('session.restoreClosed')).toEqual([{ id: 'c1' }])
     await act(async () =>

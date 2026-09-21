@@ -1,7 +1,7 @@
 import type { JSX, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AppWindow, EllipsisVertical, Globe, RotateCcw, X } from 'lucide-react'
-import { parseInternalPageUrl } from '@shared/internalPages'
+import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, Tab } from '@shared/types'
 import { presentedUrl } from '@shared/url'
 import { dayLabel } from '@shared/dayKey'
@@ -9,6 +9,7 @@ import { cmd, onEvent, run } from '@renderer/lib/api'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
+import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
 import { inTextField, walkRows } from '../rowKeys'
@@ -442,8 +443,18 @@ function VisitRow({
   )
 }
 
-function FaviconImage({ src }: { src: string | null }): JSX.Element {
+/**
+ * The row's 16 px favicon: the visit's icon, a page tab's registered glyph where `url` names
+ * one (a closed Settings, History, Bookmarks or Downloads tab fetches no icon; the glyph is
+ * its mark in every favicon slot, v2 §10.1), the globe for a site with none or a broken one.
+ */
+function FaviconImage({ src, url }: { src: string | null; url?: string | null }): JSX.Element {
   const [broken, setBroken] = useState<string | null>(null)
+  const glyph = url ? internalPageOf(url)?.glyph : undefined
+  if (glyph) {
+    const Glyph = PAGE_GLYPHS[glyph]
+    return <Glyph className="zen-page-row-favicon zen-page-row-glyph" aria-hidden />
+  }
   if (src && broken !== src) {
     return (
       <img
@@ -518,7 +529,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
                 {entry.kind === 'window' ? (
                   <AppWindow className="zen-page-row-favicon zen-page-row-favicon-fallback" />
                 ) : (
-                  <FaviconImage src={entry.favicon} />
+                  <FaviconImage src={entry.favicon} url={entry.url} />
                 )}
               </span>
               <button

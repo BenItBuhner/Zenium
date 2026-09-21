@@ -8460,6 +8460,12 @@
   stroke-width: var(--v2-icon-stroke);
   color: var(--v2-text-deemphasized);
 }
+/* A page tab's registered glyph in the slot (§10.1): the row's own ink, the icon stroke. */
+.zen-page-row-glyph {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text);
+}
 .zen-page-row-text {
   display: flex;
   min-width: 0;
