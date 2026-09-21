@@ -1,0 +1,56 @@
+name: Android import demo
+
+# Records Settings > Import on a hardware-accelerated Android emulator (ID-23's Android half):
+# the two file rows under real fingers, the system's open-document picker with a bookmarks HTML
+# and a passwords CSV published to the shared Downloads collection, the Last import group with
+# its per-kind counts, Show imported bookmarks opening the bookmarks overlay on the "Imported"
+# folder, Dismiss clearing the group, and the URL field listing an imported bookmark before it is
+# closed by the chrome's state. Every gesture of the flow is a frame-stats scene through the
+# harness's instrument (DemoHarness.traceFrames: gfxinfo frame stats reported, the chrome
+# WebView's Blink trace read; the app menu's open and close first, as the before), rendered into
+# the job summary by the shared workflow. Dispatch-only, like the other demos: it takes about ten
+# minutes and says nothing about a change being correct. The build, the emulator and the Gradle
+# cache live in android-emulator-demo.yml; this file only picks the driver.
+on:
+  workflow_dispatch:
+    inputs:
+      jank-gate:
+        description: >-
+          The jank budget's gate for the scenes this driver measures (the menu sheet as the
+          before, the Import page's push and pop, the file rows' presses and the picks' returns,
+          the overlay, Dismiss): soft reports a scene over its budget, hard fails it
+        type: choice
+        default: soft
+        options:
+          - soft
+          - hard
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-import-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Import demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-import-demo.sh
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-import-demo
+      artifact-path: artifacts/android-import-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Import demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-import-demo.sh
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-import-demo-second-boot
+      artifact-path: artifacts/android-import-demo/

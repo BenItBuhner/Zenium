@@ -330,6 +330,7 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Security',
       '|',
       'Sync',
+      'Import',
       'Accessibility',
       'Keyboard Shortcuts',
       'Default Browser',

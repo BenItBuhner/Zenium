@@ -9,7 +9,7 @@ import type { ViewportInfo } from './formFactor'
  */
 
 export type TourStep =
-  'welcome' | 'look' | 'search' | 'essentials' | 'features' | 'sync' | 'shortcuts'
+  'welcome' | 'look' | 'search' | 'import' | 'essentials' | 'features' | 'sync' | 'shortcuts'
 
 export type PhoneStep = 'welcome' | 'look' | 'search' | 'default'
 
@@ -28,9 +28,20 @@ export function isTouchOnly(viewport: Pick<ViewportInfo, 'coarse' | 'hover'>): b
   return viewport.coarse && !viewport.hover
 }
 
-/** The desktop tour: seven steps, minus sync without the capability, minus shortcuts on touch. */
-export function tourSteps(caps: TourCapabilities, touchOnly: boolean): TourStep[] {
-  const steps: TourStep[] = ['welcome', 'look', 'search', 'essentials', 'features']
+/**
+ * The desktop tour: seven steps, minus sync without the capability, minus shortcuts on touch;
+ * plus Chrome's first-run import offer after the search engine when another browser's profile
+ * was found on this computer (`importable`; the probe is `import.sources`, so the step joins
+ * the tour once it answers – files alone are no offer).
+ */
+export function tourSteps(
+  caps: TourCapabilities,
+  touchOnly: boolean,
+  importable = false
+): TourStep[] {
+  const steps: TourStep[] = ['welcome', 'look', 'search']
+  if (importable) steps.push('import')
+  steps.push('essentials', 'features')
   if (caps.sync) steps.push('sync')
   if (!touchOnly) steps.push('shortcuts')
   return steps

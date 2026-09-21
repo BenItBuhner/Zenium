@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
+import { isValidElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
   ExtensionInfo,
   HostCapabilities,
+  ImportSource,
   SafetyCheckResult,
   Settings,
   Tab,
@@ -388,6 +390,12 @@ function row(model: Model, id: string): Row {
   return found
 }
 
+/** The class list of a row's glyph element (a Lucide icon rendered with a `className`). */
+function glyphClass(node: ReactNode): string {
+  if (!isValidElement<{ className?: string }>(node)) throw new Error('not a glyph element')
+  return node.props.className ?? ''
+}
+
 beforeEach(() => invoke.mockClear())
 
 describe('the section model', () => {
@@ -408,6 +416,7 @@ describe('the section model', () => {
       'agents',
       'passwords',
       'security',
+      'import',
       'accessibility',
       'updates',
       'about'
@@ -2218,6 +2227,403 @@ describe('what a row does', () => {
       kind: 'zoom',
       domain: 'a.test'
     })
+  })
+
+  it('carries ID-23’s Import rows: the two file imports over `dialog.openText`, busy while theirs runs, and the last import until it is dismissed', async () => {
+    // The phone shell's rows (the pane's dialog rows are the mouse layouts', tested below).
+    const def = PAGE.sections.find((x) => x.id === 'import')!
+    const phoneImport = (s: UIState): Model =>
+      buildSection(def, { ...context(s).ctx, formFactor: 'phone' })
+    // Android has no other browser's profile to read: the category is the file rows alone,
+    // the passwords one behind the host's vault.
+    const idle = phoneImport(state({ import: null } as Partial<UIState>))
+    expect(idle.groups.map((g) => g.id)).toEqual(['import-files'])
+    expect(allRows(idle.groups).map((r) => r.id)).toEqual([
+      'import-bookmarks-file',
+      'import-passwords-file'
+    ])
+    expect(idle.groups.every(groupShows)).toBe(true)
+    const noVault = state({
+      import: null,
+      capabilities: { ...ANDROID, passwords: false }
+    } as Partial<UIState>)
+    expect(allRows(phoneImport(noVault).groups).map((r) => r.id)).toEqual(['import-bookmarks-file'])
+
+    // A press asks the engine for that one kind from the file source; the host's file dialog
+    // is the engine's to open.
+    const bookmarks = row(idle, 'import-bookmarks-file')
+    expect(bookmarks).toMatchObject({
+      kind: 'action',
+      label: 'Import bookmarks from a file',
+      busy: false,
+      disabled: false
+    })
+    if (bookmarks.kind !== 'action') throw new Error('not an action')
+    bookmarks.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:bookmarks',
+        kinds: ['bookmarks']
+      })
+    )
+    const passwords = row(idle, 'import-passwords-file')
+    if (passwords.kind !== 'action') throw new Error('not an action')
+    passwords.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:passwords',
+        kinds: ['passwords']
+      })
+    )
+
+    // While the bookmarks file imports its row is busy (§9.30) and the other row waits.
+    const html: ImportSource = {
+      id: 'file:bookmarks',
+      browser: 'file',
+      browserName: 'Bookmarks HTML file',
+      profileId: '',
+      name: 'Bookmarks HTML file',
+      path: '',
+      running: false,
+      kinds: ['bookmarks'],
+      limits: {}
+    }
+    const running = phoneImport(
+      state({
+        import: {
+          source: html,
+          kinds: ['bookmarks'],
+          status: 'running',
+          current: 'bookmarks',
+          results: {},
+          error: null,
+          folderId: null,
+          startedAt: 1,
+          finishedAt: null
+        }
+      } as Partial<UIState>)
+    )
+    expect(row(running, 'import-bookmarks-file')).toMatchObject({ busy: true, disabled: false })
+    expect(row(running, 'import-passwords-file')).toMatchObject({ busy: false, disabled: true })
+    expect(running.groups.map((g) => g.id)).toEqual(['import-files'])
+    invoke.mockClear()
+    const busyRow = row(running, 'import-bookmarks-file')
+    if (busyRow.kind !== 'action') throw new Error('not an action')
+    busyRow.onPress?.()
+    expect(invoke).not.toHaveBeenCalled()
+
+    // The result stays as a group under the rows: the headline in Chrome's words, a row per
+    // kind with what came in and what was skipped, Show imported bookmarks for the folder made,
+    // Dismiss clearing it.
+    const finished = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: { imported: 42, duplicates: 3, unreadable: 0, invalid: 1, error: null }
+        },
+        error: null,
+        folderId: 'imported-folder',
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const last = phoneImport(finished)
+    expect(last.groups.map((g) => g.id)).toEqual(['import-files', 'import-last'])
+    expect(last.groups[1].heading).toBe('Last import')
+    expect(last.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-show',
+      'import-last-dismiss'
+    ])
+    const headline = row(last, 'import-last-headline')
+    expect(headline).toMatchObject({
+      kind: 'info',
+      label: 'Your bookmarks and settings are ready',
+      description: 'From a bookmarks HTML file'
+    })
+    // The kind's lines share the row on the one joiner the pane and the desktop use (` · `).
+    const bookmarksRow = row(last, 'import-last-bookmarks')
+    expect(bookmarksRow).toMatchObject({
+      kind: 'info',
+      label: 'Bookmarks',
+      description: '42 bookmarks imported · 3 already saved, 1 unusable'
+    })
+    expect(headline).not.toHaveProperty('tone')
+    expect(headline).toMatchObject({ danger: false })
+    // The outcome is a trailing 16 px glyph in the status ink (the Updates rows' "Verified"),
+    // never a leading one: the group's action rows have no leading slot, and §10.4 keeps the
+    // labels of one list on one left edge.
+    for (const r of [headline, bookmarksRow]) {
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.leading).toBeUndefined()
+      expect(glyphClass(r.trailing)).toContain('zen-settings-ok')
+    }
+    expect(row(last, 'import-bookmarks-file')).toMatchObject({ busy: false, disabled: false })
+    const show = row(last, 'import-last-show')
+    if (show.kind !== 'action') throw new Error('not an action')
+    show.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('bookmarks'))
+    expect(uiStore.get().overlayFolderId).toBe('imported-folder')
+    uiStore.set({ overlay: 'none', overlayFolderId: null })
+    const dismiss = row(last, 'import-last-dismiss')
+    if (dismiss.kind !== 'action') throw new Error('not an action')
+    dismiss.onPress?.()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('import.dismiss', undefined))
+
+    // A run-level failure (the picker's bridge call rejected: `ImportService.run`'s outer catch)
+    // is the headline row with the failure as its LABEL – so the row's `danger` puts the ink on
+    // that sentence and the caption under it stays at 69% (§9.33, one ink per row); never `tone`,
+    // which would colour the neutral caption instead. No folder to show.
+    const failed = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'failed',
+        current: null,
+        results: {},
+        error: 'The file picker could not be opened.',
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const failedLast = phoneImport(failed)
+    expect(failedLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-dismiss'
+    ])
+    const failedHeadline = row(failedLast, 'import-last-headline')
+    expect(failedHeadline).toMatchObject({
+      kind: 'info',
+      label: 'The file picker could not be opened.',
+      description: 'From a bookmarks HTML file',
+      danger: true
+    })
+    expect(failedHeadline).not.toHaveProperty('tone')
+    if (failedHeadline.kind !== 'info') throw new Error('not an info row')
+    // The glyph takes the ink of the text beside it: a failure is danger, not the safety warn.
+    expect(glyphClass(failedHeadline.trailing)).toContain('zen-settings-danger')
+
+    // A run whose every kind failed is a failure too (the #259 ruling): the headline names what
+    // could not be imported in the danger ink, and the kind's row carries the reason on its
+    // description – the status ink on the line that is the status, on each row.
+    const noBookmarks = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: {
+            imported: 0,
+            duplicates: 0,
+            unreadable: 0,
+            invalid: 0,
+            error: 'No bookmarks were found in that file.'
+          }
+        },
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const noBookmarksLast = phoneImport(noBookmarks)
+    expect(noBookmarksLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-dismiss'
+    ])
+    const noBookmarksHeadline = row(noBookmarksLast, 'import-last-headline')
+    expect(noBookmarksHeadline).toMatchObject({
+      label: 'Bookmarks could not be imported.',
+      description: 'From a bookmarks HTML file',
+      danger: true
+    })
+    if (noBookmarksHeadline.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksHeadline.trailing)).toContain('zen-settings-danger')
+    const noBookmarksRow = row(noBookmarksLast, 'import-last-bookmarks')
+    expect(noBookmarksRow).toMatchObject({
+      label: 'Bookmarks',
+      description: 'No bookmarks were found in that file.',
+      tone: 'danger'
+    })
+    expect(noBookmarksRow).not.toHaveProperty('danger')
+    if (noBookmarksRow.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksRow.trailing)).toContain('zen-settings-danger')
+
+    // A file pick the user dismissed leaves a cancelled run with nothing reported: no group.
+    const dismissedPick = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'cancelled',
+        current: null,
+        results: {},
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    expect(phoneImport(dismissedPick).groups.map((g) => g.id)).toEqual(['import-files'])
+
+    // The category's search words reach it from the landing.
+    const s = state({ import: null } as Partial<UIState>)
+    const hits = searchRows(phoneSections(s), 'csv').map((h) => h.row.id)
+    expect(hits).toContain('import-passwords-file')
+  })
+
+  it('on a mouse the Import category is the pane that leads to the dialog: the browsers found, two button rows, and the last import as one row (#259’s lead verdict)', async () => {
+    const def = PAGE.sections.find((x) => x.id === 'import')!
+    const mouse = (
+      s: UIState,
+      importSources?: ImportSource[] | null,
+      layout: 'desktop' | 'tablet' = 'desktop'
+    ): Model => buildSection(def, { ...context(s).ctx, formFactor: layout, importSources })
+    const chrome: ImportSource = {
+      id: 'chrome:Default',
+      browser: 'chrome',
+      browserName: 'Google Chrome',
+      profileId: 'Default',
+      name: 'Person 1',
+      path: '',
+      running: false,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    const firefox: ImportSource = {
+      ...chrome,
+      id: 'firefox:a.default',
+      browser: 'firefox',
+      browserName: 'Firefox',
+      profileId: 'a.default',
+      name: 'default'
+    }
+    const html: ImportSource = {
+      id: 'file:bookmarks',
+      browser: 'file',
+      browserName: 'Bookmarks HTML file',
+      profileId: '',
+      name: 'Bookmarks HTML file',
+      path: '',
+      running: false,
+      kinds: ['bookmarks'],
+      limits: {}
+    }
+    const none = state({ import: null } as Partial<UIState>)
+
+    // Two groups, one button row each (§10.5: a command row trails its button); none of the
+    // phone's whole-row file rows. The tablet is the same pane.
+    const idle = mouse(none)
+    expect(idle.groups.map((g) => g.id)).toEqual(['import-browsers', 'import-file'])
+    expect(allRows(idle.groups).map((r) => r.id)).toEqual(['import-browser', 'import-file-dialog'])
+    expect(allRows(mouse(none, undefined, 'tablet').groups).map((r) => r.id)).toEqual([
+      'import-browser',
+      'import-file-dialog'
+    ])
+    expect(row(idle, 'import-browser')).toMatchObject({
+      kind: 'action',
+      label: 'Bookmarks, history and passwords',
+      description: 'From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari',
+      button: 'Import…'
+    })
+    expect(row(idle, 'import-file-dialog')).toMatchObject({
+      kind: 'action',
+      label: 'Bookmarks HTML or passwords CSV',
+      button: 'Import file…'
+    })
+    expect(idle.groups[1].heading).toBe('Import from a file')
+
+    // The first group's line under its heading: looking while the engine's answer is out (or
+    // where nothing asked, the landing's search), the browsers by name, or none – the file
+    // sources are not browsers.
+    expect(idle.groups[0].description).toBe('Looking for other browsers on this computer…')
+    expect(mouse(none, null).groups[0].description).toBe(
+      'Looking for other browsers on this computer…'
+    )
+    expect(mouse(none, [html]).groups[0].description).toBe(
+      'No other browsers were found on this computer.'
+    )
+    expect(mouse(none, [chrome, firefox, html]).groups[0].description).toBe(
+      'Found on this computer: Google Chrome and Firefox.'
+    )
+
+    // The buttons open the dialog over the Settings tab – the file row on the file sources.
+    const browser = row(idle, 'import-browser')
+    if (browser.kind !== 'action') throw new Error('not an action')
+    browser.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().importDialog).toEqual({ source: null }))
+    uiStore.set({ importDialog: null })
+    const file = row(idle, 'import-file-dialog')
+    if (file.kind !== 'action') throw new Error('not an action')
+    file.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().importDialog).toEqual({ source: 'file:bookmarks' }))
+    uiStore.set({ importDialog: null })
+
+    // The last import is one row on the pane: the headline, then the source and the counts on
+    // one line; its glyph and Dismiss trail (the lead's nit: leading, it indented the pane's
+    // one such label 26 px past its neighbours). The phone's headline, kind and action rows
+    // stay off the pane.
+    const finished = state({
+      import: {
+        source: chrome,
+        kinds: ['bookmarks', 'passwords'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: { imported: 42, duplicates: 3, unreadable: 0, invalid: 1, error: null },
+          passwords: { imported: 7, duplicates: 0, unreadable: 0, invalid: 0, error: null }
+        },
+        error: null,
+        folderId: 'imported-folder',
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const last = mouse(finished, [chrome])
+    expect(last.groups.map((g) => g.id)).toEqual(['import-browsers', 'import-file', 'import-last'])
+    expect(last.groups[2].heading).toBe('Last import')
+    expect(last.groups[2].rows.map((r) => r.id)).toEqual(['import-last-summary'])
+    const summary = row(last, 'import-last-summary')
+    expect(summary).toMatchObject({
+      kind: 'info',
+      label: 'Your bookmarks and settings are ready',
+      description: 'From Google Chrome (Person 1) · 42 bookmarks imported · 7 passwords imported',
+      danger: false,
+      clamp: true
+    })
+    if (summary.kind !== 'info') throw new Error('not an info row')
+    expect(summary.leading).toBeUndefined()
+    expect(isValidElement(summary.trailing)).toBe(true)
+
+    // A failed run: the failure is the label in the danger ink, the source alone under it.
+    const failed = mouse(
+      state({
+        import: {
+          source: chrome,
+          kinds: ['bookmarks'],
+          status: 'failed',
+          current: null,
+          results: {},
+          error: 'Google Chrome is open. Close Google Chrome and try again.',
+          folderId: null,
+          startedAt: 1,
+          finishedAt: 2
+        }
+      } as Partial<UIState>),
+      [chrome]
+    )
+    expect(row(failed, 'import-last-summary')).toMatchObject({
+      label: 'Google Chrome is open. Close Google Chrome and try again.',
+      description: 'From Google Chrome (Person 1)',
+      danger: true
+    })
+    expect(row(failed, 'import-last-summary')).not.toHaveProperty('tone')
   })
 
   it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {

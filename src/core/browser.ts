@@ -189,7 +189,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
-  'translate.selection'
+  'translate.selection',
+  'import.open'
 ])
 
 /**
@@ -1328,6 +1329,15 @@ export class Browser {
   async openBookmarks(ids: readonly string[], win: ZenWindow): Promise<void> {
     const urls = await this.bookmarkUrlsToOpen(ids, win)
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
+  }
+
+  /**
+   * Bookmarks > Import Bookmarks and Settings… (Chrome's `chrome://settings/importData`): the
+   * chrome opens Settings on its Import category with the import dialog up (ID-23). The
+   * Netscape-file import of the bookmark manager's own menu stays `importBookmarks`.
+   */
+  openImportDialog(win: ZenWindow): void {
+    this.emit('import.open', undefined, win)
   }
 
   async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {

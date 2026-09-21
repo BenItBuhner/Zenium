@@ -13,6 +13,7 @@ import type {
   GlanceTrigger,
   GovernorActionKind,
   GpuMode,
+  ImportSource,
   NewTabBackgroundKind,
   NewTabPosition,
   NewTabPreset,
@@ -143,6 +144,7 @@ import {
   WordForm,
   ZoomBlock
 } from './blocks'
+import { importGroups } from '../../import/importRows'
 import { extensionsGroups } from './extensions'
 import {
   choice,
@@ -214,6 +216,12 @@ export interface SectionContext {
    * moves it (`useDictionaryWords`); `idleDictionaryWords()` where there is none to read.
    */
   dictionary: DictionaryWords
+  /**
+   * What the import engine found on this computer (Settings › Import's pane names the browsers
+   * among them; `useImportSources`): `null` while it looks, left out where the pane is not
+   * drawn – the phone page, whose Import rows read files, and a test.
+   */
+  importSources?: ImportSource[] | null
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -252,6 +260,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   passwords: passwordsSection,
   security: securitySection,
   sync: syncSection,
+  import: importGroups,
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
