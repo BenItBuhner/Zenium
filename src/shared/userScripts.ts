@@ -43,6 +43,12 @@ export interface HostShimOptions {
    * (`core/extensions/withheldPermissions.ts`), or null when none were.
    */
   withheld: WithheldPermissions | null
+  /**
+   * `ShimOptions.granted`: the API permissions the extension holds (required and granted
+   * optional ones), so the shim defines the permission-gated namespaces Chrome would; null for
+   * a stranger (declaring counts then). Changes arrive as `__zen.grants`.
+   */
+  granted: string[] | null
 }
 
 /**
