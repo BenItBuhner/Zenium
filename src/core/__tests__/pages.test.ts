@@ -442,6 +442,25 @@ describe('back inside Settings (the tab’s history)', () => {
     expect(f.browser.tabs.tab(id)?.fromIntent).toBe(false)
   })
 
+  it('re-focusing the singleton page from another site makes that site its opener (#260 seed)', () => {
+    const f = fixture()
+    const a = openSite(f, 'https://a.test/')
+    const id = openPage(f) ?? ''
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBe(a.id)
+    // From a second site the page is re-focused, not opened again: one tab, the new opener.
+    const b = openSite(f, 'https://b.test/')
+    expect(openPage(f)).toBe(id)
+    expect(spaceUrls(f).filter((u) => u === 'zen://settings')).toHaveLength(1)
+    expect(activeTab(f)?.id).toBe(id)
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBe(b.id)
+    // Asked again from the page tab itself, the opener stays.
+    expect(openPage(f)).toBe(id)
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBe(b.id)
+    // An explicit "no opener" (a deep link, a rerouted request) clears it rather than leaving b.
+    expect(openPage(f, undefined, null)).toBe(id)
+    expect(f.browser.tabs.tab(id)?.openerTabId).toBeNull()
+  })
+
   it('remembers the opener as an id the chrome checks is still open', () => {
     const f = fixture()
     openSite(f, 'https://a.test/')
