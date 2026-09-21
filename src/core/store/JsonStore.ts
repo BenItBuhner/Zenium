@@ -7,6 +7,11 @@ export interface JsonStoreOptions {
    * missing or corrupt (the profile's core documents).
    */
   backup?: boolean
+  /**
+   * `JSON.stringify`'s replacer, applied when the document is serialised (at flush time, over
+   * the live objects): how a store leaves a field that lives in memory only out of the file.
+   */
+  replacer?: (key: string, value: unknown) => unknown
 }
 
 /**
@@ -31,6 +36,7 @@ export class JsonStore<T> {
   private inFlight = 0
   private readonly debounceMs: number
   private readonly writeOptions: StoreWriteOptions | undefined
+  private readonly replacer: ((key: string, value: unknown) => unknown) | undefined
   /** Whether the last `readSync` had to fall back to the backup. */
   readFromBackup = false
 
@@ -45,6 +51,7 @@ export class JsonStore<T> {
     const opts = typeof options === 'number' ? { debounceMs: options } : options
     this.debounceMs = opts.debounceMs ?? 400
     this.writeOptions = opts.backup ? { backup: true } : undefined
+    this.replacer = opts.replacer
   }
 
   /** Whether any store still has a write in flight (`idle` resolves once none has). */
@@ -118,7 +125,7 @@ export class JsonStore<T> {
           if (seq <= this.superseded) return
           this.inFlight++
           try {
-            await this.io.write(this.name, JSON.stringify(data), this.writeOptions)
+            await this.io.write(this.name, this.serialize(data), this.writeOptions)
           } finally {
             this.inFlight--
           }
@@ -141,13 +148,17 @@ export class JsonStore<T> {
       this.timer = null
     }
     if (this.pending === null) return
-    const text = JSON.stringify(this.pending)
+    const text = this.serialize(this.pending)
     this.pending = null
     this.superseded = this.queued
     this.writeNow(text)
     if (this.inFlight > 0) {
       this.writing = this.track(this.writing.then(() => this.writeNow(text)))
     }
+  }
+
+  private serialize(data: T): string {
+    return JSON.stringify(data, this.replacer)
   }
 
   private writeNow(text: string): void {

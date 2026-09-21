@@ -153,6 +153,8 @@ const PROBE_REFUSED_RESUME = true
 const PROBE_TIMEOUT_MS = 10_000
 /** Requests of ours (probes) and requests we answered for (dead links): their events are not a transfer's. */
 const MAX_IGNORED_REQUESTS = 64
+/** How often `onOnline` asks `net.isOnline()` while an automatic resume waits for the network. */
+export const ONLINE_POLL_MS = 2000
 
 /** What the server answered the probe with; the reason is read from it by `interruptReasonFromRangeResponse`. */
 interface ProbeAnswer {
@@ -207,11 +209,18 @@ export class ElectronDownloads implements DownloadHost {
   private readonly overwriting = new Set<string>()
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
+  /** Stop the tab's pending navigation (a dead download link's, see `deadLink`). */
+  private stopNavigation: (tabId: string) => void = () => undefined
+  /** The core's automatic resumes waiting for the network (see `onOnline`). */
+  private readonly onlineWaiters = new Set<() => void>()
+  private onlinePoll: ReturnType<typeof setInterval> | null = null
 
   constructor(
     private readonly settings: () => ElectronDownloadSettings,
     /** The app icon a dragged-out file falls back to when the OS has none for its type. */
-    private readonly appIcon: () => AppIconId = () => APP_ICON_DEFAULT
+    private readonly appIcon: () => AppIconId = () => APP_ICON_DEFAULT,
+    /** `net.isOnline()` unless a test says otherwise. */
+    private readonly online: () => boolean = () => net.isOnline()
   ) {
     setDownloadDirectoryProvider(() => this.settings().directory)
   }
@@ -221,11 +230,14 @@ export class ElectronDownloads implements DownloadHost {
     hooks: {
       tabIdFor: (source: WebContents) => string | null
       parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined
+      /** Stop the tab's pending navigation, a dead download link's (nothing when absent). */
+      stopNavigation?: (tabId: string) => void
     }
   ): void {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
+    this.stopNavigation = hooks.stopNavigation ?? (() => undefined)
   }
 
   /**
@@ -304,10 +316,18 @@ export class ElectronDownloads implements DownloadHost {
    * header (RFC 6266, `filename*` first) or the URL's last segment, typed by `Content-Type`, in
    * the request's container and from its tab, which the core then leaves as it was (no error
    * page of ours). Frames only: a fetch or XHR never becomes a download, whatever it answers.
+   *
+   * The page itself has to stay too: left alone, the refused navigation commits Chromium's own
+   * error document (`chrome-error://chromewebdata/`, a blank tab with a history entry of its
+   * own) under an address bar the core keeps on the page. The response is still held by this
+   * blocking listener, so the tab's navigation is stopped here and ends `ERR_ABORTED`, which
+   * commits nothing and which the tab service already ignores. The tab's own navigation only:
+   * a frame's dead link keeps its frame's error document, as in Chrome.
    */
   private deadLink(details: WebRequestDetails, reason: DownloadInterruptReason): void {
     const service = this.service
     if (!service) return
+    if (details.resourceType === 'main_frame' && details.tabId) this.stopNavigation(details.tabId)
     const referrer =
       [details.documentUrl, details.initiator].find((u) => u && /^https?:/.test(u)) ?? ''
     const record = service.begin({
@@ -398,20 +418,27 @@ export class ElectronDownloads implements DownloadHost {
   attach(ses: Session, containerId: string, onStarted: (sourceTabId: string | null) => void): void {
     this.sessions.set(containerId, ses)
     this.startedHooks.set(containerId, onStarted)
-    ses.on('will-download', (_event, item, source) => {
+    ses.on('will-download', (event, item, source) => {
       const sourceTabId = source && !source.isDestroyed() ? this.tabIdFor(source) : null
-      const resumed = this.track(item, ses, containerId, source, sourceTabId)
+      const resumed = this.track(item, ses, containerId, source, sourceTabId, () =>
+        event.preventDefault()
+      )
       if (!resumed) onStarted(sourceTabId)
     })
   }
 
-  /** Returns true when the item continues an existing record (no new download to announce). */
+  /**
+   * Returns true when the item continues an existing record (no new download to announce).
+   * `refuse` is `will-download`'s `preventDefault`: Electron's way of cancelling the item before
+   * it writes (a blocked insecure transfer); without it the item is cancelled a tick later.
+   */
   private track(
     item: ElectronDownloadItem,
     ses: Session,
     containerId: string,
     source: WebContents | undefined,
-    sourceTabId: string | null
+    sourceTabId: string | null,
+    refuse: () => void = () => setTimeout(() => item.cancel(), 0)
   ): boolean {
     const service = this.service
     if (!service || this.tracked.has(item)) return false
@@ -421,6 +448,7 @@ export class ElectronDownloads implements DownloadHost {
     if (resuming) {
       const record = service.begin({
         url: item.getURL(),
+        urlChain: chainOf(item),
         filename: resuming.filename,
         totalBytes: item.getTotalBytes() || resuming.totalBytes,
         mimeType: item.getMimeType() || resuming.mimeType,
@@ -428,6 +456,11 @@ export class ElectronDownloads implements DownloadHost {
         containerId,
         resumes: resuming.id
       })
+      if (record.state === 'insecure-blocked') {
+        // A row from an older build that never met the rule: it starts over once kept.
+        refuse()
+        return true
+      }
       this.live.set(record.id, this.newLive(item, ses))
       this.finalPaths.set(record.id, join(dirname(resuming.savePath), resuming.finalName))
       this.wire(item, record)
@@ -455,6 +488,7 @@ export class ElectronDownloads implements DownloadHost {
 
     const record = service.begin({
       url: item.getURL(),
+      urlChain: chainOf(item),
       referrer,
       filename,
       finalName: basename(candidate),
@@ -470,10 +504,18 @@ export class ElectronDownloads implements DownloadHost {
       private: containerId === PRIVATE_CONTAINER_ID,
       resumes: retried?.id
     })
+    started?.resolve(record)
+    if (record.state === 'insecure-blocked') {
+      // Refused by the core (Chrome's mixed-content rule): the engine's item is cancelled before
+      // it writes – Chromium removes whatever it opened – and the reserved name is given back.
+      // The row stays, waiting for Keep anyway (a fresh request through `retry`) or Discard.
+      this.reserved.delete(candidate)
+      refuse()
+      return Boolean(retried)
+    }
     this.live.set(record.id, this.newLive(item, ses))
     this.finalPaths.set(record.id, candidate)
     this.wire(item, record)
-    started?.resolve(record)
 
     if (!retried) {
       const placed = this.place(
@@ -851,6 +893,48 @@ export class ElectronDownloads implements DownloadHost {
   // DownloadHost
   // ---------------------------------------------------------------------------
 
+  /** Whether the machine has a network (`net.isOnline`); the core holds its automatic resumes until it does. */
+  isOnline(): boolean {
+    return this.online()
+  }
+
+  /**
+   * Electron's main process has no "back online" event, so the host polls `net.isOnline()`
+   * every `ONLINE_POLL_MS` while anyone waits and tells every waiter at once when it answers
+   * yes (right away when it does already). The unsubscribe drops the waiter; the poll stops with
+   * the last one.
+   */
+  onOnline(listener: () => void): () => void {
+    if (this.online()) {
+      listener()
+      return () => undefined
+    }
+    this.onlineWaiters.add(listener)
+    if (!this.onlinePoll) {
+      this.onlinePoll = setInterval(() => {
+        if (!this.online()) return
+        const waiters = [...this.onlineWaiters]
+        this.onlineWaiters.clear()
+        this.stopOnlinePoll()
+        for (const waiter of waiters) waiter()
+      }, ONLINE_POLL_MS)
+    }
+    return () => {
+      this.onlineWaiters.delete(listener)
+      if (this.onlineWaiters.size === 0) this.stopOnlinePoll()
+    }
+  }
+
+  private stopOnlinePoll(): void {
+    if (this.onlinePoll) clearInterval(this.onlinePoll)
+    this.onlinePoll = null
+  }
+
+  /** Where new downloads go right now: the setting's folder when usable, else the platform's. */
+  currentDirectory(): string {
+    return downloadDir()
+  }
+
   pause(id: string): void {
     this.live.get(id)?.item.pause()
   }
@@ -1020,6 +1104,18 @@ function referrerOf(source: WebContents | undefined, downloadUrl: string): strin
 
 function isHttp(url: string): boolean {
   return /^https?:/i.test(url)
+}
+
+/**
+ * Every URL the transfer went through, the final one last (`getURLChain` carries the redirects
+ * Chromium followed); the URL alone when the engine reports no chain. The core's insecure-
+ * download rule judges each hop.
+ */
+function chainOf(item: ElectronDownloadItem): string[] {
+  const url = item.getURL()
+  const chain = item.getURLChain()
+  if (chain.length === 0) return [url]
+  return chain.includes(url) ? [...chain] : [...chain, url]
 }
 
 /** Chromium's `NETWORK_*` reasons: every one of them resumable, none of them a `done` verdict. */

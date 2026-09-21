@@ -451,7 +451,7 @@ describe('DownloadsApi methods', () => {
     const h = harness()
     h.load(EXT_A)
     const exe = h.begin({
-      url: 'http://sketchy.example/setup.exe',
+      url: 'https://sketchy.example/setup.exe',
       filename: 'setup.exe',
       mimeType: 'application/octet-stream',
       savePath: '/dl/setup.exe.zeniumdownload'
@@ -474,7 +474,7 @@ describe('DownloadsApi methods', () => {
     await failsWith(h.api, 'acceptDanger', h.ctx(EXT_A), ERROR_NOT_IN_PROGRESS, id)
 
     const second = h.begin({
-      url: 'http://sketchy.example/other.exe',
+      url: 'https://sketchy.example/other.exe',
       filename: 'other.exe',
       mimeType: 'application/octet-stream',
       savePath: '/dl/other.exe.zeniumdownload'

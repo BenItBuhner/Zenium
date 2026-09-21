@@ -1251,6 +1251,20 @@ export interface NetHost {
  * is how flagged files stay quarantined until the user keeps them.
  */
 export interface DownloadHost {
+  /**
+   * Who retries a transient network interruption: the core (default) schedules `resume` with
+   * backoff once the host reports the network back, or the host's own downloader does before
+   * the interruption ever reaches the core (Android's `Downloads.kt`), in which case the core
+   * schedules nothing so no interruption is retried twice.
+   */
+  readonly autoResume?: 'core' | 'host'
+  /**
+   * Whether the machine has a network right now (Electron `net.isOnline()`); the core holds an
+   * automatic resume until it does. Hosts without an answer leave it out: the core assumes online.
+   */
+  isOnline?(): boolean
+  /** Call `listener` once the network is back (or is up already); returns the unsubscribe. */
+  onOnline?(listener: () => void): () => void
   pause(id: string): void
   /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
   resume(item: DownloadItem): void
@@ -1294,6 +1308,12 @@ export interface DownloadHost {
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
   chooseDirectory?(win?: ZenWindow): Promise<string | null>
+  /**
+   * The folder new downloads go to right now (the setting when it names one, else the
+   * platform's Downloads folder), for Settings › Downloads › Location; hosts that cannot name
+   * one leave it out.
+   */
+  currentDirectory?(): string
   /**
    * The app is quitting and the host's engine is about to tear the in-flight transfer down
    * (Chromium cancels it and deletes its file): keep the partial file and return where it now

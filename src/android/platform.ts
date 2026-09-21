@@ -482,10 +482,21 @@ export interface HostEventPayloads {
     mimeType?: string
     /** A `DownloadInterruptReason` (Kotlin's `DownloadInterruptReason.wire`) while `interrupted`. */
     error?: string
+    /**
+     * Epoch ms of the downloader's own next attempt, with an `interrupted` report a network
+     * failure it will retry produced (`Downloads.kt` keeps Chromium's automatic resume itself;
+     * the core schedules none for Android, `autoResume: 'host'`).
+     */
+    autoResumeAt?: number
   }
   'download.done': {
     token: string
-    state: 'completed' | 'cancelled' | 'interrupted'
+    /**
+     * `insecure-blocked`: the downloader followed the redirects itself and refused the body
+     * under Chrome's mixed-content rule (an `http:` hop under an `https:` page); nothing was
+     * written.
+     */
+    state: 'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'
     savePath: string
     finalName: string
     receivedBytes?: number
@@ -1172,6 +1183,9 @@ export class AndroidPlatform implements Platform {
       private: item.private
     })
     this.downloads = {
+      // The downloader retries a network failure itself (Chromium's automatic resume, 2 / 4 / 8 s)
+      // and announces each attempt; the core schedules none so nothing is retried twice.
+      autoResume: 'host',
       pause: (id) => bridge.send('download.pause', { id }),
       resume: (item) => bridge.send('download.resume', describe(item)),
       cancel: (id) => bridge.send('download.cancel', { id }),
@@ -1498,6 +1512,13 @@ export class AndroidPlatform implements Platform {
           disposition:
             p.disposition === 'inline' || p.disposition === 'attachment' ? p.disposition : null
         })
+        if (record.state === 'insecure-blocked') {
+          // Refused before a byte moved (Chrome's mixed-content rule): the row waits for Keep
+          // anyway or Discard, the announced transfer is dropped and reports nothing more.
+          this.bridge.send('download.refuse', { token: p.token })
+          if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+          return
+        }
         this.downloadTokens.set(p.token, record.id)
         // Where the file goes: the system save dialog, the folder from Settings, or the default.
         const settings = resolveDownloadSettings(browser.state.settings)
@@ -1510,7 +1531,9 @@ export class AndroidPlatform implements Platform {
           token: p.token,
           id: record.id,
           destination,
-          private: record.private
+          private: record.private,
+          // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
+          insecureAccepted: record.insecureAccepted === true
         })
         if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
         return
@@ -1529,7 +1552,11 @@ export class AndroidPlatform implements Platform {
             savePath: p.savePath || undefined,
             finalName: p.finalName || undefined,
             mimeType: p.mimeType || undefined,
-            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined
+            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined,
+            autoResumeAt:
+              p.state === 'interrupted' && p.autoResumeAt && p.autoResumeAt > 0
+                ? p.autoResumeAt
+                : undefined
           })
         return
       }

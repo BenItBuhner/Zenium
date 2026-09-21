@@ -1,7 +1,9 @@
 /**
  * Danger classification for downloads, modelled on Chromium's file-type policy
- * (`components/safe_browsing/content/resources/download_file_types.asciipb`, version 69) plus
- * the mixed-content rule (an http download from an https page is blocked behind a warning).
+ * (`components/safe_browsing/content/resources/download_file_types.asciipb`, version 69; the
+ * list is Chromium's, BSD-3, re-encoded here as the tiers Zenium needs rather than vendored)
+ * plus the mixed-content rule (`insecureDownload`: a plaintext hop in a download an https page
+ * started is blocked before a byte is written, HB-44).
  *
  * Chromium knows three file-type levels. `DANGEROUS` types always warn (a handful of names that
  * hijack programs when they land in a folder). `ALLOW_ON_USER_GESTURE` covers executables,
@@ -11,8 +13,17 @@
  * `NOT_DANGEROUS`. Hosts do not expose the gesture, so Zenium keys the exemption on the referrer
  * alone: a familiar site (visited before today) downloads its installers without a warning.
  *
+ * Zenium's two tiers over that policy (`DownloadDangerLevel`): `dangerous` for programs and
+ * scripts the user is likely to run straight from the panel and for every `DANGEROUS` type,
+ * `suspicious` for disk images, macro-bearing documents and the rest of the list. One table,
+ * a platform column (the letters below): an `.exe` is flagged on Windows, an `.apk` on Android
+ * and Linux, a `.dmg` on macOS, `.jar` everywhere. Archives (`.zip`, `.rar`, `.7z`) stay safe as
+ * in Chromium, whose Safe Browsing deep scan Zenium has no free twin for; `.iso` joins `.img`
+ * (both mount natively on Windows and macOS) as Zenium's one addition.
+ *
  * Verdicts from elsewhere (Safe Browsing, an enterprise policy) plug in through
- * `DangerVerdictProvider`; the highest level wins.
+ * `DangerVerdictProvider`; the highest level wins, so a URL Safe Browsing lists as malware or
+ * phishing makes any file `dangerous` whatever its type.
  */
 import type {
   DownloadDanger,
@@ -47,7 +58,8 @@ const WARN_UNLESS_FAMILIAR: Array<[platforms: string, extensions: string]> = [
   ['a', 'dex'],
   ['al', 'apk'],
   ['lm', 'pkg'],
-  ['mw', 'img']
+  // `iso` is Zenium's addition to Chromium's line (see the header).
+  ['mw', 'img iso']
 ]
 
 /** Extensions Chromium marks DANGEROUS: always warn. */
@@ -72,7 +84,7 @@ const CATEGORIES: Array<[reason: DownloadDangerReason, extensions: string]> = [
   ],
   [
     'archive',
-    'dmg dmgpart img imgpart cpgz xip pax toast udif ndif smi sparseimage sparsebundle dc42 diskcopy42 dvdr cdr'
+    'dmg dmgpart img iso imgpart cpgz xip pax toast udif ndif smi sparseimage sparsebundle dc42 diskcopy42 dvdr cdr'
   ],
   [
     'office-macro',
@@ -186,20 +198,74 @@ export interface DangerContext {
 }
 
 /**
- * Chromium blocks downloads an https page fetched over plain http (and follows the whole redirect
- * chain; hosts pass the final URL). `data:` and `blob:` inherit the page's security.
+ * Chromium's `IsUrlPotentiallyTrustworthy`, as far as a download's chain needs it: `https:`,
+ * `wss:`, `file:`, `data:` and `blob:` (the last two are no network hop: they inherit the page's
+ * security) count as secure, and so does plain `http:` to the machine itself (`localhost`, its
+ * subdomains, 127/8, `[::1]`), which no one on the network can tamper with. Anything else over
+ * `http:` (or `ws:`, `ftp:`) is not. An unparsable URL is not trusted either.
  */
-export function isInsecureDownload(url: string, referrer: string): boolean {
-  if (!referrer.startsWith('https:')) return false
-  return /^http:\/\//i.test(url)
+export function isPotentiallyTrustworthy(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  switch (parsed.protocol) {
+    case 'https:':
+    case 'wss:':
+    case 'file:':
+    case 'data:':
+    case 'blob:':
+      return true
+    case 'http:':
+    case 'ws:':
+      return isLoopbackHost(parsed.hostname)
+    default:
+      return false
+  }
 }
+
+/** `localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]` (Chromium's `net::IsLocalhost`). */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '')
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  if (host === '[::1]' || host === '::1') return true
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  return v4 !== null && v4[1] === '127'
+}
+
+/**
+ * Chrome's insecure-download rule (`chrome_download_manager_delegate.cc`,
+ * `GetInsecureDownloadStatusForDownload`): a download a secure page started is blocked when any
+ * URL of its redirect chain is not potentially trustworthy – the final one or a plaintext hop on
+ * the way, which is where the bytes could have been swapped. A download nobody's page started
+ * (a typed address, an extension, no referrer known) has no secure initiator and is never
+ * blocked. Hosts pass the whole chain when their engine exposes it (`DownloadItem.getURLChain`,
+ * the Kotlin downloader following its own redirects), else the URL alone.
+ */
+export function insecureDownload(urlChain: readonly string[], referrer: string): boolean {
+  if (!referrer || !isPotentiallyTrustworthy(referrer)) return false
+  const chain = urlChain.length > 0 ? urlChain : ['']
+  return chain.some((url) => !isPotentiallyTrustworthy(url))
+}
+
+/** The one-URL form of `insecureDownload` (a host without the chain, an older caller). */
+export function isInsecureDownload(url: string, referrer: string): boolean {
+  return insecureDownload([url], referrer)
+}
+
+/** Chrome's sentence for a blocked insecure download (`IDS_PROMPT_DOWNLOAD_INSECURE_BLOCKED`). */
+export const INSECURE_BLOCKED_MESSAGE = 'This file can’t be downloaded securely.'
 
 export const SAFE: DownloadDanger = { level: 'safe', reason: 'none', message: '' }
 
-/** File-type and mixed-content classification, before any provider verdict. */
+/**
+ * File-type classification, before any provider verdict. The mixed-content rule is not part of
+ * it any more: an insecure transfer is refused as a state (`insecure-blocked`, `insecureDownload`)
+ * and its file type is judged on its own, so the row knows whether "Keep anyway" may be offered.
+ */
 export function classifyDownload(context: DangerContext): DownloadDanger {
-  if (isInsecureDownload(context.url, context.referrer))
-    return makeDanger('suspicious', 'insecure-download')
   const policy = fileTypePolicy(context.filename, context.os)
   if (policy === 'not-dangerous') return SAFE
   if (policy === 'allow-on-user-gesture' && context.referrerFamiliar) return SAFE

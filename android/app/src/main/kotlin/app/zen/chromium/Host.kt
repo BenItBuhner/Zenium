@@ -571,7 +571,9 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
             "net.fetch" -> fetchText(args.str("url"), args.obj("headers"), args.num("timeoutMs").toInt(), args.num("maxBytes").toLong(), args.str("method", "GET"), args.strOrNull("body"), reply)
             // The chrome has read a spilled body (`BootHandoff.readBody`): its file goes.
             "net.release" -> { io.execute { handoff.release(args.str("token")) }; reply(null) }
-            "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private")); reply(null) }
+            "download.bind" -> { downloads.bind(args.str("token"), args.str("id"), args.obj("destination"), args.bool("private"), args.bool("insecureAccepted")); reply(null) }
+            // The core refused the announced transfer (`insecure-blocked`): nothing is written for the token.
+            "download.refuse" -> { downloads.refuse(args.str("token")); reply(null) }
             "download.cancel" -> { downloads.cancel(args.str("id")); reply(null) }
             "download.pause" -> { downloads.pause(args.str("id")); reply(null) }
             "download.resume" -> { downloads.resume(args); reply(null) }

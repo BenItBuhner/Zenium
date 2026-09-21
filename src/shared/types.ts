@@ -1495,8 +1495,21 @@ export interface ImportProgress {
   finishedAt: number | null
 }
 
-export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
+/**
+ * `insecure-blocked` is Chrome's mixed-content rule (HB-44): a transfer whose URL – or any hop
+ * of its redirect chain – is plain `http:` while the page that started it is secure is refused
+ * before a byte is written; the row waits for "Keep anyway" (`download.acceptDanger`, offered
+ * unless the file type is `dangerous`) or Discard.
+ */
+export type DownloadState =
+  'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'
 
+/**
+ * Chrome's two warning tiers over the file-type policy (`download_file_types.asciipb`) and the
+ * Safe Browsing verdicts: `dangerous` (executables, installers, scripts; any URL Safe Browsing
+ * lists as malware or phishing) and `suspicious` (disk images, macro-bearing documents, the rest
+ * of Chromium's list; a Safe Browsing verdict short of dangerous).
+ */
 export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
 
 /**
@@ -1603,6 +1616,18 @@ export interface DownloadItem {
   danger: DownloadDanger
   /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
   dangerAccepted: boolean
+  /**
+   * The user chose "Keep anyway" on an `insecure-blocked` row: the transfer that follows runs
+   * over the plaintext hop without being blocked again (the file-type warning still applies).
+   */
+  insecureAccepted?: boolean
+  /**
+   * An automatic resume is scheduled for this moment (epoch ms): the row is `interrupted` by a
+   * transient network failure, the server can resume, and the engine retries with backoff
+   * (2 / 4 / 8 s, three times, once the host says the network is back). Absent otherwise;
+   * never persisted.
+   */
+  autoResumeAt?: number
   /** Open the file as soon as the download completes (Chrome's "Open when done"). */
   openWhenDone: boolean
   /** Recent transfer rate; 0 while paused or unknown. */
@@ -3972,6 +3997,12 @@ export interface Commands {
   'download.exists': { args: { id: string }; result: boolean }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
   'download.chooseDirectory': { args: void; result: string | null }
+  /**
+   * The folder new downloads go to right now: `Settings.downloads.directory` when set, else the
+   * platform's Downloads folder (Settings › Downloads › Location shows it; empty when the host
+   * cannot name one).
+   */
+  'download.directory': { args: void; result: string }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
   'download.openPanel': { args: void; result: void }
   /** Desktop UI plumbing: begin an OS drag of a finished file out of the downloads page. */

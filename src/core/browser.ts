@@ -2750,6 +2750,7 @@ export class Browser {
       'download.deleteFile': ({ id }) => this.downloads.deleteFile(id),
       'download.exists': ({ id }) => this.downloads.exists(id),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
+      'download.directory': () => this.downloads.currentDirectory(),
       'download.openPanel': (_args, win) => {
         this.pages.open('downloads', undefined, win)
       },
