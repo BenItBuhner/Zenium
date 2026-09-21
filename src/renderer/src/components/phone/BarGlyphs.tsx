@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { RotateCw, Star, X } from 'lucide-react'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from '@renderer/lib/motion/spring'
 import { cn } from '@renderer/lib/utils'
@@ -54,11 +54,16 @@ const SPRING_FILL: SpringConfig = { ...SPRING_SNAPPY, restDelta: 0.004, restSpee
  * true runs the fill, in parallel with whatever the press opened (the menu's leave, the bar's
  * saved toast or editor). Not a toggle: nothing here reports a pressed state, the name of the
  * button around it says Bookmark or Edit Bookmark.
+ *
+ * The fill's rest state is written in a layout effect, before the browser paints the mount: a
+ * passive effect would leave the first frame of a fresh glyph (the bar's first mount, a bar edge
+ * switch) showing the filled star at full opacity over the outline, which nothing hides in the
+ * bar. The retargets ride the same effect; the spring itself runs on animation frames.
  */
 export function StarGlyph({ filled }: { filled: boolean }): JSX.Element {
   const fill = useRef<HTMLSpanElement>(null)
   const spring = useRef<SpringAnimation | null>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = fill.current
     if (!el) return
     const paint = (x: number): void => {
