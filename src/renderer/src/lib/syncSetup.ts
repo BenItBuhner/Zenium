@@ -57,6 +57,13 @@ export const SYNC_COPY = {
   continue: 'Continue',
   devices: 'Other devices',
   noDevices: 'No other device has synced to this folder yet',
+  // Chrome's label for the other devices' open tabs (ID-28); the row's descriptions are the
+  // list's summary, or why there is none to open: the dependent row's parent (§10.4) or an
+  // empty list (§9.17: a row that leads to an empty list is disabled, not left to open it).
+  remoteTabs: 'Tabs from other devices',
+  remoteTabsOff: 'Turn on Open tabs in What you sync to see them',
+  remoteTabsNone: 'No open tabs on your other devices yet',
+  remoteTabsDeviceEmpty: 'No open tabs on this device',
   scope: 'What you sync',
   turnOff: 'Turn off sync',
   turnOffHint: 'This device stops syncing and keeps what it has.',
