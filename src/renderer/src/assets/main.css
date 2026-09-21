@@ -7254,6 +7254,11 @@
  * the sheets' option rows run edge to edge inside a clipping scroll body, so the shared 2
  * outside would lose both sides and leave two bars – as the phone list's rows found
  * (phonePanels.css). The row moves the shared ring through the offset token, as the field does.
+ * The token inherits, so it reaches everything inside the row: safe because the row is the
+ * only target in it – a pressable row is a `button`, which holds no interactive content, and
+ * an info row's trailing slot carries a status glyph or text – so no focusable `zen-v2-` control
+ * ever takes the inset on its own fill; one that ever sat in the slot would set the token back
+ * on itself, as the picked swatch does under the card radio (v2Tokens.test.ts pins the slot).
  */
 .zen-settings-row {
   --v2-ring-offset: -2px;

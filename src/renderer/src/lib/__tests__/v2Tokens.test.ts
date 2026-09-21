@@ -1029,6 +1029,22 @@ describe('the focus ring (§1, §4)', () => {
     expect(rule(panels, '.zen-phone-row:has(> .zen-list-main:focus-visible)')).toMatch(
       /outline-offset: -2px;/
     )
+    // The token inherits, so the Settings row's −2 reaches everything inside it (the #272
+    // review): safe while the row is the only target in it. The wrappers keep it so – the
+    // pressable row is a `button` (no interactive content inside one), the switch it trails is
+    // an `aria-hidden` span, and the info row's slot takes glyphs and text – so `rows.tsx`
+    // renders no `zen-v2-` control inside a row; one that ever did would reset the token.
+    const rows = readFileSync(
+      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
+      'utf8'
+    )
+    expect(rows).toMatch(
+      /<button\s[^>]*className=\{cn\(\s*'zen-settings-row zen-settings-row-pressable zen-v2-row'/
+    )
+    expect(rows).toMatch(/<span className="zen-v2-switch" aria-hidden="true" \/>/)
+    expect(new Set(rows.match(/zen-v2-[a-z-]+/g))).toEqual(
+      new Set(['zen-v2-heading', 'zen-v2-row', 'zen-v2-switch'])
+    )
   })
 
   it('leaves a popover row the room its ring now takes: --v2-ring-room is 4 (§9.20, the #251 chassis (b))', () => {
