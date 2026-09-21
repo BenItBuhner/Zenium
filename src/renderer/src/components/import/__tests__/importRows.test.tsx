@@ -119,6 +119,7 @@ function context(
     boost: () => undefined,
     autofill: idleAutofillSettings(),
     dictionary: idleDictionaryWords(),
+    readAloudVoices: null,
     importSources
   }
 }
