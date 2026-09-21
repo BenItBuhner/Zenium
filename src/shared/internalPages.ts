@@ -154,6 +154,7 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'url bar',
       'navigation bar',
       'glance',
+      'split view',
       'app icon',
       'sites',
       'desktop site'

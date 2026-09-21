@@ -45,7 +45,7 @@ import {
   showZoomBubble,
   uiStore
 } from '@renderer/lib/ui'
-import { activeTab } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { openSiteInfo } from '@renderer/lib/siteInfo'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { toggleTabSearch } from '@renderer/lib/tabSearch'
@@ -97,7 +97,11 @@ export function useMainEvents(): void {
         if ((chrome === 'popup' || chrome === 'app') && mode !== 'new-tab') return
         // Phones always anchor the bar to the top: the keyboard owns the bottom half.
         const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
-        void openUrlbar(mode, currentActiveTabId(), { text, attached })
+        const tabId = currentActiveTabId()
+        // Over the empty pane of a split (Ctrl+Shift+*, split-04) the bar is the pane's own
+        // field: it floats inside the pane and the panes beside it stay live (`EmptyPane`).
+        const pane = !isPhone() && state !== null && isEmptySplitPane(state, tabId)
+        void openUrlbar(mode, tabId, { text, attached, pane })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
       onEvent('newtab.opened', ({ tabId, text }) => {

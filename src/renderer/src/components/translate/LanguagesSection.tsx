@@ -20,6 +20,7 @@ import {
 } from '@renderer/lib/translate'
 import { cn, formatBytes } from '@renderer/lib/utils'
 import { V2Button, V2CheckRow, V2Field, V2FormField, V2IconButton } from '../extensions/v2'
+import { ControlRow } from './ControlRow'
 import { Menulist } from './Menulist'
 
 /**
@@ -156,11 +157,11 @@ export function SpellcheckGroups({ state }: { state: UIState }): JSX.Element {
         title="Spell check"
         description="Text fields are checked by the spell checker of the keyboard in use. Its languages, and whether it marks or corrects words as you type, are chosen with the keyboard in the system settings."
       >
-        <div className="zen-v2-row" data-static="" data-control="">
+        <ControlRow>
           <V2Button onClick={() => run('spellcheck.openKeyboardSettings', undefined)}>
             Open keyboard settings
           </V2Button>
-        </div>
+        </ControlRow>
       </Group>
     )
   }
@@ -234,13 +235,7 @@ function SpellcheckLanguageRow({
 }): JSX.Element {
   const detail = dictionaryDetail(language.status)
   return (
-    <div
-      className="zen-v2-row"
-      data-static=""
-      data-control=""
-      data-language={language.code}
-      aria-disabled={disabled || undefined}
-    >
+    <ControlRow data-language={language.code} aria-disabled={disabled || undefined}>
       <span className="min-w-0 flex-1 truncate">{language.name}</span>
       {detail && (
         <span
@@ -258,7 +253,7 @@ function SpellcheckLanguageRow({
         disabled={disabled}
         onClick={() => run('spellcheck.setLanguage', { code: language.code, on: false })}
       />
-    </div>
+    </ControlRow>
   )
 }
 
@@ -316,14 +311,7 @@ function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element
     >
       {words !== null && words.length === 0 && <Empty>No words yet</Empty>}
       {(words ?? []).map((word) => (
-        <div
-          key={word}
-          className="zen-v2-row"
-          data-static=""
-          data-control=""
-          data-word={word}
-          aria-disabled={disabled || undefined}
-        >
+        <ControlRow key={word} data-word={word} aria-disabled={disabled || undefined}>
           <span className="min-w-0 flex-1 truncate">{word}</span>
           <V2IconButton
             icon={Trash2}
@@ -331,12 +319,11 @@ function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element
             disabled={disabled}
             onClick={() => void cmd('spellcheck.removeWord', { word }).then(refresh, refresh)}
           />
-        </div>
+        </ControlRow>
       ))}
-      <form
-        className="zen-v2-row zen-translate-add"
-        data-static=""
-        data-control=""
+      <ControlRow
+        as="form"
+        className="zen-translate-add"
         aria-disabled={disabled || undefined}
         onSubmit={submit}
       >
@@ -366,7 +353,7 @@ function CustomDictionaryGroup({ disabled }: { disabled: boolean }): JSX.Element
             />
           )}
         </V2FormField>
-      </form>
+      </ControlRow>
     </Group>
   )
 }
@@ -429,11 +416,11 @@ function Row({
 }): JSX.Element {
   const controls = Children.toArray(children).length > 0
   return (
-    <div className="zen-v2-row" data-static="" data-control={controls ? '' : undefined}>
+    <ControlRow control={controls}>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {detail && <span className="zen-translate-caption shrink-0">{detail}</span>}
       {children}
-    </div>
+    </ControlRow>
   )
 }
 
@@ -482,12 +469,7 @@ function AddRow({
   disabled?: boolean
 }): JSX.Element {
   return (
-    <div
-      className="zen-v2-row zen-translate-add"
-      data-static=""
-      data-control=""
-      aria-disabled={disabled || undefined}
-    >
+    <ControlRow className="zen-translate-add" aria-disabled={disabled || undefined}>
       <Menulist
         value={null}
         placeholder={placeholder}
@@ -496,7 +478,7 @@ function AddRow({
         label={label}
         disabled={disabled}
       />
-    </div>
+    </ControlRow>
   )
 }
 

@@ -393,6 +393,13 @@ const DESKTOP_APP_MENU = [
   'Zoom > Zoom In',
   'Zoom > Zoom Out',
   'Zoom > Reset Zoom',
+  'Split View',
+  'Split View > Grid',
+  'Split View > Vertical',
+  'Split View > Horizontal',
+  'Split View > -',
+  'Split View > Unsplit View',
+  'Split View > New Empty Split View',
   'Fullscreen',
   '-',
   'Find in Page…',
@@ -418,7 +425,14 @@ const DESKTOP_APP_MENU = [
   'Quit'
 ]
 
-const DESKTOP_ONLY = ['Search Tabs…', 'Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
+const DESKTOP_ONLY = [
+  'Search Tabs…',
+  'Keyboard Shortcuts',
+  'Compact Mode',
+  'Split View',
+  'Fullscreen',
+  'Quit'
+]
 
 describe('the app menu', () => {
   it('is unchanged on the desktop', () => {

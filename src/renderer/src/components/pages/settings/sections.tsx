@@ -455,6 +455,24 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       empty: 'No exceptions yet'
     })
   }
+  // Only a mouse drags tabs (a finger scrolls the strip): a touch host is not offered the row.
+  if (pointer) {
+    groups.push({
+      id: 'split-view',
+      heading: 'Split view',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'split-edge-zones',
+          label: 'Split view drag and drop',
+          description: 'Drag a tab to the edge of the page to open it in a split view.',
+          keywords: ['split screen', 'side by side', 'pane', 'drag', 'edge'],
+          checked: s.splitEdgeZones,
+          onChange: (v) => set({ splitEdgeZones: v })
+        }
+      ]
+    })
+  }
   groups.push({
     id: 'glance',
     heading: 'Glance',
@@ -1424,6 +1442,24 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           description: 'Sends what you type to the search engine as you type.',
           checked: s.searchSuggestions,
           onChange: (v) => set({ searchSuggestions: v })
+        },
+        // Suggestion privacy (omnibox-45): the local sources each behind their own switch, as
+        // Edge's; private windows show neither whatever these say.
+        {
+          kind: 'switch',
+          id: 'history-suggestions',
+          label: 'Show history suggestions',
+          description: 'Pages you visited, and completing an address you typed before.',
+          checked: s.historySuggestions !== false,
+          onChange: (v) => set({ historySuggestions: v })
+        },
+        {
+          kind: 'switch',
+          id: 'bookmark-suggestions',
+          label: 'Show bookmark suggestions',
+          description: 'Bookmarks whose title or address matches what you type.',
+          checked: s.bookmarkSuggestions !== false,
+          onChange: (v) => set({ bookmarkSuggestions: v })
         },
         {
           kind: 'info',

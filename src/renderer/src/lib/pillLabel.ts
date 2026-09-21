@@ -16,20 +16,25 @@ export function securityAnnouncement(indicator: SecurityIndicator): string | nul
 /**
  * The phone pill's address button as TalkBack reads it: "Address, <host>, <state>" – the host as
  * the pill shows it (the site, an internal page's name, an extension's), then the connection's
- * state, then the space's name when the window has more than one (the pill's own space label is
- * decoration to the tree, the group it sits in being no stop of its own). A pill with nothing in
- * it is the field's placeholder. The state is not repeated when it is all the address says
- * ("Extension page" for an extension the chrome does not know).
+ * state, then the states of the chips the site-information sheet carries for the pill
+ * ("5 requests blocked", "Translation offered"; v2 §9.29 on the phone, OMN-02: the pill draws
+ * no chip for them, so its one stop tells what the sheet would show), then the space's name
+ * when the window has more than one (the pill's own space label is decoration to the tree, the
+ * group it sits in being no stop of its own). A pill with nothing in it is the field's
+ * placeholder. The state is not repeated when it is all the address says ("Extension page" for
+ * an extension the chrome does not know); an empty chip state adds nothing.
  */
 export function phoneAddressLabel(
   address: string,
   indicator: SecurityIndicator | null,
-  spaceName: string | null = null
+  spaceName: string | null = null,
+  chipStates: readonly string[] = []
 ): string {
   if (!address) return 'Search or enter address'
   const parts = ['Address', address]
   const state = indicator ? securityAnnouncement(indicator) : null
   if (state && state !== address) parts.push(state)
+  for (const chipState of chipStates) if (chipState) parts.push(chipState)
   if (spaceName) parts.push(`in ${spaceName}`)
   return parts.join(', ')
 }
