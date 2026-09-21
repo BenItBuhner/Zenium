@@ -132,7 +132,17 @@
     "onboardingDone": true,
     "colorScheme": "light",
     "sidebarExpanded": true,
-    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" }
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" },
+    "pageControls": {
+      "desktopSite": "off",
+      "desktopSites": {},
+      "darkenSites": false,
+      "darkenSiteExceptions": {},
+      "zoom": 1,
+      "zoomIncludesOsFontSize": true,
+      "siteZooms": {},
+      "forceZoom": false
+    }
   },
   "shortcutOverrides": {},
   "bookmarks": [],

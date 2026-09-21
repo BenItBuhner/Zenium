@@ -6384,8 +6384,18 @@
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel > aside {
   height: 100%;
 }
-/* The docked sidebar's list keeps its vertical pan; the sideways swipe is the rail toggle. */
-:root[data-form-factor='tablet'] .zen-tablet-sidebar {
+/*
+ * The docked sidebar's list keeps its vertical pan; the sideways swipe is the rail toggle
+ * (`useSidebarSwipe`), and on the drawer the swipe shut. The rule sits on the list's scroller
+ * as well as on the column: Blink reads a touch's allowed pans from the touched element up to
+ * the nearest element that scrolls, and a scroller re-enables the pans it implements, so a
+ * `pan-y` on the column above the `[data-tab-scroller]` never reaches a finger on a row – its
+ * sideways pan would start a scroll (nothing scrolls that way; the pointer is cancelled all the
+ * same) and the swipe would never see a move.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-sidebar,
+:root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
+:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
   touch-action: pan-y;
 }
 

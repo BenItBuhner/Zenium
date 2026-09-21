@@ -302,7 +302,16 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check("Reload fetches the page again", awaitHits("/web.html", hitsBefore + 1), "hits ${server.hits("/web.html")} (was $hitsBefore)")
         awaitLoaded(WEB_TAB, "$ORIGIN/web.html")
         SystemClock.sleep(1_000)
-        // A second page in the tab's history, from the page itself.
+        // A second page in the tab's history, from the page itself. The tap first is the user's
+        // hand on the page, which a link's tap would be: a document that navigates without ever
+        // having been touched gets its history entry marked skippable (Chromium's history
+        // manipulation intervention) and Back would step over it – on the first entry of the
+        // tab, to nowhere.
+        val body = screen(domRect(CONTENT))
+        if (body != null) {
+            Finger().tap(body.centerX(), body.centerY())
+            SystemClock.sleep(500)
+        }
         pageJs(WEB_TAB, "location.href='/news.html'")
         awaitLoaded(WEB_TAB, "$ORIGIN/news.html")
         check("the page navigated for the history walk", tabUrl(WEB_TAB) == "$ORIGIN/news.html", "url ${tabUrl(WEB_TAB)}")
@@ -341,6 +350,14 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         SystemClock.sleep(1_200)
         shot("10-star-bubble")
         check("the host hands the back to the chrome while the bubble is up", chromeSurfaceUp(), "")
+        // The bubble's name field takes the keyboard as it opens (the phone's sheet does the
+        // same), and the platform gives the first back to the keyboard: it goes first, the
+        // bubble staying up under it.
+        if (awaitIme(true, 2_500)) {
+            back()
+            check("the first back takes the keyboard down and leaves the bubble up", awaitIme(false) && jsBoolean(STAR_DIALOG), "ime ${imeShown()}, starDialog ${jsText(STAR_DIALOG)}")
+            SystemClock.sleep(600)
+        }
         back()
         check("the system back closes the bubble (its light dismiss), not the page's history", awaitJs(STAR_DIALOG, false) && tabUrl(WEB_TAB) == "$ORIGIN/news.html", "starDialog ${jsText(STAR_DIALOG)}, url ${tabUrl(WEB_TAB)}")
         check("the bookmark stays", jsText("document.querySelector('$STAR').getAttribute('data-filled')") == "true", "")
@@ -353,12 +370,15 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val pill = domRect(ADDRESS_PILL)
         tapDom(ADDRESS_PILL)
         check("the address pill opens the URL bar", awaitUrlbar(true), "open ${urlbarOpen()}")
-        check("the URL bar's popup is as wide as the pill and hangs from it", awaitDom(OMNIBOX_POPUP, 4_000) && popupHangsFrom(pill), "popup ${domRect(OMNIBOX_POPUP)}, pill $pill")
+        check("the URL bar's popup is as wide as the pill and hangs ${POPUP_GAP.toInt()} under it", awaitDom(OMNIBOX_POPUP, 4_000) && popupHangsFrom(pill), "popup ${domRect(OMNIBOX_POPUP)}, pill $pill")
         awaitIme(true)
         SystemClock.sleep(800)
         instrumentation.sendStringSync("tea")
         check("typing brings suggestion rows", awaitJs("document.querySelectorAll('$OMNIBOX_ROW').length>0", true, 5_000), "rows ${jsText("document.querySelectorAll('$OMNIBOX_ROW').length")}")
-        check("the rows are 44 px tall", jsBoolean("[...document.querySelectorAll('$OMNIBOX_ROW')].every(function(r){return Math.abs(r.getBoundingClientRect().height-44)<=1})"), "heights ${jsText("[...document.querySelectorAll('$OMNIBOX_ROW')].map(function(r){return r.getBoundingClientRect().height})")}")
+        // The dropdown's rows are §6's 50 on every layout (shell pass 7(b), the lead's ruling on
+        // #289: one line at 50 whatever the row's kind; a row that carries a second line takes
+        // the tablet root's two-line height), every one over the 44 a finger needs.
+        check("the rows clear the 44 touch floor (§6's 50 for a line)", jsBoolean("[...document.querySelectorAll('$OMNIBOX_ROW')].every(function(r){return r.getBoundingClientRect().height>=44})"), "heights ${jsText("[...document.querySelectorAll('$OMNIBOX_ROW')].map(function(r){return r.getBoundingClientRect().height})")}")
         SystemClock.sleep(1_200)
         shot("11-omnibox-popup")
         val close = closeUrlField()
@@ -477,7 +497,9 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         pageJs(WEB_TAB, "window.scrollTo(0, 240)")
         SystemClock.sleep(600)
         val scrollBefore = pageJs(WEB_TAB, "window.scrollY").toDoubleOrNull() ?: 0.0
-        finding("before the resize: active $tabBefore at scroll $scrollBefore")
+        val placeBefore = pagePlace()
+        val loadsBefore = server.hits("/news.html")
+        finding("before the resize: active $tabBefore at scroll $scrollBefore, ${placeBefore.describe()}, ${loadsBefore} loads of the page so far")
 
         // A 1280 x 590 window: the short side under 600 dp is the phone chrome, its bar below.
         resize("1280x590")
@@ -487,7 +509,8 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         val insets = windowInsets()
         check("the phone's pill sits at the bottom of the window", phonePill != null && phonePill.top > insets.windowHeight * 0.6, "pill $phonePill in ${insets.windowWidth}x${insets.windowHeight}")
         check("the swap keeps the active tab", activeTabId() == tabBefore, "active ${activeTabId()}")
-        check("the swap keeps the page's scroll", abs((pageJs(WEB_TAB, "window.scrollY").toDoubleOrNull() ?: -1.0) - scrollBefore) <= 2, "scrollY ${pageJs(WEB_TAB, "window.scrollY")} (was $scrollBefore)")
+        check("the swap keeps the page's place (the same block at the top of the view; the page reflows to the wider view)", pagePlace().sameAs(placeBefore), "${pagePlace().describe()} (was ${placeBefore.describe()})")
+        check("the page was not loaded again for the swap", server.hits("/news.html") == loadsBefore, "loads ${server.hits("/news.html")} (were $loadsBefore)")
         check("nothing transient came along (no menu, URL bar or drag)", !urlbarOpen() && jsText(MENU_OPEN) == "false" && jsText(DRAG_UP) == "false", "")
         shot("15-phone-1280x590")
 
@@ -532,8 +555,31 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         SystemClock.sleep(2_500)
         calibrate()
         check("the active tab rode through every swap", activeTabId() == tabBefore, "active ${activeTabId()}")
-        check("and its scroll", abs((pageJs(WEB_TAB, "window.scrollY").toDoubleOrNull() ?: -1.0) - scrollBefore) <= 2, "scrollY ${pageJs(WEB_TAB, "window.scrollY")} (was $scrollBefore)")
+        check("and its place on the page", pagePlace().sameAs(placeBefore), "${pagePlace().describe()} (was ${placeBefore.describe()}, scroll $scrollBefore)")
+        check("without the page loading again", server.hits("/news.html") == loadsBefore, "loads ${server.hits("/news.html")} (were $loadsBefore)")
         shot("19-landscape-again")
+    }
+
+    /**
+     * Where the page is in the demo tab: the index of the block (the heading, then the
+     * paragraphs) at the top of the view, and the scroll in px. A swap of the chrome resizes the
+     * page's view – the sidebar's 240 comes and goes, the phone's bar takes the bottom – so the
+     * page reflows and Blink keeps the block under the view's top edge in place (its resize
+     * anchor), not the pixel: the block is the place, the pixel a reading.
+     */
+    private class PagePlace(val block: Int, val scrollY: Double, val viewWidth: Int) {
+        /** Blink anchors on the node under the view's top edge; a block either side is the same place after two reflows. */
+        fun sameAs(other: PagePlace): Boolean = block >= 0 && other.block >= 0 && abs(block - other.block) <= 1
+        fun describe(): String = "block $block at the top, scrollY $scrollY in a $viewWidth px wide view"
+    }
+
+    private fun pagePlace(): PagePlace {
+        val raw = pageJs(
+            WEB_TAB,
+            "(function(){var b=[].slice.call(document.querySelectorAll('h1,p'));var w=window.innerWidth;for(var i=0;i<b.length;i++){if(b[i].getBoundingClientRect().bottom>1)return [i,window.scrollY,w]}return [-1,window.scrollY,w]})()"
+        )
+        val a = runCatching { JSONArray(raw) }.getOrNull() ?: return PagePlace(-1, -1.0, 0)
+        return PagePlace(a.optInt(0, -1), a.optDouble(1, -1.0), a.optInt(2, 0))
     }
 
     // --- the display ------------------------------------------------------------------------------
@@ -620,11 +666,11 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
 
     private fun insetTop(): Double = jsNumber("parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zen-inset-top'))||0")
 
-    /** The URL bar's popup shares the pill's left edge and width (TB-21), within a px. */
+    /** The URL bar's popup shares the pill's left edge and width (TB-21) and hangs [POPUP_GAP] under it (`Urlbar.tsx`), within 2 px. */
     private fun popupHangsFrom(pill: RectF?): Boolean {
         val popup = domRect(OMNIBOX_POPUP) ?: return false
         if (pill == null) return false
-        return abs(popup.left - pill.left) <= 2 && abs(popup.width() - pill.width()) <= 2 && popup.top >= pill.top - 2
+        return abs(popup.left - pill.left) <= 2 && abs(popup.width() - pill.width()) <= 2 && abs(popup.top - (pill.bottom + POPUP_GAP)) <= 2
     }
 
     private fun menuRowsAre44(): Boolean = jsBoolean("[...document.querySelectorAll('$TABLET_MENU_ITEM')].every(function(r){return Math.abs(r.getBoundingClientRect().height-44)<=1})")
@@ -829,8 +875,11 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         private const val CONTENT = ".zen-content-frame"
         private const val TABLET_MENU = ".zen-v2-menu"
         private const val TABLET_MENU_ITEM = ".zen-v2-menu-item"
-        private const val OMNIBOX_POPUP = ".zen-omnibox-sheet"
+        /** The tablet's URL bar: the pill's attached popup (`.zen-omnibox[data-attached]`; the phone's `.zen-omnibox-sheet` is another pose). */
+        private const val OMNIBOX_POPUP = ".zen-omnibox[data-attached=\"true\"]"
         private const val OMNIBOX_ROW = ".zen-omnibox-row"
+        /** The gap between the pill and its popup (`POPUP_GAP` in `Urlbar.tsx`). */
+        private const val POPUP_GAP = 4f
         private const val OVERVIEW_MORE = ".zen-overview button[aria-label=\"More\"]"
 
         private fun row(tabId: String) = ".zen-tablet-sidebar [data-tab-id=\"$tabId\"]"
