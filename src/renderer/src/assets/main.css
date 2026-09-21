@@ -5995,8 +5995,9 @@
  * edge. At the shown rest its edge is the page's, a band in from the inset; at the hidden rest a
  * gutter in – the same two boxes the content column takes (`edgePadding`). Between, the frame
  * takes the tall box for the whole gesture (`data-bar-away` on the root, set the frame the bar
- * leaves its shown rest and cleared the frame it is back: one layout of the frame at each, as
- * the page itself is laid out tall once per hide), and the cards on that edge – the toast under
+ * leaves its shown rest and cleared at the shown REST it comes back to – not the frame it
+ * arrives, when a finger may still hold it – with the page's own tall layout, §11.5: one layout
+ * of the frame at each, as the page itself is laid out tall once per hide), and the cards on that edge – the toast under
  * a bottom bar, the banner stack under a top one – ride the bar by transform on their promoted
  * container, `--zen-bar-hide` written on the container itself: a toast showing mid-gesture moves
  * with the bar instead of jumping the band at the rest, and nothing is laid out in the frame.

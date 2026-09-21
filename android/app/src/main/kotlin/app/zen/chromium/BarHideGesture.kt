@@ -22,11 +22,20 @@ class BarHideFrame(
     /** The band the page gains once the bar is hidden. */
     val travelPx: Int,
     /** Window y of the page's edge on the bar's side with the bar fully shown. */
-    val shownEdgePx: Int
+    val shownEdgePx: Int,
+    /**
+     * The page holds its tall layout, into the bar's band ([BarHidePlacement]): from the hide's
+     * first frame to the shown REST, as the chrome says (`BarHideHostFrame.tall`) – not read off
+     * [offsetPx] here, since a bar that has come home under a finger still down, or under a
+     * fling not yet ended, is at 0 with the page still tall, so that its one short relayout (the
+     * gesture's biggest task on a heavy page, 105 ms on github.com in #270) lands at the rest,
+     * after the gesture's frames (§11.5). Implied by an offset above 0.
+     */
+    val tall: Boolean = offsetPx > 0f
 ) {
     enum class Edge { TOP, BOTTOM }
 
-    /** The bar is off its edge at all (the page is laid out tall, clipped to what the bar has left). */
+    /** The bar is off its edge at all. */
     val away: Boolean get() = offsetPx > 0f
     /** The bar is fully off. */
     val hidden: Boolean get() = offsetPx >= travelPx
@@ -37,11 +46,13 @@ class BarHideFrame(
             if (!args.optBoolean("enabled", true)) return null
             val travel = (args.num("travel") * density).roundToInt()
             if (travel <= 0) return null
+            val offset = (args.num("offset") * density).toFloat().coerceIn(0f, travel.toFloat())
             return BarHideFrame(
                 if (args.str("edge", "bottom") == "top") Edge.TOP else Edge.BOTTOM,
-                (args.num("offset") * density).toFloat().coerceIn(0f, travel.toFloat()),
+                offset,
                 travel,
-                (args.num("shownEdge") * density).roundToInt()
+                (args.num("shownEdge") * density).roundToInt(),
+                tall = args.optBoolean("tall", offset > 0f) || offset > 0f
             )
         }
     }
@@ -88,7 +99,9 @@ class BarHideGesture(
             // The chrome's offset is the mirror's, except under a finger a top-docked bar is
             // taking travel from: there the mirror leads and the chrome follows a frame behind.
             if (!filter.touching || value?.edge != BarHideFrame.Edge.TOP) share.mirror = value?.offsetPx ?: 0f
-            if (value == null || value.offsetPx <= 0f) filter.barAtRest()
+            // The page's layout as the chrome has it: laid out short, the next hide is gated on
+            // the band it would grow by; still tall (a bar home under the finger), it is not.
+            filter.pageLaidOut(tall = value?.tall == true)
         }
 
     /**
@@ -130,7 +143,7 @@ class BarHideGesture(
         fingerY = event.rawY
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                filter.down(fingerY)
+                filter.down(fingerY, pageTall = frame?.tall == true)
                 share.mirror = frame?.offsetPx ?: 0f
                 if (frame != null) emit("start", null)
             }
@@ -168,8 +181,9 @@ class BarHideGesture(
                 val travel = frame?.takeIf { it.edge == BarHideFrame.Edge.TOP }?.travelPx ?: 0
                 // A hide starts only with the band the page is about to be laid out taller by
                 // still below (else Chromium clamps the scroll back, see [BarHideScrollFilter]);
-                // one under way needs only something left to scroll to.
-                val pageBelow = view.scrollRemaining() >= if (share.mirror <= 0f) travel else 1
+                // one under way, or one from a page still laid out tall (the bar home under this
+                // finger), needs only something left to scroll to.
+                val pageBelow = view.scrollRemaining() >= if (share.mirror <= 0f && frame?.tall != true) travel else 1
                 val taken = share.move(fingerX, fingerY, travel, pageBelow)
                 if (taken != 0f) report(taken)
             }
