@@ -33,6 +33,21 @@ class PrivateBrowsingTest {
     }
 
     /**
+     * INC-05: the lock cover is drawn on the private surface, so the chrome's word keeps the
+     * guard up under it; the host's own hidden private views (the frames between the app's
+     * return and the chrome's next report) keep it up on their own too. Neither reads whether
+     * private tabs merely exist: a regular page with the private tabs locked behind it captures
+     * as before, and a recording is let in as before.
+     */
+    @Test
+    fun theGuardStaysUpUnderTheLockCover() {
+        assertTrue(PrivateBrowsing.guardWanted(privateSurface = true, recording = false, lockedContent = true))
+        assertTrue(PrivateBrowsing.guardWanted(privateSurface = false, recording = false, lockedContent = true))
+        assertFalse(PrivateBrowsing.guardWanted(privateSurface = false, recording = false, lockedContent = false))
+        assertFalse(PrivateBrowsing.guardWanted(privateSurface = true, recording = true, lockedContent = true))
+    }
+
+    /**
      * The guard has one owner: the chrome's `window.setSecure`, through [PrivateBrowsing.guard].
      * A second writer reading the page views' visibility (the private session's first cut) missed
      * the private new tab page, which has no page view, kept the overview's Tabs pane guarded

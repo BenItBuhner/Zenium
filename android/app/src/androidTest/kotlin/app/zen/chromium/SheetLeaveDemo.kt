@@ -37,7 +37,9 @@ import kotlin.math.sqrt
  * delivered as one event clear it, while the upper's q and the page's recede hold (§11.2);
  * (4) a prompt the core owns (the location permission, in `state`), withdrawn by the page
  * itself: the page navigates, the core cancels the tab's questions (`permissionPrompts.
- * cancelForTab`), and the prompt leaves `state` – the same leave, from the frame dialog slot.
+ * cancelForTab`), and the prompt leaves `state` – the same leave, from a sheet of the prompt's
+ * own (`PermissionPrompts` keeps the withdrawn prompt while its sheet runs down; #135 moved it
+ * out of the frame dialog host, whose slot carried it before).
  *
  * Two judgements are made, neither with a clock in it (the recording emulator paints two to
  * five frames a second). The first is [SheetRecedeDemo]'s: a test-only swatch in the chrome
@@ -53,8 +55,10 @@ import kotlin.math.sqrt
  * down) – and the poses after the store's write must show the sheet still there, marked leaving
  * and inert, its offset running down monotonically with the page never brought back ahead of
  * it, and gone by the end; a stack's upper sheet must not move while the lower goes; the slot
- * must have a panel in it part-way down, never run back empty. The BEFORE of each is the sheet
- * gone in the commit that cleared its request (no pose of it leaving; the slot's way back empty).
+ * must have a panel in it part-way down, never run back empty; a lone sheet its owner keeps for
+ * the way down (the prompt, never marked leaving) must be caught part-way, running one way, and
+ * gone by the end. The BEFORE of each is the sheet gone in the commit that cleared its request
+ * (no pose of it leaving or part-way; the slot's way back empty).
  * The chrome is read on until each leave has landed, past the screenshots: the emulator
  * stretches a leave of two sheets to some seconds, and starves the reader meanwhile.
  *
@@ -223,8 +227,17 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         // The Change Icon… row of step 2 stays on the tree's click: it sits below the context
         // menu's peek, and the menu must stay at the peek for the band that is measured.
         if (findNode { it == ALWAYS_LABEL } != null) {
-            val on = touchTapLabelExpecting(ALWAYS_LABEL, "the confirm's $ALWAYS_LABEL switch is on") { findNode { it == ALWAYS_LABEL }?.isChecked == true }
-            finding("stack: a finger on the confirm's '$ALWAYS_LABEL' switch: ${if (on) "it reads on" else "it did not take"}")
+            // The switch's state is read from the chrome document (`aria-checked`, what the
+            // switch itself says) with the tree's node as the second word: in run 35582352490
+            // the finger flipped the switch within half a second of landing (the recording shows
+            // it) while the tree's node went on reading unchecked for the five seconds the
+            // touch was given – the WebView's node for it was not refreshed – and the run failed
+            // on the reading, not the product.
+            val on = touchTapLabelExpecting(ALWAYS_LABEL, "the confirm's $ALWAYS_LABEL switch is on") { alwaysSwitchOn() }
+            finding(
+                "stack: a finger on the confirm's '$ALWAYS_LABEL' switch: ${if (on) "it reads on" else "it did not take"}" +
+                    " (aria-checked ${alwaysSwitchAria()}; the tree's node ${findNode { it == ALWAYS_LABEL }?.let { if (it.isChecked) "checked" else "unchecked" } ?: "gone"})"
+            )
             SystemClock.sleep(600)
         } else {
             finding("stack: the top sheet carries no '$ALWAYS_LABEL' switch to touch (the prompt's buttons would answer it)")
@@ -236,22 +249,27 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         settleDown()
 
         // 4. A prompt the core owns, withdrawn by the page: the page asks for its location and the
-        //    prompt comes up in the frame dialog host (a sheet on a phone); then the page reloads
-        //    itself, the core cancels the tab's questions on the commit, and the prompt leaves
-        //    `state` – the same leave from the slot. (A page's alert, confirm or prompt is the
-        //    system's dialog on Android, not the chrome's, so the permission prompt stands for the
-        //    core-owned dialog dismissed by its page.)
+        //    prompt comes up as a sheet of its own (since #135; the frame dialog host's slot
+        //    carried it before, and a build that still hosts it there is judged as a kept slide);
+        //    then the page reloads itself, the core cancels the tab's questions on the commit, and
+        //    the prompt leaves `state` – the same leave: `PermissionPrompts` keeps the withdrawn
+        //    prompt while its sheet runs down, and unmounts it after. (A page's alert, confirm or
+        //    prompt is the system's dialog on Android, not the chrome's, so the permission prompt
+        //    stands for the core-owned dialog dismissed by its page.)
         //    The prompt's panel stands at the top of the page, in the band, so the band reads the
         //    panel and not the page under it: these frames are recorded and their numbers written,
-        //    the leave judged by the poses (the slot's kept panel riding down, `p` with it).
+        //    the leave judged by the poses (the sheet's layer riding down, `p` with it).
         probe("prompt-open", Kind.RECORD) { runInPage(LOCATION_REQUEST) }
         settleUp()
         val promptUp = waitFor(LOCATION_TITLE, 2_000) != null || slotHasPanel(poseNow())
         finding(if (promptUp) "location prompt up: pose ${poseNow()}" else "no prompt came up for the page's location request")
         if (promptUp) {
-            val travel = slotTravel(poseNow())
-            val gone = probe("prompt-page-navigates", Kind.RECORD, landed = slotDown) { runInPage("location.reload()") }
-            judgeKeptSlide("prompt-page-navigates", gone.poses, travel)
+            val before = poseNow()
+            val travel = slotTravel(before)
+            val onSheet = before?.layers?.isNotEmpty() == true && before.slot?.optBoolean("up") != true
+            finding("location prompt on ${if (onSheet) "a sheet layer of its own" else "the frame dialog host's slot"}")
+            val gone = probe("prompt-page-navigates", Kind.RECORD, landed = if (onSheet) noLayer else slotDown) { runInPage("location.reload()") }
+            if (onSheet) judgeSheetWayDown("prompt-page-navigates", gone.poses) else judgeKeptSlide("prompt-page-navigates", gone.poses, travel)
             settleDown()
         } else if (awaitSurface(up = true, timeoutMs = 500)) {
             probe("prompt-close", Kind.RECORD) { back() }
@@ -302,6 +320,22 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     /** The slot's travel (CSS px) per a pose with a panel in it: what the slide runs over. */
     private fun slotTravel(pose: Pose?): Double = pose?.slot?.let { if (it.isNull("travel")) null else it.getDouble("travel") } ?: Double.NaN
+
+    /**
+     * The confirm's Always allow switch's `aria-checked` as the chrome document has it (`"true"`
+     * / `"false"`), `"none"` with no such switch in a sheet, or the evaluation's raw word.
+     */
+    private fun alwaysSwitchAria(): String {
+        val raw = chromeJs(
+            "(function(){var s=document.querySelector('.zen-sheet [role=\"switch\"][aria-label=\"$ALWAYS_LABEL\"]');" +
+                "return s?String(s.getAttribute('aria-checked')):'none';})()"
+        )
+        return (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: raw
+    }
+
+    /** Whether the confirm's Always allow switch is on: by its `aria-checked`, or by the tree's node. */
+    private fun alwaysSwitchOn(): Boolean =
+        alwaysSwitchAria() == "true" || findNode { it == ALWAYS_LABEL }?.isChecked == true
 
     private fun slotHasPanel(pose: Pose?): Boolean = pose?.slot?.optBoolean("panel") ?: false
 
@@ -378,13 +412,54 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
     }
 
     /**
+     * A lone sheet's way down once its request is withdrawn – a surface its owner keeps mounted
+     * for its close and unmounts after (step 4: the phone's permission prompt, a sheet of its own
+     * since #135 moved it out of the frame dialog host, kept by `PermissionPrompts` while it runs
+     * down): the poses show its layer's offset running from its top to its height one way and
+     * never back up, the root's recede never under the sheet's presence (the page is never
+     * brought back ahead of the sheet still showing), the way down caught part-way, and the layer
+     * gone by the end. The layer is not marked leaving (the owner's own dismiss, not the leave
+     * wrapper): the store's write is read as the first pose whose layer has moved or is gone, and
+     * a way down no pose caught is a vanish or a starved poller as [partWayUnseen] tells them.
+     */
+    private fun judgeSheetWayDown(name: String, poses: List<Pose>) {
+        describePoses(name, poses)
+        val moved = poses.indexOfFirst { pose -> pose.layers.isEmpty() || pose.layers.any { presenceOf(it) < 0.999 } }
+        if (moved < 0) {
+            failures += "$name: the sheet never moved (${poses.size} poses; a layer stands at its top in every one)"
+            return
+        }
+        val afterWrite = poses.drop(moved)
+        val down = afterWrite.filter { it.layers.isNotEmpty() }
+        if (down.isEmpty()) findings.append("  $name: the layer was gone in the first pose after the write; no pose of it on its way down\n")
+        var previous = Double.NaN
+        var partWay = 0
+        for (pose in down) {
+            val layer = pose.layers.first()
+            val presence = presenceOf(layer)
+            if (presence.isNaN()) continue
+            if (presence > 0.05 && presence < 0.95) partWay++
+            if (pose.p < presence - LEAVE_TOLERANCE) {
+                failures += "$name at ${pose.at} ms: the page is back to %.2f while the sheet still stands at %.2f".format(pose.p, presence)
+            }
+            val ty = layer.getDouble("ty")
+            if (!previous.isNaN() && ty < previous - 1) failures += "$name at ${pose.at} ms: the sheet turned back up (%.1f → %.1f px)".format(previous, ty)
+            previous = ty
+        }
+        if (partWay == 0) partWayUnseen(name, afterWrite.size, down.size)
+        val last = poses.last()
+        if (last.layers.isNotEmpty()) failures += "$name: the sheet's layer is still there ${last.at} ms after the write"
+        findings.append("  ${afterWrite.size} poses after the store's write, ${down.size} of the sheet on its way down, $partWay part-way; ${last.layers.size} layer(s) at the end, ${last.at} ms after the write\n")
+    }
+
+    /**
      * No pose caught the way down between 5 and 95 percent: a failure when the chrome was read
      * often enough to have caught it ([POSES_TO_CATCH] after the write), a finding otherwise – a
      * poller the emulator starved (a script round trip of seconds while two sheets move) is not
      * evidence of a vanish; that is a leave with no pose of the sheet leaving at all.
      */
     private fun partWayUnseen(name: String, afterWrite: Int, leaving: Int) {
-        val line = "$name: the way down was not caught part-way ($afterWrite poses after the store's write, $leaving of the sheet leaving or kept)"
+        val line = "$name: the way down was not caught part-way ($afterWrite poses after the store's write, $leaving of the sheet leaving, kept or on its way down)"
         if (afterWrite >= POSES_TO_CATCH) failures += line else findings.append("  $line: too few poses to tell\n")
     }
 
@@ -500,7 +575,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
     /**
      * What the page asks for to put a second sheet over the menu: a `tel:` link, which the host
      * holds for the external-protocol confirm when an app on the device answers to it (the
-     * dialer), else the location permission, whose prompt is a frame dialog – a sheet on a phone,
+     * dialer), else the location permission, whose prompt is a sheet of its own on a phone,
      * standing at the top of the page.
      */
     private fun secondSheet(): SecondSheet {
@@ -585,10 +660,12 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     /**
      * Put the progress swatch into the chrome (as [SheetRecedeDemo] does): a fixed bar in the
-     * status-bar area whose width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen,
-     * read through `var()` so it moves in the very style pass that moves the page and the
-     * sheets. Black on the light scheme, white on the dark, above everything and taking no
-     * input. Test-only; the product has no such thing.
+     * status-bar area whose width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen:
+     * tagged `data-recede-surface`, so the chassis writes the value on it each frame as on the
+     * frame and the bar (the root's value does not inherit), and read through `var()` so it
+     * moves in the very style pass that moves the page and the sheets. Black on the light
+     * scheme, white on the dark, above everything and taking no input. Test-only; the product
+     * has no such thing.
      */
     private fun placeSwatch() {
         val insets = windowInsets()
@@ -603,7 +680,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             "z-index:2147483647;pointer-events:none;margin:0;padding:0;border:0;border-radius:0"
         val result = chromeJs(
             "(function(){var el=document.getElementById('zen-demo-recede');" +
-                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';document.body.appendChild(el);}" +
+                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';el.setAttribute('data-recede-surface','');document.body.appendChild(el);}" +
                 "el.style.cssText=${jsString(css)};return el.getBoundingClientRect().height;})()"
         )
         finding("swatch placed at $swatch (${swatchColour()}); the chrome says its height is $result")
@@ -741,6 +818,9 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     /** The frame dialog host is down (or was never read): a slot's leave has landed. */
     private val slotDown: (Pose) -> Boolean = { pose -> pose.slot?.optBoolean("up") != true }
+
+    /** No sheet layer is left: a lone sheet's way down has landed and its layer is gone. */
+    private val noLayer: (Pose) -> Boolean = { pose -> pose.layers.isEmpty() }
 
     /** The content frame: below the status bar and above the bar. */
     private fun pageArea(): Rect {

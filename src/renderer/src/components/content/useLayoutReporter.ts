@@ -19,6 +19,7 @@ import {
   viewCover
 } from '@renderer/lib/layout'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
+import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
 import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
@@ -116,8 +117,10 @@ export function useLayoutReporter(
 
   // Under a chrome overlay, a revealed compact sidebar or toolbar, or a frame dialog host that
   // keeps the page behind its capture while a panel it placed is still on its way out, after
-  // the dialog's own flag has cleared (`holdFrameDialogCover`).
-  const contentHidden = pageHidden(ui)
+  // the dialog's own flag has cleared (`holdFrameDialogCover`); or under the lock cover of a
+  // locked private tab (INC-05, `PrivateLockCover`), until the cover has lifted.
+  const lockCover = usePrivateCoverUp(state)
+  const contentHidden = pageHidden(ui) || lockCover
   // The strips the chrome's message cards cover at the frame's edges (see `coverBandStore`).
   const band = coverBandStore.use()
   // Where the chrome lies under the pages – the Android chassis, whatever its form factor – the
@@ -136,7 +139,11 @@ export function useLayoutReporter(
     let deadline: ReturnType<typeof setTimeout> | null = null
     const evaluate = (): void => {
       let hidden = contentHidden
-      if (followsCover) {
+      // The lock cover never waits for its picture: a locked private page is hidden the moment
+      // the cover is asked for, a frame of the cover's base ahead of the blurred picture being
+      // the trade (the picture is decoration on the lock; the live page over the cover would be
+      // the leak, INC-05). Every other cover waits for its paint as before.
+      if (followsCover && !lockCover) {
         const cover = coverStatus(coverStore.get(), activeTab(state)?.id)
         const waitedOut =
           waitingSince.current !== null && Date.now() - waitingSince.current >= COVER_WAIT_MS
@@ -155,6 +162,8 @@ export function useLayoutReporter(
         } else {
           waitingSince.current = null
         }
+      } else {
+        waitingSince.current = null
       }
       reportedHidden.current = hidden
       send(hidden)
@@ -240,6 +249,7 @@ export function useLayoutReporter(
     ui.glanceReady,
     glanceActive,
     contentHidden,
+    lockCover,
     gap,
     band,
     followsCover,

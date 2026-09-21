@@ -1,10 +1,11 @@
 import type { CSSProperties, JSX } from 'react'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
+import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
@@ -20,8 +21,10 @@ import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gesture
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
+import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab } from '@renderer/lib/selectors'
@@ -151,7 +154,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
       const media = (e.target as HTMLElement).closest('[data-media]')
       const session = media ? mediaSession(state) : null
       if (overviewIsOpen()) closeOverview()
-      else if (session) {
+      else if (tab && privateTabLocked(state)) {
+        // The pill over a locked private tab says nothing of the page and opens nothing of it
+        // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
+        // Unlock does (INC-05).
+        void unlockPrivateTabs()
+      } else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
         void openMediaSheet(session.tabId, activeTabId)
@@ -193,6 +201,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // 120 ms, opacity alone, once the page's view has landed (`lib/fullscreenLanding.ts`).
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
+  // The message layer sits on the frame's edges and recedes with it (main.css reads
+  // `--zen-recede` on it).
+  const messageFrameRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(messageFrameRef)
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(
@@ -265,18 +277,16 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         )}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets.
-          On the bar's edge the box rides the bar as it hides (`--zen-bar-hide-shift`, per frame,
-          like the bar itself), so a toast showing mid-gesture moves with the bar instead of
-          jumping the band at the rest; at either rest it is the content column's edge. */}
+          Its box is the stylesheet's, by the bar's edge (`data-edge`) and the root's
+          `data-bar-away` (lib/barHide.ts): the content column's edge at either rest, the page's
+          tall box for the whole of a hide gesture, with the cards on the bar's edge riding the
+          bar by transform – so a toast showing mid-gesture moves with the bar instead of jumping
+          the band at the rest, and nothing in the frame is laid out per frame (main.css). */}
       <div
+        ref={messageFrameRef}
         data-shell-chrome
+        data-edge={edge}
         className="zen-message-frame pointer-events-none absolute z-[36]"
-        style={{
-          top: edgePadding('top', edge, barAway, true),
-          bottom: edgePadding('bottom', edge, barAway, true),
-          left: 'var(--zen-padding)',
-          right: 'var(--zen-padding)'
-        }}
       >
         <MessageLayer />
       </div>
@@ -328,21 +338,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 /**
  * What the content column leaves free at `side`: the bar band on the bar's edge – the bar and,
  * while the active tab is grouped, the group strip (`--zen-phone-band`) – a gutter elsewhere,
- * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`). With
- * `perFrame` the bar's edge follows the bar's hide as it happens (`--zen-bar-hide-shift`,
- * lib/barHide.ts): the band less the shift, which is the band at the shown rest and the gutter
- * at the hidden one, the same two values, with every frame between – for a box that should
- * move with the bar rather than be laid out twice per hide, as the content column is.
+ * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`). The two
+ * values are the two rests of the hide (lib/barHide.ts); nothing here follows the bar per
+ * frame – the page's edge does that on the host, the message frame's cards by transform.
  */
-function edgePadding(
-  side: PhoneBarPosition,
-  barEdge: PhoneBarPosition,
-  barAway = false,
-  perFrame = false
-): string {
+function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition, barAway = false): string {
   const inset = `var(--zen-inset-${side})`
-  if (side === barEdge && perFrame)
-    return `calc(${inset} + var(--zen-phone-band) - var(--zen-bar-hide-shift, 0px))`
   return side === barEdge && !barAway
     ? `calc(${inset} + var(--zen-phone-band))`
     : `calc(${inset} + var(--zen-padding))`
@@ -394,43 +395,67 @@ export function PhoneBar({
   const ctx = barContext(state, overviewOpen)
   const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
+  // Docked at the bottom edge the bar fades on the page's recede (main.css reads `--zen-recede`
+  // on it, §11.1); the top-docked bar registers too and its rule ignores the value.
+  const barRef = useRef<HTMLElement>(null)
+  useRecedeSurface(barRef)
   const groupStrip = strip ? (
     <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
+  // The bar that hides on scroll writes its progress on this element per frame (lib/barHide.ts);
+  // the preview of the bar at the other edge, drawn during a carry, does not hide.
+  const bindHide = useBarHideBinding(!inert)
+  // One ref for the two: the recede's registration reads the element off `barRef` in its layout
+  // effect, the hide's binding takes the element as it mounts and unmounts.
+  const setBar = useCallback(
+    (el: HTMLElement | null) => {
+      barRef.current = el
+      bindHide(el)
+    },
+    [bindHide]
+  )
 
   return (
-    <nav
-      className={cn(
-        'zen-phone-bar absolute z-30 flex flex-col px-2',
-        edge === 'bottom' ? 'bottom-0' : 'top-0',
-        // While the pill is being carried the other buttons are on their way out too.
-        pillLook !== 'docked' && 'zen-phone-bar-lifted',
-        inert && 'pointer-events-none'
-      )}
-      // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
-      data-surface="window"
-      // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
-      // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
-      data-edge={edge}
-      aria-hidden={inert || undefined}
-      data-shell-chrome
-      // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
-      // a button) brings it back, as does keyboard focus.
-      onFocus={inert ? undefined : showBar}
-      style={{
-        ...style,
-        left: 'var(--zen-inset-left)',
-        right: 'var(--zen-inset-right)',
-        paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
-        paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
-      }}
-    >
-      {edge === 'bottom' && groupStrip}
-      <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
-        {layout.left.map((id) => (
-          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-        ))}
-        {/*
+    // The clip box (main.css `zen-phone-bar-clip`): from the inset line to the window's far
+    // edge, clipping its overflow and never moving, so a bar slid off its edge by the hide is cut
+    // at the inset line and the bar's frame is its transform alone. The bar hangs its inset
+    // padding past the box's edge to sit where it always did.
+    <div className="zen-phone-bar-clip" data-edge={edge}>
+      <nav
+        ref={setBar}
+        className={cn(
+          'zen-phone-bar absolute z-30 flex flex-col px-2',
+          // While the pill is being carried the other buttons are on their way out too.
+          pillLook !== 'docked' && 'zen-phone-bar-lifted',
+          inert && 'pointer-events-none'
+        )}
+        // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
+        data-surface="window"
+        // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
+        // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
+        data-edge={edge}
+        aria-hidden={inert || undefined}
+        data-shell-chrome
+        // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
+        // a button) brings it back, as does keyboard focus.
+        onFocus={inert ? undefined : showBar}
+        style={{
+          ...style,
+          left: 'var(--zen-inset-left)',
+          right: 'var(--zen-inset-right)',
+          ...(edge === 'bottom'
+            ? { bottom: `calc(-1 * ${inset})` }
+            : { top: `calc(-1 * ${inset})` }),
+          paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
+          paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
+        }}
+      >
+        {edge === 'bottom' && groupStrip}
+        <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
+          {layout.left.map((id) => (
+            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+          ))}
+          {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
           buttons inside it, so TalkBack gets a node for each (a button's descendants would all
           collapse into one). Taps are told apart in onTap by what was under the finger. The
@@ -439,27 +464,28 @@ export function PhoneBar({
           (#108's follow-up, A11Y-01), and nothing in it but its buttons may speak (the space
           label is hidden from the tree, the address button says the space instead).
         */}
-        <div
-          className={cn(
-            'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
-            pillLook === 'docked' &&
-              'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
-            pillLook !== 'docked' && 'zen-pill-well',
-            pillLook === 'well-target' && 'zen-pill-well-target'
-          )}
-          data-surface="window"
-          {...(inert ? {} : pill)}
-        >
-          {pillLook === 'docked' && (
-            <PillContent state={state} tab={tab} space={space} interactive={!inert} />
-          )}
+          <div
+            className={cn(
+              'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
+              pillLook === 'docked' &&
+                'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
+              pillLook !== 'docked' && 'zen-pill-well',
+              pillLook === 'well-target' && 'zen-pill-well-target'
+            )}
+            data-surface="window"
+            {...(inert ? {} : pill)}
+          >
+            {pillLook === 'docked' && (
+              <PillContent state={state} tab={tab} space={space} interactive={!inert} />
+            )}
+          </div>
+          {layout.right.map((id) => (
+            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+          ))}
         </div>
-        {layout.right.map((id) => (
-          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-        ))}
-      </div>
-      {edge === 'top' && groupStrip}
-    </nav>
+        {edge === 'top' && groupStrip}
+      </nav>
+    </div>
   )
 }
 
@@ -498,16 +524,21 @@ export function PillContent({
   // translation chip – it is neither a secure site nor an insecure one, whatever origin the
   // Android runtime serves it from (§10.1 applied to extension pages, `extensionPageChrome`).
   const extension = shown ? extensionPageChrome(shown.url, state.extensions) : null
+  // A private tab under the lock (INC-05): the pill says nothing of its page – no address, no
+  // lock, no shield, no translation glyph – only that it is a private tab, behind the mask; the
+  // whole pill asks for the screen lock when tapped (the shell's onTap).
+  const locked = privateLockStore.use((s) => s.locked) && shown !== null && isPrivateTab(shown)
   // The site alone, as Chrome's omnibox shows it at rest: the path would only push it off the
   // pill. The PDF viewer page reads as its document (the file's name, then the title the
   // document names), the way Chrome's tab does; there is no site to show.
-  const url = shown
-    ? extension
-      ? extension.name
-      : isPdfViewerTab(state, shown.id) && shown.title
-        ? shown.title
-        : displayHost(shown.url)
-    : ''
+  const url =
+    shown && !locked
+      ? extension
+        ? extension.name
+        : isPdfViewerTab(state, shown.id) && shown.title
+          ? shown.title
+          : displayHost(shown.url)
+      : ''
   // An internal page (Settings): its glyph in the favicon slot and the page's name, no lock and
   // no site-information chip – there is no site (v2 §10.1); the registry says which glyph.
   const page = shown ? internalPageOf(shown.url) !== null : false
@@ -525,7 +556,8 @@ export function PillContent({
   const chips = phonePillChips(state, shown, {
     siteInfoOpen,
     mediaSheetOpen,
-    activeTabId: tab?.id ?? null
+    activeTabId: tab?.id ?? null,
+    locked
   })
   const drawn = pillChipsDrawn(chips)
   const spaceLabel = state.spaces.length > 1 ? space.icon || space.name : null
@@ -553,6 +585,16 @@ export function PillContent({
         aria-hidden="true"
       >
         <Favicon tab={shown} size={16} />
+      </span>
+    ) : shown && locked ? (
+      // Under the lock the slot is the mask alone – no site-information control announced for
+      // a page nothing may be read of; the pill's tap asks for the screen lock (INC-05).
+      <span
+        className="order-first -ml-1.5 -mr-2 flex h-8 w-8 shrink-0 items-center justify-center"
+        data-private-mark=""
+        aria-hidden="true"
+      >
+        <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
       </span>
     ) : shown ? (
       <PillChip
@@ -582,14 +624,20 @@ export function PillContent({
       <Control
         {...controlProps}
         className="flex h-full min-w-0 flex-1 items-center text-left"
-        aria-label={interactive ? addressLabel : undefined}
+        aria-label={
+          interactive ? (locked ? 'Private tab locked, unlock' : addressLabel) : undefined
+        }
         data-testid="pill-address"
       >
         <span
-          className={cn('min-w-0 flex-1 truncate text-[14px]', !url && 'text-[var(--zen-muted)]')}
+          className={cn(
+            'min-w-0 flex-1 truncate text-[14px]',
+            !url && !locked && 'text-[var(--zen-muted)]'
+          )}
+          data-private-locked={locked || undefined}
           data-testid="pill-host"
         >
-          {url || 'Search or enter address'}
+          {locked ? 'Private tab' : url || 'Search or enter address'}
         </span>
       </Control>
       {anchor}

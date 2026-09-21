@@ -14,13 +14,15 @@ import java.security.SecureRandom
  * parsed by the JS engine and copied again, all of it on the chrome's main thread):
  *
  *  - Boot documents. The boot payload inlines the core's documents while they are small
- *    ([Storage.bootDocuments]); the rest – a Safe Browsing feed's prefix table runs to megabytes –
+ *    ([Storage.bootDocuments]); the rest – a session grown big, an extension's rule-set document –
  *    it lists with their size and version tag, and the chrome fetches each from
  *    `https://appassets.androidplatform.net/zen-docs/<name>` ([document]), streamed from the
  *    profile's file through the WebView's request interception (`ChromeWebView.kt`). The tag
  *    travels as the response's `ETag` too, so the chrome (`src/android/handoff.ts`) can tell a
  *    document rewritten between the payload and the fetch; the Safe Browsing host keeps its
  *    parsed tables by the same tag and re-parses only what changed (`SafeBrowsing.reload`).
+ *    The same handler serves the Safe Browsing feed documents (megabytes of prefixes), which
+ *    the core reads once it is up rather than at boot (`AndroidStoreIO.read`).
  *  - Fetched bodies. `net.fetch` answers with the body inline up to [NET_INLINE_LIMIT] bytes; a
  *    bigger one (the 11 MB phishing-domains list) is written to a file under the cache directory
  *    as it arrives ([readBody], no further than [NET_BODY_LIMIT]) and the reply names it by
@@ -43,13 +45,14 @@ class BootHandoff(private val storage: Storage, private val spillDir: File) {
     }
 
     /**
-     * `/zen-docs/<name>`: one of the boot documents ([Storage.isBootDocument]), whole, with its
-     * ETag; 404 for anything else – a document that is not one of them (the filter text under
-     * `blocking/`) is not served here, whether or not it exists.
+     * `/zen-docs/<name>`: one of the documents the handler serves ([Storage.isServedDocument]: the
+     * boot documents and the Safe Browsing feed documents), whole, with its ETag; 404 for anything
+     * else – a document that is not one of them (the filter text under `blocking/`) is not served
+     * here, whether or not it exists.
      */
     fun document(path: String): Answer {
         val name = path.trim('/')
-        if (!storage.isBootDocument(name)) return NOT_FOUND
+        if (!storage.isServedDocument(name)) return NOT_FOUND
         val doc = storage.open(name) ?: return NOT_FOUND
         return Answer(200, "application/json", doc.etag, doc.length, doc.stream)
     }

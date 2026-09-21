@@ -18,7 +18,7 @@ import {
 import { PRIVATE_ACCENT, PRIVATE_ACCENT_RGB } from '@shared/newTabPageScript'
 
 /*
- * The theme hook rendered for real on the phone (MOT-14, design language v2 §11.5): a private
+ * The theme hook rendered for real on the phone (MOT-14, design language v2 §11.6): a private
  * tab coming into view runs the root's colour variables from the space theme to the private
  * theme in one blend over 240 ms on one value, through intermediate colours, and flips the
  * polarity (`data-theme`, the returned `isDark`) at the midpoint, 120 ms in; leaving it runs
@@ -229,7 +229,7 @@ afterEach(() => {
   delete document.documentElement.dataset.theme
 })
 
-describe('the theme blend (MOT-14, v2 §11.5)', () => {
+describe('the theme blend (MOT-14, v2 §11.6)', () => {
   it('paints the space theme on a regular tab, and blends the root to the private theme over 240 ms on one value', () => {
     render(stateOn('r1'))
     expect(painted()).toBe(bgOf(SPACE_LIGHT))
@@ -376,6 +376,51 @@ describe('the theme blend (MOT-14, v2 §11.5)', () => {
     rerender(stateOn('r1', ocean))
     expect(frames.queue.size).toBe(0)
     expect(painted()).toBe(bgOf(resolveTheme(ocean, false)))
+  })
+
+  /** The document's visibility as the hook reads it, with the `visibilitychange` it fires. */
+  function visibility(state: 'hidden' | 'visible'): void {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+  }
+  afterEach(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+  })
+
+  it('a blend in flight settles at its end as the document hides: no frozen private colours wait for the return', () => {
+    render(stateOn('x1'))
+    rerender(stateOn('r1'))
+    frames.run(2)
+    expect(painted()).toBe(between(PRIVATE_RESOLVED, SPACE_LIGHT, 32 / 240))
+    expect(frames.queue.size).toBe(1)
+    heard.length = 0
+    // Home: the document hides mid-blend, where rAF stops. The blend cuts to the space theme,
+    // the pending frame is dropped, and the host hears the rest once.
+    visibility('hidden')
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(paintedDark()).toBe(false)
+    expect(frames.queue.size).toBe(0)
+    expect(heard).toEqual([{ dark: false, background: rgbToHex(SPACE_LIGHT.averageColor) }])
+    // Back: nothing is pending, nothing runs, the theme is as it should be.
+    visibility('visible')
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+  })
+
+  it('a theme change while the document is hidden is a cut: nothing would show the blend, and its frames would not run', () => {
+    render(stateOn('x1'))
+    visibility('hidden')
+    // The private session ends from the notification while the app is away: the tab in front
+    // becomes a regular one.
+    rerender(stateOn('r1'))
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
+    expect(paintedDark()).toBe(false)
+    visibility('visible')
+    expect(frames.queue.size).toBe(0)
+    expect(painted()).toBe(bgOf(SPACE_LIGHT))
   })
 })
 

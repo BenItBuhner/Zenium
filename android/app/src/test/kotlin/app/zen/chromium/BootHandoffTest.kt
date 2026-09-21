@@ -39,12 +39,17 @@ class BootHandoffTest {
         storage.writeSync("history.json", "[]")
         storage.writeSync("blocking/index.json", """{"version":1,"sets":[]}""")
         val big = """{"version":1,"id":"phishing-database","prefixes":"${"A".repeat(2_000)}"}"""
+        // The Safe Browsing feed documents are not boot documents at all, whatever their size: the
+        // core reads them through the handler once it is up (`AndroidStoreIO.read`).
         storage.writeSync("safebrowsing/phishing-database.json", big)
         storage.writeSync("safebrowsing/urlhaus.json", """{"version":1,"id":"urlhaus","prefixes":""}""")
-        // The rule sets' documents: a small one travels inline, uBlock Origin Lite's are deferred like the feed.
+        // The rule sets' documents: a small one travels inline, uBlock Origin Lite's are deferred; a
+        // session grown big is deferred the same way.
         val ruleSet = """{"id":"ext:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:static:ruleset_1","rules":[${"""{"id":1,"action":{"type":"block"},"condition":{"urlFilter":"||ads.example^"}},""".repeat(40)}null]}"""
         storage.writeSync("blocking/sets/ext_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_static_ruleset_1-0c0ffee0.json", ruleSet)
         storage.writeSync("blocking/sets/user.json", """{"id":"user","rules":[]}""")
+        val session = """{"version":1,"tabs":[${"""{"url":"https://example.com/"},""".repeat(60)}null]}"""
+        storage.writeSync("session.json", session)
         // Not boot documents: a set's filter text, a temp file, a non-JSON file under a folder.
         storage.writeSync("blocking/easylist.json", """{"filterText":"${"x".repeat(5_000)}"}""")
         File(dir, "safebrowsing/urlhaus-filter.json.tmp").writeText(big)
@@ -53,28 +58,34 @@ class BootHandoffTest {
 
         val documents = storage.bootDocuments(1_024)
         assertEquals(
-            setOf("history.json", "state.json", "blocking/index.json", "blocking/sets/user.json", "safebrowsing/urlhaus.json"),
+            setOf("history.json", "state.json", "blocking/index.json", "blocking/sets/user.json"),
             documents.files.keys().asSequence().toSet()
         )
         assertEquals("""{"version":1}""", documents.files.getString("state.json"))
         assertEquals("""{"id":"user","rules":[]}""", documents.files.getString("blocking/sets/user.json"))
         assertEquals(2, documents.deferred.length())
-        // The manifest's order is the payload's: the root, the blocking index and its set documents, the feeds.
-        val deferredSet = documents.deferred.getJSONObject(0)
+        // The manifest's order is the payload's: the root, then the blocking index and its set documents.
+        val deferredSession = documents.deferred.getJSONObject(0)
+        assertEquals("session.json", deferredSession.getString("name"))
+        assertEquals(session.length.toLong(), deferredSession.getLong("bytes"))
+        assertEquals(storage.etag("session.json"), deferredSession.getString("etag"))
+        val deferredSet = documents.deferred.getJSONObject(1)
         assertEquals("blocking/sets/ext_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_static_ruleset_1-0c0ffee0.json", deferredSet.getString("name"))
         assertEquals(ruleSet.length.toLong(), deferredSet.getLong("bytes"))
         assertEquals(storage.etag(deferredSet.getString("name")), deferredSet.getString("etag"))
-        val deferred = documents.deferred.getJSONObject(1)
-        assertEquals("safebrowsing/phishing-database.json", deferred.getString("name"))
-        assertEquals(big.length.toLong(), deferred.getLong("bytes"))
-        assertEquals(storage.etag("safebrowsing/phishing-database.json"), deferred.getString("etag"))
 
-        // Every boot document inline, whatever its size: the payload before the handoff.
+        // Every boot document inline, whatever its size: the payload before the handoff. The feed
+        // documents are in neither.
         val all = storage.readAll()
-        assertEquals(big, all.getString("safebrowsing/phishing-database.json"))
+        assertEquals(session, all.getString("session.json"))
         assertEquals(ruleSet, all.getString(deferredSet.getString("name")))
-        assertEquals(7, all.length())
+        assertFalse(all.has("safebrowsing/phishing-database.json"))
+        assertFalse(all.has("safebrowsing/urlhaus.json"))
+        assertEquals(6, all.length())
         assertEquals(0, storage.bootDocuments(Long.MAX_VALUE).deferred.length())
+        // Served by the document handler all the same, for the core's read after boot.
+        assertTrue(storage.isServedDocument("safebrowsing/phishing-database.json"))
+        assertEquals(big, handoff.document("safebrowsing/phishing-database.json").text())
     }
 
     @Test
@@ -84,7 +95,12 @@ class BootHandoffTest {
         val first = storage.etag("safebrowsing/phishing-database.json")
         assertNotNull(first)
         assertEquals(first, storage.etag("safebrowsing/phishing-database.json"))
-        assertEquals(first, storage.bootDocuments(0).deferred.getJSONObject(0).getString("etag"))
+        // The manifest names a deferred boot document by the same tag; a feed document is no boot document.
+        storage.writeSync("state.json", """{"version":1}""")
+        val deferred = storage.bootDocuments(0).deferred
+        assertEquals(1, deferred.length())
+        assertEquals("state.json", deferred.getJSONObject(0).getString("name"))
+        assertEquals(storage.etag("state.json"), deferred.getJSONObject(0).getString("etag"))
         // The tag is the file's size and modification time and nothing of this process: the next
         // process (the Safe Browsing snapshot's header is compared across them) reads the same one.
         val file = File(dir, "safebrowsing/phishing-database.json")
@@ -150,12 +166,12 @@ class BootHandoffTest {
     }
 
     @Test
-    fun `the boot set is the root documents, the blocking index and set documents, and the feed documents`() {
+    fun `the served set is the root documents, the blocking index and set documents, and the feed documents`() {
         for (name in listOf("state.json", "extensions-runtime.json", "/state.json", "blocking/index.json", "safebrowsing/urlhaus.json", "safebrowsing//a.json", "blocking/sets/user.json", "/blocking/sets/ext_a_static_1-0c0ffee0.json")) {
-            assertTrue(name, storage.isBootDocument(name))
+            assertTrue(name, storage.isServedDocument(name))
         }
         for (name in listOf("blocking/easylist.json", "blocking/index.json.tmp", "state.json.bak", "safebrowsing/notes.txt", "privacy/flags.json", "a/b/c.json", "blocking", ".json", "", "blocking/sets", "blocking/sets/.json", "blocking/sets/user.json.bak", "blocking/other/user.json", "safebrowsing/sets/a.json")) {
-            assertFalse(name, storage.isBootDocument(name))
+            assertFalse(name, storage.isServedDocument(name))
         }
     }
 

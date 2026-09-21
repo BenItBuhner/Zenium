@@ -17,8 +17,10 @@ import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DesktopSettings } from './desktop'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -127,6 +129,8 @@ function PhoneSettings({
   // The vault's lists are fetched while Settings › Autofill is the section shown; the landing's
   // search builds the section with none (its switches and choices match, its entries do not).
   const autofill = useAutofillSettings(state, current?.id === 'autofill')
+  // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch.
+  const screenLock = privateLockStore.use((s) => s.screenLock)
   // The speech engine's voices are asked for while Accessibility is the section shown (the
   // landing's search builds its voice rows from the list already kept, or shows none yet).
   const readAloudVoices = useReadAloudVoices(
@@ -136,6 +140,9 @@ function PhoneSettings({
   const dictionary = useDictionaryWords(
     current?.id === 'languages' && state.spellcheck.available && formFactor !== 'phone'
   )
+  // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
+  // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
+  syncSetupStore.use((s) => s.folder)
   const ctx: SectionContext = {
     state,
     tab,
@@ -149,6 +156,7 @@ function PhoneSettings({
       void openOverlay('boosts', tabId)
     },
     autofill,
+    screenLock,
     readAloudVoices,
     dictionary
   }

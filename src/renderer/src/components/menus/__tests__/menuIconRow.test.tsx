@@ -151,7 +151,7 @@ const button = (label: string): HTMLButtonElement =>
   buttons().find((b) => b.getAttribute('aria-label') === label)!
 const textRows = (): string[] =>
   [...document.querySelectorAll<HTMLElement>('.zen-sheet-item')].map((b) => b.textContent ?? '')
-const starFill = (): HTMLElement => document.querySelector<HTMLElement>('.zen-menu-star-fill')!
+const starFill = (): HTMLElement => document.querySelector<HTMLElement>('.zen-star-glyph-fill')!
 const fillOpacity = (): number => Number(starFill().style.opacity)
 const fillScale = (): number => parseFloat(/scale\(([\d.]+)\)/.exec(starFill().style.transform)![1])
 const click = (el: Element): void => {
@@ -273,7 +273,7 @@ describe('the icon row', () => {
     expect(glyph).toContain('stroke-width: var(--v2-icon-stroke)')
     const block = css.slice(
       css.indexOf('.zen-menu-icon-row {'),
-      css.indexOf('.zen-menu-star > span')
+      css.indexOf('.zen-star-glyph > span')
     )
     expect(block).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i)
     // The disabled look is the primitive's one rule (§9.30), not a second one on the row.

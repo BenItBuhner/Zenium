@@ -667,17 +667,7 @@ export class TabManager {
         this.browser.fullscreen.onHtmlFullscreen(tabId, true)
         this.browser.pushDisplayMode(win)
       },
-      onLeaveHtmlFullscreen: () => {
-        for (const w of this.browser.allWindows()) {
-          if (w.htmlFullscreenTabId === tabId) {
-            w.htmlFullscreenTabId = null
-            w.relayout()
-            this.browser.pushDisplayMode(w)
-          }
-        }
-        state.commitVolatile()
-        this.browser.fullscreen.onHtmlFullscreen(tabId, false)
-      },
+      onLeaveHtmlFullscreen: () => this.leaveHtmlFullscreen(tabId),
       onDevtoolsOpened: () => {
         state.devtoolsOpenFor.add(tabId)
         state.commitVolatile()
@@ -1099,10 +1089,31 @@ export class TabManager {
     this.browser.state.commitVolatile()
   }
 
+  /**
+   * `tabId`'s page left HTML fullscreen – its element's exit, or the page gone while in it:
+   * every window it covered lays its chrome out again and its pages hear the display mode.
+   */
+  private leaveHtmlFullscreen(tabId: string): void {
+    for (const w of this.browser.allWindows()) {
+      if (w.htmlFullscreenTabId === tabId) {
+        w.htmlFullscreenTabId = null
+        w.relayout()
+        this.browser.pushDisplayMode(w)
+      }
+    }
+    this.browser.state.commitVolatile()
+    this.browser.fullscreen.onHtmlFullscreen(tabId, false)
+  }
+
   destroyView(tabId: string): void {
     const view = this.views.get(tabId)
     if (!view) return
     this.views.delete(tabId)
+    // The page goes with its element in fullscreen (a close from the core or the host, a
+    // discard): the windows it covered come back now. The host's own leave on the tear-down, if
+    // it sends one, reaches a view the core has dropped and is not heard.
+    if (this.browser.allWindows().some((w) => w.htmlFullscreenTabId === tabId))
+      this.leaveHtmlFullscreen(tabId)
     this.httpsUpgraded.delete(tabId)
     this.clearCaptureState(tabId)
     this.browser.protection.safeBrowsing.forgetTab(tabId)

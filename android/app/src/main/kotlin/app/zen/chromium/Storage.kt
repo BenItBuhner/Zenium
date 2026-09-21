@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicLong
  * `safebrowsing/`, and the extensions' `chrome.storage` documents in `ext-storage/`. What the
  * core reads at boot ([bootDocuments]) travels inline in the boot payload while small, and is
  * fetched through the chrome WebView's document handler (`BootHandoff.kt`) once it is not; the
- * (megabytes of) filter text and extension storage stay on disk and are read on demand.
+ * Safe Browsing feed documents (megabytes once the feeds were refreshed) are not read at boot
+ * at all – the core brings them in through the same handler once it is up ([isServedDocument])
+ * – and the filter text and extension storage stay on disk and are read on demand.
  *
  * Large documents cross the bridge in pieces ([beginWrite] / [writeChunk] / [endWrite], and
  * [readOrBegin] / [readChunk]): a filter-list extension's storage runs to tens of megabytes, and
@@ -72,9 +74,10 @@ class Storage(private val dir: File) {
     /**
      * The documents the core reads at boot, split by size (`BootDocuments`): `files` holds the
      * text of every one of `inlineLimit` bytes or less, by name, as the boot payload always
-     * carried them; `deferred` lists the larger ones – a Safe Browsing feed's prefix table, a
-     * rule index grown big – with their size and version tag ([etag]), for the chrome to fetch
+     * carried them; `deferred` lists the larger ones – a session grown big, an extension's
+     * rule-set document – with their size and version tag ([etag]), for the chrome to fetch
      * through the document handler instead of receiving them JSON-quoted inside the payload.
+     * The Safe Browsing feed documents are not among them (see [bootFiles]).
      */
     fun bootDocuments(inlineLimit: Long): BootDocuments {
         val files = JSONObject()
@@ -94,29 +97,32 @@ class Storage(private val dir: File) {
     fun readAll(): JSONObject = bootDocuments(Long.MAX_VALUE).files
 
     /**
-     * The root documents, the blocking index and its set documents, and the Safe Browsing feed
-     * documents, in the order the payload lists them: the root first, by name, then the folders.
+     * The root documents, then the blocking index and its set documents, in the order the
+     * payload lists them: the root first, by name, then the folder. Not the Safe Browsing feed
+     * documents under `safebrowsing/`: the core reads those after it has started (its service
+     * keeps their metadata and the refresh schedule; the tables themselves are this side's,
+     * `privacy/SafeBrowsing.kt`), through the document handler, so that a profile whose feeds
+     * were refreshed – megabytes of prefixes – boots as fast as a fresh one.
      */
     private fun bootFiles(): List<Pair<String, File>> {
         val out = ArrayList<Pair<String, File>>()
         dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.sortedBy { it.name }?.forEach { out.add(it.name to it) }
         fileFor(BLOCKING_INDEX)?.takeIf { it.isFile }?.let { out.add(BLOCKING_INDEX to it) }
-        for (folder in listOf(BLOCKING_SETS_DIR, SAFE_BROWSING_DIR)) {
-            for (name in list(folder).sorted()) {
-                if (!name.endsWith(".json")) continue
-                fileFor(name)?.takeIf { it.isFile }?.let { out.add(name to it) }
-            }
+        for (name in list(BLOCKING_SETS_DIR).sorted()) {
+            if (!name.endsWith(".json")) continue
+            fileFor(name)?.takeIf { it.isFile }?.let { out.add(name to it) }
         }
         return out
     }
 
     /**
-     * Whether a name is one [bootFiles] can list – a root `*.json` document, the blocking index,
-     * a rule set's document under `blocking/sets/`, a Safe Browsing feed document – and so one
-     * the document handler serves. Not the filter text under `blocking/`, not a backup, not a
-     * temp file: those the chrome reads through the bridge when it needs them, as before.
+     * Whether the document handler serves a name: every document [bootFiles] can list – a root
+     * `*.json` document, the blocking index, a rule set's document under `blocking/sets/` – and
+     * the Safe Browsing feed documents, which the core fetches after boot rather than reading
+     * through the bridge. Not the filter text under `blocking/`, not a backup, not a temp file:
+     * those the chrome reads through the bridge when it needs them, as before.
      */
-    fun isBootDocument(name: String): Boolean {
+    fun isServedDocument(name: String): Boolean {
         val parts = name.split('/').filter { it.isNotEmpty() }
         return when (parts.size) {
             1 -> isJsonName(parts[0])

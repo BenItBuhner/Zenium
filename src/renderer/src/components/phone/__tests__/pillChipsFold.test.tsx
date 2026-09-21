@@ -34,6 +34,7 @@ const { SiteInfoLayer } = await import('../../siteinfo/SiteInfoSheet')
 const { browserStore, uiStore } = await import('@renderer/lib/ui')
 const { viewportStore } = await import('@renderer/lib/formFactor')
 const { siteInfoStore } = await import('@renderer/lib/siteInfo')
+const { privateLockStore, resetPrivateLock } = await import('@renderer/lib/privateLock')
 const { defaultShortcuts } = await import('@shared/shortcuts')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
@@ -205,6 +206,7 @@ afterEach(() => {
   root = null
   host = null
   browserStore.set({ state: null })
+  resetPrivateLock()
   vi.useRealTimers()
 })
 
@@ -240,6 +242,31 @@ describe('phonePillChips: the chips as data', () => {
     expect(rows.translate?.value).toBe('German to English')
     expect(rows.media?.label).toBe('Now playing')
     expect(rows.media?.value).toBe('Nocturne')
+  })
+
+  it('the media row masks a locked private tab’s title (INC-05, §9.19) and says the state', () => {
+    // A private tab holds the session (`MediaState.private`, the core's flag, #279 – the core
+    // blanks the title too; a title stands in here to show the rule's two sides); the regular
+    // page's pill carries the chip.
+    const privateTab = tab('https://music.example.com/', { id: 'p1', containerId: 'private' })
+    const s = playing(state(page, { tabs: { t1: page, p1: privateTab } }))
+    s.media = [{ ...s.media![0]!, tabId: 'p1', private: true }]
+    const row = (): PillChipModel['row'] =>
+      phonePillChips(s, page, ctx).find((c) => c.id === 'media')?.row
+    expect(row()?.value).toBe('Nocturne')
+    privateLockStore.set({ locked: true })
+    expect(row()?.label).toBe('Now playing')
+    expect(row()?.value).toBe('Private tab')
+    // The cover still over the page as the lock lifts: masked until it lands.
+    privateLockStore.set({ locked: false, lifting: true })
+    expect(row()?.value).toBe('Private tab')
+    privateLockStore.set({ lifting: false })
+    expect(row()?.value).toBe('Nocturne')
+    // A regular tab's session (no flag) is never masked.
+    privateLockStore.set({ locked: true })
+    expect(
+      phonePillChips(playing(state(page)), page, ctx).find((c) => c.id === 'media')?.row?.value
+    ).toBe('Nocturne')
   })
 
   it('the media row opens the player for the session’s tab, and the sheet leaves for it', async () => {

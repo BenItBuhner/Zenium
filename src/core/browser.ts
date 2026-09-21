@@ -125,7 +125,7 @@ import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
 import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
@@ -1058,6 +1058,18 @@ export class Browser {
       return
     }
     this.newTab.open(win)
+  }
+
+  /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium (INC-05 / SET-17):
+   * the switch, device-local (`state.privateDevice`, never synced, the `newTabDevice` write
+   * shape: replaced whole, sanitised). The lock itself is the phone host's and stays in memory;
+   * the host reads the switch off the state it is sent.
+   */
+  private setPrivateLockOnLeave(enabled: boolean): void {
+    const { state } = this
+    state.privateDevice = sanitizePrivateDevice({ ...state.privateDevice, lockOnLeave: enabled })
+    state.commit()
   }
 
   /**
@@ -2375,6 +2387,7 @@ export class Browser {
         void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
+      'private.setLockOnLeave': ({ enabled }) => this.setPrivateLockOnLeave(enabled),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
       'tab.closeBelow': ({ tabId }, win) => tabs.closeBelow(tabId, win),
       'tab.closeAbove': ({ tabId }, win) => tabs.closeAbove(tabId, win),

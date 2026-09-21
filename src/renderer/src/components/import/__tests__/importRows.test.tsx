@@ -118,6 +118,7 @@ function context(
     openBarEditor: () => undefined,
     boost: () => undefined,
     autofill: idleAutofillSettings(),
+    screenLock: false,
     dictionary: idleDictionaryWords(),
     readAloudVoices: null,
     importSources
