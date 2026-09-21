@@ -39,6 +39,7 @@ import type {
   ShortcutAction,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceTabs,
   SyncScope,
   SyncStatus,
   Tab,
@@ -1602,6 +1603,13 @@ export interface SyncHost {
   confirmMerge(merge: boolean): Promise<void>
   disconnect(wipeRemote: boolean): void
   flushSync(): void
+  /** The other devices' open tabs as they last published them (ID-28); [] with Open tabs off. */
+  tabsFromDevices(): SyncDeviceTabs[]
+  /** Send a page to another device, where it opens as a tab once (ID-27). */
+  sendTab(
+    opts: { deviceId: string; url: string; title?: string; tabId?: string },
+    win: ZenWindow
+  ): Promise<void>
 }
 
 /**
@@ -2077,6 +2085,12 @@ export interface WebNotificationRequest {
   renotify: boolean
   /** Epoch ms shown as the notification's time. */
   timestamp: number
+  /**
+   * The browser's own notification rather than a page's: posted under the app's "Sharing"
+   * channel (Chrome Android's for tabs sent from another device), not the site's, and never
+   * counted against the site's permission. Absent for a page's notification.
+   */
+  channel?: 'sharing'
 }
 
 /**

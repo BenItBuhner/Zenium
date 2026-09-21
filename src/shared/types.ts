@@ -781,6 +781,34 @@ export interface SyncScope {
    * everything else; on by default as Chrome's password sync is.
    */
   passwords: boolean
+  /**
+   * Browsing history (ID-13 / HB-48): the device's visits and deletions as a stream the other
+   * devices import into their own history, on by default as Chrome's is. Off, a device neither
+   * publishes its visits nor takes the others' in. Absent on a `sync.json` older than the key.
+   */
+  history: boolean
+}
+
+/** One open tab of another device, as its `open-tabs` record carries it (ID-28). */
+export interface SyncRemoteTab {
+  /** The tab's id on its own device. */
+  tabId: string
+  url: string
+  title: string
+  favicon: string | null
+  /** When the tab was last in front on its device (epoch ms). */
+  lastActive: number
+  /** The window the tab is local to on its device, when it is not shared by every window. */
+  windowId: string | null
+}
+
+/** Another device's open tabs, newest activity first ("Tabs from other devices"). */
+export interface SyncDeviceTabs {
+  deviceId: string
+  deviceName: string
+  /** When the device last published its list (epoch ms). */
+  updatedAt: number
+  tabs: SyncRemoteTab[]
 }
 
 export interface SyncStatus {
@@ -808,6 +836,11 @@ export interface SyncStatus {
   devices: Array<{ id: string; name: string; lastSeen: number }>
   /** Set while the first sync waits for the user to confirm merging with existing cloud data. */
   pendingMerge: boolean
+  /**
+   * Bumped whenever another device's open tabs changed (`sync.tabsFromDevices` has a new
+   * answer); the list itself stays out of the status, it can run to hundreds of tabs.
+   */
+  remoteTabsVersion: number
 }
 
 // ---------------------------------------------------------------------------
@@ -4355,6 +4388,16 @@ export interface Commands {
   'sync.now': { args: void; result: void }
   'sync.confirmMerge': { args: { merge: boolean }; result: void }
   'sync.disconnect': { args: { wipeRemote: boolean }; result: void }
+  /** The other devices' open tabs (ID-28), those that publish them; [] with Open tabs off here. */
+  'sync.tabsFromDevices': { args: void; result: SyncDeviceTabs[] }
+  /**
+   * Send a page to one of the other devices (ID-27, Chrome's "Send to your devices"): it opens
+   * there as a tab once. `tabId` names the tab whose page it is (its title when none is given).
+   */
+  'sync.sendTab': {
+    args: { deviceId: string; url: string; title?: string; tabId?: string }
+    result: void
+  }
 
   /** End an agent's session and release its tabs. */
   'agent.disconnect': { args: { id: string }; result: void }

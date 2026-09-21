@@ -369,7 +369,8 @@ export class BrowserState {
       lastError: null,
       syncing: false,
       devices: [],
-      pendingMerge: false
+      pendingMerge: false,
+      remoteTabsVersion: 0
     },
     agents: [],
     agentServer: emptyAgentServerStatus(),

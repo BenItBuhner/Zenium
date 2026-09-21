@@ -77,6 +77,7 @@ export const SYNC_COPY = {
  */
 export const SYNC_SCOPES: ReadonlyArray<{ key: keyof SyncScope; label: string; hint?: string }> = [
   { key: 'bookmarks', label: 'Bookmarks' },
+  { key: 'history', label: 'History' },
   { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices.' },
   {
     key: 'passwords',
