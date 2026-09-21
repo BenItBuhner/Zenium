@@ -1456,14 +1456,27 @@ async function privateCookiesSwitch(s, privateWindowId) {
   ).catch((err) => {
     throw new Error(`${err.message}; the window's views: ${JSON.stringify(seen)}`)
   })
-  // (b) The view is shown and its page loaded: the chrome placed it. Every 4 s without that, the
-  // chrome is nudged into another layout report.
+  // (b) The view is shown and its page loaded: the chrome placed it. A hidden view here is
+  // usually by design, not a stall: 150 ms after the chrome is up the core opens the URL bar in
+  // its new-tab mode over the private new tab page (`newtab.opened`), and an open URL bar covers
+  // the content (`overlayCoversContent`), so the chrome reports `contentHidden` and shows the
+  // page's picture instead of the live view. Whether the first look lands before or after that
+  // 150 ms decided the outcome (main red three times on `visible: false`). So while the view is
+  // hidden, Escape closes the bar every second (the later click needs it closed anyway), and
+  // every 4 s the chrome is nudged into another layout report as a fallback.
   let lastNudge = Date.now()
+  let lastEscape = 0
+  const escaped = []
   const ntpId = await waitFor(
     async () => {
       const snapshot = await windowViews()
       seen = snapshot.views
       if (snapshot.shown) return snapshot.shown
+      if (Date.now() - lastEscape >= 1000) {
+        lastEscape = Date.now()
+        escaped.push(new Date().toISOString())
+        await s.press('Escape', privateWindowId)
+      }
       if (Date.now() - lastNudge >= 4000) {
         lastNudge = Date.now()
         nudged.push(new Date().toISOString())
@@ -1475,7 +1488,7 @@ async function privateCookiesSwitch(s, privateWindowId) {
     "the private window's zen://newtab view shown by the chrome"
   ).catch((err) => {
     throw new Error(
-      `${err.message}; the window's views: ${JSON.stringify(seen)}; nudged ${nudged.length} time(s)`
+      `${err.message}; the window's views: ${JSON.stringify(seen)}; escaped ${escaped.length}, nudged ${nudged.length} time(s)`
     )
   })
   const probe = `(() => {
@@ -1506,7 +1519,7 @@ async function privateCookiesSwitch(s, privateWindowId) {
     10000,
     'the "Block third-party cookies" row on the private new tab page'
   )
-  const detail = { privateWindowId, ntpId, before, row, nudged }
+  const detail = { privateWindowId, ntpId, before, row, nudged, escaped }
   if (row.role !== 'switch' || row.label !== 'Block third-party cookies') {
     throw new Error(`the row is not the switch it should be: ${JSON.stringify(row)}`)
   }
