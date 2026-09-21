@@ -262,6 +262,12 @@ class PrivateLockTest {
         assertTrue("a show asks the lock first", "privateLock.refusesShow(tabId, Profiles.isPrivate(view.containerId))" in setVisible)
         assertTrue("the core's word ends the hold", "privateLock.forget(tabId)" in setVisible)
         assertTrue("lockedContent = privateLock.holdsHiddenViews" in host)
+        // Arming leaves a private page's element fullscreen first: its layer sits above the chrome's
+        // root (MainActivity), out of the cover's reach; the view under it is then hidden like the rest.
+        val armed = host.substringAfter("private fun onPrivateLockArmed()").substringBefore("\n    }\n")
+        val exit = armed.indexOf("fullscreenTab?.takeIf { Profiles.isPrivate(it.containerId) }?.let(::exitFullscreen)")
+        assertTrue("a private fullscreen is left as the lock arms", exit >= 0)
+        assertTrue("the fullscreen leaves before the views are hidden", exit < armed.indexOf("privateLock.hide("))
         val reauth = File(sources, "Reauth.kt").readText()
         // The hook fires ahead of the caller's callback, once per prompt: the lock is armed before the chrome hears the answer.
         val once = reauth.substringAfter("val once =").substringBefore("prompting = true")

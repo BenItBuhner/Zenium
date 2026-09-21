@@ -10,7 +10,8 @@ import {
   RotateCcw,
   RotateCw,
   SkipBack,
-  SkipForward
+  SkipForward,
+  VenetianMask
 } from 'lucide-react'
 import type { MediaState, UIState } from '@shared/types'
 import { useMediaSeek } from '@renderer/hooks/useMediaSeek'
@@ -18,6 +19,7 @@ import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { formatMediaTime, handlesAction, mediaDetail, mediaOf } from '@renderer/lib/media'
 import { useFrameDialog } from '@renderer/lib/portals'
+import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeMediaSheet, uiStore } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
@@ -48,11 +50,20 @@ export function MediaLayer({ state }: { state: UIState }): JSX.Element | null {
  * Media Session action the OS controls send (`media.action` / `media.toggle`: the page's handler
  * when it has one, the element otherwise); the sheet leaves with the media – a closed tab, a clip that ended and left the
  * list – and every other way out (scrim, drag, back, Escape) simply closes it.
+ *
+ * The media of a private tab under the lock (INC-05) is shown as a state and not as a page: the
+ * chip is on whichever pill is up, so from a regular tab the sheet opens for a locked private
+ * tab's session – and a sheet already up keeps standing as the lock arms. `NowPlaying` masks the
+ * page then (§9.19, as the tab's card does): the mask on the tile, "Private tab" for the title,
+ * no artist, no site, no artwork; the seek and the transport stay, as the host's notification
+ * keeps its controls under "A site is playing media" (#223); picture-in-picture is not offered,
+ * the small window being the page itself. Switch to tab stays, and lands on the cover.
  */
 function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const media = mediaOf(state, tabId)
   const tab = state.tabs[tabId]
+  const masked = useTabMasked(tab)
   const dismiss = useCallback(() => sheet.current?.dismiss(), [])
   useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useEscapeTrap(true, dismiss)
@@ -68,9 +79,9 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
     if (!media) sheet.current?.dismiss()
   }, [media])
 
-  const pip = Boolean(state.capabilities.pictureInPicture && media?.video)
+  const pip = Boolean(state.capabilities.pictureInPicture && media?.video && !masked)
   const elsewhere = activeTab(state)?.id !== tabId
-  const contentKey = `${tabId}:${pip ? 'pip' : ''}:${elsewhere ? 'switch' : ''}`
+  const contentKey = `${tabId}:${pip ? 'pip' : ''}:${elsewhere ? 'switch' : ''}:${masked ? 'masked' : ''}`
 
   return (
     <BottomSheet
@@ -126,7 +137,9 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
  * What plays: the artwork (the page's, else a glyph on a fill tile – a film strip for a video, a
  * note for audio) beside the title and, under it, the artist and the site – the composition of
  * the media notification's header. A page without metadata shows its title over its site, and
- * never the site twice (`mediaDetail` skips what the title already says).
+ * never the site twice (`mediaDetail` skips what the title already says). A locked private
+ * tab's media says nothing of its page (§9.19, `useTabMasked`): the mask on the tile, "Private
+ * tab" for the title, no line under it.
  */
 function NowPlaying({
   media,
@@ -136,11 +149,12 @@ function NowPlaying({
   tab: UIState['tabs'][string] | undefined
 }): JSX.Element {
   const [broken, setBroken] = useState(false)
-  const artwork = media.artwork && !broken ? media.artwork : null
-  const title = media.title?.trim() || tab?.title || 'Media'
-  const detail = mediaDetail(media, tab, title)
+  const masked = useTabMasked(tab)
+  const artwork = !masked && media.artwork && !broken ? media.artwork : null
+  const title = masked ? PRIVATE_TAB_PLACEHOLDER : media.title?.trim() || tab?.title || 'Media'
+  const detail = masked ? '' : mediaDetail(media, tab, title)
   return (
-    <div className="zen-media-now">
+    <div className="zen-media-now" data-masked={masked || undefined}>
       {artwork ? (
         <img
           className="zen-media-art"
@@ -151,7 +165,13 @@ function NowPlaying({
         />
       ) : (
         <span className="zen-media-art zen-media-art-empty" aria-hidden>
-          {media.video ? <Film className={V2_GLYPH} /> : <Music className={V2_GLYPH} />}
+          {masked ? (
+            <VenetianMask className={V2_GLYPH} strokeWidth={1.75} />
+          ) : media.video ? (
+            <Film className={V2_GLYPH} />
+          ) : (
+            <Music className={V2_GLYPH} />
+          )}
         </span>
       )}
       <div className="min-w-0 flex-1">

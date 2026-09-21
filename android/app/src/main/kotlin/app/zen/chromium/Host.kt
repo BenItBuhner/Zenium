@@ -893,6 +893,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * the guard follows and the chrome hears.
      */
     private fun onPrivateLockArmed() {
+        // A private page's element fullscreen leaves with the lock: its layer sits above `root`
+        // (MainActivity), where the chrome's cover could not cover it, and the page's view under
+        // the layer is what the cover is for.
+        fullscreenTab?.takeIf { Profiles.isPrivate(it.containerId) }?.let(::exitFullscreen)
         for (tab in tabs.all()) {
             if (!Profiles.isPrivate(tab.containerId) || tab.visibility != View.VISIBLE) continue
             tabs.setVisible(tab.tabId, false)

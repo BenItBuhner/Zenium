@@ -156,16 +156,28 @@ export function usePrivateCoverUp(state: UIState): boolean {
 export const PRIVATE_TAB_PLACEHOLDER = 'Private tab'
 
 /**
- * This tab's card shows nothing of its page: it is private and the private tabs are locked (or
- * the lock is lifting, the cover still over the page). Wherever a card is drawn – the overview's
- * Private pane and its hero, the swipe track's neighbours, a card leaving or in the hand – the
- * picture is masked (`TabPreview`), and the title row reads the placeholder behind the mask in
- * place of the favicon and the title (§9.19: nothing of the page's identity leaks before the
- * unlock). For a rendering component.
+ * This tab shows nothing of its page: it is private and the private tabs are locked (or the
+ * lock is lifting, the cover still over the page). Wherever the tab is drawn – its card in the
+ * overview's Private pane and the hero, the swipe track's neighbours, a card leaving or in the
+ * hand, its media in the player and the site-information media row – the picture is masked
+ * (`TabPreview`), and the title reads the placeholder behind the mask in place of the favicon
+ * and the title (§9.19: nothing of the page's identity leaks before the unlock). Only the tab's
+ * identity is masked; a state of it (its media playing or paused) is not, as the host's
+ * notification keeps its controls under "A site is playing media". Nothing masks a tab that is
+ * not there.
  */
-export function useTabMasked(tab: Tab): boolean {
-  const masked = privateLockStore.use((s) => s.locked || s.lifting)
-  return masked && isPrivateTab(tab)
+export function tabMasked(
+  tab: Pick<Tab, 'containerId'> | null | undefined,
+  lock: Pick<PrivateLockState, 'locked' | 'lifting'> = privateLockStore.get()
+): boolean {
+  return (lock.locked || lock.lifting) && tab != null && isPrivateTab(tab)
+}
+
+/** `tabMasked` for a rendering component. */
+export function useTabMasked(tab: Pick<Tab, 'containerId'> | null | undefined): boolean {
+  const locked = privateLockStore.use((s) => s.locked)
+  const lifting = privateLockStore.use((s) => s.lifting)
+  return tabMasked(tab, { locked, lifting })
 }
 
 /**
