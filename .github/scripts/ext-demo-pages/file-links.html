@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Probe local file links</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 40px;
+        background: #ffffff;
+        color: #111;
+        font: 18px system-ui;
+      }
+      a {
+        font-size: 22px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Local file links</h1>
+    <p>
+      The link below points at a <code>file://</code> address (from the page's <code>?target=</code>
+      query, a placeholder otherwise). Browsers refuse to follow a local-file link from a web page;
+      an extension that opens local files is expected to open it in a new tab.
+    </p>
+    <p><a id="local" href="file:///nonexistent/probe.html">Open the local file</a></p>
+    <script>
+      const target = new URLSearchParams(location.search).get('target')
+      if (target && /^file:\/\//i.test(target)) document.getElementById('local').href = target
+      document.getElementById('local').textContent = 'Open ' + document.getElementById('local').href
+    </script>
+  </body>
+</html>
