@@ -12,6 +12,8 @@ import {
   nextRate,
   READ_ALOUD_RATE_SIZER,
   READ_ALOUD_RATE_STEPS,
+  VOICE_PLACEHOLDER,
+  voiceMenulistOptions,
   voiceOptions,
   voiceRow
 } from '../readAloud'
@@ -160,5 +162,36 @@ describe('the voice picker', () => {
     vi.mocked(run).mockClear()
     row.onChange('')
     expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe('the desktop voice menulist', () => {
+  const result = { voices: VOICES, byLanguage: { 'en-GB': 'en-gb-1' } }
+
+  it('lists the text’s language first, the other languages’ voices named with their language, no headings', () => {
+    const options = voiceMenulistOptions(result, 'en-GB', 'en-gb-1')
+    expect(options.map((o) => o.value)).toEqual(['en-gb-1', 'en-us-1', 'en-au-1', 'de-de-1'])
+    expect(options[3]!.label).toMatch(/^Deutsch 1 · German/)
+    expect(options[0]!.label).toBe('English (UK) 1')
+  })
+
+  it('carries the phone picker’s one-line description under each voice (§9.13)', () => {
+    const options = voiceMenulistOptions(result, 'en-GB', 'en-gb-1')
+    expect(options.map((o) => o.description)).toEqual([
+      'On this device · High quality',
+      'Needs a network · High quality',
+      'On this device · Low quality',
+      'On this device'
+    ])
+  })
+
+  it('holds the control’s label in one placeholder row before the list arrives, and while the session’s voice is not among them', () => {
+    expect(voiceMenulistOptions(null, 'en', '')).toEqual([
+      { value: '', label: `${VOICE_PLACEHOLDER}…` }
+    ])
+    const options = voiceMenulistOptions(result, 'en', 'missing')
+    expect(options[0]).toEqual({ value: '', label: VOICE_PLACEHOLDER })
+    expect(options).toHaveLength(VOICES.length + 1)
+    expect(voiceMenulistOptions(result, 'en', 'en-gb-1')).toHaveLength(VOICES.length)
   })
 })

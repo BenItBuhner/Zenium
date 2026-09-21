@@ -24,11 +24,9 @@ import { useBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
-  APP_MENU_BUTTON,
-  READER_PREFS_CHIP,
   closeReaderPreferences,
   readerPreferencesChanged,
-  shownElement,
+  readerPreferencesChip,
   uiStore
 } from '@renderer/lib/ui'
 import { useEscape } from '@renderer/hooks/useEscape'
@@ -238,16 +236,15 @@ function Rows({
 }
 
 /**
- * Desktop: the chassis popover (§9.20) 400 wide, hanging from what opened it as `lib/ui.ts`'s
- * `openReaderPreferences` settled it – its top border on the pill's bottom edge and
- * start-aligned with the chip; or, the chip folded away in a narrow pill (§9.29), on the toolbar
- * row's bottom edge aligned to the app menu's button, which keeps its pressed fill meanwhile –
- * placed by `placePopover`; the panel shadow, no scrim (§9.5). It renders through the chrome
- * layer and the layer's light dismiss puts it away: a press anywhere else closes it and reaches
- * nothing beneath, the opener's own press closes it and keeps the focus. Focus moves to the
+ * Desktop: the chassis popover (§9.20) 400 wide, hanging from the pill's Text preferences chip
+ * – its top border on the pill's bottom edge and start-aligned with the chip, which keeps its
+ * pressed fill meanwhile – whether the chip or the app menu's "Text Preferences…" asked for it
+ * (`lib/ui.ts`'s `openReaderPreferences`; the reader tab never hides the chip, §9.29), placed
+ * by `placePopover`; the panel shadow, no scrim (§9.5). It renders through the chrome layer
+ * and the layer's light dismiss puts it away: a press anywhere else closes it and reaches
+ * nothing beneath, the chip's own press closes it and keeps the focus. Focus moves to the
  * first control on open, Tab wraps, and Escape closes it and hands the keyboard back to the
- * opener (§9.22). With nothing on screen to hang from (compact mode) it hangs under the frame's
- * top edge.
+ * chip (§9.22). With no chip on screen (compact mode) it hangs under the frame's top edge.
  */
 function ReaderPreferencesPopover({
   panel,
@@ -258,7 +255,6 @@ function ReaderPreferencesPopover({
   closing: boolean
   children: JSX.Element
 }): JSX.Element {
-  const opener = panel.opener
   return (
     <DesktopPopover
       anchor={panel.anchor}
@@ -266,9 +262,7 @@ function ReaderPreferencesPopover({
       width={POPOVER_WIDTH.form}
       labelledBy={TITLE_ID}
       closing={closing}
-      anchorElement={() =>
-        opener ? shownElement(opener === 'menu' ? APP_MENU_BUTTON : READER_PREFS_CHIP) : null
-      }
+      anchorElement={readerPreferencesChip}
       onClosed={(byKey) => closeReaderPreferences({ keepFocus: byKey })}
       data-reader-prefs-panel=""
       data-surface="page"

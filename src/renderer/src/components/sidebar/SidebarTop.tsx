@@ -150,9 +150,6 @@ export function NavRow({
   const readerPrefsOpen = uiStore.use(
     (s) => s.readerPreferences !== null && s.readerPreferences.tabId === tab?.id
   )
-  // The Text preferences popover hanging from the menu button (its chip folded away, §9.29):
-  // the button keeps the anchor's pressed fill while it is up (§9.20).
-  const readerPrefsFromMenu = uiStore.use((s) => s.readerPreferences?.opener === 'menu')
   // A popup (`window.open` with features) has Chrome's read-only location bar: the address and
   // its chips show where the page is, but nothing can be typed into it. (An app window draws
   // its title bar in place of this row, `app/AppTitleBar.tsx`; should the row ever stand in for
@@ -198,9 +195,15 @@ export function NavRow({
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
   // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
   // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
-  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
-  // the stylesheet's container query's. A hidden chip's action stays in the app menu and the
-  // tab's menu; a chip whose popover is up stays put (§9.20).
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
+  // stylesheet's container query's. A hidden chip's action stays in the app menu and the
+  // tab's menu; a chip whose popover is up stays put (§9.20). On a `zen://reader` tab the lit
+  // Reader View exit and the Text preferences chip are the document's own controls (§10.1 took
+  // the reader toolbar away and left the chip the one home of its type, theme, width, spacing
+  // and reading aids), so there both join the never-hidden class (§9.29): they are counted with
+  // the state chips, and the address gives way to them – below the floor the pill drops its
+  // text altogether, which on the reader page costs nothing, since the document's own header
+  // carries the title, byline and host.
   const pill = useRef<HTMLDivElement>(null)
   const pillInner = usePillInnerWidth(pill)
   const shieldState =
@@ -237,7 +240,10 @@ export function NavRow({
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
   if (tab && !extension && (tab.readerable || isReader)) {
-    chipsPresent.push({ id: 'reader', tier: 'info', width: CHIP_WIDTH.small })
+    chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
+  }
+  if (tab && isReader) {
+    chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
   const fits = fittingChips(pillInner, chipsPresent)
   return (
@@ -440,14 +446,12 @@ export function NavRow({
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
               // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
-              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
-              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
-              // does not show itself, and at the default sidebar width the pill has room for
-              // the two chips that stay (site information, Reader View) and no more – a third
-              // would spill under the media hub's button. The reader document carries no
-              // toolbar of its own (§10.1: this popover is the one home of its controls), so
-              // the app menu's "Text Preferences…" is the way in while the chip is folded (the
-              // popover then hangs from the menu button, `lib/ui.ts`'s `openReaderPreferences`).
+              // and what its Escape hands the keyboard back to (§9.22). The reader document
+              // carries no toolbar of its own (§10.1: this popover is the one home of its
+              // controls), so the chip is never hidden on the reader tab, whatever the pill's
+              // width (§9.29: it joins site information and the lit Reader View exit; the
+              // address gives way instead) – no `zen-pill-extra`, and the app menu's "Text
+              // Preferences…" opens the same popover anchored to this chip.
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -455,7 +459,7 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
                 )}
@@ -591,11 +595,7 @@ export function NavRow({
       <button
         ref={menuButton}
         type="button"
-        // Named for the Text preferences popover, which hangs from this button while the
-        // pill's chip is folded (§9.29) and lights it as its anchor meanwhile (§9.20); the
-        // button's own `aria-expanded` would be the menu's, and the menu is not open.
-        data-zen-app-menu-button
-        className={cn('zen-toolbar-button', readerPrefsFromMenu && 'bg-[var(--zen-element-bg)]')}
+        className="zen-toolbar-button"
         title={hint('Menu', state, 'menu.app')}
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}

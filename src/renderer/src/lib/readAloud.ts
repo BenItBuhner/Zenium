@@ -137,11 +137,11 @@ function voiceDescription(voice: ReadAloudVoice): string {
 export const VOICE_PLACEHOLDER = 'Voice'
 
 /**
- * The desktop player's voice menulist (§9.13's popover of 28 px rows, one line each): the
- * voices for the text's language first under their names, then the other languages' voices
- * with their language after the name – the popover has no headings and its rows no second
- * line, so the language rides on the label. Before the list arrives, or while the session has
- * no voice among them, one placeholder row holds the control's label.
+ * The desktop player's voice menulist (§9.13's popover): the voices for the text's language
+ * first under their names, then the other languages' voices with their language after the
+ * name – the popover has no headings, so the language rides on the label – each with the phone
+ * picker's one-line description (where the voice runs, its quality). Before the list arrives,
+ * or while the session has no voice among them, one placeholder row holds the control's label.
  */
 export function voiceMenulistOptions(
   voices: ReadAloudVoicesResult | null,
@@ -152,8 +152,16 @@ export function voiceMenulistOptions(
   const same: MenulistOption<string>[] = []
   const other: MenulistOption<string>[] = []
   for (const voice of voices?.voices ?? []) {
-    if (baseLanguage(voice.lang) === base) same.push({ value: voice.id, label: voice.name })
-    else other.push({ value: voice.id, label: `${voice.name} · ${languageName(voice.lang)}` })
+    const description = voiceDescription(voice)
+    if (baseLanguage(voice.lang) === base) {
+      same.push({ value: voice.id, label: voice.name, description })
+    } else {
+      other.push({
+        value: voice.id,
+        label: `${voice.name} · ${languageName(voice.lang)}`,
+        description
+      })
+    }
   }
   const options = [...same, ...other]
   if (!options.some((option) => option.value === current)) {
