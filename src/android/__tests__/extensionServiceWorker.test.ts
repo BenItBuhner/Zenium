@@ -474,7 +474,7 @@ describe('the worker lifecycle events', () => {
     expect(location instanceof workerNavigator).toBe(false)
     expect(navigator instanceof workerLocation).toBe(false)
     expect({} instanceof workerNavigator).toBe(false)
-    expect(undefined instanceof workerNavigator).toBe(false)
+    expect((undefined as unknown) instanceof workerNavigator).toBe(false)
     expect(() => new workerNavigator()).toThrow(TypeError)
     expect(() => new workerLocation()).toThrow(TypeError)
     expect(workerNavigator.name).toBe('WorkerNavigator')

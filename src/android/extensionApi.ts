@@ -603,7 +603,7 @@ export class ExtensionApi {
       case 'tabs':
         return this.tabsCall(ext, endpoint, method, args)
       case 'windows':
-        return this.windowsCall(ext, endpoint, method, args)
+        return this.windowsCall(ext, method, args)
       case 'action':
       case 'browserAction':
       case 'pageAction':
@@ -1063,12 +1063,7 @@ export class ExtensionApi {
     return undefined
   }
 
-  private windowsCall(
-    ext: AttachedExtension,
-    endpoint: Endpoint,
-    method: string,
-    args: unknown[]
-  ): unknown {
+  private windowsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     switch (method) {
       case 'get':
       case 'getCurrent':
