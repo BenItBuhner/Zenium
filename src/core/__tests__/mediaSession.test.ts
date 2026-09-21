@@ -369,6 +369,23 @@ describe('MediaSessionService', () => {
       expect(h.service.pictureInPictureTab).toBeNull()
     })
 
+    it('withholds picture-in-picture from a private tab, and says so on its state', async () => {
+      h.privateTabs.add('t2')
+      play(h, 't2', report({ video: true, width: 1920, height: 1080 }))
+      expect(h.service.hasVideo('t2')).toBe(true)
+      // Chrome withholds PiP from Incognito; the host is never asked (ruled 2026-09-21).
+      await expect(h.service.enterPictureInPicture('t2')).resolves.toBe(false)
+      expect(h.pipRequests).toHaveLength(0)
+      expect(h.service.pictureInPictureTab).toBeNull()
+      const state = h.service.refresh().find((m) => m.tabId === 't2')!
+      expect(state.private).toBe(true)
+      expect(state.video).toBe(true)
+      expect(state.pictureInPicture).toBe(false)
+      // A regular tab's state carries no flag at all.
+      play(h, 't1', report({ video: true }))
+      expect(h.service.refresh().find((m) => m.tabId === 't1')!.private).toBeUndefined()
+    })
+
     it('refuses a tab without video, and hosts without the entry point', async () => {
       play(h, 't1')
       await expect(h.service.enterPictureInPicture('t1')).resolves.toBe(false)

@@ -372,6 +372,12 @@ describe('the media sheet', () => {
     expect(q('[data-testid="media-pip"]')).toBeNull()
   })
 
+  it("offers no picture-in-picture for a private tab's video (withheld, as Chrome does in Incognito)", async () => {
+    await open(state([track({ video: true, private: true, title: '', artist: '' })]))
+    expect(q('[data-testid="media-transport"]')).not.toBeNull()
+    expect(q('[data-testid="media-pip"]')).toBeNull()
+  })
+
   it('offers Switch to tab only while another tab is on screen, and switches', async () => {
     await open(state([track()]))
     expect(q('[data-testid="media-switch-tab"]')).toBeNull()
@@ -390,9 +396,11 @@ describe('the media sheet', () => {
     await vi.waitFor(() => expect(uiStore.get().mediaSheet).toBeNull())
   })
 
-  it('masks a locked private tab’s media (INC-05, §9.19): the mask, Private tab, no detail, no artwork, no picture-in-picture; the controls stay', async () => {
-    // The session's tab is private; a regular tab is on screen, whose pill carried the chip.
-    const s = state([track({ video: true, artwork: 'https://music.example.com/art.png' })], {
+  it('masks a locked private tab’s media (INC-05, §9.19): the mask, Private tab, no detail, no artwork; the controls stay', async () => {
+    // A private tab's session as the core sends it (`MediaState.private`, #279; the title,
+    // artist and artwork blank already): the player's fallbacks – the page's title, its site –
+    // are what the mask keeps in. A regular tab is on screen, whose pill carried the chip.
+    const s = state([track({ video: true, private: true, title: '', artist: '' })], {
       active: 't2'
     })
     s.tabs = { ...s.tabs, t1: { ...music, containerId: PRIVATE_CONTAINER_ID } }
@@ -405,10 +413,10 @@ describe('the media sheet', () => {
     expect(q('.zen-media-detail')).toBeNull()
     expect(q('img.zen-media-art')).toBeNull()
     expect(q('.zen-media-art-empty svg')?.classList.contains('lucide-venetian-mask')).toBe(true)
-    expect(document.body.textContent).not.toContain('Nocturne')
-    expect(document.body.textContent).not.toContain('The Band')
+    expect(document.body.textContent).not.toContain('Album – Music')
     expect(document.body.textContent).not.toContain('music.example.com')
-    // The small window would be the page: not offered under the lock. Switch to tab lands on the cover.
+    // Picture-in-picture is withheld from a private tab's video, locked or not (#279); Switch to
+    // tab stays and lands on the cover.
     expect(q('[data-testid="media-pip"]')).toBeNull()
     expect(q('[data-testid="media-switch-tab"]')).not.toBeNull()
     // The state is not the page: the seek row and the transport work as they do.
@@ -416,16 +424,26 @@ describe('the media sheet', () => {
     click(byLabel('Pause'))
     expect(commands().at(-1)).toEqual(['media.toggle', { tabId: 't1' }])
 
-    // The lock lifting (the cover still over the page) keeps the mask; off, the page is back.
+    // The lock lifting (the cover still over the page) keeps the mask; off, the page's fallbacks
+    // read as they did before the lock – and still no picture-in-picture.
     act(() => privateLockStore.set({ locked: false, lifting: true }))
     expect(q('[data-testid="media-title"]')?.textContent).toBe('Private tab')
     act(() => privateLockStore.set({ lifting: false }))
-    expect(q('[data-testid="media-title"]')?.textContent).toBe('Nocturne')
-    expect(q('.zen-media-detail')?.textContent).toBe('The Band · music.example.com')
-    expect(q<HTMLImageElement>('img.zen-media-art')?.getAttribute('src')).toBe(
-      'https://music.example.com/art.png'
-    )
-    expect(q('[data-testid="media-pip"]')).not.toBeNull()
+    expect(q('.zen-media-now')?.hasAttribute('data-masked')).toBe(false)
+    expect(q('[data-testid="media-title"]')?.textContent).toBe('Album – Music')
+    expect(q('.zen-media-detail')?.textContent).toBe('music.example.com')
+    expect(q('.zen-media-art-empty svg')?.classList.contains('lucide-film')).toBe(true)
+    expect(q('[data-testid="media-pip"]')).toBeNull()
+  })
+
+  it('masks on the core’s flag, not the tab’s container: a session marked private is masked whatever its tab reads', async () => {
+    // The flag is the core's word (#279), read wherever the media is drawn; the tab record
+    // beside it is not consulted.
+    privateLockStore.set({ locked: true })
+    await open(state([track({ private: true, title: 'Nocturne', artist: 'The Band' })]))
+    expect(q('[data-testid="media-title"]')?.textContent).toBe('Private tab')
+    expect(document.body.textContent).not.toContain('Nocturne')
+    expect(document.body.textContent).not.toContain('The Band')
   })
 
   it('masks nothing of a regular tab’s media under the lock', async () => {

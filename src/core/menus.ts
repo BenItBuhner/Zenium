@@ -569,7 +569,12 @@ export class Menus {
         }
       )
     }
-    if (params.mediaType === 'video' && state.capabilities.pictureInPicture) {
+    // Withheld from private tabs, as Chrome withholds it from Incognito (ruled 2026-09-21).
+    if (
+      params.mediaType === 'video' &&
+      state.capabilities.pictureInPicture &&
+      !tabs.isPrivate(tab)
+    ) {
       const showing = flags?.isShowingPictureInPicture ?? false
       controls.push({
         label: showing ? 'Exit Picture-in-Picture' : 'Picture-in-Picture',

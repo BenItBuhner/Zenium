@@ -1,4 +1,4 @@
-import type { Tab, UIState } from '@shared/types'
+import type { MediaState, Tab, UIState } from '@shared/types'
 import { run } from './api'
 import { activeTabIsPrivate, isPrivateTab } from './privateTabs'
 import { createStore } from './store'
@@ -155,29 +155,46 @@ export function usePrivateCoverUp(state: UIState): boolean {
 /** What a masked private tab's card reads in place of its title (§9.19; the pill's word). */
 export const PRIVATE_TAB_PLACEHOLDER = 'Private tab'
 
-/**
- * This tab shows nothing of its page: it is private and the private tabs are locked (or the
- * lock is lifting, the cover still over the page). Wherever the tab is drawn – its card in the
- * overview's Private pane and the hero, the swipe track's neighbours, a card leaving or in the
- * hand, its media in the player and the site-information media row – the picture is masked
- * (`TabPreview`), and the title reads the placeholder behind the mask in place of the favicon
- * and the title (§9.19: nothing of the page's identity leaks before the unlock). Only the tab's
- * identity is masked; a state of it (its media playing or paused) is not, as the host's
- * notification keeps its controls under "A site is playing media". Nothing masks a tab that is
- * not there.
- */
-export function tabMasked(
-  tab: Pick<Tab, 'containerId'> | null | undefined,
-  lock: Pick<PrivateLockState, 'locked' | 'lifting'> = privateLockStore.get()
-): boolean {
-  return (lock.locked || lock.lifting) && tab != null && isPrivateTab(tab)
+/** The private tabs' identity is masked: the lock stands, or is lifting with the cover still over the page. */
+function masking(lock: Pick<PrivateLockState, 'locked' | 'lifting'>): boolean {
+  return lock.locked || lock.lifting
 }
 
-/** `tabMasked` for a rendering component. */
-export function useTabMasked(tab: Pick<Tab, 'containerId'> | null | undefined): boolean {
+/**
+ * This tab's card shows nothing of its page: it is private and the private tabs are locked (or
+ * the lock is lifting, the cover still over the page). Wherever a card is drawn – the overview's
+ * Private pane and its hero, the swipe track's neighbours, a card leaving or in the hand – the
+ * picture is masked (`TabPreview`), and the title row reads the placeholder behind the mask in
+ * place of the favicon and the title (§9.19: nothing of the page's identity leaks before the
+ * unlock). For a rendering component.
+ */
+export function useTabMasked(tab: Pick<Tab, 'containerId'>): boolean {
   const locked = privateLockStore.use((s) => s.locked)
   const lifting = privateLockStore.use((s) => s.lifting)
-  return tabMasked(tab, { locked, lifting })
+  return masking({ locked, lifting }) && isPrivateTab(tab)
+}
+
+/**
+ * This media says nothing of its page: it is a private tab's (`MediaState.private`, the core's
+ * flag, #279 – the core blanks its title, artist, album and artwork already, and the player's
+ * fallbacks would read the page's title and site) and the private tabs are locked (or the lock
+ * is lifting). The in-app player and the site-information media row read the placeholder behind
+ * the mask, as the tab's card does (§9.19). Only the identity is masked; the state (playing or
+ * paused, the seek, the transport) is not, as the host's notification keeps its controls under
+ * "A site is playing media". Nothing masks a regular tab's media, nor none.
+ */
+export function mediaMasked(
+  media: Pick<MediaState, 'private'> | null | undefined,
+  lock: Pick<PrivateLockState, 'locked' | 'lifting'> = privateLockStore.get()
+): boolean {
+  return masking(lock) && media?.private === true
+}
+
+/** `mediaMasked` for a rendering component. */
+export function useMediaMasked(media: Pick<MediaState, 'private'> | null | undefined): boolean {
+  const locked = privateLockStore.use((s) => s.locked)
+  const lifting = privateLockStore.use((s) => s.lifting)
+  return mediaMasked(media, { locked, lifting })
 }
 
 /**

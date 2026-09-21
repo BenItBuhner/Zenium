@@ -2542,6 +2542,12 @@ export interface MediaState {
   positionAt?: number
   actions?: MediaSessionAction[]
   pictureInPicture?: boolean
+  /**
+   * A private tab's media: title, artist, album and artwork are blank on every surface, and
+   * picture-in-picture is withheld (Chrome withholds it from Incognito; the private tab lock
+   * never arms on a window that left for PiP – ruled 2026-09-21).
+   */
+  private?: boolean
   /** The media session's tab: the one the OS controls show (the in-app player leads with it). */
   session?: boolean
   /** Whose media: the tab's page (absent or `page`), or a chrome player's on that tab (`chrome`: no seek without a position, no PiP). */

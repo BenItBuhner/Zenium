@@ -11,7 +11,7 @@ import { chipCount, requests, siteBlockingState } from '@renderer/lib/blockingUi
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
 import { openSettings } from '@renderer/lib/pages'
-import { PRIVATE_TAB_PLACEHOLDER, tabMasked } from '@renderer/lib/privateLock'
+import { PRIVATE_TAB_PLACEHOLDER, mediaMasked } from '@renderer/lib/privateLock'
 import {
   foldPillChips,
   liveArrival,
@@ -238,12 +238,13 @@ export function phonePillChips(
   // media session – whichever pill is up – and gone otherwise; in the accent while it plays. It
   // takes the glyph's slot (§9.29: the lock gives way and returns when the media stops). Opens
   // the in-app player – from the pill, or from its sheet row while a newer state has the slot,
-  // the sheet leaving for the player. The session a locked private tab's (INC-05): the state is
-  // said, the title is not – the row reads "Private tab" (§9.19), as the player it opens does.
+  // the sheet leaving for the player. The session a locked private tab's (`MediaState.private`
+  // under the lock, INC-05): the state is said, the title is not – the row reads "Private tab"
+  // (§9.19), as the player it opens does.
   const session = mediaSession(state)
   if (session) {
     const label = session.playing ? 'Now playing' : 'Media paused'
-    const masked = tabMasked(state.tabs[session.tabId])
+    const masked = mediaMasked(session)
     chips.push({
       id: 'media',
       fold: pillChipFold('media'),

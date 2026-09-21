@@ -19,7 +19,7 @@ import { run } from '@renderer/lib/api'
 import { useBackSurface } from '@renderer/lib/back'
 import { formatMediaTime, handlesAction, mediaDetail, mediaOf } from '@renderer/lib/media'
 import { useFrameDialog } from '@renderer/lib/portals'
-import { PRIVATE_TAB_PLACEHOLDER, useTabMasked } from '@renderer/lib/privateLock'
+import { PRIVATE_TAB_PLACEHOLDER, useMediaMasked } from '@renderer/lib/privateLock'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeMediaSheet, uiStore } from '@renderer/lib/ui'
 import { useEscapeTrap } from '../bookmarks/escape'
@@ -54,16 +54,18 @@ export function MediaLayer({ state }: { state: UIState }): JSX.Element | null {
  * The media of a private tab under the lock (INC-05) is shown as a state and not as a page: the
  * chip is on whichever pill is up, so from a regular tab the sheet opens for a locked private
  * tab's session – and a sheet already up keeps standing as the lock arms. `NowPlaying` masks the
- * page then (§9.19, as the tab's card does): the mask on the tile, "Private tab" for the title,
- * no artist, no site, no artwork; the seek and the transport stay, as the host's notification
- * keeps its controls under "A site is playing media" (#223); picture-in-picture is not offered,
- * the small window being the page itself. Switch to tab stays, and lands on the cover.
+ * page then (`MediaState.private` under the lock, §9.19, as the tab's card does): the mask on
+ * the tile, "Private tab" for the title, no artist, no site, no artwork; the seek and the
+ * transport stay, as the host's notification keeps its controls under "A site is playing media"
+ * (#223). Picture-in-picture is withheld from a private tab's video altogether, locked or not
+ * (#279: a window that left for the small video never stops, so the lock would never arm).
+ * Switch to tab stays, and lands on the cover.
  */
 function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const media = mediaOf(state, tabId)
   const tab = state.tabs[tabId]
-  const masked = useTabMasked(tab)
+  const masked = useMediaMasked(media)
   const dismiss = useCallback(() => sheet.current?.dismiss(), [])
   useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
   useEscapeTrap(true, dismiss)
@@ -79,7 +81,7 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
     if (!media) sheet.current?.dismiss()
   }, [media])
 
-  const pip = Boolean(state.capabilities.pictureInPicture && media?.video && !masked)
+  const pip = Boolean(state.capabilities.pictureInPicture && media?.video && !media?.private)
   const elsewhere = activeTab(state)?.id !== tabId
   const contentKey = `${tabId}:${pip ? 'pip' : ''}:${elsewhere ? 'switch' : ''}:${masked ? 'masked' : ''}`
 
@@ -138,7 +140,7 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
  * note for audio) beside the title and, under it, the artist and the site – the composition of
  * the media notification's header. A page without metadata shows its title over its site, and
  * never the site twice (`mediaDetail` skips what the title already says). A locked private
- * tab's media says nothing of its page (§9.19, `useTabMasked`): the mask on the tile, "Private
+ * tab's media says nothing of its page (§9.19, `useMediaMasked`): the mask on the tile, "Private
  * tab" for the title, no line under it.
  */
 function NowPlaying({
@@ -149,7 +151,7 @@ function NowPlaying({
   tab: UIState['tabs'][string] | undefined
 }): JSX.Element {
   const [broken, setBroken] = useState(false)
-  const masked = useTabMasked(tab)
+  const masked = useMediaMasked(media)
   const artwork = !masked && media.artwork && !broken ? media.artwork : null
   const title = masked ? PRIVATE_TAB_PLACEHOLDER : media.title?.trim() || tab?.title || 'Media'
   const detail = masked ? '' : mediaDetail(media, tab, title)

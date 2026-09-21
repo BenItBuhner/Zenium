@@ -245,10 +245,12 @@ describe('phonePillChips: the chips as data', () => {
   })
 
   it('the media row masks a locked private tab’s title (INC-05, §9.19) and says the state', () => {
-    // The private tab holds the session; the regular page's pill carries the chip.
+    // A private tab holds the session (`MediaState.private`, the core's flag, #279 – the core
+    // blanks the title too; a title stands in here to show the rule's two sides); the regular
+    // page's pill carries the chip.
     const privateTab = tab('https://music.example.com/', { id: 'p1', containerId: 'private' })
     const s = playing(state(page, { tabs: { t1: page, p1: privateTab } }))
-    s.media = [{ ...s.media![0]!, tabId: 'p1' }]
+    s.media = [{ ...s.media![0]!, tabId: 'p1', private: true }]
     const row = (): PillChipModel['row'] =>
       phonePillChips(s, page, ctx).find((c) => c.id === 'media')?.row
     expect(row()?.value).toBe('Nocturne')
@@ -260,7 +262,7 @@ describe('phonePillChips: the chips as data', () => {
     expect(row()?.value).toBe('Private tab')
     privateLockStore.set({ lifting: false })
     expect(row()?.value).toBe('Nocturne')
-    // A regular tab's session is never masked.
+    // A regular tab's session (no flag) is never masked.
     privateLockStore.set({ locked: true })
     expect(
       phonePillChips(playing(state(page)), page, ctx).find((c) => c.id === 'media')?.row?.value
