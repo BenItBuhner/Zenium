@@ -6,6 +6,7 @@ import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
+import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
@@ -134,6 +135,10 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
   // The grow surface is a stage layer too, but the page it reveals must be painted under it: the
   // surface fades on its own progress and the page shows through (NewTabGrowLayer).
   const growing = newTabGrowStore.use((s) => s.phase !== 'idle')
+  // The page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts): the page
+  // stays painted under the arriving sheet, fading on the morph's value, until the field lands.
+  const morph = fakeboxMorphStore.use()
+  const morphHolds = tab !== null && morph.tabId === tab.id && fakeboxHoldsChrome(morph)
   // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
   // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
   const pageTab = isPageTab(tab)
@@ -239,7 +244,11 @@ export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Eleme
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.
-              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || (staged && !growing)} />
+              <NewTabPage
+                state={state}
+                tab={tab}
+                hidden={(ui.urlbar.open && !morphHolds) || (staged && !growing)}
+              />
             )}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />

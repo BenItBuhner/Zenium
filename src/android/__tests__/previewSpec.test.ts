@@ -12,7 +12,12 @@ import {
 
 describe('parsePreviewSeed', () => {
   it('seeds the private tabs’ lock and the device’s screen lock on any spec, leaving the rest alone', () => {
-    expect(parsePreviewSeed('private=page')).toEqual({ rules: null, lock: false, screenLock: null })
+    expect(parsePreviewSeed('private=page')).toEqual({
+      rules: null,
+      lock: false,
+      screenLock: null,
+      bar: null
+    })
     // The lock on (INC-05): the cover over a private tab in front, or over the Private pane.
     expect(parsePreviewSeed('private=page&lock=on')).toMatchObject({ lock: true })
     expect(parsePreviewSeed('#private=overview&lock=1')).toMatchObject({ lock: true })
@@ -26,8 +31,18 @@ describe('parsePreviewSeed', () => {
     expect(parsePreviewSeed('page=settings&rules=3&lock=on&screenlock=off')).toEqual({
       rules: 3,
       lock: true,
-      screenLock: false
+      screenLock: false,
+      bar: null
     })
+  })
+
+  it('docks the phone bar where the spec says, leaving the setting alone otherwise', () => {
+    expect(parsePreviewSeed('page=newtab&bar=top')).toMatchObject({ bar: 'top' })
+    expect(parsePreviewSeed('page=newtab&ntp=scrub:40&bar=bottom')).toMatchObject({
+      bar: 'bottom'
+    })
+    expect(parsePreviewSeed('page=newtab&bar=left')).toMatchObject({ bar: null })
+    expect(parsePreviewSeed('page=newtab')).toMatchObject({ bar: null })
   })
 })
 
