@@ -10,10 +10,6 @@ name: Android boot probe
 # body. Dispatch-only; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
 on:
   workflow_dispatch:
-  # TEMPORARY (removed before merge): the one probe run of the Safe Browsing boot-path branch.
-  push:
-    branches:
-      - cursor/services-safebrowsing-boot-path-24d1
 
 permissions:
   contents: read
