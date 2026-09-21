@@ -383,16 +383,39 @@ export class TabCaptureApi {
     return `zen-tab-capture-${this.prefix}-${this.minted}`
   }
 
-  /** The consuming document going away ends the capture (Chrome sees the media request close). */
+  /**
+   * The consuming document going away ends the capture: Chrome sees its media request close. The
+   * document goes with its `WebContents`, with its renderer, and with a cross-document navigation
+   * of its frame (a reload of a recorder window): the stream it held is over, and the tab is free
+   * for the next document's capture. A request nothing has redeemed yet (Chrome's
+   * `TAB_CAPTURE_STATE_NONE`) outlives a navigation, as its registry entry does.
+   */
   private watchConsumer(consumer: WebContents, streamId: string): void {
-    const onGone = (): void => {
-      const request = this.requests.find((r) => r.streamId === streamId)
-      if (!request) return
+    const find = (): LiveRequest | undefined => this.requests.find((r) => r.streamId === streamId)
+    const detach = (): void => {
+      consumer.removeListener('did-navigate', onNavigated)
+      consumer.removeListener('render-process-gone', onGone)
+      consumer.removeListener('destroyed', onGone)
+    }
+    const end = (request: LiveRequest): void => {
+      detach()
       if (request.state === 'pending' || request.state === 'active')
         this.setState(request, 'stopped')
       this.remove(request)
     }
+    const onGone = (): void => {
+      const request = find()
+      if (request) end(request)
+      else detach()
+    }
+    const onNavigated = (): void => {
+      const request = find()
+      if (!request) detach()
+      else if (request.state === 'pending' || request.state === 'active') end(request)
+    }
     try {
+      consumer.on('did-navigate', onNavigated)
+      consumer.on('render-process-gone', onGone)
       consumer.once('destroyed', onGone)
     } catch {
       /* already gone */

@@ -154,24 +154,50 @@ describe('tabCapture parameters', () => {
 interface FakeWebContents {
   id: number
   destroyed: boolean
+  on(event: string, fn: () => void): void
   once(event: string, fn: () => void): void
+  removeListener(event: string, fn: () => void): void
+  /** The listeners still attached, by event: the router detaches its own when a request ends. */
+  listenerCount(event: string): number
   destroy(): void
+  /** A cross-document navigation of the main frame (Electron's `did-navigate`). */
+  navigate(): void
+  /** The renderer went (Electron's `render-process-gone`). */
+  crash(): void
   /** Set on the page of a popup window, which the router reads the consumer's URL from. */
   getURL?(): string
 }
 
 function fakeWebContents(id: number): FakeWebContents {
-  const listeners: Array<() => void> = []
+  const listeners = new Map<string, Array<{ fn: () => void; once: boolean }>>()
+  const emit = (event: string): void => {
+    for (const entry of [...(listeners.get(event) ?? [])]) {
+      if (entry.once) wc.removeListener(event, entry.fn)
+      entry.fn()
+    }
+  }
   const wc: FakeWebContents = {
     id,
     destroyed: false,
-    once: (event, fn) => {
-      if (event === 'destroyed') listeners.push(fn)
+    on: (event, fn) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), { fn, once: false }])
     },
+    once: (event, fn) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), { fn, once: true }])
+    },
+    removeListener: (event, fn) => {
+      listeners.set(
+        event,
+        (listeners.get(event) ?? []).filter((entry) => entry.fn !== fn)
+      )
+    },
+    listenerCount: (event) => (listeners.get(event) ?? []).length,
     destroy: () => {
       wc.destroyed = true
-      for (const fn of listeners.splice(0)) fn()
-    }
+      emit('destroyed')
+    },
+    navigate: () => emit('did-navigate'),
+    crash: () => emit('render-process-gone')
   }
   return wc
 }
@@ -492,6 +518,65 @@ describe('TabCaptureApi', () => {
       'stopped'
     ])
     expect(w.api.handlers.getCapturedTabs(w.frameCtx(again))).toEqual([])
+  })
+
+  it("a cross-document navigation of the consuming document (a reload of the recorder window) ends its capture and frees the tab, as Chrome's media request closes with the document", () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://example.com/')
+    w.grant(EXT, 5)
+    // Sound Booster's flow: the popup window captures the active tab, naming itself the consumer.
+    const recorder = w.addPopupWindow(41, `chrome-extension://${EXT}/window.html?tabId=5`)
+    const first = w.api.handlers.getMediaStreamId(w.frameCtx(recorder), {
+      targetTabId: 5,
+      consumerTabId: 41
+    }) as string
+    w.api.handlers.streamState(w.frameCtx(recorder), first, 'pending')
+    w.api.handlers.streamState(w.frameCtx(recorder), first, 'active')
+    expect(() =>
+      w.api.handlers.getMediaStreamId(w.frameCtx(w.page(43)), { targetTabId: 5 })
+    ).toThrow(TAB_CAPTURE_SAME_TAB_ERROR)
+    // The window reloads (its own `r` key): the document and its stream are gone; the next document
+    // captures the tab again, with a fresh engine id, and the router's listeners went with the request.
+    recorder.navigate()
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(false)
+    const second = w.api.handlers.getMediaStreamId(w.frameCtx(recorder), {
+      targetTabId: 5,
+      consumerTabId: 41
+    }) as string
+    expect(second).not.toBe(first)
+    expect(w.registered.map((r) => r.id)).toEqual(['engine-1', 'engine-2'])
+    expect(recorder.listenerCount('did-navigate')).toBe(1)
+    expect(recorder.listenerCount('destroyed')).toBe(1)
+    // A request nothing has redeemed yet outlives the navigation (Chrome's TAB_CAPTURE_STATE_NONE
+    // entry stands in the registry): the new document may still call getUserMedia with it.
+    recorder.navigate()
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(true)
+    expect(w.api.handlers.resolveStreamId(w.frameCtx(recorder), second)).toBe(second)
+    w.api.handlers.streamState(w.frameCtx(recorder), second, 'active')
+    // The renderer going ends the capture the same way; `capture`'s requests report the stop.
+    recorder.crash()
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(false)
+    expect(recorder.listenerCount('did-navigate')).toBe(0)
+    expect(recorder.listenerCount('render-process-gone')).toBe(0)
+    expect(recorder.listenerCount('destroyed')).toBe(0)
+    const popup = w.page(31)
+    const captured = w.api.handlers.capture(w.frameCtx(popup), { audio: true }) as Any
+    const streamId = captured.audioConstraints.mandatory.chromeMediaSourceId as string
+    w.api.handlers.resolveStreamId(w.frameCtx(popup), streamId)
+    w.api.handlers.streamState(w.frameCtx(popup), streamId, 'active')
+    popup.navigate()
+    expect(w.dispatched.map((d) => (d.args[0] as Any).status)).toEqual([
+      'pending',
+      'active',
+      'stopped'
+    ])
+    expect(w.api.handlers.getCapturedTabs(w.frameCtx(popup))).toEqual([])
   })
 
   it('an id of this layer that waits too long, or whose tab is gone, fails to resolve', () => {
