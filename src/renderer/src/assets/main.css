@@ -157,7 +157,11 @@
   --v2-radius-control: 4px;
   --v2-radius-card: 8px;
   --v2-radius-sheet: 12px;
-  /* A tile or chip sitting on the window itself (an Essentials tile): an alpha of the window's ink. */
+  /*
+   * A tile, chip, pill or secondary button sitting on the window itself (an Essentials tile, the
+   * phone pill, a band's Dismiss): an alpha of the window's ink – Zen's `--zen-toolbar-element-bg`,
+   * 8% of the toolbox text in light and 15% in dark (v2 §9.29). The dark block raises it.
+   */
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.08);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.14);
 
@@ -275,8 +279,13 @@
   --zen-scrim-alpha: 0.55;
   --v2-scrim: rgb(0 0 0 / var(--zen-scrim-alpha));
   --v2-shadow-urlbar: 0 30px 140px -15px rgb(0 0 0 / 0.8);
-  --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.1);
-  --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.16);
+  /*
+   * Zen's dark element fill is 15% of the toolbox text (light 8%): at .1 a secondary button on a
+   * mid-tone dark band read fifteen units from it (#281's Dismiss), so dark takes Zen's number
+   * and the hover its step above (v2 §9.29).
+   */
+  --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.15);
+  --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.2);
 
   --v2-sidebar-neutral: #131313;
   --v2-tab-active: #3b3c3d;
