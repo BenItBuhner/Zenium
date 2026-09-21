@@ -586,8 +586,14 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Settings',
     'Keyboard shortcuts',
     'Boosts',
-    'Turn off sync',
-    'Turn off and remove this device’s data'
+    // The pane's second button, "Turn off and remove this device's data", is not a row of the
+    // tab: the design lead's ruling on #261's desktop page (the stills of its two rows) – removing
+    // the data only means something together with turning off, so it is a checkbox row inside
+    // the prompt (§9.23: a choice that means something only with the footer's action), not a
+    // second action. The tab carries it as the "Also remove this device's data from the folder"
+    // checkbox in Turn off sync's dialog (`SyncDisconnectForm`), the phone sheet's composition,
+    // so nothing the pane offered is lost.
+    'Turn off sync'
   ],
   shortcuts: ['Shortcut set', 'Your changes', 'New tab'],
   'default-browser': ['Zenium is not your default browser'],

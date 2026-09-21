@@ -63,17 +63,11 @@ export const SYNC_COPY = {
   turnOffTitle: 'Turn off sync?',
   turnOffDescription:
     'This device stops syncing and keeps everything it has. Other devices keep syncing with each other.',
+  // The prompt's one choice on both hosts (§9.23): a checkbox row submitted with Turn off, never
+  // a row or a second action of its own.
   wipeRemote: 'Also remove this device’s data from the folder',
   wipeRemoteHint: 'Other devices forget what this one synced; what they have of their own stays.',
-  turnOffAction: 'Turn off',
-  // The desktop and tablet page's second way off (the pane's two buttons, #193's inventory): the
-  // wipe as a row of its own with its confirmation, where the phone folds it into Turn off
-  // sync's sheet as the checkbox row above.
-  wipeRow: 'Turn off and remove this device’s data',
-  wipeTitle: 'Turn off sync and remove this device’s data?',
-  wipeDescription:
-    'This device stops syncing and keeps everything it has. Its records leave the folder, and other devices forget what it synced.',
-  wipeAction: 'Remove'
+  turnOffAction: 'Turn off'
 } as const
 
 /**

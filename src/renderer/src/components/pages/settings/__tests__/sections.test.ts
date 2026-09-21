@@ -4308,15 +4308,15 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(buttons(desktop(syncStatus()))[0]).toEqual(['sync-folder', 'Change…'])
     syncSetupStore.set({ folder: null })
 
-    // Connected: Sync now's button is its own label; the folder changes; the two ways off trail
-    // Turn off… and Remove…; the merge question's button opens its form.
+    // Connected: Sync now's button is its own label; the folder changes; the one way off trails
+    // Turn off… (its prompt holds the wipe as a checkbox – no Remove… row, the lead's ruling on
+    // #261's desktop page); the merge question's button opens its form.
     const on = desktop(connected())
     expect(on.groups.map((g) => g.id)).toEqual(phone(connected()).groups.map((g) => g.id))
     expect(buttons(on)).toEqual([
       ['sync-now', 'Sync now'],
       ['sync-folder', 'Change…'],
-      ['sync-turn-off', 'Turn off…'],
-      ['sync-wipe', 'Remove…']
+      ['sync-disconnect', 'Turn off…']
     ])
     expect(buttons(desktop(connected({ pendingMerge: true })))[0]).toEqual([
       'sync-merge',
@@ -4329,12 +4329,11 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(buttons(lost)).toEqual([
       ['sync-now', 'Sync now'],
       ['sync-folder', 'Change…'],
-      ['sync-turn-off', 'Turn off…'],
-      ['sync-wipe', 'Remove…']
+      ['sync-disconnect', 'Turn off…']
     ])
   })
 
-  it('keeps every row the desktop pane had (#193’s inventory): the device’s field under the pane’s own label on every shell, and the two ways off as two rows – Turn off sync confirming, the wipe destructive with its own – where the phone folds the wipe into Turn off sync’s sheet', () => {
+  it('keeps every row the desktop pane had (#193’s inventory): the device’s field under the pane’s own label on every shell, and one way off – Turn off sync, whose §9.23 prompt holds the wipe as its checkbox row on both hosts, so the pane’s second button is that checkbox and not a row', () => {
     const def = PAGE.sections.find((x) => x.id === 'sync')!
     const build = (layout: 'phone' | 'tablet' | 'desktop'): Model =>
       buildSection(def, { ...context(syncState(connected())).ctx, formFactor: layout })
@@ -4348,54 +4347,37 @@ describe('ID-08’s Sync category on a phone', () => {
       })
     }
 
-    // The phone's one row, its sheet the §9.23 form with the checkbox.
-    const phoneOff = build('phone').groups.find((g) => g.id === 'sync-off')
-    expect(phoneOff?.rows.map((r) => r.id)).toEqual(['sync-disconnect'])
-    const sheet = row(build('phone'), 'sync-disconnect')
-    if (sheet.kind !== 'action') throw new Error('not an action')
-    expect(sheet.form).toBeDefined()
-    expect(sheet.confirm).toBeUndefined()
-
-    // The desktop's two, each the whole of what it says: no second choice in either dialog.
-    for (const layout of ['desktop', 'tablet'] as const) {
+    // One row on every shell – its form the sheet on the phone, the form dialog on the desktop
+    // (opened by Turn off…, in the danger ink as the row is destructive) – and no confirmation
+    // or press of its own: the form is the prompt, and its footer's Turn off submits the checkbox
+    // with the action (`SyncDisconnectForm`, pinned in syncForms.test.tsx). The lead's ruling on
+    // #261's desktop page: removing the data only means something together with turning off
+    // (§9.23), so it is never a second row – the pane's "Turn off and remove this device's data"
+    // button is this checkbox. Nothing names a shell: the same row is what either page's search
+    // reaches.
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
       const model = build(layout)
       expect(model.groups.find((g) => g.id === 'sync-off')?.rows.map((r) => r.id)).toEqual([
-        'sync-turn-off',
-        'sync-wipe'
+        'sync-disconnect'
       ])
-      const off = row(model, 'sync-turn-off')
+      const off = row(model, 'sync-disconnect')
       if (off.kind !== 'action') throw new Error('not an action')
       expect(off).toMatchObject({
         label: 'Turn off sync',
+        description: 'This device stops syncing and keeps what it has.',
         button: 'Turn off…',
-        confirm: { title: 'Turn off sync?', action: 'Turn off' }
-      })
-      expect(off.destructive).toBeUndefined()
-      expect(off.form).toBeUndefined()
-      invoke.mockClear()
-      off.onPress?.()
-      expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: false })
-
-      const wipe = row(model, 'sync-wipe')
-      if (wipe.kind !== 'action') throw new Error('not an action')
-      expect(wipe).toMatchObject({
-        label: 'Turn off and remove this device’s data',
-        description:
-          'Other devices forget what this one synced; what they have of their own stays.',
-        button: 'Remove…',
         destructive: true,
-        confirm: { title: 'Turn off sync and remove this device’s data?', action: 'Remove' }
+        form: {
+          title: 'Turn off sync?',
+          description:
+            'This device stops syncing and keeps everything it has. Other devices keep syncing with each other.'
+        }
       })
-      expect(wipe.form).toBeUndefined()
-      invoke.mockClear()
-      wipe.onPress?.()
-      expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: true })
-    }
-    // Every row of the group names its shells, so neither page's search reaches the other's.
-    for (const r of connectedOffRows()) expect(r.layouts).toBeDefined()
-    function connectedOffRows(): Row[] {
-      const all = buildSection(def, context(syncState(connected())).ctx)
-      return all.groups.find((g) => g.id === 'sync-off')?.rows ?? []
+      expect(off.confirm).toBeUndefined()
+      expect(off.onPress).toBeUndefined()
+      expect(off.layouts).toBeUndefined()
+      const labels = allRows(model.groups).map((r) => r.label)
+      expect(labels.filter((l) => l.startsWith('Turn off'))).toEqual(['Turn off sync'])
     }
   })
 })
