@@ -2094,6 +2094,21 @@ export class TabManager {
   }
 
   /**
+   * The tab another page now comes from (`Tab.openerTabId`): a singleton page tab re-focused
+   * from a second site remembers that site, not the one it was first opened from. A closed or
+   * unknown opener is no opener; a tab is never its own.
+   */
+  setOpener(tabId: string, openerTabId: string | null): void {
+    const tab = this.tab(tabId)
+    if (!tab) return
+    const opener = openerTabId && openerTabId !== tabId ? this.tab(openerTabId) : undefined
+    const next = opener?.id ?? null
+    if (tab.openerTabId === next) return
+    tab.openerTabId = next
+    this.browser.state.commit()
+  }
+
+  /**
    * Chrome's Duplicate (tabs-22): a copy right after the tab, in its container and folder, with
    * its back/forward stack – and, through the entries' page state, its scroll position – not a
    * bare load of the current URL. The stack is queued for the copy's page, which replays it
