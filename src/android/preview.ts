@@ -14,6 +14,7 @@ import {
 } from '@shared/readAloud'
 import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
+import { previewRangeAnswer } from './previewAutofill'
 import { createPreviewDownloads } from './previewDownloads'
 import { previewPdfVariantOf } from './previewPdf'
 import { emulateTextZoom } from './previewTextZoom'
@@ -1041,6 +1042,10 @@ export function createPreviewBridge(): NativeBridge {
     // reaches a site for the chrome: the suggest endpoints and OpenSearch descriptions the core
     // asks for send no CORS headers, so the chrome's own fetch to them would be refused.
     'net.fetch': async ({ url, headers }) => {
+      // The Pwned Passwords range API is answered here (`previewAutofill.ts`): the leak warning
+      // and the checkup are staged against a stand-in, never the real service.
+      const staged = await previewRangeAnswer(String(url))
+      if (staged) return staged
       try {
         const accept = (headers as Record<string, string> | undefined)?.accept
         const res = await fetch(`${PREVIEW_FETCH_ROUTE}?url=${encodeURIComponent(String(url))}`, {

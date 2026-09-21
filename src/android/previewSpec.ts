@@ -127,7 +127,12 @@ export const PREVIEW_POPUPS_MAX = 12
  * Settings > Autofill with saved entries (`manager`), with none (`manager-empty`) and behind the
  * vault gate (`manager-locked`), its two editors (`edit-address` adds one, `edit-card` edits a
  * saved card) and the vault passphrase dialog a re-authenticated command puts up (`passphrase`,
- * the real one behind a passphrase vault).
+ * the real one behind a passphrase vault). Two more from the credential-safety package: the
+ * sign-in leak warning over the active tab (`leak-warning`: the detector checks a sample sign-in
+ * against a stand-in range answer, so the sheet or dialog is the engine's own, ID-31) and the
+ * password manager open on a login that carries a note (`login-note`: the vault seeded with it,
+ * the manager over the page; `then=tap:<row>;tap:Edit` walks to the detail and its edit view,
+ * ID-34).
  */
 export const PREVIEW_AUTOFILL = [
   'save-login',
@@ -143,7 +148,9 @@ export const PREVIEW_AUTOFILL = [
   'manager-locked',
   'edit-address',
   'edit-card',
-  'passphrase'
+  'passphrase',
+  'leak-warning',
+  'login-note'
 ] as const
 
 export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
@@ -165,7 +172,10 @@ export type PreviewState =
       surface: PreviewAutofillSurface
       /** For a manager surface (the Settings tab): text of a row to scroll into view once it is open. */
       show?: string
-      /** For a manager surface: steps taken on the page once it is open and scrolled. */
+      /**
+       * For a manager surface: steps taken on the page once it is open and scrolled; for
+       * `login-note`, steps taken in the manager once it is open (`tap:<row>`, `tap:Edit`).
+       */
       then?: PreviewStep[]
     }
   | {
@@ -446,7 +456,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * #135 spelt them),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
- * `page`), `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
+ * `page`; `login-note` opens the password manager and takes `then=<steps>` on it; `checkup=<compromised>,<weak>,<reused>`
+ * seeds the last Password Checkup's counts, checked two days ago, for Safety Check's Passwords
+ * row under `page=settings&section=privacy`), `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
  * (`sample`, `locked`, `broken`, `slow`; see `previewPdf.ts`; with `find=<text>` for the find
  * bar over it and `then=<steps>` for the bar's controls: `tap:Contents`, `tap:Unlock;type:pdf-password=zenium`),
  * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
