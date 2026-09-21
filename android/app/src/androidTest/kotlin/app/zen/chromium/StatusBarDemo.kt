@@ -69,7 +69,10 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
     }
 
     /** The media demos' profile with its tab on the fullscreen page, the bar docked top, the light scheme, the hints shown. */
-    override fun patchState(json: String): String {
+    override fun patchState(json: String): String = seedState(json, dock = "top", scheme = "light")
+
+    /** The seeded session: the demo tab on the fullscreen page, the bar at `dock`, the `scheme`, the hints shown. */
+    private fun seedState(json: String, dock: String, scheme: String): String {
         val state = JSONObject(json)
         val tabs = state.getJSONArray("tabs")
         for (i in 0 until tabs.length()) {
@@ -80,8 +83,8 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
             }
         }
         state.getJSONObject("settings")
-            .put("phoneBarPosition", "top")
-            .put("colorScheme", "light")
+            .put("phoneBarPosition", dock)
+            .put("colorScheme", scheme)
             .put("gestureHintDone", true)
             .put("fullscreenHintDone", true)
         return state.toString()
@@ -145,44 +148,38 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
     }
 
     override fun demo() {
-        // 1. The first cold chrome boot at the top dock: the boot the report is about.
+        // 1. The first cold chrome boot at the top dock, light: the boot the report is about.
         checkChrome("boot-1-top-light", dock = "top", dark = false)
-        shot("top-light")
+        shot("boot-1-top-light")
 
-        // 2. A fullscreen video in and out, while the seeded page is certainly live (a relaunch
-        //    below may lose the tab: the old host's `destroyed` events reach the old core as it
-        //    is torn down, and its last write can be the session the next boot reads).
+        // 2. A fullscreen video in and out, in the first session.
         fullscreenExit()
 
-        // 3. The dark scheme: light status bar icons over the dark chrome, the inset kept.
+        // 3. The scheme and the dock switched in place: the inset kept, the status bar icons
+        //    following the scheme. (On an unfixed chrome the scheme switch happens to heal a
+        //    lost inset: the appearance change makes Android dispatch the insets again.)
         setScheme("dark")
-        checkChrome("top-dark", dock = "top", dark = true)
-        shot("top-dark")
-
-        // 4. Docked bottom: the row above the gesture bar, the page frame under the status bar.
+        checkChrome("switch-top-dark", dock = "top", dark = true)
         setDock("bottom")
-        checkChrome("bottom-dark", dock = "bottom", dark = true)
-        shot("bottom-dark")
+        checkChrome("switch-bottom-dark", dock = "bottom", dark = true)
         setScheme("light")
-        checkChrome("bottom-light", dock = "bottom", dark = false)
-        shot("bottom-light")
+        checkChrome("switch-bottom-light", dock = "bottom", dark = false)
 
-        // 5. Cold chrome boots at the bottom dock, three times over.
-        for (n in 1..3) {
-            relaunch()
-            checkChrome("boot-$n-bottom-light", dock = "bottom", dark = false)
-            shot("boot-$n-bottom-light")
+        // 4. Cold chrome boots in every dock and scheme, two each: the claim of this driver. The
+        //    stills the fix is judged by are these (boot-N-<dock>-<scheme>), each taken right
+        //    after its boot, before anything could make Android dispatch the insets again.
+        var boot = 1
+        for ((dock, scheme) in listOf("top" to "dark", "bottom" to "dark", "bottom" to "light", "top" to "light")) {
+            repeat(2) {
+                boot++
+                relaunch(dock, scheme)
+                val scene = "boot-$boot-$dock-$scheme"
+                checkChrome(scene, dock = dock, dark = scheme == "dark")
+                shot(scene)
+            }
         }
 
-        // 6. Cold chrome boots at the top dock, three times over.
-        setDock("top")
-        for (n in 2..4) {
-            relaunch()
-            checkChrome("boot-$n-top-light", dock = "top", dark = false)
-            shot("boot-$n-top-light")
-        }
-
-        // 7. The paths that leave and return without a page: the screen off and on, the system font at 1.3.
+        // 5. The paths that leave and return: the screen off and on, the system font at 1.3.
         screenOffAndOn()
         fontScale()
         note("\nend: $checks checks, $failures failed")
@@ -384,18 +381,24 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
     }
 
     /**
-     * A fresh activity: the chrome WebView and the core boot again on the profile as it stands
-     * (the deferred documents included). Nothing after a relaunch needs the page, so the wait is
-     * for the chrome alone; whether the seeded tab survived the old host's teardown is noted.
+     * A cold chrome boot on the profile as it stands (the deferred documents included), the
+     * session seeded again at `dock` and `scheme`. The old activity is finished first and its
+     * teardown given time: the old host's `destroyed` view events reach the old core as it goes,
+     * and a session it writes then (its tabs closed) would otherwise be what the next boot reads,
+     * as run 2's tabless relaunches showed; the session is written after that, before the launch.
      */
-    private fun relaunch() {
+    private fun relaunch(dock: String, scheme: String) {
+        val old = activity
+        instrumentation.runOnMainSync { old.finish() }
+        poll(10_000) { old.isDestroyed }
+        SystemClock.sleep(1_500)
+        File(app.filesDir, "zen/state.json").writeText(seedState(readAsset("media-demo-state.json"), dock, scheme))
         launch()
         ensureForeground()
         poll(20_000) { chromeJs("typeof window.zen") == "\"object\"" }
         poll(15_000) { chromeGeometry()?.optJSONObject("row") != null }
-        SystemClock.sleep(1_500)
-        val tabs = runCatching { coreState().getJSONObject("tabs") }.getOrNull()
-        note("  relaunched: ${tabs?.length() ?: -1} tab(s), the seeded tab ${if (tabs?.has(TAB) == true) "kept" else "gone"}")
+        val live = poll(20_000) { field("fs") != null }
+        note("  relaunched at $dock / $scheme: the seeded page ${if (live) "is live" else "did not come up"} (${describeTab(TAB)})")
     }
 
     private fun rotation(): Int {
