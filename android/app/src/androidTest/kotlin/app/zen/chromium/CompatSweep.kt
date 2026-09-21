@@ -497,14 +497,18 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val tabsBefore = tabUrls().keys
         val activeBefore = activeCoreTab()?.optString("id")
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        // The sheet the click brought up: the popup, or the side panel an action without a popup
+        // opens from `onClicked` (Image Downloader's `sidePanel.open`), the extension's answer as
+        // Chrome shows it.
         val view = poll(POPUP_TIMEOUT_MS, 400) {
             val v = popupView()
-            if (v != null && v.context == "popup" && rendered(v)) v else null
+            if (v != null && (v.context == "popup" || (runtimePopup == null && v.context == "sidePanel")) && rendered(v)) v else null
         }
         SystemClock.sleep(1_800)
         snap("$slug-popup")
         val live = popupView()
         val detail = JSONObject().put("declared", declared ?: JSONObject.NULL).put("runtimePopup", runtimePopup ?: JSONObject.NULL)
+        view?.let { detail.put("surface", it.context) }
         if (live != null) {
             detail.put("console", JSONArray(consoleOf(live).takeLast(20)))
             detail.put("dom", json(tabEval(live, DOM_REPORT)))
@@ -520,7 +524,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 stage(
                     entry, "popup",
                     if (uncaught.isEmpty()) "P" else "PARTIAL",
-                    "${dom.optInt("w")}x${dom.optInt("h")} css px in a ${sheet.optInt("widthDp")}x${sheet.optInt("heightDp")} dp sheet, ${dom.optInt("els")} elements, text \"${dom.optString("text").take(80)}\"" +
+                    (if (view.context == "sidePanel") "no popup (the extension emptied it with action.setPopup); the click fired action.onClicked, which opened its side panel: " else "") +
+                        "${dom.optInt("w")}x${dom.optInt("h")} css px in a ${sheet.optInt("widthDp")}x${sheet.optInt("heightDp")} dp sheet, ${dom.optInt("els")} elements, text \"${dom.optString("text").take(80)}\"" +
                         (if (overflow) "; overflows the sheet horizontally (scrollWidth ${dom.optInt("scrollWidth")} > ${dom.optInt("innerWidth")})" else "") +
                         (if (uncaught.isNotEmpty()) "; uncaught: ${uncaught.take(2).joinToString(" | ") { it.take(160) }}" else ""),
                     detail
@@ -1072,6 +1077,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             return list.filter { (it.substringBefore(' ').toLongOrNull() ?: Long.MAX_VALUE) >= startedAt }
         }
 
+        /** Every bridge line of the row since the step started (the ring's, so up to its size). */
+        fun trace(): List<String> = traceLines()
+
         fun record(extra: JSONObject, at: String) {
             val bg = backgroundView(row.id)
             val console = bg?.let { consoleOf(it).drop(consoleFrom) } ?: emptyList()
@@ -1474,6 +1482,23 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 }
                 runCatching { coreInvoke("extension.closePopup", "null") }
                 extra.put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
+                // The page's side of a missed injection: the element's state if the DOM has it
+                // (Read&Write's toolbar mounts `minimised: true, visible: false` until its
+                // license round trip says otherwise), the page's own console (the content
+                // bundle's errors land there, not in the worker's), what the content scripts
+                // left on `window` (`texthelp`, `thFrameInit`), the frames in the page, and the
+                // row's whole bridge trace since the click as a file of the artifact.
+                if (hit == null && injects != null) {
+                    val miss = INJECTION_MISS.replace("__SELECTOR__", JSONObject.quote(injects))
+                    extra.put("pageAfterClick", json(tabEval(view, miss)))
+                    // On an isolated-worlds WebView the content scripts' globals live in the
+                    // extension's world; the DOM is shared.
+                    if (worlds) worldEval(view, row.id, miss)?.let { extra.put("worldAfterClick", json(it)) }
+                    extra.put("pageConsole", JSONArray(consoleOf(view).takeLast(15)))
+                    val trace = since.trace()
+                    File(out, "bridge-${entry.optString("slug")}.txt").writeText(trace.joinToString("\n"))
+                    extra.put("bridgeFile", "bridge-${entry.optString("slug")}.txt").put("bridgeLines", trace.size)
+                }
                 var text = ""
                 if (landed != null) {
                     val landedView = runCatching { waitForView(landed.key) }.getOrNull()
@@ -3203,7 +3228,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("adbacgifemdbhdkfppmeilbgppmhaobf", "RoPro - Enhance Your Roblox Experience", "ropro", core = liveMarker("RoPro", "https://www.roblox.com/games/920587237", injectedAny("ropro"))),
         Row("jpkfgepcmmchgfbjblnodjhldacghenp", "Pie Adblock - A Powerful Free Ad Blocker", "pie-adblock", core = ::adBlocker),
         Row("mihcahmgecmbnbcchbopgniflfhgnkff", "Google Mail Checker", "google-mail-checker", core = accountGate("Google Mail Checker", Regex("accounts\\.google|mail\\.google|gmail", RegexOption.IGNORE_CASE), gate = "a Google account (the unread count is Gmail's feed)")),
-        Row("fjnbnpbmkenffdnngjfgmeleoegfcffe", "Stylish - Custom themes for any website", "stylish", core = accountGate("Stylish", Regex("userstyles|stylish", RegexOption.IGNORE_CASE), injects = "iframe[src*='fjnbnpbmkenffdnngjfgmeleoegfcffe']", gate = "its styles gateway listing styles for the site (none for the runner on the desktop) and a Stylish account")),
+        // Stylish's slider is a fixed 360 px host div whose iframe (index.html) sits under a CLOSED
+        // shadow root: the host is what the page's DOM shows, the iframe is not reachable from it.
+        Row("fjnbnpbmkenffdnngjfgmeleoegfcffe", "Stylish - Custom themes for any website", "stylish", core = accountGate("Stylish", Regex("userstyles|stylish", RegexOption.IGNORE_CASE), injects = "div[id^='stylish-main-extension-slider']", gate = "its styles gateway listing styles for the site (none for the runner on the desktop) and a Stylish account")),
         Row("hnmpcagpplmpfojmgmnngilcnanddlhb", "Free VPN For Chrome - VPN Extension - Windscribe", "windscribe", core = vpn("Windscribe")),
         Row("agionbommeaifngbhincahgmoflcikhm", "Image downloader - Imageye", "imageye", core = imageList("Imageye")),
         Row("nmigaijibiabddkkmjhlehchpmgbokfj", "Sound Booster - increase volume up", "sound-booster", core = ::soundBooster),
@@ -4138,6 +4165,21 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * largest visible node of its shadow tree, and a frame's text is read from its document when
          * it is ours to read (an `about:blank` frame the script filled).
          */
+        /**
+         * The page after an injection the probe did not find: whether the element is in the DOM
+         * at all and how it sits (classes, rect, computed display / visibility, shadow root),
+         * the elements the extension left (tags with a `gw-` or `th-` prefix, elements with an
+         * id or class of the same prefixes), the content scripts' globals (`window.texthelp`'s
+         * keys, `thFrameInit`), the custom elements defined, and the frames of the page.
+         */
+        private const val INJECTION_MISS =
+            "(function(){var out={};var el=document.querySelector(__SELECTOR__);out.present=!!el;if(el){var r=el.getBoundingClientRect();var cs=getComputedStyle(el);out.element={tag:el.tagName.toLowerCase(),classes:String(el.className||'').slice(0,160),rect:Math.round(r.width)+'x'+Math.round(r.height)+'@'+Math.round(r.left)+','+Math.round(r.top),display:cs.display,visibility:cs.visibility,opacity:cs.opacity,shadow:!!el.shadowRoot,shadowEls:el.shadowRoot?el.shadowRoot.querySelectorAll('*').length:0,children:el.children.length,text:String((el.shadowRoot&&el.shadowRoot.textContent)||el.textContent||'').replace(/\\s+/g,' ').trim().slice(0,120)}}" +
+                "var tags={};var all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var t=e.tagName.toLowerCase();if(/^(gw|th)-/.test(t)||/(^|\\s)(gw|th)-/.test(String(e.className||''))||/^(gw|th)-/.test(e.id||''))tags[t+(e.id?'#'+e.id:'')]=(tags[t+(e.id?'#'+e.id:'')]||0)+1}out.extensionElements=tags;" +
+                "var th=window.texthelp;out.texthelp=th?Object.keys(th).slice(0,20):null;out.rw4gc=th&&th.RW4GC?Object.keys(th.RW4GC).slice(0,30):null;out.thFrameInit=window.thFrameInit;" +
+                "out.customElements=['gw-toolbar','gw-toolbarbutton','gw-iconbutton'].filter(function(n){return !!customElements.get(n)});" +
+                "out.frames=Array.prototype.map.call(document.querySelectorAll('iframe'),function(f){var fr=f.getBoundingClientRect();return (f.getAttribute('src')||'(no src)').slice(0,120)+' '+Math.round(fr.width)+'x'+Math.round(fr.height)}).slice(0,12);" +
+                "out.bodyEls=document.body?document.body.querySelectorAll('*').length:0;return JSON.stringify(out)})()"
+
         private const val INJECTED_UI =
             "(function(){var el=document.querySelector(__SELECTOR__);if(!el)return JSON.stringify({pass:false});" +
                 "var visible=function(e){var r=e.getBoundingClientRect();var cs=getComputedStyle(e);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?r:null};" +
@@ -4319,14 +4361,29 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * `pass` when a selected-side element says Hindi afterwards.
          */
         private const val INPUT_TOOLS_ADD =
-            "(function(){var hindi=/hindi|\\u0939\\u093f(\\u0928|\\u0902)\\u0926\\u0940/i;var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var shown=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};" +
-                "var selectedSide=function(){var els=Array.prototype.slice.call(document.querySelectorAll('select, [role=listbox], ul, ol, table, div'));var right=els.filter(function(e){return shown(e)&&/selected|chosen|enabled|active|right|second/i.test(e.id+' '+e.className+' '+(e.getAttribute('aria-label')||''))});" +
+            "(function(){var hindi=/hindi|\\u0939\\u093f(\\u0928|\\u0902)\\u0926\\u0940/i;var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var shown=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};var text=function(e){return (e.textContent||'').replace(/\\s+/g,' ').trim()};" +
+                "var selectedTree=document.getElementById('selected');var selectedSide=function(){if(selectedTree)return hindi.test(text(selectedTree));var els=Array.prototype.slice.call(document.querySelectorAll('select, [role=listbox], ul, ol, table, div'));var right=els.filter(function(e){return shown(e)&&/selected|chosen|enabled|active|right|second/i.test(e.id+' '+e.className+' '+(e.getAttribute('aria-label')||''))});" +
                 "return right.some(function(e){return hindi.test(e.textContent||Array.prototype.map.call(e.options||[],function(o){return o.text}).join(' '))})};" +
-                "if(selectedSide())return JSON.stringify({pass:true,how:'already'});var picked=null;var opts=Array.prototype.slice.call(document.querySelectorAll('option'));var opt=opts.find(function(o){return hindi.test(o.text)&&!/transliteration.*keyboard|keyboard/i.test(o.text)})||opts.find(function(o){return hindi.test(o.text)});" +
+                "if(selectedSide())return JSON.stringify({pass:true,how:'already'});var picked=null;var add=null;var how='';" +
+                // The page as shipped (v102): a Closure goog.ui.tree of the tools under #inputtools, one row
+                // per tool ("Hindi - <native name>" is the transliteration, the keyboards and handwriting
+                // carry their kind), #language-filter narrowing the rows on keyup; a tree node is selected
+                // on MOUSEDOWN (Closure's tree, not on click), which shows #input_text_button_right ("Move
+                // the selected input tool to the right"), whose click moves the tool into #selected.
+                "var tree=document.getElementById('inputtools');if(tree){var filter=document.getElementById('language-filter');if(filter){filter.value='hindi';filter.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'i'}))}" +
+                "var rows=Array.prototype.slice.call(tree.querySelectorAll('.goog-tree-row, .goog-tree-item-label, li.ita-kd-menuitem, li')).filter(function(e){return shown(e)&&hindi.test(text(e))&&text(e).length<60});" +
+                "var row=rows.find(function(e){return /^hindi\\s*-\\s*\\u0939\\u093f\\u0928\\u094d\\u0926\\u0940$/i.test(text(e))})||rows.find(function(e){return !/keyboard|handwrit|phonetic|inscript|qwerty/i.test(text(e))})||rows[0];" +
+                "if(row){var target=row.querySelector('.goog-tree-item-label')||row;['mousedown','mouseup','click'].forEach(function(t){target.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window,button:0}))});picked='row '+text(row).slice(0,30);" +
+                "var btn=document.getElementById('input_text_button_right');if(btn){btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window,button:0}));add='#input_text_button_right ('+getComputedStyle(btn).display+')';how='tree'}" +
+                // The tree's own shortcut: a double-click on the row moves the tool across (its DBLCLICK handler).
+                "if(!selectedSide()){target.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,view:window,button:0,detail:2}));how='tree dblclick'}}}" +
+                "if(selectedSide())return JSON.stringify({pass:true,how:how,picked:picked,add:add,selects:document.querySelectorAll('select').length,options:document.querySelectorAll('option').length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''});" +
+                "var opts=Array.prototype.slice.call(document.querySelectorAll('option'));var opt=opts.find(function(o){return hindi.test(o.text)&&!/transliteration.*keyboard|keyboard/i.test(o.text)})||opts.find(function(o){return hindi.test(o.text)});" +
                 "if(opt){opt.selected=true;opt.parentNode.dispatchEvent(new Event('change',{bubbles:true}));opt.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));picked='option '+opt.text.slice(0,30)}" +
                 "else{var items=Array.prototype.slice.call(document.querySelectorAll('li, [role=option], [role=listitem], tr, div, span')).filter(function(e){return shown(e)&&hindi.test(label(e))&&label(e).length<60});var leaf=items.filter(function(e){return !items.some(function(o){return o!==e&&e.contains(o)})})[0];if(leaf){leaf.click();picked='item '+label(leaf).slice(0,30)}}" +
-                "var add=Array.prototype.slice.call(document.querySelectorAll('button, a, [role=button], input[type=button], div, span, img')).filter(shown).find(function(e){var l=label(e)+' '+(e.id||'')+' '+(e.className||'')+' '+(e.getAttribute('alt')||'');return /^(add|>>|>|\\u2192|\\u25b6|\\u25ba)$|add|arrow-?right|to-?right|moveRight|move-right/i.test(l)&&!/remove|left|delete/i.test(l)});" +
-                "if(add)add.click();return JSON.stringify({pass:selectedSide(),picked:picked,add:add?(label(add)||add.id||add.className||add.tagName).slice(0,30):null,selects:document.querySelectorAll('select').length,options:opts.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
+                "var generic=Array.prototype.slice.call(document.querySelectorAll('button, a, [role=button], input[type=button], div, span, img')).filter(shown).find(function(e){var l=label(e)+' '+(e.id||'')+' '+(e.className||'')+' '+(e.getAttribute('alt')||'');return /^(add|>>|>|\\u2192|\\u25b6|\\u25ba)$|add|arrow-?right|to-?right|moveRight|move-right/i.test(l)&&!/remove|left|delete/i.test(l)});" +
+                "if(generic){generic.click();add=(label(generic)||generic.id||generic.className||generic.tagName).slice(0,30);how=how||'generic'}" +
+                "return JSON.stringify({pass:selectedSide(),how:how,picked:picked,add:add,selects:document.querySelectorAll('select').length,options:opts.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
         /**
          * Google Input Tools on the editor: Devanagari in the textarea (a transliteration of what
          * was typed), or its candidate window (`ita-` classes / ids) drawn on the page.
