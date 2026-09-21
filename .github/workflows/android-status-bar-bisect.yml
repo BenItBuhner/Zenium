@@ -1,0 +1,41 @@
+name: Android status bar bisect
+
+# TEMPORARY (removed before the PR is marked ready): bisects Bennett's status-bar clipping by
+# release on the shared emulator recipe. The setup-script downloads the release APKs from GitHub
+# Releases (a public repository, so plain curl), the Gradle step is skipped (`help`), and the
+# driver installs each APK in turn and screenshots the chrome at both docks in both schemes.
+on:
+  push:
+    branches: [cursor/android-status-bar-inset-5775]
+    paths:
+      - .github/workflows/android-status-bar-bisect.yml
+      - .github/scripts/android-status-bar-bisect.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-status-bar-bisect-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bisect:
+    name: Release bisect
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-status-bar-bisect.sh
+      gradle-tasks: help
+      script-env: |
+        RELEASE_VERSIONS=0.3.73 0.3.74 0.3.75 0.3.76 0.3.77 0.3.78 0.3.79
+        APK_DIR=artifacts/apks
+        BISECT_OUT=artifacts/android-status-bar-bisect
+      setup-script: |
+        mkdir -p artifacts/apks
+        for v in 0.3.73 0.3.74 0.3.75 0.3.76 0.3.77 0.3.78 0.3.79; do
+          curl -fsSL --retry 3 -o "artifacts/apks/zenium-$v.apk" \
+            "https://github.com/BenItBuhner/Zenium/releases/download/v$v/zenium-$v.apk"
+        done
+        ls -la artifacts/apks
+      artifact-name: android-status-bar-bisect
+      artifact-path: artifacts/android-status-bar-bisect/
+      timeout-minutes: 45
