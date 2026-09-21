@@ -125,20 +125,25 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
     if (current) downloadsEngine.refreshFiles(downloadsEngine.list(current))
   }, [])
 
-  // "2 min ago" moves while the sheet is up; a row counting down to its automatic resume moves
-  // every second, while there is one (the text alone changes: no layout property animates).
-  const counting = items.some(awaitsAutoResume)
+  // "2 min ago" moves while the sheet is up; a row counting down to its automatic resume (HB-43)
+  // moves every second, while there is one (the text alone changes: no layout property
+  // animates). Each schedule arriving – the first attempt's and every later one's – re-reads the
+  // clock on the next frame and restarts the second from there: the last tick can be up to 30 s
+  // old, and a countdown drawn from it would open high.
+  const schedules = items
+    .flatMap((item) => (item.autoResumeAt ? [item.autoResumeAt] : []))
+    .join(',')
+  const counting = schedules !== ''
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const tick = (): void => setNow(Date.now())
     const timer = setInterval(tick, counting ? COUNTDOWN_TICK_MS : AGE_TICK_MS)
-    // The first countdown row re-reads the clock at once: the last 30 s tick may be stale.
     const first = counting ? setTimeout(tick, 0) : null
     return () => {
       clearInterval(timer)
       if (first !== null) clearTimeout(first)
     }
-  }, [counting])
+  }, [counting, schedules])
 
   const clearable = hasClearable(items)
   // Rows coming and going (or growing a Keep / Delete row, or the Clear list row appearing)
