@@ -15,6 +15,7 @@ import {
   openedAt,
   type PathFocus
 } from '@renderer/lib/menuPath'
+import { sourceTitle } from '@renderer/lib/menuTitle'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
@@ -33,15 +34,20 @@ import { closeMenu, lastPointer, pickMenuItem } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { ReloadStopGlyph, StarGlyph } from '../phone/BarGlyphs'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { TabletMenu } from '../tablet/TabletMenu'
 
 /**
- * Renders a `menu.show` descriptor for hosts without native popup menus. Touch gets a bottom
- * sheet with drill-in submenus; a mouse (DeX, tablets with a trackpad) gets the shared
- * `.zen-v2-menu` popover with cascading submenus (`Popover` below), the vocabulary every menu
- * the renderer draws shares with `LocalMenu` and the bookmarks bar's folder panels.
+ * Renders a `menu.show` descriptor for hosts without native popup menus. A phone gets a bottom
+ * sheet with drill-in submenus; a tablet gets the §9.20 popover anchored to its button or the
+ * finger's point, with cascading submenus (`TabletMenu`, v2 §9.36: a sheet at the foot of a
+ * 1280 window is a reach away from the ⋯ that opened it – the shared `.zen-v2-menu` in its
+ * tablet pose); a mouse (DeX, tablets with a trackpad) gets the shared `.zen-v2-menu` popover
+ * with cascading submenus (`Popover` below), the vocabulary every menu the renderer draws shares
+ * with `LocalMenu` and the bookmarks bar's folder panels.
  */
 export function MenuSheet({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const viewport = useViewport()
+  if (viewport.formFactor === 'tablet') return <TabletMenu menu={menu} />
   return viewport.coarse ? <MenuBottomSheet menu={menu} /> : <Popover menu={menu} />
 }
 
@@ -276,37 +282,6 @@ function groupItems(items: MenuItemDescriptor[]): MenuItemDescriptor[][] {
   }
   if (group.length) groups.push(group)
   return groups
-}
-
-function sourceTitle(source: MenuDescriptor['source']): string {
-  switch (source) {
-    case 'page':
-      return 'Page'
-    case 'tab':
-      return 'Tab'
-    case 'selection':
-      return 'Selected Tabs'
-    case 'space':
-      return 'Space'
-    case 'folder':
-      return 'Folder'
-    case 'newtab':
-      return 'New Tab'
-    case 'topsite':
-      return 'Shortcut'
-    case 'app':
-      return 'Zenium'
-    case 'bookmark':
-      return 'Bookmark'
-    case 'history':
-      return 'History'
-    case 'download':
-      return 'Download'
-    case 'urlbar':
-      return 'Address'
-    case 'translate':
-      return 'Translation'
-  }
 }
 
 // ---------------------------------------------------------------------------

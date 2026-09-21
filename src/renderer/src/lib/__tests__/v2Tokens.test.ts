@@ -33,6 +33,17 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The phone's resting pill (components/phone/PhoneShell.tsx, pillChips.tsx; §9.29, the shell
+  // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the
+  // lock, a paused state) in the deemphasised window ink.
+  ['.zen-phone-pill-docked {', '.zen-pill-well {'],
+  // The tablet layout (components/tablet/*, TABLET-01 / 02 / 06): the toolbar row's icon buttons
+  // and pill, the sidebar's rows and close buttons and the drawer at §9.3's tablet sizes, read
+  // from the scale tokens the tablet root sets. Unlayered, right before the phone bar's layer.
+  [
+    ' * The tablet layout (TABLET-01 / 02 / 06',
+    "@layer components {\n  /*\n   * The phone bar's controls"
+  ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
@@ -256,6 +267,7 @@ const lightBlockStart = css.lastIndexOf(':root {', lightStart)
 const light = declared(':root', lightBlockStart)
 const dark = declared(":root[data-theme='dark']", lightStart)
 const phone = declared(":root[data-form-factor='phone']", lightStart)
+const tablet = declared(":root[data-form-factor='tablet']", lightStart)
 
 const SURFACE = [
   'page',
@@ -369,6 +381,16 @@ describe('design language v2 tokens', () => {
       expect(SURFACE, `${name} must not change per form factor`).not.toContain(name)
   })
 
+  // TABLET-01: the tablet root scales the same names, and only those – the touch rows and
+  // controls with §9.3's 40 / 20 icon button – so a tablet never forks the vocabulary either.
+  it('scales the tablet the same way, at the tablet icon button', () => {
+    expect([...tablet].sort()).toEqual([...phone].sort())
+    const tabletBlock = block(":root[data-form-factor='tablet']", lightStart)
+    expect(tabletBlock).toMatch(/--v2-icon-button: 40px;/)
+    expect(tabletBlock).toMatch(/--v2-icon: 20px;/)
+    expect(tabletBlock).toMatch(/--v2-row: calc\(var\(--v2-line-body-box\) \+ 24px\);/)
+  })
+
   // §9.3, one stroke per toolbar row: the constant the toolbar row's and the app title bar's
   // glyphs pass as Lucide's `strokeWidth` is the desktop value of the glyph-stroke token, so
   // the row and the v2 glyphs drawn from the token cannot drift apart (#245 chassis (d)).
@@ -400,14 +422,14 @@ describe('design language v2 tokens', () => {
     // `-box` line tokens read the four line tokens (A11Y-05: what a line box measures at the
     // text zoom, four reads), the rows derive from the line boxes so they grow with the system
     // font size (§9.2, A11Y-05: `--v2-row`, `--v2-row-two-line` and `--v2-menu-row` in the base
-    // block and again in the phone block, four reads each), the tab card's title row
-    // `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05: once at
-    // rest, once as the two-line row from scale 1.5), the group card's title row
+    // block and again in the phone block and the tablet block, four reads each), the tab card's
+    // title row `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05:
+    // once at rest, once as the two-line row from scale 1.5), the group card's title row
     // `--zen-overview-group-header` from the same line box (one line at every size), and the two
     // §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      9 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
+      9 + 4 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
     expect(inside).toMatch(
@@ -667,7 +689,10 @@ describe('the v2 primitives (§9.34)', () => {
     // The group heading (§9.27, §10.3) with its 20 / 4 beat: the customise sheet's layered copy
     // and the Settings tab's and phone panels' local beats went with it; what each surface adds
     // (the first heading's 8 under a header, a popover's tighter 12) is an unlayered modifier.
-    '.zen-v2-heading'
+    '.zen-v2-heading',
+    // The inline link (§9.10, the #294 ruling): the extensions UI's layered copy in the accent
+    // and the passwords detail's `.zen-v2-pw-link` went with it; the test below pins its values.
+    '.zen-v2-link'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -1048,6 +1073,116 @@ describe('the v2 primitives (§9.34)', () => {
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
+  })
+
+  it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
+    // The #294 ruling: a `.zen-v2-link` in the accent with no underline at rest was the
+    // primitive's fault, and the 18 px site link in the passwords detail the other failure case.
+    // The one rule sits after the token block, unlayered, and states §9.10's declarations and
+    // nothing else: the surrounding ink and font (never larger), the underline at 40 % of the
+    // ink with a 2 px offset, the pointer a link has.
+    const declarations = (at: number): string[] =>
+      (bare.slice(at, bare.indexOf('}', at)).match(/^ +[a-z-]+:[^;]+;/gm) ?? []).map((d) =>
+        d.trim()
+      )
+    const base = ruleAt('.zen-v2-link')
+    expect(base).toBeGreaterThan(bare.indexOf('--v2-page:'))
+    expect(nesting(base)).toBe(0)
+    expect(bare.match(/\n\.zen-v2-link \{/g)).toHaveLength(1)
+    expect(declarations(base)).toEqual([
+      'color: inherit;',
+      'font: inherit;',
+      'text-decoration: underline;',
+      'text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);',
+      'text-underline-offset: 2px;',
+      'cursor: pointer;'
+    ])
+    // Hover – a mouse's, under the hover media query – and focus-visible: the surface family's
+    // accent through the §9.29 control role, the underline in the same. Beside the rule,
+    // unlayered like it.
+    const media = '\n@media (hover: hover) {'
+    const hover = bare.indexOf('\n  .zen-v2-link:hover {')
+    expect(hover).toBeGreaterThan(base)
+    expect(bare.slice(hover - media.length, hover)).toBe(media)
+    expect(layered(hover + 1)).toBe(false)
+    const focus = ruleAt('.zen-v2-link:focus-visible')
+    expect(nesting(focus)).toBe(0)
+    for (const at of [hover + 1, focus])
+      expect(declarations(at)).toEqual([
+        'color: var(--v2-control-accent, var(--v2-accent));',
+        'text-decoration-color: currentColor;'
+      ])
+    // The trailing glyph (§9.10: a link that leaves the app): the icon token's 16 / 20 at the
+    // size's stroke, 4 after the last word; a link that carries one lays out as an inline-flex
+    // so the glyph is centred on the line and never orphaned, and a link without one sets no
+    // `display` – it is inline in a sentence and wraps as text does.
+    expect(declarations(ruleAt('.zen-v2-link > svg'))).toEqual([
+      'flex-shrink: 0;',
+      'width: var(--v2-icon);',
+      'height: var(--v2-icon);',
+      'stroke-width: var(--v2-icon-stroke);'
+    ])
+    expect(declarations(ruleAt('.zen-v2-link:has(> svg)'))).toEqual([
+      'display: inline-flex;',
+      'align-items: center;',
+      'gap: 4px;'
+    ])
+    // A link standing alone on its line takes `data-touch`, and on a phone its hit area grows
+    // to the row height around the unchanged text (the passwords detail's extender, folded in).
+    expect(declarations(ruleAt('.zen-v2-link[data-touch]'))).toEqual(['position: relative;'])
+    const touch = ruleAt(":root[data-form-factor='phone'] .zen-v2-link[data-touch]::before")
+    expect(nesting(touch)).toBe(0)
+    expect(declarations(touch)).toEqual([
+      "content: '';",
+      'position: absolute;',
+      'inset: calc((var(--v2-row) - 100%) / -2) 0;'
+    ])
+    // No stylesheet keeps the old forms: no `.zen-v2-link` rule outside main.css (the extensions
+    // UI's accent-and-no-underline copy went), no second link under another name (the passwords
+    // detail's `.zen-v2-pw-link` and its phone extender went), and at rest no rule anywhere inks
+    // a link in the accent or takes its underline off.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+    for (const file of sources) {
+      const text = readFileSync(join(root, file), 'utf8')
+      expect(text, `${file} names the passwords link`).not.toMatch(/zen-v2-pw-link/)
+      if (!file.endsWith('.css')) continue
+      const rules = text.replace(/\/\*[\s\S]*?\*\//g, '')
+      if (file !== 'assets/main.css') {
+        expect(rules, `${file} restates the link`).not.toMatch(/\.zen-v2-link[^{]*\{/)
+        expect(rules, `${file} restates the phone extender`).not.toMatch(
+          /inset: calc\(\(var\(--v2-row\) - 100%\) \/ -2\) 0/
+        )
+        continue
+      }
+      for (const rule of rules.matchAll(/[^\n{}]*\.zen-v2-link(?![\w-])[^{]*\{/g)) {
+        const selector = rule[0].trim()
+        if (/:hover|:focus-visible/.test(selector)) continue
+        const body = rules.slice(rule.index + rule[0].length, rules.indexOf('}', rule.index))
+        expect(body, `"${selector}" inks the link in the accent at rest`).not.toMatch(
+          /color: var\(--v2-(control-)?accent/
+        )
+        expect(body, `"${selector}" takes the underline off`).not.toMatch(/text-decoration: none/)
+      }
+    }
+    // Its three consumers on main take the class and add nothing of their own: the extension
+    // details' store link with its glyph, the login detail's site link (a button, as the site
+    // opens through a command) with `data-touch` – no size utility on the glyph, no link class
+    // of the surface's – and the leak warning's manager link in a sentence, which navigates
+    // inside the app and so carries no glyph and no `data-touch` (never in running prose).
+    const details = readFileSync(join(root, 'components/extensions/ExtensionDetails.tsx'), 'utf8')
+    expect(details).toMatch(/className="zen-v2-link"/)
+    const login = readFileSync(join(root, 'components/overlays/passwords/LoginDetail.tsx'), 'utf8')
+    expect(login).toMatch(/className="zen-v2-link min-w-0 max-w-full"\n\s+data-touch=""/)
+    expect(login).toMatch(/<ExternalLink \/>/)
+    const leak = readFileSync(join(root, 'components/autofill/LeakWarning.tsx'), 'utf8')
+    const manager = /<a\n\s+className="zen-v2-link"\n[\s\S]*?>\s*password manager\s*<\/a>/.exec(
+      leak
+    )
+    expect(manager, 'the leak warning links the manager as plain text').not.toBeNull()
+    expect(manager?.[0]).not.toMatch(/data-touch|<svg|Lucide|Icon/)
   })
 })
 

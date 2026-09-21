@@ -152,6 +152,10 @@ textarea.zen-v2-field {
   background: var(--v2-panel);
   box-shadow: var(--v2-shadow-sheet);
 }
+/* A title-and-notice dialog takes the focus itself as it opens (§9.22, `tabIndex -1`); it draws no ring for it, as the popover and the sheet chassis do not. */
+.zen-v2-af-dialog:focus {
+  outline: none;
+}
 /*
  * A phone sheet is the shared BottomSheet chassis as it comes (`.zen-sheet` in main.css: the
  * panel face, one hairline, radius 12, the sheet shadow, the chassis scrim – which is `--v2-scrim`
@@ -161,6 +165,18 @@ textarea.zen-v2-field {
  */
 .zen-v2-af-sheet {
   font-size: var(--v2-font-body);
+}
+/*
+ * A title-and-notice sheet (the leak warning) takes the focus itself as it opens (§9.22). The
+ * chassis draws no ring for that (`.zen-sheet:focus` in main.css) – but that rule sits in the
+ * components layer, and this class puts the dialog element under the unlayered v2 ring rule
+ * (`[class*=' zen-v2-']:focus-visible`), which would outline the whole sheet: the dialog's rule
+ * above, restated for the sheet – with the ring rule's own coarse-pointer form beside it, since
+ * on a phone the root's `data-pointer='coarse'` puts that form ahead on specificity.
+ */
+.zen-v2-af-sheet:focus,
+:root[data-pointer='coarse'] .zen-v2-af-sheet:focus {
+  outline: none;
 }
 /*
  * The picker strip on hosts without a popup surface: docked at the bottom of the content frame,

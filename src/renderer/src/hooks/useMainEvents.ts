@@ -8,7 +8,7 @@ import { offerChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { chromeUnderPages } from '@renderer/lib/cover'
 import { remoteDragOver } from '@renderer/lib/drag'
 import { startDownloadsUi } from '@renderer/lib/downloads'
-import { isPhone, viewportStore } from '@renderer/lib/formFactor'
+import { isPhone, isTouchLayout, viewportStore } from '@renderer/lib/formFactor'
 import { noteInsetsSettling, noteViewSized } from '@renderer/lib/fullscreenLanding'
 import { presentInstallBanner, retireInstallBanner } from '@renderer/lib/installBanner'
 import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
@@ -96,18 +96,24 @@ export function useMainEvents(): void {
         // Ctrl+K have nothing to open.
         const chrome = state?.window.chrome
         if ((chrome === 'popup' || chrome === 'app') && mode !== 'new-tab') return
-        // Phones always anchor the bar to the top: the keyboard owns the bottom half.
-        const attached = isPhone() || state?.settings.urlbarBehavior === 'normal'
+        // The touch layouts always anchor the bar: on a phone the keyboard owns the bottom half,
+        // and the tablet's bar is its toolbar pill's popup (TB-21).
+        const attached = isTouchLayout() || state?.settings.urlbarBehavior === 'normal'
         const tabId = currentActiveTabId()
-        // Over the empty pane of a split (Ctrl+Shift+*, split-04) the bar is the pane's own
-        // field: it floats inside the pane and the panes beside it stay live (`EmptyPane`).
-        const pane = !isPhone() && state !== null && isEmptySplitPane(state, tabId)
+        // Over the empty pane of a split (Ctrl+Shift+*, split-04) the desktop's bar is the pane's
+        // own field: it floats inside the pane and the panes beside it stay live (`EmptyPane`).
+        // The touch layouts' bar is the shell's (the phone's band, the tablet's toolbar popup).
+        const pane = !isTouchLayout() && state !== null && isEmptySplitPane(state, tabId)
         void openUrlbar(mode, tabId, { text, attached, pane })
       }),
       onEvent('urlbar.close', () => closeUrlbar()),
       onEvent('newtab.opened', ({ tabId, text }) => {
         const state = browserStore.get().state
-        openNewTabPageUrlbar(tabId, text, isPhone() || state?.settings.urlbarBehavior === 'normal')
+        openNewTabPageUrlbar(
+          tabId,
+          text,
+          isTouchLayout() || state?.settings.urlbarBehavior === 'normal'
+        )
       }),
       onEvent('newtab.shortcutDialog', (request) => {
         closeUrlbar()

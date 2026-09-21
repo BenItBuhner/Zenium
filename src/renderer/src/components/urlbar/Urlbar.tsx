@@ -69,7 +69,20 @@ interface Props {
    * the suggestions fill the content frame, growing away from it towards the middle of the screen.
    */
   phoneEdge?: PhoneBarPosition
+  /**
+   * Tablet layout: the toolbar's address pill, in the coordinates of the layer the bar is drawn
+   * in. The bar is then the pill's popup (TB-21): attached, hung `POPUP_GAP` under it and as
+   * wide as it, growing down over the page as far as `area` (the shell's box) lets it.
+   */
+  anchor?: Rect | null
 }
+
+/**
+ * The gap between the tablet pill and its popup (v2 §9.36: Zen's floating bar under the pill,
+ * as the design gate's stills showed it): 4 px of the toolbar's own bottom padding, so the popup
+ * reads as hung from the pill rather than fused to it, while it still meets no other edge.
+ */
+const POPUP_GAP = 4
 
 /**
  * Zen remembers what you typed until you navigate away: the desktop bar's per-tab draft, kept
@@ -150,7 +163,7 @@ const removable = (row: Suggestion): boolean => Boolean(row.deletable)
 /** Rows that come from the user's own typing or pages, worth remembering as shortcuts. */
 const LEARNABLE_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'search', 'entity'])
 
-export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
+export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.Element {
   const phone = Boolean(phoneEdge)
   const [text, setText] = useState(() => initialTextFor(state, urlbar, phone))
   const [results, setResults] = useState<Suggestion[]>([])
@@ -920,9 +933,21 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     }
   }
 
-  const floating = !urlbar.attached
+  // Hung from a toolbar pill (the tablet) the bar is always the pill's attached popup.
+  const floating = !urlbar.attached && !anchor
   const style = useMemo(() => {
     if (!area) return undefined
+    if (anchor) {
+      // Hung `POPUP_GAP` under the pill and as wide as it (TB-21), down to the bottom of the
+      // shell's box less a gutter – the keyboard's inset has already taken its share of the box.
+      const top = anchor.y + anchor.height + POPUP_GAP
+      return {
+        left: anchor.x,
+        top,
+        width: anchor.width,
+        maxHeight: Math.max(120, area.height - top - 8)
+      }
+    }
     const field = urlbarFieldBox(area, floating)
     return {
       left: field.x,
@@ -931,7 +956,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       // Never grow past the content area – on phones the keyboard takes most of it.
       maxHeight: Math.max(120, area.y + area.height - field.y - 8)
     }
-  }, [floating, area])
+  }, [floating, area, anchor])
 
   const placeholder = inKeyword ? `Search with ${engine.name}` : 'Search or enter address'
   // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current
