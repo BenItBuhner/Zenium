@@ -9727,11 +9727,17 @@
   /*
    * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx,
    * content/CrashRestoreBanner.tsx): a window surface (§9.29, `data-surface="window"` on it) –
-   * the theme's ink on `--v2-window-fill` – with §9.7's hairline at its bottom edge, the one
-   * line it draws. It grows around its 32 px buttons to 40 (§9.21: the 4 above and below are
-   * its own padding, the control + 8 its own statement, so no strip sets `data-control` by
-   * hand – §9.34 leaves that to a row wrapper rendering a control), 16 px gutters, the sentence
-   * at 15 on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   * the theme's ink on the frame's own solid (`--zen-bg-solid`, the frame's background showing
+   * through: the strip paints no fill of its own) – with §9.7's hairline at its bottom edge, the
+   * one line it draws. A band of `--v2-window-fill` under its secondary button put the same
+   * translucent fill on itself (`--v2-control-fill` is the window fill on this surface): the
+   * button's rest a doubled tint over the frame and its hover, `-hover` over the band, a step
+   * of ~30 from that rest – the fill-on-fill the shell pass captured for the lead (PR #295); on
+   * the solid the secondary is one fill and its hover the token's own step. It grows around its
+   * 32 px buttons to 40 (§9.21: the 4 above and below are its own padding, the control + 8 its
+   * own statement, so no strip sets `data-control` by hand – §9.34 leaves that to a row wrapper
+   * rendering a control), 16 px gutters, the sentence at 15 on 20 in the full ink (an action's
+   * line, not supplementary text), the buttons 8 apart.
    */
   .zen-frame-strip {
     position: relative;
@@ -9742,7 +9748,6 @@
     min-height: calc(var(--v2-control) + 8px);
     padding: 4px var(--v2-card-padding);
     color: var(--v2-control-text);
-    background: var(--v2-window-fill);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
