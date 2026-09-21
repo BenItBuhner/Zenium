@@ -496,6 +496,54 @@ describe('credential records (ID-09)', () => {
     ).toBe(false)
   })
 
+  it('carries a login\u2019s breach memory and note as additive fields: absent when unset, read back when present', () => {
+    const src = sources()
+    const flagged = {
+      ...login,
+      id: 'cred_login2',
+      notes: 'the recovery codes are in the safe',
+      breached: 12,
+      checkedAt: 1_000,
+      leakWarnedAt: 1_000,
+      leakIgnoredAt: 2_000
+    }
+    src.credentials = { logins: [login, flagged], passkeys: [] }
+    const out = collectLocal(src, defaultScope())
+    // An unflagged login's record has none of the fields, so it hashes as it did before they existed.
+    expect(Object.keys(out.get('cred_login1')!.data as object)).toEqual([
+      'kind',
+      'origin',
+      'url',
+      'username',
+      'password',
+      'realm',
+      'notes',
+      'createdAt',
+      'updatedAt',
+      'lastUsedAt'
+    ])
+    expect(out.get('cred_login2')!.data).toMatchObject({
+      notes: 'the recovery codes are in the safe',
+      breached: 12,
+      checkedAt: 1_000,
+      leakWarnedAt: 1_000,
+      leakIgnoredAt: 2_000
+    })
+    // A reader on this build takes the fields along; one without them (an older device) reads
+    // the rest of the record as before, and its own records lack them.
+    expect(readCredentialData(out.get('cred_login2')!.data)).toMatchObject({
+      breached: 12,
+      checkedAt: 1_000,
+      leakWarnedAt: 1_000,
+      leakIgnoredAt: 2_000
+    })
+    const plain = readCredentialData(out.get('cred_login1')!.data)!
+    expect('breached' in plain).toBe(false)
+    expect(
+      readCredentialData({ kind: 'login', origin: 'https://a.example', password: 'x', breached: 'many' })
+    ).not.toHaveProperty('breached')
+  })
+
   it('readCredentialData accepts both kinds, repairs missing fields and rejects garbage', () => {
     expect(
       readCredentialData({ kind: 'login', origin: 'https://a.example', password: 'x' })

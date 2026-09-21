@@ -255,12 +255,33 @@ describe('two engines on one folder', () => {
     expect(b.browser.passwords.store.listPasskeys().map((p) => p.id)).toEqual([passkey.id])
     expect(b.engine.status().devices.map((d) => d.name)).toEqual(['Desk (Linux)'])
 
-    // B edits the login later; A takes the newer copy.
+    // A's sign-in check flagged the login and the user ignored the warning, and A wrote a note:
+    // both travel (additive fields), so B neither warns again nor loses the note.
+    a.browser.passwords.update(login.id, { notes: 'shared with the team' })
+    a.browser.passwords.store.recordLeak(login.id, { breached: 5, leakWarnedAt: 1_000, leakIgnoredAt: 1_500 }, 1_000)
+    await a.engine.syncNow()
+    await b.engine.syncNow()
+    expect(b.browser.passwords.store.get(login.id)).toMatchObject({
+      notes: 'shared with the team',
+      breached: 5,
+      checkedAt: 1_000,
+      leakWarnedAt: 1_000,
+      leakIgnoredAt: 1_500
+    })
+
+    // B edits the login later; A takes the newer copy, whose memory the new value reset.
     await new Promise((r) => setTimeout(r, 5))
     b.browser.passwords.update(login.id, { password: 'second-secret' })
     await b.engine.syncNow()
     await a.engine.syncNow()
-    expect(a.browser.passwords.store.get(login.id)?.password).toBe('second-secret')
+    expect(a.browser.passwords.store.get(login.id)).toMatchObject({
+      password: 'second-secret',
+      notes: 'shared with the team',
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null,
+      leakIgnoredAt: null
+    })
     expect(a.engine.status().devices.map((d) => d.name)).toEqual(['Pixel 9'])
 
     // A deletes it; the tombstone reaches B.
