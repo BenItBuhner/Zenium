@@ -42,6 +42,9 @@ import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
+import { V2_GLYPH } from '../v2/controls'
+import { Highlighted } from '../v2/Highlighted'
+import { matchRanges } from './highlight'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
 import {
   arrowStep,
@@ -935,6 +938,12 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   // one while editing, a new one from the new-tab bar (`data-zen-menu`, read by the main process).
   const menuTabId = urlbar.mode === 'new-tab' || !tab ? undefined : tab.id
 
+  // What the desktop rows emphasise (omnibox-21): the typed terms – a `@keyword`'s query alone
+  // – and nothing while the field still holds the page's own address, untouched (the rows are
+  // for it, but it was not typed: Chrome bolds nothing there either) or in zero-suggest.
+  const typedQuery =
+    tab && typedText === restTextFor(tab, phone) ? '' : (textKeyword?.query ?? typedText)
+
   const rows = (sheet: boolean): JSX.Element[] =>
     results.flatMap((item, i) => {
       const row = (
@@ -944,6 +953,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           item={item}
           selected={i === selected}
           sheet={sheet}
+          typed={sheet ? undefined : typedQuery}
           onPick={(e) => {
             if (item.kind === 'clipboard') void pickClip()
             else
@@ -968,7 +978,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
         />
       )
       // A group's heading over its first row (zero-suggest's "Recent searches", omnibox-20):
-      // the shared v2 heading at a popover list's beat, as the tab search popover's.
+      // the shared v2 heading (§9.27's 15/600) at a popover list's beat, as the tab search
+      // popover's – 12 above, 4 below, the first 4 under the field's hairline.
       const heading =
         !sheet && item.group && item.group !== results[i - 1]?.group ? (
           <li
@@ -1108,8 +1119,11 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   /*
     The desktop bar on design language v2 §6 "Floating URL bar": a neutral opaque surface at radius
     12 with the URL bar shadow (anchored under the pill it is a popover, §9.20: radius 8, hairline,
-    panel shadow), a 62 px field with a hairline under it, 50 px rows with a 16 px favicon, the
-    title then ` — ` then the host at 69%. Page tokens only (§9.29).
+    panel shadow), a 62 px field with a hairline under it, then the dropdown at §4 / §5 sizes
+    (shell pass 7(b)): `.zen-v2-row`s of 32 (a title alone) or 52 (the title 15/20 over the host
+    or the engine line 13/20 deemphasised) with a 16 px glyph in the lead slot, the keyboard's
+    row on `--v2-fill` (§9.6), the typed match in the heading weight, the remove X trailing
+    (§9.34), and the hint strip at 13/20. Page tokens only (§9.29).
   */
   return (
     // The empty pane's bar (`urlbar.pane`) lets presses through to the chrome around it – the
@@ -1201,6 +1215,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             {rows(false)}
           </ul>
         )}
+        {/* The hint strip (§4: 13 on the small line, deemphasised), the key chips 20 tall. */}
         <div className="zen-omnibox-footer zen-kbd-hint flex shrink-0 items-center">
           <span>
             <kbd className="zen-omnibox-kbd">↵</kbd> Open
@@ -1513,15 +1528,22 @@ function SuggestionRow({
   onActionKeyDown,
   onRefine,
   clip,
-  onReveal
+  onReveal,
+  typed = ''
 }: {
   id: string
   item: Suggestion
   /** The keyboard's highlight; hovering a row never moves it (Chrome), only a click picks. */
   selected: boolean
-  /** A row of the phone sheet: touch height (44), the desktop list keeps v2's 50. */
+  /** A row of the phone sheet: touch height (44); the desktop list's rows are §9.2's 32 / 52. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
+  /**
+   * What the user typed, for the desktop row's bold match (omnibox-21, `highlight.ts`): a
+   * keyword mode's terms alone; empty at rest over a page and in zero-suggest, when nothing
+   * is emphasised.
+   */
+  typed?: string
   /**
    * The desktop row's remove X (omnibox-22): shown on hover, on the highlighted row and while
    * it has the keyboard; `removeId` is its element id, the target Tab moves the keyboard to.
@@ -1556,6 +1578,8 @@ function SuggestionRow({
       onPick(e)
     }
   }
+  // The desktop row's glyph is a §9.3 row glyph – 16 at stroke 1.5 in the lead slot's
+  // deemphasised ink (`V2_GLYPH`); the phone sheet's row keeps its own.
   const icon =
     item.favicon && !faviconBroken && !page ? (
       <img
@@ -1565,8 +1589,10 @@ function SuggestionRow({
         referrerPolicy="no-referrer"
         onError={() => setFaviconBroken(true)}
       />
-    ) : (
+    ) : sheet ? (
       <Icon className="h-4 w-4 shrink-0 opacity-60" />
+    ) : (
+      <Icon className={V2_GLYPH} aria-hidden />
     )
   if (sheet) {
     // The row is the option (what a tap picks) and, after it, its control: Show or the Refine
@@ -1623,38 +1649,49 @@ function SuggestionRow({
       </li>
     )
   }
-  // As the sheet's row: the option is the row's body, its remove X a sibling in the row (a
-  // button inside an option would be presentational to assistive technology), the row itself
-  // carrying the highlight and the hover across its whole width.
+  // The desktop row (v2 draft §9.2, §9.34, shell pass 7(b)): the shared `.zen-v2-row` – 32 for a
+  // title alone, 52 with its host or engine line under it – whose body is the option (its
+  // remove X is a sibling in the row: a button inside an option would be presentational to
+  // assistive technology). The row takes the press, so the whole row is the target, the X's
+  // press excepted; hovering is the row's own fill and never moves the keyboard's highlight.
+  const rowPointerProps = {
+    onPointerDown: (e: React.PointerEvent) => {
+      if ((e.target as Element).closest('button')) return
+      pointerProps.onPointerDown(e)
+    },
+    onClick: (e: React.MouseEvent) => {
+      if ((e.target as Element).closest('button')) return
+      pointerProps.onClick(e)
+    }
+  }
   return (
     <li
       role="presentation"
-      className="zen-omnibox-row flex shrink-0 cursor-default items-center"
+      className="zen-v2-row zen-omnibox-row cursor-default"
       data-selected={selected}
       data-kind={item.kind}
       data-action-focused={actionFocused || undefined}
+      {...rowPointerProps}
     >
-      <div
-        id={id}
-        role="option"
-        aria-selected={selected}
-        className="zen-omnibox-row-body flex h-full min-w-0 flex-1 items-center"
-        {...pointerProps}
-      >
-        <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">
-          {icon}
-        </span>
-        <span className="zen-omnibox-row-title">{item.title}</span>
-        {item.subtitle && (
-          <span className="zen-omnibox-row-host">
-            <span aria-hidden="true"> — </span>
-            {item.subtitle}
+      <div id={id} role="option" aria-selected={selected} className="zen-v2-row-body">
+        <span className="zen-v2-row-lead">{icon}</span>
+        <span className="zen-v2-row-text">
+          <span className="zen-v2-label truncate">
+            <Highlighted text={item.title} ranges={matchRanges(item.kind, item.title, typed)} />
           </span>
-        )}
+          {item.subtitle && (
+            <span className="zen-v2-description truncate">
+              <Highlighted
+                text={item.subtitle}
+                ranges={matchRanges(item.kind, item.subtitle, typed, 'description')}
+              />
+            </span>
+          )}
+        </span>
         {item.kind === 'tab' && (
           <span className="zen-omnibox-row-hint">
             Switch to tab
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight aria-hidden />
           </span>
         )}
       </div>

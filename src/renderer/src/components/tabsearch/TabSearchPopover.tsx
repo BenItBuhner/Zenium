@@ -1,7 +1,7 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AppWindow, Volume2, VolumeX } from 'lucide-react'
-import { searchHost, type MatchRange } from '@shared/tabSearch'
+import { searchHost } from '@shared/tabSearch'
 import type { TabSearchCandidate, UIState } from '@shared/types'
 import { DEFAULT_CONTAINER_ID } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
@@ -37,6 +37,7 @@ import { usePopover } from '@renderer/hooks/usePopover'
 import { useScrolled } from '../bookmarks/popover'
 import { Favicon, type FaviconSource } from '../sidebar/Favicon'
 import { V2_GLYPH } from '../v2/controls'
+import { Highlighted } from '../v2/Highlighted'
 
 /**
  * The bar the popover hangs from (v2 draft §9.20): the sidebar's top row, the one the extension
@@ -346,20 +347,6 @@ interface RowProps<R extends Option> {
   selected: boolean
   onSelect: () => void
   onActivate: () => void
-}
-
-/** The title or host with the query's matches in the heading weight. */
-function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }): JSX.Element {
-  if (ranges.length === 0) return <>{text}</>
-  const parts: JSX.Element[] = []
-  let cursor = 0
-  ranges.forEach(([start, end], i) => {
-    if (start > cursor) parts.push(<span key={`t${i}`}>{text.slice(cursor, start)}</span>)
-    parts.push(<mark key={`m${i}`}>{text.slice(start, end)}</mark>)
-    cursor = end
-  })
-  if (cursor < text.length) parts.push(<span key="tail">{text.slice(cursor)}</span>)
-  return <>{parts}</>
 }
 
 /**
