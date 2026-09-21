@@ -906,11 +906,17 @@ describe('the app menu', () => {
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-    expect(appMenu(h)).not.toContain('Create Shortcut…')
+    expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
-    expect(appMenu(h)).toContain('Create Shortcut…')
-    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    // Under More Tools, where Chrome's More tools carried "Create shortcut…" – not a top-level
+    // row, so the menu keeps Firefox's count (§6).
+    expect(appMenu(h)).toContain('More Tools > Create Shortcut…')
     expect(appMenu(h)).not.toContain('Create Shortcut…')
+    expect(appMenu(h).indexOf('More Tools > Create Shortcut…')).toBe(
+      appMenu(h).indexOf('More Tools') + 1
+    )
+    h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
+    expect(appMenu(h)).not.toContain('More Tools > Create Shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
   })

@@ -2412,9 +2412,10 @@ export class Menus {
    * menu is exempt from §9.20's 60% cap and takes the room to the window's bottom margin). What
    * Firefox's count leaves out is not lost but moves into a submenu: History carries the
    * recently closed list as Chrome's does, Zoom the fullscreen toggle as Firefox's zoom row
-   * does, More Tools Zenium's space and window actions with the captures, the developer tools
-   * and the resources (Chrome's More tools holds its window and task-manager rows the same
-   * way), Help the menu bar's Help entries and the About row. The phone layout – which has no
+   * does, More Tools the install row with Zenium's space and window actions, the captures, the
+   * developer tools and the resources (Chrome's More tools carried "Create shortcut…" and
+   * holds its window and task-manager rows the same way), Help the menu bar's Help entries and
+   * the About row. The phone layout – which has no
    * sidebar, window frame or keyboard to speak of – keeps Chrome's phone menu (TB-08): the icon
    * row first, then the tabs, library, page and app groups in one flat list, without the items
    * that only act on a window (Chrome's phone menu has none of them either). An item the host
@@ -2804,16 +2805,18 @@ export class Menus {
         readerView,
         ...textPreferences,
         ...listen,
-        ...homeScreen,
         ...pageControls,
         {
           label: 'More Tools',
-          // Chrome's More tools, which carries its window rows (Name window…), Task manager and
-          // Developer tools the same way: Zenium's space and window actions, the window's
-          // layout toggles, the captures, then the developer's and the resources. Fullscreen
-          // rides the zoom submenu where there is one (Firefox's zoom row); a host whose zoom
-          // is the sheet keeps it here with the other window toggles.
+          // Chrome's More tools, which carried "Create shortcut…" first and carries its window
+          // rows (Name window…), Task manager and Developer tools the same way: the install row
+          // (Create Shortcut…, or Open in <app>), Zenium's space and window actions, the
+          // window's layout toggles, the captures, then the developer's and the resources.
+          // Fullscreen rides the zoom submenu where there is one (Firefox's zoom row); a host
+          // whose zoom is the sheet keeps it here with the other window toggles.
           submenu: tidySeparators([
+            ...homeScreen,
+            separator,
             ...newSpace,
             ...newBlankWindow,
             separator,
