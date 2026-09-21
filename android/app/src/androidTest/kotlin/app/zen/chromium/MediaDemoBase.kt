@@ -240,6 +240,9 @@ abstract class MediaDemoBase(private val shotPrefix: String) : DemoHarness("medi
     /** Where the page's element `id` is on screen (its CSS box scaled to the view, offset by the view), or null. */
     protected fun pageElementRect(id: String, tabId: String = TAB): Rect? {
         val raw = pageJs("(function(){var e=document.getElementById(${JSONObject.quote(id)});if(!e)return null;var r=e.getBoundingClientRect();return JSON.stringify({x:r.left,y:r.top,w:r.width,h:r.height})})()", tabId)
+        // "" is a page that did not answer (no view for the tab yet after a relaunch, or a renderer
+        // that never replied): no element to touch, not a syntax error.
+        if (raw.isEmpty()) return null
         val json = (JSONTokener(raw).nextValue() as? String)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
         var origin: IntArray? = null
         var scale = 0f
