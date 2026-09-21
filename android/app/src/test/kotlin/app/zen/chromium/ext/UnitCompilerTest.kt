@@ -157,6 +157,29 @@ class UnitCompilerTest {
     }
 
     @Test
+    fun `a large file goes into the script once, is not held for a re-plan, and is read again by one`() {
+        // Monica's content.js: 28 million characters; the soft copy and the assembly's third copy did not fit the heap.
+        val large = "/* big */ " + "x".repeat(UnitCompiler.LARGE_SOURCE_CHARS)
+        files["big.js"] = large
+        val compiler = UnitCompiler { "/*boot*/" }
+        val compiled = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js")), true, read)
+        val script = compiled[0].script
+        assertEquals(1, Regex("/\\* big \\*/").findAll(script).count())
+        val cs = script.indexOf("console.log('cs')")
+        val big = script.indexOf("/* big */")
+        val extra = script.indexOf("console.log('extra')")
+        assertTrue(cs in 0 until big && big < extra)
+        assertEquals(4, reads) // cs.js, big.js, extra.js and the CSS
+        // cs.js, extra.js and the CSS are held; big.js is not.
+        assertEquals(3, compiler.cachedSources(id))
+        // A re-plan that needs it reads big.js again and nothing else.
+        val more = compiler.compile(id, "1.0.0", units("k" to listOf("cs.js", "big.js", "extra.js"), "k2" to listOf("big.js")), true, read)
+        assertEquals(listOf(true, false), more.map { it.cached })
+        assertEquals(5, reads)
+        assertTrue(more[1].script.contains("/* big */"))
+    }
+
+    @Test
     fun `another extension's cache is untouched`() {
         val compiler = UnitCompiler { "/*boot*/" }
         val other = "ponmlkjihgfedcbaponmlkjihgfedcba"

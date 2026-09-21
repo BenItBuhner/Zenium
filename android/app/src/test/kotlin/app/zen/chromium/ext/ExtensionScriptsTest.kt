@@ -9,7 +9,7 @@ import java.io.File
 
 /** The injected script is assembled by string work; these tests pin its shape and syntax. */
 class ExtensionScriptsTest {
-    private val group = ExtensionScripts.Group(
+    private val group = ExtensionScripts.Group.of(
         extensionId = "abcdefghijklmnopabcdefghijklmnop",
         index = 0,
         sources = listOf("var shared = 1 // trailing comment", "(function(){ return shared })()"),
@@ -41,7 +41,7 @@ class ExtensionScriptsTest {
     @Test
     fun `main-world scripts are named with a location no page script can have, after every file`() {
         // A file's own magic comment comes first in the text; V8 keeps the last one, the host's.
-        val spoofing = ExtensionScripts.Group(group.extensionId, 3, listOf("void 0;\n//# sourceURL=https://page.example/own.js"), "with")
+        val spoofing = ExtensionScripts.Group.of(group.extensionId, 3, listOf("void 0;\n//# sourceURL=https://page.example/own.js"), "with")
         val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(spoofing), emptyMap(), false)
         assertTrue(script.lastIndexOf("//# sourceURL=https://page.example/own.js") < script.lastIndexOf("//# sourceURL=${ExtensionScripts.SOURCE_URL}"))
         assertTrue(script.endsWith("\n//# sourceURL=${ExtensionScripts.SOURCE_URL}"))
@@ -67,7 +67,7 @@ class ExtensionScriptsTest {
     @Test
     fun `assembled script keeps its braces balanced around every embedded text`() {
         // Sources and CSS with unbalanced braces travel as JSON strings, never as raw text.
-        val hostile = ExtensionScripts.Group(group.extensionId, 2, listOf("var s = '}}}'; // {"), "shadow")
+        val hostile = ExtensionScripts.Group.of(group.extensionId, 2, listOf("var s = '}}}'; // {"), "shadow")
         val script = ExtensionScripts.documentStart("void 0;", "{}", listOf(group, hostile), mapOf("a/b.css" to "a{{{"), false)
         val stripped = script.replace(Regex("\"(?:[^\"\\\\]|\\\\.)*\""), "\"\"").replace(Regex("'(?:[^'\\\\]|\\\\.)*'"), "''").replace(Regex("//[^\n]*"), "")
         var depth = 0

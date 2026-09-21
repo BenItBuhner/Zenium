@@ -15,8 +15,40 @@ import java.io.File
  *  - the `scripting.executeScript` wrapper the host evaluates in a tab.
  */
 object ExtensionScripts {
+    /**
+     * One content-script file's text as the assembly consumes it: [length] characters, written
+     * into the builder by [appendTo] exactly once. A held string ([Source] of a text) stays
+     * around – the compiler keeps small files softly for the next re-plan. A [transient] one lets
+     * go of its text the moment it is copied in, so that while a large file (Monica's 28 million
+     * characters of `content.js`) is being assembled the heap holds the text and the builder, and
+     * at the copy out only the builder and the script: two copies at the peak, never three. The
+     * third copy was the allocation that failed on the 192 MB debug heap.
+     */
+    class Source(val length: Int, private val write: (StringBuilder) -> Unit) {
+        constructor(text: String) : this(text.length, { it.append(text) })
+
+        fun appendTo(sb: StringBuilder) = write(sb)
+
+        companion object {
+            /** A text appended once and released: after [appendTo] the source no longer holds it. */
+            fun transient(text: String): Source {
+                var held: String? = text
+                return Source(text.length) { sb ->
+                    sb.append(held ?: throw IllegalStateException("a transient source is appended once"))
+                    held = null
+                }
+            }
+        }
+    }
+
     /** One content-script group: the extension id, the group index and its files' sources in order. */
-    class Group(val extensionId: String, val index: Int, val sources: List<String>, val isolation: String)
+    class Group(val extensionId: String, val index: Int, val sources: List<Source>, val isolation: String) {
+        companion object {
+            /** A group over texts held in memory. */
+            fun of(extensionId: String, index: Int, sources: List<String>, isolation: String): Group =
+                Group(extensionId, index, sources.map { Source(it) }, isolation)
+        }
+    }
 
     /**
      * The `//# sourceURL` of the scripts the host runs in a tab's main world (the document-start
@@ -43,10 +75,13 @@ object ExtensionScripts {
 
     /**
      * The document-start script, named [SOURCE_URL]. Assembled in one builder sized for the whole
-     * text and copied out once: an extension's units can run to ten million characters (Grammarly),
-     * and a 192 MB debug heap that holds the sources, the builder's `char[]` and the string at once
-     * has no room for a second builder growing by doubling on top of them (a `named(toString())`
-     * pass did that, and a 37 MB `char[]` for it was the allocation that failed on the emulator).
+     * text and copied out once: an extension's units can run to ten million characters (Grammarly)
+     * or twenty-eight million (Monica), and a 192 MB debug heap that holds the sources, the
+     * builder's `char[]` and the string at once has no room for a second builder growing by
+     * doubling on top of them (a `named(toString())` pass did that, and a 37 MB `char[]` for it
+     * was the allocation that failed on the emulator). The sources of large files are
+     * [Source.transient]: released as they are copied in, so the peak is two copies of the text,
+     * not three (the third, Monica's 57 MB string at the copy out, was the next allocation to fail).
      */
     fun documentStart(
         bootstrap: String,
@@ -88,7 +123,9 @@ object ExtensionScripts {
         sb.append("function(window,self,globalThis,chrome,browser){")
         if (group.isolation == "with") sb.append("with(window){")
         for (source in group.sources) {
-            sb.append('\n').append(source).append("\n;")
+            sb.append('\n')
+            source.appendTo(sb)
+            sb.append("\n;")
         }
         if (group.isolation == "with") sb.append('}')
         sb.append("\n}")
