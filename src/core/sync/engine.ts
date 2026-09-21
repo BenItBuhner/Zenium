@@ -713,7 +713,7 @@ export class SyncEngine implements SyncHost {
         const page = readHistoryPage(await decryptJson(this.key, doc.envelope))
         if (page) {
           const cursor: StreamCursor = advanceCursor(page)
-          cursor.updatedAt = doc.updatedAt
+          if (!page.sealed) cursor.updatedAt = doc.updatedAt
           this.data.history.cursors[dev] = cursor
         }
       } catch {
@@ -806,8 +806,9 @@ export class SyncEngine implements SyncHost {
         } finally {
           this.applyingHistory = false
         }
+        // An open page is read again only once its document changed; a sealed one is past.
         cursor = advanceCursor(page)
-        cursor.updatedAt = doc.updatedAt
+        if (!page.sealed) cursor.updatedAt = doc.updatedAt
         state.cursors[dev] = cursor
       }
     }
@@ -906,14 +907,14 @@ export class SyncEngine implements SyncHost {
       const parsed = parseInboxName(name)
       if (!parsed) continue
       const mine = ownsName(this.data.deviceId, parsed.targetId)
+      if (mine && this.data.consumedSends.includes(parsed.sendId)) {
+        await transport.remove(name)
+        continue
+      }
       const doc = await readDocument(transport, name)
       if (!doc) continue
       if (!mine) {
         if (now - doc.updatedAt > SEND_TTL_MS) await transport.remove(name)
-        continue
-      }
-      if (this.data.consumedSends.includes(parsed.sendId)) {
-        await transport.remove(name)
         continue
       }
       let sent: SendTabDocument | null = null
