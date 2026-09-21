@@ -1,10 +1,11 @@
 import type { CSSProperties, JSX } from 'react'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
 import type { PhoneBarPosition, Space, Tab, UIState } from '@shared/types'
 import { displayHost } from '@shared/url'
+import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { chromeGutter } from '@renderer/hooks/useTheme'
 import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
@@ -276,19 +277,16 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         )}
       </main>
       {/* Messages sit on the content frame's box, over the bar and the stage but under sheets.
-          On the bar's edge the box rides the bar as it hides (`--zen-bar-hide-shift`, per frame,
-          like the bar itself), so a toast showing mid-gesture moves with the bar instead of
-          jumping the band at the rest; at either rest it is the content column's edge. */}
+          Its box is the stylesheet's, by the bar's edge (`data-edge`) and the root's
+          `data-bar-away` (lib/barHide.ts): the content column's edge at either rest, the page's
+          tall box for the whole of a hide gesture, with the cards on the bar's edge riding the
+          bar by transform – so a toast showing mid-gesture moves with the bar instead of jumping
+          the band at the rest, and nothing in the frame is laid out per frame (main.css). */}
       <div
         ref={messageFrameRef}
         data-shell-chrome
+        data-edge={edge}
         className="zen-message-frame pointer-events-none absolute z-[36]"
-        style={{
-          top: edgePadding('top', edge, barAway, true),
-          bottom: edgePadding('bottom', edge, barAway, true),
-          left: 'var(--zen-padding)',
-          right: 'var(--zen-padding)'
-        }}
       >
         <MessageLayer />
       </div>
@@ -340,21 +338,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
 /**
  * What the content column leaves free at `side`: the bar band on the bar's edge – the bar and,
  * while the active tab is grouped, the group strip (`--zen-phone-band`) – a gutter elsewhere,
- * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`). With
- * `perFrame` the bar's edge follows the bar's hide as it happens (`--zen-bar-hide-shift`,
- * lib/barHide.ts): the band less the shift, which is the band at the shown rest and the gutter
- * at the hidden one, the same two values, with every frame between – for a box that should
- * move with the bar rather than be laid out twice per hide, as the content column is.
+ * and a gutter on the bar's edge too while the bar rests hidden off it (`barAway`). The two
+ * values are the two rests of the hide (lib/barHide.ts); nothing here follows the bar per
+ * frame – the page's edge does that on the host, the message frame's cards by transform.
  */
-function edgePadding(
-  side: PhoneBarPosition,
-  barEdge: PhoneBarPosition,
-  barAway = false,
-  perFrame = false
-): string {
+function edgePadding(side: PhoneBarPosition, barEdge: PhoneBarPosition, barAway = false): string {
   const inset = `var(--zen-inset-${side})`
-  if (side === barEdge && perFrame)
-    return `calc(${inset} + var(--zen-phone-band) - var(--zen-bar-hide-shift, 0px))`
   return side === barEdge && !barAway
     ? `calc(${inset} + var(--zen-phone-band))`
     : `calc(${inset} + var(--zen-padding))`
@@ -413,41 +402,60 @@ export function PhoneBar({
   const groupStrip = strip ? (
     <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
+  // The bar that hides on scroll writes its progress on this element per frame (lib/barHide.ts);
+  // the preview of the bar at the other edge, drawn during a carry, does not hide.
+  const bindHide = useBarHideBinding(!inert)
+  // One ref for the two: the recede's registration reads the element off `barRef` in its layout
+  // effect, the hide's binding takes the element as it mounts and unmounts.
+  const setBar = useCallback(
+    (el: HTMLElement | null) => {
+      barRef.current = el
+      bindHide(el)
+    },
+    [bindHide]
+  )
 
   return (
-    <nav
-      ref={barRef}
-      className={cn(
-        'zen-phone-bar absolute z-30 flex flex-col px-2',
-        edge === 'bottom' ? 'bottom-0' : 'top-0',
-        // While the pill is being carried the other buttons are on their way out too.
-        pillLook !== 'docked' && 'zen-phone-bar-lifted',
-        inert && 'pointer-events-none'
-      )}
-      // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
-      data-surface="window"
-      // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
-      // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
-      data-edge={edge}
-      aria-hidden={inert || undefined}
-      data-shell-chrome
-      // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
-      // a button) brings it back, as does keyboard focus.
-      onFocus={inert ? undefined : showBar}
-      style={{
-        ...style,
-        left: 'var(--zen-inset-left)',
-        right: 'var(--zen-inset-right)',
-        paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
-        paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
-      }}
-    >
-      {edge === 'bottom' && groupStrip}
-      <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
-        {layout.left.map((id) => (
-          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-        ))}
-        {/*
+    // The clip box (main.css `zen-phone-bar-clip`): from the inset line to the window's far
+    // edge, clipping its overflow and never moving, so a bar slid off its edge by the hide is cut
+    // at the inset line and the bar's frame is its transform alone. The bar hangs its inset
+    // padding past the box's edge to sit where it always did.
+    <div className="zen-phone-bar-clip" data-edge={edge}>
+      <nav
+        ref={setBar}
+        className={cn(
+          'zen-phone-bar absolute z-30 flex flex-col px-2',
+          // While the pill is being carried the other buttons are on their way out too.
+          pillLook !== 'docked' && 'zen-phone-bar-lifted',
+          inert && 'pointer-events-none'
+        )}
+        // Window chrome: the bar, the pill and their chips draw in the window family (v2 §9.29).
+        data-surface="window"
+        // The edge it is docked at: main.css fades the bottom-docked bar with a sheet (§11.1) and
+        // slides it off by `--zen-bar-hide` as the page scrolls (lib/barHide.ts).
+        data-edge={edge}
+        aria-hidden={inert || undefined}
+        data-shell-chrome
+        // A hidden bar stays in the accessibility tree: TalkBack focus landing on it (the pill,
+        // a button) brings it back, as does keyboard focus.
+        onFocus={inert ? undefined : showBar}
+        style={{
+          ...style,
+          left: 'var(--zen-inset-left)',
+          right: 'var(--zen-inset-right)',
+          ...(edge === 'bottom'
+            ? { bottom: `calc(-1 * ${inset})` }
+            : { top: `calc(-1 * ${inset})` }),
+          paddingTop: edge === 'top' ? `calc(${inset} + 6px)` : 6,
+          paddingBottom: edge === 'bottom' ? `calc(${inset} + 6px)` : 6
+        }}
+      >
+        {edge === 'bottom' && groupStrip}
+        <div className="zen-phone-bar-row flex items-center gap-1" {...(inert ? {} : hold)}>
+          {layout.left.map((id) => (
+            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+          ))}
+          {/*
           The pill is a gesture surface, not a button: its site icon, address and lock are real
           buttons inside it, so TalkBack gets a node for each (a button's descendants would all
           collapse into one). Taps are told apart in onTap by what was under the finger. The
@@ -456,27 +464,28 @@ export function PhoneBar({
           (#108's follow-up, A11Y-01), and nothing in it but its buttons may speak (the space
           label is hidden from the tree, the address button says the space instead).
         */}
-        <div
-          className={cn(
-            'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
-            pillLook === 'docked' &&
-              'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
-            pillLook !== 'docked' && 'zen-pill-well',
-            pillLook === 'well-target' && 'zen-pill-well-target'
-          )}
-          data-surface="window"
-          {...(inert ? {} : pill)}
-        >
-          {pillLook === 'docked' && (
-            <PillContent state={state} tab={tab} space={space} interactive={!inert} />
-          )}
+          <div
+            className={cn(
+              'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
+              pillLook === 'docked' &&
+                'bg-[var(--zen-element-bg)] active:bg-[var(--zen-element-bg-hover)]',
+              pillLook !== 'docked' && 'zen-pill-well',
+              pillLook === 'well-target' && 'zen-pill-well-target'
+            )}
+            data-surface="window"
+            {...(inert ? {} : pill)}
+          >
+            {pillLook === 'docked' && (
+              <PillContent state={state} tab={tab} space={space} interactive={!inert} />
+            )}
+          </div>
+          {layout.right.map((id) => (
+            <BarButton key={id} id={id} ctx={ctx} inert={inert} />
+          ))}
         </div>
-        {layout.right.map((id) => (
-          <BarButton key={id} id={id} ctx={ctx} inert={inert} />
-        ))}
-      </div>
-      {edge === 'top' && groupStrip}
-    </nav>
+        {edge === 'top' && groupStrip}
+      </nav>
+    </div>
   )
 }
 

@@ -21,10 +21,20 @@ import { browserStore, contentAreaStore, pageHidden, uiStore, type UiState } fro
  * scroll while a finger or a fling drives it, and snapped fully in or out on `SPRING_SNAPPY`
  * when the scroll ends, by the app's one set of swipe thresholds (`SWIPE_THRESHOLDS`, §11.5).
  * The value is published three ways every frame: `--zen-bar-hide` (0 shown … 1 hidden) on the
- * document root for the bar and anything that slides with it, the host command that moves the
- * page's edge to follow (the page gets the bar's band as the bar leaves it), and
- * `uiStore.barHidden`, a boolean that flips only at rest, so the content column re-lays itself
- * out at the two ends of the motion and never in between.
+ * elements that move with the bar (`bindBarHide`: the bar itself and the message cards on its
+ * edge; a registered, non-inherited property, so a frame's write recalculates the style of that
+ * one element and nothing under or beside it – written on the root it recalculated the whole
+ * chrome), the host command that moves the page's edge to follow (the page gets the bar's band
+ * as the bar leaves it), and `uiStore.barHidden`, a boolean that flips only at the two rests,
+ * so the content column re-lays itself out at the two ends of the motion and never in between.
+ * The root carries two attributes for the stylesheet: `data-bar-away` while the bar is off its
+ * shown rest at all (the message frame takes the page's tall box for the gesture, once, and its
+ * cards ride the bar by transform), and `data-bar-hidden` at the hidden rest.
+ *
+ * The rule every write here keeps (the performance program's): a gesture and its spring touch
+ * only `transform` and `opacity` on promoted layers and never lay out or paint the page in the
+ * frame. The chrome's layout changes twice per hide (the column at the hidden rest, the message
+ * frame's box at the gesture's start), never per frame.
  *
  * Gating (`barMayHide`): the bar stays put on the new tab page and the internal pages, while
  * the omnibox is editing, while a sheet or any chrome covers the page, while find or the zoom
@@ -357,7 +367,7 @@ export class BarHideMachine {
 // ---------------------------------------------------------------------------
 
 export interface BarHideState {
-  /** 0 shown … 1 hidden, per frame (the root's `--zen-bar-hide`). */
+  /** 0 shown … 1 hidden, per frame (`--zen-bar-hide` on the bound elements). */
   progress: number
   phase: BarHidePhase
   /** The edge the bar hides off (the phone bar's dock). */
@@ -495,13 +505,60 @@ function publishHost(): void {
   host.apply(frame)
 }
 
+/**
+ * The elements that move with the bar: `--zen-bar-hide` (0 shown … 1 hidden) is written on each
+ * per frame – the bar itself (the stylesheet turns it into the bar's transform) and the message
+ * frame's card containers (theirs rides the bar's edge). The property is registered on the
+ * element alone (`@property … inherits: false`, main.css), so a write recalculates that
+ * element's style and no other; written on the root, as it first was, every frame recalculated
+ * the style of the whole chrome (H4 of the bar hide profile, #270).
+ */
+const bound = new Set<HTMLElement>()
+
+function writeProgress(el: HTMLElement, progress: number): void {
+  if (progress > 0) el.style.setProperty('--zen-bar-hide', progress.toFixed(4))
+  else el.style.removeProperty('--zen-bar-hide')
+}
+
+/**
+ * Register an element that moves with the bar; it carries the current progress at once and every
+ * frame after, until the returned unbind. Its rule in main.css reads `--zen-bar-hide` off the
+ * element itself.
+ */
+export function bindBarHide(el: HTMLElement): () => void {
+  bound.add(el)
+  writeProgress(el, barHideStore.get().progress)
+  return () => {
+    bound.delete(el)
+    el.style.removeProperty('--zen-bar-hide')
+  }
+}
+
+/** Whether the root last said the bar was off its shown rest (`data-bar-away`). */
+let away = false
+
+/**
+ * The root's `data-bar-away`: on while the bar is anywhere off its shown rest, so the stylesheet
+ * gives the message frame the page's tall box for the whole gesture (one layout of the frame at
+ * the gesture's start, as the page itself is laid out tall once) and moves its cards on the bar's
+ * edge by transform. Touched at the two transitions only, never per frame.
+ */
+function publishAway(next: boolean): void {
+  if (away === next) return
+  away = next
+  const el = root()
+  if (!el) return
+  if (next) el.dataset.barAway = 'true'
+  else delete el.dataset.barAway
+}
+
 const machine = new BarHideMachine(
   {
     paint: (offset) => {
       const travel = machine.travel
       const progress = travel > 0 ? Math.min(1, Math.max(0, offset / travel)) : 0
-      const el = root()
-      if (el) el.style.setProperty('--zen-bar-hide', progress.toFixed(4))
+      for (const el of bound) writeProgress(el, progress)
+      publishAway(progress > 0)
       barHideStore.set({ progress })
       publishHost()
       // Leaving the hidden rest: the content column takes its shown layout at once, so the page
@@ -511,7 +568,12 @@ const machine = new BarHideMachine(
     },
     onChange: (phase) => {
       barHideStore.set({ phase })
-      publishHidden(machine.hidden)
+      // The boolean flips to hidden at the hidden rest and nowhere else: a finger landing on the
+      // hidden bar (rest → dragging at the full travel) or a fling passing under it has not moved
+      // the bar, and the column that flipped on the phase alone re-laid the chrome out and the
+      // page with it at every touch and every fling's end on a hidden bar (#270's H5). It flips
+      // back in `paint`, the frame the bar leaves the far end.
+      if (machine.hidden) publishHidden(true)
       publishHost()
       note(`${phase} at ${Math.round(machine.current * 100) / 100} of ${machine.travel}`)
     }
