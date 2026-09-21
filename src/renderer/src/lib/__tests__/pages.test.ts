@@ -16,6 +16,7 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { isPageTab, openPage, openSettings } = await import('../pages')
 const { backStore, handleSystemBack, refreshBackState, rootBackAction } = await import('../back')
 const { browserStore, openOverlay, overlayAvailable, uiStore } = await import('../ui')
+const { viewportStore } = await import('../formFactor')
 
 function tab(id: string, url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -86,6 +87,10 @@ describe('page tabs', () => {
     expect(isPageTab(tab('t', 'zen://settings'))).toBe(true)
     expect(isPageTab(tab('t', 'zen://settings/privacy'))).toBe(true)
     expect(isPageTab(tab('t', 'zenium://settings/look'))).toBe(true)
+    expect(isPageTab(tab('t', 'zen://history'))).toBe(true)
+    expect(isPageTab(tab('t', 'zen://history?q=a.test'))).toBe(true)
+    expect(isPageTab(tab('t', 'zen://bookmarks?folder=f1'))).toBe(true)
+    expect(isPageTab(tab('t', 'zenium://downloads'))).toBe(true)
     expect(isPageTab(tab('t', 'https://settings.example/'))).toBe(false)
     // Documents – the new tab page among them, registered or not – have a view of their own.
     expect(isPageTab(tab('t', 'zen://newtab'))).toBe(false)
@@ -217,19 +222,27 @@ describe('opening a page', () => {
   })
 })
 
-describe('the Settings overlay on a host with page tabs', () => {
+describe('the page overlays on a host with page tabs', () => {
+  const desktop = viewportStore.get()
   beforeEach(() => {
     invoke.mockClear()
-    uiStore.set({ overlay: 'none', overlaySection: null })
+    uiStore.set({ overlay: 'none', overlaySection: null, overlayFolderId: null })
+    viewportStore.set({ ...desktop, formFactor: 'desktop' })
   })
-  afterEach(() => browserStore.set({ state: null }))
+  afterEach(() => {
+    browserStore.set({ state: null })
+    viewportStore.set(desktop)
+  })
 
   it('is not an overlay there: Settings, Shortcuts and Sync open the page’s tab through page.open instead', async () => {
     browserStore.set({ state: state([tab('a', 'https://a.test/')], 'a') })
     expect(overlayAvailable('settings')).toBe(false)
     expect(overlayAvailable('shortcuts')).toBe(false)
     expect(overlayAvailable('sync')).toBe(false)
-    expect(overlayAvailable('history')).toBe(true)
+    // Overlays in their own right, whatever the host: the theme picker, the Boosts panel.
+    expect(overlayAvailable('theme')).toBe(true)
+    expect(overlayAvailable('boosts')).toBe(true)
+    expect(overlayAvailable('passwords')).toBe(true)
     await openOverlay('settings', 'a', null, null, 'privacy')
     await openOverlay('shortcuts', 'a')
     await openOverlay('sync', 'a')
@@ -242,10 +255,46 @@ describe('the Settings overlay on a host with page tabs', () => {
     expect(invoke.mock.calls.some(([name]) => name === 'overlay.snapshot')).toBe(false)
   })
 
+  it('opens History, the bookmarks manager and Downloads as page tabs on the desktop and the tablet (v2 §10.1)', async () => {
+    browserStore.set({ state: state([tab('a', 'https://a.test/')], 'a') })
+    for (const formFactor of ['desktop', 'tablet'] as const) {
+      viewportStore.set({ ...desktop, formFactor })
+      expect(overlayAvailable('history')).toBe(false)
+      expect(overlayAvailable('bookmarks')).toBe(false)
+      expect(overlayAvailable('downloads')).toBe(false)
+    }
+    await openOverlay('history', 'a')
+    // The bar's "Bookmark Manager" names the folder it was opened from: the page's `?folder=`.
+    await openOverlay('bookmarks', 'a', null, 'f1')
+    await openOverlay('downloads', 'a')
+    expect(uiStore.get().overlay).toBe('none')
+    expect(invoke.mock.calls.filter(([name]) => name === 'page.open').map(([, a]) => a)).toEqual([
+      { id: 'history', section: null, query: undefined },
+      { id: 'bookmarks', section: null, query: { folder: 'f1' } },
+      { id: 'downloads', section: null, query: undefined }
+    ])
+    expect(invoke.mock.calls.some(([name]) => name === 'overlay.snapshot')).toBe(false)
+  })
+
+  it('keeps the phone’s History, Bookmarks and Downloads panels although the host has page tabs', async () => {
+    browserStore.set({ state: state([tab('a', 'https://a.test/')], 'a') })
+    viewportStore.set({ ...desktop, formFactor: 'phone' })
+    expect(overlayAvailable('history')).toBe(true)
+    expect(overlayAvailable('bookmarks')).toBe(true)
+    expect(overlayAvailable('downloads')).toBe(true)
+    // Settings names no layouts: the phone's Settings is the tab too.
+    expect(overlayAvailable('settings')).toBe(false)
+    await openOverlay('bookmarks', 'a', null, 'f1')
+    expect(uiStore.get().overlay).toBe('bookmarks')
+    expect(uiStore.get().overlayFolderId).toBe('f1')
+    expect(invoke.mock.calls.some(([name]) => name === 'page.open')).toBe(false)
+  })
+
   it('stays the desktop’s overlay where the host has no page tabs', async () => {
     const s = state([tab('a', 'https://a.test/')], 'a')
     browserStore.set({ state: { ...s, capabilities: { pageTabs: false } } as unknown as UIState })
     expect(overlayAvailable('settings')).toBe(true)
+    expect(overlayAvailable('history')).toBe(true)
     await openOverlay('shortcuts', 'a')
     expect(uiStore.get().overlay).toBe('shortcuts')
     expect(invoke.mock.calls.some(([name]) => name === 'page.open')).toBe(false)

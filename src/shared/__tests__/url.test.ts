@@ -3,6 +3,7 @@ import type { CertificateDetails } from '../types'
 import {
   BLANK_URL,
   BOOKMARKS_URL,
+  DOWNLOADS_URL,
   HISTORY_URL,
   NEW_TAB_URL,
   SETTINGS_URL,
@@ -89,11 +90,16 @@ describe('new tab and settings pages', () => {
     // A section is part of the address (the deep link adb sends, v2 §10.1).
     expect(inputToUrl('zenium://settings/privacy')).toBe(`${SETTINGS_URL}/privacy`)
     expect(inputToUrl('ZENIUM://Newtab/')).toBe(NEW_TAB_URL)
-    // A zenium:// address that is not a registered page is exactly the zen:// one and falls
-    // through to that address's own handling: the history page (a chrome surface, zenPages),
-    // an error page with its query intact – never a blank tab.
+    // The three page tabs of pass 6 (v2 §10.1), typed as users see them.
     expect(inputToUrl('zenium://history')).toBe(HISTORY_URL)
-    expect(inputToUrl('zenium://history')).toBe(inputToUrl('zen://history'))
+    expect(inputToUrl('zenium://bookmarks')).toBe(BOOKMARKS_URL)
+    expect(inputToUrl('zenium://downloads')).toBe(DOWNLOADS_URL)
+    expect(inputToUrl('chrome://history')).toBe(HISTORY_URL)
+    expect(inputToUrl('chrome://downloads')).toBe(DOWNLOADS_URL)
+    // A zenium:// address that is not a registered page is exactly the zen:// one and falls
+    // through to that address's own handling: an error page with its query intact – never a
+    // blank tab.
+    expect(inputToUrl('zenium://image?src=x')).toBe(inputToUrl('zen://image?src=x'))
     expect(inputToUrl('zenium://error?url=https%3A%2F%2Fexample.com&code=-105')).toBe(
       'zen://error?url=https%3A%2F%2Fexample.com&code=-105'
     )
@@ -147,7 +153,9 @@ describe('fullUrl / addressParts', () => {
     ).toBe('https://en.wikipedia.org/wiki/Zen')
     // An internal page is shown and copied under its user-facing alias (v2 §10.1).
     expect(fullUrl('zen://settings')).toBe('zenium://settings')
-    expect(fullUrl('zen://history')).toBe('zen://history')
+    expect(fullUrl('zen://history')).toBe('zenium://history')
+    // A zen:// document that is no page stays as it is.
+    expect(fullUrl('zen://image?src=x')).toBe('zen://image?src=x')
   })
 
   it('splits the site from the dimmed path, query and fragment', () => {
@@ -203,7 +211,7 @@ describe('displayHost', () => {
   it('falls back to the display form where there is no site', () => {
     expect(displayHost(BLANK_URL)).toBe('')
     expect(displayHost('')).toBe('')
-    expect(displayHost('zen://history')).toBe('zen://history')
+    expect(displayHost('zen://image?src=x')).toBe('zen://image?src=x')
     expect(displayHost('file:///home/me/notes.html')).toBe('file:///home/me/notes.html')
   })
 })
@@ -261,17 +269,28 @@ describe('internal pages', () => {
   it('shows the alias in the address bar and the title on the tab', () => {
     expect(displayUrl('zen://settings')).toBe('zenium://settings')
     expect(displayUrl('zen://settings/look')).toBe('zenium://settings/look')
-    expect(displayUrl('zen://history')).toBe('zen://history')
+    // History, Bookmarks and Downloads: the alias without the page's query (v2 §10.1), the
+    // page's title on the tab; a zen:// document that is no page is shown as it is.
+    expect(displayUrl('zen://history')).toBe('zenium://history')
+    expect(displayUrl('zen://history?q=example.com')).toBe('zenium://history')
+    expect(displayUrl('zen://bookmarks?folder=f1')).toBe('zenium://bookmarks')
+    expect(displayUrl('zen://downloads')).toBe('zenium://downloads')
+    expect(displayUrl('zen://image?src=x')).toBe('zen://image?src=x')
     expect(titleForUrl('zen://settings')).toBe('Settings')
     expect(titleForUrl('zen://settings/privacy')).toBe('Settings')
     expect(titleForUrl('zen://settings/unknown')).toBe('Settings')
+    expect(titleForUrl('zen://history?q=a')).toBe('History')
+    expect(titleForUrl('zen://bookmarks')).toBe('Bookmarks')
+    expect(titleForUrl('zen://downloads')).toBe('Downloads')
+    expect(displayHost('zen://history')).toBe('History')
   })
 
   it('copies and shares the alias, never the stored zen:// form', () => {
     expect(fullUrl('zen://settings')).toBe('zenium://settings')
     expect(fullUrl('zen://settings/privacy')).toBe('zenium://settings/privacy')
     expect(fullUrl('https://www.example.com/a?b=c')).toBe('https://www.example.com/a?b=c')
-    expect(fullUrl('zen://history')).toBe('zen://history')
+    expect(fullUrl('zen://history')).toBe('zenium://history')
+    expect(fullUrl('zen://downloads')).toBe('zenium://downloads')
   })
 })
 
