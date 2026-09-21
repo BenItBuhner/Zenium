@@ -57,6 +57,8 @@ interface Harness {
   asked: () => number
   items: (id: string) => MenuItemDescriptor[]
   pick: (id: string, itemId: string) => void
+  /** The menus the host was asked to pop up: their source and top-level labels. */
+  popups: { source: string; labels: string[] }[]
 }
 
 /** The host's template for the extension: a plain item, a checked checkbox, a separator, a submenu. */
@@ -81,6 +83,7 @@ function ownItems(clicked: string[]): MenuItemTemplate[] {
 
 function harness(extensions: ExtensionInfo[]): Harness {
   const clicked: string[] = []
+  const popups: Harness['popups'] = []
   let asked = 0
   const platform: Platform = {
     info: { os: 'linux' as PlatformOs, version: '1.2.3' },
@@ -112,7 +115,11 @@ function harness(extensions: ExtensionInfo[]): Harness {
           isCurrentlyAudible: () => false
         })
     }),
-    menus: { popup: () => undefined },
+    menus: {
+      popup: (items, options) => {
+        popups.push({ source: options.source, labels: items.map((i) => i.label ?? '-') })
+      }
+    },
     dialogs: stub(),
     clipboard: stub(),
     shell: stub(),
@@ -143,9 +150,33 @@ function harness(extensions: ExtensionInfo[]): Harness {
       browser.handleCommand(win, 'extension.actionMenuItems', { id }) as MenuItemDescriptor[],
     pick: (id, itemId) => {
       browser.handleCommand(win, 'extension.actionMenuClick', { id, itemId })
-    }
+    },
+    popups
   }
 }
+
+describe('extension.actionContextMenu', () => {
+  it('is a context menu of its own source – the native menu at the button on the desktop, never the "⋯" app menu’s in-chrome panel (§6 Menus)', () => {
+    const h = harness([EXT])
+    h.browser.handleCommand(h.win, 'extension.actionContextMenu', { id: ID, x: 300, y: 44 })
+    expect(h.popups).toHaveLength(1)
+    expect(h.popups[0].source).toBe('extension')
+    expect(h.popups[0].labels).toEqual([
+      'Vimium',
+      '-',
+      'Open Dashboard',
+      'Dark Mode',
+      '-',
+      'More',
+      '-',
+      'Options',
+      'Pin to Toolbar',
+      '-',
+      'Remove from Zenium',
+      'Manage Extensions'
+    ])
+  })
+})
 
 describe('extension.actionMenuItems', () => {
   it('answers the extension’s action-context items in the native menu’s layout, as descriptors', () => {

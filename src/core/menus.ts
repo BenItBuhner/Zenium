@@ -1152,7 +1152,9 @@ export class Menus {
 
   /**
    * The context menu of an extension's toolbar button: Chrome's layout of the extension's own
-   * `contextMenus` items (`action` / `browser_action` contexts) above the browser's entries.
+   * `contextMenus` items (`action` / `browser_action` contexts) above the browser's entries. A
+   * context menu, so its own source: the platform's native menu at the button on the desktop
+   * (§6 "Menus": the context menus stay native), not the "⋯" menu's in-chrome panel.
    */
   showExtensionActionMenu(id: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { extensions } = this.browser
@@ -1178,7 +1180,7 @@ export class Menus {
         click: () => this.browser.actions.run('addons.open', { sourceTabId: null, win })
       }
     )
-    this.popup(template, win, 'app', anchor)
+    this.popup(template, win, 'extension', anchor)
   }
 
   /**

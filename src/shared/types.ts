@@ -3345,6 +3345,7 @@ export interface MenuDescriptor {
     | 'newtab'
     | 'topsite'
     | 'app'
+    | 'extension'
     | 'bookmark'
     | 'history'
     | 'download'

@@ -997,6 +997,8 @@ export type MenuSource =
   | 'newtab'
   | 'topsite'
   | 'app'
+  /** An extension's toolbar button's context menu (a context menu: native on the desktop). */
+  | 'extension'
   | 'bookmark'
   | 'history'
   | 'download'

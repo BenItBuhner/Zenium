@@ -152,6 +152,16 @@ describe('the app menu is the renderer’s', () => {
       }
     ])
   })
+
+  it('an extension button’s context menu is a context menu: native at the button, not the "⋯" panel', () => {
+    const menus = new ElectronMenus()
+    const send = vi.fn()
+    const win = { host: { alive: true, win: {} }, send } as never
+    menus.popup([{ label: 'Options', click: vi.fn() }], { source: 'extension', win, x: 300, y: 44 })
+    expect(send).not.toHaveBeenCalled()
+    expect(built).toHaveLength(1)
+    expect(built[0][0]).toMatchObject({ label: 'Options' })
+  })
 })
 
 describe('native menu icons', () => {
