@@ -22,6 +22,7 @@ import { formatMediaTime, handlesAction, mediaDetail } from '@renderer/lib/media
 import {
   MEDIA_HUB_NAME,
   closeMediaHub,
+  mediaHubAnchor,
   mediaHubEntries,
   mediaHubUi,
   mediaTitle
@@ -41,7 +42,6 @@ import { cn } from '@renderer/lib/utils'
 import { V2IconButton } from '../extensions/v2'
 import { Slider } from '../ui/slider'
 import { V2_GLYPH } from '../v2/controls'
-import { MEDIA_HUB_BUTTON } from './MediaHubButton'
 
 /** Rows with trailing controls: the 400 popover (§9.20). */
 const WIDTH = POPOVER_WIDTH.form
@@ -70,7 +70,9 @@ export function MediaHubLayer(): JSX.Element | null {
  * .4 (§9.30) until the page handles them. Every control sends the Media Session action the OS
  * controls send (`media.action`, `media.toggle`). The popover leaves with the last player;
  * Escape returns the keyboard to the button, a press anywhere else, a resize and another
- * popover opening put it away (§9.22).
+ * popover opening put it away (§9.22). Where the toolbar button has folded into the app menu's
+ * "Now Playing…" row (§9.29) the row's pick opens the same popover from the "⋯" menu button,
+ * which is then its anchor for placement, light dismiss and the keyboard's return alike.
  */
 function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
   const ref = useRef<HTMLDivElement>(null)
@@ -98,9 +100,9 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
   usePopover(ref, {
     onClose: closeMediaHub,
     active: ready,
-    returnTo: document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)
+    returnTo: mediaHubAnchor()
   })
-  useLightDismiss(ref, closeMediaHub, { anchor: () => document.querySelector(MEDIA_HUB_BUTTON) })
+  useLightDismiss(ref, closeMediaHub, { anchor: mediaHubAnchor })
 
   if (!ready) return null
   return (
@@ -281,11 +283,12 @@ function Transport({ media }: { media: MediaState }): JSX.Element {
 
 /**
  * Where the hub goes: hanging from the row the toolbar button sits in, end-aligned with the
- * button (it sits in the row's trailing half); a button not on screen puts it in the window's
- * top trailing corner.
+ * button (it sits in the row's trailing half) – or with the "⋯" menu button where the toolbar
+ * button has folded into the menu's row (§9.29); neither on screen puts it in the window's top
+ * trailing corner.
  */
 function place(): PopoverBox {
-  const button = document.querySelector(MEDIA_HUB_BUTTON)
+  const button = mediaHubAnchor()
   if (button) return placeUnder(anchorOf(button), WIDTH)
   const viewport = viewportSize()
   const corner: Rect = { x: viewport.width - POPOVER_MARGIN - 28, y: 28, width: 28, height: 28 }

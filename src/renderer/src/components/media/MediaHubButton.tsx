@@ -1,13 +1,28 @@
 import type { JSX } from 'react'
 import { SquarePlay } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { mediaHubEntries, mediaHubLabel, mediaHubUi, toggleMediaHub } from '@renderer/lib/mediaHub'
+import {
+  mediaHubEntries,
+  mediaHubLabel,
+  mediaHubUi,
+  mediaPlaying,
+  toggleMediaHub
+} from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
-/** The button the hub's popover hangs from and returns the keyboard to (§9.22). */
-export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
+/**
+ * The accent dot that says something plays: on the hub's toolbar button, and – the same dot,
+ * the same token, the window's `--zen-accent` (§9.29) – on the "⋯" menu button while that
+ * toolbar button has folded, Firefox's badge on its menu button, since the menu's "Now
+ * playing…" row is then where the hub goes. One of the two wears it, never both. Decorative:
+ * the button it sits on names the state.
+ */
+export function MediaLiveDot({ state }: { state: UIState }): JSX.Element | null {
+  if (!mediaPlaying(state)) return null
+  return <span className="zen-mhub-dot" aria-hidden />
+}
 
 /**
  * Chrome's global media controls button (MW-16) in the toolbar row: there while any tab has
@@ -33,7 +48,7 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
       onClick={() => toggleMediaHub({ fromKeyboard: openedFromKeyboard() })}
     >
       <SquarePlay className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-      {entries.some((m) => m.playing) && <span className="zen-mhub-dot" aria-hidden />}
+      <MediaLiveDot state={state} />
     </button>
   )
 }

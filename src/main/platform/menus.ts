@@ -97,8 +97,7 @@ export class ElectronMenus implements MenuHost {
     try {
       const response = await net.fetch(url, { signal: controller.signal })
       if (response.ok) {
-        const decoded = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()))
-        image = decoded.isEmpty() ? null : decoded.resize({ width: 16, height: 16 })
+        image = menuIcon(nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer())))
       }
     } catch {
       image = null
@@ -124,9 +123,30 @@ function remoteIcons(items: MenuItemTemplate[], out = new Set<string>()): Set<st
 
 function dataUrlIcon(src: string): Electron.NativeImage | null {
   try {
-    const image = nativeImage.createFromDataURL(src)
-    return image.isEmpty() ? null : image.resize({ width: 16, height: 16 })
+    return menuIcon(nativeImage.createFromDataURL(src))
   } catch {
     return null
   }
+}
+
+/**
+ * A picture as a menu item's 16 × 16 icon. A favicon is square already; the app menu's "Now
+ * playing…" row leads with a media session's artwork, which is often 16:9 or 1200 × 630 – that
+ * is cropped to its centre square first, as the media hub's tile covers it (`object-fit: cover`),
+ * rather than squashed to fit.
+ */
+function menuIcon(image: Electron.NativeImage): Electron.NativeImage | null {
+  if (image.isEmpty()) return null
+  const { width, height } = image.getSize()
+  const side = Math.min(width, height)
+  const square =
+    width === height
+      ? image
+      : image.crop({
+          x: Math.floor((width - side) / 2),
+          y: Math.floor((height - side) / 2),
+          width: side,
+          height: side
+        })
+  return square.resize({ width: 16, height: 16 })
 }
