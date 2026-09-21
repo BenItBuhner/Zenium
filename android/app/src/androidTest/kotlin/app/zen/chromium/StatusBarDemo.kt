@@ -151,6 +151,7 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         for (n in 2..3) {
             relaunch()
             checkChrome("boot-$n-top-light", dock = "top", dark = false)
+            shot("boot-$n-top-light")
         }
 
         // 2. The dark scheme: light status bar icons over the dark chrome, the inset kept.
@@ -170,6 +171,7 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         for (n in 1..3) {
             relaunch()
             checkChrome("boot-$n-bottom-light", dock = "bottom", dark = false)
+            shot("boot-$n-bottom-light")
         }
 
         // 5. Back to the top dock for the paths that leave and return: a fullscreen video's exit,
@@ -177,6 +179,7 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         setDock("top")
         relaunch()
         checkChrome("boot-4-top-light", dock = "top", dark = false)
+        shot("boot-4-top-light")
         fullscreenExit()
         screenOffAndOn()
         fontScale()
@@ -378,12 +381,18 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         SystemClock.sleep(2_500)
     }
 
-    /** A fresh activity: the chrome WebView and the core boot again on the profile as it stands. */
+    /**
+     * A fresh activity: the chrome WebView and the core boot again on the profile as it stands.
+     * The restored tab carries its persisted title before its view exists, so the wait is for
+     * the live page (its view created and its document complete), not for the title alone.
+     */
     private fun relaunch() {
         launch()
         ensureForeground()
         poll(20_000) { chromeJs("typeof window.zen") == "\"object\"" }
         waitTitle(TAB, 20_000) { it.startsWith("FS|") }
+        val live = poll(30_000) { pageJs("document.readyState") == "\"complete\"" && field("fs") != null }
+        if (!live) note("  the page did not come up live after the relaunch (view ${host.tabs.get(TAB) != null})")
     }
 
     private fun rotation(): Int {
@@ -404,7 +413,13 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
     private fun fmt(value: Double): String = if (value == value.roundToInt().toDouble()) value.roundToInt().toString() else "%.2f".format(value)
 
     companion object {
-        /** Visits in the seeded history: about 200 bytes each, well past the 64 KiB inline limit. */
-        const val SEEDED_VISITS = 3_000
+        /**
+         * Visits in the seeded history: about 125 bytes each, some 2 MB, the size of a phone's
+         * Safe Browsing feed document once the fourth feed has refreshed (4 MB in run 1's notes).
+         * A small deferred document is fetched before the page's `load` more often than not and
+         * the chrome wins the race; a document this size makes the drop the rule (run 1: the
+         * unfixed chrome passed its first three boots at 0.8 MB and lost every boot from 4 MB on).
+         */
+        const val SEEDED_VISITS = 15_000
     }
 }
