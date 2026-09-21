@@ -12,6 +12,8 @@ import {
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { ScopedValues } from '@core/extensions/api/privacy'
+import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
@@ -45,7 +47,7 @@ import type { AndroidDeclarativeNetRequest } from './extensionDnr'
 import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
-import { answerProxySetting } from './extensionProxy'
+import { AndroidProxy } from './extensionProxy'
 import { AndroidSidePanel } from './extensionSidePanel'
 import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
 import { AndroidTts } from './extensionTts'
@@ -161,6 +163,13 @@ export interface ApiHost {
   /** `sidePanel.setPanelBehavior({ openPanelOnActionClick })`, kept across sessions. */
   sidePanelOnActionClick(id: string): boolean
   setSidePanelOnActionClick(id: string, on: boolean): void
+  /** `chrome.proxy.settings`: an extension's values by scope, kept across sessions (`extensionProxy.ts`). */
+  proxyValues(id: string): unknown
+  setProxyValues(id: string, values: ScopedValues): void
+  /** Apply the resolved configuration to the process's WebViews through `ProxyController` (`system` clears it). */
+  applyProxy(config: ProxyConfig): Promise<void>
+  /** Whether a private tab is open (Chrome's `incognito_session_only` scope needs one). */
+  privateTabOpen(): boolean
   /**
    * `chrome.offscreen`: the extension's one hidden document. `openOffscreen` resolves once the
    * page said hello (Chrome's `createDocument` resolves when the document is created), or
@@ -397,6 +406,8 @@ export class ExtensionApi {
   readonly tabs: TabIds
   readonly contextMenus: AndroidContextMenus
   readonly sidePanel: AndroidSidePanel
+  /** `chrome.proxy.settings` over the WebView's proxy override (`extensionProxy.ts`). */
+  readonly proxy: AndroidProxy
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
@@ -437,6 +448,17 @@ export class ExtensionApi {
       emit: (id, ns, name, args) => host.emit(id, ns, name, args),
       behavior: (id) => host.sidePanelOnActionClick(id),
       setBehavior: (id, on) => host.setSidePanelOnActionClick(id, on)
+    })
+    this.proxy = new AndroidProxy({
+      attached: (id) => host.attached(id),
+      allAttached: () => host.allAttached(),
+      allowedInPrivate: (id) => host.attached(id)?.record.allowPrivate === true,
+      privateTabOpen: () => host.privateTabOpen(),
+      persistedValues: (id) => host.proxyValues(id),
+      persistValues: (id, values) => host.setProxyValues(id, values),
+      apply: (config) => host.applyProxy(config),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      warn: (message) => console.warn(`[zen] ${message}`)
     })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -497,6 +519,7 @@ export class ExtensionApi {
   load(ext: AttachedExtension): void {
     this.contextMenus.load(ext)
     this.sidePanel.load(ext)
+    this.proxy.load(ext)
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -504,6 +527,7 @@ export class ExtensionApi {
     this.actions.delete(id)
     this.contextMenus.forget(id)
     this.sidePanel.forget(id)
+    this.proxy.unload(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
@@ -709,9 +733,8 @@ export class ExtensionApi {
           throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
         return answerSystemDisplay(method, this.host.screen())
       case 'proxy':
-        // `proxy.settings`, a ChromeSetting: the system's value, not controllable on the WebView
-        // (`extensionProxy.ts`); the calls come from extensions that declared the permission.
-        return answerProxySetting(method, args)
+        // `proxy.settings`, a ChromeSetting over the WebView's proxy override (`extensionProxy.ts`).
+        return this.proxy.call(ext, method, args)
       case 'extension':
         // The store's record carries both toggles (the runtime scopes tabs, events and rules by them).
         if (method === 'isAllowedFileSchemeAccess') return ext.record.allowFileAccess === true

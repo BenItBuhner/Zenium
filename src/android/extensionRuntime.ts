@@ -31,6 +31,8 @@ import {
   type Alarm
 } from '@core/extensions/api/alarms'
 import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
+import type { ScopedValues } from '@core/extensions/api/privacy'
+import type { ProxyConfig } from '@core/extensions/api/proxy'
 import {
   applyClear,
   applyRemove,
@@ -97,6 +99,7 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { webViewProxyOverride } from './extensionProxy'
 import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
 
@@ -133,6 +136,7 @@ import type { ViewEventPayloads } from './views'
  *  ext.observeRequests { on }               every engine decision is reported, not just the rules' matches
  *  ext.auth.open { viewId, id, url, title } / show { viewId } / close { viewId }   identity.launchWebAuthFlow's sheet
  *  ext.notifications.show { id, notification } / hide { id, notificationId } / forget { id } / allowed
+ *  ext.proxy.set { rules, bypass, bypassSimpleHostnames, removeImplicitRules } / clear   chrome.proxy.settings over ProxyController
  *  view.capture { tabId, mode: 'viewport', format, quality }   tabs.captureVisibleTab
  * Kotlin → runtime (host events): ext.message, ext.gone, ext.popupClosed, ext.request,
  * ext.authView { viewId, event, url? }, ext.notification.
@@ -250,6 +254,8 @@ interface RuntimeData {
   contextMenus: Record<string, PersistedMenuItem[]>
   /** id → `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`. */
   sidePanelOnActionClick: Record<string, boolean>
+  /** id → the `chrome.proxy.settings` values it set, by scope (Chrome's `ExtensionPrefs`; the session-only scope is not kept). */
+  proxy: Record<string, ScopedValues>
 }
 
 type StorageDoc = { local: StorageItems; sync: StorageItems }
@@ -371,7 +377,8 @@ function emptyData(): RuntimeData {
     alarms: {},
     listeners: {},
     contextMenus: {},
-    sidePanelOnActionClick: {}
+    sidePanelOnActionClick: {},
+    proxy: {}
   }
 }
 
@@ -389,6 +396,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.listeners = saved.listeners ?? {}
   data.contextMenus = saved.contextMenus ?? {}
   data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
+  data.proxy = saved.proxy ?? {}
   return data
 }
 
@@ -822,6 +830,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.listeners[id]
     delete this.data.contextMenus[id]
     delete this.data.sidePanelOnActionClick[id]
+    delete this.data.proxy[id]
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -1110,6 +1119,29 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (items.length === 0) delete this.data.contextMenus[id]
     else this.data.contextMenus[id] = items
     this.save()
+  }
+
+  proxyValues(id: string): unknown {
+    return this.data.proxy[id] ?? {}
+  }
+
+  setProxyValues(id: string, values: ScopedValues): void {
+    if (Object.keys(values).length === 0) delete this.data.proxy[id]
+    else this.data.proxy[id] = values
+    this.save()
+  }
+
+  /** The resolved `chrome.proxy` configuration to Kotlin's `ProxyController`: one override for the process, or none. */
+  applyProxy(config: ProxyConfig): Promise<void> {
+    const override = webViewProxyOverride(config)
+    return override
+      ? this.bridge.call('ext.proxy.set', override)
+      : this.bridge.call('ext.proxy.clear')
+  }
+
+  privateTabOpen(): boolean {
+    const tabs = this.browser.tabs
+    return Object.values(tabs.model.tabs).some((tab) => tabs.isPrivate(tab))
   }
 
   icon(id: string): string | null {
