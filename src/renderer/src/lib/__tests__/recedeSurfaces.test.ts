@@ -109,6 +109,31 @@ function classTokens(node: ts.Node): string[] {
   return tokens
 }
 
+/** What a `ref` expression binds: the identifier itself, or the `x.current = el` targets of a callback. */
+function boundRefs(expr: ts.Expression): string[] {
+  if (ts.isIdentifier(expr)) return [expr.text]
+  if (!ts.isArrowFunction(expr) && !ts.isFunctionExpression(expr)) return []
+  const param = expr.parameters[0]?.name
+  if (!param || !ts.isIdentifier(param)) return []
+  const out: string[] = []
+  const visit = (n: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(n.left) &&
+      n.left.name.text === 'current' &&
+      ts.isIdentifier(n.left.expression) &&
+      ts.isIdentifier(n.right) &&
+      n.right.text === param.text
+    ) {
+      out.push(n.left.expression.text)
+    }
+    ts.forEachChild(n, visit)
+  }
+  visit(expr.body)
+  return out
+}
+
 function attribute(tag: ts.JsxOpeningLikeElement, name: string): ts.JsxAttribute | undefined {
   return tag.attributes.properties.find(
     (a): a is ts.JsxAttribute =>
@@ -122,8 +147,12 @@ interface Surface {
   /** The reader classes on the element. */
   classes: string[]
   tagged: boolean
-  /** The identifier passed as `ref`; null with no `ref`, or a `ref` that is not one identifier. */
-  ref: string | null
+  /**
+   * The identifiers the element's `ref` binds: the identifier passed as `ref`, or those a
+   * callback ref assigns its element to (`ref={(el) => { barRef.current = el; other(el) }}`,
+   * the shape for two bindings on one element). Empty with no `ref`, or one of another shape.
+   */
+  refs: string[]
   refText: string | null
   component: ts.Node | null
 }
@@ -165,7 +194,7 @@ function inspect(source: ts.SourceFile, readerClasses: ReadonlySet<string>): Fin
           tag: node.tagName.getText(source),
           classes,
           tagged: attribute(node, 'data-recede-surface') !== undefined,
-          ref: expr && ts.isIdentifier(expr) ? expr.text : null,
+          refs: expr ? boundRefs(expr) : [],
           refText: expr ? expr.getText(source) : null,
           component: component(node)
         })
@@ -201,22 +230,23 @@ function faults(path: string, { surfaces, registrations }: Findings): string[] {
   for (const s of surfaces) {
     const classes = s.classes.map((c) => `.${c}`).join(' ')
     if (s.tagged) continue
-    if (s.ref === null) {
+    if (s.refs.length === 0) {
       out.push(
         s.refText === null
           ? `${path}:${s.line}: <${s.tag} ${classes}> is read \`--zen-recede\` on and carries no ref: pass one to useRecedeSurface(ref), or tag the element data-recede-surface`
-          : `${path}:${s.line}: <${s.tag} ${classes}> has ref={${s.refText}}, not one identifier the component also passes to useRecedeSurface`
+          : `${path}:${s.line}: <${s.tag} ${classes}> has ref={${s.refText}}: not an identifier the component passes to useRecedeSurface, nor a callback assigning its element to one (\`(el) => { ref.current = el; … }\`)`
       )
       continue
     }
-    if (!registrations.some((r) => r.ref === s.ref && r.component === s.component)) {
+    if (!registrations.some((r) => s.refs.includes(r.ref) && r.component === s.component)) {
+      const ref = s.refs.join(' / ')
       out.push(
-        `${path}:${s.line}: <${s.tag} ${classes}> is read \`--zen-recede\` on, and its ref \`${s.ref}\` is not registered: the component must call useRecedeSurface(${s.ref}), or the value on it is 0`
+        `${path}:${s.line}: <${s.tag} ${classes}> is read \`--zen-recede\` on, and its ref \`${ref}\` is not registered: the component must call useRecedeSurface(${ref}), or the value on it is 0`
       )
     }
   }
   for (const r of registrations) {
-    if (!surfaces.some((s) => s.ref === r.ref && s.component === r.component)) {
+    if (!surfaces.some((s) => s.refs.includes(r.ref) && s.component === r.component)) {
       out.push(
         `${path}:${r.line}: useRecedeSurface(${r.ref}) registers a ref that is on no element a stylesheet reads \`--zen-recede\` on (the ref is not on the element, or the rule's class is another): the hook writes to nothing`
       )
@@ -277,7 +307,7 @@ describe('the guard itself', () => {
     return faults('fixture.tsx', inspect(source, classes))
   }
 
-  it('passes a registered ref, a tagged element, and a class composed through cn()', () => {
+  it('passes a registered ref, a tagged element, a class composed through cn(), and a callback ref binding the element to the registered ref beside another binding', () => {
     expect(
       check(
         `function Frame() { const r = useRef(null); useRecedeSurface(r); return <div ref={r} className="zen-content-frame relative" /> }`
@@ -295,9 +325,15 @@ describe('the guard itself', () => {
     expect(check(`function Row() { return <div className="zen-phone-bar-row flex" /> }`)).toEqual(
       []
     )
+    // Two bindings on one element (the bar that hides on scroll AND recedes, #270 with #269).
+    expect(
+      check(
+        `function Bar() { const barRef = useRef(null); useRecedeSurface(barRef); const bindHide = useBarHideBinding(); return <nav ref={(el) => { barRef.current = el; bindHide(el) }} className="zen-phone-bar" /> }`
+      )
+    ).toEqual([])
   })
 
-  it('fails an element without the hook, a hook on another ref, a ref left off the element, and a callback ref', () => {
+  it('fails an element without the hook, a hook on another ref, a ref left off the element, and a callback ref binding the element to no registered ref', () => {
     expect(
       check(
         `function Frame() { const r = useRef(null); return <div ref={r} className="zen-content-frame" /> }`
@@ -321,10 +357,10 @@ describe('the guard itself', () => {
     ])
     expect(
       check(
-        `function Frame() { useRecedeSurface(r); return <div ref={(el) => { r.current = el }} className="zen-content-frame" /> }`
+        `function Frame() { const r = useRef(null); useRecedeSurface(r); return <div ref={(el) => bindHide(el)} className="zen-content-frame" /> }`
       )
     ).toEqual([
-      expect.stringContaining('not one identifier the component also passes to useRecedeSurface'),
+      expect.stringContaining('not an identifier the component passes to useRecedeSurface'),
       expect.stringContaining('useRecedeSurface(r) registers a ref that is on no element')
     ])
     // The hook in one component, the element in another: the pairing is per component.
