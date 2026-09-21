@@ -67,7 +67,11 @@ import kotlin.math.sin
  * [DemoHarness] for the plumbing; findings land in `private-lock-findings.txt`, a check that
  * fails there fails the run. The recorder sees the private surface because
  * `PrivateBrowsing.captureForRecording` is on for the run; the guard's real state is read with
- * the override dropped for a moment each time ([guardNow]).
+ * the override dropped for a moment each time ([guardNow]). One consequence to read the video
+ * with: as the window leaves (scene 2's Home) FLAG_SECURE is off, so the system keeps its task
+ * snapshot of the live page and shows it as the starting window on the way back, ahead of the
+ * app's own first frame – that is the OS's picture, not a frame of ours (the visibility watch has
+ * the view GONE then); a release build has the guard up at the departure and no snapshot is kept.
  */
 @RunWith(AndroidJUnit4::class)
 class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "private-lock-demo") {
@@ -306,6 +310,11 @@ class PrivateLockDemo : DemoHarness("private-demo-state.json", "private-lock", "
             expect("the private page's view is hidden under the cover", view != null && onMain { view!!.visibility != View.VISIBLE })
             expect("no frame of the live page: the view was never VISIBLE with the activity started after the stop", watch != null && watch.leaks == 0 && watch.sawStop)
             finding("  visibility watch (private view, 8 ms samples): $watchReport")
+            finding(
+                "  note on the recording: the return frames before the app's own first frame show the OS task-snapshot starting window, " +
+                    "a picture the system took at the departure – present only because this run has captureForRecording on, so FLAG_SECURE was off as the window left; " +
+                    "the watch above says the view was GONE then. A release build has the guard up on the private surface at the departure (#203), the system keeps no snapshot, and that starting window is blank. Not a product leak."
+            )
             expect("the pill reads Private tab and asks for the unlock", awaitChrome("!!document.querySelector('[data-private-locked]')", 4_000) && findByLabel(PILL_LOCKED_LABEL) != null)
             expect("no Site information control under the lock", findByLabel("Site information") == null)
             val guard = guardNow()
