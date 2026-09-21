@@ -223,8 +223,17 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
         // The Change Icon… row of step 2 stays on the tree's click: it sits below the context
         // menu's peek, and the menu must stay at the peek for the band that is measured.
         if (findNode { it == ALWAYS_LABEL } != null) {
-            val on = touchTapLabelExpecting(ALWAYS_LABEL, "the confirm's $ALWAYS_LABEL switch is on") { findNode { it == ALWAYS_LABEL }?.isChecked == true }
-            finding("stack: a finger on the confirm's '$ALWAYS_LABEL' switch: ${if (on) "it reads on" else "it did not take"}")
+            // The switch's state is read from the chrome document (`aria-checked`, what the
+            // switch itself says) with the tree's node as the second word: in run 35582352490
+            // the finger flipped the switch within half a second of landing (the recording shows
+            // it) while the tree's node went on reading unchecked for the five seconds the
+            // touch was given – the WebView's node for it was not refreshed – and the run failed
+            // on the reading, not the product.
+            val on = touchTapLabelExpecting(ALWAYS_LABEL, "the confirm's $ALWAYS_LABEL switch is on") { alwaysSwitchOn() }
+            finding(
+                "stack: a finger on the confirm's '$ALWAYS_LABEL' switch: ${if (on) "it reads on" else "it did not take"}" +
+                    " (aria-checked ${alwaysSwitchAria()}; the tree's node ${findNode { it == ALWAYS_LABEL }?.let { if (it.isChecked) "checked" else "unchecked" } ?: "gone"})"
+            )
             SystemClock.sleep(600)
         } else {
             finding("stack: the top sheet carries no '$ALWAYS_LABEL' switch to touch (the prompt's buttons would answer it)")
@@ -302,6 +311,22 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     /** The slot's travel (CSS px) per a pose with a panel in it: what the slide runs over. */
     private fun slotTravel(pose: Pose?): Double = pose?.slot?.let { if (it.isNull("travel")) null else it.getDouble("travel") } ?: Double.NaN
+
+    /**
+     * The confirm's Always allow switch's `aria-checked` as the chrome document has it (`"true"`
+     * / `"false"`), `"none"` with no such switch in a sheet, or the evaluation's raw word.
+     */
+    private fun alwaysSwitchAria(): String {
+        val raw = chromeJs(
+            "(function(){var s=document.querySelector('.zen-sheet [role=\"switch\"][aria-label=\"$ALWAYS_LABEL\"]');" +
+                "return s?String(s.getAttribute('aria-checked')):'none';})()"
+        )
+        return (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: raw
+    }
+
+    /** Whether the confirm's Always allow switch is on: by its `aria-checked`, or by the tree's node. */
+    private fun alwaysSwitchOn(): Boolean =
+        alwaysSwitchAria() == "true" || findNode { it == ALWAYS_LABEL }?.isChecked == true
 
     private fun slotHasPanel(pose: Pose?): Boolean = pose?.slot?.optBoolean("panel") ?: false
 
