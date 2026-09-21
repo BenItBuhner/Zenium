@@ -724,10 +724,12 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
     /**
      * Put the progress swatch into the chrome: a fixed bar in the status-bar area, below the
      * clock and the icons, from about a fifth of the way across to about three quarters, whose
-     * width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen. It reads the root's
-     * variable through `var()`, so it moves in the very style pass that moves the page and the
-     * sheet: a frame shows all three as they were together. Black on the light scheme, white on
-     * the dark, above everything and taking no input. Test-only; the product has no such thing.
+     * width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen. It carries
+     * `data-recede-surface`, so the chassis writes the value on it each frame as it does on the
+     * frame and the bar (`lib/motion/recede.ts`: the root's value does not inherit), and it reads
+     * it through `var()`: it moves in the very style pass that moves the page and the sheet, and
+     * a frame shows all three as they were together. Black on the light scheme, white on the
+     * dark, above everything and taking no input. Test-only; the product has no such thing.
      */
     private fun placeSwatch() {
         val insets = windowInsets()
@@ -742,7 +744,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             "z-index:2147483647;pointer-events:none;margin:0;padding:0;border:0;border-radius:0"
         val result = chromeJs(
             "(function(){var el=document.getElementById('zen-demo-recede');" +
-                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';document.body.appendChild(el);}" +
+                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';el.setAttribute('data-recede-surface','');document.body.appendChild(el);}" +
                 "el.style.cssText=${jsString(css)};return el.getBoundingClientRect().height;})()"
         )
         finding("swatch placed at $swatch (${swatchColour()}); the chrome says its height is $result")

@@ -585,10 +585,12 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
 
     /**
      * Put the progress swatch into the chrome (as [SheetRecedeDemo] does): a fixed bar in the
-     * status-bar area whose width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen,
-     * read through `var()` so it moves in the very style pass that moves the page and the
-     * sheets. Black on the light scheme, white on the dark, above everything and taking no
-     * input. Test-only; the product has no such thing.
+     * status-bar area whose width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen:
+     * tagged `data-recede-surface`, so the chassis writes the value on it each frame as on the
+     * frame and the bar (the root's value does not inherit), and read through `var()` so it
+     * moves in the very style pass that moves the page and the sheets. Black on the light
+     * scheme, white on the dark, above everything and taking no input. Test-only; the product
+     * has no such thing.
      */
     private fun placeSwatch() {
         val insets = windowInsets()
@@ -603,7 +605,7 @@ class SheetLeaveDemo : DemoHarness("sheet-recede-demo-state.json", "leave", "she
             "z-index:2147483647;pointer-events:none;margin:0;padding:0;border:0;border-radius:0"
         val result = chromeJs(
             "(function(){var el=document.getElementById('zen-demo-recede');" +
-                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';document.body.appendChild(el);}" +
+                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';el.setAttribute('data-recede-surface','');document.body.appendChild(el);}" +
                 "el.style.cssText=${jsString(css)};return el.getBoundingClientRect().height;})()"
         )
         finding("swatch placed at $swatch (${swatchColour()}); the chrome says its height is $result")

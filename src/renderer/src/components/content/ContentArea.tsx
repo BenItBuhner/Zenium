@@ -13,6 +13,7 @@ import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { barStateOf } from '@renderer/lib/translate'
 import {
   captureActiveTab,
@@ -59,6 +60,9 @@ interface Props {
 export function ContentArea({ state, ui }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const sidePanelRef = useRef<HTMLDivElement>(null)
+  // The frame recedes under a phone sheet (main.css reads `--zen-recede` on it, §11.1).
+  const frameRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(frameRef)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
   const glanceActive = ui.glanceActive
@@ -192,6 +196,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div
+        ref={frameRef}
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
         // A phone panel takes the whole frame (OverlayShell): what it covers – a chrome page's

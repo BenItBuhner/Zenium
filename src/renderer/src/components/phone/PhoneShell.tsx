@@ -20,6 +20,7 @@ import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gesture
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { phoneAddressLabel } from '@renderer/lib/pillLabel'
 import { privateLockStore, privateTabLocked, unlockPrivateTabs } from '@renderer/lib/privateLock'
@@ -199,6 +200,10 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   // 120 ms, opacity alone, once the page's view has landed (`lib/fullscreenLanding.ts`).
   const windowRef = useRef<HTMLDivElement | null>(null)
   useFullscreenReturn(windowRef, state.window.htmlFullscreenTabId)
+  // The message layer sits on the frame's edges and recedes with it (main.css reads
+  // `--zen-recede` on it).
+  const messageFrameRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(messageFrameRef)
   // The one-time gesture hint (FRE-07) is a toast on the message cards, owed once the chrome is
   // calm: a page in view under nothing, the bar and its pill in place, no drag, overview or prompt.
   useGestureHint(
@@ -275,6 +280,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           like the bar itself), so a toast showing mid-gesture moves with the bar instead of
           jumping the band at the rest; at either rest it is the content column's edge. */}
       <div
+        ref={messageFrameRef}
         data-shell-chrome
         className="zen-message-frame pointer-events-none absolute z-[36]"
         style={{
@@ -400,12 +406,17 @@ export function PhoneBar({
   const ctx = barContext(state, overviewOpen)
   const layout = barLayout(state)
   const inset = `var(--zen-inset-${edge})`
+  // Docked at the bottom edge the bar fades on the page's recede (main.css reads `--zen-recede`
+  // on it, §11.1); the top-docked bar registers too and its rule ignores the value.
+  const barRef = useRef<HTMLElement>(null)
+  useRecedeSurface(barRef)
   const groupStrip = strip ? (
     <GroupStrip presence={strip} edge={edge} overviewOpen={overviewOpen} inert={inert} />
   ) : null
 
   return (
     <nav
+      ref={barRef}
       className={cn(
         'zen-phone-bar absolute z-30 flex flex-col px-2',
         edge === 'bottom' ? 'bottom-0' : 'top-0',
