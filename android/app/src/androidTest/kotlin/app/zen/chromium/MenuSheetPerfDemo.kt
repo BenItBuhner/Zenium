@@ -278,15 +278,23 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
 
     // --- the moves -----------------------------------------------------------------------------------
 
-    /** A finger on the Menu button; true once the sheet is up and at rest at its detent. */
+    /**
+     * A finger on the Menu button; true once the sheet is up and at rest at its detent. A sheet
+     * still up from a cycle that did not close is sent away first (Back), or the finger meant for
+     * the button lands on a row of it and opens something else (run 35540328965's github cycle
+     * 10: a 209 px sheet where the menu's 499 px one was expected, and every cycle after it off).
+     */
     private fun openMenu(): Boolean {
+        if (chromeSurfaceUp()) {
+            finding("a surface is up before the open; Back first (${poseText()})")
+            back()
+            awaitSurface(up = false, timeoutMs = 6_000)
+            SystemClock.sleep(1_200)
+        }
         val button = menuButton()
         Finger().tap(button.exactCenterX(), button.exactCenterY())
         if (!awaitSurface(up = true, timeoutMs = 8_000)) return false
-        val landed = awaitPose(SETTLE_MS) { pose ->
-            // The recede at 1 says so first; a variant without the root write goes by the sheet's own stillness.
-            pose.recede >= 0.995 || (pose.sheet && pose.height > 0 && pose.still)
-        }
+        val landed = awaitPose(SETTLE_MS) { pose -> pose.sheet && pose.landed && pose.still }
         if (landed) sheetPose()?.let { if (it.height > 0) restHeight = it.height }
         return landed
     }
@@ -314,12 +322,27 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
         return findByLabel(MENU_LABEL) ?: Rect((width - 52 * density).roundToInt(), (pillY - 22 * density).roundToInt(), (width - 8 * density).roundToInt(), (pillY + 22 * density).roundToInt())
     }
 
-    /** A finger on the scrim above the sheet; true once the sheet has gone and the recede is back at 0. */
+    /**
+     * A finger on the scrim above the sheet; true once the sheet has gone and the recede is back
+     * at 0. A press on the scrim while the sheet still settles catches the sheet instead of
+     * dismissing it (the chassis, §9.20) – so the open waits for the spring to rest before this is
+     * called – and a sheet the press did not send away is sent away by Back, off the record for
+     * this half-cycle, so the next cycle starts clean.
+     */
     private fun closeMenu(): Boolean {
         val insets = windowInsets()
         // Well above any detent of the menu and below the status bar: the page's upper third.
         Finger().tap(width * 0.5f, insets.top + (height - insets.top) * 0.22f)
-        if (!awaitSurface(up = false, timeoutMs = 8_000)) return false
+        var dismissed = awaitSurface(up = false, timeoutMs = 5_000)
+        if (!dismissed) {
+            finding("the scrim press did not send the sheet away (${poseText()}); Back")
+            back()
+            dismissed = awaitSurface(up = false, timeoutMs = 8_000)
+            if (!dismissed) return false
+            awaitPose(SETTLE_MS) { pose -> !pose.sheet }
+            SystemClock.sleep(900)
+            return false
+        }
         val landed = awaitPose(SETTLE_MS) { pose -> !pose.sheet || (pose.recede <= 0.005 && pose.still) }
         // The live page comes back and its picture goes once the host has drawn it: part of the close.
         SystemClock.sleep(900)
@@ -389,22 +412,29 @@ class MenuSheetPerfDemo : DemoHarness("menu-perf-demo-state.json", "menu-perf", 
 
     // --- the chrome's word ---------------------------------------------------------------------------
 
-    private class Pose(val sheet: Boolean, val height: Double, val recede: Double, val still: Boolean)
+    /**
+     * `landed`: the sheet's inline transform stands at translateY 0 – at its detent, not at the
+     * pose it mounts in (translated fully below the screen, waiting for the page's picture), which
+     * is as still as a landed sheet and read as one in run 35540328965 (the scrim press then came
+     * on a sheet still settling, and caught it instead of dismissing it).
+     */
+    private class Pose(val sheet: Boolean, val height: Double, val recede: Double, val still: Boolean, val landed: Boolean)
 
-    /** The sheet's inline height and the root's inline `--zen-recede` (what the chassis writes each frame), from the probe. */
+    /** The sheet's inline height and transform and the root's inline `--zen-recede` (what the chassis writes each frame), from the probe. */
     private fun sheetPose(): Pose? {
         val raw = chromeJs("window.__zenPerf?window.__zenPerf.pose():''")
         val text = (JSONTokener(raw).nextValue() as? String).orEmpty()
         if (text.isEmpty()) return null
         return try {
             val o = JSONObject(text)
-            Pose(o.optInt("s") == 1, o.optDouble("h", 0.0), o.optDouble("p", 0.0), o.optBoolean("still"))
+            val ty = o.optDouble("ty", Double.NaN)
+            Pose(o.optInt("s") == 1, o.optDouble("h", 0.0), o.optDouble("p", 0.0), o.optBoolean("still"), !ty.isNaN() && abs(ty) < 0.5)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun poseText(): String = sheetPose()?.let { "sheet ${if (it.sheet) "up" else "away"}, height ${it.height}, recede ${it.recede}, ${if (it.still) "still" else "moving"}" } ?: "no probe"
+    private fun poseText(): String = sheetPose()?.let { "sheet ${if (it.sheet) "up" else "away"}, height ${it.height}, recede ${it.recede}, ${if (it.landed) "at its detent" else "off its detent"}, ${if (it.still) "still" else "moving"}" } ?: "no probe"
 
     private fun awaitPose(timeoutMs: Long, settled: (Pose) -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
@@ -447,7 +477,8 @@ P.motion.push({t:t,p:p===''?-1:+p,tr:tr,h:h,s:s?1:0});
 if((s||quiet<24)&&P.motion.length<6000)requestAnimationFrame(sample);else running=false}
 function arm(){if(running)return;running=true;quiet=0;requestAnimationFrame(sample)}
 P.arm=arm;P.still=function(){return !running||quiet>=6};
-P.pose=function(){var s=document.querySelector('.zen-sheet');var p=root.style.getPropertyValue('--zen-recede');return JSON.stringify({s:s?1:0,h:s?(parseFloat(s.style.height)||0):0,p:p===''?0:+p,still:P.still()})};
+P.pose=function(){var s=document.querySelector('.zen-sheet');var p=root.style.getPropertyValue('--zen-recede');var m=s?/translate3d\(\s*[-\d.]+(?:px)?\s*,\s*(-?[\d.]+)px/.exec(s.style.transform):null;
+return JSON.stringify({s:s?1:0,h:s?(parseFloat(s.style.height)||0):0,p:p===''?0:+p,ty:m?+m[1]:null,still:P.still()})};
 P.mark=function(n){try{performance.mark('menu-perf:'+n)}catch(_){}P.marks.push({t:performance.now(),n:n})};
 P.begin=function(name){P.scene=name;P.taps=[];P.motion=[];P.long=[];P.events=[];P.marks=[];P.mark(name+':start')};
 P.end=function(){P.mark(P.scene+':end');return JSON.stringify({scene:P.scene,origin:performance.timeOrigin,taps:P.taps,motion:P.motion,long:P.long,events:P.events,marks:P.marks})};
