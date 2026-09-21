@@ -40,7 +40,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The tablet layout (components/tablet/*, TABLET-01 / 02 / 06): the toolbar row's icon buttons
   // and pill, the sidebar's rows and close buttons and the drawer at §9.3's tablet sizes, read
   // from the scale tokens the tablet root sets. Unlayered, right before the phone bar's layer.
-  [' * The tablet layout (TABLET-01 / 02 / 06', "@layer components {\n  /*\n   * The phone bar's controls"],
+  [
+    ' * The tablet layout (TABLET-01 / 02 / 06',
+    "@layer components {\n  /*\n   * The phone bar's controls"
+  ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,

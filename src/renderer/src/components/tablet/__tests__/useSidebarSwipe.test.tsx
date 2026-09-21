@@ -19,13 +19,7 @@ const onCollapse = vi.fn()
 const onExpand = vi.fn()
 const onRowClick = vi.fn()
 
-function Sidebar({
-  side,
-  collapsed
-}: {
-  side: 'left' | 'right'
-  collapsed: boolean
-}): JSX.Element {
+function Sidebar({ side, collapsed }: { side: 'left' | 'right'; collapsed: boolean }): JSX.Element {
   const swipe = useSidebarSwipe({ side, collapsed, onCollapse, onExpand })
   return (
     <div data-testid="sidebar" {...swipe}>

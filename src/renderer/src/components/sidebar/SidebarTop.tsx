@@ -103,8 +103,7 @@ export function NavRow({
   tab,
   compact,
   className,
-  leading,
-  afterNavigation
+  leading
 }: {
   state: UIState
   tab: Tab | null
@@ -112,8 +111,6 @@ export function NavRow({
   className?: string
   /** Controls ahead of Back (the tablet toolbar's sidebar toggle); nothing on the desktop. */
   leading?: ReactNode
-  /** Controls between Reload / Stop and the pill (the tablet toolbar's Home); nothing on the desktop. */
-  afterNavigation?: ReactNode
 }): JSX.Element {
   const url = tab ? displayUrl(tab.url) : ''
   // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
@@ -306,7 +303,6 @@ export function NavRow({
           <RotateCw className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
         )}
       </button>
-      {afterNavigation}
       {!compact && (
         /*
           The pill is a group, not a button: the address and each chip inside it are buttons of

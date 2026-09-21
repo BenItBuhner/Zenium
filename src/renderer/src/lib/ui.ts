@@ -476,6 +476,15 @@ export const contentAreaStore = createStore<{ area: Rect | null }>({ area: null 
 /** Last pointer-down position – anchors renderer-hosted menus that come without coordinates. */
 export const lastPointer = { x: 0, y: 0 }
 
+/**
+ * The chrome control the menu about to open hangs from – the toolbar's ⋯ for `app.menu` – set
+ * by the opener (`openAppMenu`). The descriptor the core sends back carries a point alone (the
+ * button's bottom start corner), and the tablet's popover menu anchors to the control's box
+ * instead (v2 §9.20: flush under its bar, aligned by its half, the control lit while it is up,
+ * its own press closing it). Read by the menu that shows next and matched against its point.
+ */
+export const menuAnchor: { element: HTMLElement | null } = { element: null }
+
 export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
@@ -1884,6 +1893,19 @@ export function panelAloneOverContent(ui: UiState): boolean {
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
+}
+
+/**
+ * Only a core menu is up over the page: the app menu or a context menu (`ui.menu`), alone or
+ * over floating chrome that draws no dim of its own either (the tablet's sidebar drawer a tab
+ * row's long-press menu opens over, whose scrim is the drawer's; a menulist's list), and
+ * nothing else covering the content. Where the menu is a popover – the tablet's (v2 §9.36,
+ * `TabletMenu`) – the page's capture under it stays undimmed as under every other popover (v2
+ * §9.5, §9.20: panels and popovers draw no scrim). The phone's menu sheet has its own scrim, and
+ * the mouse's popover on a desktop layout without native menus keeps the dim it has had.
+ */
+export function menuAloneOverContent(ui: UiState): boolean {
+  return ui.menu !== null && !overlayCoversContent({ ...ui, menu: null, floatingChrome: 0 })
 }
 
 // ---------------------------------------------------------------------------
