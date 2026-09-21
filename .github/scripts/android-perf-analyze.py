@@ -4,7 +4,9 @@
     python3 .github/scripts/android-perf-analyze.py <artifact dir> [--summary <file>]
 
 Reads `perf-scenes.json` (the scenes, their windows in the traces' clocks, the in-process
-counters), each scene's `gfx-<page>-<scene>.txt` (`dumpsys gfxinfo … framestats` verbatim), each
+counters), each scene's `dumpsys gfxinfo … framestats` dump verbatim (the file the scene's `gfx`
+names: `framestats-<page>-<scene>.txt`, written by the harness's `measureFrames`, PERF-3's #268;
+`gfx-<page>-<scene>.txt` in the baseline artifacts, before #268), each
 page's `blink-<page>.json.gz` (the WebViews' Chromium trace) and the Perfetto trace
 (`zen-*.pftrace`, read with trace_processor through the `perfetto` package when it is installed),
 and writes `perf-report.md` and `perf-report.json` next to them; `--summary` appends the Markdown

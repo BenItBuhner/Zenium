@@ -26,12 +26,13 @@ import java.util.zip.GZIPOutputStream
  * method: measured, not guessed). Three captures, each read by `.github/scripts/android-perf-analyze.py`
  * on the runner afterwards:
  *
- *  - the frame stats of the app's own window from `dumpsys gfxinfo <package>`: [gfxReset] before a
- *    scene, [gfxFrameStats] after it – the summary (frames, janky frames, the 50 / 90 / 95 / 99th
- *    percentiles) covers every frame since the reset, and the `---PROFILEDATA---` rows carry the
- *    last 120 frames' stage timestamps (input, animation, measure / layout, draw, sync, command
- *    issue, swap, GPU), so the long stage of a slow frame can be named. One dump per scene, never
- *    inside one: the dump runs on the app's RenderThread and would be a jank of its own;
+ *  - (the frame stats of the app's own window from `dumpsys gfxinfo <package>` are the harness's
+ *    own capture, `DemoHarness.measureFrames` (PERF-3's #268): `reset` before a scene,
+ *    `framestats` after it, the dump kept verbatim beside its record – the summary covers every
+ *    frame since the reset, and the `---PROFILEDATA---` rows carry the last 120 frames' stage
+ *    timestamps (input, animation, measure / layout, draw, sync, command issue, swap, GPU), so the
+ *    long stage of a slow frame can be named. One dump per scene, never inside one: the dump runs
+ *    on the app's RenderThread and would be a jank of its own);
  *  - a Perfetto trace of the device (`sched gfx view input wm am binder_driver webview` and
  *    SurfaceFlinger's frame timeline; `.github/scripts/android-perf-bar-hide.pbtx`, pushed to the
  *    device by the workflow script) run as a detached session across the whole sequence
@@ -56,14 +57,6 @@ class PerfCapture(private val ui: UiAutomation, val packageName: String, private
         val fd = ui.executeShellCommand(command)
         return FileInputStream(fd.fileDescriptor).bufferedReader().use { it.readText() }.also { fd.close() }
     }
-
-    // --- dumpsys gfxinfo -------------------------------------------------------------------------
-
-    fun gfxReset() {
-        shell("dumpsys gfxinfo $packageName reset")
-    }
-
-    fun gfxFrameStats(): String = shell("dumpsys gfxinfo $packageName framestats")
 
     // --- Perfetto ---------------------------------------------------------------------------------
 

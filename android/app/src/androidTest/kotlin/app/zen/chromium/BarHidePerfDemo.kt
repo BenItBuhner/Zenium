@@ -40,14 +40,18 @@ import kotlin.math.abs
  * that does not load in time is skipped and said so.
  *
  * Every number goes to `perf-scenes.json` (the scenes' windows in the traces' clocks, the
- * counters, the file names) and `findings.txt`; `gfx-<page>-<scene>.txt` is each scene's
- * `dumpsys gfxinfo` verbatim; `blink-<page>.json.gz` the page's Chromium trace; the workflow
- * script pulls the Perfetto trace. `.github/scripts/android-perf-analyze.py` turns them into the
- * table (frames, janky share, percentiles, the long stage, the chrome main thread's slices per
- * scene). Nothing is judged here: a profile is evidence, the driver of PR #200 (BarHideDemo)
- * keeps the claims. The chrome is read only outside the scenes' windows: a read is a script
- * evaluation in its renderer and would be a frame's worth of work of its own. Screenshots are
- * one per page, at its end, for the same reason.
+ * counters, the file names) and `findings.txt`; the frame statistics of each scene go through the
+ * harness's gate ([measureFrames], PERF-3's #268: `framestats-<page>-<scene>.txt` is the scene's
+ * `dumpsys gfxinfo` verbatim, `frames.jsonl` / `frames.txt` its record and table, the loopback
+ * pages' `control-3s-off` the same-run baseline of their other scenes; the harness takes no
+ * Chromium trace of its own here, since this driver traces each whole page); `blink-<page>.json.gz`
+ * is the page's Chromium trace; the workflow script pulls the Perfetto trace.
+ * `.github/scripts/android-perf-analyze.py` turns them into the table (frames, janky share,
+ * percentiles, the long stage, the chrome main thread's slices per scene). Nothing is judged
+ * here: a profile is evidence, the driver of PR #200 (BarHideDemo) keeps the claims. The chrome
+ * is read only outside the scenes' windows: a read is a script evaluation in its renderer and
+ * would be a frame's worth of work of its own. Screenshots are one per page, at its end, for the
+ * same reason.
  */
 @RunWith(AndroidJUnit4::class)
 class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide", "perf-bar-hide") {
@@ -165,7 +169,7 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
             if (!page.live) {
                 setHideOnScroll(false)
                 settleBar(0.0, "${page.key} control")
-                scenes.put(scene(page, "control-3s-off", before = { ensureRoom() }) { longScroll() })
+                scenes.put(scene(page, CONTROL_SCENE, before = { ensureRoom() }) { longScroll() })
                 setHideOnScroll(true)
             }
         } finally {
@@ -179,6 +183,9 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
      * then the counters are zeroed and the frame stats reset, the window opens, `gesture` runs
      * with its own tail (the spring after the finger lifts is part of the scene), the window
      * closes, and everything is read. Nothing reads the chrome or the page inside the window.
+     * The frame statistics are the harness's ([measureFrames]: `gfxinfo reset` before the block,
+     * `framestats` after it, the dump kept verbatim as `framestats-<page>-<scene>.txt`); the
+     * scene's own window in the traces' clocks opens inside the block, after the reset settles.
      */
     private fun scene(page: Page, name: String, before: () -> Unit, gesture: () -> Unit): JSONObject {
         before()
@@ -190,21 +197,29 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
         resetChromeCounters()
         resetPageCounters()
         counters.reset()
-        capture.gfxReset()
-        SystemClock.sleep(400)
 
         val label = "${page.key}/$name"
-        val cookie = capture.sceneBegin(label)
-        val startBoot = capture.nowBoot()
-        val startMono = capture.nowMono()
-        gesture()
-        val endBoot = capture.nowBoot()
-        val endMono = capture.nowMono()
-        capture.sceneEnd(label, cookie)
+        val sceneKey = "${page.key}-$name"
+        // The loopback pages' scroll with the setting off is the same motion without the feature.
+        val baseline = if (!page.live && name != CONTROL_SCENE) "${page.key}-$CONTROL_SCENE" else null
+        var cookie = 0
+        var startBoot = 0L
+        var startMono = 0L
+        var endBoot = 0L
+        var endMono = 0L
+        measureFrames(sceneKey, JankBudget.Kind.GESTURE, baseline) {
+            SystemClock.sleep(400)
+            cookie = capture.sceneBegin(label)
+            startBoot = capture.nowBoot()
+            startMono = capture.nowMono()
+            gesture()
+            endBoot = capture.nowBoot()
+            endMono = capture.nowMono()
+            capture.sceneEnd(label, cookie)
+        }
 
-        val gfx = capture.gfxFrameStats()
-        val gfxFile = File(out, "gfx-${page.key}-$name.txt")
-        gfxFile.writeText(gfx)
+        val gfxFile = File(out, "framestats-$sceneKey.txt")
+        val gfx = if (gfxFile.exists()) gfxFile.readText() else ""
         val views = counters.snapshot()
         val chrome = readChromeCounters()
         val pageCounts = readPageCounters()
@@ -573,6 +588,8 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
          * the page with it at rest; the fling is short and fast; the long scroll covers most of
          * the screen at a finger's reading pace.
          */
+        /** The loopback pages' scroll with Hide toolbar when scrolling off: the harness's baseline for their other scenes. */
+        private const val CONTROL_SCENE = "control-3s-off"
         private const val HIDE_DRAG_DP = 140f
         private const val HIDE_MS = 1_800L
         private const val FLING_DP = 200f
