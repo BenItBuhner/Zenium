@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Zenium extension runtime frame budget fixture</title>
+<style>
+  /*
+   * The long page the extension runtime's frame budget scrolls (ExtensionScrollBudget): about a
+   * hundred numbered sections of prose with links, emphasis and code; an image every third
+   * section (one SVG under many query strings, so each is a request of its own through the
+   * engine and an image for a dark mode to read); a login form and a comment box (a textarea and
+   * a contenteditable) for the password managers and the grammar checkers to attach to; a
+   * table, lists, a sticky header and a fixed badge; a video with controls near the top; a last
+   * line the driver can find. Static markup: the content scripts meet the whole tree at load.
+   */
+  html { background: #fff; color: #15141a; scroll-behavior: auto; }
+  body { margin: 0; padding: 0 20px 96px; font: 17px/1.5 -apple-system, Roboto, sans-serif; }
+  header.top { position: sticky; top: 0; z-index: 2; margin: 0 -20px 12px; padding: 10px 20px; background: rgba(250, 250, 252, 0.94); border-bottom: 1px solid rgba(127, 127, 140, 0.35); backdrop-filter: blur(6px); }
+  header.top h1 { margin: 0; font-size: 20px; line-height: 1.2; }
+  header.top nav a { font-size: 13px; margin-right: 12px; color: #2a5bd7; }
+  p.meta { font-size: 13px; opacity: 0.7; margin: 0 0 10px; }
+  section { border-top: 1px solid rgba(127, 127, 140, 0.3); padding-top: 6px; margin-top: 18px; }
+  h2 { margin: 0 0 6px; font-size: 19px; }
+  .n { display: inline-block; min-width: 2.4em; opacity: 0.55; font-variant-numeric: tabular-nums; }
+  p { margin: 0 0 10px; }
+  a { color: #2a5bd7; }
+  code { font: 15px ui-monospace, monospace; background: rgba(127, 127, 140, 0.12); padding: 0 4px; border-radius: 4px; }
+  figure { margin: 8px 0 12px; }
+  figure img { display: block; width: 100%; max-width: 360px; height: auto; border-radius: 10px; background: #dfe3ee; }
+  figcaption { font-size: 13px; opacity: 0.7; margin-top: 4px; }
+  form.login { display: grid; gap: 8px; max-width: 360px; padding: 12px; border: 1px solid rgba(127, 127, 140, 0.4); border-radius: 10px; }
+  form.login label { font-size: 13px; opacity: 0.8; }
+  form.login input { font: inherit; padding: 8px 10px; border: 1px solid rgba(127, 127, 140, 0.5); border-radius: 8px; }
+  form.login button { font: inherit; padding: 8px 12px; border: 0; border-radius: 8px; background: #2a5bd7; color: #fff; }
+  textarea, .editor { display: block; width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid rgba(127, 127, 140, 0.5); border-radius: 8px; background: #fff; }
+  textarea { min-height: 96px; resize: none; }
+  .editor { min-height: 72px; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 6px 0 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid rgba(127, 127, 140, 0.3); }
+  th { font-weight: 600; }
+  ul { margin: 0 0 10px; padding-left: 22px; }
+  video { display: block; width: 100%; max-width: 360px; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; }
+  #edge { position: fixed; left: 0; right: 0; bottom: 0; height: 36px; display: flex; align-items: center; justify-content: center; gap: 12px; background: rgba(70, 120, 220, 0.92); color: #fff; font: 600 14px/1 -apple-system, Roboto, sans-serif; z-index: 3; }
+  #last { font-weight: 600; }
+</style>
+</head>
+<body>
+<a id="top"></a>
+<header class="top">
+  <h1>Zenium extension runtime frame budget</h1>
+  <nav><a href="#s1">Start</a><a href="#s4">Login form</a><a href="#s8">Comment box</a><a href="#s15">Video</a><a href="#last">End</a></nav>
+</header>
+<p class="meta">A long page served by the fixture server, scrolled under a finger with none, three and six extensions attached. Nothing here moves on its own.</p>
+<section id="s1">
+<h2><span class="n">1</span>What the runtime adds to a frame</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s2">
+<h2><span class="n">2</span>Content scripts at document start</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s3">
+<h2><span class="n">3</span>The bridge under a finger</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=1" width="360" height="200" alt="Illustration 1" loading="eager" decoding="sync"><figcaption>Figure 1: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s4">
+<h2><span class="n">4</span>Badges, counts and state pushes</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<form class="login" action="#" method="post" autocomplete="on">
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" placeholder="name@example.com">
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Password">
+<button type="button">Sign in</button>
+</form>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s5">
+<h2><span class="n">5</span>Declarative rules on the request path</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s6">
+<h2><span class="n">6</span>Isolated worlds and the with scope</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=2" width="360" height="200" alt="Illustration 2" loading="eager" decoding="sync"><figcaption>Figure 2: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s7">
+<h2><span class="n">7</span>A page that keeps scrolling</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s8">
+<h2><span class="n">8</span>Images the extensions look at</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<label for="comment">Leave a comment</label>
+<textarea id="comment" name="comment" placeholder="Write something for the grammar checkers to read." spellcheck="true"></textarea>
+<div class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Rich comment">A rich text box the grammar checkers also attach to. It has a sentence with an error in it, and it recieve the checker’s underline.</div>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s9">
+<h2><span class="n">9</span>Forms the password manager scans</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=3" width="360" height="200" alt="Illustration 3" loading="eager" decoding="sync"><figcaption>Figure 3: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s10">
+<h2><span class="n">10</span>Fields the grammar checkers watch</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s11">
+<h2><span class="n">11</span>Links a keyboard extension could hint</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s12">
+<h2><span class="n">12</span>A table for the parsers</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=4" width="360" height="200" alt="Illustration 4" loading="eager" decoding="sync"><figcaption>Figure 4: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s13">
+<h2><span class="n">13</span>Sticky things and fixed things</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s14">
+<h2><span class="n">14</span>What a fling costs</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s15">
+<h2><span class="n">15</span>Where the long stage goes</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<video src="clip.mp4" controls muted playsinline preload="metadata"></video>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=5" width="360" height="200" alt="Illustration 5" loading="eager" decoding="sync"><figcaption>Figure 5: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s16">
+<h2><span class="n">16</span>What the runtime adds to a frame</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s17">
+<h2><span class="n">17</span>Content scripts at document start</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s18">
+<h2><span class="n">18</span>The bridge under a finger</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=6" width="360" height="200" alt="Illustration 6" loading="eager" decoding="sync"><figcaption>Figure 6: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s19">
+<h2><span class="n">19</span>Badges, counts and state pushes</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s20">
+<h2><span class="n">20</span>Declarative rules on the request path</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s21">
+<h2><span class="n">21</span>Isolated worlds and the with scope</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=7" width="360" height="200" alt="Illustration 7" loading="eager" decoding="sync"><figcaption>Figure 7: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s22">
+<h2><span class="n">22</span>A page that keeps scrolling</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s23">
+<h2><span class="n">23</span>Images the extensions look at</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s24">
+<h2><span class="n">24</span>Forms the password manager scans</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=8" width="360" height="200" alt="Illustration 8" loading="eager" decoding="sync"><figcaption>Figure 8: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s25">
+<h2><span class="n">25</span>Fields the grammar checkers watch</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s26">
+<h2><span class="n">26</span>Links a keyboard extension could hint</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s27">
+<h2><span class="n">27</span>A table for the parsers</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=9" width="360" height="200" alt="Illustration 9" loading="eager" decoding="sync"><figcaption>Figure 9: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s28">
+<h2><span class="n">28</span>Sticky things and fixed things</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s29">
+<h2><span class="n">29</span>What a fling costs</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s30">
+<h2><span class="n">30</span>Where the long stage goes</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=10" width="360" height="200" alt="Illustration 10" loading="eager" decoding="sync"><figcaption>Figure 10: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s31">
+<h2><span class="n">31</span>What the runtime adds to a frame</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s32">
+<h2><span class="n">32</span>Content scripts at document start</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s33">
+<h2><span class="n">33</span>The bridge under a finger</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=11" width="360" height="200" alt="Illustration 11" loading="eager" decoding="sync"><figcaption>Figure 11: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s34">
+<h2><span class="n">34</span>Badges, counts and state pushes</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s35">
+<h2><span class="n">35</span>Declarative rules on the request path</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s36">
+<h2><span class="n">36</span>Isolated worlds and the with scope</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=12" width="360" height="200" alt="Illustration 12" loading="eager" decoding="sync"><figcaption>Figure 12: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s37">
+<h2><span class="n">37</span>A page that keeps scrolling</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s38">
+<h2><span class="n">38</span>Images the extensions look at</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s39">
+<h2><span class="n">39</span>Forms the password manager scans</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=13" width="360" height="200" alt="Illustration 13" loading="eager" decoding="sync"><figcaption>Figure 13: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s40">
+<h2><span class="n">40</span>Fields the grammar checkers watch</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s41">
+<h2><span class="n">41</span>Links a keyboard extension could hint</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s42">
+<h2><span class="n">42</span>A table for the parsers</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=14" width="360" height="200" alt="Illustration 14" loading="eager" decoding="sync"><figcaption>Figure 14: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s43">
+<h2><span class="n">43</span>Sticky things and fixed things</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s44">
+<h2><span class="n">44</span>What a fling costs</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s45">
+<h2><span class="n">45</span>Where the long stage goes</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=15" width="360" height="200" alt="Illustration 15" loading="eager" decoding="sync"><figcaption>Figure 15: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s46">
+<h2><span class="n">46</span>What the runtime adds to a frame</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s47">
+<h2><span class="n">47</span>Content scripts at document start</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s48">
+<h2><span class="n">48</span>The bridge under a finger</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=16" width="360" height="200" alt="Illustration 16" loading="eager" decoding="sync"><figcaption>Figure 16: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s49">
+<h2><span class="n">49</span>Badges, counts and state pushes</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s50">
+<h2><span class="n">50</span>Declarative rules on the request path</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s51">
+<h2><span class="n">51</span>Isolated worlds and the with scope</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=17" width="360" height="200" alt="Illustration 17" loading="eager" decoding="sync"><figcaption>Figure 17: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s52">
+<h2><span class="n">52</span>A page that keeps scrolling</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s53">
+<h2><span class="n">53</span>Images the extensions look at</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s54">
+<h2><span class="n">54</span>Forms the password manager scans</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=18" width="360" height="200" alt="Illustration 18" loading="eager" decoding="sync"><figcaption>Figure 18: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s55">
+<h2><span class="n">55</span>Fields the grammar checkers watch</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s56">
+<h2><span class="n">56</span>Links a keyboard extension could hint</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s57">
+<h2><span class="n">57</span>A table for the parsers</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=19" width="360" height="200" alt="Illustration 19" loading="eager" decoding="sync"><figcaption>Figure 19: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s58">
+<h2><span class="n">58</span>Sticky things and fixed things</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s59">
+<h2><span class="n">59</span>What a fling costs</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s60">
+<h2><span class="n">60</span>Where the long stage goes</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=20" width="360" height="200" alt="Illustration 20" loading="eager" decoding="sync"><figcaption>Figure 20: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s61">
+<h2><span class="n">61</span>What the runtime adds to a frame</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s62">
+<h2><span class="n">62</span>Content scripts at document start</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s63">
+<h2><span class="n">63</span>The bridge under a finger</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=21" width="360" height="200" alt="Illustration 21" loading="eager" decoding="sync"><figcaption>Figure 21: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s64">
+<h2><span class="n">64</span>Badges, counts and state pushes</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s65">
+<h2><span class="n">65</span>Declarative rules on the request path</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s66">
+<h2><span class="n">66</span>Isolated worlds and the with scope</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=22" width="360" height="200" alt="Illustration 22" loading="eager" decoding="sync"><figcaption>Figure 22: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s67">
+<h2><span class="n">67</span>A page that keeps scrolling</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s68">
+<h2><span class="n">68</span>Images the extensions look at</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s69">
+<h2><span class="n">69</span>Forms the password manager scans</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=23" width="360" height="200" alt="Illustration 23" loading="eager" decoding="sync"><figcaption>Figure 23: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s70">
+<h2><span class="n">70</span>Fields the grammar checkers watch</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s71">
+<h2><span class="n">71</span>Links a keyboard extension could hint</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s72">
+<h2><span class="n">72</span>A table for the parsers</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=24" width="360" height="200" alt="Illustration 24" loading="eager" decoding="sync"><figcaption>Figure 24: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s73">
+<h2><span class="n">73</span>Sticky things and fixed things</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s74">
+<h2><span class="n">74</span>What a fling costs</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s75">
+<h2><span class="n">75</span>Where the long stage goes</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=25" width="360" height="200" alt="Illustration 25" loading="eager" decoding="sync"><figcaption>Figure 25: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s76">
+<h2><span class="n">76</span>What the runtime adds to a frame</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s77">
+<h2><span class="n">77</span>Content scripts at document start</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s78">
+<h2><span class="n">78</span>The bridge under a finger</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=26" width="360" height="200" alt="Illustration 26" loading="eager" decoding="sync"><figcaption>Figure 26: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s79">
+<h2><span class="n">79</span>Badges, counts and state pushes</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s80">
+<h2><span class="n">80</span>Declarative rules on the request path</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s81">
+<h2><span class="n">81</span>Isolated worlds and the with scope</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=27" width="360" height="200" alt="Illustration 27" loading="eager" decoding="sync"><figcaption>Figure 27: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s82">
+<h2><span class="n">82</span>A page that keeps scrolling</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s83">
+<h2><span class="n">83</span>Images the extensions look at</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s84">
+<h2><span class="n">84</span>Forms the password manager scans</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=28" width="360" height="200" alt="Illustration 28" loading="eager" decoding="sync"><figcaption>Figure 28: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s85">
+<h2><span class="n">85</span>Fields the grammar checkers watch</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s86">
+<h2><span class="n">86</span>Links a keyboard extension could hint</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s87">
+<h2><span class="n">87</span>A table for the parsers</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=29" width="360" height="200" alt="Illustration 29" loading="eager" decoding="sync"><figcaption>Figure 29: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s88">
+<h2><span class="n">88</span>Sticky things and fixed things</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s89">
+<h2><span class="n">89</span>What a fling costs</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s90">
+<h2><span class="n">90</span>Where the long stage goes</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=30" width="360" height="200" alt="Illustration 30" loading="eager" decoding="sync"><figcaption>Figure 30: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s91">
+<h2><span class="n">91</span>What the runtime adds to a frame</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s92">
+<h2><span class="n">92</span>Content scripts at document start</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s93">
+<h2><span class="n">93</span>The bridge under a finger</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=31" width="360" height="200" alt="Illustration 31" loading="eager" decoding="sync"><figcaption>Figure 31: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s94">
+<h2><span class="n">94</span>Badges, counts and state pushes</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s95">
+<h2><span class="n">95</span>Declarative rules on the request path</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s96">
+<h2><span class="n">96</span>Isolated worlds and the with scope</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=32" width="360" height="200" alt="Illustration 32" loading="eager" decoding="sync"><figcaption>Figure 32: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<section id="s97">
+<h2><span class="n">97</span>A page that keeps scrolling</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s98">
+<h2><span class="n">98</span>Images the extensions look at</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s99">
+<h2><span class="n">99</span>Forms the password manager scans</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=33" width="360" height="200" alt="Illustration 33" loading="eager" decoding="sync"><figcaption>Figure 33: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s100">
+<h2><span class="n">100</span>Fields the grammar checkers watch</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s101">
+<h2><span class="n">101</span>Links a keyboard extension could hint</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s102">
+<h2><span class="n">102</span>A table for the parsers</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=34" width="360" height="200" alt="Illustration 34" loading="eager" decoding="sync"><figcaption>Figure 34: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+</section>
+<section id="s103">
+<h2><span class="n">103</span>Sticky things and fixed things</h2>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+</section>
+<section id="s104">
+<h2><span class="n">104</span>What a fling costs</h2>
+<p>Every section of this page holds a heading, prose with a few <a href="#top">links</a>, an <em>emphasis</em> or two and some <code>inline code</code>, so a content script that walks the tree has work to do at load and none to do on scroll. The sections are numbered so a screenshot tells how far the finger went.</p>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+</section>
+<section id="s105">
+<h2><span class="n">105</span>Where the long stage goes</h2>
+<p>A grammar checker attaches to editable fields, a password manager collects the forms, a dark mode reads the colours of every image, and an ad blocker matches the cosmetic filters of the site. All of that is load-time work. What shows in the frames of a scroll is whatever any of them does per scroll event or per mutation, and what the runtime does to carry it.</p>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<figure><img src="scroll-art.svg?i=35" width="360" height="200" alt="Illustration 35" loading="eager" decoding="sync"><figcaption>Figure 35: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<ul>
+<li>Frames: every frame HWUI drew during the scene.</li>
+<li>Janky share: the frames over the deadline, as a share.</li>
+<li>p50, p95, p99: the frame time percentiles.</li>
+<li>The long stage: where the slowest frames spent their time.</li>
+<li>Bridge messages per second: what the runtime moved meanwhile.</li>
+</ul>
+</section>
+<section id="s106">
+<h2><span class="n">106</span>What the runtime adds to a frame</h2>
+<p>The recipe measured here is the emulator on a software GPU: frame times compare against the same scroll with no extension attached, never against a device. The numbers to hold are the ratios, the janky share above the baseline and the renderer main thread time per frame in the trace.</p>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+</section>
+<section id="s107">
+<h2><span class="n">107</span>Content scripts at document start</h2>
+<p>Links: <a href="#s1">first section</a>, <a href="#s50">the middle</a>, <a href="#last">the last line</a>. Words that a spell checker underlines: recieve, occurence, seperate. Words it should not: Zenium, WebView, Chromium.</p>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+</section>
+<section id="s108">
+<h2><span class="n">108</span>The bridge under a finger</h2>
+<p>Nothing on this page is fetched from the network beyond the runner that serves it: the images are one SVG asked for under many names so every one of them is a request the engine decides, and the clip is the fixture server’s own.</p>
+<p>Scrolling a long page is the gesture a phone does most. The chrome must spend the frame on the page, and the extension runtime must spend nothing on it: content scripts run once per document, the bridge carries messages only when an extension asks for one, and rules are decided off the main thread before the request leaves.</p>
+<figure><img src="scroll-art.svg?i=36" width="360" height="200" alt="Illustration 36" loading="eager" decoding="sync"><figcaption>Figure 36: one request through the engine, one image for the dark mode to read.</figcaption></figure>
+<table>
+<thead><tr><th>Scene</th><th>Extensions</th><th>Baseline</th></tr></thead>
+<tbody>
+<tr><td>ext-scroll-0</td><td>none</td><td>itself</td></tr>
+<tr><td>ext-scroll-3</td><td>uBlock Origin Lite, Dark Reader, Vimium</td><td>ext-scroll-0</td></tr>
+<tr><td>ext-scroll-6</td><td>plus Grammarly, LanguageTool, Bitwarden</td><td>ext-scroll-0</td></tr>
+</tbody>
+</table>
+</section>
+<p id="last">The last line of the fixture: the finger never gets this far in one scene.</p>
+<div id="edge">Zenium frame budget fixture</div>
+</body>
+</html>

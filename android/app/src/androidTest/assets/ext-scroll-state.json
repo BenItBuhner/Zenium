@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_ext",
+  "spaces": [
+    {
+      "id": "space_ext",
+      "name": "Extensions",
+      "icon": "E",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [96, 110, 235],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [214, 92, 160],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": ["tab_scroll"],
+      "activeTabId": "tab_scroll",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_scroll",
+      "spaceId": "space_ext",
+      "containerId": "default",
+      "url": "http://10.0.2.2:8765/scroll.html",
+      "title": "Zenium extension runtime frame budget fixture",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "gestureHintDone": true,
+    "colorScheme": "light",
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    },
+    "privacy": {
+      "httpsOnly": "off"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_ext",
+      "selection": {
+        "space_ext": "tab_scroll"
+      },
+      "compact": false
+    }
+  ]
+}

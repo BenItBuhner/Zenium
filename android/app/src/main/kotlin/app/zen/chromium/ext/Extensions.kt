@@ -261,6 +261,24 @@ class Extensions(private val host: Host) {
         private set
     /** `ext.configure` outcomes per extension (`{ units: [{ key, chars, cached }], ms }`), for instrumentation. */
     val configureStats = HashMap<String, JSONObject>()
+    /**
+     * The bridge's traffic so far, three counters on the main thread, for instrumentation (the
+     * frame budget reads them around a scroll): `[0]` messages from frames to the host (a content
+     * script's or an extension page's `postMessage`, host-bound), `[1]` events the runtime raised
+     * into the chrome's core on their behalf (`ext.*`: a message forwarded, a request observed, an
+     * endpoint gone – each an `evaluateJavascript` on the chrome WebView), `[2]` messages from the
+     * host to frames (replies, deliveries, events; page-bound). Always on: three increments.
+     */
+    private val bridgeCounters = LongArray(3)
+
+    /** A copy of the bridge counters (see [bridgeCounters]): frames to host, host to chrome, host to frames. */
+    fun bridgeCounts(): LongArray = bridgeCounters.copyOf()
+
+    /** An `ext.*` event into the chrome's core, counted ([bridgeCounters]). */
+    private fun chromeEvent(name: String, payload: Any?) {
+        bridgeCounters[1]++
+        host.chrome.hostEvent(name, payload)
+    }
 
     val origin = ORIGIN_SUFFIX
 
@@ -504,13 +522,13 @@ class Extensions(private val host: Host) {
 
     private fun onNotificationEvent(id: String, notificationId: String, event: String, index: Int) {
         val payload = json("id" to id, "notificationId" to notificationId, "event" to event, "index" to index)
-        if (served.containsKey(id)) host.chrome.hostEvent("ext.notification", payload)
+        if (served.containsKey(id)) chromeEvent("ext.notification", payload)
         else pendingNotificationEvents.getOrPut(id) { ArrayDeque() }.addLast(payload)
     }
 
     private fun flushNotificationEvents(id: String) {
         val queue = pendingNotificationEvents.remove(id) ?: return
-        for (payload in queue) host.chrome.hostEvent("ext.notification", payload)
+        for (payload in queue) chromeEvent("ext.notification", payload)
     }
 
     // --- detach ----------------------------------------------------------------------------------
@@ -557,6 +575,7 @@ class Extensions(private val host: Host) {
     /** Host → endpoint: the reply proxy of the frame that said hello. A dead frame reports `ext.gone`. */
     private fun send(ep: String, message: String) {
         val endpoint = endpoints[ep] ?: return
+        bridgeCounters[2]++
         if (debug) recordReply(ep, message)
         val ok = runCatching { endpoint.proxy.postMessage(message) }.isSuccess
         if (!ok) gone(listOf(ep))
@@ -912,7 +931,7 @@ class Extensions(private val host: Host) {
 
     private fun gone(eps: List<String>) {
         for (ep in eps) endpoints.remove(ep)
-        host.chrome.hostEvent("ext.gone", json("eps" to JSONArray(eps)))
+        chromeEvent("ext.gone", json("eps" to JSONArray(eps)))
     }
 
     /**
@@ -929,6 +948,7 @@ class Extensions(private val host: Host) {
         message.remove("token")
         val ep = message.str("ep")
         if (ep.isEmpty()) return
+        bridgeCounters[0]++
         if (slot != null) {
             val known = endpoints[ep]
             val claimed = if (known != null) known.extensionId else message.str("ext")
@@ -965,7 +985,7 @@ class Extensions(private val host: Host) {
             }
         }
         val tabId = (view as? TabWebView)?.tabId
-        host.chrome.hostEvent(
+        chromeEvent(
             "ext.message",
             json("ep" to ep, "tabId" to tabId, "top" to isMainFrame, "origin" to origin.toString(), "message" to message)
         )
@@ -1166,7 +1186,7 @@ class Extensions(private val host: Host) {
             "micros" to micros,
             "cpuMicros" to cpuMicros
         )
-        main.post { host.chrome.hostEvent("ext.request", payload) }
+        main.post { chromeEvent("ext.request", payload) }
     }
 
     /**
@@ -1418,7 +1438,7 @@ class Extensions(private val host: Host) {
         val ext = served[id] ?: return
         val sheet = ExtensionPopup(host, this, ext, title, url, context) {
             popup = null
-            host.chrome.hostEvent("ext.popupClosed", json("id" to id))
+            chromeEvent("ext.popupClosed", json("id" to id))
         }
         popup = sheet
         sheet.show()
@@ -1437,7 +1457,7 @@ class Extensions(private val host: Host) {
         authSheets.remove(viewId)?.close()
         val sheet = ExtensionAuthSheet(host, viewId, id, title) { event, target ->
             if (event == ExtensionAuthSheet.EVENT_CLOSED) authSheets.remove(viewId)
-            host.chrome.hostEvent("ext.authView", json("viewId" to viewId, "event" to event, "url" to target))
+            chromeEvent("ext.authView", json("viewId" to viewId, "event" to event, "url" to target))
         }
         authSheets[viewId] = sheet
         sheet.load(url)

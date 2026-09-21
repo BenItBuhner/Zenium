@@ -112,6 +112,12 @@ export interface BootStats {
   /** The Trusted Types shield of an isolated world: policy created, sinks patched. */
   trustedTypes: { policy: boolean; patched: number } | null
   /**
+   * This copy's bridge traffic so far: messages it posted to the host (`hostBound`) and messages
+   * the host delivered to it (`pageBound`), every unit of the world counted together. The frame
+   * budget reads the two around a scroll for the messages per second the runtime moved.
+   */
+  bridge: { hostBound: number; pageBound: number }
+  /**
    * The first uncaught errors of the document after the bootstrap ran (a debug world's
    * capturing `error` listener), with the stack and, for a script the page holds inline (an
    * element a content script wrote), the source around the throw: a console line names such a

@@ -158,7 +158,13 @@ declare const __zenExtBoot: Boot
     }
   }
   if (!transport) return
-  const post = transport.post
+  /** Both directions of this copy's bridge traffic, exposed on the debug stats (`BootStats.bridge`). */
+  const bridgeTraffic = { hostBound: 0, pageBound: 0 }
+  const rawPost = transport.post
+  const post = (message: string): void => {
+    bridgeTraffic.hostBound++
+    rawPost(message)
+  }
   const primordials: Primordials = transport.primordials
   const sources: Record<string, GroupFunction> = Object.assign(
     Object.create(null) as Record<string, GroupFunction>,
@@ -174,6 +180,7 @@ declare const __zenExtBoot: Boot
   /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
   let scriptRecovery: ScriptRecovery | null = null
   transport.listen((event) => {
+    bridgeTraffic.pageBound++
     let message: Record<string, unknown>
     try {
       message = primordials.parse(event.data) as Record<string, unknown>
@@ -623,7 +630,8 @@ declare const __zenExtBoot: Boot
         bootMs: 0,
         applied: 0,
         groups: [],
-        trustedTypes: null
+        trustedTypes: null,
+        bridge: bridgeTraffic
       }
     : null
   if (stats) {
