@@ -17,6 +17,16 @@ name: Android emulator demo
 # script-env (NAME=value lines) is exported before setup-script and the driver run; setup-script is
 # for what a demo needs beyond the build (another APK, a tool), and runs from the repository root.
 #
+# The frame statistics. A driver that measures its scenes through DemoHarness.measureFrames leaves
+# `frames.jsonl` (one JSON line per scene) in its findings; after the driver, whatever the run
+# left is rendered into the job summary (android-jank-report.mjs: scene, frames, janky share,
+# percentiles, the long stage, the budget's verdict), handed on as the `jank-report` output (one
+# JSON line) and uploaded as a small `jank-report-<artifact-name>` artifact kept 90 days – the
+# one the release dry-run reads for main's latest table. `jank-gate` is the budget's gate: `soft`
+# (the default) reports a scene over its budget, `hard` fails that scene (the harness raises a
+# jank fault at the end of the run, like a touch fault). The numbers are the emulator recipe's own
+# (a software GPU: see the header of JankBudget.kt) and compare on this recipe alone.
+#
 # One cache. gradle/actions/setup-gradle restores the Gradle user home, and only runs on main write
 # it back (cache-read-only everywhere else, which is also the action's default): a branch reads what
 # main's CI and demos saved and never publishes entries of its own. The AVD is not cached: in PR #34
@@ -112,6 +122,13 @@ on:
         required: false
         type: string
         default: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+      jank-gate:
+        description: >-
+          How the jank budget acts on a scene over it (DemoHarness.measureFrames, JankBudget.kt):
+          soft reports it in the summary, hard fails the scene; exported to the driver as JANK_GATE
+        required: false
+        type: string
+        default: soft
     outputs:
       emulator-died:
         description: >-
@@ -119,6 +136,13 @@ on:
           never came up for it (the runner action failed before the driver ran) rather than the
           driver failing; a caller may boot once more on that alone
         value: ${{ jobs.record.outputs.emulator-died }}
+      jank-report:
+        description: >-
+          The frame statistics the driver recorded, one JSON line: {"v":1,"gate":"soft"|"hard",
+          "scenes":[one object per measured scene, as in frames.jsonl],"over":[scenes over their
+          budget],"enforced":[the scenes that failed under a hard gate]}; empty scenes when the
+          driver measured none
+        value: ${{ jobs.record.outputs.jank-report }}
 
 permissions:
   contents: read
@@ -133,6 +157,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     outputs:
       emulator-died: ${{ steps.emulator.outputs.died }}
+      jank-report: ${{ steps.frames.outputs.report }}
     concurrency:
       # One emulator per demo and ref; a newer push supersedes the run still in progress.
       group: android-emulator-demo-${{ github.workflow }}-${{ inputs.artifact-name }}-${{ github.ref }}
@@ -164,6 +189,16 @@ jobs:
         run: |
           read -ra tasks <<< "$GRADLE_TASKS"
           ./gradlew "${tasks[@]}" --no-daemon --stacktrace
+      - name: Pass the jank gate to the driver
+        # Before the caller's environment, so a JANK_GATE line in script-env still has the last word.
+        env:
+          JANK_GATE_INPUT: ${{ inputs.jank-gate }}
+        run: |
+          case "$JANK_GATE_INPUT" in
+            soft | hard) ;;
+            *) echo "::error::jank-gate must be soft or hard, not '$JANK_GATE_INPUT'"; exit 1 ;;
+          esac
+          echo "JANK_GATE=$JANK_GATE_INPUT" >> "$GITHUB_ENV"
       - name: Pass the caller's environment to the driver
         if: inputs.script-env != ''
         env:
@@ -241,6 +276,17 @@ jobs:
           else
             echo "died=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Render the frame statistics
+        # Every frames.jsonl the driver left (DemoHarness.measureFrames) as the job summary's table,
+        # the `jank-report` output and the small artifact below; a run without one says so.
+        id: frames
+        if: always()
+        env:
+          ARTIFACT_PATH: ${{ inputs.artifact-path }}
+        run: |
+          node .github/scripts/android-jank-report.mjs summary "$ARTIFACT_PATH" \
+            --gate "$JANK_GATE" --out "$RUNNER_TEMP/jank-report" >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::the frame statistics could not be rendered (see the step's log)"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -248,3 +294,13 @@ jobs:
           path: ${{ inputs.artifact-path }}
           if-no-files-found: warn
           retention-days: 14
+      - name: Keep the frame statistics for the release's table
+        # Small (the records and the rendered table alone), kept longer than the findings: the
+        # release dry-run reads the newest of these on main (android-jank-report.mjs main).
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: jank-report-${{ inputs.artifact-name }}
+          path: ${{ runner.temp }}/jank-report/
+          if-no-files-found: ignore
+          retention-days: 90

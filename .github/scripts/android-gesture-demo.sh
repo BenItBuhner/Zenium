@@ -32,11 +32,17 @@
 #   DEMO_INSTRUMENT_FLAGS – extra flags for `am instrument` (`--no-hidden-api-checks` lets a
 #                 driver reach a @TestApi such as UiAutomation's input-filter injection, which
 #                 hands a swipe to TalkBack the way a finger's does)
+#   JANK_GATE   – `soft` (the default) or `hard`: how the harness's jank budget acts on a scene
+#                 over its budget (DemoHarness.measureFrames; the shared workflow's `jank-gate`
+#                 input). Passed to the instrumentation as the `jankGate` argument.
 #
 # Handshake with the driver, through files in the app's private storage (readable via run-as):
 #   files/<DEMO_DIR>/record     – written by the driver once its warm-up is done
 #   files/<DEMO_DIR>/recording  – written here once screenrecord is rolling
 #   files/<DEMO_DIR>/done       – written by the driver when the sequence is over
+#   files/<DEMO_DIR>/frames.jsonl, frames.txt – the frame statistics of the scenes the driver
+#                               measured, one JSON line and one table per scene; collected with
+#                               the screenshots, rendered into the job summary by the workflow
 set -euo pipefail
 
 # applicationId of the debug build (android/app/build.gradle.kts); the instrumentation APK is
@@ -210,8 +216,10 @@ adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
 
+jank_gate=${JANK_GATE:-soft}
+echo "jank gate: $jank_gate"
 # shellcheck disable=SC2086 # DEMO_INSTRUMENT_FLAGS is a list of flags, split on purpose
-adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" "$runner" > "$out/instrument.txt" 2>&1 &
+adb shell am instrument -w ${DEMO_INSTRUMENT_FLAGS:-} -e class "$demo_class" -e theme "${DEMO_THEME:-light}" -e scenes "${DEMO_SCENES:-all}" -e jankGate "$jank_gate" "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
 ready=0
@@ -289,12 +297,18 @@ elif [ "${#parts[@]}" -gt 1 ]; then
     echo "::warning::the recording's parts could not be joined; they are in the artifact as they are"
   fi
 fi
-# Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump).
+# Screenshots, and whatever else a driver writes down next to them (an accessibility tree dump,
+# the frame statistics: frames.jsonl and frames.txt, the raw framestats-*.txt dumps, the scenes'
+# WebView traces trace-*.json.gz).
 for name in $(adb shell run-as "$app_id" ls "files/$demo_dir" | tr -d '\r'); do
   case "$name" in
-    *.png | *.jpg | *.txt) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
+    *.png | *.jpg | *.txt | *.jsonl | *.json.gz) adb exec-out run-as "$app_id" cat "files/$demo_dir/$name" > "$out/$name" ;;
   esac
 done
+if [ -f "$out/frames.txt" ]; then
+  echo "== frame statistics (frames.txt)"
+  cat "$out/frames.txt"
+fi
 
 cat "$out/instrument.txt"
 ls -la "$out"
