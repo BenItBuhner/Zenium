@@ -91,20 +91,20 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // overlays/ProtectionSection.tsx, overlays/protection/*): what they add under their own
   // `.zen-protection-*` names to the pane's vocabulary above them. The block sits between the
   // pane's and the Default Browser range, so it is cut out before the pane's, which ends there.
-  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-privacy + .zen-privacy.zen-protection {', '/*\n * The frame\'s strips – "Make Zenium'],
   // Settings > Privacy and Security (components/overlays/PrivacySection.tsx) and the URL bar's
   // blocked-count chip (components/urlbar/BlockedChip.tsx). Its block sits between the find
   // bar's and the Default Browser range, so it is cut out before the find bar's, which ends there.
-  ['.zen-privacy {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-privacy {', '/*\n * The frame\'s strips – "Make Zenium'],
   // Find in page, zoom and fullscreen: the docked find bar (components/content/FindBar.tsx).
-  ['.zen-find-bar {', '/*\n * Settings → Default Browser and the'],
+  ['.zen-find-bar {', '/*\n * The frame\'s strips – "Make Zenium'],
   // The phone page zoom sheet, docked under the live page, and its own instance of the stepper
   // (components/content/ZoomSheet.tsx, components/ZoomStepper.tsx). The last block before the
   // reduced-motion rules, so it is cut out before the Default Browser range that ends there.
   ['.zen-zoom-sheet {', '\n@media (prefers-reduced-motion: reduce) {'],
-  // Settings → Default Browser and the default-browser strip (components/overlays/
-  // DefaultBrowserSection.tsx, content/DefaultBrowserBanner.tsx): the flat card and its inks.
-  ['.zen-default-browser-card {', '\n@media (prefers-reduced-motion: reduce) {'],
+  // The frame's strips (content/DefaultBrowserBanner.tsx, content/CrashRestoreBanner.tsx): the
+  // window-family band, its hairline and text, and the default-browser prompt's icon.
+  ['  .zen-frame-strips[data-under-overlay] {', '\n@media (prefers-reduced-motion: reduce) {'],
   // The message cards: toast and banner, their action button, glyph and close (components/messages/*).
   ['.zen-message {', '.zen-suggestion {'],
   // The lock cover of "Lock private tabs when you leave Zenium" (components/phone/

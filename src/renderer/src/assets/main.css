@@ -9122,93 +9122,27 @@
 }
 
 /*
- * Settings → Default Browser and the "Make Zenium your default browser" strip, with the desktop's
- * default-browser prompt, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): a
- * flat card with a 1 px border, the shared v2 button above, rows that grow around their control
- * (§9.21), the strip as a window surface (§9.29). v1 motion only. They read the token block and
- * nothing else.
+ * The frame's strips – "Make Zenium your default browser" (content/DefaultBrowserBanner.tsx) and
+ * "Restore pages?" (content/CrashRestoreBanner.tsx) – and the desktop's default-browser prompt's
+ * icon, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): the strip as a
+ * window surface (§9.29) around the shared v2 button. v1 motion only. They read the token block
+ * and nothing else. (Settings → Default Browser and the prompt's title block draw on the §9.34
+ * primitives; the flat card and rows they once had here went with them.)
  */
 @layer components {
-  /* The frame's strips ("Make Zenium your default browser", "Restore pages?") stay in layout but
-     vanish under an open overlay: `visibility` inherits through the `display: contents` wrapper. */
+  /* The frame's strips stay in layout but vanish under an open overlay: `visibility` inherits
+     through the `display: contents` wrapper. */
   .zen-frame-strips[data-under-overlay] {
     visibility: hidden;
   }
-  .zen-default-browser-card {
-    color: var(--v2-text);
-    background: var(--v2-card);
-    border: 1px solid var(--v2-card-border);
-    border-radius: var(--v2-radius-card);
-  }
-  /* A title block (§9.23): 17/600 on 22, then 16 px to the body; the row's glyph is the status. */
-  .zen-default-browser-title {
-    margin: 0 0 16px;
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-heading);
-  }
   /*
-   * A row: the base height (§9.2, one line 32 / two lines 52, padding 6) or, holding a control,
-   * the control plus 8 (§9.21: 40 for the 32 px button), the 4 above and below being the row's own
-   * padding so rows touch. Trailing controls centre on the row (§9.18); a leading glyph sits on the
-   * first text line (§9.2), so glyph and text form one body that centres against the control.
-   * Text 15 on 20; a description 13 on the same 20 px line (18 is not used).
-   */
-  .zen-default-browser-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: var(--v2-row);
-    padding: 6px 0;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  .zen-default-browser-body {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .zen-default-browser-row[data-two-line] {
-    min-height: var(--v2-row-two-line);
-  }
-  .zen-default-browser-row[data-control] {
-    min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
-    padding: 4px 0;
-  }
-  .zen-default-browser-row[data-control][data-two-line] {
-    min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
-    padding: 6px 0;
-  }
-  /* The strip is one such row on its card: 12 px before the glyph, 8 px after the buttons. */
-  .zen-default-browser-row[data-strip] {
-    padding-left: 12px;
-    padding-right: 8px;
-  }
-  .zen-default-browser-glyph {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-  }
-  .zen-default-browser-description {
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-body);
-  }
-  .zen-default-browser-muted,
-  .zen-default-browser-description {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-default-browser-ok {
-    color: var(--v2-ok);
-  }
-  /*
-   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx): a window
-   * surface (§9.29, `data-surface="window"` on it) – the theme's ink on `--v2-window-fill` – with
-   * §9.7's hairline at its bottom edge, the one line it draws. It grows around its 32 px buttons
-   * to 40 (§9.21: the 4 above and below are its own padding), 16 px gutters, the sentence at 15
-   * on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx,
+   * content/CrashRestoreBanner.tsx): a window surface (§9.29, `data-surface="window"` on it) –
+   * the theme's ink on `--v2-window-fill` – with §9.7's hairline at its bottom edge, the one
+   * line it draws. It grows around its 32 px buttons to 40 (§9.21: the 4 above and below are
+   * its own padding, the control + 8 its own statement, so no strip sets `data-control` by
+   * hand – §9.34 leaves that to a row wrapper rendering a control), 16 px gutters, the sentence
+   * at 15 on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
    */
   .zen-frame-strip {
     position: relative;
