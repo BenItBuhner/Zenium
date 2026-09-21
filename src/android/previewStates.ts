@@ -26,6 +26,7 @@ import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
 import { isEmptyTabUrl } from '@shared/url'
+import { closeCustomize, openCustomize } from '@renderer/lib/newtab'
 import { blockedPopupsOf, closeBlockedPopups, openBlockedPopups } from '@renderer/lib/security'
 import { BLANK_URL, EXTENSION_SCHEME } from '@shared/url'
 import { DEFAULT_FOLDER_ICON } from '@renderer/components/phone/GroupCard'
@@ -67,6 +68,7 @@ import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
 import {
+  DEFAULT_BROWSER_KEY,
   PREVIEW_ARTICLE,
   PREVIEW_CLIP_EVENT,
   PREVIEW_EXTENSION_PAGE_EVENT,
@@ -79,6 +81,7 @@ import {
   previewVoiceScript,
   type PreviewExtensionPage
 } from './preview'
+import { DEFAULT_PROMO_STATE, PROMO_FIRST_SESSION } from '@shared/defaultBrowser'
 import { clearPdfReport, isPdfViewerTab, pdfViewerStore } from '@renderer/lib/pdfViewer'
 import { dismissSiteInfo, openSiteInfo } from '@renderer/lib/siteInfo'
 import type { ReadAloudStatus } from '@shared/readAloud'
@@ -103,9 +106,11 @@ const STEP_SETTLE_MS = 450
 
 /**
  * The back surfaces a page's sheets register (`settings-options:<row>`, `settings-confirm:<row>`,
- * …) and the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …).
+ * …), the PDF viewer bar's (`pdf-zoom`, `pdf-outline`, `pdf-password`, …) and the default-browser
+ * promo's (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
  */
-const SHEET_SURFACE = /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-)/
+const SHEET_SURFACE =
+  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -128,10 +133,13 @@ const QR_EVENT_MARGIN_MS = 250
  * (history, bookmarks,
  * downloads, addons, …: the chrome overlays a phone still has – Settings is not one, it is
  * `page=settings`; `show=<text>` scrolls the row with that text into view, `expand` rests a
- * sheet on its expanded detent), `menu=app` (the app menu sheet; `show=<text>` scrolls an item
+ * sheet on its expanded detent, `then=hold:<row>;tap:<row>` takes steps on it once it is up),
+ * `menu=app` (the app menu sheet; `show=<text>` scrolls an item
  * into view), `menu=tabs` (the Tabs button's quick menu), `sheet=extensions` (the Extensions
  * sheet the app menu's row opens, over the active page; `then=tap:<row>;hold:<row>` taps a row
- * or long-presses it for its menu), `extension-page=<id>/<path>` (an extension's page open as a
+ * or long-presses it for its menu), `sheet=customise` (the new tab page's customise sheet, over
+ * the active page), `sheet=promo` (the default-browser promo, the core's campaign made due over
+ * the active page as the third session raises it), `extension-page=<id>/<path>` (an extension's page open as a
  * tab, the way its options page opens: `chrome-extension://<id>/<path>`, which the stand-in
  * host serves a page for; with `extensions=installed` the chrome knows the extension, so the
  * pill shows its name), `prompt=<permission>` (the active page asks for that permission: the
@@ -220,12 +228,14 @@ function apply(browser: Browser, spec: string): void {
     closeUrlbar()
     dismissOverview()
     closeReaderPreferences({ keepFocus: true })
+    closeCustomize()
     uiStore.set({
       findOpen: false,
       findTabId: null,
       zoomTabId: null,
       install: null,
-      extensionsSheetOpen: false
+      extensionsSheetOpen: false,
+      barEditorOpen: false
     })
     abortPull()
     cancelVoiceSearch()
@@ -576,6 +586,32 @@ function closeSheets(then: () => void, deadline = performance.now() + SHEET_LEAV
 }
 
 /**
+ * Raise the default-browser promo (`DefaultBrowserService`, `components/defaultbrowser`): the
+ * campaign is put where the third session finds it – onboarding behind the user, the sessions
+ * counted, nothing shown or dismissed yet, the role not held by the stand-in host – and the
+ * core asked to decide again, as a session start asks it. The sheet goes up once the layer has
+ * the page's picture (`defaultBrowserPrompt` in the ui store); `then` runs from there. The
+ * dismissals a run of stills spends on it never add up: the seed starts the count over.
+ */
+function raisePromo(browser: Browser, then: () => void): void {
+  localStorage.setItem(DEFAULT_BROWSER_KEY, 'false')
+  const { settings } = browser.state
+  settings.onboardingDone = true
+  settings.defaultBrowserPromo = { ...DEFAULT_PROMO_STATE, sessions: PROMO_FIRST_SESSION }
+  browser.state.commit()
+  if (uiStore.get().defaultBrowserPrompt) {
+    then()
+    return
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (!uiStore.get().defaultBrowserPrompt) return
+    unsubscribe()
+    then()
+  })
+  void browser.defaultBrowser.refresh()
+}
+
+/**
  * Take the chrome, now idle, to the state `spec` names. `securityAtRest` settles once the
  * previous state's security prompts are cancelled and forgotten (a prompt raised before that
  * would join the cancelled one's protection space instead of asking).
@@ -646,11 +682,17 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
     })
   } else if (target.kind === 'overlay') {
+    // The steps, if any, once the overlay is up and settled: a row held for selection mode.
+    const then = target.then ?? []
+    const settled = (): void => {
+      if (then.length === 0) finish()
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    }
     void openOverlay(target.overlay, tab?.id ?? null, null, null, target.section ?? null).then(
       () => {
         if (target.show) requestAnimationFrame(() => show(target.show))
-        if (target.expand) expandSheet(finish)
-        else finish()
+        if (target.expand) expandSheet(settled)
+        else settled()
       }
     )
   } else if (target.kind === 'download') {
@@ -692,11 +734,21 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       )
     })
     run('app.menu', {})
+  } else if (target.kind === 'sheet' && target.sheet === 'promo') {
+    // The campaign's promo comes up through the core, once the layer has the page's picture.
+    seed()
+    raisePromo(browser, () => {
+      const then = target.then ?? []
+      if (then.length === 0) afterFrames(2, finish)
+      else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
+    })
   } else if (target.kind === 'sheet') {
     // The Extensions sheet lists what the seed put in the state, so the seed goes first; the
-    // sheet mounts on the next render and slides in, and the steps wait for it to settle.
+    // sheet mounts on the next render and slides in, and the steps wait for it to settle. The
+    // customise sheet is the new tab page's gear, opened by name over whichever page is up.
     seed()
-    openExtensionsSheet()
+    if (target.sheet === 'customise') openCustomize()
+    else openExtensionsSheet()
     const then = target.then ?? []
     if (then.length === 0) requestAnimationFrame(() => requestAnimationFrame(finish))
     else setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
@@ -1853,12 +1905,18 @@ function hold(text: string): void {
   )
 }
 
+/**
+ * What a finger could press: a button, or a checkbox row's label (`.zen-v2-check-row`, §9.30),
+ * whose whole face toggles its box.
+ */
+const PRESSABLE = 'button, [role="button"], label:has(> input[type="checkbox"])'
+
 /** The first button a finger could press whose accessible label or own text reads `text`. */
 function pressable(text: string): HTMLElement | null {
   const wanted = text.trim()
   const reachable = (el: Element | null | undefined): el is HTMLElement =>
     el instanceof HTMLElement && !el.closest('[inert]') && el.getAttribute('aria-hidden') !== 'true'
-  for (const el of document.querySelectorAll<HTMLElement>('button, [role="button"]')) {
+  for (const el of document.querySelectorAll<HTMLElement>(PRESSABLE)) {
     if (!reachable(el)) continue
     if (el.getAttribute('aria-label')?.trim() === wanted || el.textContent?.trim() === wanted)
       return el
@@ -1868,7 +1926,7 @@ function pressable(text: string): HTMLElement | null {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node.textContent?.trim() !== wanted) continue
-    const button = node.parentElement?.closest('button, [role="button"]')
+    const button = node.parentElement?.closest(PRESSABLE)
     if (reachable(button)) return button
   }
   return null

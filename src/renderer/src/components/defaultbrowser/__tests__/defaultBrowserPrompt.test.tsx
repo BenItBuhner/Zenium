@@ -6,6 +6,7 @@ import type { Platform, UIState } from '@shared/types'
 import { FrameDialogHost } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { describeDefaultBrowserRequest } from '@renderer/lib/defaultBrowser'
+import { viewportStore } from '@renderer/lib/formFactor'
 
 /*
  * The desktop's default-browser surfaces on v2 (styling pass 5): the strip under the toolbar –
@@ -14,7 +15,10 @@ import { describeDefaultBrowserRequest } from '@renderer/lib/defaultBrowser'
  * DefaultBrowserPrompt.tsx): the §9.23 composition on the frame's dialog host with the app icon
  * at 48 over the title block, one sentence per OS, focus on the primary, Escape closing it and
  * giving focus back to the strip's button, the primary running the request and taking the
- * strip down for this release.
+ * strip down for this release. Then the phone's campaign promo (`PromoSheet`, the core's
+ * `prompt: 'sheet'` on a coarse pointer): the same composition as a sheet – the 48 app icon
+ * above the chassis' title block, no glyph on the title (§9.23 as the #264 verdict wrote it;
+ * the primitives pass 3, #272) – and its mouse form (`HostedDialog`), the icon over the block.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -248,5 +252,102 @@ describe('the desktop prompt', () => {
     expect(dialog()).toBeNull()
     expect(uiStore.get().defaultBrowserAsk).toBeNull()
     expect(uiStore.get().defaultBrowserPrompt).toBe(false)
+  })
+})
+
+describe('the campaign promo (§9.23: a prompt about Zenium itself)', () => {
+  /** The core says a sheet is due; with no tab to capture the prompt goes up on the next frame. */
+  function due(platform: Platform): UIState {
+    const s = state(platform)
+    return { ...s, defaultBrowser: { isDefault: false, prompt: 'sheet' } } as UIState
+  }
+
+  /** Frames asked for and not yet painted: the layer's one before its capture, the sheet's spring. */
+  let frames: FrameRequestCallback[] = []
+
+  /**
+   * One frame – the layer captures the (absent) page and puts the prompt up – then the microtasks
+   * of the capture; the sheet's own frames stay unpainted, so it stands where it mounted (as the
+   * PhoneSheet tests keep it) instead of springing through happy-dom's zero-height layout.
+   */
+  async function raise(): Promise<void> {
+    await act(async () => {
+      for (const frame of frames.splice(0)) frame(0)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await settle()
+  }
+
+  beforeEach(() => {
+    frames = []
+    vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => frames.push(fn))
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+  })
+
+  it('on a phone is the sheet: the 48 app icon above the chassis title block, the block itself with no glyph, Not now then Set as default', async () => {
+    // The viewport re-derives itself from the window on every browser-state change: the state
+    // goes in first, then the finger.
+    browserStore.set({ state: due('android') })
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'phone', coarse: true })
+    render(
+      <>
+        <FrameDialogHost frame />
+        <DefaultBrowserLayer />
+      </>
+    )
+    await raise()
+    const sheet = document.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')!
+    expect(sheet).not.toBeNull()
+    const body = sheet.querySelector<HTMLElement>('.zen-sheet-scroll')!
+    // The icon's box is the body's first content, the title block straight after it – the
+    // desktop `AskDialog`'s order, the one composition (§9.23).
+    const icon = body.querySelector<HTMLElement>('.zen-sheet-app-icon')!
+    expect(icon).not.toBeNull()
+    expect(icon.parentElement?.firstElementChild).toBe(icon)
+    const mark = icon.firstElementChild!
+    expect(mark.tagName.toLowerCase()).toBe('svg')
+    expect(mark.getAttribute('aria-hidden')).toBe('true')
+    const block = body.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(icon.nextElementSibling).toBe(block)
+    // No glyph on the title's start: the icon stands in for it.
+    expect(block.querySelector('h2 svg')).toBeNull()
+    expect(block.querySelector('h2')?.textContent).toBe('Make Zenium your default browser')
+    expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+    expect(block.querySelector('p')?.textContent).toMatch(/^Links from other apps open in Zenium/)
+    // No 48 header: a prompt sheet opens on its block.
+    expect(sheet.querySelector('.zen-sheet-header')).toBeNull()
+    const [notNow, setDefault] = buttons(block.parentElement!)
+    expect(notNow.textContent).toBe('Not now')
+    expect(setDefault.textContent).toBe('Set as default')
+    expect(setDefault.hasAttribute('data-primary')).toBe(true)
+  })
+
+  it('on a mouse is the dialog with the same icon over its title block, no glyph', async () => {
+    browserStore.set({ state: due('android') })
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    render(
+      <>
+        <FrameDialogHost frame />
+        <DefaultBrowserLayer />
+      </>
+    )
+    await raise()
+    const d = dialog()!
+    expect(d).not.toBeNull()
+    expect(d.classList.contains('zen-v2-dialog')).toBe(true)
+    const [icon, block] = [...d.children]
+    expect(icon.tagName.toLowerCase()).toBe('svg')
+    expect(icon.classList.contains('zen-default-browser-prompt-icon')).toBe(true)
+    expect(block.classList.contains('zen-v2-title-block')).toBe(true)
+    expect(block.querySelector('.zen-v2-title-block-title svg')).toBeNull()
+    expect(block.querySelector('.zen-v2-title-block-title')!.textContent).toBe(
+      'Make Zenium your default browser'
+    )
   })
 })
