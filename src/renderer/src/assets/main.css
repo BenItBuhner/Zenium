@@ -1280,6 +1280,70 @@
     box-shadow: var(--zen-shadow);
   }
 
+  /*
+   * The overlay header (design language v2 §9.7; overlays/OverlayShell.tsx, every overlay on the
+   * shell inheriting): a title block, no line at rest – the title 17/600 on 22 for a panel (the
+   * `dock` and `dialog` variants) or 22/600 on 28 for a page (`full`) – 16 from the panel's top
+   * edge to the title's line box and 16 from the line box to the first content box (§5, box to
+   * box; the body carries no padding of its own above its first box). The row is the 28 close
+   * button's (§9.3), so a panel header's 13 is the 16 less the 3 the row adds around the 22
+   * line: 13 + 28 + 13 = 54, as a §9.23 title block alone measures; a page's 28 line fills the
+   * row, 16 + 28 + 16 = 60. The hairline is its own element at the bottom edge (v1 §7.4:
+   * opacity, not a border), in only while the body is scrolled under the header
+   * (`data-scrolled`, the bookmark popovers' pattern) and out again at scroll top; it replaces
+   * the permanent `border-b` and the fading start edge the body drew under it. On a phone the
+   * header is §9.16's bar header instead: 56 tall, the 44 close at a 6 margin, the title 17/600
+   * on 22 at the 16 gutter, a page's title the same 17 (§9.26: no 22 under an overlay's title).
+   */
+  .zen-overlay-header {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 16px;
+  }
+  .zen-overlay-header[data-size='page'] {
+    padding: 16px;
+  }
+  :root[data-form-factor='phone'] .zen-overlay-header {
+    padding: 6px 6px 6px 16px;
+  }
+  .zen-overlay-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-heading);
+    letter-spacing: -0.012em;
+  }
+  .zen-overlay-header[data-size='page'] .zen-overlay-title {
+    font-size: var(--v2-font-title);
+    line-height: var(--v2-line-title);
+    letter-spacing: -0.014em;
+  }
+  :root[data-form-factor='phone'] .zen-overlay-header[data-size='page'] .zen-overlay-title {
+    font-size: var(--v2-font-heading);
+    line-height: var(--v2-line-heading);
+    letter-spacing: -0.012em;
+  }
+  .zen-overlay-header::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-overlay-header[data-scrolled]::after {
+    opacity: 1;
+  }
+
   /* The 1px outline is a spread shadow: its corners are the page's radius plus 1px, concentric. */
   .zen-content-frame {
     background: var(--zen-bg-solid);

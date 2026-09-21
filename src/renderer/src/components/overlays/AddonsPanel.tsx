@@ -42,7 +42,7 @@ export function AddonsPanel({ state }: { state: UIState }): JSX.Element {
             />
           </div>
         ) : (
-          <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] p-2">
+          <nav className="w-52 shrink-0 border-r border-[var(--zen-border)] px-2 pb-2">
             {tabs.map((item) => (
               <button
                 key={item.id}

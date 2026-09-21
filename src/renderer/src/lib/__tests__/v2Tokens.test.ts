@@ -64,6 +64,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
+  // hairline in the border token once the body scrolls under it.
+  ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],
   // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
   // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
   // comment that ends them, so it is taken out first.

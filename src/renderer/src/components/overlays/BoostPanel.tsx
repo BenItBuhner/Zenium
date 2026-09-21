@@ -75,7 +75,7 @@ export function BoostPanel({ state }: { state: UIState }): JSX.Element {
         </label>
       }
     >
-      <div className="flex flex-col gap-5 p-4">
+      <div className="flex flex-col gap-5 px-4 pb-4">
         <section className="flex flex-col gap-2">
           <Label className="text-[12px] text-[var(--zen-muted)]">Tint</Label>
           <div className="flex items-center gap-1.5">
