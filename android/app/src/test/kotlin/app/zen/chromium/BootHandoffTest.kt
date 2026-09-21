@@ -95,7 +95,12 @@ class BootHandoffTest {
         val first = storage.etag("safebrowsing/phishing-database.json")
         assertNotNull(first)
         assertEquals(first, storage.etag("safebrowsing/phishing-database.json"))
-        assertEquals(first, storage.bootDocuments(0).deferred.getJSONObject(0).getString("etag"))
+        // The manifest names a deferred boot document by the same tag; a feed document is no boot document.
+        storage.writeSync("state.json", """{"version":1}""")
+        val deferred = storage.bootDocuments(0).deferred
+        assertEquals(1, deferred.length())
+        assertEquals("state.json", deferred.getJSONObject(0).getString("name"))
+        assertEquals(storage.etag("state.json"), deferred.getJSONObject(0).getString("etag"))
         // The tag is the file's size and modification time and nothing of this process: the next
         // process (the Safe Browsing snapshot's header is compared across them) reads the same one.
         val file = File(dir, "safebrowsing/phishing-database.json")

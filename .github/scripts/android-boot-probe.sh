@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Runs on the workflow runner once the emulator has booted (android-boot-probe.yml): the boot
-# handoff's before / after measurement. The same instrumentation driver (BootHandoffProbe) runs
+# path's before / after measurement. The same instrumentation driver (BootHandoffProbe) runs
 # against two APKs – the one built from main (BEFORE_APK, prepared by the workflow's setup script)
 # and the one built from the branch – warming a profile up first (a first run installs the bundled
-# lists and snapshots), then booting twice and measuring: the time to the chrome's `window.zen`,
-# the host's storage writes during the boot, the request engine's rebuilds, and each transport
-# replayed in the chrome (boot-probe.js). The two results are tabulated into summary.md and the
-# step summary.
+# lists and snapshots), then seeding the feed documents at production size and booting twice,
+# measuring: the time to the chrome's `window.zen`, its first paint and its document's `load`,
+# the host's storage writes during the boot, the request engine's rebuilds, the documents fetched
+# from the handler (during and after the boot), and each transport replayed in the chrome
+# (boot-probe.js). The two results are tabulated into summary.md and the step summary.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
