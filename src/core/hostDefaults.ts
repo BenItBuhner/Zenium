@@ -6,6 +6,7 @@ import type {
   ResourceSnapshot,
   SidePanelInfo,
   Suggestion,
+  SyncDeviceTabs,
   SyncStatus
 } from '../shared/types'
 import { emptyResourceSnapshot } from '../shared/defaults'
@@ -204,7 +205,8 @@ export class NoSync implements SyncHost {
       lastError: null,
       syncing: false,
       devices: [],
-      pendingMerge: false
+      pendingMerge: false,
+      remoteTabsVersion: 0
     }
   }
 
@@ -224,6 +226,14 @@ export class NoSync implements SyncHost {
   async confirmMerge(): Promise<void> {}
   disconnect(): void {}
   flushSync(): void {}
+
+  tabsFromDevices(): SyncDeviceTabs[] {
+    return []
+  }
+
+  async sendTab(_opts: unknown, win: ZenWindow): Promise<void> {
+    this.browser.toast('Sync is not available on this device yet.', 'info', win)
+  }
 }
 
 /** Hosts without an installer: releases are only looked up, never fetched or applied. */
