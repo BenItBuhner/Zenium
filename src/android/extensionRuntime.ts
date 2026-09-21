@@ -1006,10 +1006,21 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       }
     }
     sendTo((endpoint) => endpoint.context !== 'background')
-    if (this.background.has(extensionId))
-      this.background.deliver(extensionId, key, () =>
+    if (this.background.has(extensionId)) {
+      const outcome = this.background.deliver(extensionId, key, () =>
         sendTo((endpoint) => endpoint.context === 'background')
       )
+      // A user's action click the background never hears of (WhatFont on the compat sweep: no
+      // bridge line of its worker's for the step) is the one drop worth a line in the console.
+      if (ns === 'action' || ns === 'browserAction') {
+        const bg = this.router.of(extensionId).filter((e) => e.context === 'background')
+        const heard = bg.some((e) => this.deliveryFor(e.id, key, url) !== null)
+        if (outcome === 'dropped' || (outcome === 'sent' && !heard))
+          this.warn(
+            `${key} of ${extensionId.slice(0, 8)} ${outcome}, ${heard ? 'heard' : 'unheard'}: background endpoints ${bg.length} (${bg.map((e) => `${e.id} listens ${this.listens(e.id, key)}`).join('; ') || 'none'}), lifecycle ${JSON.stringify(this.background.stats(extensionId))}`
+          )
+      }
+    }
   }
 
   /**
