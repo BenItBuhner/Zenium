@@ -452,7 +452,10 @@ function SliderControl({
  * A static row that carries a control (§9.21): label and description as the text block, the
  * 32 px control trailing, centred; the row is 40 around it – 4 px of its own padding above and
  * below rather than a list gap, so rows still touch. `data-static` keeps the row's fill off: the
- * control is the target, not the row.
+ * control is the target, not the row. Disabled as a dependent row, the row takes §9.30's one .4
+ * and its control keeps `disabled` for what it does but not its own .4 on top
+ * (`.zen-settings-row-disabled .zen-v2-button:disabled { opacity: 1 }` and its siblings in
+ * main.css), so a Use default or an Up button reads at .4, not .16.
  */
 function ControlRow({
   row,

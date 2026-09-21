@@ -7568,9 +7568,23 @@
 .zen-settings-row-danger .zen-settings-label {
   color: var(--v2-danger);
 }
-/* A dependent row whose parent is off stays laid out at 40 % and takes no press (§10.4). */
+/*
+ * A dependent row whose parent is off stays laid out at 40 % and takes no press (§10.4). The .4
+ * is the row's, once (§9.30: one number on the whole control): a control inside it that is
+ * itself disabled – a control row's button or menulist, a field, a switch, the shortcut rows'
+ * icon buttons – keeps `disabled` for what it does and does not take its own .4 on top, which
+ * compounded to .16 (Settings › Downloads' Use default button, gone in dark; #297's review). The
+ * same shape as the check-row primitive's rule above and the translate pane's (`translate.css`).
+ */
 .zen-settings-row-disabled {
   opacity: 0.4;
+}
+.zen-settings-row-disabled .zen-v2-button:disabled,
+.zen-settings-row-disabled .zen-v2-icon-button:disabled,
+.zen-settings-row-disabled .zen-v2-menulist:disabled,
+.zen-settings-row-disabled .zen-v2-field:disabled,
+.zen-settings-row-disabled .zen-v2-switch:disabled {
+  opacity: 1;
 }
 .zen-settings-row-disabled:active {
   background: transparent;
