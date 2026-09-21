@@ -709,7 +709,11 @@ describe('the section model', () => {
     const folder = row(downloads, 'download-directory')
     expect(folder.label).toBe('Location')
     expect(folder.description).toBe('The system Downloads folder')
-    expect(row(downloads, 'download-directory-default').disabled).toBe(true)
+    // No Use the default folder row while the default is in force (§10.4): the row is there only
+    // once a folder has been picked, and then as a plain action row, never a disabled one.
+    expect(
+      downloads.groups.flatMap((g) => g.rows).find((r) => r.id === 'download-directory-default')
+    ).toBeUndefined()
     if (folder.kind !== 'action') throw new Error('not an action')
     expect(folder.button).toBe('Change…')
     invoke.mockResolvedValueOnce(null)
@@ -742,23 +746,37 @@ describe('the section model', () => {
     )
     expect(row(unnamed, 'download-directory').description).toBe('The system Downloads folder')
     // A folder picked on Android is a document-tree URI: the row reads its relative path (#93).
+    const pickedCtx = context(
+      state(
+        {},
+        {
+          downloads: {
+            ...DEFAULT_SETTINGS.downloads,
+            directory:
+              'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FZenium'
+          }
+        }
+      )
+    )
     const picked = buildSection(
       PAGE.sections.find((x) => x.id === 'downloads')!,
-      context(
-        state(
-          {},
-          {
-            downloads: {
-              ...DEFAULT_SETTINGS.downloads,
-              directory:
-                'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FZenium'
-            }
-          }
-        )
-      ).ctx
+      pickedCtx.ctx
     )
     expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
-    expect(row(picked, 'download-directory-default').disabled).toBe(false)
+    // …and the way back appears under it, enabled: Use the default folder clears the setting.
+    const useDefault = row(picked, 'download-directory-default')
+    expect(useDefault.disabled).toBeUndefined()
+    expect(useDefault.label).toBe('Use the default folder')
+    expect(
+      picked.groups
+        .find((g) => g.id === 'saving')!
+        .rows.map((r) => r.id)
+        .slice(0, 2)
+    ).toEqual(['download-directory', 'download-directory-default'])
+    if (useDefault.kind !== 'action') throw new Error('not an action')
+    expect(useDefault.button).toBe('Use default')
+    useDefault.onPress?.()
+    expect(pickedCtx.patches).toEqual([{ downloads: { directory: null } }])
     // The interface's label (Chrome's `IDS_SETTINGS_PROMPT_FOR_DOWNLOAD` runs on "before
     // downloading", a second line on a phone; it stays a search keyword); no switch for the
     // danger warnings, as Chrome has none (Safe Browsing governs them).

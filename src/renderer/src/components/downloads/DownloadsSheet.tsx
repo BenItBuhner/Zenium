@@ -370,14 +370,17 @@ function ProgressBar({ item }: { item: DownloadItem }): JSX.Element {
 
 /**
  * The pair for a row waiting on the user, worded per state by the interface's verbs table
- * (`decisionLabels`; the desktop rows share it): Keep / Delete for a file the engine flagged,
- * weighted as Chrome's bubble weights them, Keep anyway / Discard for a transfer refused as
- * insecure – or Discard alone, spanning the row (§9.11), when the type is one Chrome offers no
- * Keep for. The row's own footer under its text: two peers splitting the width at an 8 gap,
- * the destructive or prominent one trailing (§9.11). The pressed one is busy until the engine
- * answers – the row leaves its waiting state or goes – and the other waits disabled meanwhile
- * (§9.30: busy keeps its ink and width under a 16 px spinner and says `aria-busy`; disabled is
- * the whole control at .4).
+ * (`decisionLabels`; the desktop rows share its weighting): Keep / Delete for a file the engine
+ * flagged, Keep anyway / Discard for a transfer refused as insecure – or Discard alone when the
+ * type is one Chrome offers no Keep for. On every tier the protective verb – Delete, Discard –
+ * is the filled primary and the releasing one the plain secondary (§6 as amended for #297: the
+ * primary is the action the app recommends; the danger ink is for actions that destroy the
+ * user's own data, so neither takes `data-danger`). The row's own footer under the sentence it
+ * answers, starting at the text column with the glyph column kept clear (§9.11, Chrome's
+ * indent; `.zen-downloads-decision`): two peers splitting the rest at an 8 gap, the primary
+ * trailing. The pressed one is busy until the engine answers – the row leaves its waiting state
+ * or goes – and the other waits disabled meanwhile (§9.30: busy keeps its ink and width under a
+ * 16 px spinner and says `aria-busy`; disabled is the whole control at .4).
  */
 function DecisionActions({ item }: { item: DownloadItem }): JSX.Element {
   const labels = decisionLabels(item)
@@ -393,8 +396,8 @@ function DecisionActions({ item }: { item: DownloadItem }): JSX.Element {
     if (which === 'keep') downloadsEngine.acceptDanger(item.id)
     else downloadsEngine.discard(item.id)
   }
-  // Keep leads and Delete trails, as the desktop rows order them: the destructive or prominent
-  // action on the trailing side (§9.11).
+  // Keep leads and Delete trails, as the desktop rows order them: the primary on the trailing
+  // side (§9.11).
   return (
     <div className="zen-downloads-decision">
       {labels.keep !== null && (
@@ -409,7 +412,6 @@ function DecisionActions({ item }: { item: DownloadItem }): JSX.Element {
       )}
       <BusyButton
         primary={labels.prominent === 'discard'}
-        danger={labels.prominent !== 'discard'}
         busy={busy === 'discard'}
         disabled={busy === 'keep'}
         onClick={() => decide('discard')}
@@ -420,19 +422,20 @@ function DecisionActions({ item }: { item: DownloadItem }): JSX.Element {
   )
 }
 
-/** The v2 button with the §9.30 busy state, as the extensions UI and the new tab sheet draw it. */
+/**
+ * The v2 button with the §9.30 busy state, as the extensions UI and the new tab sheet draw it:
+ * the secondary, or the accent-filled primary (`data-primary`); never the danger ink here (§6).
+ */
 function BusyButton({
   children,
   onClick,
   primary,
-  danger,
   busy,
   disabled
 }: {
   children: ReactNode
   onClick: () => void
   primary?: boolean
-  danger?: boolean
   busy?: boolean
   disabled?: boolean
 }): JSX.Element {
@@ -441,7 +444,6 @@ function BusyButton({
       type="button"
       className="zen-v2-button"
       data-primary={primary || undefined}
-      data-danger={danger || undefined}
       aria-busy={busy || undefined}
       disabled={disabled}
       onClick={onClick}

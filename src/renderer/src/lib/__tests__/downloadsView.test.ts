@@ -244,15 +244,22 @@ describe('danger copy (Chrome 112 download bubble)', () => {
       discard: 'Delete',
       prominent: 'discard'
     })
+    // The suspicious tier fills Delete the same (§6: the primary is the protective verb on every
+    // tier, as Chrome fills it on every tier of its bubble); the tier names the status, not the pair.
     const lesser = item({ id: 'l', state: 'completed', danger: verdict('suspicious', 'archive') })
-    expect(decisionLabels(lesser)).toEqual({ keep: 'Keep', discard: 'Delete', prominent: null })
+    expect(decisionLabels(lesser)).toEqual({
+      keep: 'Keep',
+      discard: 'Delete',
+      prominent: 'discard'
+    })
     // Nothing is on disk for an insecure-blocked row, so its second verb is Discard, not Delete;
-    // both plain. Keep anyway only while the engine would honour it (`canKeepInsecure`).
+    // Discard is the filled one there too. Keep anyway only while the engine would honour it
+    // (`canKeepInsecure`).
     const blocked = item({ id: 'b', state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
     expect(decisionLabels(blocked)).toEqual({
       keep: 'Keep anyway',
       discard: 'Discard',
-      prominent: null
+      prominent: 'discard'
     })
     const blockedDangerous = item({
       id: 'bd',
@@ -264,7 +271,7 @@ describe('danger copy (Chrome 112 download bubble)', () => {
     expect(decisionLabels(blockedDangerous)).toEqual({
       keep: null,
       discard: 'Discard',
-      prominent: null
+      prominent: 'discard'
     })
   })
 
@@ -295,13 +302,12 @@ describe('danger copy (Chrome 112 download bubble)', () => {
     )
   })
 
-  it('labels the pair Keep / Delete and fills Delete only for a dangerous verdict', () => {
-    expect(dangerActionLabels(verdict('dangerous', 'executable'))).toEqual({
+  it('labels the pair Keep / Delete with Delete the filled one, whatever the tier (§6)', () => {
+    expect(dangerActionLabels()).toEqual({
       keep: 'Keep',
       discard: 'Delete',
       prominent: 'discard'
     })
-    expect(dangerActionLabels(verdict('suspicious', 'archive')).prominent).toBeNull()
   })
 })
 

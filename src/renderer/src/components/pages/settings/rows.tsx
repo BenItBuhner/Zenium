@@ -455,7 +455,8 @@ function SliderControl({
  * control is the target, not the row. Disabled as a dependent row, the row takes §9.30's one .4
  * and its control keeps `disabled` for what it does but not its own .4 on top
  * (`.zen-settings-row-disabled .zen-v2-button:disabled { opacity: 1 }` and its siblings in
- * main.css), so a Use default or an Up button reads at .4, not .16.
+ * main.css, the Radix slider's `[data-disabled]` among them), so a shortcut row's Up button or
+ * the Share of installed RAM slider reads at .4, not .16.
  */
 function ControlRow({
   row,

@@ -1585,7 +1585,11 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
  * Settings › Downloads (#161's desktop section row for row, on the engine's `Settings.downloads`;
  * Chrome's `chrome://settings/downloads` rows in Chrome's words): **Location** – the folder new
  * downloads go to, by its path (`download.directory`, HB-20), with Change… through the host's
- * own picker (`download.chooseDirectory`, then `settings.update`) and Use default beside it –
+ * own picker (`download.chooseDirectory`, then `settings.update`) – **Use the default folder**,
+ * a plain action row that is there only while a folder has been picked (§10.4 as amended for
+ * #297: a one-tap way back to the default is worth a row once the user has left it; a row most
+ * users could never tap is not, so it is never a disabled row on the first screen; Chrome has
+ * no such row, Firefox's radio is the default itself) –
  * **Ask where to save each file** (the interface's label: Chrome's desktop string runs on
  * "before downloading", which wraps the phone's 320 px label column to a second line against
  * §9.2's one-line rule; Chrome's own phone label is the short "Ask where to save files", and the
@@ -1617,28 +1621,24 @@ function downloadsSection({ state, set, downloadDirectory }: SectionContext): Ro
           if (dir !== null) patch({ directory: dir })
         })
       }
-    },
-    {
+    }
+  ]
+  if (d.directory !== null) {
+    // The way back to the system folder, under the Location it undoes: a row only while there
+    // is a picked folder to leave (§10.4), never a disabled one while the default is in force.
+    saving.push({
       kind: 'action',
       id: 'download-directory-default',
       label: 'Use the default folder',
-      disabled: d.directory === null,
+      keywords: ['reset', 'system folder'],
       button: 'Use default',
       onPress: () => patch({ directory: null })
-    },
-    {
-      kind: 'switch',
-      id: 'ask-where-to-save',
-      label: 'Ask where to save each file',
-      keywords: ['before downloading', 'always ask', 'prompt', 'save as', 'choose'],
-      checked: d.askWhereToSave,
-      onChange: (v) => set({ askWhereToSave: v })
-    }
-  ]
+    })
+  }
   if (state.platform !== 'android') {
     // A desktop OS has a file manager to show the folder in; Android's picked folder is a
     // document tree with no such window.
-    saving.splice(1, 0, {
+    saving.push({
       kind: 'action',
       id: 'download-open-folder',
       label: 'Open the downloads folder',
@@ -1647,6 +1647,14 @@ function downloadsSection({ state, set, downloadDirectory }: SectionContext): Ro
       onPress: () => downloadsEngine.openFolder()
     })
   }
+  saving.push({
+    kind: 'switch',
+    id: 'ask-where-to-save',
+    label: 'Ask where to save each file',
+    keywords: ['before downloading', 'always ask', 'prompt', 'save as', 'choose'],
+    checked: d.askWhereToSave,
+    onChange: (v) => set({ askWhereToSave: v })
+  })
   if (d.autoOpenTypes.length > 0) {
     saving.push({
       kind: 'action',

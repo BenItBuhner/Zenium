@@ -139,21 +139,24 @@ export function insecureSummary(item: Pick<DownloadItem, 'danger'>): string {
 export interface DangerActionLabels {
   keep: string
   discard: string
-  /** Which of the two Chrome sets in the prominent (filled) style; null when neither. */
+  /**
+   * Which of the two is the filled primary (§6): the action the app recommends, which on every
+   * tier is the protective verb – the one that takes the file away. Never the danger ink: that
+   * is for actions that destroy the user's own data, and a verb is not danger-inked for sounding
+   * destructive. Kept a field rather than a constant so the renderers stay data-driven.
+   */
   prominent: 'keep' | 'discard' | null
 }
 
 /**
- * The Keep / Discard pair's labels for a verdict, as Chrome's bubble words them: Delete takes
- * the file away in every case; Keep releases it. A dangerous verdict makes Delete the prominent
- * one, the way Chrome fills it; a lesser warning leaves both plain.
+ * The Keep / Delete pair's labels for a flagged file, as Chrome's bubble words them: Delete takes
+ * the file away in every case; Keep releases it. Delete is the filled, recommended one on the
+ * dangerous and the suspicious tier alike (§6 as the lead widened it for #297: the primary is the
+ * protective verb; Chrome fills it on every tier of its bubble), Keep the plain secondary – so
+ * the verdict's tier no longer enters: it names the row's status and ink, not its pair.
  */
-export function dangerActionLabels(danger: DownloadDanger): DangerActionLabels {
-  return {
-    keep: 'Keep',
-    discard: 'Delete',
-    prominent: danger.level === 'dangerous' ? 'discard' : null
-  }
+export function dangerActionLabels(): DangerActionLabels {
+  return { keep: 'Keep', discard: 'Delete', prominent: 'discard' }
 }
 
 export interface DecisionLabels {
@@ -167,9 +170,11 @@ export interface DecisionLabels {
  * The pair a row waiting on the user shows, by its state (the interface's verbs table): a
  * flagged file's Keep / Delete (`dangerActionLabels`; the file is on disk in quarantine, so
  * Chrome's word is Delete), an `insecure-blocked` row's **Keep anyway** / **Discard** – nothing
- * is on disk, so not Delete; both plain, Discard trailing – with Keep anyway only while the
- * engine would honour it (`canKeepInsecureDownload`). Keep and Keep anyway are one command
- * (`download.acceptDanger`), Delete and Discard another (`download.discard`).
+ * is on disk, so not Delete – with Keep anyway only while the engine would honour it
+ * (`canKeepInsecureDownload`). Discard is the filled primary as Delete is on the other tiers
+ * (§6: the protective verb, trailing per §9.11), Keep anyway the plain secondary. Keep and Keep
+ * anyway are one command (`download.acceptDanger`), Delete and Discard another
+ * (`download.discard`).
  */
 export function decisionLabels(
   item: Pick<DownloadItem, 'state' | 'danger' | 'dangerAccepted'>
@@ -178,10 +183,10 @@ export function decisionLabels(
     return {
       keep: canKeepInsecureDownload(item) ? 'Keep anyway' : null,
       discard: 'Discard',
-      prominent: null
+      prominent: 'discard'
     }
   }
-  return dangerActionLabels(item.danger)
+  return dangerActionLabels()
 }
 
 /**
