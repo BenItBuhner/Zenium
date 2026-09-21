@@ -3767,10 +3767,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
          * The first element `__SELECTOR__` matches in the page, when it is drawn: its tag, size
          * and text (its shadow root's when it has one). An extension's UI the click injected.
          */
+        /**
+         * The element `__SELECTOR__` names, measured; a shadow host that sizes nothing itself (Avast's
+         * `div.aosp-class` under `<html>` holds a fixed-position frame in its shadow tree, so the host
+         * is 0x0 while the panel shows, as DeepL's trigger was on the desktop) is measured by the
+         * largest visible node of its shadow tree, and a frame's text is read from its document when
+         * it is ours to read (an `about:blank` frame the script filled).
+         */
         private const val INJECTED_UI =
-            "(function(){var el=document.querySelector(__SELECTOR__);if(!el)return JSON.stringify({pass:false});var r=el.getBoundingClientRect();var cs=getComputedStyle(el);" +
-                "var text=String((el.shadowRoot&&el.shadowRoot.textContent)||el.textContent||'').replace(/\\s+/g,' ').trim();" +
-                "return JSON.stringify({pass:r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none',tag:el.tagName.toLowerCase(),w:Math.round(r.width),h:Math.round(r.height),text:text.slice(0,120)})})()"
+            "(function(){var el=document.querySelector(__SELECTOR__);if(!el)return JSON.stringify({pass:false});" +
+                "var visible=function(e){var r=e.getBoundingClientRect();var cs=getComputedStyle(e);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'?r:null};" +
+                "var best=el,rect=visible(el);if(el.shadowRoot){var nodes=el.shadowRoot.querySelectorAll('*');for(var i=0;i<nodes.length;i++){var r=visible(nodes[i]);if(r&&(!rect||r.width*r.height>rect.width*rect.height)){best=nodes[i];rect=r}}}" +
+                "var text='';if(best.tagName==='IFRAME'){try{var d=best.contentDocument;text=d&&d.body?String(d.body.innerText||''):''}catch(e){}}" +
+                "if(!text)text=String((el.shadowRoot&&el.shadowRoot.textContent)||el.textContent||'');text=text.replace(/\\s+/g,' ').trim();" +
+                "return JSON.stringify({pass:!!rect,tag:best.tagName.toLowerCase(),w:rect?Math.round(rect.width):0,h:rect?Math.round(rect.height):0,text:text.slice(0,120),host:el.tagName.toLowerCase(),shadow:!!el.shadowRoot,hostBox:Math.round(el.getBoundingClientRect().width)+'x'+Math.round(el.getBoundingClientRect().height)})})()"
 
         /**
          * In GoFullPage's popup: whether the FileSystem API it stores captures through is there
@@ -3891,7 +3901,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "if(re.test(key)){found.push(key.replace(/\\s+/g,' ').trim().slice(0,40));var r=e.getBoundingClientRect();if(r.width>0&&r.height>0)shown++}if(e.shadowRoot)walk(e.shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
                 "return JSON.stringify({pass:found.length>0,n:found.length,visible:shown,tags:found.slice(0,6)})})()"
         /** A live page that is not serving the runner: a challenge, a refusal, a block page. */
-        private val CHALLENGE_WORDS = Regex("access denied|captcha|unusual traffic|verify (that )?you are|not a robot|attention required|just a moment|checking your browser|enable javascript|rate limit|error 403|forbidden|service unavailable|temporarily unavailable|something went wrong|blocked", RegexOption.IGNORE_CASE)
+        // Amazon's interstitial for an automated visitor ("Click the button below to continue
+        // shopping") is a challenge page too: the product page behind it never reaches Keepa.
+        private val CHALLENGE_WORDS = Regex("access denied|captcha|unusual traffic|verify (that )?you are|not a robot|attention required|just a moment|checking your browser|enable javascript|rate limit|error 403|forbidden|service unavailable|temporarily unavailable|something went wrong|blocked|continue shopping", RegexOption.IGNORE_CASE)
         /** DeepL: the Spanish phrase selected by script with the events a mouse's selection ends in (`mouseup`, `selectionchange`). */
         private const val DEEPL_SELECT =
             "(function(){var el=document.getElementById('phrase')||document.querySelector('p');if(!el)return 'no phrase';var r=document.createRange();r.selectNodeContents(el);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);var b=r.getBoundingClientRect();" +
