@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.content.Intent
+import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
@@ -43,16 +44,23 @@ import java.util.concurrent.TimeUnit
  *  4. Everything again in dark, for the design record: the reader document (its theme following
  *     the colour scheme), the sheet with the extras, the player.
  *
- * Frame stats ([FrameStats]; Bennett's rule of 2026-09-20, the Android program's PERF-3 scene
- * names as #259's driver uses them): the app menu opened under a finger and dismissed with a
- * back first, as the baseline (`menu-sheet-open` / `menu-sheet-close`), then the PR's own
- * scenes – the Text preferences sheet's open under the finger on the menu's row, its pull to the
- * expanded detent, and its dismiss on a back (`reader-prefs-sheet-open` / `-expand` / `-close`);
- * the Lines in focus and Text spacing pickers' open from the menulist and the pick that closes
- * them (`lines-in-focus-picker-open` / `-pick`, `text-spacing-picker-open` / `-pick`); the
- * player docking on Listen to this article and leaving on Close (`read-aloud-player-dock` /
- * `-close`). The table goes to `services-reader-android-frames.txt` and into the findings, the
- * scenes to `reader-ui-frames.json.txt`, the raw dumps to `services-reader-android-framestats.txt`.
+ * The jank record ([traceFrames], `frames.jsonl`; Bennett's rule of 2026-09-20, the Android
+ * program's PERF-3 harness of #268 and its scene names): the app menu opened under a finger and
+ * dismissed with a back first (`menu-sheet-open` / `menu-sheet-close`, `open`: the sheet main had
+ * before this PR, the table's point of reference – not a harness BASELINE, whose ratios ask for
+ * the same motion with the chrome's part removed, which a sheet's open has none of), then the
+ * PR's own scenes – the Text preferences sheet's open under the finger on the menu's row
+ * (`reader-prefs-sheet-open`, `open`), its pull to the expanded detent by its handle
+ * (`reader-prefs-sheet-expand`, `gesture`) and its dismiss on a back (`reader-prefs-sheet-close`,
+ * `open`); the Lines in focus and Text spacing pickers' open from the menulist and the pick that
+ * closes them (`lines-in-focus-picker-open` / `-pick`, `text-spacing-picker-open` / `-pick`, all
+ * `open`); the player docking on Listen to this article and leaving on Close
+ * (`read-aloud-player-dock` / `-close`, `open`). Each block is the finger (or the back) and
+ * [MOTION_MS] for what it does, nothing else – the node is found and the finger's point fixed
+ * BEFORE the block, the claim polled AFTER it ([scene]): a read of the tree or of the chrome
+ * inside the block would be work the app did not do for the user, in the very trace columns the
+ * budget reads. Every scene carries the chrome WebView's trace; the gate (`jankGate`, soft unless
+ * the workflow says hard) reports or fails them; the run's findings list the scenes one line each.
  *
  * Every control pressed inside a sheet or the player is a real injected finger with an
  * assertion (#198's rule); the URL field, when a step leaves it open, is closed with
@@ -63,7 +71,6 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
     override val tag = "ReaderUiDemo"
     private lateinit var server: DemoServer
     private lateinit var findings: File
-    private lateinit var frames: FrameStats
     private var failures = 0
     private var shots = 0
     private val host get() = (activity as MainActivity).host
@@ -96,7 +103,6 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
     override fun warmUp() {
         findings = File(out, "reader-ui-findings.txt")
         findings.writeText("Zenium Android reader UI checks (API ${Build.VERSION.SDK_INT}, ${width}x$height, density $density)\n\n")
-        frames = FrameStats(tag, app.packageName, out, MEDIA_PREFIX, ::shell)
         finding("demo server: ${server.selfCheck()}")
         val caps = coreState().getJSONObject("capabilities")
         finding("capabilities: readAloud=${caps.optBoolean("readAloud")}${if (engineless) " (OVERRIDDEN: no engine on this image)" else ""} phone=${caps.optBoolean("phone")}")
@@ -132,40 +138,132 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             dark()
             finding("\nend: ${describeTab()}${if (failures == 0) "" else "; $failures FAIL"}")
         } finally {
-            val table = frames.table(
-                "The PR's scenes: the Text preferences sheet (a §9.13 control panel over the reader document) opened from the app menu's row, pulled to its expanded detent and dismissed with a back; its Lines in focus and Text spacing pickers (§9.24 sheets over it) opened from the menulist and closed by the pick; the read-aloud player docking on Listen to this article and leaving on Close."
-            )
-            File(out, "$MEDIA_PREFIX-frames.txt").writeText(table)
-            // The shared pull step takes *.png / *.txt from the handshake dir: the JSON goes out as a .txt.
-            File(out, "reader-ui-frames.json.txt").writeText(frames.json().toString(2))
-            finding("\n$table")
+            framesFinding()
         }
     }
 
-    // --- 0. the baseline scene: the app menu ------------------------------------------------------
+    // --- the frame record ----------------------------------------------------------------------------
+
+    /**
+     * One of the PR's scenes through the harness's one helper ([traceFrames]: HWUI's frame stats
+     * for the process and the chrome WebView's trace around the block, one line of `frames.jsonl`
+     * and its table in `frames.txt` and the log). The block is `motion` – the finger, or the back –
+     * and [MOTION_MS] for what it does, nothing else (a frame nothing moves in is no frame, so a
+     * wait past the landing costs the reading nothing); what the motion is expected to do, `took`,
+     * is polled AFTER the block for up to `timeoutMs` more – #198's rule, every finger with its
+     * assertion, kept out of the frames. Answers whether `took` held; the caller says what a false
+     * means (a [touchFault] for a finger that went in, a check for a back).
+     */
+    private fun scene(name: String, kind: JankBudget.Kind, timeoutMs: Long = 6_000, took: () -> Boolean, motion: () -> Unit): Boolean {
+        traceFrames(name, kind) {
+            motion()
+            SystemClock.sleep(MOTION_MS)
+        }
+        return poll(timeoutMs, took)
+    }
+
+    private fun Finger.tap(at: PointF) = tap(at.x, at.y)
+
+    /**
+     * Where a finger lands on the node reading `label` (exactly, or with a description running
+     * on after it when `prefix`, as a switch row's text does), found now – before a scene's clock
+     * starts – and settled ([steadyBounds]); null, with a finding, when nothing on screen reads it
+     * or no part of it is inside the touchable window.
+     */
+    private fun fingerOn(label: String, prefix: Boolean = false, timeoutMs: Long = 8_000): PointF? {
+        val node = awaitNode(timeoutMs) { it == label || (prefix && (it.startsWith("$label ") || it.startsWith("$label\n"))) } ?: run {
+            finding("  nothing on screen reads '$label'")
+            return null
+        }
+        val bounds = steadyBounds(node) ?: run {
+            finding("  '$label' left the tree before the finger")
+            return null
+        }
+        return touchPoint(bounds) ?: run {
+            finding("  no part of '$label' ($bounds) is inside the touchable window")
+            null
+        }
+    }
+
+    /**
+     * Where a finger lands on the control of the §9.13 row labelled `label` – the 40 menulist, a
+     * button whose accessible name is the row's label (`V2Menulist`'s `aria-label`) – found now,
+     * before a scene's clock starts. The row's label span reads the same text and comes first in
+     * the tree (the first run's finger landed on it, and a label opens nothing), so the finger
+     * goes to the clickable node reading the label; when the tree offers none, to the menulist's
+     * rect as the chrome's DOM lays it out (OmniboxDemo's fallback). Null, with a finding, when
+     * there is nothing to touch.
+     */
+    private fun fingerOnControl(label: String): PointF? {
+        val reads = { node: AccessibilityNodeInfo ->
+            val text = (node.text ?: node.contentDescription)?.toString()
+            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label,"))
+        }
+        val control = findNodeWhere { node -> node.isClickable && reads(node) }
+        val point = control?.let { steadyBounds(it) }?.let { touchPoint(it) }
+            ?: menulistDomRect(label)?.let { touchPoint(it) }
+        if (point == null) {
+            finding("  nothing to touch for the $label control (tree node: ${control != null}; DOM rect: ${menulistDomRect(label)})")
+        } else {
+            Log.i(tag, "finger at ${point.x},${point.y} on the $label control (${if (control != null) "tree" else "DOM rect"})")
+        }
+        return point
+    }
+
+    /** The bar's Menu button, where [tapMenuButton] puts the finger: by label, else the default bar's end, on the pill's line. */
+    private fun menuButtonPoint(): PointF =
+        (findByLabel(MENU_LABEL) ?: waitFor(MENU_LABEL, 4_000))?.let { PointF(it.exactCenterX(), it.exactCenterY()) }
+            ?: PointF(width - 30 * density, pillY)
+
+    /**
+     * The record's scenes, one line each, into the findings: HWUI's summary and long stage, the
+     * trace's reading, the budget's verdict. The full tables are the harness's `frames.txt`, the
+     * record `frames.jsonl` (the workflow renders it into the job summary); settled once the run
+     * is over, by the harness.
+     */
+    private fun framesFinding() {
+        val scenes = frameScenes
+        if (scenes.isEmpty()) {
+            finding("\nframes: no scene was measured")
+            return
+        }
+        finding("\nframes (DemoHarness.traceFrames, PERF-3's harness; gate ${jankGate.key}; the emulator's software GPU makes every frame janky by construction: the trace columns, and the same scenes run to run on this one recipe, are the reading):")
+        for (s in scenes) {
+            val summary = s.summary
+            val hwui = if (summary == null) {
+                "not measured (no HWUI summary in the dump)"
+            } else {
+                "${summary.frames} frames, ${summary.janky} janky, p50 ${summary.p50Ms} p90 ${summary.p90Ms} p95 ${summary.p95Ms} p99 ${summary.p99Ms} ms, long stage ${s.analysis.dominant ?: "-"}"
+            }
+            val trace = s.trace?.let { "; ${it.describe()}" } ?: s.traceMissing?.let { "; trace: none read ($it)" } ?: ""
+            finding("  ${s.name} (${s.kind.key}, ${s.durationMs} ms): $hwui$trace; ${s.verdict.describe()}")
+        }
+    }
+
+    // --- 0. the reference scene: the app menu ---------------------------------------------------------
 
     /**
      * The app menu – the sheet main had before this PR – under a finger on the bar's Menu button,
-     * settled, then dismissed with a back: the before the PR's scenes read against, as two
-     * readings under the Android program's names ([FrameStats]).
+     * settled, then dismissed with a back: the two `open` readings the PR's scenes sit beside in
+     * the table, under the Android program's names. The button is found before the clock starts.
      */
     private fun baselineScenes() {
         ensureForeground()
-        val opened = frames.scene("menu-sheet-open") {
-            tapMenuButton()
-            poll(6_000) { chromeSurfaceUp() && findByLabel(MENU_HANDLE_LABEL) != null }
+        val menu = menuButtonPoint()
+        val opened = scene("menu-sheet-open", JankBudget.Kind.OPEN, took = { chromeSurfaceUp() && findByLabel(MENU_HANDLE_LABEL) != null }) {
+            Finger().tap(menu)
         }
-        check("PERF-3 baseline: the app menu opened under a finger (menu-sheet-open)", opened)
+        check("PERF-3 reference: the app menu opened under a finger (menu-sheet-open)", opened)
         if (!opened) {
+            touchFault("a touch on the Menu button opened no app menu (menu-sheet-open)")
             back()
             awaitSurface(up = false, timeoutMs = 8_000)
             return
         }
-        val closed = frames.scene("menu-sheet-close") {
+        val closed = scene("menu-sheet-close", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = { !chromeSurfaceUp() && findByLabel(MENU_HANDLE_LABEL) == null }) {
             back()
-            awaitSurface(up = false, timeoutMs = 8_000) && waitForGone(MENU_HANDLE_LABEL, 8_000)
         }
-        check("PERF-3 baseline: the app menu went on a back (menu-sheet-close)", closed)
+        check("PERF-3 reference: the app menu went on a back (menu-sheet-close)", closed)
         SystemClock.sleep(600)
     }
 
@@ -245,17 +343,14 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         beat()
         // Lines in focus: 3 -> 5 through its picker sheet. A §9.13 control-panel row's tap target
         // is its control – the 40 menulist reading the value ("3 lines") – not the row's label.
-        // The picker's open and the pick that closes it (§9.13, #247) are a scene each.
+        // The picker's open and the pick that closes it (§9.13, #247) are a scene each; the
+        // control and the row to pick are found before their scene's clock starts.
         revealPrefix("Lines in focus")
-        val picker = frames.scene("lines-in-focus-picker-open") {
-            touchControlExpecting("Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines", timeoutMs = 6_000) { rowNode("5 lines") != null && rowNode("1 line") != null }
-        }
+        val picker = pickerScene("lines-in-focus-picker-open", "Lines in focus", "the Lines in focus picker lists 1 / 3 / 5 lines") { rowNode("5 lines") != null && rowNode("1 line") != null }
         if (picker) {
             SystemClock.sleep(800)
             snap("lines-in-focus-picker")
-            frames.scene("lines-in-focus-picker-pick") {
-                touchTapLabelExpecting("5 lines", "the document's data-line-focus reads 5 and the picker closed", timeoutMs = 6_000) { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
-            }
+            pickScene("lines-in-focus-picker-pick", "5 lines", "the document's data-line-focus reads 5 and the picker closed") { readerProbe().optString("lineFocus") == "5" && rowNode("1 line") == null }
             probe = readerProbe()
             finding("  after 5 lines: document $probe; picker gone=${rowNode("1 line") == null}; the menulist reads ${menulistValue("Lines in focus")}")
             check("5 lines: the pick closes the picker on its own (§9.13) and the document's band is five lines", probe.optString("lineFocus") == "5" && rowNode("1 line") == null)
@@ -265,13 +360,9 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         // Text spacing: Normal -> Wider through its menulist (Column width has a "Wide" of its own;
         // "Wider" is spacing's alone).
         revealPrefix("Text spacing")
-        val spacing = frames.scene("text-spacing-picker-open") {
-            touchControlExpecting("Text spacing", "the Text spacing picker lists Wider", timeoutMs = 6_000) { rowNode("Wider") != null }
-        }
+        val spacing = pickerScene("text-spacing-picker-open", "Text spacing", "the Text spacing picker lists Wider") { rowNode("Wider") != null }
         if (spacing) {
-            frames.scene("text-spacing-picker-pick") {
-                touchTapLabelExpecting("Wider", "the document's data-spacing reads wider", timeoutMs = 6_000) { readerProbe().optString("spacing") == "wider" }
-            }
+            pickScene("text-spacing-picker-pick", "Wider", "the document's data-spacing reads wider") { readerProbe().optString("spacing") == "wider" }
             probe = readerProbe()
             finding("  after Wider: document $probe")
             check("Text spacing Wider: the document's data-spacing wider (the stylesheet's letter, word and line spacing)", probe.optString("spacing") == "wider")
@@ -285,7 +376,7 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         beat()
         // The system back closes the sheet alone (the `reader-prefs-sheet-close` scene); the
         // document keeps its extras.
-        val closed = backFromSheet(scene = true)
+        val closed = backFromSheet(measured = true)
         probe = readerProbe()
         finding("  back: sheet gone=$closed; document $probe")
         check("back closes the sheet and the document keeps line focus 5, syllables, wider spacing", closed && probe.optString("lineFocus") == "5" && probe.optString("syllables") == "true" && probe.optString("spacing") == "wider")
@@ -300,15 +391,17 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         finding("\nCT-13 / EDGE-11 Listen to this article from the sheet: the reader document read with the highlight in it")
         if (!openSheet()) return
         // The finger on Listen, the sheet leaving and the player docking under the document are
-        // one scene (`read-aloud-player-dock`: the sheet's slide out and the docked panel's in).
-        var sheetGone = false
-        var panel = false
-        frames.scene("read-aloud-player-dock") {
-            touchTapLabelExpecting("Listen to this article", "a session starts from the reader document", timeoutMs = 10_000) { readAloud() != null }
-            sheetGone = poll(6_000) { findNode { it == "Listen to this article" } == null }
-            panel = poll(8_000) { panelUp() }
-            sheetGone && panel
+        // one scene (`read-aloud-player-dock`: the sheet's slide out and the docked panel's in);
+        // the row is found before the clock starts, the session, the sheet and the panel read after.
+        val listen = fingerOn("Listen to this article")
+        if (listen != null) {
+            val docked = scene("read-aloud-player-dock", JankBudget.Kind.OPEN, timeoutMs = 10_000, took = { readAloud() != null && findNode { it == "Listen to this article" } == null && panelUp() }) {
+                Finger().tap(listen)
+            }
+            if (!docked) touchFault("a touch on Listen to this article did not take: no session from the reader document with the sheet gone and the player docked within ${MOTION_MS + 10_000} ms")
         }
+        val sheetGone = findNode { it == "Listen to this article" } == null
+        val panel = panelUp()
         val session = readAloud()
         finding("  real touch on Listen to this article: session ${session?.let { "up: status=${it.optString("status")} source=${it.optString("source")} sentences=${it.optInt("sentenceCount")}" } ?: "MISSING"}")
         check("the session's source is the reader document (source: reader)", session?.optString("source") == "reader")
@@ -341,11 +434,13 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             snap("player-reader-paused")
             beat()
         }
+        val close = fingerOn("Close")
         var gone = false
-        frames.scene("read-aloud-player-close") {
-            touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
-            gone = poll(6_000) { !panelUp() }
-            gone
+        if (close != null) {
+            gone = scene("read-aloud-player-close", JankBudget.Kind.OPEN, took = { readAloud() == null && !panelUp() }) {
+                Finger().tap(close)
+            }
+            if (!gone) touchFault("a touch on Close did not take: the session or the player still there after ${MOTION_MS + 6_000} ms")
         }
         finding("  after Close: session=${readAloud()}; panel gone=$gone")
         check("Close ends the session and the player leaves", readAloud() == null && gone)
@@ -392,7 +487,8 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
      * menu's own open and pull are the harness's ([openMenuItem]'s steps, outside any scene);
      * the finger on the row and the sheet coming up is the `reader-prefs-sheet-open` scene, the
      * pull to the expanded detent `reader-prefs-sheet-expand` – once per run, on the first sheet
-     * (`scenes`); the later opens, the dark record's among them, play without a reading.
+     * (`scenes`); the later opens, the dark record's among them, play without a reading. The row
+     * and the handle are found before their scene's clock starts.
      */
     private fun openSheet(scenes: Boolean = false): Boolean {
         tapMenuButton()
@@ -417,51 +513,88 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             return false
         }
         val sheetUp = { rowNode("Text size") != null }
-        val up = if (scenes) {
-            frames.scene("reader-prefs-sheet-open") { touchTapLabel(MENU_ITEM) && poll(8_000, sheetUp) }
+        val item = fingerOn(MENU_ITEM)
+        val up = if (item == null) {
+            false
+        } else if (scenes) {
+            scene("reader-prefs-sheet-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = sheetUp) { Finger().tap(item) }
         } else {
-            touchTapLabel(MENU_ITEM) && poll(8_000, sheetUp)
+            Finger().tap(item)
+            poll(8_000, sheetUp)
         }
-        if (!up) touchFault("a touch on $MENU_ITEM opened no sheet")
+        if (item != null && !up) touchFault("a touch on $MENU_ITEM opened no sheet")
         check("a real touch on $MENU_ITEM opens the sheet", up)
         SystemClock.sleep(1_000)
-        // The sheet opens at its peek, where the extras' rows sit below the fold and out of a
-        // finger's reach (the first run: no node for Syllables, Lines in focus clipped at the
-        // screen's bottom edge): pulled to its expanded detent by its handle, the way the app
-        // menu is (DemoHarness.openMenuItem), the nine rows fit the screen.
+        // The sheet opens at its peek (the lead's ruling on #265: a control panel tunes the page
+        // under it live, and a row cut at the fold is the pull's affordance), where the extras'
+        // rows sit below the fold and out of a finger's reach (the first run: no node for
+        // Syllables, Lines in focus clipped at the screen's bottom edge): pulled to its expanded
+        // detent by its handle, the way the app menu is (DemoHarness.openMenuItem), the nine rows
+        // fit the screen. The pull is the `gesture` scene: the drag and its release in the block,
+        // the handle's new place read after.
         if (up) {
-            val pull = {
-                val handle = findByLabel(SHEET_HANDLE_LABEL)
-                if (handle == null) {
-                    false
-                } else {
-                    val before = handle.top
+            val handle = findByLabel(SHEET_HANDLE_LABEL)
+            if (handle == null) {
+                finding("  no handle on screen reads $SHEET_HANDLE_LABEL; the sheet stays at its peek")
+            } else {
+                val before = handle.top
+                val drag = {
                     Finger().apply {
                         down(handle.exactCenterX(), handle.exactCenterY())
                         moveBy(0f, -0.4f * height, 130)
                         up()
                     }
-                    // Settled once the handle holds still above where it was.
-                    poll(4_000) { findByLabel(SHEET_HANDLE_LABEL)?.let { it.top < before - 40 * density } == true }
+                    Unit
                 }
+                // Settled once the handle holds still above where it was.
+                val expanded = { findByLabel(SHEET_HANDLE_LABEL)?.let { it.top < before - 40 * density } == true }
+                val pulled = if (scenes) {
+                    scene("reader-prefs-sheet-expand", JankBudget.Kind.GESTURE, timeoutMs = 4_000, took = expanded, motion = drag)
+                } else {
+                    drag()
+                    poll(4_000, expanded)
+                }
+                if (scenes) finding("  the sheet pulled to its expanded detent by its handle: $pulled")
             }
-            val pulled = if (scenes) frames.scene("reader-prefs-sheet-expand", pull) else pull()
-            if (scenes) finding("  the sheet pulled to its expanded detent by its handle: $pulled")
             SystemClock.sleep(2_000)
         }
         return up
     }
 
     /**
-     * The system back on the sheet, as the `reader-prefs-sheet-close` scene when `scene`; true
-     * once the sheet's title is gone and the host reports no surface.
+     * The system back on the sheet, as the `reader-prefs-sheet-close` scene when `measured`;
+     * true once the sheet's title is gone and the host reports no surface.
      */
-    private fun backFromSheet(scene: Boolean): Boolean {
-        val gone = {
-            back()
-            poll(6_000) { findNode { it == "Text preferences" } == null && !chromeSurfaceUp() }
-        }
-        return if (scene) frames.scene("reader-prefs-sheet-close", gone) else gone()
+    private fun backFromSheet(measured: Boolean): Boolean {
+        val gone = { findNode { it == "Text preferences" } == null && !chromeSurfaceUp() }
+        if (measured) return scene("reader-prefs-sheet-close", JankBudget.Kind.OPEN, took = gone) { back() }
+        back()
+        return poll(6_000, gone)
+    }
+
+    /**
+     * A picker's open as one `open` scene: the finger on the control in the row labelled `label`
+     * ([fingerOnControl], found before the clock starts), then `lists` – the picker's rows on
+     * screen – polled after the block. A [touchFault] when the finger went in and the picker
+     * never listed them; false and a finding when there was nothing to touch.
+     */
+    private fun pickerScene(name: String, label: String, effect: String, lists: () -> Boolean): Boolean {
+        val control = fingerOnControl(label) ?: return false
+        val listed = scene(name, JankBudget.Kind.OPEN, took = lists) { Finger().tap(control) }
+        if (!listed) touchFault("a touch on the $label control did not take: not $effect within ${MOTION_MS + 6_000} ms")
+        return listed
+    }
+
+    /**
+     * A pick that closes its picker (§9.13, #247) as one `open` scene: the finger on the row
+     * reading `row`, found before the clock starts, then `took` – the document changed and the
+     * picker gone – polled after the block. A [touchFault] when it never held.
+     */
+    private fun pickScene(name: String, row: String, effect: String, took: () -> Boolean): Boolean {
+        val point = fingerOn(row) ?: return false
+        val held = scene(name, JankBudget.Kind.OPEN, took = took) { Finger().tap(point) }
+        if (!held) touchFault("a touch on $row did not take: not $effect within ${MOTION_MS + 6_000} ms")
+        return held
     }
 
     /**
@@ -475,39 +608,6 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         SystemClock.sleep(1_200)
         return true
-    }
-
-    /**
-     * A real touch on the control of the §9.13 row labelled `label` – the 40 menulist, a button
-     * whose accessible name is the row's label (`V2Menulist`'s `aria-label`) – then up to
-     * `timeoutMs` for `took`, as [touchTapLabelExpecting]. The row's label span reads the same
-     * text and comes first in the tree (the first run's finger landed on it, and a label opens
-     * nothing), so the finger goes to the clickable node reading the label; when the tree offers
-     * none, to the menulist's rect as the chrome's DOM lays it out (OmniboxDemo's fallback).
-     * False, with a [touchFault], when the touch went in and `took` never held; false and a
-     * finding when there was nothing to touch.
-     */
-    private fun touchControlExpecting(label: String, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
-        val reads = { node: AccessibilityNodeInfo ->
-            val text = (node.text ?: node.contentDescription)?.toString()
-            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label,"))
-        }
-        val control = findNodeWhere { node -> node.isClickable && reads(node) }
-        val point = if (control != null) {
-            touchTapPoint(control)
-        } else {
-            menulistDomRect(label)?.let { rect ->
-                touchPoint(rect)?.also { Finger().tap(it.x, it.y) }
-            }
-        }
-        if (point == null) {
-            finding("  nothing to touch for the $label control (tree node: ${control != null}; DOM rect: ${menulistDomRect(label)})")
-            return false
-        }
-        Log.i(tag, "touch at ${point.x},${point.y} on the $label control (${if (control != null) "tree" else "DOM rect"})")
-        if (poll(timeoutMs, took)) return true
-        touchFault("a touch on the $label control did not take: not $effect within $timeoutMs ms")
-        return false
     }
 
     /** The menulist in the row labelled `label`, as the chrome's DOM lays it out, in screen px; null when there is none. */
@@ -695,5 +795,12 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
         private const val PANEL_LABEL = "Read aloud"
         /** The Text preferences sheet's handle (`ReaderPreferencesSheet`'s `handleLabel`). */
         private const val SHEET_HANDLE_LABEL = "Resize text preferences"
+        /**
+         * What a measured scene's block gives the motion after the finger (or the back): the
+         * sheet's half-second spring at the emulator's pace, with room, as the sheet recede demo's
+         * measured menu cycle gives it; the frames after the landing are not rendered and cost the
+         * reading nothing. The claim is polled after it.
+         */
+        private const val MOTION_MS = 3_000L
     }
 }
