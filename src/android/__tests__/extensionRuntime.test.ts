@@ -1113,6 +1113,84 @@ describe('AndroidExtensionRuntime: scripting into frames', () => {
     ])
     expect(String(gone.error)).toContain('No frame with id 1')
   })
+
+  it("awaits an injection whose value is a promise: the frame's execSettled settles the ticket the host answered", async () => {
+    const h = harness()
+    await h.runtime.attach(record(h))
+    backgroundUp(h, 'bg1')
+    hello(h, 'docA.1', 'content')
+    hello(h, 'docB.1', 'content', { top: false, url: 'https://frame.example/inner' })
+    const tabId = h.runtime.api.tabs.chromeIdFor('t1')
+    // An async func (Image Downloader's `findImages`): the bootstrap answers a ticket and the
+    // frame's endpoint settles it when the promise does; the caller sees the settled value.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.1', ep: 'docA.1' })
+    const id = nextCallId()
+    message(h, 'bg1', {
+      t: 'call',
+      id,
+      ns: 'scripting',
+      method: 'executeScript',
+      args: [{ target: { tabId }, funcSource: 'async () => findImages()' }]
+    })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    // A settle from another endpoint of the extension is not this ticket's.
+    message(h, 'docB.1', { t: 'execSettled', ticket: 'n.1', ok: true, result: 'wrong frame' })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)).toBeUndefined()
+    message(h, 'docA.1', {
+      t: 'execSettled',
+      ticket: 'n.1',
+      ok: true,
+      result: { allImages: ['https://example.com/a.png'], linkedImages: [] }
+    })
+    await until(() => h.kt.to('bg1').some((m) => m.t === 'reply' && m.id === id))
+    const reply = h.kt.to('bg1').find((m) => m.t === 'reply' && m.id === id)
+    expect(reply?.ok).toBe(true)
+    expect(reply?.result).toEqual([
+      {
+        frameId: 0,
+        documentId: '',
+        result: { allImages: ['https://example.com/a.png'], linkedImages: [] }
+      }
+    ])
+    // A rejection settles as the call's error.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.2', ep: 'docA.1' })
+    const failing = call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => { throw new Error("no images") }' }
+    ])
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    message(h, 'docA.1', { t: 'execSettled', ticket: 'n.2', ok: false, error: 'no images' })
+    expect(String((await failing).error)).toBe('no images')
+    // The settle can cross the host ahead of the exec reply: it waits for its ticket.
+    message(h, 'docA.1', { t: 'execSettled', ticket: 'n.3', ok: true, result: 3 })
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.3', ep: 'docA.1' })
+    const early = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => 3' }
+    ])
+    expect(early.result).toEqual([{ frameId: 0, documentId: '', result: 3 }])
+    // The frame goes while its promise is pending: Chrome's rejection, and nothing waits on.
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.4', ep: 'docA.1' })
+    const orphaned = call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => new Promise(() => {})' }
+    ])
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    h.runtime.onGone(['docA.1'])
+    expect(String((await orphaned).error)).toBe('The frame was removed.')
+    // A ticket naming an endpoint that is not the extension's in that tab is refused.
+    hello(h, 'docA.2', 'content')
+    h.kt.execAnswer = () => ({ __zenExtPending: 'n.5', ep: 'bg1' })
+    const forged = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, funcSource: 'async () => 5' }
+    ])
+    expect(String(forged.error)).toBe('The frame was removed.')
+    // A plain value is answered as before.
+    h.kt.execAnswer = () => ({ title: 'plain' })
+    const plain = await call(h, 'bg1', 'scripting', 'executeScript', [
+      { target: { tabId }, files: ['scraper.js'] }
+    ])
+    expect(plain.result).toEqual([{ frameId: 0, documentId: '', result: { title: 'plain' } }])
+  })
 })
 
 describe('AndroidExtensionRuntime: an extension page open as a tab', () => {

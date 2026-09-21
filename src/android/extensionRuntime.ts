@@ -368,6 +368,31 @@ const isServiceWorkerClient = (endpoint: Endpoint): boolean =>
   endpoint.context !== 'content' &&
   endpoint.context !== 'userScript'
 
+/** Chrome's `scripting.executeScript` rejection when the frame goes before the injection's promise settles. */
+const FRAME_REMOVED = 'The frame was removed.'
+
+/** Settles kept ahead of their exec reply, at most (a frame that never gets its reply cannot fill the map). */
+const MAX_EARLY_SETTLES = 256
+
+/** How an injection's promise settled, as the frame reported it (`execSettled`). */
+type ExecOutcome = { ok: true; result: unknown } | { ok: false; error: string }
+
+/**
+ * The bootstrap's answer for an injection whose value was a promise (`settleLater` in
+ * `extensionBootstrap.ts`): the ticket the frame settles later, and the endpoint it settles over.
+ */
+function pendingExecOf(value: unknown): { ticket: string; ep: string } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const marker = value as { __zenExtPending?: unknown; ep?: unknown }
+  if (typeof marker.__zenExtPending !== 'string' || typeof marker.ep !== 'string') return null
+  return { ticket: marker.__zenExtPending, ep: marker.ep }
+}
+
+function settledValue(outcome: ExecOutcome): unknown {
+  if (outcome.ok) return outcome.result
+  throw new Error(outcome.error)
+}
+
 function emptyData(): RuntimeData {
   return {
     version: 1,
@@ -466,6 +491,17 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
   /** Extensions whose `runtime.onInstalled` waits for the first background ready: previous version or null. */
   private readonly installEvents = new Map<string, string | null>()
   private readonly startupFired = new Set<string>()
+  /**
+   * `exec` calls whose injection returned a promise: ticket → the endpoint the frame settles it
+   * over and the caller waiting (`scripting.executeScript` awaits the settled value as Chrome
+   * does). A settle that arrives before its exec reply (the two cross the host on different
+   * paths) waits in `earlySettles` for the ticket.
+   */
+  private readonly pendingExecs = new Map<
+    string,
+    { ep: string; resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >()
+  private readonly earlySettles = new Map<string, { ep: string; outcome: ExecOutcome }>()
   /**
    * `chrome_settings_overrides.search_provider` of each attached extension that declares one:
    * the engines reach the browser's search model while the extension is attached (installed and
@@ -1207,7 +1243,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     )
   }
 
-  exec(request: ExecRequest): Promise<unknown> {
+  /**
+   * One injection into one frame, as the host evaluates it; an injection whose value is a promise
+   * (an `async` func, a script ending in one) comes back as a ticket the frame settles later over
+   * its endpoint (`execSettled`), and the call waits for that as Chrome's does.
+   */
+  async exec(request: ExecRequest): Promise<unknown> {
     // A subframe is named to the host by its document id (the first segment of every endpoint
     // id of that document), which the frame's own bridge endpoint carries; the main frame needs none.
     let doc: string | null = null
@@ -1216,14 +1257,12 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         .of(request.extensionId, 'content')
         .find((e) => e.tabId === request.tabId && e.frameId === request.frameId)
       if (!endpoint)
-        return Promise.reject(
-          new Error(
-            `No frame with id ${request.frameId} in tab ${this.api.tabs.chromeIdFor(request.tabId)}.`
-          )
+        throw new Error(
+          `No frame with id ${request.frameId} in tab ${this.api.tabs.chromeIdFor(request.tabId)}.`
         )
       doc = endpoint.id.split('.')[0] ?? null
     }
-    return this.bridge.call<unknown>('ext.exec', {
+    const value = await this.bridge.call<unknown>('ext.exec', {
       tabId: request.tabId,
       ext: request.extensionId,
       doc,
@@ -1234,6 +1273,54 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       funcSource: request.funcSource,
       args: request.args
     })
+    const pending = pendingExecOf(value)
+    if (!pending) return value
+    // The frame's endpoint settles the ticket; it must be the extension's, in that tab.
+    const endpoint = this.router.endpoint(pending.ep)
+    if (!endpoint || endpoint.extensionId !== request.extensionId || endpoint.tabId !== request.tabId)
+      throw new Error(FRAME_REMOVED)
+    const early = this.earlySettles.get(pending.ticket)
+    if (early) {
+      this.earlySettles.delete(pending.ticket)
+      if (early.ep !== pending.ep) throw new Error(FRAME_REMOVED)
+      return settledValue(early.outcome)
+    }
+    return new Promise<unknown>((resolve, reject) => {
+      this.pendingExecs.set(pending.ticket, { ep: pending.ep, resolve, reject })
+    })
+  }
+
+  /**
+   * `execSettled` from a frame: the promise an injection returned has settled. The ticket's
+   * waiting caller gets the value (or the rejection); a settle ahead of its exec reply is kept
+   * for it, and dropped with the endpoint when the frame goes first.
+   */
+  private onExecSettled(ep: string, message: Record<string, unknown>): void {
+    const ticket = String(message.ticket ?? '')
+    if (!ticket) return
+    const outcome: ExecOutcome =
+      message.ok === true
+        ? { ok: true, result: message.result ?? null }
+        : { ok: false, error: String(message.error ?? 'The script failed.') }
+    const pending = this.pendingExecs.get(ticket)
+    if (!pending) {
+      if (this.earlySettles.size < MAX_EARLY_SETTLES) this.earlySettles.set(ticket, { ep, outcome })
+      return
+    }
+    if (pending.ep !== ep) return
+    this.pendingExecs.delete(ticket)
+    if (outcome.ok) pending.resolve(outcome.result)
+    else pending.reject(new Error(outcome.error))
+  }
+
+  /** The frame of a pending injection went (navigated, closed): its caller hears Chrome's word for it. */
+  private dropPendingExecs(eps: string[]): void {
+    for (const [ticket, pending] of this.pendingExecs) {
+      if (!eps.includes(pending.ep)) continue
+      this.pendingExecs.delete(ticket)
+      pending.reject(new Error(FRAME_REMOVED))
+    }
+    for (const [ticket, early] of this.earlySettles) if (eps.includes(early.ep)) this.earlySettles.delete(ticket)
   }
 
   async readCookies(containerId: string, url: string): Promise<JarReading> {
@@ -1566,6 +1653,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       case 'sw':
         this.onServiceWorkerMessage(endpoint, message)
         return
+      case 'execSettled':
+        this.onExecSettled(ep, message)
+        return
       default:
         this.router.handle(ep, message)
     }
@@ -1716,6 +1806,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   onGone(eps: string[]): void {
     const owners = new Set<string>()
+    this.dropPendingExecs(eps)
     for (const ep of eps) {
       const endpoint = this.router.endpoint(ep)
       this.router.unregister(ep)

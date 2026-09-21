@@ -879,7 +879,72 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
-    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
+    return settleLater(
+      scope,
+      (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
+    )
+  }
+
+  let execTickets = 0
+
+  /**
+   * Chrome awaits an injection whose value is a promise – an `async` func (Image Downloader's
+   * `findImages`), a script whose last statement is one – and answers the settled value. The
+   * host's evaluation returns synchronously and would serialize the promise as `{}`, so a
+   * thenable comes back as a ticket the runtime holds (`exec` in `extensionRuntime.ts`) and the
+   * frame settles it over the extension's endpoint (`execSettled`, a bridge message like
+   * `mainScript`) when the promise does; a value the bridge cannot carry (a DOM node, a cycle)
+   * settles as null, a rejection with its message. A scope without an engine of the extension's
+   * in this copy (a `world: "MAIN"` injection on a WebView with worlds) has no bridge to settle
+   * over and answers the value as it is.
+   */
+  function settleLater(scope: Scope, value: unknown): unknown {
+    if (
+      (typeof value !== 'object' || value === null) &&
+      typeof value !== 'function'
+    )
+      return value
+    let then: unknown
+    try {
+      then = (value as { then?: unknown }).then
+    } catch {
+      return value
+    }
+    if (typeof then !== 'function') return value
+    const engine =
+      scope.engine ??
+      scopes.get(`${scope.ext.id}/with/content`)?.engine ??
+      scopes.get(`${scope.ext.id}/world/content`)?.engine ??
+      null
+    if (!engine) return value
+    let ep: string | null = null
+    for (const [id, candidate] of engines) if (candidate === engine) ep = id
+    if (ep === null) return value
+    const ticket = `${nonce}.${++execTickets}`
+    let settled = false
+    const settle = (ok: boolean, result: unknown, error: string): void => {
+      if (settled) return
+      settled = true
+      let carried: unknown = result
+      if (ok && result !== undefined) {
+        try {
+          primordials.stringify(result)
+        } catch {
+          carried = null
+        }
+      }
+      engine.post({ t: 'execSettled', ticket, ok, result: carried ?? null, error })
+    }
+    try {
+      ;(then as (a: (v: unknown) => void, b: (e: unknown) => void) => unknown).call(
+        value,
+        (v) => settle(true, v, ''),
+        (e) => settle(false, null, e instanceof Error ? e.message : String(e))
+      )
+    } catch (e) {
+      settle(false, null, e instanceof Error ? e.message : String(e))
+    }
+    return { __zenExtPending: ticket, ep }
   }
 
   // --- matching and scheduling -----------------------------------------------------------------
