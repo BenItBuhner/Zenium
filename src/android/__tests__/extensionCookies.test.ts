@@ -163,6 +163,47 @@ describe('chrome.cookies over the WebView jar', () => {
     })
   })
 
+  it('sets a cookie under a path the URL is not on and answers it (Keepa’s /extension cookies through https://keepa.com)', async () => {
+    const h = harness()
+    await withCookies(h)
+    const set = await call(h, 'bg1', 'cookies', 'set', [
+      {
+        url: 'https://www.example.com',
+        path: '/extension',
+        name: 'optOut_crawl',
+        value: '0',
+        secure: true,
+        expirationDate: 4102444800
+      }
+    ])
+    expect(set.ok).toBe(true)
+    expect(set.result).toMatchObject({
+      name: 'optOut_crawl',
+      value: '0',
+      path: '/extension',
+      domain: 'www.example.com',
+      hostOnly: true,
+      secure: true
+    })
+    // Stored once, under its own path; a request to the site's root does not carry it.
+    expect(h.kt.jar().cookies.map((c) => `${c.name}@${c.path}`)).toEqual(['optOut_crawl@/extension'])
+    expect(h.kt.jar().pairs('https://www.example.com/')).toEqual([])
+    expect(h.kt.jar().pairs('https://www.example.com/extension/x')).toEqual(['optOut_crawl=0'])
+    expect(events(h, 'bg1', 'cookies.onChanged')).toHaveLength(1)
+
+    // The second set of the same cookie is an overwrite, found under the path too.
+    await call(h, 'bg1', 'cookies', 'set', [
+      { url: 'https://www.example.com', path: '/extension', name: 'optOut_crawl', value: '1' }
+    ])
+    const changed = events(h, 'bg1', 'cookies.onChanged')
+    expect(changed).toHaveLength(3)
+    expect((changed[1].args as unknown[])[0]).toMatchObject({
+      removed: true,
+      cause: 'overwrite',
+      cookie: { name: 'optOut_crawl', value: '0', path: '/extension' }
+    })
+  })
+
   it('reports a refused write as Chrome does', async () => {
     const h = harness()
     await withCookies(h)
