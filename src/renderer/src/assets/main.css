@@ -783,8 +783,49 @@
 
   * {
     box-sizing: border-box;
+  }
+
+  /*
+   * Scrollbars (v2 §9.20, the #265 verdict). A finger's chrome – Android's WebView – keeps the
+   * UA's own overlay bar, which hides itself, thinned and in the theme's ink through the standard
+   * properties. A mouse's chrome – the desktop – would get Chromium's classic buttoned bar, a
+   * defect inside a `--v2-panel`: every scrolling chrome surface draws the thin overlay bar
+   * instead – an 8 gutter, no buttons, no track, the thumb a 6 pill in the surface family's ink
+   * at the spec's 30 % (`--v2-control-text`: the page ink on a page, the theme's on the window,
+   * §9.29; the page ink where no family is set), the deemphasised ink under the pointer. One
+   * rule, here at the chassis, on every element of the chrome document: popover bodies, menus
+   * and menulists, the Settings tab's panes, the tab strip, the overlays' bodies, the pages.
+   * Chromium 121+ paints the `::-webkit-scrollbar` parts only where `scrollbar-width` and
+   * `scrollbar-color` are both `auto` – the spec's `scrollbar-width: thin` alone brings the
+   * buttoned bar back – so the desktop leaves the standard properties at their initial value
+   * and no component states either (lib/__tests__/v2Tokens.test.ts guards it); a scroller that
+   * hides its bar by design says `scrollbar-width: none`. Web content is its own document and
+   * keeps the OS's bar.
+   */
+  :root[data-pointer='coarse'] * {
     scrollbar-width: thin;
     scrollbar-color: rgb(var(--zen-fg-rgb) / 0.25) transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-button {
+    display: none;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-track,
+  :root[data-pointer='fine'] ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);
+    background-clip: padding-box;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
   }
 }
 
@@ -3725,7 +3766,6 @@
     position: fixed;
     z-index: 80;
     outline: none;
-    scrollbar-width: thin;
     will-change: transform;
   }
   /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
@@ -4034,7 +4074,6 @@
     margin-inline: -16px;
     padding-block: var(--v2-ring-room);
     overflow-y: auto;
-    scrollbar-width: thin;
   }
   .zen-bm-pick-row[aria-selected='true'] {
     background: var(--v2-selected);
@@ -7142,7 +7181,6 @@
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
   outline: none;
-  scrollbar-width: thin;
 }
 .zen-v2-menulist-option {
   display: flex;
@@ -7210,10 +7248,15 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 24px;
-  scrollbar-width: none;
 }
-.zen-settings-scroll::-webkit-scrollbar {
-  display: none;
+/*
+ * The panes' bars (§9.20): on the desktop the chassis's thin overlay bar, drawn by the base
+ * layer's rule; a finger's Settings (Android's) hides its own, the WebView's overlay bar being
+ * the phone's.
+ */
+:root[data-pointer='coarse'] .zen-settings-scroll,
+:root[data-pointer='coarse'] .zen-settings-nav {
+  scrollbar-width: none;
 }
 
 /* Landing (§10.2): a title block, the search field, the categories. */
@@ -7933,10 +7976,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 0 24px;
-  scrollbar-width: none;
-}
-.zen-settings-nav::-webkit-scrollbar {
-  display: none;
 }
 .zen-settings-nav-title {
   display: flex;

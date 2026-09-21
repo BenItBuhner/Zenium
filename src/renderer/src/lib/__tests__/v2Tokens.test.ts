@@ -57,6 +57,10 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // the weight tokens while the setting is on; unlayered, between the focus ring and the first
   // components layer, so it is cut out before the ring's span.
   ['/*\n * The bold-text setting (A11Y-05', '@layer components {'],
+  // The overlay scrollbar's thumb (§9.20): the base-layer floor under every scroller of a mouse's
+  // chrome, reading the control role's ink (§9.29) at rest and the deemphasised ink under the
+  // pointer; it ends where the focus ring's comment begins.
+  ["  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb {", "/*\n * The chrome's focus ring"],
   // The chrome's focus ring (§1, a11y-10): the base-layer floor under every control of the chrome
   // document, reading the ring token, and the one text-selection rule after it (§9.6, reading
   // `--v2-selection`); it ends where the first components layer begins.
@@ -1021,6 +1025,96 @@ describe('text selection (§9.6)', () => {
         readFileSync(join(rendererRoot, file), 'utf8'),
         `${file} sets ::selection`
       ).not.toMatch(/::selection/)
+    }
+  })
+})
+
+describe('the overlay scrollbar (§9.20)', () => {
+  const rendererRoot = fileURLToPath(new URL('../../', import.meta.url))
+  const sources = readdirSync(rendererRoot, { recursive: true, encoding: 'utf8' })
+    .map((f) => f.split('\\').join('/'))
+    .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+  const desktop = ":root[data-pointer='fine'] "
+  /** The chassis rule's declarations for one `::-webkit-scrollbar` part, in source order. */
+  const part = (name: string): string[] => {
+    const at = bare.indexOf(`${desktop}::-webkit-scrollbar${name} {`)
+    expect(at, `the chassis states ::-webkit-scrollbar${name}`).toBeGreaterThanOrEqual(0)
+    // In the base layer, the floor under every scroller of the chrome document.
+    expect(nesting(at), `::-webkit-scrollbar${name} sits in @layer base`).toBe(1)
+    const body = bare.slice(bare.indexOf('{', at) + 1, bare.indexOf('}', at))
+    return (body.match(/^ {4}[a-z-]+:[^;]+;/gm) ?? []).map((d) => d.trim())
+  }
+
+  it('is one chassis rule on every scroller of a mouse’s chrome: an 8 gutter, no buttons, no track, the thumb the family’s ink at 30 %', () => {
+    expect(part('')).toEqual(['width: 8px;', 'height: 8px;', 'background: transparent;'])
+    expect(part('-button')).toEqual(['display: none;'])
+    // The track and the corner are one rule; the corner's selector is read here through the track's.
+    expect(part("-track,\n  :root[data-pointer='fine'] ::-webkit-scrollbar-corner")).toEqual([
+      'background: transparent;'
+    ])
+    // The thumb: the control role's ink (the page ink on a page, the theme's on the window,
+    // §9.29; the page ink where no family is set) at the spec's 30 %, a pill 1 inside the gutter.
+    expect(part('-thumb')).toEqual([
+      'border: 1px solid transparent;',
+      'border-radius: 4px;',
+      'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);',
+      'background-clip: padding-box;'
+    ])
+    // Under the pointer, the deemphasised ink – a token, not a shade of its own.
+    expect(part('-thumb:hover')).toEqual([
+      'background-color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));'
+    ])
+  })
+
+  it('leaves the standard properties to a finger’s chrome alone: Chromium paints the parts only where both are auto', () => {
+    // The one `thin` and the one `scrollbar-color` in the renderer are the coarse pointer's
+    // (Android's WebView, whose bar is its own overlay); on the desktop neither is stated, since
+    // Chromium 121+ ignores every `::-webkit-scrollbar` part where either is not `auto`.
+    const coarse = bare.indexOf(":root[data-pointer='coarse'] * {")
+    expect(coarse).toBeGreaterThanOrEqual(0)
+    expect(nesting(coarse)).toBe(1)
+    const body = bare.slice(bare.indexOf('{', coarse) + 1, bare.indexOf('}', coarse))
+    expect(body).toContain('scrollbar-width: thin;')
+    expect(body).toContain('scrollbar-color: rgb(var(--zen-fg-rgb) / 0.25) transparent;')
+    for (const file of sources) {
+      const text = readFileSync(join(rendererRoot, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      const widths = [...text.matchAll(/scrollbar-width\s*:\s*([a-z]+)/g)].map((m) => m[1])
+      const colors = text.match(/scrollbar-color\s*:/g) ?? []
+      if (file === 'assets/main.css') {
+        expect(widths.filter((w) => w !== 'none')).toEqual(['thin'])
+        expect(colors).toHaveLength(1)
+      } else {
+        // A component hides a bar by design (`none`) or says nothing; it never thins or colours one.
+        expect(
+          widths.filter((w) => w !== 'none'),
+          `${file} sets scrollbar-width`
+        ).toEqual([])
+        expect(colors, `${file} sets scrollbar-color`).toHaveLength(0)
+      }
+      // No `::-webkit-scrollbar` styling of a component's own: only the chassis draws a bar, and a
+      // hidden bar's `display: none` companion is the most a component states.
+      const webkit = [
+        ...text.matchAll(/([^\n{]*)::-webkit-scrollbar[a-z-]*(?::hover)?[^{]*\{([^}]*)\}/g)
+      ]
+      for (const m of webkit) {
+        if (m[1].includes(desktop.trim())) continue
+        expect(m[2].trim(), `${file}: ${m[0].trim().split('\n')[0]}`).toBe('display: none;')
+      }
+    }
+  })
+
+  it('reaches the Settings tab’s panes: their hide is the phone’s only', () => {
+    // The nav column and the scroll pane said `scrollbar-width: none` for every pointer; the
+    // desktop's panes now draw the chassis bar and only a finger's Settings hides its own.
+    const at = bare.indexOf(":root[data-pointer='coarse'] .zen-settings-scroll,")
+    expect(at).toBeGreaterThanOrEqual(0)
+    expect(bare.slice(at, bare.indexOf('}', at))).toMatch(
+      /^:root\[data-pointer='coarse'\] \.zen-settings-scroll,\n:root\[data-pointer='coarse'\] \.zen-settings-nav \{\n {2}scrollbar-width: none;\n$/
+    )
+    for (const cls of ['.zen-settings-scroll', '.zen-settings-nav']) {
+      const from = bare.search(new RegExp(`^\\${cls} \\{`, 'm'))
+      expect(from, `${cls}'s own rule`).toBeGreaterThanOrEqual(0)
+      expect(bare.slice(from, bare.indexOf('}', from))).not.toMatch(/scrollbar/)
     }
   })
 })
