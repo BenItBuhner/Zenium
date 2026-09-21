@@ -147,9 +147,7 @@ export class FullscreenService {
       const win = tabs.windowFor(tabId)
       if (win.htmlFullscreenTabId !== tabId) return
       this.snooze(key)
-      view.showHint?.(
-        htmlFullscreenHint(host, this.keyboardLocked.has(tabId), this.browser.darkScheme())
-      )
+      view.showHint?.(htmlFullscreenHint(this.keyboardLocked.has(tabId), this.browser.darkScheme()))
     })
   }
 

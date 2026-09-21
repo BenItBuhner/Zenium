@@ -1,5 +1,5 @@
-import type { JSX } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import type { JSX, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Minimize } from 'lucide-react'
 import type { Events, Rect, UIState } from '@shared/types'
 import { PRIVATE_CONTAINER_ID } from '@shared/types'
@@ -291,12 +291,16 @@ function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }
 /** What main's cursor tracking reports (the `compact.reveal` event, as `zen-compact-reveal`). */
 type ChromeReveal = Events['compact.reveal']
 
+/** The hidden toolbar's slide, in and out (Edge's reveal is about this long); `.zen-toolbar-reveal`. */
+const TOOLBAR_SLIDE_MS = 200
+
 /**
  * The top toolbar while hidden – compact mode with the toolbar switch on, or the window's
- * fullscreen: the cursor on the top edge brings it (and the bookmarks bar) out over a picture
- * of the page, as the sidebar comes out at its side, and it goes 300 ms after the cursor leaves.
- * Main reports the edge (the page view takes the pointer there); the strip below catches the
- * cursor where the chrome still has a gutter.
+ * fullscreen: the cursor on the top edge slides it (and the bookmarks bar) down over a picture
+ * of the page, as the sidebar comes out at its side, and it slides back 300 ms after the cursor
+ * leaves. The picture stays under it until the slide out is done, so the toolbar never crosses
+ * the live page view. Main reports the edge (the page view takes the pointer there); the strip
+ * below catches the cursor where the chrome still has a gutter.
  */
 function CompactToolbar({
   state,
@@ -314,11 +318,18 @@ function CompactToolbar({
   const urlbarOpen = uiStore.use((s) => s.urlbar.open)
   const overlay = uiStore.use((s) => s.overlay)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const slideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const revealing = useRef(false)
   const hovering = useRef(false)
+  // The toolbar is sliding away (the pose is off while it still stands, until it unmounts).
+  const [closing, setClosing] = useState(false)
   const show = useCallback((): void => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = null
+    // A slide out under way turns around where it is.
+    if (slideTimer.current) clearTimeout(slideTimer.current)
+    slideTimer.current = null
+    setClosing(false)
     if (uiStore.get().toolbarHover || revealing.current) return
     revealing.current = true
     void captureActiveTab(tab?.id ?? null).then(() => {
@@ -333,8 +344,15 @@ function CompactToolbar({
       // The toolbar stays while something it opened is up (the URL bar, an overlay).
       const ui = uiStore.get()
       if (ui.overlay !== 'none' || ui.urlbar.open || ui.menu || ui.zoomBubble) return
-      uiStore.set({ toolbarHover: false })
-      invalidateSnapshot()
+      if (!ui.toolbarHover || slideTimer.current) return
+      // Slide out over the page's picture; the live page comes back once the toolbar is gone.
+      setClosing(true)
+      slideTimer.current = setTimeout(() => {
+        slideTimer.current = null
+        setClosing(false)
+        uiStore.set({ toolbarHover: false })
+        invalidateSnapshot()
+      }, TOOLBAR_SLIDE_MS)
     }, 300)
   }, [])
   useEffect(() => {
@@ -361,6 +379,7 @@ function CompactToolbar({
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
+      if (slideTimer.current) clearTimeout(slideTimer.current)
       if (uiStore.get().toolbarHover) {
         uiStore.set({ toolbarHover: false })
         invalidateSnapshot()
@@ -386,7 +405,7 @@ function CompactToolbar({
     >
       <div className="h-1.5" />
       {open && (
-        <div className="px-2">
+        <SlideDown closing={closing}>
           <Toolbar
             state={state}
             tab={tab}
@@ -407,8 +426,37 @@ function CompactToolbar({
           >
             {showBar && <BookmarksBar state={state} tab={tab} className="px-1" />}
           </Toolbar>
-        </div>
+        </SlideDown>
       )}
+    </div>
+  )
+}
+
+/**
+ * The hidden toolbar's slide (`.zen-toolbar-reveal`): mounted in its hidden pose, open a frame
+ * later so the transition has a start, and off again while `closing` – it unmounts once the
+ * slide out is done, which is also what resets it for the next reveal.
+ */
+function SlideDown({ closing, children }: { closing: boolean; children: ReactNode }): JSX.Element {
+  const [entered, setEntered] = useState(false)
+  useEffect(() => {
+    // Two frames: the hidden pose must be the computed style once before the open one.
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => setEntered(true))
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  }, [])
+  return (
+    <div
+      className="zen-toolbar-reveal px-2"
+      data-open={entered && !closing ? 'true' : undefined}
+      data-testid="toolbar-reveal"
+    >
+      {children}
     </div>
   )
 }

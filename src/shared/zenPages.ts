@@ -14,7 +14,7 @@
 // a copy of any value; `v2Tokens.test.ts` lists the page among the v2 surfaces.
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
-import type { CertificateDetails, OverlayKind } from './types'
+import type { CertificateDetails, OverlayKind, Platform as PlatformOs } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
@@ -194,8 +194,102 @@ const NET_ERRORS: Record<number, NetErrorCopy> = {
   }
 }
 
-/** The hosts report a crashed renderer through this code (not a `net::` error); the description carries the reason. */
-const CRASH_CODE = -1
+/**
+ * The hosts report a crashed renderer through this code (not a `net::` error); the description
+ * carries Chrome's name for the way the process ended (`crashCodeName`). A tab whose `errorCode`
+ * is this one is the sad tab (tabs-44): the row shows the crashed favicon until the next load.
+ */
+export const CRASH_ERROR_CODE = -1
+
+/** Chromium's `content::ResultCode` names, the exit codes a renderer is ended with on purpose. */
+const RESULT_CODES: Record<number, string> = {
+  1: 'RESULT_CODE_KILLED',
+  2: 'RESULT_CODE_HUNG',
+  3: 'RESULT_CODE_KILLED_BAD_MESSAGE',
+  4: 'RESULT_CODE_GPU_DEAD_ON_ARRIVAL'
+}
+
+/** The Windows exception statuses a renderer dies of (its exit code is the `NTSTATUS`). */
+const WINDOWS_STATUSES: Record<number, string> = {
+  0x80000003: 'STATUS_BREAKPOINT',
+  0xc0000005: 'STATUS_ACCESS_VIOLATION',
+  0xc0000006: 'STATUS_IN_PAGE_ERROR',
+  0xc0000008: 'STATUS_INVALID_HANDLE',
+  0xc000001d: 'STATUS_ILLEGAL_INSTRUCTION',
+  0xc0000025: 'STATUS_NONCONTINUABLE_EXCEPTION',
+  0xc0000094: 'STATUS_INTEGER_DIVIDE_BY_ZERO',
+  0xc00000fd: 'STATUS_STACK_OVERFLOW',
+  0xc0000135: 'STATUS_DLL_NOT_FOUND',
+  0xc0000142: 'STATUS_DLL_INIT_FAILED',
+  0xc000027b: 'STATUS_STOWED_EXCEPTION',
+  0xc0000374: 'STATUS_HEAP_CORRUPTION',
+  0xc0000409: 'STATUS_STACK_BUFFER_OVERRUN',
+  0xc0000417: 'STATUS_INVALID_CRUNTIME_PARAMETER',
+  0xc0000420: 'STATUS_ASSERTION_FAILURE',
+  0xc0000602: 'STATUS_FAIL_FAST_EXCEPTION'
+}
+
+/** The signals a renderer dies of, by number; the ones Linux and macOS number differently apart. */
+const SIGNALS: Record<number, string> = {
+  1: 'SIGHUP',
+  2: 'SIGINT',
+  3: 'SIGQUIT',
+  4: 'SIGILL',
+  5: 'SIGTRAP',
+  6: 'SIGABRT',
+  8: 'SIGFPE',
+  9: 'SIGKILL',
+  11: 'SIGSEGV',
+  13: 'SIGPIPE',
+  14: 'SIGALRM',
+  15: 'SIGTERM'
+}
+const LINUX_SIGNALS: Record<number, string> = {
+  7: 'SIGBUS',
+  10: 'SIGUSR1',
+  12: 'SIGUSR2',
+  31: 'SIGSYS'
+}
+const MAC_SIGNALS: Record<number, string> = {
+  7: 'SIGEMT',
+  10: 'SIGBUS',
+  12: 'SIGSYS',
+  31: 'SIGUSR2'
+}
+
+/**
+ * The name Chrome's sad tab puts on its code line ("Error code: …") for a renderer that went
+ * away with `reason` (the host's `render-process-gone` reason) and `exitCode` (the process's,
+ * when the host has it): Chromium's own result code where the process was ended on purpose, the
+ * signal (POSIX: the raw wait status, the signal in its low bits) or the Windows exception status
+ * it died of where the exit code names one, the bare number where it does not (Chrome's
+ * "Error code: 5"), and the reason itself, spelt as a code, where the host sent none.
+ */
+export function crashCodeName(
+  reason: string,
+  exitCode: number | null | undefined = null,
+  os: PlatformOs = 'linux'
+): string {
+  if (reason === 'oom' || reason === 'memory-eviction') return 'Out of Memory'
+  if (reason === 'launch-failed') return 'LAUNCH_FAILED'
+  if (reason === 'integrity-failure') return 'INTEGRITY_FAILURE'
+  const code = typeof exitCode === 'number' && Number.isFinite(exitCode) ? exitCode : null
+  if (code === null) return reason.toUpperCase().replace(/-/g, '_')
+  if (os === 'win32') {
+    const status = WINDOWS_STATUSES[code >>> 0]
+    if (status) return status
+    return RESULT_CODES[code] ?? (reason === 'killed' ? 'RESULT_CODE_KILLED' : String(code))
+  }
+  // POSIX: a signalled process reports the raw wait status, the signal in the low seven bits
+  // (the core-dump bit above them); one that exited reports its exit code in the second byte.
+  const signal = code & 0x7f
+  if (signal !== 0 && signal !== 0x7f && code < 0x100) {
+    const named = (os === 'darwin' ? MAC_SIGNALS[signal] : LINUX_SIGNALS[signal]) ?? SIGNALS[signal]
+    if (named) return named
+  }
+  const exited = code >= 0x100 && (code & 0xff) === 0 ? (code >> 8) & 0xff : code
+  return RESULT_CODES[exited] ?? (reason === 'killed' ? 'RESULT_CODE_KILLED' : String(exited))
+}
 
 /** Chromium `net::` error codes eligible for the https→http typed-input fallback. */
 export const HTTP_FALLBACK_CODES = new Set([
@@ -320,12 +414,14 @@ export function errorPageContent(
   certificate: CertificateDetails | null = null
 ): ErrorPageContent {
   const site = siteOf(target)
-  if (code === CRASH_CODE) {
+  if (code === CRASH_ERROR_CODE) {
+    // The sad tab (tabs-44): Chrome's "Aw, Snap!" in Zenium's words, the way the renderer
+    // ended on the code line the way Chrome's sad tab writes it ("Error code: …").
     return {
-      title: 'Aw, Snap!',
+      title: 'This page crashed',
       site,
-      reason: 'Something went wrong while displaying this page.',
-      code: description,
+      reason: 'Something went wrong while displaying this page. Reload to try again.',
+      code: description ? `Error code: ${description}` : '',
       target,
       interstitial: null
     }

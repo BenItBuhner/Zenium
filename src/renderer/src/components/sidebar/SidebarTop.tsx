@@ -305,7 +305,9 @@ export function NavRow({
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
           // The tooltip carries the whole address – the user-facing `zenium://` form for an
-          // internal page (§10.1: `zen://` never shows), and the address behind a title.
+          // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
+          // error or Reader View page the page it stands in for (`fullUrl`), never the `zen://`
+          // document. An empty tab offers the search prompt, as the field does.
           title={(tab && fullUrl(tab.url)) || 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}

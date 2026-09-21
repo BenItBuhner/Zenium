@@ -1167,6 +1167,15 @@
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--v2-control-text-deemphasized);
   }
+  /* The alert states on a compact row (tabs-43): Chrome's red for a camera / microphone in use
+   * and for sharing, the row's deemphasised ink for picture-in-picture. */
+  .zen-tab-alert-dot[data-alert='recording'],
+  .zen-tab-alert-dot[data-alert='capturing'] {
+    background: var(--v2-danger);
+  }
+  .zen-tab-alert-dot[data-alert='pip'] {
+    background: var(--v2-control-text-deemphasized);
+  }
   /*
    * A tab drag (lib/drag.ts, components/DragLayer.tsx). The ghost is the lifted row, at v1
    * level 2 with scale(1.02) and 90% opacity (v2 draft §9.4), on the window's solid colour so
@@ -1555,11 +1564,53 @@
   .zen-animate-in {
     animation: zen-fade-in 160ms var(--zen-ease);
   }
+  /*
+   * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
+   * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
+   * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
+   * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
+   * it unmounts. Reduced motion collapses the travel to the global 0.01 ms.
+   */
+  .zen-toolbar-reveal {
+    transform: translateY(calc(-100% - 8px));
+    transition: transform 200ms var(--zen-ease);
+    will-change: transform;
+  }
+  .zen-toolbar-reveal[data-open] {
+    transform: none;
+  }
   .zen-animate-pop {
     animation: zen-pop 180ms var(--zen-ease);
   }
   .zen-spin {
     animation: zen-spin 900ms linear infinite;
+  }
+  /*
+   * The tab row's throbber (tabs-41), Chrome's two phases on #125's 16 × 16, 2 px ring with the
+   * top quarter open: the muted ink turning backwards while the load waits for the server's
+   * first response, the accent turning forwards once the document is coming in (the colour
+   * eases over between them). The favicon that takes the ring's place fades back in over
+   * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
+   * 60 %, a sleeping row's 69 %). Reduced motion collapses both to the global 0.01 ms.
+   */
+  .zen-tab-throbber {
+    border-color: var(--zen-muted);
+    border-top-color: transparent;
+    animation: zen-spin 900ms linear infinite reverse;
+  }
+  /* The ease sits on the second phase only: the ring enters in its colours, never eased from
+     whatever stood there before. */
+  .zen-tab-throbber[data-phase='loading'] {
+    border-color: var(--zen-accent);
+    border-top-color: transparent;
+    animation-direction: normal;
+    transition: border-color 150ms var(--zen-ease);
+  }
+  .zen-tab-favicon-in {
+    transition: opacity 150ms var(--zen-ease);
+    @starting-style {
+      opacity: 0;
+    }
   }
   .zen-toast {
     animation: zen-toast-in 180ms var(--zen-ease);
