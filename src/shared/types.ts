@@ -4487,6 +4487,12 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
+   * The app menu's "Now Playing" row asked for the media hub (design language v2 §9.29: the
+   * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
+   * popover from the toolbar button while it is in the row, else from the "⋯" menu button.
+   */
+  'mediahub.open': void
+  /**
    * A shortcut asked the keyboard to move panes (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B). The
    * renderer works out the pane the keyboard is in and the one it goes to among those on screen,
    * and asks the core for the chrome's or the page's focus accordingly (`focus.chrome`,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   FormFactor,
   HostCapabilities,
+  MediaState,
   Platform as PlatformOs,
   Settings,
   SharePayload
@@ -441,6 +442,99 @@ describe('the app menu', () => {
 
   it('gives a tablet the desktop menu', () => {
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(DESKTOP_APP_MENU)
+  })
+
+  describe('the Now Playing row (design language v2 §9.29: the hub folded into the menu)', () => {
+    /** A media entry for `tabId`, the OS controls' session by default. */
+    const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
+      tabId,
+      playing: true,
+      title: 'Nocturne',
+      artist: 'The Band',
+      artwork: 'https://example.com/art.png',
+      session: true,
+      ...over
+    })
+
+    it('heads the desktop menu while a session is live, with the hub card’s content, and is gone otherwise', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      expect(without[0]).toBe('New Tab')
+      h.browser.state.media = [media(h.tabId)]
+      const menu = appMenu(h)
+      expect(menu.slice(0, 3)).toEqual([
+        'Now Playing: Nocturne · The Band · example.com',
+        '-',
+        'New Tab'
+      ])
+      // The rest of the menu is as it was: the row is added at the top, nothing else moves.
+      expect(menu.slice(2)).toEqual(without)
+      // The card's artwork leads the row where the host's menus draw an icon.
+      expect(h.items()[0].icon).toBe('https://example.com/art.png')
+      h.browser.state.media = []
+      expect(appMenu(h)).toEqual(without)
+    })
+
+    it('stays while the media has paused (the hub keeps its card), keeping its name', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.media = [media(h.tabId, { playing: false, session: false })]
+      expect(appMenu(h)[0]).toBe('Now Playing: Nocturne · The Band · example.com')
+    })
+
+    it('mirrors the hub’s first card: the session before what merely plays, then the rest', () => {
+      const h = pageHarness(DESKTOP)
+      const other = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, h.win)
+      h.browser.state.media = [
+        media(h.tabId, { session: false, title: 'Background' }),
+        media(other.id, { title: 'A film', artist: '' })
+      ]
+      expect(appMenu(h)[0]).toBe('Now Playing: A film · video.example.org')
+    })
+
+    it('reads the title and the detail as the hub does: the tab’s title without metadata, the site once', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.tabs.tab(h.tabId)!.title = 'An article'
+      h.browser.tabs.tab(h.tabId)!.favicon = 'https://example.com/favicon.ico'
+      h.browser.state.media = [media(h.tabId, { title: '', artist: 'example.com', artwork: null })]
+      expect(appMenu(h)[0]).toBe('Now Playing: An article · example.com')
+      // No artwork: the tab's favicon, as the menu's Recently Closed entries lead with theirs.
+      expect(h.items()[0].icon).toBe('https://example.com/favicon.ico')
+    })
+
+    it('clips a long title as a page title in a menu is clipped', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.media = [
+        media(h.tabId, { title: 'A'.repeat(60), artist: 'B'.repeat(40) })
+      ]
+      const label = appMenu(h)[0]
+      expect(label.startsWith(`Now Playing: ${'A'.repeat(31)}…`)).toBe(true)
+      expect(label.length).toBeLessThanOrEqual('Now Playing: '.length + 48)
+    })
+
+    it('is not there for media whose tab is gone', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      h.browser.state.media = [media('gone')]
+      expect(appMenu(h)).toEqual(without)
+    })
+
+    it('is the sidebar layouts’ row: the phone keeps its chip and sheet', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+      h.browser.state.media = [media(h.tabId)]
+      expect(appMenu(h).some((label) => label.startsWith('Now Playing'))).toBe(false)
+      const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+      tablet.browser.state.media = [media(tablet.tabId)]
+      expect(appMenu(tablet)[0]).toBe('Now Playing: Nocturne · The Band · example.com')
+    })
+
+    it('opens the hub on its pick – every player and the transport – with the chrome focused', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.media = [media(h.tabId)]
+      appMenu(h)
+      h.sent.length = 0
+      h.click('Now Playing: Nocturne · The Band · example.com')
+      expect(h.sent).toEqual(['mediahub.open'])
+    })
   })
 
   it('keeps the desktop menu until the chrome reports a phone layout', () => {

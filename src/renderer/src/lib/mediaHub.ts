@@ -1,5 +1,5 @@
-import type { MediaState, Tab, UIState } from '@shared/types'
-import { displayHost } from '@shared/url'
+import type { MediaState, UIState } from '@shared/types'
+import { orderMediaEntries } from '@shared/mediaHub'
 import { run } from '@renderer/lib/api'
 import { createStore } from '@renderer/lib/store'
 
@@ -8,8 +8,12 @@ import { createStore } from '@renderer/lib/store'
  * popover of one player per tab) reads from `UIState.media` beyond what both in-app players
  * share – the position carried forward, the times, the detail line and the track handlers are
  * `lib/media.ts`'s, the seek row's state `useMediaSeek`'s, as the phone's media sheet reads
- * them – and the hub's own open state.
+ * them – and the hub's own open state. The players' order and the line a player leads with are
+ * `shared/mediaHub.ts`'s, so the app menu's "Now Playing" row the core builds where the toolbar
+ * button has folded (design language v2 §9.29) mirrors the hub's first card.
  */
+
+export { mediaTitle } from '@shared/mediaHub'
 
 export interface MediaHubUi {
   /** The popover is up. */
@@ -29,14 +33,21 @@ export const mediaHubUi = createStore<MediaHubUi>(
  * core's order (a tab that paused stays until its media goes, as Chrome's cards do).
  */
 export function mediaHubEntries(state: UIState): MediaState[] {
-  const entries = (state.media ?? []).filter((m) => state.tabs[m.tabId])
-  const rank = (m: MediaState): number => (m.session ? 0 : m.playing ? 1 : 2)
-  return [...entries].sort((a, b) => rank(a) - rank(b))
+  return orderMediaEntries((state.media ?? []).filter((m) => state.tabs[m.tabId]))
 }
 
 /** The toolbar button shows while there is anything to control. */
 export function mediaHubVisible(state: UIState): boolean {
   return mediaHubEntries(state).length > 0
+}
+
+/**
+ * Something plays: the accent dot on the hub's toolbar button, and the same dot on the "⋯" menu
+ * button, whose menu carries the "Now Playing" row while the button has folded (§9.29 –
+ * Firefox's badge on its menu button).
+ */
+export function mediaPlaying(state: UIState): boolean {
+  return mediaHubEntries(state).some((m) => m.playing)
 }
 
 /**
@@ -51,14 +62,6 @@ export function mediaHubLabel(entries: MediaState[]): string {
   const playing = entries.filter((m) => m.playing).length
   if (playing === 0) return MEDIA_HUB_NAME
   return `${MEDIA_HUB_NAME}, ${playing} playing`
-}
-
-/**
- * The line the player leads with: the page's metadata, else the tab's title, else the site
- * (the detail line under it, `mediaDetail`, then never says the site again).
- */
-export function mediaTitle(media: MediaState, tab: Tab | undefined): string {
-  return media.title?.trim() || tab?.title?.trim() || (tab ? displayHost(tab.url) : '') || 'Media'
 }
 
 /** Open the hub from its button; the popover captures the page itself (`useFloatingChrome`). */
