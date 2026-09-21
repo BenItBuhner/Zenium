@@ -8,14 +8,7 @@ import { bookmarksBarVisible } from '@shared/bookmarkViews'
 import { formatBinding } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
 import { closeExtensionPopup } from '@renderer/lib/extensions/popup'
-import {
-  isPhone,
-  useFormFactorReport,
-  useViewport,
-  type FormFactor
-} from '@renderer/lib/formFactor'
-import { dismissSpacesDrawer } from '@renderer/lib/gestures/drawer'
-import { dismissStage } from '@renderer/lib/gestures/stage'
+import { isPhone, useFormFactorReport, useViewport } from '@renderer/lib/formFactor'
 import { openNewTabPage } from '@renderer/lib/newtab'
 import { activeTab } from '@renderer/lib/selectors'
 import {
@@ -32,6 +25,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
+import { useStageContinuity } from '@renderer/hooks/useStageContinuity'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { Announcer } from './components/Announcer'
 import { AppTitleBar } from './components/app/AppTitleBar'
@@ -47,7 +41,6 @@ import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
 import { TabHoverCard } from './components/TabHoverCard'
-import { dismissTabletDrawer } from './components/tablet/tabletChrome'
 import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
 
@@ -566,26 +559,6 @@ function useNewTabEvent(): void {
     window.addEventListener('zen-new-tab', onNewTab)
     return () => window.removeEventListener('zen-new-tab', onNewTab)
   }, [])
-}
-
-/**
- * What survives a shell swap, and what does not (TABLET-08). The gesture stage – the tab
- * overview, a tab switch in flight – belongs to the touch layouts and lives in `stageStore`, not
- * in a shell: a tablet window narrowed into the phone chrome (or widened back) swaps its shell
- * with the overview still open, drawn by the next shell's stage at the next frame. Only the
- * desktop layout, which has no stage, takes it down – with the Spaces drawer, which both touch
- * shells mount over the overview. The tablet's sidebar drawer is the tablet shell's alone (the
- * phone has no sidebar), so the phone and the desktop drop it, without motion – else the stale
- * one would be a back surface with nothing on screen.
- */
-function useStageContinuity(formFactor: FormFactor): void {
-  useEffect(() => {
-    if (formFactor === 'desktop') {
-      dismissStage()
-      dismissSpacesDrawer()
-    }
-    if (formFactor !== 'tablet') dismissTabletDrawer()
-  }, [formFactor])
 }
 
 /** Remember where the pointer went down so renderer-hosted menus can anchor there. */
