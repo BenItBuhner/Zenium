@@ -102,12 +102,15 @@ export function NavRow({
   state,
   tab,
   compact,
-  className
+  className,
+  leading
 }: {
   state: UIState
   tab: Tab | null
   compact: boolean
   className?: string
+  /** Controls ahead of Back (the tablet toolbar's sidebar toggle); nothing on the desktop. */
+  leading?: ReactNode
 }): JSX.Element {
   const url = tab ? displayUrl(tab.url) : ''
   // The address at rest elides the scheme and `www.` (Chrome); the full URL shows while the
@@ -265,6 +268,7 @@ export function NavRow({
       // on the first enabled control.
       data-pane="toolbar"
     >
+      {leading}
       <NavigationButton
         tab={tab}
         title={hint('Back', state, 'nav.back')}

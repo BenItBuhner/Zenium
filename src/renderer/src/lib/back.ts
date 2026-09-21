@@ -4,6 +4,7 @@ import type { Tab, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { run } from './api'
 import { SPRING_SNAPPY, SpringAnimation, type SpringConfig } from './motion/spring'
+import { closeAllPopovers, openPopoverCount, subscribePopovers } from './popoverStore'
 import { activeSpace, activeTab, tabOrderOf } from './selectors'
 import { createStore } from './store'
 import {
@@ -157,6 +158,14 @@ export function dispatchBackEvent(phase: BackPhase, payload?: BackEventPayload |
 export function handleSystemBack(): boolean {
   const ui = uiStore.get()
   const state = browserStore.get().state
+  // A §9.20 popover (the star bubble, site information, an extension's popup) is the touch
+  // layout's topmost chrome while it is up: the system back is its light dismiss, as a press
+  // outside it is – never a navigation of the page it hangs over (a tablet's popovers register
+  // no back surface of their own; the phone's sheets do).
+  if (openPopoverCount() > 0) {
+    closeAllPopovers()
+    return true
+  }
   if (ui.menu) {
     closeMenu()
     return true
@@ -328,6 +337,7 @@ function chromeHandlesBack(ui: UiState, state: UIState | null): boolean {
   return (
     pageHistory ||
     stack.length > 0 ||
+    openPopoverCount() > 0 ||
     ui.menu !== null ||
     ui.urlbar.open ||
     (ui.overlay !== 'none' && ui.overlay !== 'onboarding') ||
@@ -356,6 +366,8 @@ if (!flags.__zenBackWired) {
   flags.__zenBackWired = true
   uiStore.subscribe(refreshBackState)
   browserStore.subscribe(refreshBackState)
+  // A popover opening or closing changes the answer without touching either store.
+  subscribePopovers(refreshBackState)
 }
 
 // ---------------------------------------------------------------------------
