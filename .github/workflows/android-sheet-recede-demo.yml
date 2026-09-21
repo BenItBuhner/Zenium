@@ -16,6 +16,10 @@ name: Android sheet recede demo
 # takes about ten minutes. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml; this file only picks the driver and the colour scheme.
 on:
+  # TEMPORARY (PERF-2, #269: the functional run on the head, the program's first dispatch after the emulator hold); off in the next commit.
+  push:
+    branches:
+      - cursor/android-perf-menu-sheet-2306
   workflow_dispatch:
     inputs:
       theme:
