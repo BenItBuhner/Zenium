@@ -81,6 +81,21 @@ export function downloadFolderLabel(directory: string): string {
   return relative.replace(/^\/+|\/+$/g, '') || 'Storage'
 }
 
+/**
+ * Settings › Downloads › Location's line (HB-20): the folder new downloads go to, shown as
+ * Chrome's row shows it – the engine's answer to `download.directory` when it has one (the
+ * desktop names the platform's Downloads folder by its path), else the setting (a phone's
+ * picked tree by its relative path), else the system folder by name, which is all the phone's
+ * downloader can say of it.
+ */
+export function downloadLocationLabel(
+  current: string | null | undefined,
+  setting: string | null
+): string {
+  const folder = current || setting
+  return folder ? downloadFolderLabel(folder) : 'The system Downloads folder'
+}
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value)

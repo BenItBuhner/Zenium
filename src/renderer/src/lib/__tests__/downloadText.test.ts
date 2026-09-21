@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { DownloadItem } from '@shared/types'
-import { downloadFolderLabel, downloadStatus, formatEta } from '../downloadText'
+import {
+  downloadFolderLabel,
+  downloadLocationLabel,
+  downloadStatus,
+  formatEta
+} from '../downloadText'
 
 const NOW = 1_700_000_000_000
 
@@ -198,5 +203,25 @@ describe('downloadFolderLabel', () => {
   it('shows a desktop path as it is', () => {
     expect(downloadFolderLabel('/home/me/Files/Invoices')).toBe('/home/me/Files/Invoices')
     expect(downloadFolderLabel('C:\\Users\\me\\Desktop')).toBe('C:\\Users\\me\\Desktop')
+  })
+})
+
+describe('downloadLocationLabel (Settings › Downloads › Location, HB-20)', () => {
+  it('shows the engine’s resolved folder over the setting, the way Chrome’s row shows a path', () => {
+    expect(downloadLocationLabel('/home/me/Downloads', null)).toBe('/home/me/Downloads')
+    expect(downloadLocationLabel('/home/me/Files', '/home/me/Files')).toBe('/home/me/Files')
+  })
+
+  it('falls back to the setting until the engine answers, then to the system folder by name', () => {
+    expect(downloadLocationLabel(null, '/home/me/Files')).toBe('/home/me/Files')
+    expect(
+      downloadLocationLabel(
+        undefined,
+        'content://com.android.externalstorage.documents/tree/primary%3ADownload%2FZenium'
+      )
+    ).toBe('Download/Zenium')
+    expect(downloadLocationLabel(null, null)).toBe('The system Downloads folder')
+    // A host that cannot name one answers empty: the setting's words stay.
+    expect(downloadLocationLabel('', null)).toBe('The system Downloads folder')
   })
 })

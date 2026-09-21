@@ -234,14 +234,26 @@ describe('danger copy (Chrome 112 download bubble)', () => {
   })
 
   it('words the waiting pair per state: Keep / Delete for a flagged file, Keep anyway / Discard for an insecure block', () => {
-    const flagged = item({ id: 'f', state: 'completed', danger: verdict('dangerous', 'executable') })
-    expect(decisionLabels(flagged)).toEqual({ keep: 'Keep', discard: 'Delete', prominent: 'discard' })
+    const flagged = item({
+      id: 'f',
+      state: 'completed',
+      danger: verdict('dangerous', 'executable')
+    })
+    expect(decisionLabels(flagged)).toEqual({
+      keep: 'Keep',
+      discard: 'Delete',
+      prominent: 'discard'
+    })
     const lesser = item({ id: 'l', state: 'completed', danger: verdict('suspicious', 'archive') })
     expect(decisionLabels(lesser)).toEqual({ keep: 'Keep', discard: 'Delete', prominent: null })
     // Nothing is on disk for an insecure-blocked row, so its second verb is Discard, not Delete;
     // both plain. Keep anyway only while the engine would honour it (`canKeepInsecure`).
     const blocked = item({ id: 'b', state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
-    expect(decisionLabels(blocked)).toEqual({ keep: 'Keep anyway', discard: 'Discard', prominent: null })
+    expect(decisionLabels(blocked)).toEqual({
+      keep: 'Keep anyway',
+      discard: 'Discard',
+      prominent: null
+    })
     const blockedDangerous = item({
       id: 'bd',
       state: 'insecure-blocked',
@@ -249,7 +261,11 @@ describe('danger copy (Chrome 112 download bubble)', () => {
       receivedBytes: 0,
       danger: verdict('dangerous', 'executable')
     })
-    expect(decisionLabels(blockedDangerous)).toEqual({ keep: null, discard: 'Discard', prominent: null })
+    expect(decisionLabels(blockedDangerous)).toEqual({
+      keep: null,
+      discard: 'Discard',
+      prominent: null
+    })
   })
 
   it('counts an automatic resume down in whole seconds, then reads Resuming… (HB-43)', () => {

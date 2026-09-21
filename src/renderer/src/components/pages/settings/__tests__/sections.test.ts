@@ -696,7 +696,7 @@ describe('the section model', () => {
     ])
   })
 
-  it('carries #161’s Downloads rows: the folder, ask where to save, auto-open types, the notification; the bubble’s switches on a windowed host only', async () => {
+  it('carries #161’s Downloads rows in Chrome’s words: Location with Change…, ask where to save, auto-open types, the notification; the bubble’s switches on a windowed host only', async () => {
     const c = context(state())
     const downloads = buildSection(
       PAGE.sections.find((x) => x.id === 'downloads')!,
@@ -704,11 +704,14 @@ describe('the section model', () => {
     )
     expect(downloads.groups.map((g) => g.id)).toEqual(['saving', 'download-notifications'])
     expect(downloads.groups.every(groupShows)).toBe(true)
-    // The folder row names the system folder until one is picked; a dismissed picker keeps it.
+    // Location (Chrome's `IDS_SETTINGS_DOWNLOAD_LOCATION`) names the system folder until the
+    // engine has said where that is or one is picked; a dismissed picker keeps it.
     const folder = row(downloads, 'download-directory')
+    expect(folder.label).toBe('Location')
     expect(folder.description).toBe('The system Downloads folder')
     expect(row(downloads, 'download-directory-default').disabled).toBe(true)
     if (folder.kind !== 'action') throw new Error('not an action')
+    expect(folder.button).toBe('Change…')
     invoke.mockResolvedValueOnce(null)
     folder.onPress?.()
     await Promise.resolve()
@@ -719,6 +722,25 @@ describe('the section model', () => {
     await new Promise((r) => setTimeout(r, 0))
     // The one-key patch goes inside `downloads`; `askWhereToSave` stays at the top level.
     expect(c.patches).toEqual([{ downloads: { directory: '/sdcard/Zenium' } }])
+    // The engine's answer to `download.directory` – the desktop's platform folder by its path,
+    // as Chrome's row shows it (HB-20) – is the line once the page has it, over the setting.
+    const resolved = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      {
+        ...c.ctx,
+        downloadDirectory: '/home/bennett/Downloads'
+      }
+    )
+    expect(row(resolved, 'download-directory').description).toBe('/home/bennett/Downloads')
+    // An empty answer (a host that cannot name one) leaves the setting's words.
+    const unnamed = buildSection(
+      PAGE.sections.find((x) => x.id === 'downloads')!,
+      {
+        ...c.ctx,
+        downloadDirectory: ''
+      }
+    )
+    expect(row(unnamed, 'download-directory').description).toBe('The system Downloads folder')
     // A folder picked on Android is a document-tree URI: the row reads its relative path (#93).
     const picked = buildSection(
       PAGE.sections.find((x) => x.id === 'downloads')!,
@@ -737,7 +759,13 @@ describe('the section model', () => {
     )
     expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
     expect(row(picked, 'download-directory-default').disabled).toBe(false)
+    // Chrome's `IDS_SETTINGS_PROMPT_FOR_DOWNLOAD`; no switch for the danger warnings, as Chrome
+    // has none (Safe Browsing governs them).
     const ask = row(downloads, 'ask-where-to-save')
+    expect(ask.label).toBe('Ask where to save each file before downloading')
+    expect(
+      downloads.groups.flatMap((g) => g.rows).filter((r) => /danger|warn/i.test(r.label))
+    ).toEqual([])
     if (ask.kind !== 'switch') throw new Error('not a switch')
     expect(ask.checked).toBe(DEFAULT_SETTINGS.askWhereToSave)
     ask.onChange(true)

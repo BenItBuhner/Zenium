@@ -92,7 +92,7 @@ import {
 } from '@renderer/lib/autofill'
 import type { AutofillSettingsData, VaultGate } from '@renderer/lib/autofillSettings'
 import { requestDefaultBrowser } from '@renderer/lib/defaultBrowser'
-import { downloadFolderLabel } from '@renderer/lib/downloadText'
+import { downloadLocationLabel } from '@renderer/lib/downloadText'
 import { downloadsEngine } from '@renderer/lib/downloadsEngine'
 import {
   NEW_TAB_LAYOUT_HINT,
@@ -228,6 +228,13 @@ export interface SectionContext {
    * drawn – the phone page, whose Import rows read files, and a test.
    */
   importSources?: ImportSource[] | null
+  /**
+   * The folder new downloads go to right now (`download.directory`, `useDownloadDirectory`),
+   * for Settings › Downloads › Location, which shows the path as Chrome's row does: null while
+   * the engine has not answered, left out where the row is not drawn (a test), and the row
+   * reads the setting meanwhile.
+   */
+  downloadDirectory?: string | null
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -1575,14 +1582,18 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
 // ---------------------------------------------------------------------------
 
 /**
- * Settings › Downloads (#161's desktop section row for row, on the engine's `Settings.downloads`):
- * the folder through the host's own picker, whether to ask where to save, the file types that
- * open by themselves once they are on disk, and the completion notification (Android's
- * downloader posts it, the desktop shell its own). The downloads bubble and the toolbar button
- * are the desktop chrome's – a single-window host shows its downloads panel as a transfer
- * starts (`Browser.onDownloadStarted`) – so their switches show where the chrome has windows.
+ * Settings › Downloads (#161's desktop section row for row, on the engine's `Settings.downloads`;
+ * Chrome's `chrome://settings/downloads` rows in Chrome's words): **Location** – the folder new
+ * downloads go to, by its path (`download.directory`, HB-20), with Change… through the host's
+ * own picker (`download.chooseDirectory`, then `settings.update`) and Use default beside it –
+ * **Ask where to save each file before downloading**, the file types that open by themselves
+ * once they are on disk, and the completion notification (Android's downloader posts it, the
+ * desktop shell its own). No switch for the danger warnings: Chrome has none (Safe Browsing
+ * governs them), so neither does this page. The downloads bubble and the toolbar button are
+ * the desktop chrome's – a single-window host shows its downloads panel as a transfer starts
+ * (`Browser.onDownloadStarted`) – so their switches show where the chrome has windows.
  */
-function downloadsSection({ state, set }: SectionContext): RowGroup[] {
+function downloadsSection({ state, set, downloadDirectory }: SectionContext): RowGroup[] {
   const d = resolveDownloadSettings(state.settings)
   const patch = (p: Partial<DownloadSettings>): void => set({ downloads: p })
   const types = d.autoOpenTypes.map((t) => `.${t}`).join(', ')
@@ -1590,11 +1601,12 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
     {
       kind: 'action',
       id: 'download-directory',
-      label: 'Save files to',
-      // Android keeps a picked folder as a document-tree URI: the row reads its relative path.
-      description:
-        d.directory === null ? 'The system Downloads folder' : downloadFolderLabel(d.directory),
-      keywords: ['folder', 'location', 'directory'],
+      label: 'Location',
+      // The engine's resolved folder (a desktop path as it is); until it answers, the setting
+      // – Android keeps a picked folder as a document-tree URI, read as its relative path – or
+      // the system folder by name.
+      description: downloadLocationLabel(downloadDirectory, d.directory),
+      keywords: ['folder', 'directory', 'save files to', 'downloads folder', 'path'],
       button: 'Change…',
       onPress: () => {
         // A dismissed picker keeps the folder as it is.
@@ -1614,7 +1626,8 @@ function downloadsSection({ state, set }: SectionContext): RowGroup[] {
     {
       kind: 'switch',
       id: 'ask-where-to-save',
-      label: 'Always ask where to save files',
+      label: 'Ask where to save each file before downloading',
+      keywords: ['always ask', 'prompt', 'save as', 'choose'],
       checked: d.askWhereToSave,
       onChange: (v) => set({ askWhereToSave: v })
     }

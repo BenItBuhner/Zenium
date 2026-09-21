@@ -130,12 +130,14 @@ function HostedDownloadsSheet({ state }: { state: UIState }): JSX.Element {
   const counting = items.some(awaitsAutoResume)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    setNow(Date.now())
-    const timer = setInterval(
-      () => setNow(Date.now()),
-      counting ? COUNTDOWN_TICK_MS : AGE_TICK_MS
-    )
-    return () => clearInterval(timer)
+    const tick = (): void => setNow(Date.now())
+    const timer = setInterval(tick, counting ? COUNTDOWN_TICK_MS : AGE_TICK_MS)
+    // The first countdown row re-reads the clock at once: the last 30 s tick may be stale.
+    const first = counting ? setTimeout(tick, 0) : null
+    return () => {
+      clearInterval(timer)
+      if (first !== null) clearTimeout(first)
+    }
   }, [counting])
 
   const clearable = hasClearable(items)
