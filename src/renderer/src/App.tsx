@@ -25,6 +25,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { useCaptionOverlay } from '@renderer/hooks/useCaptionOverlay'
 import { useMainEvents } from '@renderer/hooks/useMainEvents'
+import { useStageContinuity } from '@renderer/hooks/useStageContinuity'
 import { useTheme } from '@renderer/hooks/useTheme'
 import { Announcer } from './components/Announcer'
 import { AppTitleBar } from './components/app/AppTitleBar'
@@ -40,6 +41,7 @@ import { PhoneShell } from './components/phone/PhoneShell'
 import { COLLAPSED_WIDTH, Sidebar } from './components/sidebar/Sidebar'
 import { TabDialogs } from './components/TabDialogs'
 import { TabHoverCard } from './components/TabHoverCard'
+import { TabletShell } from './components/tablet/TabletShell'
 import { Toolbar } from './components/Toolbar'
 
 /** Width of the compact-mode hover zone along the window edge (px). */
@@ -54,12 +56,18 @@ export function App(): JSX.Element {
   useGlobalKeys(state)
   useNewTabEvent()
   usePointerTracking()
+  useStageContinuity(viewport.formFactor)
   const ui = uiStore.use()
+  // A page's sized popup and a web app's window keep the one-row desktop chrome at any size and
+  // with any pointer (`formFactorFor`): the tablet shell is for a window with tabs to show.
+  const popupChrome = state.window.chrome === 'popup' || state.window.chrome === 'app'
 
   return (
     <>
       {viewport.formFactor === 'phone' ? (
         <PhoneShell state={state} ui={ui} isDark={theme.isDark} />
+      ) : viewport.formFactor === 'tablet' && !popupChrome ? (
+        <TabletShell state={state} ui={ui} isDark={theme.isDark} />
       ) : (
         <DesktopShell state={state} theme={theme} />
       )}
@@ -71,7 +79,10 @@ export function App(): JSX.Element {
   )
 }
 
-/** Desktop, tablet and DeX: Zen's vertical sidebar next to the content card. */
+/**
+ * Desktop and DeX: Zen's vertical sidebar next to the content card. Also the one-row windows (a
+ * page's popup, a web app) at every form factor, the tablet's included.
+ */
 function DesktopShell({ state, theme }: { state: UIState; theme: ResolvedTheme }): JSX.Element {
   const ui = uiStore.use()
   const tab = activeTab(state)

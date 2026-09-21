@@ -181,7 +181,9 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     id: 'compact',
     label: 'Compact Mode',
     keywords: ['sidebar', 'toolbar', 'hide'],
-    layouts: ['desktop', 'tablet']
+    // The desktop's hover-revealed sidebar; the tablet collapses its sidebar to the icon rail
+    // from its toolbar instead (TABLET-02) and the phone has no sidebar.
+    layouts: ['desktop']
   },
   {
     id: 'newtab',

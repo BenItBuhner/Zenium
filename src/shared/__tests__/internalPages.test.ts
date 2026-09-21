@@ -315,8 +315,11 @@ describe('the section model', () => {
     const tablet = availableSections(INTERNAL_PAGES.settings, ALL, 'tablet', 'android').map(
       (s) => s.id
     )
-    expect(tablet).toContain('compact')
+    // Compact mode is the desktop's (the tablet's sidebar collapses to its rail, TABLET-02);
+    // the keyboard sections stay: a tablet may have one.
+    expect(tablet).not.toContain('compact')
     expect(tablet).toContain('shortcuts')
+    expect(tablet).toContain('sync')
   })
 
   it('keeps Default Browser to the desktop OSes: Android has the row under About (v2 §10.5)', () => {

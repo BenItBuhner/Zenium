@@ -2374,7 +2374,13 @@ export class Menus {
     /** Items the host must be able to act on; left out rather than greyed where it cannot. */
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
     /** Items of the sidebar layouts (desktop and tablet) only. */
-    const desktop = (...items: Template): Template => (phone ? [] : items)
+    const sidebar = (...items: Template): Template => (phone ? [] : items)
+    /**
+     * Items of the desktop layout alone: what acts on chrome the tablet does not draw. The
+     * tablet's sidebar collapses to its icon rail from the toolbar (Zen's compact mode is the
+     * desktop's hover-revealed sidebar, which a finger cannot reveal) and it has no bookmarks bar.
+     */
+    const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
     // From its button the menu hangs off the button's bottom edge (Chrome, Firefox); from a
     // shortcut it also starts with its first item selected (design language v2 §9.22).
     const anchor = options.anchor
@@ -2395,11 +2401,11 @@ export class Menus {
         // button has folded (design language v2 §9.29: the sidebar's width tier folds it at 240,
         // and this row is where it goes; with the button up, the button is the hub). The phone
         // has its own chip and sheet (§9.33).
-        ...desktop(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
+        ...sidebar(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
         // switcher searches on its own.
-        ...desktop({
+        ...sidebar({
           label: 'Search Tabs…',
           action: 'tab.search',
           click: () => this.browser.emit('tabsearch.open', undefined, win)
@@ -2450,7 +2456,7 @@ export class Menus {
           submenu: [
             // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
             // the desktop keeps the toggle here, whose star bubble names and files it.
-            ...desktop({
+            ...sidebar({
               label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
               action: 'bookmark.add',
               enabled: Boolean(active && !active.url.startsWith('zen://')),
@@ -2492,7 +2498,7 @@ export class Menus {
           click: () => this.browser.pages.open('history', undefined, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
-        ...desktop(this.recentlyClosedSubmenu(win)),
+        ...sidebar(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
           action: 'downloads.open',
@@ -2533,15 +2539,16 @@ export class Menus {
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
         ...when(!caps.pageControls, this.zoomSubmenu(active)),
-        // Where Edge's users look for "Split screen" (split-01): the sidebar layouts' menu; a
-        // phone has no split view. The tab row's "Split with Current Tab" stays as it is.
-        ...desktop(
+        // Where Edge's users look for "Split screen" (split-01): the sidebar layouts' menu (the
+        // tablet splits its content card as the desktop does); a phone has no split view. The
+        // tab row's "Split with Current Tab" stays as it is.
+        ...sidebar(
           splitViewSubmenu(
             active,
             active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
           )
         ),
-        ...desktop({
+        ...sidebar({
           label: 'Fullscreen',
           type: 'checkbox',
           action: 'page.fullscreen',
@@ -2599,7 +2606,7 @@ export class Menus {
         }),
         // The phone's save is the icon row's Download Page (TB-08, `phoneIconRow`), the one entry
         // Chrome's menu has for it; the desktop keeps the text item.
-        ...desktop({
+        ...sidebar({
           label: 'Save Page As…',
           action: 'page.savePage',
           enabled: Boolean(active),
@@ -2645,7 +2652,7 @@ export class Menus {
             }
           ]
         }),
-        ...desktop({
+        ...sidebar({
           label: 'Keyboard Shortcuts',
           click: () => void this.browser.pages.open('settings', 'shortcuts', win)
         }),
@@ -2662,8 +2669,9 @@ export class Menus {
         }),
         { type: 'separator' },
         { label: `About Zenium ${state.version}`, enabled: false },
-        // An Android app is left, not quit: the system owns its lifetime.
-        ...desktop({
+        // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
+        // phone. Hosts with windows of their own (the desktop) quit.
+        ...when(caps.windows, {
           label: 'Quit',
           action: 'app.quit',
           click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
