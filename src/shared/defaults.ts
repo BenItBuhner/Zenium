@@ -138,7 +138,8 @@ export function emptyPasswordsStatus(): PasswordsStatus {
     error: null,
     checkup: emptyCheckupState(),
     checkupSummary: emptyCheckupSummary(),
-    leaks: []
+    leaks: [],
+    leakChecks: []
   }
 }
 

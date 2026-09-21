@@ -1028,6 +1028,11 @@ export interface PasswordsStatus {
   checkupSummary: CheckupSummary
   /** Sign-in leak warnings waiting for the user, oldest first (one per tab at most). */
   leaks: CredentialLeakWarning[]
+  /**
+   * Tabs whose sign-in leak check is still running (one per tab at most): a phone save sheet
+   * that has not risen yet holds a moment for the verdict, so a warning goes first as Chrome's.
+   */
+  leakChecks: string[]
 }
 
 /** Outcome of a command that needs the user to re-authenticate first. */

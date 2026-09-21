@@ -34,6 +34,29 @@ export function currentLeakWarning(state: UIState): CredentialLeakWarning | null
 }
 
 /**
+ * How long a phone save sheet that has not risen yet holds for its sign-in's leak check: the
+ * lookup is one padded range request, well under this on any network worth waiting for; a slower
+ * one does not keep the prompt, and a warning that arrives later waits behind the sheet instead.
+ */
+export const LEAK_HOLD_MS = 3000
+
+/**
+ * What a phone save sheet that has not risen yet waits for (`AutofillPrompts`): Chrome shows the
+ * warning first, and two sheets never stack for this – so the sheet holds while a warning is up
+ * for its tab (`'warning'`), and while the tab's check is still running (`'check'`,
+ * `passwords.leakChecks`) until the surface's `LEAK_HOLD_MS` runs out. On a mouse the warning is
+ * a frame dialog and this does not apply.
+ */
+export function savePromptHold(
+  state: UIState,
+  tabId: string | null | undefined
+): 'warning' | 'check' | null {
+  if (!tabId) return null
+  if ((state.passwords?.leaks ?? []).some((w) => w.tabId === tabId)) return 'warning'
+  return (state.passwords?.leakChecks ?? []).includes(tabId) ? 'check' : null
+}
+
+/**
  * Which open of the warning is current: an open that finishes after a close (the user answered
  * within the wait for the picture) must not hide the page under a warning that has gone.
  */

@@ -165,6 +165,11 @@ export class LeakDetector {
     return [...this.warnings.values()]
   }
 
+  /** Tabs whose check is still running (`UIState.passwords.leakChecks`). */
+  checking(): string[] {
+    return [...this.aborts.keys()]
+  }
+
   /** Resolves once every check started so far has finished (tests, demo drivers). */
   async whenSettled(): Promise<void> {
     while (this.inflight.size > 0) await Promise.allSettled([...this.inflight])
@@ -195,16 +200,27 @@ export class LeakDetector {
     const abort = new AbortController()
     this.aborts.set(candidate.tabId, abort)
     this.results.delete(candidate.tabId)
-    let count: number | null
+    // The check is on record while it runs (`checking`): a phone save sheet holds for its verdict.
+    this.onChange()
     try {
-      count = await lookupBreachCount(
-        candidate.password,
-        { fetchRange: this.fetchRange },
-        abort.signal
-      )
+      await this.lookup(candidate, abort, isPrivate)
     } finally {
       if (this.aborts.get(candidate.tabId) === abort) this.aborts.delete(candidate.tabId)
+      // Over, with a warning or without one: the chrome hears either way.
+      this.onChange()
     }
+  }
+
+  private async lookup(
+    candidate: LeakCandidate,
+    abort: AbortController,
+    isPrivate: boolean
+  ): Promise<void> {
+    const count = await lookupBreachCount(
+      candidate.password,
+      { fetchRange: this.fetchRange },
+      abort.signal
+    )
     // Aborted (the tab is gone or another sign-in followed) or the network failed: not checked.
     if (count === null || abort.signal.aborted) return
     if (!this.browser.tabs.tab(candidate.tabId)) return
@@ -244,7 +260,6 @@ export class LeakDetector {
         private: isPrivate
       })
     }
-    this.onChange()
   }
 
   private saved(candidate: LeakCandidate): Credential | null {

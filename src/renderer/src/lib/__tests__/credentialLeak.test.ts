@@ -9,12 +9,14 @@ vi.mock('../api', () => ({
 import type { CredentialLeakWarning, HttpAuthPrompt, UIState } from '@shared/types'
 import { run } from '../api'
 import {
+  LEAK_HOLD_MS,
   LEAK_WARNING_BODY,
   LEAK_WARNING_TITLE,
   closeLeakWarning,
   currentLeakWarning,
   openLeakWarning,
-  respondToLeak
+  respondToLeak,
+  savePromptHold
 } from '../credentialLeak'
 import { chromeNeedsKeyboard, overlayCoversContent, panelAloneOverContent, uiStore } from '../ui'
 
@@ -83,6 +85,40 @@ describe('currentLeakWarning', () => {
     expect(currentLeakWarning(state({ securityPrompts: [{ ...auth, tabId: 't2' }] }))?.id).toBe(
       'leak-1'
     )
+  })
+})
+
+describe('savePromptHold: the phone save sheet waits for the warning, Chrome’s order', () => {
+  it('holds for a warning up on its tab, and for the tab’s check while it runs', () => {
+    expect(savePromptHold(state(), 't1')).toBe('warning')
+    expect(
+      savePromptHold(state({ passwords: { leaks: [], leakChecks: ['t1'] } } as never), 't1')
+    ).toBe('check')
+    // The warning outranks the check when a stale entry lists both.
+    expect(
+      savePromptHold(
+        state({ passwords: { leaks: [warning()], leakChecks: ['t1'] } } as never),
+        't1'
+      )
+    ).toBe('warning')
+  })
+
+  it('holds for nothing on another tab, with no tab, with no check and with no passwords state', () => {
+    expect(
+      savePromptHold(state({ passwords: { leaks: [], leakChecks: ['t2'] } } as never), 't1')
+    ).toBeNull()
+    expect(savePromptHold(state(), 't2')).toBeNull()
+    expect(savePromptHold(state(), null)).toBeNull()
+    expect(
+      savePromptHold(state({ passwords: { leaks: [], leakChecks: [] } } as never), 't1')
+    ).toBeNull()
+    // A state from before the field existed.
+    expect(savePromptHold(state({ passwords: { leaks: [] } } as never), 't1')).toBeNull()
+    expect(savePromptHold(state({ passwords: undefined } as never), 't1')).toBeNull()
+  })
+
+  it('bounds the hold: a lookup is one range request, so three seconds is more than any network worth waiting for', () => {
+    expect(LEAK_HOLD_MS).toBe(3000)
   })
 })
 
