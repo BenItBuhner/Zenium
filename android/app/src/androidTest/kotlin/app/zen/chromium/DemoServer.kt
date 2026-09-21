@@ -21,14 +21,18 @@ import java.util.concurrent.atomic.AtomicInteger
  * loopback address to listen on – 127.0.0.1 unless a demo needs several sites, which are told
  * apart by host: any 127.x.y.z is the loopback too, so one server per address on one port gives
  * each site its own host. A path in `delays` answers that many milliseconds late: a slow script
- * or image, for a page that takes its time to load.
+ * or image, for a page that takes its time to load. A path in `redirects` answers `303 See
+ * Other` to the location it maps to, whatever the method: a sign-in form's POST landing on its
+ * welcome page the way a real site's does (a request body is read to its `Content-Length` first,
+ * so the connection closes cleanly).
  */
 class DemoServer(
     private val port: Int,
     private val routes: Map<String, Pair<String, ByteArray>>,
     private val address: String = "127.0.0.1",
     private val delays: Map<String, Long> = emptyMap(),
-    private val cacheable: Set<String> = emptySet()
+    private val cacheable: Set<String> = emptySet(),
+    private val redirects: Map<String, String> = emptyMap()
 ) : Thread("demo-server-$address-$port") {
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
@@ -78,14 +82,36 @@ class DemoServer(
             val request = it.getInputStream().bufferedReader()
             val line = request.readLine() ?: return
             var range: String? = null
+            var contentLength = 0
             while (true) {
                 val header = request.readLine()
                 if (header.isNullOrEmpty()) break
                 if (header.startsWith("Range:", ignoreCase = true)) range = header.substringAfter(':').trim()
+                if (header.startsWith("Content-Length:", ignoreCase = true)) {
+                    contentLength = header.substringAfter(':').trim().toIntOrNull() ?: 0
+                }
+            }
+            // A body left unread when the socket closes goes back as a reset, which the WebView
+            // reports over the response it already has: read it (a form's fields) and drop it.
+            var unread = contentLength
+            val scratch = CharArray(4096)
+            while (unread > 0) {
+                val n = request.read(scratch, 0, minOf(unread, scratch.size))
+                if (n < 0) break
+                unread -= n
             }
             val path = line.split(' ').getOrNull(1)?.substringBefore('?') ?: "/"
             requests.getOrPut(path) { AtomicInteger() }.incrementAndGet()
             delays[path]?.let { Thread.sleep(it) }
+            val out = it.getOutputStream()
+            redirects[path]?.let { location ->
+                out.write(
+                    ("HTTP/1.1 303 See Other\r\nLocation: $location\r\nContent-Length: 0\r\n" +
+                        "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray()
+                )
+                out.flush()
+                return
+            }
             val route = routes[path]
             val (type, body) = route ?: ("text/plain; charset=utf-8" to "no such page: $path\n".toByteArray())
             // A media element fetches its file in byte ranges (the header, then the part it plays,
@@ -93,7 +119,6 @@ class DemoServer(
             // real server answers, so a WAV or an MP4 is seekable in the WebView.
             val part = if (route != null) range?.let { r -> byteRange(r, body.size) } else null
             val cache = if (route != null && path in cacheable) "max-age=3600" else "no-store"
-            val out = it.getOutputStream()
             val head = StringBuilder()
             if (part != null) {
                 val (from, to) = part

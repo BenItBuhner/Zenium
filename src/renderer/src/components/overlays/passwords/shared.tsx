@@ -163,7 +163,8 @@ export function Field({
 }: {
   id: string
   label: string
-  description?: string
+  /** Text, or a node when the text needs a class (a live count in `tabular-nums`, §4). */
+  description?: ReactNode
   error?: string | null
   actions?: ReactNode
   className?: string

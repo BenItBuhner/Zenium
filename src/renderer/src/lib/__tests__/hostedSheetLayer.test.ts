@@ -37,6 +37,8 @@ const OWN_SCRIM_CONSUMERS = [
   // prompts, the menulist's picker sheet, the passphrase sheet.
   'components/autofill/AutofillEditor.tsx',
   'components/autofill/AutofillPrompts.tsx',
+  // The sign-in leak warning's phone sheet (ID-31): the hosted `BottomSheet` at its content's height.
+  'components/autofill/LeakWarning.tsx',
   'components/autofill/PassphraseDialog.tsx',
   'components/autofill/controls.tsx',
   'components/downloads/DownloadsSheet.tsx',
