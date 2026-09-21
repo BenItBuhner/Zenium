@@ -3,7 +3,7 @@ import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { run } from './api'
 import { isPhone } from './formFactor'
-import { openImportDialog, openOverlay, overlayAvailable } from './ui'
+import { closeUrlbar, openImportDialog, openOverlay, overlayAvailable } from './ui'
 
 /**
  * Internal pages from the chrome's side (`shared/internalPages.ts`, `core/pages.ts`). Every
@@ -33,7 +33,10 @@ export function openSettings(section?: string | null): void {
  * a tablet, where another browser's profile can be read. On a phone the category alone: its
  * rows import from files, there being no profile to read, so the dialog never opens there.
  * `section` lets the first run land on another category first (Sync, when both were asked
- * for) with the dialog over it; a phone lands on Import whatever was asked.
+ * for) with the dialog over it; a phone lands on Import whatever was asked. The URL bar closes
+ * first, as it does wherever Settings opens as a tab (`overlay.open`): the first run ends over
+ * the new tab page with the bar up in its new-tab mode, and a tab that opens under it would
+ * keep the bar floating over the page and the dialog.
  */
 export async function openImportSurface(
   activeTabId: string | null,
@@ -41,6 +44,7 @@ export async function openImportSurface(
   section = 'import'
 ): Promise<void> {
   const phone = isPhone()
+  closeUrlbar()
   if (overlayAvailable('settings')) await openOverlay('settings', activeTabId, null, null, section)
   else openSettings(phone ? 'import' : section)
   if (!phone) await openImportDialog(activeTabId, source)

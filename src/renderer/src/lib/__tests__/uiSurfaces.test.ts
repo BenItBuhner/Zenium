@@ -159,12 +159,16 @@ describe('chrome surfaces over the content', () => {
     uiStore.set({ overlay: 'none', overlaySection: null, importDialog: null })
     vi.mocked(run).mockClear()
 
-    // The desktop, Settings a tab (#193): the tab on the section, the dialog over it.
+    // The desktop, Settings a tab (#193): the tab on the section, the dialog over it. The first
+    // run ends over the new tab page with the URL bar up in its new-tab mode: it closes first,
+    // or it would float over the tab and the dialog.
     browserStore.set({
       state: { capabilities: { pageTabs: true } } as unknown as UIState
     })
+    uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: true } }))
     await openImportSurface('t1', 'chrome:Default')
     expect(idle().overlay).toBe('none')
+    expect(idle().urlbar.open).toBe(false)
     expect(run).toHaveBeenCalledWith('page.open', { id: 'settings', section: 'import' })
     expect(idle().importDialog).toEqual({ source: 'chrome:Default' })
     uiStore.set({ importDialog: null })
