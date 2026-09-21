@@ -298,11 +298,11 @@ describe('PageDown and PageUp (omnibox-50)', () => {
 
   it('the highlighted row is brought into view when the list scrolls (the field keeps the focus, so nothing else would)', async () => {
     const scrolled: Element[] = []
-    const spy = vi
-      .spyOn(Element.prototype, 'scrollIntoView')
-      .mockImplementation(function (this: Element) {
-        scrolled.push(this)
-      })
+    const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+      this: Element
+    ) {
+      scrolled.push(this)
+    })
     try {
       suggestions = (q) => (q ? [1, 2, 3].map(history) : [])
       const el = await render(desktop())
