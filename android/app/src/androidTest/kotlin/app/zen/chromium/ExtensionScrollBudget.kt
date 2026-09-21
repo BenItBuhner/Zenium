@@ -22,9 +22,12 @@ import java.util.concurrent.TimeUnit
  * against the empty scroll (`baseline = ext-scroll-0`), so the ratios say what the runtime adds
  * to a scroll's frames – content-script injection, bridge traffic, badge and state pushes – on
  * the recipe the run happens to be on (the emulator's software GPU; the ratios and the trace's
- * main-thread time carry, the raw frame times do not). A fourth scene scrolls the emptied page
- * again at the end (`ext-scroll-0-again`, reported against the first): the recipe's own drift
- * over the run, so a ratio can be told from the emulator warming or tiring.
+ * main-thread time carry, the raw frame times do not). Two more scenes read the others: the
+ * three less Dark Reader (`ext-scroll-2`: uBlock Origin Lite and Vimium), so a ratio the three
+ * carry and the two do not is Dark Reader's restyled page rastering, not the runtime's frame
+ * work; and the emptied page scrolled again at the end (`ext-scroll-0-again`, reported against
+ * the first): the recipe's own drift over the run, so a ratio can be told from the emulator
+ * warming or tiring.
  *
  * The six are laid out as store installs from what the workflow pushed (see [ExtensionSeed]) and
  * registered DISABLED; each scene turns its set on through `extension.setEnabled`, waits for the
@@ -148,6 +151,11 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
 
     override fun demo() {
         scene(SCENE_0, emptySet(), baseline = null)
+        // The three less Dark Reader, the attribution scene: on a WebView with isolated worlds
+        // Dark Reader restyles the whole page (its dynamic theme, nine style sheets), and a
+        // restyled page rasters differently from the fixture as served; a ratio the three carry
+        // and the two do not is the theme's raster, not the runtime's frame work.
+        scene(SCENE_2, TWO, baseline = SCENE_0)
         scene(SCENE_3, THREE, baseline = SCENE_0)
         scene(SCENE_6, SIX, baseline = SCENE_0)
         scene(SCENE_0_AGAIN, emptySet(), baseline = SCENE_0)
@@ -601,6 +609,7 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         private const val FIXTURE = "$BASE/scroll.html"
         private const val TAB_ID = "tab_scroll"
         const val SCENE_0 = "ext-scroll-0"
+        const val SCENE_2 = "ext-scroll-2"
         const val SCENE_3 = "ext-scroll-3"
         const val SCENE_6 = "ext-scroll-6"
         const val SCENE_0_AGAIN = "ext-scroll-0-again"
@@ -610,6 +619,7 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         const val GRAMMARLY = "kbfnbcaeplbcioakkpcpgfkobkghlhen"
         const val LANGUAGETOOL = "oldceeleldhonbafppcapldpdifcinji"
         const val BITWARDEN = "nngceckbapebfimnlniiiahkandclblb"
+        val TWO = linkedSetOf(UBOL, VIMIUM)
         val THREE = linkedSetOf(UBOL, DARK_READER, VIMIUM)
         val SIX = linkedSetOf(UBOL, DARK_READER, VIMIUM, GRAMMARLY, LANGUAGETOOL, BITWARDEN)
         val ALL = SIX
