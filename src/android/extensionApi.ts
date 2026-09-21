@@ -432,12 +432,20 @@ export class ExtensionApi {
       speech: () => host.browser.platform.speech,
       hasPermission: (id) => host.attached(id)?.manifest.permissions.includes('tts') === true,
       endpointAlive: (endpointId) => host.router.endpoint(endpointId) !== undefined,
-      emit: (id, endpointId, args) =>
-        host.emit(id, 'tts', 'onEvent', args, (endpoint) => endpoint.id === endpointId),
+      emit: (id, endpointId, args, web) =>
+        host.emit(
+          id,
+          web ? 'speechSynthesis' : 'tts',
+          'onEvent',
+          args,
+          (endpoint) => endpoint.id === endpointId
+        ),
       voicesChanged: () => {
-        for (const ext of host.allAttached())
+        for (const ext of host.allAttached()) {
           if (ext.manifest.permissions.includes('tts'))
             host.emit(ext.record.id, 'tts', 'onVoicesChanged', [])
+          host.emit(ext.record.id, 'speechSynthesis', 'onVoicesChanged', [])
+        }
       },
       readAloudPlaying: () => host.browser.readAloud.uiState()?.status === 'playing',
       pauseReadAloud: () => host.browser.readAloud.pause()
@@ -613,6 +621,9 @@ export class ExtensionApi {
         return this.notifications.call(ext, method, args)
       case 'tts':
         return this.tts.call(id, endpoint.id, method, args)
+      case 'speechSynthesis':
+        // A page's Web Speech API (extensionSpeechSynthesis.ts): no permission, the same engine.
+        return this.tts.call(id, endpoint.id, method, args, true)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':

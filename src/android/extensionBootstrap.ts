@@ -44,6 +44,7 @@ import {
 import type { ClaimedTransport, TransportJanitor } from './extensionTransport'
 import { installCorsProxy } from './extensionCorsProxy'
 import { installExtensionUrlRewrite } from './extensionFrameUrls'
+import { installSpeechSynthesis } from './extensionSpeechSynthesis'
 
 /**
  * The extension bootstrap Kotlin injects at document start into tab WebViews (content mode) and
@@ -449,6 +450,18 @@ declare const __zenExtBoot: Boot
     // What the page spells `chrome-extension://<id>/...` by hand (a frame's src, an image's, a
     // script's) loads from the served origin: the WebView has no such scheme (extensionFrameUrls.ts).
     installExtensionUrlRewrite(window)
+    // The Web Speech API's synthesis, which Chrome's documents have and the WebView's do not,
+    // over the host's speech engine (extensionSpeechSynthesis.ts; Read&Write's speech frame).
+    // Not on the MV3 worker page: a service worker's global has none in Chrome.
+    if (!(context === 'background' && workerScript))
+      installSpeechSynthesis(pageWindow as unknown as Record<string, unknown>, {
+        call: (method, args) => engine.call('speechSynthesis', method, args),
+        onEvent: (listener) =>
+          engine.onHostEvent((ns, name, args) => {
+            if (ns === 'speechSynthesis') listener(name, args)
+          }),
+        listen: (event) => engine.post({ t: 'listen', event: `speechSynthesis.${event}`, on: true })
+      })
 
     if (context === 'background' && workerScript) {
       // `self` and `globalThis` answer as a worker's global does (`workerSelf`: no `window`

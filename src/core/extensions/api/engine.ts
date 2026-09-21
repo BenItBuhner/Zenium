@@ -145,6 +145,13 @@ export interface EmulatedEngine {
   ready(): void
   /** Send a bootstrap-level message (`popupSize`, `closePopup`); `token` and `ep` are stamped. */
   post(message: Record<string, unknown>): void
+  /**
+   * A host call outside `chrome` (a bootstrap-level platform such as a page's Web Speech API):
+   * `{ t: 'call', ns, method, args }`, answered like the shim's, and the host's events for
+   * `ns` through [onHostEvent] once the bootstrap has asked for them with a `listen` post.
+   */
+  call(ns: string, method: string, args: unknown[]): Promise<unknown>
+  onHostEvent(listener: (namespace: string, event: string, args: unknown[]) => void): void
   diagnostics: ShimDiagnostics | null
 }
 
@@ -831,6 +838,10 @@ export function createEmulatedEngine(
     receive,
     ready: () => post({ t: 'ready' }),
     post,
+    call,
+    onHostEvent: (listener) => {
+      hostEventListeners.push(listener)
+    },
     diagnostics
   }
 }

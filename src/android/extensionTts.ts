@@ -44,9 +44,12 @@ export interface TtsHost {
   hasPermission(extensionId: string): boolean
   /** Whether the endpoint that asked to speak is still there (its events are dropped when it is not: no wake for them). */
   endpointAlive(endpointId: string): boolean
-  /** `tts.onEvent(token, event)` to the one endpoint that called `speak`. */
-  emit(extensionId: string, endpointId: string, args: unknown[]): void
-  /** `tts.onVoicesChanged` to every extension with the permission. */
+  /**
+   * `tts.onEvent(token, event)` to the one endpoint that called `speak`; `web`: the utterance is
+   * a page's Web Speech one, and the event goes to its `speechSynthesis.onEvent` instead.
+   */
+  emit(extensionId: string, endpointId: string, args: unknown[], web: boolean): void
+  /** `tts.onVoicesChanged` to every extension with the permission, `speechSynthesis.onVoicesChanged` to every page. */
   voicesChanged(): void
   /** Read aloud is speaking: the player pauses before the extension's utterance starts. */
   readAloudPlaying(): boolean
@@ -235,7 +238,10 @@ export class AndroidTts {
   private readonly driver: SpeechHostDriver
   private nextId = 1
   /** The endpoint each utterance came from (`Utterance.owner` is the extension): its events go there. */
-  private readonly askers = new Map<number, { extensionId: string; endpointId: string }>()
+  private readonly askers = new Map<
+    number,
+    { extensionId: string; endpointId: string; web: boolean }
+  >()
   private voicesWatched: SpeechHost | null = null
 
   constructor(private readonly host: TtsHost) {
@@ -247,11 +253,22 @@ export class AndroidTts {
     this.queue = new TtsQueue(this.driver, (utterance, event) => this.deliver(utterance, event))
   }
 
-  call(extensionId: string, endpointId: string, method: string, args: unknown[]): unknown {
-    if (!this.host.hasPermission(extensionId)) throw new Error(ERROR_NO_PERMISSION)
+  /**
+   * A `chrome.tts` call, or (`web`) the same call from a page's `speechSynthesis`
+   * (extensionSpeechSynthesis.ts): the Web Speech API needs no permission, as in Chrome, and
+   * its utterances share the one queue and engine with `chrome.tts` and read aloud.
+   */
+  call(
+    extensionId: string,
+    endpointId: string,
+    method: string,
+    args: unknown[],
+    web = false
+  ): unknown {
+    if (!web && !this.host.hasPermission(extensionId)) throw new Error(ERROR_NO_PERMISSION)
     switch (method) {
       case 'speak':
-        this.speak(extensionId, endpointId, args[0], args[1], args[2])
+        this.speak(extensionId, endpointId, args[0], args[1], args[2], web)
         return undefined
       case 'stop':
         this.queue.stop()
@@ -267,7 +284,9 @@ export class AndroidTts {
       case 'getVoices':
         return this.voices()
     }
-    throw new Error(`chrome.tts.${method} is not implemented on Zenium for Android`)
+    throw new Error(
+      `${web ? 'speechSynthesis' : 'chrome.tts'}.${method} is not implemented on Zenium for Android`
+    )
   }
 
   /** The extension went away (disabled, removed): its speech stops and its queued utterances go without a word. */
@@ -302,7 +321,8 @@ export class AndroidTts {
     endpointId: string,
     rawUtterance: unknown,
     rawOptions: unknown,
-    rawToken: unknown
+    rawToken: unknown,
+    web: boolean
   ): void {
     let text: string
     let options: Utterance['options']
@@ -314,7 +334,7 @@ export class AndroidTts {
       throw error
     }
     const id = this.nextId++
-    this.askers.set(id, { extensionId, endpointId })
+    this.askers.set(id, { extensionId, endpointId, web })
     this.queue.speak({
       id,
       text,
@@ -329,6 +349,6 @@ export class AndroidTts {
     if (event.isFinalEvent) this.askers.delete(utterance.id)
     if (utterance.token === null || asker === undefined) return
     if (!this.host.endpointAlive(asker.endpointId)) return
-    this.host.emit(utterance.owner, asker.endpointId, [utterance.token, event])
+    this.host.emit(utterance.owner, asker.endpointId, [utterance.token, event], asker.web)
   }
 }
