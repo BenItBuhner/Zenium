@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DownloadService,
   RateEstimator,
+  canKeepInsecure,
   canRetry,
   estimateEta,
   isQuarantined,
@@ -34,6 +35,9 @@ interface Call {
 
 class FakeHost implements DownloadHost {
   calls: Call[] = []
+  autoResume?: 'core' | 'host'
+  isOnline?: () => boolean
+  onOnline?: (listener: () => void) => () => void
   releaseResult: { savePath: string; finalName: string } | null | 'derive' = 'derive'
   releaseNotify: boolean[] = []
   opened: string[] = []
@@ -203,7 +207,7 @@ describe('DownloadService state machine', () => {
     expect(item.bytesPerSecond).toBe(200)
     expect(item.etaMs).toBe(3000)
     const data = stored(h)
-    expect(data.version).toBe(3)
+    expect(data.version).toBe(4)
     expect(data.items[0]!.receivedBytes).toBe(400)
   })
 
@@ -617,13 +621,31 @@ describe('danger: quarantine, Keep and Discard', () => {
     expect(stranger.danger.level).toBe('dangerous')
   })
 
-  it('an http download from an https page is suspicious', () => {
-    const item = begin(h, { url: 'http://cdn.example.com/report.pdf' })
-    expect(item.danger).toEqual({
-      level: 'suspicious',
-      reason: 'insecure-download',
-      message: 'This file was downloaded over an insecure connection.'
-    })
+  it('a Safe Browsing verdict makes any file dangerous whatever its type (PS-34)', async () => {
+    const provider: DangerVerdictProvider = {
+      verdict: async () => ({ level: 'dangerous', reason: 'url-verdict', message: 'Malware.' })
+    }
+    h.service.addVerdictProvider(provider)
+    const pdf = begin(h)
+    expect(pdf.danger.level).toBe('safe')
+    await flush()
+    expect(pdf.danger).toEqual({ level: 'dangerous', reason: 'url-verdict', message: 'Malware.' })
+    h.service.finish(pdf.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    await flush()
+    expect(pdf.state).toBe('completed')
+    expect(isQuarantined(pdf)).toBe(true)
+    expect(h.host.count('release')).toBe(0)
+    expect(h.dangers).toEqual([pdf.id])
+  })
+
+  it('the tier is named on the record: dangerous programs, suspicious disk images', () => {
+    const exe = begin(h, { filename: 'setup.exe', referrer: 'https://other.example/x' })
+    expect(exe.danger).toMatchObject({ level: 'dangerous', reason: 'executable' })
+    const iso = begin(h, { filename: 'ubuntu.iso', referrer: 'https://other.example/x' })
+    expect(iso.danger).toMatchObject({ level: 'suspicious', reason: 'archive' })
+    const zip = begin(h, { filename: 'photos.zip', referrer: 'https://other.example/x' })
+    expect(zip.danger.level).toBe('safe')
   })
 
   it('waits for verdict providers before releasing and takes the worst answer', async () => {
@@ -792,6 +814,373 @@ describe('interrupt reasons', () => {
   })
 })
 
+describe('insecure downloads are blocked (HB-44)', () => {
+  let h: Harness
+  beforeEach(() => {
+    h = harness()
+  })
+
+  it('refuses an http download an https page started before a byte is written, and the row waits', () => {
+    const item = begin(h, { url: 'http://cdn.example.com/report.pdf' })
+    expect(item).toMatchObject({
+      state: 'insecure-blocked',
+      savePath: '',
+      receivedBytes: 0,
+      canResume: false,
+      endedAt: h.clock.now
+    })
+    expect(item.error).toBeUndefined()
+    expect(item.insecureAccepted).toBeUndefined()
+    // The file type is judged on its own: a PDF is safe, so Keep anyway may be offered.
+    expect(item.danger).toEqual({ level: 'safe', reason: 'none', message: '' })
+    expect(canKeepInsecure(item)).toBe(true)
+    expect(h.service.inFlight).toHaveLength(0)
+    expect(h.changes).toEqual([{ id: item.id, kind: 'started' }])
+    // The danger hook fires so the panel opens on the blocked row, as for a flagged file.
+    expect(h.dangers).toEqual([item.id])
+    // Written as blocked, so the row survives a restart.
+    expect(stored(h).items[0]).toMatchObject({ state: 'insecure-blocked' })
+    // The transfer the host cancelled reports nothing more that counts.
+    h.service.progress(item.id, { receivedBytes: 100, state: 'progressing' })
+    expect(item.state).toBe('insecure-blocked')
+    h.service.finish(item.id, 'cancelled')
+    expect(item.state).toBe('insecure-blocked')
+    expect(h.service.items).toContain(item)
+  })
+
+  it('judges the whole redirect chain; a secure chain from a secure page, or any page over http, runs', () => {
+    const mixed = begin(h, {
+      url: 'https://c.example/file.pdf',
+      urlChain: ['https://a.example/dl', 'http://b.example/dl', 'https://c.example/file.pdf']
+    })
+    expect(mixed.state).toBe('insecure-blocked')
+    const secure = begin(h, {
+      url: 'https://c.example/file.pdf',
+      urlChain: ['https://a.example/dl', 'https://c.example/file.pdf']
+    })
+    expect(secure.state).toBe('progressing')
+    const plainPage = begin(h, {
+      url: 'http://cdn.example.com/report.pdf',
+      referrer: 'http://example.com/page'
+    })
+    expect(plainPage.state).toBe('progressing')
+    const noPage = begin(h, { url: 'http://cdn.example.com/report.pdf', referrer: '' })
+    expect(noPage.state).toBe('progressing')
+    const local = begin(h, { url: 'http://localhost:8080/report.pdf' })
+    expect(local.state).toBe('progressing')
+  })
+
+  it('Keep anyway runs the transfer again into the same row, once, and the file type still counts', async () => {
+    const item = begin(h, { url: 'http://cdn.example.com/setup.exe', filename: 'setup.exe' })
+    expect(item.state).toBe('insecure-blocked')
+    expect(item.danger.level).toBe('dangerous')
+    // No Keep anyway for a dangerous type (Chrome offers none): the call is refused.
+    expect(canKeepInsecure(item)).toBe(false)
+    await h.service.acceptDanger(item.id)
+    expect(item.state).toBe('insecure-blocked')
+    expect(h.host.count('retry')).toBe(0)
+
+    const pdf = begin(h, { url: 'http://cdn.example.com/report.pdf' })
+    h.changes.length = 0
+    await h.service.acceptDanger(pdf.id)
+    expect(pdf.insecureAccepted).toBe(true)
+    expect(h.host.ids('retry')).toEqual([pdf.id])
+    expect(stored(h).items.find((i) => i.id === pdf.id)).toMatchObject({ insecureAccepted: true })
+    // The host's new request reports into the row and is not refused a second time.
+    const again = h.service.begin({
+      url: pdf.url,
+      urlChain: [pdf.url],
+      referrer: pdf.referrer,
+      filename: 'report.pdf',
+      totalBytes: 1000,
+      mimeType: 'application/pdf',
+      savePath: '/dl/report.pdf.zeniumdownload',
+      resumes: pdf.id
+    })
+    expect(again).toBe(pdf)
+    expect(pdf.state).toBe('progressing')
+    expect(pdf.savePath).toBe('/dl/report.pdf.zeniumdownload')
+    h.service.finish(pdf.id, 'completed', { receivedBytes: 1000 })
+    await flush()
+    expect(pdf.state).toBe('completed')
+    expect(isQuarantined(pdf)).toBe(false)
+    expect(h.host.count('release')).toBe(1)
+    // A Retry later keeps the answer: the same chain is not blocked again.
+    h.service.finish(pdf.id, 'interrupted', { canResume: false, error: 'server-failed' })
+    h.service.retry(pdf.id)
+    const third = h.service.begin({
+      url: pdf.url,
+      referrer: pdf.referrer,
+      filename: 'report.pdf',
+      totalBytes: 1000,
+      mimeType: 'application/pdf',
+      resumes: pdf.id
+    })
+    expect(third.state).toBe('progressing')
+  })
+
+  it('Discard and Remove drop the row; nothing is on disk to delete; Retry and Resume do nothing', async () => {
+    const item = begin(h, { url: 'http://cdn.example.com/report.pdf' })
+    expect(canRetry(item)).toBe(false)
+    h.service.retry(item.id)
+    h.service.resume(item.id)
+    h.service.cancel(item.id)
+    expect(h.host.calls).toEqual([])
+    await h.service.discard(item.id)
+    expect(h.host.count('deletePartial')).toBe(0)
+    expect(h.service.items).toHaveLength(0)
+    expect(h.changes.at(-1)).toEqual({ id: item.id, kind: 'removed', removed: true })
+    const other = begin(h, { url: 'http://cdn.example.com/other.pdf' })
+    h.service.remove(other.id)
+    expect(h.service.items).toHaveLength(0)
+    const third = begin(h, { url: 'http://cdn.example.com/third.pdf' })
+    h.service.removeCompleted()
+    expect(h.service.items).toHaveLength(0)
+    expect(third.state).toBe('insecure-blocked')
+  })
+
+  it('a host that learns the chain late reports the refusal through finish (the Kotlin downloader)', async () => {
+    const item = begin(h)
+    expect(item.state).toBe('progressing')
+    h.changes.length = 0
+    h.service.finish(item.id, 'insecure-blocked')
+    expect(item).toMatchObject({ state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
+    // Whatever the host wrote before it knew is deleted.
+    expect(h.host.ids('deletePartial')).toEqual([item.id])
+    expect(h.changes).toEqual([{ id: item.id, kind: 'done' }])
+    expect(h.dangers).toEqual([item.id])
+    await h.service.acceptDanger(item.id)
+    expect(h.host.ids('retry')).toEqual([item.id])
+  })
+
+  it('a Safe Browsing verdict on a blocked row takes Keep anyway away', async () => {
+    const provider: DangerVerdictProvider = {
+      verdict: async () => ({ level: 'dangerous', reason: 'url-verdict', message: 'Malware.' })
+    }
+    h.service.addVerdictProvider(provider)
+    const item = begin(h, { url: 'http://cdn.example.com/report.pdf' })
+    expect(item.state).toBe('insecure-blocked')
+    await flush()
+    expect(item.danger.level).toBe('dangerous')
+    expect(canKeepInsecure(item)).toBe(false)
+    expect(item.state).toBe('insecure-blocked')
+  })
+
+  it('the private list forgets its blocked rows with the session', () => {
+    const item = begin(h, { url: 'http://cdn.example.com/report.pdf', private: true })
+    expect(item.state).toBe('insecure-blocked')
+    expect(stored(h).items).toHaveLength(0)
+    h.service.endPrivateSession()
+    expect(h.service.items).toHaveLength(0)
+  })
+})
+
+describe('automatic resume after a transient network failure (HB-43)', () => {
+  let h: Harness
+  beforeEach(() => {
+    vi.useFakeTimers()
+    h = harness()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A running transfer that the network just dropped, resumable. */
+  function dropped(over: Partial<Parameters<DownloadService['begin']>[0]> = {}): DownloadItem {
+    const item = begin(h, over)
+    h.service.progress(item.id, { receivedBytes: 300, state: 'progressing' })
+    h.service.progress(item.id, {
+      receivedBytes: 300,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-disconnected'
+    })
+    return item
+  }
+
+  it('schedules resume 2 / 4 / 8 s after each failure in a row, then leaves the row to the user', () => {
+    const item = dropped()
+    expect(item.state).toBe('interrupted')
+    expect(item.autoResumeAt).toBe(h.clock.now + 2000)
+    // Not persisted: a restart offers Resume, it does not retry on its own.
+    expect(stored(h).items[0]!.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(1999)
+    expect(h.host.count('resume')).toBe(0)
+    vi.advanceTimersByTime(1)
+    expect(h.host.ids('resume')).toEqual([item.id])
+    expect(item.autoResumeAt).toBeUndefined()
+
+    // The host's resume runs, then the network drops again: the second step.
+    h.service.progress(item.id, { receivedBytes: 300, state: 'progressing' })
+    h.service.progress(item.id, {
+      receivedBytes: 300,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    expect(item.autoResumeAt).toBe(h.clock.now + 4000)
+    vi.advanceTimersByTime(4000)
+    expect(h.host.count('resume')).toBe(2)
+    h.service.progress(item.id, { receivedBytes: 300, state: 'progressing' })
+    h.service.progress(item.id, {
+      receivedBytes: 300,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-timeout'
+    })
+    expect(item.autoResumeAt).toBe(h.clock.now + 8000)
+    vi.advanceTimersByTime(8000)
+    expect(h.host.count('resume')).toBe(3)
+    // The fourth failure in a row: interrupted with Resume / Retry, nothing scheduled.
+    h.service.progress(item.id, { receivedBytes: 300, state: 'progressing' })
+    h.service.progress(item.id, {
+      receivedBytes: 300,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-server-down'
+    })
+    expect(item.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(3)
+    expect(item.state).toBe('interrupted')
+    expect(item.canResume).toBe(true)
+  })
+
+  it('bytes arriving start the count over', () => {
+    const item = dropped()
+    vi.advanceTimersByTime(2000)
+    expect(h.host.count('resume')).toBe(1)
+    h.service.progress(item.id, { receivedBytes: 301, state: 'progressing' })
+    h.service.progress(item.id, {
+      receivedBytes: 301,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    // Back to the first step, not the second.
+    expect(item.autoResumeAt).toBe(h.clock.now + 2000)
+  })
+
+  it('never for a server refusal, a server without ranges, a file error, a stop of the user’s, or a blob', () => {
+    const cases: Array<[Partial<DownloadItem>, string]> = [
+      [{ canResume: true, error: 'server-bad-content' }, '404'],
+      [{ canResume: true, error: 'server-forbidden' }, '403'],
+      [{ canResume: false, error: 'network-failed' }, 'no ranges'],
+      [{ canResume: true, error: 'server-no-range' }, '416'],
+      [{ canResume: true, error: 'file-no-space' }, 'file'],
+      [{ canResume: true, error: 'user-shutdown' }, 'shutdown']
+    ]
+    for (const [patch] of cases) {
+      const item = begin(h)
+      h.service.progress(item.id, {
+        receivedBytes: 10,
+        state: 'interrupted',
+        canResume: patch.canResume,
+        error: patch.error
+      })
+      expect(item.autoResumeAt).toBeUndefined()
+    }
+    const blob = begin(h, { url: 'blob:https://example.com/abc' })
+    h.service.progress(blob.id, {
+      receivedBytes: 10,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    expect(blob.autoResumeAt).toBeUndefined()
+    // A terminal interruption (the host's done) that is resumable and transient also schedules.
+    const term = begin(h)
+    h.service.finish(term.id, 'interrupted', { canResume: true, error: 'network-failed' })
+    expect(term.autoResumeAt).toBe(h.clock.now + 2000)
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(1)
+  })
+
+  it('waits for the host’s network to come back, then resumes at once', () => {
+    let online = false
+    const listeners = new Set<() => void>()
+    h.host.isOnline = () => online
+    h.host.onOnline = (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+    const item = dropped()
+    vi.advanceTimersByTime(2000)
+    expect(h.host.count('resume')).toBe(0)
+    expect(listeners.size).toBe(1)
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(0)
+    online = true
+    for (const l of [...listeners]) l()
+    expect(h.host.ids('resume')).toEqual([item.id])
+    expect(listeners.size).toBe(0)
+  })
+
+  it('the user’s own Resume, Retry, Cancel or removal drop the schedule', () => {
+    const a = dropped()
+    h.service.resume(a.id)
+    expect(a.autoResumeAt).toBeUndefined()
+    expect(h.host.ids('resume')).toEqual([a.id])
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(1)
+
+    const b = dropped()
+    h.service.retry(b.id)
+    expect(b.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(1)
+
+    const c = dropped()
+    h.service.remove(c.id)
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(1)
+
+    const d = dropped()
+    h.service.finish(d.id, 'cancelled')
+    expect(d.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(1)
+  })
+
+  it('a host that retries on its own (Android) sees nothing scheduled', () => {
+    h.host.autoResume = 'host'
+    const item = dropped()
+    expect(item.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(0)
+  })
+
+  it('a resume the core did not start (a Retry, a restart) keeps the count for the next failure', () => {
+    const item = dropped()
+    vi.advanceTimersByTime(2000)
+    expect(h.host.count('resume')).toBe(1)
+    // The host's transfer picked the row up again through begin (a resume after a restart).
+    h.service.begin({
+      url: item.url,
+      filename: item.filename,
+      totalBytes: 1000,
+      mimeType: 'application/pdf',
+      savePath: item.savePath,
+      resumes: item.id
+    })
+    h.service.progress(item.id, {
+      receivedBytes: 300,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    expect(item.autoResumeAt).toBe(h.clock.now + 4000)
+  })
+
+  it('nothing is retried on the way out: shutdown clears the schedule', () => {
+    const item = dropped()
+    h.service.shutdown()
+    expect(item.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(0)
+  })
+})
+
 describe('the file on disk: deleteFile, exists and fileMissing', () => {
   let h: Harness
   beforeEach(() => {
@@ -846,7 +1235,7 @@ describe('the file on disk: deleteFile, exists and fileMissing', () => {
     h.service.finish(running.id, 'interrupted', { canResume: false })
     await expect(h.service.deleteFile(running.id)).resolves.toBe('not-completed')
     const flagged = begin(h, {
-      url: 'http://sketchy.example/setup.exe',
+      url: 'https://sketchy.example/setup.exe',
       filename: 'setup.exe',
       savePath: '/dl/setup.exe.zeniumdownload'
     })

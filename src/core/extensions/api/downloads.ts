@@ -185,8 +185,11 @@ export function chromeState(item: DownloadItem): ChromeDownloadState {
       return 'in_progress'
     case 'completed':
       return quarantined(item) ? 'in_progress' : 'complete'
+    // A blocked insecure download too: refused before a byte was written, nothing is in
+    // progress and nothing is complete.
     case 'cancelled':
     case 'interrupted':
+    case 'insecure-blocked':
       return 'interrupted'
   }
 }
@@ -201,10 +204,13 @@ export function chromeDanger(danger: DownloadDanger, accepted: boolean): ChromeD
 /**
  * The model's reason in Chrome's spelling: every `DownloadInterruptReason` is one of Chrome's
  * (`network-failed` → `NETWORK_FAILED`); a cancelled row is `USER_CANCELED`, an interrupted one
- * without a reason (never written by this build) a plain network failure.
+ * without a reason (never written by this build) a plain network failure, and a row blocked by
+ * the insecure-download rule `FILE_BLOCKED` (what Chrome's item reads when the browser refuses
+ * the file).
  */
 export function chromeInterruptReason(item: DownloadItem): ChromeInterruptReason | undefined {
   if (item.state === 'cancelled') return 'USER_CANCELED'
+  if (item.state === 'insecure-blocked') return 'FILE_BLOCKED'
   if (item.state !== 'interrupted') return undefined
   const name = item.error ? chromeInterruptReasonName(item.error) : 'NETWORK_FAILED'
   return INTERRUPT_REASONS.includes(name as ChromeInterruptReason)

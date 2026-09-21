@@ -26,6 +26,7 @@ import {
   VERDICT_TIMEOUT_MS,
   classifyDownload,
   dangerVerdicts,
+  insecureDownload,
   makeDanger,
   mayAutoOpen,
   worstDanger,
@@ -55,19 +56,40 @@ interface PersistedV3 {
   items: DownloadItem[]
 }
 
-type Persisted = PersistedV1 | PersistedV2 | PersistedV3
+/**
+ * Version 4 (download safety): the `insecure-blocked` state and `insecureAccepted` are written
+ * (a version 3 reader turns the state into `interrupted`); `autoResumeAt` never is.
+ */
+interface PersistedV4 {
+  version: 4
+  items: DownloadItem[]
+}
+
+type Persisted = PersistedV1 | PersistedV2 | PersistedV3 | PersistedV4
 
 const MAX_ITEMS = 100
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 /** Progress events per item are throttled to this (4 Hz); state changes go out at once. */
 const PROGRESS_INTERVAL_MS = 250
 const PERSIST_INTERVAL_MS = 2000
 /** How long a dead download link's note waits for the failure of the navigation it came from. */
 const DEAD_LINK_MS = 10_000
+/**
+ * Backoff before each automatic resume of a transfer a transient network failure interrupted
+ * (HB-43): three attempts, each held until the host says the network is back; the count starts
+ * over once bytes arrive again. Then the row stays interrupted with Resume / Retry.
+ */
+export const AUTO_RESUME_DELAYS_MS: readonly number[] = [2000, 4000, 8000]
 
 /** Everything a host knows when a transfer starts. */
 export interface DownloadInit {
   url: string
+  /**
+   * Every URL the request went through, the final one last (`DownloadItem.getURLChain()`; the
+   * Kotlin downloader's own redirects). The insecure-download rule judges each hop; `[url]`
+   * when the host knows no chain.
+   */
+  urlChain?: string[]
   /** Name the server suggested (`Content-Disposition`, the `download` attribute or the URL). */
   filename: string
   /** Name the file will end up under when the host already made it unique; defaults to `filename`. */
@@ -211,6 +233,17 @@ type ProgressPatch = Partial<
   >
 >
 
+/** The core's automatic resume of one interrupted row (see `AUTO_RESUME_DELAYS_MS`). */
+interface AutoResume {
+  /** Attempts made since bytes last arrived. */
+  attempts: number
+  /** Bytes the row had when it was interrupted: progress past it starts the count over. */
+  receivedAt: number
+  timer: ReturnType<typeof setTimeout> | null
+  /** Waiting for the host's online signal. */
+  unsubscribe: (() => void) | null
+}
+
 /**
  * The downloads list: records, their persistence and the rules around them. The host owns the
  * actual transfers and reports through `begin` / `progress` / `finish`, then acts on `pause` /
@@ -224,12 +257,19 @@ type ProgressPatch = Partial<
  * Private downloads (a private window, the Android private profile) stay in memory: they are
  * never written to `downloads.json`, only private windows see them, and `endPrivateSession`
  * cancels and forgets them when the last private window closes.
+ *
+ * Two safety rules live here rather than in the hosts (HB-44, HB-43): a transfer a secure page
+ * started over a plaintext hop is refused in `begin` (`insecure-blocked`; the host cancels its
+ * engine's item and "Keep anyway" runs it again with `insecureAccepted`), and a row a transient
+ * network failure interrupted is resumed on its own with backoff once the host's network is
+ * back, unless the host's downloader does that itself (`DownloadHost.autoResume`).
  */
 export class DownloadService {
   items: DownloadItem[] = []
   private readonly store: JsonStore<Persisted>
   private lastPersist = 0
   private readonly transfers = new Map<string, Transfer>()
+  private readonly autoResumes = new Map<string, AutoResume>()
   private readonly registry: DangerVerdictRegistry
   private readonly now: () => number
   /** Set by `shutdown()`: the rows are frozen as persisted, later host reports are teardown noise. */
@@ -249,7 +289,11 @@ export class DownloadService {
   ) {
     this.now = deps.now ?? (() => Date.now())
     this.registry = deps.verdicts ?? dangerVerdicts
-    this.store = new JsonStore<Persisted>(io, 'downloads.json', 1000)
+    this.store = new JsonStore<Persisted>(io, 'downloads.json', {
+      debounceMs: 1000,
+      // The schedule of an automatic resume lives in memory only: a restart offers Resume.
+      replacer: (key, value) => (key === 'autoResumeAt' ? undefined : value)
+    })
     this.items = migrate(this.store.readSync(), this.now())
     // Files deleted while the browser was closed: the loaded rows are checked as the list loads
     // (the host answers asynchronously), so the first snapshot goes out at once and the rows
@@ -311,10 +355,19 @@ export class DownloadService {
   // Host reports
   // ---------------------------------------------------------------------------
 
-  /** A transfer started; returns the record the host should keep updating. */
+  /**
+   * A transfer started; returns the record the host should keep updating. A record that comes
+   * back `insecure-blocked` was refused (Chrome's mixed-content rule over `urlChain` and the
+   * referrer): the host cancels its engine's item and reports nothing more for it; the row
+   * waits for "Keep anyway" (`acceptDanger`, which runs `retry` with `insecureAccepted`) or
+   * Discard. Verdict providers are still asked, so a Safe Browsing hit can take Keep away.
+   */
   begin(init: DownloadInit): DownloadItem {
     const now = this.now()
     const existing = init.resumes ? this.item(init.resumes) : undefined
+    // A transfer is running for the row again (the core's own resume after a restart, a Retry):
+    // the pending attempt is moot, the count carries on until bytes arrive.
+    if (existing) this.holdAutoResume(existing)
     const record = existing ? this.continueRecord(existing, init) : this.newRecord(init, now)
     const transfer: Transfer = {
       rate: new RateEstimator(now),
@@ -327,10 +380,37 @@ export class DownloadService {
     transfer.rate.reset(record.receivedBytes, now)
     this.transfers.set(record.id, transfer)
     if (!existing && this.registry.size > 0) transfer.verdicts = this.askProviders(record, transfer)
+    if (
+      !record.insecureAccepted &&
+      insecureDownload(init.urlChain ?? [init.url], record.referrer)
+    ) {
+      this.blockInsecure(record, now)
+      this.onChange(record, 'started')
+      this.deps.onDanger?.(record)
+      return record
+    }
     this.persist()
     if (!existing) this.deps.onBegin?.(record, init)
     this.onChange(record, 'started')
     return record
+  }
+
+  /** The row of a refused insecure transfer: nothing on disk, waiting for Keep anyway or Discard. */
+  private blockInsecure(record: DownloadItem, now: number): void {
+    record.state = 'insecure-blocked'
+    record.savePath = ''
+    record.receivedBytes = 0
+    record.canResume = false
+    record.bytesPerSecond = 0
+    record.etaMs = null
+    record.endedAt = now
+    delete record.completedAt
+    this.clearError(record)
+    // No bytes will come: the verdicts still land on the row, nothing waits for them.
+    const transfer = this.transfers.get(record.id)
+    if (transfer) transfer.verdicts = null
+    this.transfers.delete(record.id)
+    this.persist()
   }
 
   private newRecord(init: DownloadInit, now: number): DownloadItem {
@@ -431,8 +511,9 @@ export class DownloadService {
   ): void {
     if (this.quitting) return
     const record = this.item(id)
-    // Finished records never come back to life; a resumable interruption does (interrupted → progressing).
-    if (!record || record.state === 'completed' || record.state === 'cancelled') return
+    // Finished records never come back to life; a resumable interruption does (interrupted →
+    // progressing). A blocked row hears nothing more from the transfer it refused.
+    if (!record || isFinal(record.state)) return
     const transfer = this.transfers.get(id)
     const now = this.now()
     const stateChanged = record.state !== patch.state
@@ -448,6 +529,11 @@ export class DownloadService {
       record.bytesPerSecond = state === 'progressing' ? transfer.rate.bytesPerSecond(now) : 0
     }
     record.etaMs = estimateEta(record)
+    if (state === 'interrupted') {
+      if (stateChanged) this.considerAutoResume(record)
+    } else if (state === 'progressing') {
+      this.noteProgress(record)
+    }
     if (stateChanged || now - this.lastPersist > PERSIST_INTERVAL_MS) this.persist()
     if (stateChanged || !transfer || now - transfer.lastBroadcast >= PROGRESS_INTERVAL_MS) {
       if (transfer) transfer.lastBroadcast = now
@@ -455,15 +541,19 @@ export class DownloadService {
     }
   }
 
-  /** The transfer ended: completed (bytes are in the partial file), cancelled or interrupted. */
+  /**
+   * The transfer ended: completed (bytes are in the partial file), cancelled, interrupted, or
+   * `insecure-blocked` for a host that learnt the redirect chain only once its own request was
+   * answered (the Kotlin downloader) and refused the body under Chrome's mixed-content rule.
+   */
   finish(
     id: string,
-    state: Extract<DownloadState, 'completed' | 'cancelled' | 'interrupted'>,
+    state: Extract<DownloadState, 'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'>,
     patch: ProgressPatch = {}
   ): void {
     if (this.quitting) return
     const record = this.item(id)
-    if (!record || record.state === 'completed' || record.state === 'cancelled') return
+    if (!record || isFinal(record.state)) return
     const transfer = this.transfers.get(id)
     const { finalName, ...fields } = patch
     assignFields(record, fields)
@@ -475,20 +565,133 @@ export class DownloadService {
       void this.complete(record, transfer)
       return
     }
+    if (state === 'insecure-blocked') {
+      const partial = record.savePath
+      this.blockInsecure(record, this.now())
+      if (partial) void this.host.deletePartial({ ...record, savePath: partial })
+      this.onChange(record, 'done')
+      this.deps.onDanger?.(record)
+      return
+    }
     this.transfers.delete(id)
     transfer?.abort.abort()
     record.state = state
     record.endedAt = this.now()
     if (state === 'cancelled') {
       this.clearError(record)
+      this.clearAutoResume(record)
       const partial = record.savePath
       record.savePath = ''
       if (partial) void this.host.deletePartial({ ...record, savePath: partial })
     } else {
       this.setError(record, record.error ?? 'network-failed')
+      this.considerAutoResume(record)
     }
     this.persist()
     this.onChange(record, 'done')
+  }
+
+  // ---------------------------------------------------------------------------
+  // Automatic resume (HB-43)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A row just went interrupted. When the failure was the network's (a `network-*` reason), the
+   * server can resume and the host leaves retrying to the core, the next attempt is scheduled
+   * with the backoff step for the attempts made since bytes last arrived; the fourth failure in
+   * a row leaves the row interrupted with Resume / Retry. A 4xx, a server without ranges, a
+   * file error or the user's own stop never schedule anything.
+   */
+  private considerAutoResume(record: DownloadItem): void {
+    const entry = this.autoResumes.get(record.id)
+    if (!this.mayAutoResume(record)) {
+      this.clearAutoResume(record)
+      return
+    }
+    const attempts = entry?.attempts ?? 0
+    const delay = AUTO_RESUME_DELAYS_MS[attempts]
+    if (delay === undefined) {
+      this.clearAutoResume(record)
+      return
+    }
+    if (entry?.timer) clearTimeout(entry.timer)
+    entry?.unsubscribe?.()
+    const next: AutoResume = {
+      attempts,
+      receivedAt: record.receivedBytes,
+      timer: null,
+      unsubscribe: null
+    }
+    next.timer = setTimeout(() => {
+      next.timer = null
+      this.whenOnline(next, () => this.fireAutoResume(record, next))
+    }, delay)
+    this.autoResumes.set(record.id, next)
+    record.autoResumeAt = this.now() + delay
+  }
+
+  private mayAutoResume(record: DownloadItem): boolean {
+    if (this.quitting || this.host.autoResume === 'host') return false
+    return (
+      record.state === 'interrupted' &&
+      record.canResume &&
+      isTransientInterrupt(record.error) &&
+      !record.url.startsWith('blob:')
+    )
+  }
+
+  /** Run `then` now when the host says online (or cannot say), else once it reports the network back. */
+  private whenOnline(entry: AutoResume, then: () => void): void {
+    const online = this.host.isOnline?.() ?? true
+    if (online || !this.host.onOnline) {
+      then()
+      return
+    }
+    let fired = false
+    entry.unsubscribe = this.host.onOnline(() => {
+      if (fired) return
+      fired = true
+      entry.unsubscribe?.()
+      entry.unsubscribe = null
+      then()
+    })
+  }
+
+  private fireAutoResume(record: DownloadItem, entry: AutoResume): void {
+    if (this.autoResumes.get(record.id) !== entry) return
+    delete record.autoResumeAt
+    if (!this.mayAutoResume(record) || this.item(record.id) !== record) {
+      this.autoResumes.delete(record.id)
+      return
+    }
+    entry.attempts++
+    entry.timer = null
+    this.host.resume(record)
+  }
+
+  /** Bytes arrived: the attempt count starts over for the next interruption. */
+  private noteProgress(record: DownloadItem): void {
+    const entry = this.autoResumes.get(record.id)
+    if (!entry) return
+    if (record.receivedBytes > entry.receivedAt) this.autoResumes.delete(record.id)
+  }
+
+  /** Forget the row's schedule (a user action, a cancel, a removal, the quit). */
+  private clearAutoResume(record: DownloadItem): void {
+    this.holdAutoResume(record)
+    this.autoResumes.delete(record.id)
+  }
+
+  /** Stop the pending attempt but keep the count: the transfer is running again on its own. */
+  private holdAutoResume(record: DownloadItem): void {
+    const entry = this.autoResumes.get(record.id)
+    if (entry) {
+      if (entry.timer) clearTimeout(entry.timer)
+      entry.timer = null
+      entry.unsubscribe?.()
+      entry.unsubscribe = null
+    }
+    delete record.autoResumeAt
   }
 
   /**
@@ -589,12 +792,14 @@ export class DownloadService {
     if (item?.state === 'progressing') this.host.pause(id)
   }
 
+  /** The user's Resume: the engine's own schedule for the row is dropped, the count starts over. */
   resume(id: string): void {
     const item = this.item(id)
     if (!item) return
-    if (item.state === 'paused' || (item.state === 'interrupted' && item.canResume))
+    if (item.state === 'paused' || (item.state === 'interrupted' && item.canResume)) {
+      this.clearAutoResume(item)
       this.host.resume(item)
-    else if (canRetry(item)) this.retry(id)
+    } else if (canRetry(item)) this.retry(id)
   }
 
   cancel(id: string): void {
@@ -605,10 +810,12 @@ export class DownloadService {
   /**
    * Start over: a new request for the same URL and referrer that reports back into this record
    * (the host passes `resumes: item.id` to `begin`), so the row keeps its place and identity.
+   * A "Keep anyway" given earlier holds: the same chain is not blocked again on the way back.
    */
   retry(id: string): void {
     const item = this.item(id)
     if (!item || !canRetry(item)) return
+    this.clearAutoResume(item)
     // A completed row retries only once its file is gone: nothing of ours is left to delete.
     if (item.savePath && item.state !== 'completed') void this.host.deletePartial(item)
     item.savePath = ''
@@ -618,10 +825,25 @@ export class DownloadService {
     this.host.retry(item)
   }
 
-  /** "Keep": release a flagged file from quarantine. */
+  /**
+   * "Keep": release a flagged file from quarantine. On an `insecure-blocked` row this is "Keep
+   * anyway": the transfer runs again (a new request into the same row, as `retry`) with
+   * `insecureAccepted`, so the plaintext hop is not refused a second time; the file that arrives
+   * is still judged by type and verdict. Refused when the type is dangerous – Chrome offers no
+   * Keep there, and neither does the interface.
+   */
   async acceptDanger(id: string): Promise<void> {
     const item = this.item(id)
-    if (!item || !isQuarantined(item)) return
+    if (!item) return
+    if (item.state === 'insecure-blocked') {
+      if (!canKeepInsecure(item)) return
+      item.insecureAccepted = true
+      item.dangerAccepted = false
+      this.persist()
+      this.host.retry(item)
+      return
+    }
+    if (!isQuarantined(item)) return
     const released = await this.host.release(item, this.releaseOptions())
     if (this.item(id) !== item) return
     if (released) {
@@ -740,6 +962,7 @@ export class DownloadService {
   removeCompleted(): void {
     const finished = this.items.filter((i) => !isInFlight(i.state))
     for (const item of finished) {
+      this.clearAutoResume(item)
       if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
         void this.host.deletePartial(item)
     }
@@ -766,6 +989,7 @@ export class DownloadService {
     if (gone.length === 0) return
     const ids = new Set(gone.map((i) => i.id))
     for (const item of gone) {
+      this.clearAutoResume(item)
       if (item.savePath && (isQuarantined(item) || item.state === 'interrupted'))
         void this.host.deletePartial(item)
     }
@@ -782,6 +1006,7 @@ export class DownloadService {
     const mine = this.items.filter((i) => i.private)
     if (mine.length === 0) return
     for (const item of mine) {
+      this.clearAutoResume(item)
       if (isInFlight(item.state)) {
         this.host.cancel(item.id)
         this.transfers.get(item.id)?.abort.abort()
@@ -799,6 +1024,15 @@ export class DownloadService {
 
   async chooseDirectory(win?: ZenWindow): Promise<string | null> {
     return (await this.host.chooseDirectory?.(win)) ?? null
+  }
+
+  /**
+   * Where new downloads go right now (HB-20): the host's answer (the setting's folder when it
+   * exists or can be made, else the platform's Downloads folder), the bare setting for a host
+   * without one, empty when neither knows (a host with no file system of its own to name).
+   */
+  currentDirectory(): string {
+    return this.host.currentDirectory?.() ?? this.deps.settings().directory ?? ''
   }
 
   private persist(): void {
@@ -826,6 +1060,8 @@ export class DownloadService {
     const park = this.host.park?.bind(this.host)
     let changed = false
     for (const item of this.items) {
+      // Nothing is retried on the way out; the next launch offers Resume.
+      this.clearAutoResume(item)
       if (!isInFlight(item.state) || item.private) continue
       if (park && item.savePath) {
         const kept = park(item)
@@ -847,6 +1083,7 @@ export class DownloadService {
 
   private drop(item: DownloadItem): void {
     this.items = this.items.filter((i) => i !== item)
+    this.clearAutoResume(item)
     this.transfers.get(item.id)?.abort.abort()
     this.transfers.delete(item.id)
     this.persist()
@@ -865,7 +1102,8 @@ export class DownloadService {
         }
       }
       if (victim === -1) victim = this.items.length - 1
-      this.items.splice(victim, 1)
+      const [gone] = this.items.splice(victim, 1)
+      if (gone) this.clearAutoResume(gone)
     }
   }
 
@@ -962,6 +1200,30 @@ export function isInFlight(state: DownloadState): boolean {
   return state === 'progressing' || state === 'paused'
 }
 
+/**
+ * States no host report moves a row out of: completed and cancelled rows never come back to
+ * life (a resumable interruption does), and a blocked row hears nothing more from the transfer
+ * it refused. Only a user action (Retry, Keep anyway) starts them over.
+ */
+export function isFinal(state: DownloadState): boolean {
+  return state === 'completed' || state === 'cancelled' || state === 'insecure-blocked'
+}
+
+/**
+ * Chromium's `NETWORK_*` reasons: the connection dropped, timed out, the machine went offline,
+ * the server stopped answering. These come back on their own, so the engine retries them
+ * (HB-43); a server's refusal (a 4xx, a 5xx, no ranges), a file error and the user's own stop
+ * do not.
+ */
+export function isTransientInterrupt(reason: DownloadInterruptReason | undefined): boolean {
+  return reason !== undefined && reason.startsWith('network-')
+}
+
+/** Whether "Keep anyway" may be offered on an `insecure-blocked` row (never for a dangerous type). */
+export function canKeepInsecure(item: DownloadItem): boolean {
+  return item.state === 'insecure-blocked' && item.danger.level !== 'dangerous'
+}
+
 /** A finished download whose file is held back behind a danger warning. */
 export function isQuarantined(item: DownloadItem): boolean {
   return item.state === 'completed' && item.danger.level !== 'safe' && !item.dangerAccepted
@@ -1017,8 +1279,9 @@ export function basename(path: string): string {
  * Versions 1 and 2 named the reason loosely (`interrupted`, `shutdown`, `file-error`, at times
  * a `net::` error): each becomes the closest `DownloadInterruptReason`, `network-failed` when
  * nothing closer is known. Rows in flight in a version 3 file were never shut down (`crash`);
- * in older files the shutdown did not write them, so they read `user-shutdown`. Private items
- * are never on disk, so nothing loaded is private.
+ * in older files the shutdown did not write them, so they read `user-shutdown`. Version 4 adds
+ * the `insecure-blocked` state and `insecureAccepted`, read as written (a version 3 file has
+ * neither). Private items are never on disk, so nothing loaded is private.
  */
 export function migrate(data: Persisted | null, now: number): DownloadItem[] {
   if (!data || !Array.isArray(data.items)) return []
@@ -1030,7 +1293,7 @@ export function migrate(data: Persisted | null, now: number): DownloadItem[] {
     const item =
       data.version === 1
         ? fromV1(raw, now)
-        : fromV2(raw, now, data.version >= 3 ? 'crash' : 'user-shutdown')
+        : fromV2(raw, now, data.version >= 3 ? 'crash' : 'user-shutdown', data.version >= 4)
     if (item) items.push(item)
   }
   return items.slice(0, MAX_ITEMS)
@@ -1073,22 +1336,27 @@ function fromV1(raw: Record<string, unknown>, now: number): DownloadItem | null 
 }
 
 /**
- * Versions 2 and 3 share a shape; `inFlightReason` is what a row still in flight in the file
- * means (the writer's shutdown stamps rows since version 3, so there it is a crash).
+ * Versions 2 to 4 share a shape; `inFlightReason` is what a row still in flight in the file
+ * means (the writer's shutdown stamps rows since version 3, so there it is a crash), and
+ * `blockedRows` whether the file can hold `insecure-blocked` rows (since version 4; the state
+ * reads as `interrupted` from older files, where it never occurs).
  */
 function fromV2(
   raw: Record<string, unknown>,
   now: number,
-  inFlightReason: DownloadInterruptReason
+  inFlightReason: DownloadInterruptReason,
+  blockedRows: boolean
 ): DownloadItem | null {
   const state = raw['state']
   const inFlight = state === 'progressing' || state === 'in-progress' || state === 'paused'
+  const blocked = blockedRows && state === 'insecure-blocked'
   const finalState: DownloadState =
-    state === 'completed' || state === 'cancelled' || state === 'interrupted'
+    state === 'completed' || state === 'cancelled' || state === 'interrupted' || blocked
       ? state
       : 'interrupted'
   const danger = raw['danger'] as Partial<DownloadDanger & { kept?: boolean }> | undefined
-  const savePath = str(raw['savePath'])
+  // A blocked row owns nothing on disk, whatever an interrupted write left in the field.
+  const savePath = blocked ? '' : str(raw['savePath'])
   const filename = str(raw['filename']) || 'download'
   const startedAt = num(raw['startedAt']) || now
   const endedAt = typeof raw['endedAt'] === 'number' ? raw['endedAt'] : inFlight ? now : startedAt
@@ -1119,6 +1387,7 @@ function fromV2(
     etag: str(raw['etag']),
     lastModified: str(raw['lastModified'])
   }
+  if (blockedRows && raw['insecureAccepted'] === true) item.insecureAccepted = true
   if (finalState === 'completed') {
     item.completedAt = typeof raw['completedAt'] === 'number' ? raw['completedAt'] : endedAt
     if (raw['fileMissing'] === true && savePath !== '') item.fileMissing = true

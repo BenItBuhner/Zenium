@@ -121,6 +121,16 @@ export function dangerSummary(danger: DownloadDanger): string {
   }
 }
 
+/**
+ * The sentence under an `insecure-blocked` row: Chrome's ("This file can’t be downloaded
+ * securely", `IDS_PROMPT_DOWNLOAD_INSECURE_BLOCKED`), and when the type is dangerous too the
+ * verdict's sentence after it – that row offers no Keep anyway (`canKeepInsecure`).
+ */
+export function insecureSummary(item: Pick<DownloadItem, 'danger'>): string {
+  const base = 'This file can’t be downloaded securely'
+  return item.danger.level === 'dangerous' ? `${base} · ${dangerSummary(item.danger)}` : base
+}
+
 export interface DangerActionLabels {
   keep: string
   discard: string
@@ -165,6 +175,14 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
         text: describeDownloadError(item.error),
         tone: 'danger',
         hint: item.errorMessage || undefined
+      }
+    // Refused before a byte was written (HB-44); the row waits for Keep anyway or Discard. The
+    // engine's default wording: the desktop program draws the state from the interface.
+    case 'insecure-blocked':
+      return {
+        text: 'Blocked · Insecure download',
+        tone: item.danger.level === 'dangerous' ? 'danger' : 'warn',
+        detail: insecureSummary(item)
       }
     case 'completed':
       if (needsDangerDecision(item)) {

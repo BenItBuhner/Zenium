@@ -30,8 +30,15 @@ class FakeNotification extends EventEmitter {
 }
 
 const appEvents = new EventEmitter()
+/** Every `app.setBadgeCount` (the Linux launcher count), in order. */
+const badgeCounts: number[] = []
 vi.mock('electron', () => ({
-  app: Object.assign(appEvents, { dock: undefined, getFileIcon: vi.fn(), getPath: () => '/tmp' }),
+  app: Object.assign(appEvents, {
+    dock: undefined,
+    getFileIcon: vi.fn(),
+    getPath: () => '/tmp',
+    setBadgeCount: (count: number) => badgeCounts.push(count)
+  }),
   BrowserWindow: class {},
   Notification: FakeNotification,
   nativeImage: { createEmpty: () => ({ isEmpty: () => true }) },
@@ -285,6 +292,36 @@ describe('the desktop downloads shell', () => {
     })
     publish([flagged], flagged, 'done')
     expect(FakeNotification.shown).toHaveLength(0)
+  })
+
+  it('on Linux the launcher count follows the finished-unseen downloads and clears on focus (HB-41)', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    badgeCounts.length = 0
+    try {
+      const away = fakeWindow({ focused: false })
+      const { browser, publish } = fakeBrowser([away])
+      new ElectronDownloadsShell(browser as never)
+      const a = item({ id: 'a', filename: 'a.pdf' })
+      const b = item({ id: 'b', filename: 'b.pdf' })
+      publish([a], a, 'done')
+      publish([b, a], b, 'done')
+      expect(badgeCounts).toEqual([1, 2])
+      // A flagged file is not "finished" until Keep: no count for it.
+      const flagged = item({
+        id: 'c',
+        danger: { level: 'dangerous', reason: 'executable', message: 'Harmful.' }
+      })
+      publish([flagged, b, a], flagged, 'done')
+      expect(badgeCounts).toEqual([1, 2])
+      appEvents.emit('browser-window-focus')
+      expect(badgeCounts).toEqual([1, 2, 0])
+      // Nothing unseen: focusing again says nothing to the launcher.
+      appEvents.emit('browser-window-focus')
+      expect(badgeCounts).toEqual([1, 2, 0])
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform)
+    }
   })
 
   it('on macOS a finished file bounces the Downloads stack; the dock icon only in the background', () => {
