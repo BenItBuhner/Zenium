@@ -402,4 +402,33 @@ describe('BackDismissal', () => {
     expect(dismissed).toBe(1)
     expect(d.progress).toBe(1)
   })
+
+  it('a surface that takes the commit over gets the value and neither the spring nor dismissed', () => {
+    const painted: number[] = []
+    let dismissed = 0
+    const committedAt: number[] = []
+    const d = new BackDismissal({
+      render: (v) => painted.push(v),
+      dismissed: () => dismissed++,
+      committed: (value) => {
+        committedAt.push(value)
+        return value <= 0
+      }
+    })
+    // A back key: nothing pulled, the surface's own motion runs it out.
+    d.commit()
+    expect(committedAt).toEqual([0])
+    expect(frames).toEqual([])
+    settle()
+    expect(dismissed).toBe(0)
+    expect(painted).toEqual([])
+    // After a pull the surface declines and the spring finishes the way out.
+    d.start()
+    d.setProgress(0.4)
+    d.commit()
+    expect(committedAt).toEqual([0, 0.4])
+    settle()
+    expect(dismissed).toBe(1)
+    expect(d.progress).toBe(1)
+  })
 })

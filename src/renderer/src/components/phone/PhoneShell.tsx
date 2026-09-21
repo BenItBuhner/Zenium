@@ -11,6 +11,12 @@ import { run } from '@renderer/lib/api'
 import { setBarHideContext, showBar } from '@renderer/lib/barHide'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import {
+  fakeboxAway,
+  fakeboxHoldsChrome,
+  fakeboxMorphStore,
+  tapFakebox
+} from '@renderer/lib/fakeboxMorph'
+import {
   contentShift,
   cssPx,
   dismissDock,
@@ -46,6 +52,7 @@ import {
 import { cn } from '@renderer/lib/utils'
 import { ContentArea } from '../content/ContentArea'
 import { MessageLayer } from '../messages/MessageLayer'
+import { FakeboxMorphLayer } from '../newtab/FakeboxMorphLayer'
 import { Onboarding } from '../overlays/Onboarding'
 import { BlockedPopupsChip } from '../security/BlockedPopupsPanel'
 import { Favicon } from '../sidebar/Favicon'
@@ -159,7 +166,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         // (the omnibox would show its address): a tap asks for the screen lock, as the cover's
         // Unlock does (INC-05).
         void unlockPrivateTabs()
-      } else if (session) {
+      }
+      // The new tab page's field is the address control while the pill's slot is its well
+      // (NTP-02): a tap on the well is a tap on the field, which morphs into the omnibox. The
+      // well's chips are inert (main.css `.zen-pill-away > *`), so none is under the finger here.
+      else if (fakeboxAway()) tapFakebox()
+      else if (session) {
         // The Now playing chip opens the in-app player for the tab the OS controls show (MW-16),
         // over a picture of the tab on screen.
         void openMediaSheet(session.tabId, activeTabId)
@@ -173,6 +185,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
   })
 
   const barHidden = ui.urlbar.open
+  // The new tab page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts):
+  // the bar stays mounted under the arriving sheet, fading on the morph's value (main.css), so
+  // the field is seen to leave it and to come back to it; the pill's slot is the field's well
+  // while the field is the page's.
+  const morph = fakeboxMorphStore.use()
+  const barUp = !barHidden || fakeboxHoldsChrome(morph)
   // The tab group strip (TAB-14): present while the active tab is grouped, and on its way out for
   // a moment after it leaves; its share of the bar band is published by the hook.
   const strip = useGroupStrip(state)
@@ -255,10 +273,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           a frame dialog is up (§9.22, `holdChromeInert` in lib/portals.tsx). */}
       <main
         data-shell-chrome
-        className="relative flex min-h-0 flex-1 flex-col"
+        className="zen-content-column relative flex min-h-0 flex-1 flex-col"
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
-          // is hidden); the other edge keeps the content gutter above the inset.
+          // is hidden); the other edge keeps the content gutter above the inset. Laid out, never
+          // transitioned (main.css keeps it out of reduced motion's 0.01 ms rule): the content
+          // frame is measured the moment the edge changes (`useLayoutReporter`).
           paddingTop: edgePadding('top', edge, barAway),
           paddingBottom: edgePadding('bottom', edge, barAway),
           paddingLeft: 'var(--zen-padding)',
@@ -297,7 +317,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           23:50). At rest nothing is written over it; while the pill is carried the carry's own
           fade goes through `barFade`, which composes the recede into it at the bottom edge
           only, so a sheet coming up mid-carry fades the bar there all the same. */}
-      {!barHidden && (
+      {barUp && (
         <PhoneBar
           state={state}
           edge={edge}
@@ -306,6 +326,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           strip={strip}
           overviewOpen={overviewOpen}
           pillLook={dock.phase === 'idle' ? 'docked' : 'well'}
+          pillAway={morph.away}
           style={fromHere ? { opacity: barFade(edge, 1 - p) } : undefined}
         />
       )}
@@ -323,6 +344,7 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
         />
       )}
       {barHidden && <Urlbar state={state} urlbar={ui.urlbar} area={null} phoneEdge={edge} />}
+      <FakeboxMorphLayer />
       {dock.phase !== 'idle' && <BarDockLayer state={state} pill={pill} />}
       {ui.drawerOpen && <SpacesDrawer state={state} isDark={isDark} />}
       {ui.tabsMenu && !barHidden && (
@@ -374,6 +396,7 @@ export function PhoneBar({
   strip,
   overviewOpen,
   pillLook,
+  pillAway,
   inert,
   style
 }: {
@@ -386,6 +409,12 @@ export function PhoneBar({
   overviewOpen: boolean
   /** The pill in place, or the empty slot it left (highlighted when it is about to land here). */
   pillLook: PillLook
+  /**
+   * The new tab page's field is the address control (NTP-02, lib/fakeboxMorph.ts): the pill's
+   * slot is the well the field left, its own look and words filling in by `--zen-ntp-pill` as the
+   * page's scroll carries the field into it. The slot still takes the pill's gestures.
+   */
+  pillAway?: boolean
   /** A preview of the bar at the other edge: drawn, never pressed. */
   inert?: boolean
   style?: CSSProperties
@@ -467,16 +496,23 @@ export function PhoneBar({
           <div
             className={cn(
               'zen-phone-pill flex h-11 min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-full px-3.5 text-left',
-              // The resting pill's fill and pressed fill are the window family's (§9.29; main.css).
-              pillLook === 'docked' && 'zen-phone-pill-docked',
-              pillLook !== 'docked' && 'zen-pill-well',
+              // The resting pill's fill and pressed fill are the window family's (§9.29; main.css);
+              // while the field is the page's, the pill is the well the field left (lib/fakeboxMorph.ts).
+              pillLook === 'docked' && !pillAway && 'zen-phone-pill-docked',
+              (pillLook !== 'docked' || pillAway) && 'zen-pill-well',
+              pillLook === 'docked' && pillAway && 'zen-pill-away',
               pillLook === 'well-target' && 'zen-pill-well-target'
             )}
             data-surface="window"
             {...(inert ? {} : pill)}
           >
             {pillLook === 'docked' && (
-              <PillContent state={state} tab={tab} space={space} interactive={!inert} />
+              <PillContent
+                state={state}
+                tab={tab}
+                space={space}
+                interactive={!inert && !pillAway}
+              />
             )}
           </div>
           {layout.right.map((id) => (

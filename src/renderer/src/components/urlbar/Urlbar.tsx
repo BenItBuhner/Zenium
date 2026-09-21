@@ -34,6 +34,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
+import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
@@ -463,7 +464,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
-      closeUrlbar({ keepKeyboard })
+      // A dismissal, not a submit: the new tab page's field morph runs back on it (lib/fakeboxMorph.ts).
+      closeUrlbar({ keepKeyboard, reason: 'dismiss' })
     },
     [draftKey, phone, tab, text]
   )
@@ -508,6 +510,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   useBackDismissal('urlbar', {
     travel: 320,
     render: (v) => {
+      // The bar the new tab page's field morphed into: the gesture pulls the field back toward
+      // the page instead, and the sheet fades on the morph's value (lib/fakeboxMorph.ts).
+      if (fakeboxBackPulled(v)) return
       const sheet = sheetRef.current
       if (sheet) {
         sheet.style.transform = `scale(${1 - 0.08 * v})`
@@ -521,6 +526,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
       el.style.transformOrigin = '50% 0%'
       el.style.transform = `translateY(${-100 * v}%) scale(${1 - 0.06 * v})`
       el.style.opacity = String(1 - 0.7 * v)
+    },
+    // The bar the field morphed into: a commit the field has not followed – mid-flight, or a
+    // back key with nothing pulled – dismisses on the morph's own closing segment from where the
+    // field is (the close hook starts it), not at the end of the bar's spring, which the field
+    // would meet in a jump. After a pull the bar's spring finishes the way home: the field
+    // follows it (`fakeboxBackPulled`) and the close comes at once when it lands.
+    committed: (value) => {
+      if (!fakeboxTakesCommit(value)) return false
+      close(true)
+      return true
     },
     dismissed: () => close(true)
   })
