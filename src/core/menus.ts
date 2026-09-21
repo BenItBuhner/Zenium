@@ -47,7 +47,7 @@ import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar, splitViewSubmenu } from './menuBar'
-import { folderTabs } from './model'
+import { folderTabs, tabVisibleIn } from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -2676,11 +2676,18 @@ export class Menus {
    * "⋯" button (`mediahub.open`), so the fold loses no control. There while anything is to be
    * controlled (a tab that paused stays until its media goes, as the button does), gone
    * otherwise, and no separate row per player: the hub is the list. The label keeps "Now
-   * Playing" whatever the state, as the phone's sheet keeps its title (ruled on #233).
+   * Playing" whatever the state, as the phone's sheet keeps its title (ruled on #233). The
+   * window's media only: the hub reads its cards from the tabs the window lists, and the row is
+   * that hub's first card, not another window's.
    */
   private nowPlayingRow(win: ZenWindow): Template {
     const { state, tabs } = this.browser
-    const entries = orderMediaEntries((state.media ?? []).filter((m) => tabs.tab(m.tabId)))
+    const entries = orderMediaEntries(
+      (state.media ?? []).filter((m) => {
+        const tab = tabs.tab(m.tabId)
+        return tab !== undefined && this.listedIn(win, tab)
+      })
+    )
     const first = entries[0]
     if (!first) return []
     const tab = tabs.tab(first.tabId)
@@ -2695,6 +2702,17 @@ export class Menus {
       },
       { type: 'separator' }
     ]
+  }
+
+  /**
+   * Whether `win`'s sidebar lists `tab` – the tabs its `UIState.tabs` carries (`State.snapshot`):
+   * a blank or private window its own space's, a synced window every tab shown in it that is not
+   * another window's own.
+   */
+  private listedIn(win: ZenWindow, tab: Tab): boolean {
+    if (win.localSpace) return win.localSpace.tabIds.includes(tab.id)
+    const m = this.browser.state.model
+    return tabVisibleIn(tab, win.id) && !(tab.spaceId && m.localSpaces[tab.spaceId])
   }
 
   /**

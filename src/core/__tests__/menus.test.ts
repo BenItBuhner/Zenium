@@ -516,6 +516,24 @@ describe('the app menu', () => {
       expect(appMenu(h)).toEqual(without)
     })
 
+    it('is the window’s, as the hub is: another window’s own tab is that window’s row, not this one’s', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      const priv = h.browser.openWindow('private', h.win)!
+      const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
+      h.browser.state.media = [media(theirs.id, { title: 'Theirs' })]
+      // The main window's hub lists no such tab, so its menu carries no row for it…
+      expect(appMenu(h)).toEqual(without)
+      // …while the private window's own menu leads with it.
+      h.browser.handleCommand(priv, 'app.menu', {})
+      expect(labels(h.shown())[0]).toBe('Now Playing: Theirs · The Band · video.example.org')
+      // A synced tab shows in every synced window and so does its row.
+      h.browser.state.media = [media(h.tabId)]
+      expect(appMenu(h)[0]).toBe('Now Playing: Nocturne · The Band · example.com')
+      h.browser.handleCommand(priv, 'app.menu', {})
+      expect(labels(h.shown())[0]).toBe('New Tab')
+    })
+
     it('is the sidebar layouts’ row: the phone keeps its chip and sheet', () => {
       const h = pageHarness(ANDROID, { formFactor: 'phone' })
       h.browser.state.media = [media(h.tabId)]
