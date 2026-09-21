@@ -35,7 +35,12 @@ class MainActivity : BrowserActivity() {
     private lateinit var fullscreenLayer: FrameLayout
     lateinit var host: Host
         private set
-    private var insets = JSONObject()
+    /**
+     * The insets as last told to the chrome (CSS px), zeros until the window's first dispatch:
+     * the boot payload carries them ([currentInsets]), and a chrome booting ahead of that
+     * dispatch must read four numbers, not an empty object.
+     */
+    private var insets = json("top" to 0.0, "right" to 0.0, "bottom" to 0.0, "left" to 0.0)
     private var latestInsets: WindowInsetsCompat? = null
     /** The keyboard is animating for the chrome; its frames are streamed as insets. */
     private var imeAnimating = false

@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -33,6 +35,7 @@ const { TOOLBAR_STROKE } = await import('../v2/controls')
 const { browserStore, openUrlbar, uiStore } = await import('@renderer/lib/ui')
 const { closeSiteInfo, siteInfoStore } = await import('@renderer/lib/siteInfo')
 const { defaultShortcuts } = await import('@shared/shortcuts')
+const { DEFAULT_PAGE_CONTROLS } = await import('@shared/pageControls')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -484,6 +487,69 @@ describe('desktop pill (NavRow)', () => {
     expect(order[0].textContent).toBe('Search or enter address')
   })
 
+  /*
+   * The pill yields its chips to the address as it narrows, in tiers of a container query on
+   * `.zen-pill` (main.css; content-box widths, 20 px inside the pill): the hover-only chips under
+   * 170, the "Not secure" label under 220, and under 110 – a 130 px pill – every tool after the
+   * address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at the default sidebar width
+   * (100 px) is the address, or one of Zenium's pages' name, and the site icon (v2 §10.1's
+   * favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
+   * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
+   * evaluates no container query, so the markers and the rule are pinned here; the widths are
+   * measured on the packaged build.
+   */
+  it('marks every tool after the address for the narrow pill’s tier; the site icon and the blocked pop-ups notice stay', () => {
+    // Zoomed away from the default, so the zoom chip is in the pill too; two pop-ups refused,
+    // so the notice is.
+    const zoomed = tab('https://example.com/some/path', { readerable: true, zoom: 1.25 })
+    const s = withBlocked(zoomed, 2)
+    s.settings = { ...s.settings, pageControls: DEFAULT_PAGE_CONTROLS }
+    const el = render(<NavRow state={s} tab={zoomed} compact={false} />)
+    const pill = el.querySelector<HTMLElement>('[role="group"]')!
+    const chips = Array.from(pill.querySelectorAll<HTMLElement>('[data-pill-chip]'))
+    expect(labels(chips)).toEqual([
+      'Site information',
+      'Reader View',
+      '2 pop-ups blocked',
+      'Translate this page',
+      'Boost this site',
+      'Copy URL',
+      'Zoom: 125%',
+      'Bookmark this tab'
+    ])
+    const stays = new Set(['Site information', '2 pop-ups blocked'])
+    for (const chip of chips) {
+      const label = chip.getAttribute('aria-label') ?? ''
+      expect(chip.classList.contains('zen-pill-chip'), label).toBe(!stays.has(label))
+    }
+    // The address itself is never a chip.
+    expect(focusable(pill)[0].classList.contains('zen-pill-chip')).toBe(false)
+
+    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 20 px
+    // inside the pill) – unlayered, as its siblings are, to beat the `flex` and `group-hover`
+    // utilities that draw the chips.
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      ''
+    )
+    const tiers = [
+      ...css.matchAll(
+        /@container \(width < (\d+)px\) \{\s*\.zen-pill-(\w+) \{\s*display: none;\s*\}\s*\}/g
+      )
+    ]
+    expect(tiers.map((m) => [m[2], Number(m[1])])).toEqual([
+      ['extra', 170],
+      ['label', 220],
+      ['chip', 110]
+    ])
+    for (const tier of tiers) {
+      const before = css.slice(0, tier.index)
+      const open = (before.match(/\{/g) ?? []).length - (before.match(/\}/g) ?? []).length
+      expect(open, `the ${tier[2]} tier is nested`).toBe(0)
+    }
+    expect(css.match(/\.zen-pill-chip\b/g)).toHaveLength(1)
+  })
+
   it('shows the key chip before the star only while a save prompt is pending for the page', () => {
     const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
     expect(el.querySelector('[data-af-chip]')).toBeNull()
@@ -559,6 +625,85 @@ describe('desktop pill (NavRow)', () => {
     const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
     expect(pill.closest('[data-surface]')).toBe(el.firstElementChild)
     expect(el.firstElementChild!.getAttribute('data-surface')).toBe('window')
+  })
+})
+
+/*
+ * The desktop pill on one of Zenium's own pages (design language v2 §10.1): `zenium://settings/
+ * <section>` while the field fits it, the page's title once it does not – as the phone pill names
+ * its pages – with the whole address in the tooltip either way. happy-dom lays nothing out, so
+ * the widths the pill measures before its first paint (the address at its natural width in the
+ * probe, the width the field is given) are set here.
+ */
+describe('desktop pill on an internal page', () => {
+  const settings = tab('zen://settings/privacy', { title: 'Settings' })
+  const widths = { probe: 0, field: 0 }
+
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-pill-probe')
+        ? widths.probe
+        : this.hasAttribute('data-reads')
+          ? widths.field
+          : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  const pillOf = (el: HTMLElement): { pill: HTMLElement; field: HTMLElement } => {
+    const pill = el.querySelector<HTMLElement>('[role="group"][aria-label="Address"]')!
+    return { pill, field: pill.querySelector<HTMLElement>('[data-reads]')! }
+  }
+
+  it('reads the whole address, section and all, while the field fits it', () => {
+    widths.probe = 150
+    widths.field = 160
+    const el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('zenium://settings/privacy')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    // The probe holds the same address, out of the accessibility tree and never in the name.
+    const probe = pill.querySelector<HTMLElement>('[data-pill-probe]')!
+    expect(probe.textContent).toBe('zenium://settings/privacy')
+    expect(probe.getAttribute('aria-hidden')).toBe('true')
+    expect(probe.className).toContain('invisible')
+    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+  })
+
+  it('names the page once the field cannot fit the address; the tooltip keeps the address', () => {
+    widths.probe = 150
+    widths.field = 60
+    const el = render(<NavRow state={state(settings)} tab={settings} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('Settings')
+    expect(field.getAttribute('data-reads')).toBe('title')
+    // `zenium://`, never the canonical `zen://` the tab carries (§10.1).
+    expect(pill.getAttribute('title')).toBe('zenium://settings/privacy')
+    // The star is kept: Chrome keeps it on chrome://settings, the registry says so for Settings.
+    // Whether a narrow pill draws it is the width tier's (the test above), not the text's.
+    expect(pill.querySelector('[aria-label="Bookmark this tab"]')).not.toBeNull()
+  })
+
+  it('leaves a site’s address to truncate as before: a site has no title to stand in', () => {
+    widths.probe = 150
+    widths.field = 60
+    const site = tab('https://example.com/some/path')
+    const el = render(<NavRow state={state(site)} tab={site} compact={false} />)
+    const { pill, field } = pillOf(el)
+    expect(focusable(pill)[0].textContent).toBe('example.com/some/path')
+    expect(field.getAttribute('data-reads')).toBe('address')
+    expect(pill.getAttribute('title')).toBe('https://example.com/some/path')
+  })
+
+  it('offers the search prompt, not `zen://newtab`, as the empty tab’s tooltip', () => {
+    const empty = tab('zen://newtab')
+    const el = render(<NavRow state={state(empty)} tab={empty} compact={false} />)
+    const { pill } = pillOf(el)
+    expect(pill.getAttribute('title')).toBe('Search or enter address')
   })
 })
 

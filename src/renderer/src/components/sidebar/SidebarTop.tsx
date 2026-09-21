@@ -22,14 +22,7 @@ import {
 import { internalPageOf } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { securityIndicator, type IndicatorState } from '@shared/siteInfo'
-import {
-  addressParts,
-  displayUrl,
-  fullUrl,
-  getDomain,
-  isWebPageUrl,
-  presentedUrl
-} from '@shared/url'
+import { addressParts, displayUrl, fullUrl, getDomain, isWebPageUrl, pillText } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
 import { chipPrompt } from '@renderer/lib/autofill'
@@ -121,7 +114,16 @@ export function NavRow({
   // pointer or the keyboard is on the address, or always with the "Always show full URLs" setting.
   const [revealed, setRevealed] = useState(false)
   const shown = tab ? (state.settings.showFullUrls || revealed ? fullUrl(tab.url) : url) : ''
-  const address = addressParts(shown)
+  // An internal page's address that the pill cannot fit gives way to the page's title, as the
+  // phone pill names Zenium's own pages (v2 §10.1): `pillText`, from the field's width against
+  // the address at its natural width (the probe span, drawn invisibly without truncation). The
+  // same `pill` ref serves the chip tier below (`usePillInnerWidth`).
+  const pill = useRef<HTMLDivElement>(null)
+  const field = useRef<HTMLSpanElement>(null)
+  const probe = useRef<HTMLSpanElement>(null)
+  const addressFits = useAddressFits(pill, field, probe, !compact)
+  const text = tab ? pillText(tab.url, shown, addressFits) : ''
+  const address = addressParts(text)
   // What the site icon says (derived in the core's site-information module, drawn here).
   const indicator = securityIndicator(
     tab?.url ?? '',
@@ -195,10 +197,18 @@ export function NavRow({
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
   // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
   // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
-  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
-  // the stylesheet's container query's. A hidden chip's action stays in the app menu and the
-  // tab's menu; a chip whose popover is up stays put (§9.20).
-  const pill = useRef<HTMLDivElement>(null)
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
+  // stylesheet's container query's, as is the 130 px tier under which every tool after the
+  // address goes (`zen-pill-chip`; §9.29's threshold, which the star's return here matches). A
+  // hidden chip's action stays in the app menu and the tab's menu; a chip whose popover is up
+  // stays put (§9.20). On a `zen://reader` tab the lit Reader View exit and the Text preferences
+  // chip are the document's own controls (§10.1 took the reader toolbar away and left the chip
+  // the one home of its type, theme, width, spacing and reading aids), so there both join the
+  // never-hidden class (§9.29, the lead's ruling on #265): they are counted with the state chips
+  // here, carry no `zen-pill-chip` (the lit exit sheds it; unlit, "Enter Reader View" is a tool
+  // like the star), and the address gives way to them – below the floor the pill drops its text
+  // altogether, which on the reader page costs nothing, since the document's own header carries
+  // the title, byline and host.
   const pillInner = usePillInnerWidth(pill)
   const shieldState =
     tab && isWebPage && state.capabilities.requestBlocking
@@ -234,7 +244,10 @@ export function NavRow({
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
   if (tab && !extension && (tab.readerable || isReader)) {
-    chipsPresent.push({ id: 'reader', tier: 'info', width: CHIP_WIDTH.small })
+    chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
+  }
+  if (tab && isReader) {
+    chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
   const fits = fittingChips(pillInner, chipsPresent)
   return (
@@ -298,12 +311,14 @@ export function NavRow({
           role="group"
           aria-label="Address"
           className={cn(
-            'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
+            'zen-squircle zen-pill group/pill relative mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
-          // The tooltip is the address the pill shows: an error or Reader View page's is the
-          // page it stands in for, never the `zen://` document (§10.1).
-          title={tab ? fullUrl(tab.url) || presentedUrl(tab.url) : 'Search or enter address'}
+          // The tooltip carries the whole address – the user-facing `zenium://` form for an
+          // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
+          // error or Reader View page the page it stands in for (`fullUrl`), never the `zen://`
+          // document. An empty tab offers the search prompt, as the field does.
+          title={(tab && fullUrl(tab.url)) || 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
@@ -332,10 +347,12 @@ export function NavRow({
             }}
           >
             <span
+              ref={field}
               className={cn(
                 'min-w-0 flex-1 truncate text-[12.5px]',
                 !url && 'text-[var(--zen-muted)]'
               )}
+              data-reads={url ? (text === shown ? 'address' : 'title') : undefined}
             >
               {url ? (
                 <>
@@ -347,6 +364,15 @@ export function NavRow({
               )}
             </span>
           </button>
+          {/* The address at its natural width, for `useAddressFits`; out of flow, never seen. */}
+          <span
+            ref={probe}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap text-[12.5px]"
+            data-pill-probe
+          >
+            {shown}
+          </span>
           {/*
             Chrome's "Not secure" text before the address of an http page (or of a certificate
             error's page, in the danger ink), drawn between the site icon and the address; a
@@ -373,6 +399,10 @@ export function NavRow({
             only `:focus-within` on their common ancestor holds through that instant. They stay
             as well while a chip has its popover up (`aria-expanded`), so the chips do not shift
             under a popover that was placed on one of them (§9.20).
+            Every tool after the address – Reader View, Boost, Copy, the zoom, the star – carries
+            `zen-pill-chip`: a pill under 130 px drops them all for the address (the container
+            query on `.zen-pill`). The site icon stays, and so does the blocked pop-ups chip: a
+            notice rather than a tool, and the only word of a pop-up the page tried to open.
           */}
           <span className="contents group/chips">
             {isPrivate ? (
@@ -428,7 +458,9 @@ export function NavRow({
                 pressed={isReader}
                 className={cn(
                   'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
-                  isReader && 'text-[var(--zen-accent)] opacity-100'
+                  // The lit exit on the reader tab is never hidden (§9.29; the tier comment
+                  // above); unlit it is a tool and goes with the rest under a 130 px pill.
+                  isReader ? 'text-[var(--zen-accent)] opacity-100' : 'zen-pill-chip'
                 )}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
@@ -439,10 +471,12 @@ export function NavRow({
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
               // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
-              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
-              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
-              // does not show itself, and the app menu's "Text Preferences…" and the reader
-              // page's own toolbar keep the surface reachable (the popover then hangs centred).
+              // and what its Escape hands the keyboard back to (§9.22). The reader document
+              // carries no toolbar of its own (§10.1: this popover is the one home of its
+              // controls), so the chip is never hidden on the reader tab, whatever the pill's
+              // width (§9.29: it joins site information and the lit Reader View exit; the
+              // address gives way instead) – no `zen-pill-extra`, and the app menu's "Text
+              // Preferences…" opens the same popover anchored to this chip.
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -450,7 +484,7 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
                 )}
@@ -510,7 +544,7 @@ export function NavRow({
                   label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   className={cn(
-                    'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                    'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                     translation &&
                       isTranslating(translation) &&
                       'text-[var(--zen-accent)] opacity-100',
@@ -533,7 +567,7 @@ export function NavRow({
                 popup="dialog"
                 expanded={boostsOpen}
                 className={cn(
-                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
                     : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
@@ -547,7 +581,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />
@@ -595,6 +629,41 @@ export function NavRow({
       </button>
     </div>
   )
+}
+
+/**
+ * Whether the address at its natural width (`probe`) fits the width the pill gives its field
+ * (`field`): measured before the first paint and again whenever either changes size – the
+ * sidebar resized, a chip come or gone, the tab moved to another section. Held still while the
+ * pointer or the keyboard is on the pill: the hover-only chips narrow the field for the hover's
+ * duration, and the text must not swap under the pointer – it truncates then, as every address
+ * does. The observer's next delivery after the hover ends measures the rest layout again.
+ * `mounted` says the pill is in the row (the compact sidebar has none): its change rebinds the
+ * observer to the pill the row has now.
+ */
+function useAddressFits(
+  pill: RefObject<HTMLElement | null>,
+  field: RefObject<HTMLElement | null>,
+  probe: RefObject<HTMLElement | null>,
+  mounted: boolean
+): boolean {
+  const [fits, setFits] = useState(true)
+  useLayoutEffect(() => {
+    const slot = field.current
+    const text = probe.current
+    if (!mounted || !slot || !text) return
+    // Fractional widths: a text 0.3 px wider than its box already draws the ellipsis.
+    const measure = (): void => {
+      if (pill.current?.matches(':hover, :focus-within')) return
+      setFits(text.getBoundingClientRect().width <= slot.getBoundingClientRect().width)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(slot)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [pill, field, probe, mounted])
+  return fits
 }
 
 /**

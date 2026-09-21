@@ -63,7 +63,7 @@ export function StarChip({
       data-bm-star=""
       data-filled={filled}
       data-open={open}
-      className="zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
+      className="zen-pill-chip zen-bm-star -mr-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]"
       onActivate={() => {
         // The bubble commits its pending name as it goes; the chip that put it away keeps the
         // keyboard, as the anchor does after Escape (§9.22).

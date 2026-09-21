@@ -7,19 +7,26 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
 import { useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
 import { useEscapeTrap } from './escape'
+
+const TITLE_ID = 'zen-bm-all-tabs-title'
+const NAME_ID = 'zen-bm-all-tabs-name'
+const FOLDER_ID = 'zen-bm-all-tabs-folder'
 
 const close = (): void => closeBookmarkChrome({ bookmarkAllTabs: null })
 
 /**
  * Chrome's "Bookmark all tabs": the open pages go into a new folder, named here (Chrome suggests
  * "N tabs") and placed in a folder of the user's choosing – the most recently used one first.
- * A v2 dialog (draft §9.23): a title block with the count as its description, no X; Escape,
- * the scrim and the footer close it; the name field takes focus and Tab wraps (§9.22). Rendered
- * inside TabDialogs' `FrameDialogHost`, which centres it over its scrim.
+ * A v2 dialog (draft §9.20, §9.23) at the form width, 400, on the frame dialog host TabDialogs
+ * mounts – centred over its scrim (§9.5), the chrome inert, kept through its exit – with a title
+ * block ("Bookmark all tabs", the count as its description, no X), the Name field (§9.12) and
+ * the folder menulist (§9.13), then the §9.11 footer: Cancel, Save as the one primary. Escape,
+ * the scrim and the footer close it; the name field takes focus and Tab wraps (§9.22).
  */
 export function BookmarkAllTabsDialog({
   state,
@@ -62,12 +69,14 @@ export function BookmarkAllTabsDialog({
     <div
       ref={dialogRef}
       role="dialog"
-      aria-labelledby="zen-bm-all-tabs-title"
-      aria-describedby="zen-bm-all-tabs-desc"
+      aria-modal="true"
+      aria-labelledby={TITLE_ID}
+      aria-describedby={`${TITLE_ID}-desc`}
       className={cn(
-        'zen-animate-pop zen-bm-dialog flex max-h-[calc(100%-24px)] flex-col',
-        phone &&
-          'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto self-end justify-self-stretch'
+        'zen-v2 zen-animate-pop flex max-h-[calc(100%-24px)] flex-col',
+        phone
+          ? 'zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto self-end justify-self-stretch'
+          : 'zen-v2-dialog'
       )}
       style={phone ? undefined : { width: POPOVER_WIDTH.form }}
       onKeyDown={(e) => {
@@ -80,14 +89,15 @@ export function BookmarkAllTabsDialog({
         wrapTab(e, dialogRef.current)
       }}
     >
-      <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
-        <h2 id="zen-bm-all-tabs-title" className="zen-bm-title">
-          Bookmark All Tabs
-        </h2>
-        <p id="zen-bm-all-tabs-desc" className="zen-bm-title-desc">
-          {count === 1 ? '1 page goes into a new folder' : `${count} pages go into a new folder`}
-        </p>
-      </div>
+      <V2TitleBlock
+        id={TITLE_ID}
+        title="Bookmark all tabs"
+        description={
+          count === 1 ? '1 page goes into a new folder' : `${count} pages go into a new folder`
+        }
+        descriptionId={`${TITLE_ID}-desc`}
+        scrolled={scrolled}
+      />
       <form
         ref={bodyRef}
         className="zen-bm-popover-body zen-bm-form"
@@ -96,33 +106,34 @@ export function BookmarkAllTabsDialog({
           save()
         }}
       >
-        <label className="zen-bm-label">
-          Name
-          <input
-            ref={nameRef}
-            className="zen-field"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </label>
-        <div className="zen-bm-label min-h-0">
-          Folder
-          <FolderField
-            tree={tree}
-            value={parentId}
-            onChange={setChosenId}
-            onNestedChange={setNested}
-          />
-        </div>
+        <V2FormField id={NAME_ID} label="Name">
+          {(field) => (
+            <V2Field
+              {...field}
+              ref={nameRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          )}
+        </V2FormField>
+        <V2FormField id={FOLDER_ID} label="Folder">
+          {(field) => (
+            <FolderField
+              id={field.id}
+              tree={tree}
+              value={parentId}
+              onChange={setChosenId}
+              onNestedChange={setNested}
+            />
+          )}
+        </V2FormField>
         <div className="zen-bm-footer justify-end">
-          <button type="button" className="zen-button" onClick={close}>
-            Cancel
-          </button>
-          <button type="submit" className="zen-button" data-variant="primary">
+          <V2Button onClick={close}>Cancel</V2Button>
+          <V2Button type="submit" variant="primary">
             Save
-          </button>
+          </V2Button>
         </div>
       </form>
     </div>

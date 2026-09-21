@@ -1,26 +1,45 @@
 import type { JSX, ReactNode, RefCallback } from 'react'
+import { useState } from 'react'
 import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
+import { V2Button } from '../../extensions/v2'
+import { V2Menulist } from '../../extensions/V2Menulist'
+import { Slider } from '../../ui/slider'
 import {
   currentOptionLabel,
   groupShows,
   type ActionRow,
+  type FieldRow,
   type RowGroup,
-  type SettingsRow
+  type SettingsRow,
+  type SliderRow,
+  type SwitchRow
 } from './model'
-import { useSheetDismiss } from './sheetContext'
+import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
 /**
- * The phone Settings rows (design language v2 §10.3–10.4) as React: one flat row per model row,
- * 44 tall with one line and 64 with a description, text inset 16, no card, no divider, no
- * background at rest. A row that opens a sheet asks the page for it through `open`; the page
- * owns the sheet stack (`sheets.tsx`) and resolves the row again by id when it draws the sheet.
+ * The Settings rows (design language v2 §10.3–10.5) as React: one flat row per model row, text
+ * inset 16, no card, no divider, no background at rest, on the shared `.zen-v2-row` (§9.34).
+ *
+ * The phone variant (§10.4): 44 tall with one line and 64 with a description; a value row opens
+ * a picker sheet, a switch row is the switch, a field row opens a one-field sheet. A row that
+ * opens a sheet asks the page for it through `open`; the page owns the sheet stack
+ * (`sheets.tsx`) and resolves the row again by id when it draws the sheet.
+ *
+ * The desktop variant (§10.5, Zen's about:preferences): 32 tall with one line and 52 with a
+ * description; a value row trails its 32 px menulist, a boolean is a 16 px checkbox left of its
+ * label, a field row holds its field inline, an action with a `button` trails it – the row grows
+ * to 40 around a 32 px control (§9.21) – and only a confirmation, a form or an item's rows open
+ * a dialog (`dialogs.tsx`), through the same `open`.
  *
  * Whatever trails the text centres on the row (§9.18) – until the text runs to three lines (a
  * description wrapped, or a search result's caption above the label), when the control centres
  * on the label's line instead. The row measures its own text block for that: `data-lines="3"`
  * and `--zen-settings-label-top` (the label line's offset in the block) go on the row.
  */
+
+/** Which of the two row vocabularies a list draws (§10.4 / §10.5). */
+export type RowVariant = 'phone' | 'desktop'
 
 /** The row's text block as laid out: three lines or more, and where the label line starts. */
 function measureLines(row: HTMLElement): void {
@@ -71,15 +90,22 @@ export interface RowContext {
   open(request: SheetRequest): void
 }
 
-/** The groups of a section (or an item sheet): heading, description, rows, or the empty line. */
+/**
+ * The groups of a section (or an item sheet): heading, description, rows, or the empty line.
+ * `children` come after the groups, as one more of them (a search's "Other categories").
+ */
 export function GroupList({
   groups,
   ctx,
-  className
+  className,
+  variant = 'phone',
+  children
 }: {
   groups: readonly RowGroup[]
   ctx: RowContext
   className?: string
+  variant?: RowVariant
+  children?: ReactNode
 }): JSX.Element {
   return (
     <div className={cn('zen-settings-groups', className)}>
@@ -87,6 +113,7 @@ export function GroupList({
         <section
           key={group.id}
           className="zen-settings-group"
+          data-group={group.id}
           aria-label={group.heading ?? undefined}
         >
           {group.heading !== null && (
@@ -101,10 +128,11 @@ export function GroupList({
           {group.rows.length === 0 ? (
             <p className="zen-settings-empty">{group.empty}</p>
           ) : (
-            group.rows.map((row) => <RowView key={row.id} row={row} ctx={ctx} />)
+            group.rows.map((row) => <RowView key={row.id} row={row} ctx={ctx} variant={variant} />)
           )}
         </section>
       ))}
+      {children}
     </div>
   )
 }
@@ -113,14 +141,18 @@ export function GroupList({
 export function RowView({
   row,
   ctx,
-  caption
+  caption,
+  variant = 'phone'
 }: {
   row: SettingsRow
   ctx: RowContext
   caption?: string
+  variant?: RowVariant
 }): JSX.Element {
   // The sheet this row sits in, for an action that opens a surface of its own over the page.
   const dismissSheet = useSheetDismiss()
+  if (variant === 'desktop')
+    return <DesktopRowView row={row} ctx={ctx} caption={caption} dismissSheet={dismissSheet} />
   switch (row.kind) {
     case 'value':
       return (
@@ -204,7 +236,9 @@ export function RowView({
       )
     case 'info':
       // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
-      // pointer cursor, no role – a div, since static text is not a button.
+      // pointer cursor, no role – a div, since static text is not a button. A row whose label
+      // is the status takes the danger row class the destructive action has: its label rule
+      // puts the ink on the sentence, the description keeps its 69%.
       return (
         <div
           ref={row.trailing ? attachLineCount : undefined}
@@ -212,6 +246,7 @@ export function RowView({
           data-static=""
           className={cn(
             'zen-settings-row zen-v2-row',
+            row.danger && 'zen-settings-row-danger',
             row.disabled && 'zen-settings-row-disabled',
             row.clamp && 'zen-settings-row-clamp'
           )}
@@ -230,10 +265,29 @@ export function RowView({
           {row.trailing && <span className="zen-settings-trailing">{row.trailing}</span>}
         </div>
       )
-    case 'custom':
+    case 'slider':
+      // §10.4's slider row: the value beside the label on the text's first line, the slider on
+      // the 40 px line under the text; the block is the row's, so it keeps its 16 px gutter.
       return (
         <div
-          className={cn('zen-settings-custom', row.disabled && 'zen-settings-row-disabled')}
+          className={cn(
+            'zen-settings-row zen-settings-slider-row zen-v2-row',
+            row.disabled && 'zen-settings-row-disabled'
+          )}
+          data-row={row.id}
+          data-static=""
+        >
+          <SliderControl row={row} caption={caption} labelled />
+        </div>
+      )
+    case 'custom':
+      if (row.bare && !caption) return <>{row.render()}</>
+      return (
+        <div
+          className={cn(
+            row.bare ? 'zen-settings-custom-bare' : 'zen-settings-custom',
+            row.disabled && 'zen-settings-row-disabled'
+          )}
           data-row={row.id}
         >
           {caption && <span className="zen-settings-caption">{caption}</span>}
@@ -241,6 +295,304 @@ export function RowView({
         </div>
       )
   }
+}
+
+// ---------------------------------------------------------------------------
+// Desktop rows (§10.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * What pressing an action row (or its button) does: its dialog first, else the action itself –
+ * after the sheet it sits in has gone, for an action that opens a surface of its own.
+ */
+function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss): void {
+  if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
+  else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
+  else if (row.closesSheet) dismissSheet(() => row.onPress?.())
+  else row.onPress?.()
+}
+
+/**
+ * A model row in the desktop vocabulary. Info, item and custom rows are the phone's; a value row
+ * trails a menulist, a switch row is a check row, a field row holds its field, an action with a
+ * `button` trails it and any other action is the whole-row target with its leaving glyph.
+ */
+function DesktopRowView({
+  row,
+  ctx,
+  caption,
+  dismissSheet
+}: {
+  row: SettingsRow
+  ctx: RowContext
+  caption?: string
+  dismissSheet: SheetDismiss
+}): JSX.Element {
+  switch (row.kind) {
+    case 'value':
+      return (
+        <ControlRow
+          row={row}
+          caption={caption}
+          description={row.sheetDescription ?? row.description}
+        >
+          <V2Menulist
+            label={row.label}
+            value={row.value}
+            options={row.options}
+            onChange={row.onChange}
+            disabled={row.disabled}
+            className="zen-settings-menulist"
+          />
+        </ControlRow>
+      )
+    case 'switch':
+      return <CheckRow row={row} caption={caption} />
+    case 'action':
+      if (row.button && !row.leaves) {
+        return (
+          <ControlRow row={row} caption={caption} description={row.description}>
+            <V2Button
+              variant={row.destructive ? 'danger' : 'secondary'}
+              busy={row.busy}
+              disabled={row.disabled}
+              aria-haspopup={row.confirm || row.form ? 'dialog' : undefined}
+              onClick={() => pressAction(row, ctx, dismissSheet)}
+            >
+              {row.button}
+            </V2Button>
+          </ControlRow>
+        )
+      }
+      return (
+        <PressableRow
+          row={row}
+          caption={caption}
+          description={row.description}
+          destructive={row.destructive}
+          busy={row.busy}
+          haspopup={row.confirm || row.form ? 'dialog' : undefined}
+          trailing={actionGlyph(row)}
+          onPress={() => pressAction(row, ctx, dismissSheet)}
+        />
+      )
+    case 'field':
+      return (
+        <ControlRow row={row} caption={caption} description={row.description}>
+          <InlineField row={row} />
+        </ControlRow>
+      )
+    case 'slider':
+      // The slider trails the text on the desktop (§9.21), the value as text at its end.
+      return (
+        <ControlRow row={row} caption={caption} description={row.description}>
+          <SliderControl row={row} />
+        </ControlRow>
+      )
+    default:
+      return <RowView row={row} ctx={ctx} caption={caption} />
+  }
+}
+
+/**
+ * The slider of a slider row: the zoom sheet's `zen-zoom-slider` (§10.4) with the value as text
+ * beside it, the text following the drag and the row's `onChange` running when the thumb is let
+ * go. `labelled` draws the phone block – label and value on the first line, the description,
+ * then the slider – where the desktop's control sits in its row's trailing slot.
+ */
+function SliderControl({
+  row,
+  caption,
+  labelled = false
+}: {
+  row: SliderRow
+  caption?: string
+  labelled?: boolean
+}): JSX.Element {
+  const [local, setLocal] = useState(row.value)
+  // The row's value moved under the slider (another window, a reset): follow it.
+  const [seen, setSeen] = useState(row.value)
+  if (row.value !== seen) {
+    setSeen(row.value)
+    setLocal(row.value)
+  }
+  const slider = (
+    <Slider
+      className="zen-zoom-slider zen-settings-slider"
+      aria-label={row.label}
+      aria-valuetext={row.format(local)}
+      min={row.min}
+      max={row.max}
+      step={row.step}
+      value={[local]}
+      disabled={row.disabled}
+      onValueChange={([v]) => v !== undefined && setLocal(v)}
+      onValueCommit={([v]) => v !== undefined && v !== row.value && row.onChange(v)}
+    />
+  )
+  if (!labelled) {
+    return (
+      <span className="zen-settings-slider-control">
+        {slider}
+        <span className="zen-settings-slider-value">{row.format(local)}</span>
+      </span>
+    )
+  }
+  return (
+    <span className="zen-settings-row-text zen-settings-slider-block">
+      {caption && <span className="zen-settings-caption">{caption}</span>}
+      <span className="zen-settings-slider-head">
+        <span className="zen-settings-label">{row.label}</span>
+        <span className="zen-settings-slider-value">{row.format(local)}</span>
+      </span>
+      {row.description && <span className="zen-settings-description">{row.description}</span>}
+      {slider}
+    </span>
+  )
+}
+
+/**
+ * A static row that carries a control (§9.21): label and description as the text block, the
+ * 32 px control trailing, centred; the row is 40 around it – 4 px of its own padding above and
+ * below rather than a list gap, so rows still touch. `data-static` keeps the row's fill off: the
+ * control is the target, not the row.
+ */
+function ControlRow({
+  row,
+  caption,
+  description,
+  children
+}: {
+  row: SettingsRow
+  caption?: string
+  description?: string
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div
+      ref={attachLineCount}
+      data-row={row.id}
+      data-static=""
+      className={cn(
+        'zen-settings-row zen-settings-control-row zen-v2-row',
+        row.disabled && 'zen-settings-row-disabled'
+      )}
+    >
+      <RowText label={row.label} description={description} tone={row.tone} caption={caption} />
+      <span className="zen-settings-trailing zen-settings-control">{children}</span>
+    </div>
+  )
+}
+
+/**
+ * A boolean on the desktop (§10.5, §6): Zen's 16 px checkbox left of the label, the description
+ * under the label; the whole row is the checkbox's label, so a press anywhere on it toggles.
+ * Disabled as a dependent row, the check-row primitive puts the .4 on the row's content (§9.30)
+ * and `aria-disabled` keeps the row's fill off.
+ */
+function CheckRow({ row, caption }: { row: SwitchRow; caption?: string }): JSX.Element {
+  const disabled = row.disabled === true
+  return (
+    <label
+      data-row={row.id}
+      className="zen-settings-row zen-settings-check-row zen-v2-row zen-v2-check-row"
+      aria-disabled={disabled || undefined}
+    >
+      <input
+        type="checkbox"
+        className="zen-v2-checkbox"
+        checked={row.checked}
+        disabled={disabled}
+        onChange={(e) => row.onChange(e.target.checked)}
+      />
+      <RowText label={row.label} description={row.description} caption={caption} />
+    </label>
+  )
+}
+
+/**
+ * A desktop input in its row (§9.12): the row's value edited in place and committed on Enter
+ * or when the field loses focus; Escape puts the row's value back. A commit the row refuses
+ * keeps the typed value, marks the field and shows the message where the description was.
+ */
+function InlineField({ row }: { row: FieldRow }): JSX.Element {
+  const [value, setValue] = useState(row.value)
+  const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  // A commit that settles later (§9.30): the field keeps the typed value, read-only, until it does.
+  const [busy, setBusy] = useState(false)
+  // The row's value moved under the field (another window, a reset): follow it unless typing.
+  const [seen, setSeen] = useState(row.value)
+  if (row.value !== seen) {
+    setSeen(row.value)
+    if (!editing) setValue(row.value)
+  }
+  const settle = (message: string | undefined): void => {
+    setError(message ?? null)
+    if (message) setEditing(true)
+  }
+  const commit = (): void => {
+    if (busy) return
+    setEditing(false)
+    if (value === row.value) {
+      setError(null)
+      return
+    }
+    const result = row.onCommit(value)
+    if (result instanceof Promise) {
+      setBusy(true)
+      void result.then(settle, (e: unknown) => settle(String(e))).finally(() => setBusy(false))
+    } else settle(result)
+  }
+  return (
+    <span className="zen-settings-inline-field">
+      <input
+        className={cn(
+          'zen-settings-input zen-v2-field',
+          row.input === 'number' ? 'zen-settings-field-number' : 'zen-settings-field-text',
+          row.secret && 'zen-settings-field-secret'
+        )}
+        type={row.input === 'number' ? 'number' : 'text'}
+        inputMode={row.input === 'number' ? 'numeric' : 'text'}
+        min={row.min}
+        max={row.max}
+        placeholder={row.placeholder}
+        aria-label={row.label}
+        aria-invalid={error ? true : undefined}
+        autoCapitalize="off"
+        autoCorrect="off"
+        spellCheck={false}
+        disabled={row.disabled}
+        readOnly={busy}
+        aria-busy={busy || undefined}
+        value={value}
+        onFocus={() => setEditing(true)}
+        onChange={(e) => {
+          setValue(e.target.value)
+          setError(null)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            e.stopPropagation()
+            setValue(row.value)
+            setError(null)
+            setEditing(false)
+            e.currentTarget.blur()
+          }
+        }}
+      />
+      {error && (
+        <span className="zen-settings-inline-error" role="alert">
+          {error}
+        </span>
+      )}
+    </span>
+  )
 }
 
 /** The 16 px glyph that says an action leaves the page (§10.4); nothing for one that stays. */

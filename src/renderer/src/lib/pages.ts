@@ -2,6 +2,8 @@ import type { InternalPageId } from '@shared/internalPages'
 import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { run } from './api'
+import { isPhone } from './formFactor'
+import { closeUrlbar, openImportDialog, openOverlay, overlayAvailable } from './ui'
 
 /**
  * Internal pages from the chrome's side (`shared/internalPages.ts`, `core/pages.ts`). Every
@@ -22,6 +24,30 @@ export function openPage(id: InternalPageId, section?: string | null): void {
 
 export function openSettings(section?: string | null): void {
   openPage('settings', section)
+}
+
+/**
+ * Bookmarks › Import Bookmarks and Settings…, the `import.open` event and the first-run offer
+ * (Chrome's `chrome://settings/importData`, ID-23): Settings on its Import category – the tab,
+ * or the overlay on a host without page tabs – with the import dialog up over it on a mouse or
+ * a tablet, where another browser's profile can be read. On a phone the category alone: its
+ * rows import from files, there being no profile to read, so the dialog never opens there.
+ * `section` lets the first run land on another category first (Sync, when both were asked
+ * for) with the dialog over it; a phone lands on Import whatever was asked. The URL bar closes
+ * first, as it does wherever Settings opens as a tab (`overlay.open`): the first run ends over
+ * the new tab page with the bar up in its new-tab mode, and a tab that opens under it would
+ * keep the bar floating over the page and the dialog.
+ */
+export async function openImportSurface(
+  activeTabId: string | null,
+  source: string | null = null,
+  section = 'import'
+): Promise<void> {
+  const phone = isPhone()
+  closeUrlbar()
+  if (overlayAvailable('settings')) await openOverlay('settings', activeTabId, null, null, section)
+  else openSettings(phone ? 'import' : section)
+  if (!phone) await openImportDialog(activeTabId, source)
 }
 
 /**

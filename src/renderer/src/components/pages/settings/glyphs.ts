@@ -7,6 +7,8 @@ import {
   Download,
   Eye,
   Gauge,
+  Globe,
+  Import,
   Info,
   KeyRound,
   Keyboard,
@@ -51,7 +53,9 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   passwords: KeyRound,
   security: ShieldCheck,
   sync: RefreshCw,
+  import: Import,
   shortcuts: Keyboard,
+  'default-browser': Globe,
   updates: CircleFadingArrowUp,
   about: Info
 }

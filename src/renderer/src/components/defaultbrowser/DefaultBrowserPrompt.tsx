@@ -23,7 +23,7 @@ import {
   uiStore
 } from '@renderer/lib/ui'
 import { V2Button, V2TitleBlock } from '../extensions/v2'
-import { AppIconImage } from '../overlays/AppIconPicker'
+import { AppIconImage } from '../pages/settings/blocks'
 import { PhoneSheet } from '../phone/PhoneSheet'
 import type { BottomSheetHandle } from '../sheet/BottomSheet'
 

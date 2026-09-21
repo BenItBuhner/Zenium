@@ -45,6 +45,21 @@ describe('tourSteps', () => {
       'features'
     ])
   })
+
+  it('offers the import after the search engine once another browser was found (ID-23), and not otherwise', () => {
+    expect(tourSteps({ sync: true }, false, true)).toEqual([
+      'welcome',
+      'look',
+      'search',
+      'import',
+      'essentials',
+      'features',
+      'sync',
+      'shortcuts'
+    ])
+    expect(tourSteps({ sync: true }, false, false)).not.toContain('import')
+    expect(tourSteps({ sync: true }, false)).not.toContain('import')
+  })
 })
 
 describe('tourFeatures', () => {

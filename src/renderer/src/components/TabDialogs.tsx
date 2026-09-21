@@ -14,6 +14,7 @@ import { AutofillPrompts } from './autofill/AutofillPrompts'
 import { PassphraseDialog } from './autofill/PassphraseDialog'
 import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { ClearBrowsingDataDialog } from './siteControls/ClearBrowsingDataDialog'
+import { ImportDialog } from './import/ImportDialog'
 import { PermissionPrompts } from './siteControls/PermissionPromptBubble'
 import { PageDialogs } from './dialogs/PageDialog'
 import { WindowPromptDialog } from './dialogs/WindowPromptDialog'
@@ -119,6 +120,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <WindowPromptDialog state={state} />
       <ExtensionPromptDialog />
       <ClearBrowsingDataDialog />
+      <ImportDialog state={state} />
       <PrintPreviewDialog state={state} />
       {zoom && <ZoomBubble state={state} bubble={zoom} />}
       {readerPrefs && (

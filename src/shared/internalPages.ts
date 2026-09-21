@@ -23,7 +23,7 @@
  * draw). Every function takes the registry it reads as an optional last argument, defaulting to
  * {@link INTERNAL_PAGES}, so a page can be tried against the mechanism before it is registered.
  */
-import type { FormFactor, HostCapabilities, OverlayKind } from './types'
+import type { FormFactor, HostCapabilities, OverlayKind, Platform } from './types'
 
 /** The scheme `tab.url` carries for every internal document and page. */
 export const INTERNAL_SCHEME = 'zen'
@@ -67,10 +67,28 @@ export interface InternalPageSection {
   label: string
   /** Terms the settings search matches besides the label (lower case). */
   keywords: readonly string[]
-  /** Host capability the section needs; not listed where it is false. */
-  requires?: keyof HostCapabilities
+  /**
+   * Host capability the section needs; not listed where it is false. A list names alternatives:
+   * the section shows where any one of them is true (Accessibility: page controls or a speech
+   * engine), its builder drawing the groups of those the host has.
+   */
+  requires?: keyof HostCapabilities | readonly (keyof HostCapabilities)[]
   /** Layouts the section applies to; absent means all of them. */
   layouts?: readonly FormFactor[]
+  /**
+   * Platforms the section exists on; absent means every one. Default Browser is a section on the
+   * desktop OSes only (registration, status and the way to the system settings need the room);
+   * Android keeps its one row under About, whatever the tablet's layout.
+   */
+  platforms?: readonly Platform[]
+}
+
+/** Whether a host has what a section requires: the one capability, or any of the listed ones. */
+export function sectionAvailable(section: InternalPageSection, caps: HostCapabilities): boolean {
+  const { requires } = section
+  if (requires === undefined) return true
+  if (typeof requires === 'string') return caps[requires]
+  return requires.some((cap) => caps[cap])
 }
 
 export interface InternalPageDefinition {
@@ -292,16 +310,53 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
     layouts: ['desktop', 'tablet']
   },
   {
+    // Chrome's "Import bookmarks and settings" (ID-23): another browser's profile on a desktop,
+    // a bookmarks HTML or passwords CSV file on every host.
+    id: 'import',
+    label: 'Import',
+    keywords: [
+      'import',
+      'chrome',
+      'edge',
+      'firefox',
+      'safari',
+      'other browser',
+      'bookmarks',
+      'history',
+      'passwords',
+      'html',
+      'csv',
+      'transfer',
+      'migrate'
+    ]
+  },
+  {
     id: 'accessibility',
     label: 'Accessibility',
-    keywords: ['zoom', 'font size', 'text size', 'pinch'],
-    requires: 'pageControls'
+    keywords: [
+      'zoom',
+      'font size',
+      'text size',
+      'pinch',
+      'read aloud',
+      'listen',
+      'voice',
+      'speech'
+    ],
+    requires: ['pageControls', 'readAloud']
   },
   {
     id: 'shortcuts',
     label: 'Keyboard Shortcuts',
     keywords: ['keys', 'binding', 'hotkey'],
     layouts: ['desktop', 'tablet']
+  },
+  {
+    id: 'default-browser',
+    label: 'Default Browser',
+    keywords: ['default', 'links', 'open with', 'system', 'register'],
+    requires: 'defaultBrowser',
+    platforms: ['win32', 'darwin', 'linux']
   },
   {
     id: 'updates',
@@ -516,14 +571,21 @@ export function sameInternalPage(
   return ra !== null && rb !== null && ra.id === rb.id
 }
 
-/** The sections a host and layout can show, in nav order. */
+/**
+ * The sections a host and layout can show, in nav order. A section listing `platforms` shows
+ * on those alone; a caller that names no platform gets none of them.
+ */
 export function availableSections(
   page: InternalPageDefinition,
   caps: HostCapabilities,
-  formFactor: FormFactor
+  formFactor: FormFactor,
+  platform?: Platform
 ): InternalPageSection[] {
   return page.sections.filter(
-    (s) => (!s.requires || caps[s.requires]) && (!s.layouts || s.layouts.includes(formFactor))
+    (s) =>
+      sectionAvailable(s, caps) &&
+      (!s.layouts || s.layouts.includes(formFactor)) &&
+      (!s.platforms || (platform !== undefined && s.platforms.includes(platform)))
   )
 }
 

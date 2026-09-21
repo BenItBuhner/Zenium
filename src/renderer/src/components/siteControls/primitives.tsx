@@ -866,7 +866,9 @@ export function ListRow({
   danger = false,
   control = false,
   className,
+  role,
   'aria-label': ariaLabel,
+  'aria-checked': ariaChecked,
   'aria-expanded': ariaExpanded,
   'aria-controls': ariaControls,
   ...data
@@ -883,7 +885,10 @@ export function ListRow({
   /** The trailing slot holds a control: the row is at least control + 8 (§9.21). */
   control?: boolean
   className?: string
+  /** The row is itself the control for assistive technology (`SwitchRow`: the whole row toggles). */
+  role?: 'switch'
   'aria-label'?: string
+  'aria-checked'?: boolean
   /** A disclosure row (Chrome's "More settings"): what it opens, and whether it is open. */
   'aria-expanded'?: boolean
   'aria-controls'?: string
@@ -960,7 +965,9 @@ export function ListRow({
           layout
         )}
         disabled={disabled}
+        role={role}
         aria-label={ariaLabel}
+        aria-checked={role === 'switch' ? ariaChecked : undefined}
         aria-busy={busy || undefined}
         aria-expanded={ariaExpanded}
         aria-controls={ariaExpanded ? ariaControls : undefined}
@@ -1097,6 +1104,44 @@ export function ChoiceRow<V extends string>({
           className={controlClassName}
         />
       }
+    />
+  )
+}
+
+/**
+ * A setting that takes effect the moment it is flipped, in a control panel (§9.13, §10.4): the
+ * row is the switch – `role="switch"` with `aria-checked`, the whole row its target with the
+ * press fill – and the shared 36 × 20 `.zen-v2-switch` trails it, drawn on from the row's
+ * `aria-checked`. Disabled, the row stays laid out at .4 and takes no press (§9.30).
+ */
+export function SwitchRow({
+  label,
+  description,
+  checked,
+  onChange,
+  disabled = false,
+  leading,
+  ...data
+}: {
+  label: string
+  description?: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+  disabled?: boolean
+  leading?: ReactNode
+} & DataAttributes): JSX.Element {
+  return (
+    <ListRow
+      label={label}
+      description={description}
+      leading={leading}
+      disabled={disabled}
+      control
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      trailing={<span className="zen-v2-switch" aria-hidden />}
+      {...data}
     />
   )
 }

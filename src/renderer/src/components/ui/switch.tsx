@@ -2,20 +2,17 @@ import * as React from 'react'
 import { Switch as SwitchPrimitive } from 'radix-ui'
 import { cn } from '@renderer/lib/utils'
 
+/**
+ * The switch as a component: Radix for the behaviour (`role="switch"`, `aria-checked`, Space
+ * and Enter, `disabled`), the shared `.zen-v2-switch` rule in main.css for the look (design
+ * language v2 §9.34, §10.4: the 36 × 20 track, the thumb its `::after`, the accent when on,
+ * `.4` when disabled). No thumb element and no utilities: the class is the whole drawing.
+ */
 const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof SwitchPrimitive.Root>
 >(({ className, ...props }, ref) => (
-  <SwitchPrimitive.Root
-    ref={ref}
-    className={cn(
-      'peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors focus-visible:outline-offset-2 disabled:opacity-40 data-[state=checked]:bg-[var(--zen-accent)] data-[state=unchecked]:bg-[var(--zen-element-bg-active)]',
-      className
-    )}
-    {...props}
-  >
-    <SwitchPrimitive.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5" />
-  </SwitchPrimitive.Root>
+  <SwitchPrimitive.Root ref={ref} className={cn('zen-v2-switch', className)} {...props} />
 ))
 Switch.displayName = 'Switch'
 

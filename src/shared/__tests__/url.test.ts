@@ -22,6 +22,7 @@ import {
   isProbablyUrl,
   isSameSite,
   isWebPageUrl,
+  pillText,
   presentedUrl,
   titleForUrl
 } from '../url'
@@ -204,6 +205,32 @@ describe('displayHost', () => {
     expect(displayHost('')).toBe('')
     expect(displayHost('zen://history')).toBe('zen://history')
     expect(displayHost('file:///home/me/notes.html')).toBe('file:///home/me/notes.html')
+  })
+})
+
+describe('pillText (the desktop pill at rest)', () => {
+  it('shows an internal page’s address whole while it fits, section and all', () => {
+    expect(pillText(SETTINGS_URL, displayUrl(SETTINGS_URL), true)).toBe('zenium://settings')
+    expect(pillText('zen://settings/privacy', displayUrl('zen://settings/privacy'), true)).toBe(
+      'zenium://settings/privacy'
+    )
+  })
+
+  it('names the page instead once its address does not fit, as the phone pill does (§10.1)', () => {
+    expect(pillText(SETTINGS_URL, displayUrl(SETTINGS_URL), false)).toBe('Settings')
+    expect(pillText('zen://settings/privacy', fullUrl('zen://settings/privacy'), false)).toBe(
+      'Settings'
+    )
+  })
+
+  it('leaves a site’s address to truncate: there is no title to stand in for it', () => {
+    const url = 'https://en.wikipedia.org/wiki/Zen_(browser)#History'
+    expect(pillText(url, displayUrl(url), false)).toBe(displayUrl(url))
+    expect(pillText(url, fullUrl(url), false)).toBe(fullUrl(url))
+    expect(pillText('file:///home/me/notes.html', 'file:///home/me/notes.html', false)).toBe(
+      'file:///home/me/notes.html'
+    )
+    expect(pillText(NEW_TAB_URL, '', false)).toBe('')
   })
 })
 

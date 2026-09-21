@@ -15,7 +15,8 @@ import {
   viewportSize,
   type DismissReason
 } from '@renderer/lib/portals'
-import { browserStore, closeBookmarkChrome, openBookmarkChrome } from '@renderer/lib/ui'
+import { browserStore, closeBookmarkChrome } from '@renderer/lib/ui'
+import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
 import { useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
@@ -31,7 +32,11 @@ export interface StarTarget {
   pill: Rect | null
 }
 
-const WIDTH = POPOVER_WIDTH.list
+/** The form width (§9.20): the bubble is a form – a field, a menulist and a footer. */
+const WIDTH = POPOVER_WIDTH.form
+const TITLE_ID = 'zen-bm-star-title'
+const NAME_ID = 'zen-bm-star-name'
+const FOLDER_ID = 'zen-bm-star-folder'
 /** How long a bubble waits for the node its event names before giving up on it. */
 const ARRIVAL_GRACE_MS = 2000
 
@@ -46,7 +51,8 @@ const closeToAnchor = (): void => {
 /**
  * Chrome's star bubble: the page was bookmarked the moment the star was pressed; this names and
  * files it. "Remove" takes the bookmark back; "Done", Escape, a click outside or the star itself
- * keep it, with whatever name is in the field.
+ * keep it, with whatever name is in the field. The URL and a folder's rename are the Edit
+ * bookmark dialog's (the bar's and the manager's "Edit…"), as in Chrome's bubble.
  *
  * The `bookmark.star` event and the state push that carries a new node are separate messages
  * from the main process and can arrive in either order, so the bubble waits for the node to show
@@ -82,14 +88,19 @@ export function StarDialog({
 }
 
 /**
- * A desktop popover (v2 draft §9.20): 320 wide, its top border on the pill's bottom edge,
- * end-aligned with the star (the star sits in the pill's trailing half), placed by
- * `placePopover` (flip, slide, shrink, 8px inside the window), no taller than 60% of it; a §9.23
- * title block over a body that scrolls under it. It renders through the chrome layer
+ * A desktop popover (v2 draft §9.20) at the form width, 400: its top border on the pill's
+ * bottom edge, end-aligned with the star (the star sits in the pill's trailing half), placed by
+ * `placePopover` (flip, slide, shrink, 8px inside the window), no taller than 60% of it; the
+ * popover chrome (`--v2-panel`, radius 8, `--v2-shadow-panel`, no arrow). Inside, a §9.23 title
+ * block – "Bookmark added" / "Edit bookmark" – over the form (§9.12): the Name field, focused
+ * and selected on open, and the folder menulist (§9.13, whose "Choose another folder…" swaps in
+ * the tree as rows), then the §9.11 footer at the 32 control height – Remove in the danger ink,
+ * then Done as the one primary, Chrome's order. It renders through the chrome layer
  * (`ChromePortal`), never inside the frame, and the layer's light dismiss puts it away: a press
  * anywhere else keeps the bookmark and closes it (the press goes no further), the star's own
- * press closes it and hands it the focus, scroll and resize close it. On phones it is a sheet
- * placed through the `FrameDialogHost` TabDialogs mounts, over that host's scrim.
+ * press closes it and hands it the focus, scroll and resize close it; Escape too returns the
+ * focus to the star (§9.22). On phones it is a sheet placed through the `FrameDialogHost`
+ * TabDialogs mounts, over that host's scrim.
  */
 function StarBubble({
   tree,
@@ -144,7 +155,7 @@ function StarBubble({
     { anchor: starChip, disabled: phone }
   )
 
-  const title = star.created ? 'Bookmark Added' : 'Edit Bookmark'
+  const title = star.created ? 'Bookmark added' : 'Edit bookmark'
   const remove = (): void => {
     removed.current = true
     run('bookmark.remove', { ids: [node.id] })
@@ -152,15 +163,6 @@ function StarBubble({
   }
   const moveTo = (folderId: string): void => {
     if (folderId !== node.parentId) run('bookmark.move', { ids: [node.id], parentId: folderId })
-  }
-  const more = (): void => {
-    void openBookmarkChrome(
-      {
-        starDialog: null,
-        bookmarkEdit: { id: node.id, parentId: node.parentId ?? '', type: 'url' }
-      },
-      star.tabId
-    )
   }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
@@ -174,11 +176,7 @@ function StarBubble({
 
   const body = (
     <>
-      <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
-        <h2 id="zen-bm-star-title" className="zen-bm-title">
-          {title}
-        </h2>
-      </div>
+      <V2TitleBlock id={TITLE_ID} title={title} scrolled={scrolled} />
       <form
         ref={bodyRef}
         className="zen-bm-popover-body zen-bm-form"
@@ -187,41 +185,36 @@ function StarBubble({
           close()
         }}
       >
-        <label className="zen-bm-label">
-          Name
-          <input
-            ref={nameRef}
-            className="zen-field"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </label>
-        <div className="zen-bm-label min-h-0">
-          Folder
-          <FolderField
-            tree={tree}
-            value={node.parentId ?? ''}
-            onChange={moveTo}
-            onNestedChange={setNested}
-          />
-        </div>
-        <div className="zen-bm-footer">
-          <button
-            type="button"
-            className="zen-button mr-auto"
-            data-variant="danger"
-            onClick={remove}
-          >
+        <V2FormField id={NAME_ID} label="Name">
+          {(field) => (
+            <V2Field
+              {...field}
+              ref={nameRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          )}
+        </V2FormField>
+        <V2FormField id={FOLDER_ID} label="Folder">
+          {(field) => (
+            <FolderField
+              id={field.id}
+              tree={tree}
+              value={node.parentId ?? ''}
+              onChange={moveTo}
+              onNestedChange={setNested}
+            />
+          )}
+        </V2FormField>
+        <div className="zen-bm-footer justify-end">
+          <V2Button variant="danger" onClick={remove}>
             Remove
-          </button>
-          <button type="button" className="zen-button" onClick={more}>
-            More
-          </button>
-          <button type="submit" className="zen-button" data-variant="primary">
+          </V2Button>
+          <V2Button type="submit" variant="primary">
             Done
-          </button>
+          </V2Button>
         </div>
       </form>
     </>
@@ -232,8 +225,8 @@ function StarBubble({
       <div
         ref={panelRef}
         role="dialog"
-        aria-labelledby="zen-bm-star-title"
-        className="zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-col self-end justify-self-stretch"
+        aria-labelledby={TITLE_ID}
+        className="zen-v2 zen-animate-pop zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] flex max-h-[calc(100%-24px)] w-auto flex-col self-end justify-self-stretch"
         onKeyDown={onKeyDown}
       >
         {body}
@@ -256,8 +249,8 @@ function StarBubble({
       <div
         ref={panelRef}
         role="dialog"
-        aria-labelledby="zen-bm-star-title"
-        className="zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
+        aria-labelledby={TITLE_ID}
+        className="zen-v2 zen-animate-pop zen-bm-popover fixed z-[70] flex flex-col"
         style={popoverStyle(box)}
         onKeyDown={onKeyDown}
       >

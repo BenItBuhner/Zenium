@@ -35,8 +35,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-ptr-disc {', '.zen-space-strip {'],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
-  // The v2 button, shared by every v2 surface (the Settings > Look and Feel > Navigation bar button,
-  // components/overlays/SettingsPanel.tsx; the first run, overlays/PhoneOnboarding.tsx; the
+  // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
+  // components/pages/settings/*; the first run, overlays/PhoneOnboarding.tsx; the
   // default-browser prompts, defaultbrowser/*), with the first run's unlayered override beside it;
   // its layering is pinned by the tests below.
   ['.zen-v2-button {', '/*\n * The v2 badge (§9.19)'],
@@ -173,8 +173,6 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
   'components/newtab/NewTabShortcutDialog.tsx',
-  // Settings → Security on desktop (#62): the status ink of a remembered answer, the pane title.
-  'components/overlays/SecuritySection.tsx',
   // The external-protocol sheet on the v2 sheet chassis (#140): its deemphasised host line.
   'components/protocol/ExternalProtocolSheet.tsx',
   // The blocked pop-ups popover, sheet and phone bar, and the sign-in and certificate dialogs
@@ -199,8 +197,6 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/siteControls/SiteInfoPopover.tsx',
   'components/siteControls/ClearBrowsingDataDialog.tsx',
   'components/siteControls/settingsRows.tsx',
-  'components/overlays/SiteSettingsSection.tsx',
-  'components/overlays/SafetyCheckSection.tsx',
   // The print preview (#225's UI): the option column's headings and validation lines in the
   // deemphasised and danger inks, the preview pane's notice and paging pill in the panel family.
   'components/print/PrintPreviewDialog.tsx',
@@ -209,7 +205,12 @@ const V2_FILES: ReadonlyArray<string> = [
   // notices in the panel family and the deemphasised ink, the outline rows' page numbers and
   // selected fill, the password sheet's error line in the danger ink.
   'components/pdf/PdfViewerBar.tsx',
-  'components/pdf/PdfSheets.tsx'
+  'components/pdf/PdfSheets.tsx',
+  // Settings > Import's dialog (ID-23's UI): the choice and checkbox rows' heights, the running
+  // browser line in the warn / danger ink, the notes and the results in the deemphasised ink;
+  // a result's glyph (the dialog's and the pane's Last import row) in the danger ink on failure.
+  'components/import/ImportDialog.tsx',
+  'components/import/ResultGlyph.tsx'
 ]
 
 /** The text of the first `selector {` block found after `from`. */
@@ -628,7 +629,8 @@ describe('the v2 primitives (§9.34)', () => {
     // The checkbox (#93): the extensions UI's layered copy went with it.
     '.zen-v2-checkbox',
     // The menulist (#106) with its popover's popup and option: the extensions UI's layered
-    // copies and the translate stylesheet's own went with it.
+    // copies and the translate stylesheet's own went with it; the desktop Settings tab's value
+    // rows are the first to draw the trigger outside those UIs.
     '.zen-v2-menulist',
     '.zen-v2-menulist-popup',
     '.zen-v2-menulist-option',
@@ -753,12 +755,10 @@ describe('the v2 primitives (§9.34)', () => {
       /\.zen-v2-pw-row:not\(\[data-control\], \[data-stack\]\) > \.zen-v2-pw-row-control > \.zen-v2-icon-button,\n\.zen-v2-pw-list-row:not\(\[data-control\]\) > \.zen-v2-icon-button \{\n {2}margin-block: calc\(4px - var\(--v2-row-pad\)\);\n\}/
     )
     // The row wrappers write the mark (§9.34): the translate rows through `ControlRow` (the
-    // surfaces set none by hand; #272's audit), the autofill and passwords wrappers only for a
-    // one-line row (a two-line row takes no mark).
-    for (const file of [
-      'components/translate/LanguagesSection.tsx',
-      'components/translate/SelectionPopover.tsx'
-    ]) {
+    // surfaces set none by hand; #272's audit), the passwords wrappers only for a one-line row
+    // (a two-line row takes no mark). (The desktop Languages and Autofill panes went with the
+    // Settings tab, #193: their rows are the builder's, which marks its control rows itself.)
+    for (const file of ['components/translate/SelectionPopover.tsx']) {
       const text = read(file)
       expect(text, file).not.toMatch(/zen-translate-control-row/)
       expect(text, file).not.toMatch(/data-control=/)
@@ -767,8 +767,6 @@ describe('the v2 primitives (§9.34)', () => {
     const controlRow = read('components/translate/ControlRow.tsx')
     expect(controlRow).toMatch(/'data-static': ''/)
     expect(controlRow).toMatch(/'data-control': control \? '' : undefined/)
-    const autofillRows = read('components/overlays/AutofillSection.tsx')
-    expect(autofillRows.match(/data-control=\{description \? undefined : ''\}/g)).toHaveLength(2)
     const shared = read('components/overlays/passwords/shared.tsx')
     expect(shared).toMatch(/data-control=\{control && !description && !stack \? '' : undefined\}/)
     expect(shared).toMatch(/const mark = control \? '' : undefined/)
