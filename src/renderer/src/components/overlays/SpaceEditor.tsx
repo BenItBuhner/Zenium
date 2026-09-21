@@ -45,7 +45,7 @@ export function SpaceEditor({
       className="w-[460px]"
     >
       <form
-        className="flex flex-col gap-4 p-4"
+        className="flex flex-col gap-4 px-4 pb-4"
         onSubmit={(e) => {
           e.preventDefault()
           save()

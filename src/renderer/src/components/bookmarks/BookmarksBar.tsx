@@ -13,7 +13,7 @@ import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { BarMenu, type BarMenuRoot } from './BarMenu'
-import { BookmarkIcon } from './BookmarkRow'
+import { BookmarkIcon } from './BookmarkIcon'
 import { ChipMotion } from './chipMotion'
 import { nodeLabel, useBookmarkTree } from './tree'
 import { HOLD_TO_OPEN_MS, useBarDrag } from './useBarDrag'

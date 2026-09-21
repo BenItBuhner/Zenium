@@ -1,14 +1,17 @@
 /**
  * The JS half of the Kotlin ⇄ JS bridge.
  *
- * Kotlin exposes `window.__zenNative` (a `@JavascriptInterface` object) with two entry points:
+ * Kotlin exposes `window.__zenNative` (a `@JavascriptInterface` object) with three entry points:
  *   call(json)      – asynchronous; Kotlin answers through `__zenHost.resolve/reject`.
+ *   post(json)      – asynchronous and one way; Kotlin answers nothing (the per-frame commands).
  *   callSync(json)  – synchronous; only for boot data and last-chance persistence.
  * Kotlin talks back through `window.__zenHost` (installed by `installHostGlobal`).
  */
 export interface NativeBridge {
   call(json: string): void
   callSync(json: string): string
+  /** One way: no `resolve` comes back. Hosts before the bar hide profile (#270) lack it. */
+  post?(json: string): void
 }
 
 export interface NativeCall {
@@ -46,6 +49,25 @@ export class Bridge {
     void this.call(method, args).catch((error) => {
       console.warn(`[zen] native ${method} failed`, error)
     })
+  }
+
+  /**
+   * One way, for a command sent every frame whose answer nobody reads (the bar hide's frame,
+   * `chrome.setBarHide`): the host dispatches it and sends nothing back. `send` is a `call`
+   * under the hood, and each of its answers is an `evaluateJavascript` of `__zenHost.resolve`
+   * on the chrome's main thread – a task of its own per frame, next to the frame's real work
+   * (the bar hide profile, #270). A host without `post` gets a `send`.
+   */
+  post(method: string, args: unknown = {}): void {
+    if (typeof this.native.post !== 'function') {
+      this.send(method, args)
+      return
+    }
+    try {
+      this.native.post(JSON.stringify({ method, args }))
+    } catch (error) {
+      console.warn(`[zen] native ${method} failed`, error)
+    }
   }
 
   callSync<T>(method: string, args: unknown = {}): T {

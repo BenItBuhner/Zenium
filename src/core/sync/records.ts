@@ -194,10 +194,30 @@ export interface LoginCredentialData {
   username: string
   password: string
   realm: string | null
+  /** The user's note (ID-34), '' when none; part of the record since the type existed. */
   notes: string
   createdAt: number
   updatedAt: number
   lastUsedAt: number | null
+  /**
+   * The breach state of the password value (ID-31: `Credential.breached` and its timestamps),
+   * each present only when set, so a login without one hashes exactly as it always did and a
+   * device on an older build, which knows none of them, reads the record as before.
+   */
+  breached?: number
+  checkedAt?: number
+  leakWarnedAt?: number
+  leakIgnoredAt?: number
+}
+
+/** The `LoginCredentialData` breach fields, each taken along only when the login has a value. */
+function leakFieldsOf(c: Credential): Partial<LoginCredentialData> {
+  const out: Partial<LoginCredentialData> = {}
+  if (c.breached !== null) out.breached = c.breached
+  if (c.checkedAt !== null) out.checkedAt = c.checkedAt
+  if (c.leakWarnedAt !== null) out.leakWarnedAt = c.leakWarnedAt
+  if (c.leakIgnoredAt !== null) out.leakIgnoredAt = c.leakIgnoredAt
+  return out
 }
 
 /**
@@ -232,7 +252,7 @@ export function readCredentialData(data: unknown): CredentialData | null {
     typeof r[key] === 'number' && Number.isFinite(r[key]) ? (r[key] as number) : null
   if (r.kind === 'login') {
     if (!str('origin') || !str('password')) return null
-    return {
+    const login: LoginCredentialData = {
       kind: 'login',
       origin: str('origin'),
       url: str('url'),
@@ -244,6 +264,11 @@ export function readCredentialData(data: unknown): CredentialData | null {
       updatedAt: num('updatedAt', 0),
       lastUsedAt: nullableNum('lastUsedAt')
     }
+    for (const key of ['breached', 'checkedAt', 'leakWarnedAt', 'leakIgnoredAt'] as const) {
+      const value = nullableNum(key)
+      if (value !== null) login[key] = value
+    }
+    return login
   }
   if (r.kind === 'passkey') {
     if (!str('rpId')) return null
@@ -505,7 +530,8 @@ export function collectLocal(
         notes: c.notes,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
-        lastUsedAt: c.lastUsedAt
+        lastUsedAt: c.lastUsedAt,
+        ...leakFieldsOf(c)
       }
       out.set(c.id, { type: 'credential', data })
     }

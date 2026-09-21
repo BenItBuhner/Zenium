@@ -13,7 +13,8 @@ import { openOverlay } from './ui'
  * contract's vocabulary: the list rides in `StateSnapshot.downloads`, every `download.*`
  * command is the engine's, and `download.changed` / `download.danger` arrive as events. What
  * stays here beyond one-liners is desktop UI plumbing the contract leaves to this program:
- * drag-out, the downloads folder, and the panel (the Ctrl+J page is a chrome overlay).
+ * drag-out, the downloads folder, and the Ctrl+J page (a chrome page tab where the host has
+ * them, the phone's sheet otherwise – `openOverlay` routes it).
  */
 
 type IdCommand = (id: string) => void
@@ -51,7 +52,7 @@ export interface DownloadsEngine {
   refreshFiles(items: readonly DownloadItem[]): void
   /** Pick the folder downloads are saved to; null when the dialog was dismissed. */
   chooseDirectory(): Promise<string | null>
-  /** The Ctrl+J page (`zen://downloads`). */
+  /** The Ctrl+J page (`zen://downloads`): the page tab, or the phone's sheet. */
   openPanel(activeTabId: string | null): void
   /** Desktop UI plumbing: hand a finished file to the OS drag the host starts. */
   dragOut: IdCommand

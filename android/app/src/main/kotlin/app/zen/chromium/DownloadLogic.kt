@@ -10,8 +10,10 @@ import java.util.Locale
 
 /**
  * The decisions of the Zenium downloader that need no Android: how a Range response continues a
- * partial file, what a download is called, what a `data:` URL holds, and how a failure is named
- * for the core. `Downloads` drives the transfers with these; the JUnit tests pin them down.
+ * partial file, where a redirect leads and when Chrome's mixed-content rule refuses the chain,
+ * how a network failure is retried, what a download is called, what a `data:` URL holds, and
+ * how a failure is named for the core. `Downloads` drives the transfers with these; the JUnit
+ * tests pin them down.
  */
 object DownloadLogic {
     /** In-flight files on the public directory (API 26–28) end in this, like Chrome's `.crdownload`. */
@@ -88,21 +90,92 @@ object DownloadLogic {
         return date.ifEmpty { null }
     }
 
-    // --- automatic retries -----------------------------------------------------------------------
+    // --- redirects -------------------------------------------------------------------------------
 
-    /** Consecutive network failures retried without telling the user (Chromium's `kMaxAutoResumeAttempts`). */
-    const val MAX_AUTO_RESUMES = 5
+    /** Hops followed before a chain is given up as a loop (Chromium's `net::URLRequest::kMaxRedirects`). */
+    const val MAX_REDIRECTS = 20
 
     /**
-     * Whether a failed transfer should quietly try again: only network-class failures of a
+     * The chain ran past `MAX_REDIRECTS` (Chromium's `ERR_TOO_MANY_REDIRECTS`): named the site's
+     * failure rather than the network's, so it is not retried on its own (`shouldAutoResume`).
+     */
+    class TooManyRedirects : IOException("the server redirected more than $MAX_REDIRECTS times")
+
+    /** The statuses that send a GET somewhere else (a 303 turns any method into a GET; ours already is). */
+    fun isRedirect(status: Int): Boolean = status == 301 || status == 302 || status == 303 || status == 307 || status == 308
+
+    /**
+     * Where a redirect points: `location` resolved against the URL that answered, for the http(s)
+     * targets a download can follow; null for a missing or unusable header (the response is then
+     * taken as it is, the way `HttpURLConnection` hands a 3xx without a Location back).
+     */
+    fun resolveRedirect(from: String, location: String?): String? {
+        val target = location?.trim().orEmpty()
+        if (target.isEmpty()) return null
+        val resolved = runCatching { java.net.URI(from).resolve(target).toString() }.getOrNull() ?: return null
+        val scheme = schemeOf(resolved) ?: return null
+        return if (scheme == "http" || scheme == "https") resolved else null
+    }
+
+    // --- insecure downloads (HB-44) --------------------------------------------------------------
+
+    /**
+     * Chrome's mixed-content rule for downloads, the twin of the core's `insecureDownload`
+     * (src/core/downloads/danger.ts): a transfer a secure page started is refused when any URL
+     * of its redirect chain is not potentially trustworthy. No referrer, or one that is not
+     * trustworthy itself (a plain http page), blocks nothing.
+     */
+    fun insecureDownload(chain: List<String>, referrer: String): Boolean {
+        if (referrer.isEmpty() || !isPotentiallyTrustworthy(referrer)) return false
+        val hops = chain.ifEmpty { listOf("") }
+        return hops.any { !isPotentiallyTrustworthy(it) }
+    }
+
+    /**
+     * Chromium's `IsUrlPotentiallyTrustworthy`, as far as a download chain needs it: `https:`,
+     * `wss:`, `file:`, `data:` and `blob:` URLs, and plain `http:` / `ws:` to a loopback host.
+     */
+    fun isPotentiallyTrustworthy(url: String): Boolean = when (schemeOf(url)) {
+        "https", "wss", "file", "data", "blob" -> true
+        "http", "ws" -> isLoopbackHost(hostOf(url))
+        else -> false
+    }
+
+    /** `localhost`, `*.localhost`, `127.0.0.0/8` and `[::1]` (the trailing dot and the case aside). */
+    fun isLoopbackHost(hostname: String): Boolean {
+        val host = hostname.lowercase(Locale.ROOT).removeSuffix(".")
+        if (host == "localhost" || host.endsWith(".localhost")) return true
+        if (host == "[::1]" || host == "::1") return true
+        val v4 = IPV4.matchEntire(host) ?: return false
+        return v4.groupValues[1] == "127"
+    }
+
+    /** The scheme of `url`, lower-case, or null for text without one. */
+    private fun schemeOf(url: String): String? = SCHEME.find(url)?.groupValues?.get(1)?.lowercase(Locale.ROOT)
+
+    /** The host of an http(s) URL as `java.net.URI` reads it (`[::1]` with its brackets), `""` when it has none. */
+    private fun hostOf(url: String): String =
+        runCatching { java.net.URI(url).host }.getOrNull() ?: HOST.find(url)?.groupValues?.get(1) ?: ""
+
+    // --- automatic retries -----------------------------------------------------------------------
+
+    /**
+     * Consecutive network failures retried without the user's hand, the same three steps the
+     * core takes on the desktop (`AUTO_RESUME_DELAYS_MS` in src/core/downloads.ts); the fourth
+     * failure in a row leaves the row interrupted with Retry.
+     */
+    const val MAX_AUTO_RESUMES = 3
+
+    /**
+     * Whether a failed transfer should try again on its own: only network-class failures of a
      * resumable transfer, a bounded number of times in a row, and never over a user's pause or
-     * cancel. Anything else surfaces as interrupted.
+     * cancel. Anything else (a 4xx, a server without ranges, a file error) surfaces as interrupted.
      */
     fun shouldAutoResume(reason: InterruptReason, resumable: Boolean, attemptsSoFar: Int, userStopped: Boolean): Boolean =
         resumable && !userStopped && reason.isNetwork && attemptsSoFar < MAX_AUTO_RESUMES
 
-    /** Back-off before automatic retry number [attempt] (1-based): 1 s, 2 s, 4 s, then 8 s. */
-    fun autoResumeDelayMs(attempt: Int): Long = 1000L shl (attempt - 1).coerceIn(0, 3)
+    /** Back-off before automatic retry number [attempt] (1-based): 2 s, 4 s, then 8 s. */
+    fun autoResumeDelayMs(attempt: Int): Long = 2000L shl (attempt - 1).coerceIn(0, MAX_AUTO_RESUMES - 1)
 
     // --- naming ----------------------------------------------------------------------------------
 
@@ -413,6 +486,7 @@ object DownloadLogic {
         val text = e.message.orEmpty()
         fun mentions(vararg needles: String) = needles.any { text.contains(it, ignoreCase = true) }
         return when {
+            e is TooManyRedirects -> InterruptReason.SERVER_FAILED
             e is SocketTimeoutException -> InterruptReason.NETWORK_TIMEOUT
             e is UnknownHostException || e is ConnectException || e is java.net.NoRouteToHostException -> InterruptReason.NETWORK_FAILED
             e is javax.net.ssl.SSLException -> InterruptReason.SERVER_FAILED
@@ -429,6 +503,10 @@ object DownloadLogic {
     }
 
     private val CONTENT_RANGE = Regex("bytes\\s+(\\*|\\d+-\\d+)/(\\*|\\d+)", RegexOption.IGNORE_CASE)
+    private val SCHEME = Regex("^\\s*([a-zA-Z][a-zA-Z0-9+.-]*):")
+    /** The authority's host of a URL `java.net.URI` refuses (an `_` in a label, a space in the path). */
+    private val HOST = Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/?#]*@)?(\\[[^\\]]*\\]|[^:/?#]*)")
+    private val IPV4 = Regex("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$")
 
     private val RESERVED_NAMES = setOf(
         "CON", "PRN", "AUX", "NUL",

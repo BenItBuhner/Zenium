@@ -13,9 +13,40 @@ export function extensionOrigin(id: string): string {
   return `https://${id}${EXTENSION_ORIGIN_SUFFIX}`
 }
 
-/** `chrome.runtime.getURL` semantics: leading slashes collapse onto the origin. */
+/**
+ * `chrome.runtime.getURL` semantics: leading slashes collapse onto the origin. Dot segments
+ * resolve as a load of the URL resolves them: a manifest's `./background/background.js`
+ * (WhatFont's worker) reaches the host as a request for `/background/background.js`, and the host
+ * matches its own pages – the generated background document, a popup's hello – by the string.
+ */
 export function extensionUrl(id: string, path: string): string {
-  return `${extensionOrigin(id)}/${path.replace(/^\/+/, '')}`
+  return `${extensionOrigin(id)}/${resolveDotSegments(path.replace(/^\/+/, ''))}`
+}
+
+/**
+ * `.` and `..` segments of an extension path resolved against its root, the query and fragment
+ * left as they are; a path without them comes back untouched (no percent-encoding, no other
+ * normalisation: `runtime.getURL` is a concatenation in Chrome too).
+ */
+export function resolveDotSegments(path: string): string {
+  const cut = path.search(/[?#]/)
+  const pathname = cut === -1 ? path : path.slice(0, cut)
+  const rest = cut === -1 ? '' : path.slice(cut)
+  if (!/(^|\/)\.\.?(\/|$)/.test(pathname)) return path
+  const out: string[] = []
+  const segments = pathname.split('/')
+  for (const segment of segments) {
+    if (segment === '.') continue
+    if (segment === '..') {
+      out.pop()
+      continue
+    }
+    out.push(segment)
+  }
+  const last = segments[segments.length - 1]
+  if ((last === '.' || last === '..') && (out.length === 0 || out[out.length - 1] !== ''))
+    out.push('')
+  return out.join('/') + rest
 }
 
 /** Inverse of `extensionUrl`; null for URLs that are not on an extension origin. */

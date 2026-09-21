@@ -10,9 +10,23 @@ import androidx.fragment.app.FragmentActivity
  * The system "confirm it's you" sheet (`androidx.biometric`): fingerprint or face where enrolled,
  * else the device PIN, pattern or password. Used before a saved password is shown, copied or
  * exported (`reauth.verify`), and to satisfy the authentication-bound vault key (`VaultKeystore`).
+ *
+ * `onAnswered` hears every prompt shown answer, ahead of the caller's own callback: the private
+ * lock reads a stop of the window seen under the prompt against it ([Host.onStop],
+ * [PrivateLock.onPromptAnswered]).
  */
-class Reauth(private val activity: FragmentActivity) {
+class Reauth(private val activity: FragmentActivity, private val onAnswered: (ok: Boolean) -> Unit = {}) {
     private val executor = ContextCompat.getMainExecutor(activity)
+
+    /**
+     * A prompt of ours is up. On Android 10 and under the device-credential fallback is an
+     * activity of its own, so the app's window stops under it as it would under another app; on
+     * Android 11 and later the prompt is the system's overlay and the window stays. What reads the
+     * lifecycle as a departure ([Host.onStop], the private lock) checks here first and lets the
+     * prompt's answer settle it.
+     */
+    var prompting = false
+        private set
 
     /** Something on this device can verify the user right now. */
     fun available(): Boolean = canAuthenticate(WEAK_OR_CREDENTIAL)
@@ -34,9 +48,12 @@ class Reauth(private val activity: FragmentActivity) {
         val once = { ok: Boolean ->
             if (!answered) {
                 answered = true
+                prompting = false
+                onAnswered(ok)
                 callback(ok)
             }
         }
+        prompting = true
         val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = once(true)
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = once(false)

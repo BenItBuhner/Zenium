@@ -114,7 +114,7 @@ function PageDialogView({ dialog }: { dialog: PageDialog }): JSX.Element {
         {!leave && dialog.message && (
           <p
             id={bodyId}
-            className="max-h-[40vh] overflow-y-auto text-[13px] leading-[18px] whitespace-pre-wrap [overflow-wrap:anywhere]"
+            className="max-h-[40vh] overflow-y-auto text-[13px] leading-[var(--v2-line-small)] whitespace-pre-wrap [overflow-wrap:anywhere]"
           >
             {dialog.message}
           </p>

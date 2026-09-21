@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import type { Tab } from '@shared/types'
 import { progressTarget } from '@renderer/lib/motion/progress'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 
 interface Props {
   tab: Tab | null
@@ -25,6 +26,8 @@ const CREEP_TICK_MS = 250
 export function LoadProgress({ tab, hidden }: Props): JSX.Element {
   const barRef = useRef<HTMLDivElement>(null)
   const fillRef = useRef<HTMLDivElement>(null)
+  const layerRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(layerRef)
   const spring = useRef<SpringAnimation | null>(null)
   const shown = useRef(false)
   const shownTabId = useRef<string | null>(null)
@@ -108,7 +111,11 @@ export function LoadProgress({ tab, hidden }: Props): JSX.Element {
 
   return (
     // The layer is the frame's box, so it recedes with the frame under a phone sheet.
-    <div className="zen-load-progress-layer pointer-events-none absolute inset-0" aria-hidden>
+    <div
+      ref={layerRef}
+      className="zen-load-progress-layer pointer-events-none absolute inset-0"
+      aria-hidden
+    >
       <div ref={barRef} className="zen-load-progress" data-hidden={hidden || undefined}>
         <div ref={fillRef} className="zen-load-progress-fill" />
       </div>

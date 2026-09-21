@@ -7,7 +7,8 @@ import type {
 } from '@shared/types'
 import { RuleEngine } from '@core/blocking/engine'
 import type { Browser } from '@core/browser'
-import type { StoreIO } from '@core/platform'
+import type { SpeechHost, SpeechHostEvent, SpeechUtteranceOptions, StoreIO } from '@core/platform'
+import type { ReadAloudVoice } from '@shared/readAloud'
 import type { ZenWindow } from '@core/window'
 import { newRecord, type ExtensionRecord } from '@core/extensions/registry'
 import {
@@ -324,9 +325,77 @@ function defaultPathOf(pathname: string): string {
 // A browser core in miniature: tabs, the state subscription, the one window
 // ---------------------------------------------------------------------------
 
+/**
+ * The device's speech engine as the platform presents it (`Platform.speech`, Kotlin's
+ * `ReadAloud.kt` in memory): what was spoken and stopped, and the events a test fires back.
+ */
+export class FakeSpeech implements SpeechHost {
+  readonly spoken: Array<{ utteranceId: string; text: string; options: SpeechUtteranceOptions }> =
+    []
+  stops = 0
+  voiceList: ReadAloudVoice[] = [
+    { id: 'en-us-x-tpf-local', name: 'English (United States)', lang: 'en-US', local: true },
+    { id: 'de-de-x-nfh-network', name: 'German (Germany)', lang: 'de-DE', local: false }
+  ]
+  private readonly listeners: Array<(utteranceId: string, event: SpeechHostEvent) => void> = []
+  private readonly voicesListeners: Array<() => void> = []
+
+  async voices(): Promise<ReadAloudVoice[]> {
+    return this.voiceList
+  }
+
+  onVoicesChanged(listener: () => void): void {
+    this.voicesListeners.push(listener)
+  }
+
+  speak(utteranceId: string, text: string, options: SpeechUtteranceOptions): void {
+    // As Kotlin's flush: the utterance the engine had is reported interrupted, after the new one is in.
+    const had = this.current
+    this.current = utteranceId
+    this.spoken.push({ utteranceId, text, options })
+    if (had !== null && had !== utteranceId)
+      this.fire(had, { type: 'error', message: 'interrupted' })
+  }
+
+  stop(): void {
+    this.stops += 1
+    const had = this.current
+    this.current = null
+    if (had !== null) this.fire(had, { type: 'error', message: 'interrupted' })
+  }
+
+  onEvent(listener: (utteranceId: string, event: SpeechHostEvent) => void): void {
+    this.listeners.push(listener)
+  }
+
+  /** The utterance the engine has (null once it ended, errored or was stopped). */
+  current: string | null = null
+
+  /** The engine reports on an utterance (`speech.event`). */
+  fire(utteranceId: string, event: SpeechHostEvent): void {
+    if (event.type === 'end' || event.type === 'error') {
+      if (this.current === utteranceId) this.current = null
+    }
+    for (const listener of [...this.listeners]) listener(utteranceId, event)
+  }
+
+  voicesChanged(): void {
+    for (const listener of [...this.voicesListeners]) listener()
+  }
+
+  /** The last utterance handed to the engine. */
+  last(): { utteranceId: string; text: string; options: SpeechUtteranceOptions } | undefined {
+    return this.spoken[this.spoken.length - 1]
+  }
+}
+
 export interface Harness {
   kt: FakeKotlin
   runtime: AndroidExtensionRuntime
+  /** The speech engine behind `chrome.tts` and read aloud; absent (a device without one) when the harness was asked so. */
+  speech: FakeSpeech | undefined
+  /** Read aloud's player as `chrome.tts` sees it: whether it plays, and how often it was paused for an extension. */
+  readAloud: { status: 'idle' | 'playing' | 'paused'; pauses: number }
   files: Map<string, string>
   tabs: Record<string, Tab>
   active: { id: string | null }
@@ -349,6 +418,8 @@ export interface Harness {
    * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
    */
   pdfDocuments: Map<string, string>
+  /** Turn the phone's screen to `angle` degrees (0, 90, 180, 270): `system.display.onDisplayChanged`. */
+  turnScreen: (angle: number) => void
   /**
    * What the runtime told the search model (`state.setExtensionSearch`), every call in order:
    * the attached extensions' engines and the control of the default.
@@ -374,9 +445,13 @@ export function harness(
     worldSlots?: number
     files?: Map<string, string>
     navigationListener?: boolean
+    /** A device without a speech engine: `Platform.speech` is left out. */
+    speech?: boolean
   } = {}
 ): Harness {
   const kt = new FakeKotlin()
+  const speech = options.speech === false ? undefined : new FakeSpeech()
+  const readAloud: Harness['readAloud'] = { status: 'idle', pauses: 0 }
   kt.isolatedWorlds = options.isolatedWorlds ?? true
   kt.worldSlots = options.worldSlots ?? 16
   kt.navigationListener = options.navigationListener ?? false
@@ -413,7 +488,15 @@ export function harness(
   const pdfDocuments = new Map<string, string>()
   const search: Harness['search'] = []
   const browser = {
-    platform: { io },
+    platform: { io, speech },
+    readAloud: {
+      uiState: () => (readAloud.status === 'idle' ? null : { status: readAloud.status }),
+      pause: () => {
+        if (readAloud.status !== 'playing') return
+        readAloud.status = 'paused'
+        readAloud.pauses += 1
+      }
+    },
     state: {
       model: { containers },
       subscribe: (fn: () => void) => {
@@ -457,9 +540,23 @@ export function harness(
   } as unknown as Browser
   const clock = { now: 1_700_000_000_000 }
   const timers: Harness['timers'] = []
+  // A 412x915 CSS px phone at 2.625x (a Pixel's), upright; `turnScreen` rotates it.
+  const screen = {
+    width: 412,
+    height: 915,
+    availWidth: 412,
+    availHeight: 915,
+    scaleFactor: 2.625,
+    angle: 0
+  }
+  const screenListeners: Array<() => void> = []
   const runtime = new AndroidExtensionRuntime(kt, browser, () => win, {
     idleMs: 30_000,
     now: () => clock.now,
+    screen: () => ({ ...screen }),
+    onScreenChange: (listener) => {
+      screenListeners.push(listener)
+    },
     setTimeout: (fn, ms) => {
       timers.push({ fn, ms, at: clock.now + ms, cleared: false })
       return timers.length - 1
@@ -486,6 +583,8 @@ export function harness(
   return {
     kt,
     runtime,
+    speech,
+    readAloud,
     files,
     tabs,
     active,
@@ -500,6 +599,13 @@ export function harness(
     infos,
     pdfDocuments,
     search,
+    turnScreen: (angle) => {
+      screen.angle = angle
+      const landscape = angle === 90 || angle === 270
+      screen.width = screen.availWidth = landscape ? 915 : 412
+      screen.height = screen.availHeight = landscape ? 412 : 915
+      for (const listener of screenListeners) listener()
+    },
     saved: (name) => {
       runtime.flushSync()
       return JSON.parse(files.get(name) ?? '{}') as Record<string, unknown>

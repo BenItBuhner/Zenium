@@ -45,7 +45,9 @@ export class ElectronSpeechHost implements SpeechHost {
     this.engine.speak(id, text, {
       ...(options.voiceId ? { voiceName: options.voiceId } : {}),
       ...(options.lang ? { lang: options.lang } : {}),
-      rate: sanitizeReadAloudRate(options.rate)
+      rate: sanitizeReadAloudRate(options.rate),
+      ...(options.pitch !== undefined ? { pitch: options.pitch } : {}),
+      ...(options.volume !== undefined ? { volume: options.volume } : {})
     })
   }
 

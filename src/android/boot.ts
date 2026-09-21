@@ -18,6 +18,7 @@ import {
   type BackEventPayload,
   type BackPhase
 } from '@renderer/lib/back'
+import { applyPrivateLock, setPrivateLockHost } from '@renderer/lib/privateLock'
 import { privateSurfaceNow, subscribePrivateSurface } from '@renderer/lib/privateSurface'
 import {
   dispatchBarNavigation,
@@ -37,7 +38,7 @@ import {
 import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
-import { fetchDeferredDocuments } from './handoff'
+import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
@@ -112,7 +113,9 @@ export interface HostGlobal {
  * background, the session, the history, the downloads, the permissions, the extension registry)
  * find every document as they always did. A document read before its file has arrived would be
  * read through the bridge instead (`AndroidStoreIO`), never reported absent: a profile is not
- * mistaken for a first run and overwritten.
+ * mistaken for a first run and overwritten. The Safe Browsing feed documents – the megabytes a
+ * refreshed profile would otherwise boot through – are not in the payload at all: the Kotlin
+ * engine holds the tables, and the core's service reads them once it is up (`AndroidStoreIO.read`).
  */
 export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; preview: boolean }> {
   const native = getNativeBridge()
@@ -123,10 +126,11 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const hostGlobal = installHostGlobal(bridge, platformRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
-  const io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
+  const handoffFetch: HandoffFetch = (url, init) => fetch(url, init)
+  const io = new AndroidStoreIO(bridge, boot.files, boot.deferred, handoffFetch)
   io.adopt(
     await fetchDeferredDocuments(boot.deferred, {
-      fetch: (url, init) => fetch(url, init),
+      fetch: handoffFetch,
       readSync: (name) => readDocument(bridge, name)
     })
   )
@@ -138,6 +142,7 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   platformRef.current = platform
   syncNativeTheme(bridge, platform, browser)
   syncPrivateSurface(bridge)
+  syncPrivateLock(bridge, boot, platform)
   syncBackState(bridge)
   syncPullToRefresh(bridge, platform)
   syncBarHide(bridge, boot)
@@ -242,6 +247,29 @@ function syncPrivateSurface(bridge: Bridge): void {
   send(privateSurfaceNow())
 }
 
+/**
+ * "Lock private tabs when you leave Zenium" (`lib/privateLock.ts`, `PrivateLock.kt`): the host
+ * holds the lock and shows the system's prompt; the chrome draws the cover. The Settings switch
+ * is mirrored to the host off the state, as pull-to-refresh is (the host arms the lock from it
+ * as the window leaves), whether a screen lock is set is read off the boot payload here, and the
+ * host's word on the lock arrives as `private.lock` (`installHostGlobal`). The lock is never on
+ * at boot: it lives in the host's memory, and a start is a fresh one.
+ */
+function syncPrivateLock(bridge: Bridge, boot: BootInfo, platform: AndroidPlatform): void {
+  setPrivateLockHost({
+    unlock: (reason) => bridge.call<{ locked: boolean }>('private.unlock', { reason }),
+    verify: (reason) => bridge.call<boolean>('reauth.verify', { reason })
+  })
+  applyPrivateLock({ locked: false, screenLock: boot.screenLock === true })
+  let last: boolean | null = null
+  platform.events.on('state', (state: UIState) => {
+    const enabled = state.privateLockOnLeave
+    if (enabled === last) return
+    last = enabled
+    bridge.send('private.setLockOnLeave', { enabled })
+  })
+}
+
 /** The colour a chrome CSS token currently computes to, as `#rrggbbaa` (null when unreadable). */
 function computedTokenColor(token: string): string | null {
   const probe = document.createElement('span')
@@ -296,7 +324,8 @@ function syncPullToRefresh(bridge: Bridge, platform: AndroidPlatform): void {
  */
 function syncBarHide(bridge: Bridge, boot: BootInfo): void {
   setBarHideHost({
-    apply: (frame) => bridge.send('chrome.setBarHide', frame ?? { enabled: false }),
+    // One way: a frame per scrolled frame, and no answer to run on the chrome's thread for each.
+    apply: (frame) => bridge.post('chrome.setBarHide', frame ?? { enabled: false }),
     // The chrome's console reaches the logcat (`ZenChrome`): each phase, and every move of the
     // bar that was not the finger's, on the record next to the host's own (`BarHide`, `ZenHost`).
     note: (reason) => console.debug(`bar hide: ${reason}`)
@@ -342,7 +371,13 @@ function installHostGlobal(
             (payload as ViewEventPayloads['navigated'] | undefined)?.inPage === true
           )
       }, `view.${name}`),
-    hostEvent: (name, json) =>
+    hostEvent: (name, json) => {
+      // The private lock is the chrome's alone (`lib/privateLock.ts`): its store takes the
+      // host's word as it comes, the core having no part in it.
+      if (name === 'private.lock') {
+        applyPrivateLock(parse<HostEventPayloads['private.lock'] | undefined>(json) ?? {})
+        return
+      }
       withPlatform((platform) => {
         // The host's own toasts go straight to the chrome's cards (the renderer is in reach here,
         // not in the platform): the file chooser's camera refused, Open settings when for good.
@@ -358,7 +393,8 @@ function installHostGlobal(
         // A configuration change: the host has re-zoomed the chrome's text already, and the
         // line boxes follow the factor it reports (`lib/textScale.ts`).
         if (name === 'environment') applyTextScale(payload as HostEventPayloads['environment'])
-      }, name),
+      }, name)
+    },
     onKey: (tabId, json) =>
       queued === null
         ? (platformRef.current?.viewKey(tabId, parse<KeyEventInput>(json)) ?? false)

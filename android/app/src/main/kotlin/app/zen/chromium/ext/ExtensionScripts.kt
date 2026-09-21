@@ -15,8 +15,40 @@ import java.io.File
  *  - the `scripting.executeScript` wrapper the host evaluates in a tab.
  */
 object ExtensionScripts {
+    /**
+     * One content-script file's text as the assembly consumes it: [length] characters, written
+     * into the builder by [appendTo] exactly once. A held string ([Source] of a text) stays
+     * around – the compiler keeps small files softly for the next re-plan. A [transient] one lets
+     * go of its text the moment it is copied in, so that while a large file (Monica's 28 million
+     * characters of `content.js`) is being assembled the heap holds the text and the builder, and
+     * at the copy out only the builder and the script: two copies at the peak, never three. The
+     * third copy was the allocation that failed on the 192 MB debug heap.
+     */
+    class Source(val length: Int, val names: List<String>, private val write: (StringBuilder) -> Unit) {
+        constructor(text: String) : this(text.length, TopLevelDeclarations.scanSource(text), { it.append(text) })
+
+        fun appendTo(sb: StringBuilder) = write(sb)
+
+        companion object {
+            /** A text appended once and released: after [appendTo] the source no longer holds it. */
+            fun transient(text: String): Source {
+                var held: String? = text
+                return Source(text.length, TopLevelDeclarations.scanSource(text)) { sb ->
+                    sb.append(held ?: throw IllegalStateException("a transient source is appended once"))
+                    held = null
+                }
+            }
+        }
+    }
+
     /** One content-script group: the extension id, the group index and its files' sources in order. */
-    class Group(val extensionId: String, val index: Int, val sources: List<String>, val isolation: String)
+    class Group(val extensionId: String, val index: Int, val sources: List<Source>, val isolation: String) {
+        companion object {
+            /** A group over texts held in memory. */
+            fun of(extensionId: String, index: Int, sources: List<String>, isolation: String): Group =
+                Group(extensionId, index, sources.map { Source(it) }, isolation)
+        }
+    }
 
     /**
      * The `//# sourceURL` of the scripts the host runs in a tab's main world (the document-start
@@ -43,10 +75,13 @@ object ExtensionScripts {
 
     /**
      * The document-start script, named [SOURCE_URL]. Assembled in one builder sized for the whole
-     * text and copied out once: an extension's units can run to ten million characters (Grammarly),
-     * and a 192 MB debug heap that holds the sources, the builder's `char[]` and the string at once
-     * has no room for a second builder growing by doubling on top of them (a `named(toString())`
-     * pass did that, and a 37 MB `char[]` for it was the allocation that failed on the emulator).
+     * text and copied out once: an extension's units can run to ten million characters (Grammarly)
+     * or twenty-eight million (Monica), and a 192 MB debug heap that holds the sources, the
+     * builder's `char[]` and the string at once has no room for a second builder growing by
+     * doubling on top of them (a `named(toString())` pass did that, and a 37 MB `char[]` for it
+     * was the allocation that failed on the emulator). The sources of large files are
+     * [Source.transient]: released as they are copied in, so the peak is two copies of the text,
+     * not three (the third, Monica's 57 MB string at the copy out, was the next allocation to fail).
      */
     fun documentStart(
         bootstrap: String,
@@ -56,7 +91,7 @@ object ExtensionScripts {
         debug: Boolean
     ): String {
         val sb = StringBuilder(
-            bootstrap.length + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } } +
+            bootstrap.length + configJson.length + groups.sumOf { g -> g.sources.sumOf { it.length } + mirrorOf(g).length + 96 } +
                 css.entries.sumOf { (key, text) -> key.length + text.length + 8 } + SOURCE_URL_TAIL.length + 4096
         )
         sb.append("(function(){var __zenExtBoot={config:").append(configJson).append(",debug:").append(debug)
@@ -80,19 +115,35 @@ object ExtensionScripts {
     }
 
     /**
-     * `function (window, self, globalThis, chrome, browser) { <files> }`. Each file ends with a
-     * newline (a trailing `//` comment must not swallow the next file) and a `;` (a file ending in
-     * an expression must not become a call of the next file's leading parenthesis).
+     * `function (window, self, globalThis, chrome, browser, __zenMirror) { <files> <mirror> }`.
+     * Each file ends with a newline (a trailing `//` comment must not swallow the next file) and
+     * a `;` (a file ending in an expression must not become a call of the next file's leading
+     * parenthesis). The mirror ([TopLevelDeclarations.mirror]) hands the files' top-level
+     * declarations to the extension's scope, where Chrome's world would have had them as globals.
      */
     fun appendGroupFunction(sb: StringBuilder, group: Group) {
-        sb.append("function(window,self,globalThis,chrome,browser){")
+        sb.append(FUNCTION_HEAD)
         if (group.isolation == "with") sb.append("with(window){")
         for (source in group.sources) {
-            sb.append('\n').append(source).append("\n;")
+            sb.append('\n')
+            source.appendTo(sb)
+            sb.append("\n;")
         }
+        sb.append(mirrorOf(group))
         if (group.isolation == "with") sb.append('}')
         sb.append("\n}")
     }
+
+    /** The mirror tail of a group: its files' top-level names, each once, in order. */
+    fun mirrorOf(group: Group): String {
+        if (group.sources.all { it.names.isEmpty() }) return ""
+        val names = LinkedHashSet<String>()
+        for (source in group.sources) names.addAll(source.names)
+        return TopLevelDeclarations.mirror(names)
+    }
+
+    /** The parameters of a content-script or `executeScript` function literal; the bootstrap's `runGroup` / `exec` call it with these. */
+    private const val FUNCTION_HEAD = "function(window,self,globalThis,chrome,browser,${TopLevelDeclarations.MIRROR_PARAM}){"
 
     /** The bootstrap for an extension page (background, popup, options): config only. */
     fun page(bootstrap: String, configJson: String): String =
@@ -111,9 +162,15 @@ object ExtensionScripts {
      * reactive element, in Read&Write's toolbar) finds its own write. Without the block the bare
      * name looked the page's global up and threw `litPropertyMetadata is not defined`. An
      * isolated world, and a `world: "MAIN"` injection, run unscoped: their global is the scope.
+     *
+     * `code` (MV2 `tabs.executeScript({ code })`) is a script in Chrome, so its top-level
+     * declarations are mirrored onto the scope after it ran ([TopLevelDeclarations]); a `func` is
+     * a function there too, its declarations its own.
      */
     fun exec(token: String, extensionId: String, kind: String, payload: JSONObject, code: String?, funcSource: String?, argsJson: String?, scoped: Boolean = false): String =
-        execHead(token, extensionId, kind, payload, scoped) + execBody(code, funcSource, argsJson) + execTail(scoped)
+        execHead(token, extensionId, kind, payload, scoped) + execBody(code, funcSource, argsJson) +
+            (if (code != null && funcSource == null) TopLevelDeclarations.mirror(TopLevelDeclarations.scanSource(code)) else "") +
+            execTail(scoped)
 
     /**
      * A document without the extension's bootstrap (one the runtime could not reach: loaded
@@ -126,7 +183,7 @@ object ExtensionScripts {
     private fun execHead(token: String, extensionId: String, kind: String, payload: JSONObject, scoped: Boolean): String =
         "(typeof __zenExtExec===\"function\"?__zenExtExec:function(){throw new Error(${JSONObject.quote(NO_ACCESS)})})" +
             "(${JSONObject.quote(token)},${JSONObject.quote(extensionId)},${JSONObject.quote(kind)},$payload," +
-            "function(window,self,globalThis,chrome,browser){" + (if (scoped) "with(window){" else "") + "\n"
+            FUNCTION_HEAD + (if (scoped) "with(window){" else "") + "\n"
 
     private fun execTail(scoped: Boolean): String = if (scoped) EXEC_TAIL_SCOPED else EXEC_TAIL
 
@@ -171,17 +228,26 @@ object ExtensionScripts {
         val head = execHead(token, extensionId, kind, payload, scoped)
         val body = execBody(code, funcSource, argsJson)
         val tail = execTail(scoped)
+        // A script's declarations (`code`, `files`) are mirrored onto the scope after the body; a
+        // `func` is a function in Chrome too. The files' names are read off the builder once they
+        // are in it, so the tail's room is a bound, not a measure (TopLevelDeclarations.MIRROR_ROOM).
+        val mirrored = funcSource == null && (code != null || files.isNotEmpty())
         val capacity = (prefix?.length ?: -1) + 1 + GUARD_HEAD.length + head.length + body.length +
             files.sumOf { it.length().toInt() + FILE_JOIN.length } + tail.length + GUARD_TAIL.length +
-            (if (named) SOURCE_URL_TAIL.length else 0)
+            (if (named) SOURCE_URL_TAIL.length else 0) + (if (mirrored) TopLevelDeclarations.MIRROR_ROOM else 0)
         val sb = StringBuilder(capacity)
         if (prefix != null) sb.append(prefix).append('\n')
-        sb.append(GUARD_HEAD).append(head).append(body)
+        sb.append(GUARD_HEAD).append(head)
+        val names = LinkedHashSet<String>()
+        val bodyStart = sb.length
+        sb.append(body)
+        if (mirrored && code != null) names.addAll(TopLevelDeclarations.scanSource(sb, bodyStart, sb.length))
         var joined = body.isNotEmpty()
         val buffer = CharArray(64 * 1024)
         for (file in files) {
             if (joined) sb.append(FILE_JOIN)
             joined = true
+            val fileStart = sb.length
             file.bufferedReader().use { reader ->
                 while (true) {
                     val n = reader.read(buffer)
@@ -189,7 +255,9 @@ object ExtensionScripts {
                     sb.append(buffer, 0, n)
                 }
             }
+            if (mirrored) names.addAll(TopLevelDeclarations.scanSource(sb, fileStart, sb.length))
         }
+        if (names.isNotEmpty()) sb.append(TopLevelDeclarations.mirror(names))
         sb.append(tail).append(GUARD_TAIL)
         if (named) sb.append(SOURCE_URL_TAIL)
         return sb.toString()

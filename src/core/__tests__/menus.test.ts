@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   FormFactor,
   HostCapabilities,
+  MediaState,
   Platform as PlatformOs,
   Settings,
   SharePayload
@@ -362,6 +363,12 @@ function appMenu(h: Harness): string[] {
   return labels(h.shown())
 }
 
+/** The app menu asked for with the media hub's toolbar button folded (design language v2 §9.29). */
+function appMenuFolded(h: Harness, win = h.win): string[] {
+  h.browser.handleCommand(win, 'app.menu', { mediaHubFolded: true })
+  return labels(h.shown())
+}
+
 /** The desktop app menu as it was before the phone variant existed. */
 const DESKTOP_APP_MENU = [
   'New Tab',
@@ -441,6 +448,120 @@ describe('the app menu', () => {
 
   it('gives a tablet the desktop menu', () => {
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(DESKTOP_APP_MENU)
+  })
+
+  describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
+    /** A media entry for `tabId`, the OS controls' session by default. */
+    const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
+      tabId,
+      playing: true,
+      title: 'Nocturne',
+      artist: 'The Band',
+      artwork: 'https://example.com/art.png',
+      session: true,
+      ...over
+    })
+    const ROW = 'Now Playing…'
+
+    it('heads the desktop menu while a session is live and the hub button has folded, and is gone otherwise', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      expect(without[0]).toBe('New Tab')
+      h.browser.state.media = [media(h.tabId)]
+      const menu = appMenuFolded(h)
+      // Its name alone, the menu's Title Case (§9.1), the ellipsis of a popover opener: the
+      // content is the hub's on the pick, and a native menu row carrying it would widen the
+      // whole menu (§5).
+      expect(menu.slice(0, 3)).toEqual([ROW, '-', 'New Tab'])
+      // The rest of the menu is as it was: the row is added at the top, nothing else moves.
+      expect(menu.slice(2)).toEqual(without)
+      // The card's artwork leads the row where the host's menus draw an icon.
+      expect(h.items()[0].icon).toBe('https://example.com/art.png')
+      h.browser.state.media = []
+      expect(appMenuFolded(h)).toEqual(without)
+    })
+
+    it('is the folded state’s: with the hub’s toolbar button up, the button is the hub and the menu has no row', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      h.browser.state.media = [media(h.tabId)]
+      // The chrome's request without the fold (the tier has not folded the button, or the
+      // request said nothing – the row never assumes a fold).
+      expect(appMenu(h)).toEqual(without)
+      h.browser.handleCommand(h.win, 'app.menu', { mediaHubFolded: false })
+      expect(labels(h.shown())).toEqual(without)
+      expect(appMenuFolded(h)[0]).toBe(ROW)
+    })
+
+    it('stays while the media has paused (the hub keeps its card), keeping its name', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.media = [media(h.tabId, { playing: false, session: false })]
+      expect(appMenuFolded(h)[0]).toBe(ROW)
+    })
+
+    it('leads with the hub’s first card: the session’s artwork before a merely playing tab’s', () => {
+      const h = pageHarness(DESKTOP)
+      const other = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, h.win)
+      h.browser.state.media = [
+        media(h.tabId, { session: false, artwork: 'https://example.com/background.png' }),
+        media(other.id, { artwork: 'https://video.example.org/poster.jpg' })
+      ]
+      expect(appMenuFolded(h)[0]).toBe(ROW)
+      expect(h.items()[0].icon).toBe('https://video.example.org/poster.jpg')
+    })
+
+    it('has no icon without artwork – never the tab’s favicon, which is not the card’s picture', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.tabs.tab(h.tabId)!.favicon = 'https://example.com/favicon.ico'
+      h.browser.state.media = [media(h.tabId, { artwork: null })]
+      expect(appMenuFolded(h)[0]).toBe(ROW)
+      expect(h.items()[0].icon).toBeNull()
+      h.browser.state.media = [media(h.tabId, { artwork: '' })]
+      appMenuFolded(h)
+      expect(h.items()[0].icon).toBeNull()
+    })
+
+    it('is not there for media whose tab is gone', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      h.browser.state.media = [media('gone')]
+      expect(appMenuFolded(h)).toEqual(without)
+    })
+
+    it('is the window’s, as the hub is: another window’s own tab is that window’s row, not this one’s', () => {
+      const h = pageHarness(DESKTOP)
+      const without = appMenu(h)
+      const priv = h.browser.openWindow('private', h.win)!
+      const theirs = h.browser.tabs.createTab({ url: 'https://video.example.org/watch' }, priv)
+      h.browser.state.media = [media(theirs.id, { artwork: 'https://video.example.org/p.jpg' })]
+      // The main window's hub lists no such tab, so its menu carries no row for it…
+      expect(appMenuFolded(h)).toEqual(without)
+      // …while the private window's own menu leads with it.
+      expect(appMenuFolded(h, priv)[0]).toBe(ROW)
+      expect(h.items()[0].icon).toBe('https://video.example.org/p.jpg')
+      // A synced tab shows in every synced window and so does its row.
+      h.browser.state.media = [media(h.tabId)]
+      expect(appMenuFolded(h)[0]).toBe(ROW)
+      expect(appMenuFolded(h, priv)[0]).toBe('New Tab')
+    })
+
+    it('is the sidebar layouts’ row: the phone keeps its chip and sheet', () => {
+      const h = pageHarness(ANDROID, { formFactor: 'phone' })
+      h.browser.state.media = [media(h.tabId)]
+      expect(appMenuFolded(h)).not.toContain(ROW)
+      const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
+      tablet.browser.state.media = [media(tablet.tabId)]
+      expect(appMenuFolded(tablet)[0]).toBe(ROW)
+    })
+
+    it('opens the hub on its pick – every player and the transport – with the chrome focused', () => {
+      const h = pageHarness(DESKTOP)
+      h.browser.state.media = [media(h.tabId)]
+      appMenuFolded(h)
+      h.sent.length = 0
+      h.click(ROW)
+      expect(h.sent).toEqual(['mediahub.open'])
+    })
   })
 
   it('keeps the desktop menu until the chrome reports a phone layout', () => {
@@ -651,11 +772,11 @@ describe('the app menu', () => {
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-    expect(appMenu(h)).not.toContain('Create shortcut…')
+    expect(appMenu(h)).not.toContain('Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
-    expect(appMenu(h)).toContain('Create shortcut…')
+    expect(appMenu(h)).toContain('Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
-    expect(appMenu(h)).not.toContain('Create shortcut…')
+    expect(appMenu(h)).not.toContain('Create Shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
   })
@@ -1673,7 +1794,7 @@ describe('the selection toolbar', () => {
     expect(h.browser.menus.selectionToolbar('tab_gone', 'quantum foam')).toEqual([])
   })
 
-  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection', async () => {
+  it('with a speech engine lists Listen last in the bar and in the menu, and starts the core from the selection reading on', async () => {
     expect(pageHarness(ANDROID, PHONE).browser.menus.selectionToolbar('t', 'quantum foam')).toEqual(
       []
     )
@@ -1696,7 +1817,7 @@ describe('the selection toolbar', () => {
     ).not.toContain('Listen')
     // The desktop's right-click menu on a selection carries it too (the reader UI PR's desktop
     // player), and without an engine it does not; its item reads on from the selection to the
-    // document's end (Edge's, the model's `selection-on`) where the phone's reads it alone.
+    // document's end (Edge's, the model's `selection-on`), as the phone's does.
     expect(pageHarness(DESKTOP).menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
       'Listen'
     )
@@ -1719,8 +1840,9 @@ describe('the selection toolbar', () => {
           call.includes('"then":"document"')
       )
     ).toBe(true)
-    // The touch starts the core's one session from the selection: the page script is asked for
-    // the selection's text (the model reads the selection alone, as Chrome does).
+    // The touch starts the core's one session from the selection and reads on: the page script
+    // is asked for the selection's text and then the document's after it (`then: 'document'`,
+    // EDGE-11's "read aloud from here"; Chrome would read the selection alone).
     h.viewCalls.length = 0
     expect(h.browser.menus.runSelectionAction(h.tabId, 'readAloud', 'quantum foam')).toBe(true)
     await settle()
@@ -1730,7 +1852,8 @@ describe('the selection toolbar', () => {
         (call) =>
           call.startsWith('postToPage(') &&
           call.includes('"action":"extract"') &&
-          call.includes('"from":"selection"')
+          call.includes('"from":"selection"') &&
+          call.includes('"then":"document"')
       )
     ).toBe(true)
   })
@@ -2359,6 +2482,36 @@ describe('the download row menu', () => {
     const before = h.popups()
     h.browser.handleCommand(h.win, 'download.contextMenu', { id: 'dl-missing' })
     expect(h.popups()).toBe(before)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The History page's row menu (v2 §10.1: selection is a mode the menu can enter)
+// ---------------------------------------------------------------------------
+
+describe('the history row menu', () => {
+  it('offers Select between the copy and the removals, and Select asks the page to pick the row', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'history.contextMenu', {
+      visitId: 'v1',
+      url: 'https://example.com/docs'
+    })
+    expect(labels(h.shown())).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Copy Link',
+      '-',
+      'Select',
+      'Remove from History',
+      'Forget About This Page',
+      '-',
+      'More from This Site'
+    ])
+    h.sent.length = 0
+    h.shown().find((item) => item.label === 'Select')!.click!()
+    expect(h.sent).toEqual(['history.select'])
   })
 })
 

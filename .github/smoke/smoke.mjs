@@ -1971,34 +1971,92 @@ async function scenarioWalkthrough() {
       }
     })
 
-    await s.step('history', async () => {
+    // History, the bookmarks manager and Downloads are page tabs like Settings (design language
+    // v2 §10.1, styling pass 6): the chord opens one `zenium://<page>` tab per window – a sidebar
+    // row titled for the page, the pill on the `zenium://` address (the title where it cannot
+    // fit), the address in the pill's tooltip – a second press refocuses that tab instead of
+    // opening another, and Ctrl+W closes it like any tab. Escape does nothing to a tab.
+    const pageTabStep = async (name, combo, testId, title, address, still) => {
       await s.reset()
-      const page = s.chrome.locator('[data-testid="history-page"]')
-      await s.press(`${ACCEL}+h`)
+      const page = s.chrome.locator(`[data-testid="${testId}"]`)
+      const rowsBefore = await s.sidebarTabCount()
+      await s.press(combo)
       await page.first().waitFor({ state: 'visible', timeout: 8000 })
-      const heading = await page.getByRole('heading', { name: 'History' }).first().textContent()
-      if ((heading ?? '').trim() !== 'History')
-        throw new Error(`history heading reads "${heading}"`)
-      await s.shot('06-history')
-      await s.press('Escape')
-      await page.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return { heading: heading.trim() }
-    })
-
-    await s.step('bookmarks-manager', async () => {
-      await s.reset()
-      const page = s.chrome.locator('[data-testid="bookmarks-manager"]')
-      await s.press(`${ACCEL}+Shift+o`)
-      await page.first().waitFor({ state: 'visible', timeout: 8000 })
-      const heading = await page.getByRole('heading', { name: 'Bookmarks' }).first().textContent()
-      if ((heading ?? '').trim() !== 'Bookmarks') {
-        throw new Error(`bookmarks manager heading reads "${heading}"`)
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore + 1,
+        8000,
+        `a sidebar row for the ${title} tab (${rowsBefore} rows before)`
+      )
+      await s.settle()
+      const heading = await page
+        .getByRole('heading', { name: title, exact: true })
+        .first()
+        .textContent()
+      if ((heading ?? '').trim() !== title) {
+        throw new Error(`the ${name} page's heading reads "${heading}", expected "${title}"`)
       }
-      await s.shot('07-bookmarks-manager')
-      await s.press('Escape')
+      const activeTitle = await s.chrome
+        .locator('[data-testid="tab"][data-active="true"] [data-testid="tab-title"]')
+        .first()
+        .textContent()
+      if ((activeTitle ?? '').trim() !== title) {
+        throw new Error(`the active sidebar row is "${activeTitle}", expected "${title}"`)
+      }
+      const pill = s.chrome.locator('[role="group"][aria-label="Address"]').first()
+      const reads = await pill.locator('[data-reads]').first().getAttribute('data-reads')
+      const shown = ((await pill.locator(':scope > button').first().textContent()) ?? '').trim()
+      const expected = reads === 'title' ? title : address
+      if (!['address', 'title'].includes(reads ?? '') || shown !== expected) {
+        throw new Error(`the pill reads "${shown}" (${reads}), expected "${expected}"`)
+      }
+      const tooltip = await pill.getAttribute('title')
+      if (tooltip !== address) {
+        throw new Error(`the pill's tooltip is "${tooltip}", expected "${address}"`)
+      }
+      await s.shot(still)
+      // The chord again: the one tab is refocused, no second row.
+      await s.press(combo)
+      await s.settle()
+      const rowsAfterSecondPress = await s.sidebarTabCount()
+      if (rowsAfterSecondPress !== rowsBefore + 1) {
+        throw new Error(
+          `a second ${combo} left ${rowsAfterSecondPress} sidebar rows, expected ${rowsBefore + 1} (one ${title} tab per window)`
+        )
+      }
+      if (!(await page.first().isVisible())) {
+        throw new Error(`a second ${combo} hid the ${name} page`)
+      }
+      await s.press(`${ACCEL}+w`)
       await page.first().waitFor({ state: 'hidden', timeout: 8000 })
-      return { heading: heading.trim() }
-    })
+      await waitFor(
+        async () => (await s.sidebarTabCount()) === rowsBefore,
+        8000,
+        `the ${title} row gone (${rowsBefore} rows before)`
+      )
+      return { heading: heading.trim(), address: shown, reads, tooltip, rows: rowsBefore }
+    }
+
+    await s.step('history', () =>
+      pageTabStep(
+        'history',
+        `${ACCEL}+h`,
+        'history-page',
+        'History',
+        'zenium://history',
+        '06-history'
+      )
+    )
+
+    await s.step('bookmarks-manager', () =>
+      pageTabStep(
+        'bookmarks manager',
+        `${ACCEL}+Shift+o`,
+        'bookmarks-manager',
+        'Bookmarks',
+        'zenium://bookmarks',
+        '07-bookmarks-manager'
+      )
+    )
 
     await s.step('settings', async () => {
       await s.reset()

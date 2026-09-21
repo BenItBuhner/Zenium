@@ -2,8 +2,8 @@ import { useEffect } from 'react'
 import { classifyViewport, type ViewportMetrics } from '@shared/formFactor'
 import type { FormFactor, WindowChrome } from '@shared/types'
 import { run } from './api'
+import { browserStore } from './browserStore'
 import { createStore } from './store'
-import { browserStore } from './ui'
 
 export type { FormFactor }
 
@@ -38,13 +38,24 @@ export function formFactorFor(
   return classifyViewport(metrics)
 }
 
-/** Loaded without a window (a pure-logic test importing a module that imports this one): a desktop, unwatched. */
+/**
+ * Loaded without a viewport (a pure-logic test importing a module that imports this one, with
+ * no window or a stub of one without media queries): a desktop, unwatched.
+ */
 const NO_WINDOW: ViewportInfo = {
   formFactor: 'desktop',
   width: 0,
   height: 0,
   coarse: false,
   hover: true
+}
+
+function hasViewport(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    typeof document !== 'undefined'
+  )
 }
 
 /**
@@ -57,7 +68,7 @@ export function chromeSurface(): string | null {
 }
 
 function compute(): ViewportInfo {
-  if (typeof window === 'undefined') return NO_WINDOW
+  if (!hasViewport()) return NO_WINDOW
   const width = window.innerWidth
   const height = window.innerHeight
   const hover = window.matchMedia('(hover: hover)').matches
@@ -91,7 +102,7 @@ function refresh(): void {
 }
 
 const flags = globalThis as unknown as { __zenViewportWatched?: boolean }
-if (!flags.__zenViewportWatched && typeof window !== 'undefined') {
+if (!flags.__zenViewportWatched && hasViewport()) {
   flags.__zenViewportWatched = true
   refresh()
   window.addEventListener('resize', refresh)

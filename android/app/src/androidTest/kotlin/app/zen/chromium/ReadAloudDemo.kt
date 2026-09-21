@@ -69,11 +69,12 @@ import java.util.concurrent.TimeUnit
  * 10. the selection toolbar's Listen (GN-13's toolbar, #206; our menu's verb, beside Google's own
  *     "Read aloud" process-text item, which stays): a long press on a word, the
  *     item (behind the overflow on a phone) under a finger starts a session that reads the
- *     selection (`source: selection`; the mode's finish collapses the page's selection first,
- *     the page script stands the cleared one in, `selectionMemory.ts`, and the document is left
- *     collapsed), the engine handed the word itself (the host's log), the session playing or
- *     ended once the word is through; then the system back with the player up closes it like a
- *     page (predictive back, MOT-35);
+ *     selection first and then on through the rest of the document (`from: 'selection-on'`,
+ *     Edge's reading from here, EDGE-11; `source: selection`; the mode's finish collapses the
+ *     page's selection first, the page script stands the cleared one in, `selectionMemory.ts`,
+ *     and the document is left collapsed), the engine handed the word itself (the host's log),
+ *     the session playing on past it with more than the one sentence; then the system back with
+ *     the player up closes it like a page (predictive back, MOT-35);
  * 11. the player in dark, for the design record;
  * 12. no engine (interface 3.2): the app started again with the host saying the device has no
  *     speech engine, `capabilities.readAloud` off, neither Listen to This Page in the menu nor
@@ -693,7 +694,7 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
     // --- 10. the selection toolbar's Listen ----------------------------------------------------------
 
     private fun fromSelection() {
-        finding("\nEDGE-11 / GN-13 $TOOLBAR_ITEM from the selection toolbar (the model reads the selection alone, as Chrome does)")
+        finding("\nEDGE-11 / GN-13 $TOOLBAR_ITEM from the selection toolbar (the model reads the selection, then on through the document, as Edge does)")
         frontApp()
         val items = longPress("#word") { list -> list.any { it.label == TOOLBAR_ITEM || it.label == "More options" } }
         val selected = jsonString(pageJs("String(getSelection())"))
@@ -715,12 +716,14 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             val up = poll(8_000) { panelUp() }
             // The mode's finish collapsed the page's selection before the core's extraction
             // reached the document; the page script stands the cleared selection in for it
-            // (`selectionMemory.ts`: run 4 read `no-text` here). The text is the selection alone:
-            // one word, through in well under a second, so by the time it is looked at the
-            // session reads `ended` as readily as `playing` (run 5's driver asked for playing
-            // alone, seconds late, and failed on a word that had been spoken: a driver fault).
-            // Spoken means: the first sample playing, or one playing or ended without an error,
-            // with the one sentence, and the engine handed the word itself (the host's log).
+            // (`selectionMemory.ts`: run 4 read `no-text` here). The text is the selection first,
+            // one word, then the rest of the document after it (`from: 'selection-on'`, EDGE-11):
+            // the word is through in well under a second and the walk goes on, so the session
+            // reads `playing` past it (before the switch it read the word alone and `ended` as
+            // readily as `playing`; run 5's driver asked for playing alone, seconds late, and
+            // failed on a word that had been spoken: a driver fault). Spoken means: the first
+            // sample playing, or one playing or ended without an error, more than the one
+            // sentence, and the engine handed the word itself first (the host's log).
             val spoke = engineless || first.optString("status") == "playing" ||
                 awaitSample(20_000) { it.optString("status") == "playing" || it.optString("status") == "ended" } != null
             val session = readAloud() ?: first
@@ -728,8 +731,8 @@ class ReadAloudDemo : DemoHarness("read-aloud-demo-state.json", "read-aloud", "r
             val handed = hostLog().drop(logBefore).filter { ": FLUSH at " in it || ": ADD at " in it }
                 .map { it.substringAfter(" \"").substringBeforeLast('"').trim() }
             finding("  player up=$up; status after a moment: ${status()}; sentences ${session.optInt("sentenceCount")}; error '$error'; the engine was handed: ${handed.joinToString(" | ") { "\"$it\"" }}")
-            check("the selection's text is what the session reads (spoken: playing, or ended once the word is through; one sentence; no 'no-text')", engineless || (spoke && error.isEmpty() && session.optInt("sentenceCount") >= 1))
-            check("the engine is handed the selection's text itself ('$selected')", engineless || handed.any { it == selected.trim() })
+            check("the selection's text is what the session reads first, and it reads on (spoken: playing, or ended without an error; more than the one sentence; no 'no-text')", engineless || (spoke && error.isEmpty() && session.optInt("sentenceCount") > 1))
+            check("the engine is handed the selection's text itself first ('$selected')", engineless || handed.firstOrNull() == selected.trim())
             check("the session's source is the selection", session.optString("source") == "selection")
             // The mode's finish collapsed the selection and the page script put it back only for
             // the extraction's duration: the document is left with a collapsed selection, no

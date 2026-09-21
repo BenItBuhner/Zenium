@@ -280,15 +280,21 @@ export class Actions {
         return this.browser.bookmarkTabs(win)
       case 'bookmark.toggleBar':
         return this.browser.toggleBookmarksBar(win)
+      // History, the bookmarks manager and Downloads are pages (`shared/internalPages.ts`): a
+      // tab on the desktop and the tablet, re-focused on a second press, the phone's panel or
+      // sheet where the page is not a tab – one route, the `PageService` deciding.
       case 'bookmark.sidebar':
       case 'bookmark.library':
       case 'bookmarks.open':
-        return this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+        this.browser.pages.open('bookmarks', undefined, win)
+        return
       case 'history.sidebar':
       case 'history.open':
-        return this.browser.emit('overlay.open', { kind: 'history' }, win)
+        this.browser.pages.open('history', undefined, win)
+        return
       case 'downloads.open':
-        return this.browser.emit('overlay.open', { kind: 'downloads' }, win)
+        this.browser.pages.open('downloads', undefined, win)
+        return
       case 'settings.open':
         this.browser.pages.open('settings', undefined, win)
         return

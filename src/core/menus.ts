@@ -40,13 +40,14 @@ import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
+import { orderMediaEntries } from '../shared/mediaHub'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
 import { applicationMenu, menuSignature, runFromMenuBar, splitViewSubmenu } from './menuBar'
-import { folderTabs } from './model'
+import { folderTabs, tabVisibleIn } from './model'
 
 type Template = MenuItemTemplate[]
 
@@ -856,23 +857,25 @@ export class Menus {
         run: () => void this.browser.share({ text: selection, tabId: tab.id }, win)
       })
     }
-    // Listen to a selection (EDGE-11 / GN-13). Hosts with a speech host; any page, since a
-    // selection is text to read whether or not the page is an article. Worded "Listen", the
-    // app menu's own verb ("Listen to This Page"), so that beside the system's process-text
-    // item ("Read aloud", Google's, which stays) the pair reads as two things (the lead, #240).
-    // The phone's item, on both of its surfaces, reads the selection alone (Chrome's behaviour,
-    // as W3-7 built it); the desktop's right-click item reads on from the selection to the
-    // document's end (Edge's "Read aloud selection", the model's `selection-on` of #257), since
-    // a mouse selection is mostly a place to start from. Both dock the shared player.
+    // Listen from a selection (EDGE-11 / GN-13): `readAloud.start { from: 'selection-on' }`,
+    // the core's model takes the selection from the page, reads it first and then reads on
+    // through the rest of the document after it – the main content when the page is readerable
+    // (Edge's "Read aloud from here"; Chrome reads the selection alone, and stopping at the
+    // selection's end left a mid-article start with nothing to follow). Hosts with a speech
+    // host; any page, since a selection is text to read whether or not the page is an article.
+    // The phone's item, on both of its surfaces, and the desktop's right-click item (#265) read
+    // on the same way, since a selection is mostly a place to start from; both dock the shared
+    // player, which shows where the reading is. Worded "Listen", the app menu's own verb
+    // ("Listen to This Page"), so that beside the system's process-text item ("Read aloud",
+    // Google's, which stays) the pair reads as two things (the lead, #240).
     if (this.browser.readAloud.available) {
-      const from = win.formFactor === 'phone' ? 'selection' : 'selection-on'
       actions.push({
         id: 'readAloud',
         label: 'Listen',
         title: 'Listen',
         menu: true,
         toolbar: true,
-        run: () => void this.browser.readAloud.start({ tabId: tab.id, from })
+        run: () => void this.browser.readAloud.start({ tabId: tab.id, from: 'selection-on' })
       })
     }
     return actions
@@ -2010,7 +2013,10 @@ export class Menus {
         { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
         {
           label: 'Bookmark Manager',
-          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks', folderId }, win)
+          click: () =>
+            this.browser.pages.open('bookmarks', null, win, undefined, {
+              query: folderId ? { folder: folderId } : undefined
+            })
         }
       )
     }
@@ -2104,7 +2110,11 @@ export class Menus {
   // History page
   // ---------------------------------------------------------------------------
 
-  /** Context menu of one visit on the history page. */
+  /**
+   * Context menu of one visit on the history page. "Select" picks the row on the page (the page's
+   * selection is a mode entered from here, by Ctrl/Shift-click or Ctrl+A; the checkboxes show
+   * while it lasts) so several can be removed at once.
+   */
   showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
@@ -2130,6 +2140,7 @@ export class Menus {
         { type: 'separator' },
         { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
         { type: 'separator' },
+        { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
         { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
         {
           label: 'Forget About This Page',
@@ -2137,10 +2148,12 @@ export class Menus {
         },
         { type: 'separator' },
         {
+          // Chrome's "More from this site": the History page searching the host
+          // (`chrome://history/?q=<host>`), in the tab the window has or a new one.
           label: 'More from This Site',
           enabled: Boolean(host),
           click: () =>
-            this.browser.emit('overlay.open', { kind: 'history', section: `host:${host}` }, win)
+            this.browser.pages.open('history', null, win, undefined, { query: { q: host ?? '' } })
         }
       ],
       win,
@@ -2286,7 +2299,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Show Full History',
-          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+          click: () => this.browser.pages.open('history', undefined, win)
         }
       ],
       win,
@@ -2345,9 +2358,14 @@ export class Menus {
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
    * sidebar, window frame or keyboard to speak of – also drops the items that only act on those
    * (Chrome's phone menu has none of them either). The desktop menu is unchanged by this: its
-   * host has every capability the items ask for.
+   * host has every capability the items ask for. `mediaHubFolded` is the chrome's word that the
+   * media hub's toolbar button is off the row (design language v2 §9.29): the menu then heads
+   * with the "Now Playing…" row in its stead.
    */
-  showAppMenu(win: ZenWindow, options: { anchor?: Rect; keyboard: boolean }): void {
+  showAppMenu(
+    win: ZenWindow,
+    options: { anchor?: Rect; keyboard: boolean; mediaHubFolded?: boolean }
+  ): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
@@ -2373,6 +2391,11 @@ export class Menus {
         // Page info and Reload / Stop, which the chrome draws as a row of icon buttons from each
         // item's glyph. The desktop's native menu has no such row and is unchanged.
         ...when(phone, ...this.phoneIconRow(active, win), { type: 'separator' }),
+        // The window's live media heads the sidebar layouts' menu while the media hub's toolbar
+        // button has folded (design language v2 §9.29: the sidebar's width tier folds it at 240,
+        // and this row is where it goes; with the button up, the button is the hub). The phone
+        // has its own chip and sheet (§9.33).
+        ...desktop(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
         // switcher searches on its own.
@@ -2442,7 +2465,7 @@ export class Menus {
             {
               label: 'Show Bookmarks',
               action: 'bookmark.sidebar',
-              click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+              click: () => this.browser.pages.open('bookmarks', undefined, win)
             },
             ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
             { type: 'separator' },
@@ -2466,14 +2489,14 @@ export class Menus {
         {
           label: 'History',
           action: 'history.sidebar',
-          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+          click: () => this.browser.pages.open('history', undefined, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
         ...desktop(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
           action: 'downloads.open',
-          click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
+          click: () => this.browser.pages.open('downloads', undefined, win)
         },
         ...when(caps.passwords, {
           label: 'Passwords',
@@ -2650,6 +2673,60 @@ export class Menus {
       'app',
       { ...anchor, keyboard: options.keyboard }
     )
+  }
+
+  /**
+   * The "Now Playing…" row at the head of the desktop app menu (design language v2 §9.29,
+   * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
+   * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
+   * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
+   * the badge is about. The row is its name alone: a native menu row is one line beside an
+   * accelerator column, so any content in the label widens the whole menu past §5's 232–332,
+   * and the title, artist and site are the hub's to show on the pick. Title Case, as §9.1
+   * casts the menu's items (the phone's "Now playing" chip is a chip on a page surface, not a
+   * menu item), and the ellipsis because it opens a popover, as "Search Tabs…" does. Its icon
+   * is the hub's first card's artwork (`shared/mediaHub.ts`: the session first, then what
+   * plays) where the host's menus draw one – §9.29's written exception to the all-or-nothing
+   * leading glyph: a native menu is the one place a lone picture icon is allowed, since the
+   * toolkit reserves its icon column for every row and a content picture is not a glyph.
+   * Without artwork the row has no icon – the kind's glyph (`Music` / `Film` on the hub's
+   * tile) has no rasterised form for a native menu item, and the favicon is not the card's
+   * picture. Its pick opens the hub – every player and the whole transport – from the
+   * "⋯" button the menu hung from (`mediahub.open`), so the fold loses no control. There while
+   * anything is to be controlled (a tab that paused stays until its media goes, as the button
+   * does), gone otherwise, and no separate row per player: the hub is the list. The window's
+   * media only: the hub reads its cards from the tabs the window lists, and the row is that
+   * hub's first card, not another window's.
+   */
+  private nowPlayingRow(win: ZenWindow): Template {
+    const { state, tabs } = this.browser
+    const entries = orderMediaEntries(
+      (state.media ?? []).filter((m) => {
+        const tab = tabs.tab(m.tabId)
+        return tab !== undefined && this.listedIn(win, tab)
+      })
+    )
+    const first = entries[0]
+    if (!first) return []
+    return [
+      {
+        label: 'Now Playing…',
+        icon: first.artwork || null,
+        click: () => this.browser.emit('mediahub.open', undefined, win)
+      },
+      { type: 'separator' }
+    ]
+  }
+
+  /**
+   * Whether `win`'s sidebar lists `tab` – the tabs its `UIState.tabs` carries (`State.snapshot`):
+   * a blank or private window its own space's, a synced window every tab shown in it that is not
+   * another window's own.
+   */
+  private listedIn(win: ZenWindow, tab: Tab): boolean {
+    if (win.localSpace) return win.localSpace.tabIds.includes(tab.id)
+    const m = this.browser.state.model
+    return tabVisibleIn(tab, win.id) && !(tab.spaceId && m.localSpaces[tab.spaceId])
   }
 
   /**

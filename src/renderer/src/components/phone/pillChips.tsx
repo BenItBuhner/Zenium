@@ -11,6 +11,7 @@ import { chipCount, requests, siteBlockingState } from '@renderer/lib/blockingUi
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { mediaSession } from '@renderer/lib/media'
 import { openSettings } from '@renderer/lib/pages'
+import { PRIVATE_TAB_PLACEHOLDER, mediaMasked } from '@renderer/lib/privateLock'
 import {
   foldPillChips,
   liveArrival,
@@ -71,6 +72,12 @@ export interface PillChipContext {
   mediaSheetOpen: boolean
   /** The tab on screen, for a row that opens something over its picture. */
   activeTabId: string | null
+  /**
+   * The tab is a private tab under the lock (INC-05): nothing of the page's identity is drawn or
+   * spoken – no lock, no shield, no translate offer – until the screen lock is passed. A live
+   * state (Now playing) is not identity and stays, as Chrome's media notification does.
+   */
+  locked?: boolean
 }
 
 /** A §9.3 44 × 44 box laid over the pill's 28 pitch (#237): the negative margins carry the difference. */
@@ -126,12 +133,16 @@ export function phonePillChips(
   // An internal page (Settings) has no site: no shield, no lock (v2 §10.1); an extension's page
   // is neither a secure site nor an insecure one (§10.1 applied to extension pages).
   const page = internalPageOf(tab.url) !== null
+  // A private tab under the lock says nothing of its page (§9.19): the identity chips wait for
+  // the unlock; the media state alone is drawn.
+  const identity = !ctx.locked
   const chips: PillChipModel[] = []
 
   // The lock: the pill's one site-information glyph after the host – a secure connection, and no
   // lock over a certificate that failed verification (the interstitial, or the page the user
   // proceeded to). It opens the site information, as the favicon ahead of the host does.
-  const secure = tab.url.startsWith('https://') && !tab.certificateError && !extension && !page
+  const secure =
+    identity && tab.url.startsWith('https://') && !tab.certificateError && !extension && !page
   if (secure) {
     chips.push({
       id: 'lock',
@@ -159,7 +170,7 @@ export function phonePillChips(
   // chip's own formatting), "Off for this site" or "Blocking off" when nothing is blocked here –
   // and it leads on to Settings › Privacy and security, where the lists and the site exceptions
   // are; the sheet leaves first, as its Site settings row does.
-  if (!page && !extension && state.capabilities.requestBlocking) {
+  if (identity && !page && !extension && state.capabilities.requestBlocking) {
     const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
     if (siteState !== 'no-site') {
       const count = tab.blockedCount
@@ -197,7 +208,7 @@ export function phonePillChips(
   // The translate offer (#106): there once the page has been offered or translated. The chip
   // raised the translate bar or put it away; the row does the same from the sheet, which closes
   // so the bar under the pill is seen. The value is the pair on offer in the bar's words.
-  const translation = isWebPageUrl(tab.url) ? translateStateOf(state, tab.id) : null
+  const translation = identity && isWebPageUrl(tab.url) ? translateStateOf(state, tab.id) : null
   if (translation) {
     const barUp = barStateOf(state, tab.id) !== null
     const label = barUp ? 'Hide the translation bar' : 'Translate this page'
@@ -229,10 +240,13 @@ export function phonePillChips(
   // media session – whichever pill is up – and gone otherwise; in the accent while it plays. It
   // takes the glyph's slot (§9.29: the lock gives way and returns when the media stops). Opens
   // the in-app player – from the pill, or from its sheet row while a newer state has the slot,
-  // the sheet leaving for the player.
+  // the sheet leaving for the player. The session a locked private tab's (`MediaState.private`
+  // under the lock, INC-05): the state is said, the title is not – the row reads "Private tab"
+  // (§9.19), as the player it opens does.
   const session = mediaSession(state)
   if (session) {
     const label = session.playing ? 'Now playing' : 'Media paused'
+    const masked = mediaMasked(session)
     chips.push({
       id: 'media',
       fold: pillChipFold('media'),
@@ -240,7 +254,7 @@ export function phonePillChips(
       row: {
         glyph: <AudioLines className={session.playing ? 'text-[var(--zen-accent)]' : undefined} />,
         label,
-        value: session.title?.trim() || undefined,
+        value: masked ? PRIVATE_TAB_PLACEHOLDER : session.title?.trim() || undefined,
         activate: () => {
           dismissSiteInfo()
           void openMediaSheet(session.tabId, ctx.activeTabId)

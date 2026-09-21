@@ -487,12 +487,16 @@ export function launcherName(
  */
 export type InstallSurface = 'homeScreen' | 'desktop'
 
-/** The app menu item that installs: Chrome's "Install <app>…" / "Create shortcut…" on desktop. */
+/**
+ * The app menu item that installs: Chrome's "Install <app>…" / "Create shortcut…" on desktop, in
+ * the menu's Title Case (design language v2 §9.1 – the sheet it opens keeps Chrome's sentence
+ * case, `installSheetCopy`).
+ */
 export function installMenuLabel(surface: InstallSurface, info: WebAppInfo | null): string {
   if (surface === 'homeScreen') return 'Add to Home Screen'
   return info && isInstallable(info)
     ? `Install ${launcherName(info, surface)}…`
-    : 'Create shortcut…'
+    : 'Create Shortcut…'
 }
 
 /** The app menu item inside an installed app's scope ("Open in <app>" launches its window). */

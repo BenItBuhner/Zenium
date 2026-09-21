@@ -38,7 +38,7 @@
  * border, `width: 100%`), `.zen-v2-icon-button` (28 / 44, radius 6 / 8), `.zen-v2-checkbox`
  * (#93's: 16 at radius 2, 20 on a phone, (line − box) / 2 below the first text line's top), the
  * `.zen-v2-radio` glyph (a `span`, checked through `aria-checked` on it or on its row) and the
- * `.zen-v2-menulist` trigger with its `.zen-v2-menulist-popup` (extensions.css). A copy here
+ * `.zen-v2-menulist` trigger with its `.zen-v2-menulist-popup` (main.css). A copy here
  * would be unlayered and win over the chassis on every surface: a restated `flex: 1` once gave
  * the field a 0% basis inside its column-flex label and collapsed it to 22, and an ungated
  * `:hover` would relight a tapped button on a phone. Below is only what these surfaces lay out
@@ -528,17 +528,10 @@ textarea.zen-v2-field {
   min-width: 0;
 }
 /*
- * The menulist's popup (§9.13) is the chassis' `.zen-v2-menulist-popup` on `.zen-v2-panel`
- * (extensions.css), hung from the trigger through the chrome layer. These surfaces' popups
- * (`zen-v2-af-menu-popup`, a modifier) give their rows one highlight, the focus, which the
- * arrow keys move and the pointer's hover matches (native-menu style), with no ring besides.
+ * The menulist's popup (§9.13) is the chassis' shared `MenulistPopover` on `.zen-v2-menulist-popup`
+ * (main.css), hung from the trigger through the chrome layer; its focused option is the list's
+ * cursor there, with no modifier here.
  */
-.zen-v2-af-menu-popup > .zen-v2-menulist-option:focus {
-  background: var(--v2-fill);
-}
-.zen-v2-af-menu-popup > .zen-v2-menulist-option:focus-visible {
-  outline: none;
-}
 
 /* ------------------------------------------------------------------------------------------ */
 /* The key chip in the URL pill (window family, §9.29)                                          */

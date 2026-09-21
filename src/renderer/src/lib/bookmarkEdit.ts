@@ -13,8 +13,8 @@ export type { BookmarkEditRequest }
  * The editor is a sheet over the page, so it opens in the order every surface over the page
  * keeps (`openBookmarkChrome`): the live page is captured first, and only then does the flag ask
  * the host to hide it, so the sheet's chassis comes up over the page's picture and never over
- * the window behind a page that was hidden with nothing in its place. Inside the bookmarks
- * overlay the picture is the overlay's already and the request is handled in place.
+ * the window behind a page that was hidden with nothing in its place. Over the phone's
+ * bookmarks panel the picture is the panel's already and the sheet opens in place.
  */
 export function editBookmark(id: string): void {
   const state = browserStore.get().state

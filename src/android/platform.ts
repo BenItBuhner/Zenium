@@ -72,7 +72,7 @@ import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
 import type { RuleSet } from '@core/blocking/rules'
-import type { PrivacyFlags } from '@shared/privacy'
+import type { PrivacyFlags, SafeBrowsingHit, SafeBrowsingThreat } from '@shared/privacy'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
 import readabilityReaderableJs from '@mozilla/readability/Readability-readerable.js?raw'
 import type { AgentHttpRequest, AgentHttpResponse } from '@core/agent/http'
@@ -348,6 +348,13 @@ export interface BootInfo {
    * and in the preview host.
    */
   touchExploration?: boolean
+  /**
+   * The device has a screen lock (or an enrolled biometric) to verify the user with
+   * (`Reauth.available`, `BiometricManager.canAuthenticate`): Settings' "Lock private tabs when
+   * you leave Zenium" is enabled (`lib/privateLock.ts`). Changes come as `private.lock`. Absent
+   * in old hosts and in the preview host.
+   */
+  screenLock?: boolean
 }
 
 /**
@@ -475,10 +482,21 @@ export interface HostEventPayloads {
     mimeType?: string
     /** A `DownloadInterruptReason` (Kotlin's `DownloadInterruptReason.wire`) while `interrupted`. */
     error?: string
+    /**
+     * Epoch ms of the downloader's own next attempt, with an `interrupted` report a network
+     * failure it will retry produced (`Downloads.kt` keeps Chromium's automatic resume itself;
+     * the core schedules none for Android, `autoResume: 'host'`).
+     */
+    autoResumeAt?: number
   }
   'download.done': {
     token: string
-    state: 'completed' | 'cancelled' | 'interrupted'
+    /**
+     * `insecure-blocked`: the downloader followed the redirects itself and refused the body
+     * under Chrome's mixed-content rule (an `http:` hop under an `https:` page); nothing was
+     * written.
+     */
+    state: 'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'
     savePath: string
     finalName: string
     receivedBytes?: number
@@ -579,6 +597,14 @@ export interface HostEventPayloads {
    * details page (`app.openSettings`). Handled in `boot.ts`, where the renderer is in reach.
    */
   toast: { message: string; kind?: 'info' | 'error'; action?: 'settings' }
+  /**
+   * "Lock private tabs when you leave Zenium" (`PrivateLock.kt`): the lock went on as the
+   * window left, or came off (the screen lock passed, the last private tab closed, the switch
+   * turned off), and whether the device has a screen lock to pass it with (read again on every
+   * return). The chrome's alone (`lib/privateLock.ts`, routed in `boot.ts`): the core keeps only
+   * the switch.
+   */
+  'private.lock': { locked: boolean; screenLock: boolean }
 }
 
 /**
@@ -893,8 +919,16 @@ class AndroidBlockingHost implements BlockingHost {
  * in the APK's assets (`assets/safebrowsing/<id>.json`), fetched through the asset loader – a
  * few hundred kilobytes that would otherwise come JSON-quoted through a script – and read
  * through Kotlin when the fetch cannot bring it (a chrome on another origin).
+ *
+ * The Safe Browsing tables are Kotlin's (`privacy/SafeBrowsing.kt` reads the feed documents the
+ * core writes and checks every request against them, ahead of the rule engine): the core's
+ * service keeps the documents' metadata and the refresh schedule only, reads the documents after
+ * boot rather than through it, and asks here – `privacy.lookup` – where it needs a table's word
+ * (a download's verdict).
  */
 class AndroidPrivacyHost implements PrivacyHost {
+  readonly safeBrowsingTables = 'host' as const
+
   constructor(private readonly bridge: Bridge) {}
 
   apply(flags: PrivacyFlags): void {
@@ -907,6 +941,28 @@ class AndroidPrivacyHost implements PrivacyHost {
     const raw = await this.bridge.call<unknown>('privacy.bundledFeed', { id })
     return typeof raw === 'string' && raw ? raw : null
   }
+
+  async lookupSafeBrowsing(url: string): Promise<SafeBrowsingHit | null> {
+    return safeBrowsingHitFrom(await this.bridge.call<unknown>('privacy.lookup', { url }))
+  }
+}
+
+/** Kotlin's `SafeBrowsingHit.toJson()` (`blocking/Policy.kt`), checked field by field; null for no hit. */
+export function safeBrowsingHitFrom(raw: unknown): SafeBrowsingHit | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.feedId !== 'string' || typeof o.expression !== 'string') return null
+  const threat = typeof o.threat === 'string' ? o.threat : 'unknown'
+  return {
+    feedId: o.feedId,
+    threat: isSafeBrowsingThreat(threat) ? threat : 'unknown',
+    expression: o.expression,
+    remote: false
+  }
+}
+
+function isSafeBrowsingThreat(value: string): value is SafeBrowsingThreat {
+  return value === 'malware' || value === 'phishing' || value === 'unwanted' || value === 'unknown'
 }
 
 /** Kotlin's description of a bundled list, checked field by field. */
@@ -1127,6 +1183,9 @@ export class AndroidPlatform implements Platform {
       private: item.private
     })
     this.downloads = {
+      // The downloader retries a network failure itself (Chromium's automatic resume, 2 / 4 / 8 s)
+      // and announces each attempt; the core schedules none so nothing is retried twice.
+      autoResume: 'host',
       pause: (id) => bridge.send('download.pause', { id }),
       resume: (item) => bridge.send('download.resume', describe(item)),
       cancel: (id) => bridge.send('download.cancel', { id }),
@@ -1453,6 +1512,13 @@ export class AndroidPlatform implements Platform {
           disposition:
             p.disposition === 'inline' || p.disposition === 'attachment' ? p.disposition : null
         })
+        if (record.state === 'insecure-blocked') {
+          // Refused before a byte moved (Chrome's mixed-content rule): the row waits for Keep
+          // anyway or Discard, the announced transfer is dropped and reports nothing more.
+          this.bridge.send('download.refuse', { token: p.token })
+          if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
+          return
+        }
         this.downloadTokens.set(p.token, record.id)
         // Where the file goes: the system save dialog, the folder from Settings, or the default.
         const settings = resolveDownloadSettings(browser.state.settings)
@@ -1465,7 +1531,9 @@ export class AndroidPlatform implements Platform {
           token: p.token,
           id: record.id,
           destination,
-          private: record.private
+          private: record.private,
+          // Keep anyway was chosen on this row: the downloader's own chain rule stands down.
+          insecureAccepted: record.insecureAccepted === true
         })
         if (!p.resumes) browser.onDownloadStarted(p.sourceTabId)
         return
@@ -1484,7 +1552,11 @@ export class AndroidPlatform implements Platform {
             savePath: p.savePath || undefined,
             finalName: p.finalName || undefined,
             mimeType: p.mimeType || undefined,
-            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined
+            error: p.state === 'interrupted' && p.error ? interruptReasonFrom(p.error) : undefined,
+            autoResumeAt:
+              p.state === 'interrupted' && p.autoResumeAt && p.autoResumeAt > 0
+                ? p.autoResumeAt
+                : undefined
           })
         return
       }

@@ -11,7 +11,12 @@ import android.view.WindowManager
  * comes and goes (`window.setSecure`: a private tab active, or the overview on its private pane):
  * Recents shows no private page, and none reaches a screenshot or a screen recording, the way
  * Chrome keeps Incognito out of the app switcher. It is released the moment the chrome leaves
- * the private surface, so a regular tab captures as before.
+ * the private surface, so a regular tab captures as before. The lock cover of "Lock private tabs
+ * when you leave Zenium" (`PrivateLock`) is drawn on that same surface – over a private page or
+ * the Private pane, in the private theme – so the chrome's word keeps the guard up under it; the
+ * host adds the frames the word cannot cover: while it holds private page views hidden under the
+ * lock ahead of the chrome's next report ([guardWanted]'s `lockedContent`), the private content
+ * behind the cover is still in the window, and the guard stays.
  *
  * The launcher shortcut is the static one in `src/main/shortcuts/shortcuts.xml` (written into
  * each variant's res/xml by the build), declared through the `android.app.shortcuts` meta-data on
@@ -41,13 +46,21 @@ object PrivateBrowsing {
     @Volatile
     var captureForRecording = false
 
-    /** Whether the guard goes up: the chrome says the surface is private, and no recording is let in. */
-    fun guardWanted(privateSurface: Boolean, recording: Boolean): Boolean = privateSurface && !recording
+    /**
+     * Whether the guard goes up: the chrome says the surface is private (the lock cover over
+     * private content included: the surface stays private under it), or the host holds private
+     * page views hidden under the lock while the chrome's word is still on its way
+     * (`lockedContent`, [Host.onStop] to the chrome's next layout report); and no recording is
+     * let in. Not while private tabs merely exist, locked or not: a regular page or the Tabs pane
+     * captures as before, the way Chrome's regular tabs do with Incognito locked.
+     */
+    fun guardWanted(privateSurface: Boolean, recording: Boolean, lockedContent: Boolean = false): Boolean =
+        (privateSurface || lockedContent) && !recording
 
     /** Put the guard on `window` or take it off, as [guardWanted] says for the surface now. */
-    fun guard(window: Window, privateSurface: Boolean) {
+    fun guard(window: Window, privateSurface: Boolean, lockedContent: Boolean = false) {
         val flag = WindowManager.LayoutParams.FLAG_SECURE
-        if (guardWanted(privateSurface, BuildConfig.DEBUG && captureForRecording)) window.addFlags(flag)
+        if (guardWanted(privateSurface, BuildConfig.DEBUG && captureForRecording, lockedContent)) window.addFlags(flag)
         else window.clearFlags(flag)
     }
 

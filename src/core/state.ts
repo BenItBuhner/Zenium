@@ -26,6 +26,8 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  PasswordsDeviceState,
+  PrivateDeviceState,
   ScreenCaptureRequest,
   ShareRequest,
   PasswordsStatus,
@@ -51,7 +53,14 @@ import type {
 } from '../shared/types'
 import type { TranslateUIState } from '../shared/translate'
 import type { ContentDefault } from '../shared/contentSettings'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
+import {
+  DEFAULT_CONTAINER_ID,
+  PRIVATE_CONTAINER_ID,
+  emptyPasswordsDevice,
+  emptyPrivateDevice,
+  sanitizePasswordsDevice,
+  sanitizePrivateDevice
+} from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
 import { isChromePageUrl, parseInternalPageUrl } from '../shared/internalPages'
 import {
@@ -192,6 +201,17 @@ export interface Persisted {
    * pins of v4's `settings.newTabPhone` among them) and the removed hosts. Never synced.
    */
   newTabDevice?: NewTabDeviceState
+  /**
+   * Private browsing's device-local choices (the shape of `newTabDevice`): the phone's "Lock
+   * private tabs when you leave Zenium". Never synced; missing before the switch existed.
+   */
+  privateDevice?: PrivateDeviceState
+  /**
+   * The password manager's device-local state (the same shape): the last Password Checkup's
+   * counts and time, which Safety Check reads while the vault is locked. Never synced; missing
+   * before the summary existed.
+   */
+  passwordsDevice?: PasswordsDeviceState
 }
 
 /**
@@ -301,6 +321,21 @@ export class BrowserState {
    * place), persisted with the profile, never synced.
    */
   newTabDevice: NewTabDeviceState = emptyNewTabDevice()
+  /**
+   * Private browsing's device-local choices, the same shape: the phone's "Lock private tabs when
+   * you leave Zenium" switch (INC-05 / SET-17). Replaced whole, persisted with the profile,
+   * never synced – Chrome's "Lock Incognito tabs" is per device too, as it names this device's
+   * screen lock. The lock itself is the phone host's, in memory; the core keeps only the switch.
+   */
+  privateDevice: PrivateDeviceState = emptyPrivateDevice()
+  /**
+   * The password manager's device-local state, the same shape: the last Password Checkup's
+   * counts and time (`PasswordsStatus.checkupSummary`, Safety Check's Passwords row), kept
+   * outside the vault so a locked vault still tells what the last run found. Replaced whole by
+   * the `PasswordService`, persisted with the profile, never synced (the counts are this
+   * device's view of the vault; another device runs its own checkup).
+   */
+  passwordsDevice: PasswordsDeviceState = emptyPasswordsDevice()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -564,6 +599,8 @@ export class BrowserState {
       newTabHiddenHosts: data.newTabHiddenHosts,
       newTabPhone
     })
+    this.privateDevice = sanitizePrivateDevice(data.privateDevice)
+    this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -849,6 +886,7 @@ export class BrowserState {
       bookmarks: this.bookmarks,
       newTabShortcuts: this.newTabDevice.shortcuts,
       newTabHiddenHosts: this.newTabDevice.hiddenHosts,
+      privateLockOnLeave: this.privateDevice.lockOnLeave,
       newTabBackground: this.newTabBackgroundFor(),
       recentlyClosedCount: this.recentlyClosed.length,
       recentlyClosed: this.recentlyClosed.slice(0, 10).map(summarizeClosed),
@@ -959,7 +997,9 @@ export class BrowserState {
       recentlyClosed: withoutClosedHostState(this.recentlyClosed),
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
-      newTabDevice: this.newTabDevice
+      newTabDevice: this.newTabDevice,
+      privateDevice: this.privateDevice,
+      passwordsDevice: this.passwordsDevice
     }
   }
 

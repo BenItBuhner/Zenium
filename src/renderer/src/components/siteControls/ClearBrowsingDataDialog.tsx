@@ -148,7 +148,7 @@ function ClearBody({
               label={
                 <>
                   <span className="block">{TYPE_LABEL[type]}</span>
-                  <span className="block text-[13px] leading-5 text-[var(--v2-text-deemphasized)] [font-variant-numeric:tabular-nums]">
+                  <span className="block text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)] [font-variant-numeric:tabular-nums]">
                     {countLine(type, form.counts, form.range)}
                   </span>
                 </>
@@ -181,7 +181,7 @@ function ClearBody({
           {!form.error && (
             <p
               id={`${fieldId}-hint`}
-              className="mt-1 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]"
+              className="mt-1 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]"
             >
               Saved passwords are protected; the vault opens with your passphrase.
             </p>
@@ -192,7 +192,7 @@ function ClearBody({
         <p
           id={`${fieldId}-error`}
           role="alert"
-          className="flex items-start gap-2 px-4 pt-1 text-[13px] leading-5 text-[var(--v2-danger)]"
+          className="flex items-start gap-2 px-4 pt-1 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-danger)]"
         >
           <CircleAlert className={cn(V2_GLYPH, 'mt-0.5')} aria-hidden />
           <span>{form.error}</span>

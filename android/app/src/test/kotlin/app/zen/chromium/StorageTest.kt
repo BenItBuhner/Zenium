@@ -87,7 +87,7 @@ class StorageTest {
         storage.writeSync("state.json", first)
         assertEquals(second, storage.read("state.json.bak"))
         assertEquals(setOf("state.json"), storage.readAll().keys().asSequence().toSet())
-        assertFalse(storage.isBootDocument("state.json.bak"))
+        assertFalse(storage.isServedDocument("state.json.bak"))
         assertEquals(setOf("state.json", "state.json.bak"), dir.list()!!.toSet())
     }
 
@@ -276,7 +276,7 @@ class StorageTest {
         assertEquals(document, storage.read("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
         assertTrue(storage.exists("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
         assertEquals(document, storage.open("blocking/sets/ext_abc__dynamic-1a2b3c4d.json")!!.stream.use { String(it.readBytes()) })
-        assertTrue(storage.isBootDocument("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
+        assertTrue(storage.isServedDocument("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
         assertEquals(document, storage.readAll().getString("blocking/sets/ext_abc__dynamic-1a2b3c4d.json"))
         storage.writeSync("blocking/sets/user.json", """{"id":"user","rules":[]}""")
         File(dir, "blocking/sets/user.json.tmp").writeText("torn")
@@ -288,9 +288,9 @@ class StorageTest {
         assertNull(storage.fileFor("a/b/c.json"))
         assertNull(storage.fileFor("blocking/sets/a/b.json"))
         assertNull(storage.fileFor("blocking/sets/../index.json"))
-        assertFalse(storage.isBootDocument("blocking/sets/x.txt"))
-        assertFalse(storage.isBootDocument("blocking/other/x.json"))
-        assertFalse(storage.isBootDocument("blocking/sets/.json"))
+        assertFalse(storage.isServedDocument("blocking/sets/x.txt"))
+        assertFalse(storage.isServedDocument("blocking/other/x.json"))
+        assertFalse(storage.isServedDocument("blocking/sets/.json"))
         val removed = CountDownLatch(1)
         storage.remove("blocking/sets/user.json") { removed.countDown() }
         assertTrue(removed.await(5, TimeUnit.SECONDS))

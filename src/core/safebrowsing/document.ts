@@ -34,6 +34,20 @@ export function feedFile(id: string): string {
   return `${SAFE_BROWSING_DIR}/${id}.json`
 }
 
+/**
+ * How many prefixes a document's `prefixes` field holds, from the base64 text's length alone
+ * (no decoding): the writers (`PrefixTable.toBase64`) encode the sorted, deduplicated table
+ * whole, so the byte count is a multiple of the prefix size. For a host that holds the tables
+ * itself and keeps the document's metadata only, when the document's own `entries` is missing.
+ */
+export function prefixCountOf(prefixes: string): number {
+  const text = /\s/.test(prefixes) ? prefixes.replace(/\s+/g, '') : prefixes
+  if (text.length === 0) return 0
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
+  const bytes = Math.floor((text.length * 3) / 4) - padding
+  return Math.max(0, Math.floor(bytes / 8))
+}
+
 /** Parse a persisted or bundled document; null when it is not one (or for another feed). */
 export function parseFeedDocument(text: string | null, id: string): FeedDocument | null {
   if (!text) return null

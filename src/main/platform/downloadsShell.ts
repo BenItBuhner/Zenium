@@ -25,8 +25,9 @@ import type { ElectronWindow } from './window'
  * aggregate progress lands on each window's taskbar entry (and the macOS dock) – normal, paused
  * while everything is, indeterminate for size-less transfers, the error tone for a moment after
  * a failure while others run, cleared when the last one ends – completions while no window is
- * focused post a notification whose click reveals the item, and the dock badge counts those
- * until a window takes focus again. The engine calls neither `setProgressBar` nor
+ * focused post a notification whose click reveals the item, and the dock badge (macOS) or the
+ * launcher's count (Linux, `app.setBadgeCount`; Windows has no count, only the taskbar bar)
+ * counts those until a window takes focus again. The engine calls neither `setProgressBar` nor
  * `Notification` (contract); nothing here touches `downloads.json` or the transfers.
  */
 export class ElectronDownloadsShell {
@@ -103,6 +104,9 @@ export class ElectronDownloadsShell {
     if (process.platform === 'darwin' && app.dock) {
       app.dock.setBadge(String(this.unseen))
       app.dock.bounce('informational')
+    } else if (process.platform === 'linux') {
+      // The Unity launcher API (GNOME's dock extensions, KDE, Unity); false where there is none.
+      app.setBadgeCount(this.unseen)
     }
     const settings = resolveDownloadSettings(this.browser.state.settings)
     if (!shouldNotifyCompletion(item, settings, focused)) return
@@ -123,6 +127,7 @@ export class ElectronDownloadsShell {
     if (this.unseen === 0) return
     this.unseen = 0
     if (process.platform === 'darwin') app.dock?.setBadge('')
+    else if (process.platform === 'linux') app.setBadgeCount(0)
   }
 
   /** Bring a window up and open the bubble on `id` (a notification was clicked). */
