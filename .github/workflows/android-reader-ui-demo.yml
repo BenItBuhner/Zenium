@@ -16,6 +16,11 @@ name: Android reader UI demo
 # 34): that is where the speech engine is.
 on:
   workflow_dispatch:
+  # TEMPORARY (worker tokens cannot dispatch; the file is not on main): the ONE final device run
+  # after the lead's verdict; removed in the next commit, before the PR is marked ready.
+  push:
+    branches:
+      - cursor/services-reader-ui-24d1
 
 permissions:
   contents: read
