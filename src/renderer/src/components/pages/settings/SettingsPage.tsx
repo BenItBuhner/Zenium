@@ -17,6 +17,7 @@ import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
@@ -127,6 +128,8 @@ function PhoneSettings({
   // The vault's lists are fetched while Settings › Autofill is the section shown; the landing's
   // search builds the section with none (its switches and choices match, its entries do not).
   const autofill = useAutofillSettings(state, current?.id === 'autofill')
+  // Whether the device has a screen lock, for Privacy and Security's private-tab lock switch.
+  const screenLock = privateLockStore.use((s) => s.screenLock)
   // The speech engine's voices are asked for while Accessibility is the section shown (the
   // landing's search builds its voice rows from the list already kept, or shows none yet).
   const readAloudVoices = useReadAloudVoices(
@@ -149,6 +152,7 @@ function PhoneSettings({
       void openOverlay('boosts', tabId)
     },
     autofill,
+    screenLock,
     readAloudVoices,
     dictionary
   }

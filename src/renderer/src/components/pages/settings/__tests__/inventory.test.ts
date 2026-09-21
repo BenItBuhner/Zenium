@@ -661,6 +661,7 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
     openBarEditor: () => undefined,
     boost: () => undefined,
     autofill: idleAutofillSettings(),
+    screenLock: false,
     readAloudVoices: null,
     dictionary: { ...idleDictionaryWords(), words: ['Zenium'] }
   }

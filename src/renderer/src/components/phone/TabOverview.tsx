@@ -29,7 +29,9 @@ import { overviewColumns } from '@renderer/lib/layout'
 import { FRAME_SHADOW, cardShadow, lerpShadow, shadowCss } from '@renderer/lib/motion/elevation'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { tabCardLabel } from '@renderer/lib/overviewLabels'
+import { PRIVATE_TAB_PLACEHOLDER, privateLockStore } from '@renderer/lib/privateLock'
 import {
+  isPrivateTab,
   overviewPane,
   pickOverviewPane,
   privateTabsOf,
@@ -59,6 +61,7 @@ import { cardHeaderHeight } from './overviewCardHeader'
 import { OverviewSheet, type SheetAction } from './OverviewSheet'
 import { PaneSlot, PaneStills, type PaneStill } from './PaneSlot'
 import { noteSheetOpener } from './phonePanel'
+import { PrivateLockCover } from './PrivateLockCover'
 import { RecentlyClosedSheet } from './RecentlyClosedSheet'
 import { TabPreview } from './TabPreview'
 import { cancelLift, liftStore, retargetLift, settleLift, type LiftHover } from './useCardLift'
@@ -149,6 +152,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const hasPrivate = state.capabilities.privateTabs
   const pane: OverviewPane = hasPrivate ? overviewPane(state, picked) : 'tabs'
   const privatePane = pane === 'private'
+  // The private tabs are locked (INC-05): the Private pane is under the lock cover, its cards
+  // blurred beneath it; the Tabs pane and the header are not.
+  const locked = privateLockStore.use((s) => s.locked)
   // The private pane is a session, not a workspace: its cards are neither pinned nor grouped
   // here – a drag rearranges them and nothing more (`hoverAt`, `dropCard`), as Chrome's incognito
   // grid lets it; the regular pane keeps its structure.
@@ -198,6 +204,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   )
   const members = new Map(groups.map((f) => [f.id, shown(membersOf(f.id), f.id)] as const))
   const hero = heroTabId ? (state.tabs[heroTabId] ?? null) : null
+  // The hero of the morph from a locked private tab reads the placeholder, as its card does
+  // (§9.19): the real title never rises into view under the cover.
+  const lifting = privateLockStore.use((s) => s.lifting)
+  const heroMasked = hero !== null && (locked || lifting) && isPrivateTab(hero)
   const p = Math.min(1, Math.max(0, progress))
   // Taps work as soon as the overview is heading open; layout tracking waits for it to rest.
   const interactive = overviewInteractive(overview)
@@ -828,6 +838,11 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 }}
                 className="zen-overview-grid min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-4 pt-1"
                 data-pane={pane}
+                // The Private pane under the lock cover (INC-05): its grid is out of reach – no
+                // focus, no touch, nothing for a screen reader – until the cover lifts; the
+                // cards read the placeholder meanwhile (`CardBody`), in case a reader reaches one.
+                inert={(privatePane && locked) || undefined}
+                aria-hidden={(privatePane && locked) || undefined}
                 // The card the page morphs into is scrolled into view: keep it clear of the fades.
                 style={{
                   touchAction: 'pan-y',
@@ -883,6 +898,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 </div>
               </div>
             )}
+            {privatePane && count > 0 && <PrivateLockCover shown={locked} />}
           </PaneSlot>
           <PaneStills stills={stills} onDone={stillDone} />
         </div>
@@ -912,9 +928,17 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
                 style={{ background: 'rgb(var(--zen-accent-rgb) / 0.14)' }}
               />
             )}
-            <Favicon tab={hero} size={16} className="relative" />
+            {heroMasked ? (
+              <VenetianMask
+                className="relative h-4 w-4 shrink-0 opacity-60"
+                strokeWidth={1.75}
+                aria-hidden
+              />
+            ) : (
+              <Favicon tab={hero} size={16} className="relative" />
+            )}
             <span className="zen-overview-card-title relative min-w-0 flex-1 truncate text-[13px] font-medium">
-              {tabTitle(hero)}
+              {heroMasked ? PRIVATE_TAB_PLACEHOLDER : tabTitle(hero)}
             </span>
           </div>
           <div className="relative min-h-0 flex-1 overflow-hidden">

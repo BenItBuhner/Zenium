@@ -10,6 +10,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
+import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { barStateOf } from '@renderer/lib/translate'
@@ -31,6 +32,7 @@ import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
 import { PdfViewerBar } from '../pdf/PdfViewerBar'
+import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
@@ -123,13 +125,19 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
   // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
   const pageTab = isPageTab(tab)
+  // The lock cover over a locked private tab (INC-05): it paints the tab's own picture, blurred,
+  // under its veil, so the plain snapshot stands aside; the gesture stage and the phone's
+  // omnibox cover the frame whole and take it over as they take the snapshot over.
+  const lockCover =
+    usePrivateCoverUp(state) && tab !== null && !staged && !(phone && ui.urlbar.open)
   const showSnapshot =
     (contentHidden || glanceActive) &&
     Boolean(tab) &&
     !pageTab &&
     !staged &&
     !(phone && ui.urlbar.open) &&
-    !newTabPage
+    !newTabPage &&
+    !lockCover
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
@@ -253,6 +261,12 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   />
                 )}
               </div>
+            )}
+            {tab && !pageTab && (
+              // Always mounted so a cover the lock released under lifts before it goes; it draws
+              // nothing while not asked for. Over the phone's new tab page (chrome, no view to
+              // picture) the veil's backdrop blur does the covering.
+              <PrivateLockCover shown={lockCover} tab={newTabPage ? null : tab} />
             )}
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />

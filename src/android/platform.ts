@@ -348,6 +348,13 @@ export interface BootInfo {
    * and in the preview host.
    */
   touchExploration?: boolean
+  /**
+   * The device has a screen lock (or an enrolled biometric) to verify the user with
+   * (`Reauth.available`, `BiometricManager.canAuthenticate`): Settings' "Lock private tabs when
+   * you leave Zenium" is enabled (`lib/privateLock.ts`). Changes come as `private.lock`. Absent
+   * in old hosts and in the preview host.
+   */
+  screenLock?: boolean
 }
 
 /**
@@ -579,6 +586,14 @@ export interface HostEventPayloads {
    * details page (`app.openSettings`). Handled in `boot.ts`, where the renderer is in reach.
    */
   toast: { message: string; kind?: 'info' | 'error'; action?: 'settings' }
+  /**
+   * "Lock private tabs when you leave Zenium" (`PrivateLock.kt`): the lock went on as the
+   * window left, or came off (the screen lock passed, the last private tab closed, the switch
+   * turned off), and whether the device has a screen lock to pass it with (read again on every
+   * return). The chrome's alone (`lib/privateLock.ts`, routed in `boot.ts`): the core keeps only
+   * the switch.
+   */
+  'private.lock': { locked: boolean; screenLock: boolean }
 }
 
 /**
