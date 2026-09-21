@@ -442,9 +442,15 @@ function analyseScene(scene, loaded, probe, clocks) {
       const frames = inRange.filter((m) => m.t >= moved.t && m.t <= rest.t)
       const intervals = []
       for (let k = 1; k < frames.length; k++) intervals.push(frames[k].t - frames[k - 1].t)
-      const markAfter = (name) => {
+      // The open's picture may be mounted before the click: the press on the menu button takes
+      // the capture (`prepareMenu`) and the chassis mounts it under the live page as it lands
+      // (`coverPrimed`), so its mark is looked for from the pointerdown that began the tap; a
+      // negative number then says how long before the click it was there.
+      const press =
+        kind === 'open' ? taps.filter((t) => t.k === 'down' && t.t <= tap.t).at(-1) : null
+      const markAfter = (name, since = tap.t - 5) => {
         const m = pmarks.find(
-          (x) => x.n === name && x.t >= tap.t - 5 && x.t < Math.min(next, endMarkT + 3000)
+          (x) => x.n === name && x.t >= since && x.t < Math.min(next, endMarkT + 3000)
         )
         return m ? m.t - from : NaN
       }
@@ -460,7 +466,10 @@ function analyseScene(scene, loaded, probe, clocks) {
         intervalMax: max(intervals),
         dropped: intervals.filter((d) => d > 33).length,
         sheetMountedMs: markAfter(kind === 'open' ? 'sheet-mounted' : 'sheet-unmounted'),
-        coverMountedMs: markAfter(kind === 'open' ? 'cover-mounted' : 'cover-unmounted'),
+        coverMountedMs:
+          kind === 'open'
+            ? markAfter('cover-mounted', press ? press.t - 5 : tap.t - 5)
+            : markAfter('cover-unmounted'),
         tsTap: toTs(from),
         tsFrom: toTs(moved.t),
         tsTo: toTs(rest.t)

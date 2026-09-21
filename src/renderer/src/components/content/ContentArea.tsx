@@ -4,7 +4,7 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
-import { chromeUnderPages } from '@renderer/lib/cover'
+import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
@@ -134,8 +134,13 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // omnibox cover the frame whole and take it over as they take the snapshot over.
   const lockCover =
     usePrivateCoverUp(state) && tab !== null && !staged && !(phone && ui.urlbar.open)
+  // Where the chrome lies under the page views, a capture of the active page is mounted the
+  // moment it exists, whether or not anything covers the page yet: under the live page nothing
+  // of it shows, and it is painted by the time a sheet asks for the page to go (`coverPrimed`,
+  // lib/cover.ts) – the capture `prepareMenu` takes as the finger lands on the menu button.
+  const primed = ui.snapshot !== null && coverPrimed(state.platform, ui.snapshotTabId, tab?.id)
   const showSnapshot =
-    (contentHidden || glanceActive) &&
+    (contentHidden || glanceActive || primed) &&
     Boolean(tab) &&
     !pageTab &&
     !staged &&

@@ -28,7 +28,7 @@ import {
   tabsOnPane
 } from '@renderer/lib/privateTabs'
 import { activeSpace, activeTab, essentialsFor, tabsOf } from '@renderer/lib/selectors'
-import { openFindBar, openOverlay, openUrlbar } from '@renderer/lib/ui'
+import { openFindBar, openOverlay, openUrlbar, prepareMenu } from '@renderer/lib/ui'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { ReloadStopGlyph, StarGlyph, TabCountBadge } from './BarGlyphs'
 
@@ -177,6 +177,9 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     id: 'menu',
     label: 'Menu',
     glyph: () => <MoreHorizontal className={glyph} />,
+    // The sheet comes up over the page's picture: taken as the finger lands, so the tap's
+    // round trip through the core and the host's capture run together (`prepareMenu`).
+    press: ({ tab }) => prepareMenu(tab?.id ?? null),
     run: () => run('app.menu', {})
   },
   spaces: {

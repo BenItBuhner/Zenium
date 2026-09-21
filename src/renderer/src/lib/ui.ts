@@ -1316,6 +1316,30 @@ export async function showMenu(menu: MenuDescriptor, activeTabId: string | null)
   uiStore.set({ menu })
 }
 
+/**
+ * How long a capture taken on a press outlives it when no tap follows: longer than any
+ * `app.menu` round trip, so a slow open still finds it; short enough that a finger lifted
+ * elsewhere leaves no stale picture behind (the next open captures afresh).
+ */
+export const MENU_PRESS_CAPTURE_TTL_MS = 2000
+
+/**
+ * The finger landed on the menu button (`press`, the bar item): capture the page now, before the
+ * tap and `app.menu`'s round trip through the core, so `showMenu` finds the picture in flight or
+ * in place and the sheet mounts without waiting on the host's PixelCopy and encode – on the
+ * profile's emulator 530 to 860 ms of the click → sheet time (PERF-2, PR #269), on a phone the
+ * better part of the wait between the tap and the first frame that moves. `captureActiveTab`
+ * shares one capture per tab, so the open joins this one rather than starting a second. A press
+ * that never becomes the tap leaves a capture nothing needs: it is dropped after
+ * `MENU_PRESS_CAPTURE_TTL_MS`, if nothing has come to need it by then (`invalidateSnapshot`).
+ */
+export function prepareMenu(activeTabId: string | null): void {
+  if (!activeTabId) return
+  void captureActiveTab(activeTabId).then(() => {
+    setTimeout(() => invalidateSnapshot(), MENU_PRESS_CAPTURE_TTL_MS)
+  })
+}
+
 export function closeMenu(notifyHost = true): void {
   const menu = uiStore.get().menu
   if (!menu) return

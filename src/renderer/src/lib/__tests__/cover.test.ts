@@ -3,6 +3,7 @@ import type { Platform } from '@shared/types'
 import {
   chromeUnderPages,
   COVER_WAIT_MS,
+  coverPrimed,
   coverStatus,
   coverStore,
   decideHidden,
@@ -247,6 +248,47 @@ describe('the ordering a sheet opens in', () => {
     // The sheet closes: the page comes back without waiting for anything.
     wantsHidden = false
     expect(evaluate()).toBe(false)
+  })
+
+  it('a cover primed before the tap (the press on the menu button) lets the hide follow the tap at once', async () => {
+    // The press: the capture lands and its picture mounts under the live page, wanted by nothing
+    // yet (`coverPrimed`, ContentArea). Nothing is reported hidden meanwhile.
+    let wantsHidden = false
+    let reported = false
+    const evaluate = (): boolean => {
+      reported = decideHidden(wantsHidden, reported, status('a'), false)
+      return reported
+    }
+    expect(coverPrimed('android', 'a', 'a')).toBe(true)
+    const img = image()
+    trackCover('a', img)
+    expect(evaluate()).toBe(false)
+    img.fire('load')
+    await flush()
+    img.decodeResolve!()
+    await flush()
+    frame()
+    frame()
+    expect(status('a')).toEqual({ loading: false, painted: true })
+    expect(evaluate()).toBe(false)
+
+    // The tap: the sheet's flag flips; the picture is on screen already, so the page goes now.
+    wantsHidden = true
+    expect(evaluate()).toBe(true)
+  })
+
+  it('coverPrimed: the active tab’s capture, on the chassis whose chrome lies under the pages', () => {
+    expect(coverPrimed('android', 'a', 'a')).toBe(true)
+    // Another tab's capture (a card of the overview) primes nothing for this one.
+    expect(coverPrimed('android', 'b', 'a')).toBe(false)
+    expect(coverPrimed('android', null, 'a')).toBe(false)
+    expect(coverPrimed('android', 'a', null)).toBe(false)
+    expect(coverPrimed('android', 'a', undefined)).toBe(false)
+    // The desktop hosts have the overlay painted before a view goes: they show the capture as
+    // they always have, once something covers the page.
+    expect(coverPrimed('linux', 'a', 'a')).toBe(false)
+    expect(coverPrimed('darwin', 'a', 'a')).toBe(false)
+    expect(coverPrimed('win32', 'a', 'a')).toBe(false)
   })
 
   it('a cover that never paints holds the page only for the wait, not for good', () => {
