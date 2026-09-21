@@ -1060,8 +1060,13 @@ describe('the overlay scrollbar (§9.20)', () => {
       'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);',
       'background-clip: padding-box;'
     ])
-    // §9.20 names one rendering and no pointer state: nothing under `:hover` or `:active`.
-    expect(bare).not.toMatch(/::-webkit-scrollbar-thumb:(hover|active)/)
+    // §9.20 (lead's #281 verdict): the thumb answers the pointer at 50 %, no size change; nothing
+    // under `:active`.
+    expect(part('-thumb:hover')).toEqual([
+      'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 50%, transparent);',
+      'background-clip: padding-box;'
+    ])
+    expect(bare).not.toMatch(/::-webkit-scrollbar-thumb:active/)
   })
 
   it('leaves the standard properties to a finger’s chrome alone: Chromium paints the parts only where both are auto', () => {

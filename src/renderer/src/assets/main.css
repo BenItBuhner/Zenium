@@ -825,6 +825,11 @@
     background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);
     background-clip: padding-box;
   }
+  /* The thumb answers the pointer (§9.20; Firefox's and macOS's do): 50 %, no size change. */
+  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 50%, transparent);
+    background-clip: padding-box;
+  }
 }
 
 /*
@@ -8599,7 +8604,9 @@
     position: relative;
     height: calc(var(--v2-control) + 8px);
     gap: 8px;
-    padding: 0 8px 0 12px;
+    /* §9.32's rhythm: the field 16 in (the docked panels' gutter), the count 8 after it, the
+     * buttons 8 apart, the close 8 from the far edge. */
+    padding: 0 8px 0 16px;
     background: var(--v2-panel);
     color: var(--v2-text);
   }
