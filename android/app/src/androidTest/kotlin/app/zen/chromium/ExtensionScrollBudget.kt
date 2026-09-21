@@ -109,6 +109,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         check(state.getJSONObject("capabilities").getBoolean("extensions")) { "the Android host must turn the extension capability on" }
         awaitLoaded(FIXTURE)
         SystemClock.sleep(2_000)
+        prime()
+        awaitLoaded(FIXTURE)
         // The touch pipeline paid for off the record: a drag down the page and back up (the page
         // is off its top when the second finger lands, so no pull-to-refresh), then the top again.
         drag(height * 0.62f, -160f * density, 400)
@@ -117,6 +119,31 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         SystemClock.sleep(700)
         pageTop()
         finding("warm-up done: page ${pageNumber("document.scrollingElement.scrollHeight")} CSS px tall, viewport ${pageNumber("window.innerHeight")} CSS px, bar hide ${hideValue()}")
+    }
+
+    /**
+     * All six on once before anything is measured, then off again. An extension's first start
+     * fires `runtime.onInstalled`, once per installed version (Chrome's rule; the runtime persists
+     * the version it fired for) and what the handlers do lands here, off the record: the
+     * onboarding tabs (Dark Reader's help page, LanguageTool's welcome, Bitwarden's start page,
+     * and Grammarly's, which in the first run came a minute after its worker was up – after the
+     * scene's stray tabs were closed – and covered the fixture through the six-extension scroll),
+     * storage seeding, the alarms. The scenes' attaches are then steady-state enables – a worker's
+     * start and its content scripts meeting the page – which is what the budget is about. The
+     * tab list is left to hold still for [PRIME_QUIET_MS] (within [PRIME_MS]) before it is cleared.
+     */
+    private fun prime() {
+        val entry = JSONObject()
+        val on = JSONObject()
+        val onMs = attach(ALL, on)
+        finding("primed ${attached.joinToString { NAMES[it] ?: it }.ifEmpty { "nothing" }} in $onMs ms; backgrounds up: ${backgroundsUp().joinToString { NAMES[it] ?: it }.ifEmpty { "none" }}")
+        closeStrayTabs(on, quietMs = PRIME_QUIET_MS, maxMs = PRIME_MS)
+        val off = JSONObject()
+        val offMs = attach(emptySet(), off)
+        closeStrayTabs(off)
+        finding("primed set off again in $offMs ms; backgrounds up: ${backgroundsUp().joinToString { NAMES[it] ?: it }.ifEmpty { "none" }}")
+        entry.put("on", on).put("off", off)
+        record.put("prime", entry)
     }
 
     override fun demo() {
@@ -130,18 +157,25 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
 
     /**
      * Attach exactly `wanted`, reload the fixture, then the fixed motion under [traceFrames] with
-     * the bridge's counters read at the block's edges, and everything about it written down.
+     * the bridge's counters read at the block's edges, and everything about it written down. A
+     * measurement something else spoiled – a tab opened over the fixture during the motion, the
+     * page not moving under the finger, a dump with no frames – leaves the record ([discardScene])
+     * and the scene is measured once more under its name; a second spoiled measurement stands,
+     * marked.
      */
-    private fun scene(name: String, wanted: Set<String>, baseline: String?) {
-        val entry = JSONObject().put("scene", name).put("wanted", JSONArray(wanted.toList()))
+    private fun scene(name: String, wanted: Set<String>, baseline: String?, again: Boolean = false) {
+        val entry = JSONObject().put("scene", name).put("wanted", JSONArray(wanted.toList())).put("again", again)
         scenes.put(entry)
         finding("")
-        finding("== $name: ${if (wanted.isEmpty()) "no extension" else wanted.joinToString { NAMES[it] ?: it }}")
+        finding("== $name: ${if (wanted.isEmpty()) "no extension" else wanted.joinToString { NAMES[it] ?: it }}${if (again) " (measured again)" else ""}")
         val attachMs = attach(wanted, entry)
         finding("[$name] attached ${attached.joinToString { NAMES[it] ?: it }.ifEmpty { "nothing" }} in $attachMs ms; backgrounds up: ${backgroundsUp().joinToString { NAMES[it] ?: it }.ifEmpty { "none" }}")
         closeStrayTabs(entry)
         reloadFixture(entry)
         entry.put("worldsBefore", worldStats())
+        val marks = pageMarks()
+        entry.put("page", marks)
+        finding("[$name] page before the finger: ${marks.optInt("styles")} style elements (${marks.optInt("darkReaderStyles")} Dark Reader's), html filter ${marks.optString("htmlFilter", "?")}, first image filter ${marks.optString("imgFilter", "?")}, body ${marks.optString("background", "?")} on ${marks.optString("color", "?")}, ${marks.optInt("shadowHosts")} shadow hosts")
         pageTop()
         settleBar()
         SystemClock.sleep(1_200)
@@ -150,6 +184,7 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         val after = LongArray(3)
         var t0 = 0L
         var t1 = 0L
+        val tabsBefore = tabUrls()
         val scrollBefore = pageNumber("Math.round(document.scrollingElement.scrollTop)")
         val result = traceFrames(name, JankBudget.Kind.GESTURE, baseline = baseline) {
             // Two reads of three longs on the main thread, at the block's edges: not frames' work.
@@ -161,6 +196,25 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         }
         val scrollAfter = pageNumber("Math.round(document.scrollingElement.scrollTop)")
         shot("${++shots}".padStart(2, '0') + "-$name")
+        val tabsAfter = tabUrls()
+        val front = activeCoreTab()?.optString("id") == TAB_ID
+        val spoiled = when {
+            tabsAfter.keys != tabsBefore.keys || !front ->
+                "a tab opened over the fixture during the motion (${(tabsAfter - tabsBefore.keys).values.joinToString().ifEmpty { "the active tab changed" }})"
+            (result.summary?.frames ?: 0) == 0 -> "no frames were recorded (the dump came back empty)"
+            scrollAfter <= scrollBefore -> "the page did not move under the finger ($scrollBefore -> $scrollAfter CSS px)"
+            else -> null
+        }
+        if (spoiled != null) {
+            entry.put("spoiled", spoiled)
+            finding("[$name] spoiled: $spoiled" + if (again) "; the second measurement stands, marked" else "; the scene is measured again")
+            if (!again) {
+                discardScene(result, spoiled)
+                closeStrayTabs(entry)
+                scene(name, wanted, baseline, again = true)
+                return
+            }
+        }
         val seconds = (t1 - t0).coerceAtLeast(1) / 1000.0
         val fromFrames = after[0] - before[0]
         val toChrome = after[1] - before[1]
@@ -284,25 +338,24 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
     /**
      * Every tab but the fixture's goes (an extension's onboarding page loading from the network
      * would compete with the scroll for the emulator's CPU), once the tab list has held still
-     * for two seconds, and the fixture is made the active tab again.
+     * for `quietMs` (within `maxMs`), and the fixture is made the active tab again.
      */
-    private fun closeStrayTabs(entry: JSONObject) {
+    private fun closeStrayTabs(entry: JSONObject, quietMs: Long = 2_000, maxMs: Long = 15_000) {
         var last = -1
         var since = SystemClock.uptimeMillis()
-        val deadline = since + 15_000
+        val deadline = since + maxMs
         while (SystemClock.uptimeMillis() < deadline) {
             val count = coreState().optJSONObject("tabs")?.length() ?: 0
             if (count != last) {
                 last = count
                 since = SystemClock.uptimeMillis()
-            } else if (SystemClock.uptimeMillis() - since >= 2_000) break
+            } else if (SystemClock.uptimeMillis() - since >= quietMs) break
             SystemClock.sleep(500)
         }
-        val tabs = coreState().optJSONObject("tabs") ?: JSONObject()
+        val tabs = tabUrls()
         val closed = JSONArray()
-        for (tabId in tabs.keys().asSequence().toList()) {
+        for ((tabId, url) in tabs) {
             if (tabId == TAB_ID) continue
-            val url = tabs.optJSONObject(tabId)?.optString("url") ?: ""
             runCatching { coreInvoke("tab.close", """{"tabId":${JSONObject.quote(tabId)},"force":true}""") }
             closed.put(url)
         }
@@ -310,6 +363,14 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         if (closed.length() > 0) finding("closed ${closed.length()} tab(s) the extensions opened: $closed")
         runCatching { coreInvoke("tab.activate", """{"tabId":${JSONObject.quote(TAB_ID)}}""") }
         SystemClock.sleep(800)
+    }
+
+    /** The core's tabs right now: id to URL. */
+    private fun tabUrls(): Map<String, String> {
+        val tabs = coreState().optJSONObject("tabs") ?: JSONObject()
+        val result = LinkedHashMap<String, String>()
+        for (tabId in tabs.keys().asSequence().toList()) result[tabId] = tabs.optJSONObject(tabId)?.optString("url") ?: ""
+        return result
     }
 
     /** Reload the fixture so the content scripts of the attached set meet the document at its start; wait for it. */
@@ -348,6 +409,23 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
             result.put("main", runCatching { JSONObject(unquote(raw)) }.getOrNull() ?: JSONObject.NULL)
         }
         return result
+    }
+
+    /**
+     * What the attached set did to the fixture's document before the finger lands, for reading a
+     * scene's raster cost against its main-thread one: Dark Reader's style sheets (its dynamic
+     * theme recolours the page and puts `filter`s on images, which the software GPU pays for on
+     * every frame – the page's content, as in Chrome, not the runtime), the document's filters
+     * and colours, and the elements the content scripts added.
+     */
+    private fun pageMarks(): JSONObject {
+        val raw = pageJs(
+            "JSON.stringify({styles:document.querySelectorAll('style').length,darkReaderStyles:document.querySelectorAll('style.darkreader, style[class*=darkreader], link[class*=darkreader]').length," +
+                "htmlFilter:getComputedStyle(document.documentElement).filter,imgFilter:(function(){var i=document.querySelector('img');return i?getComputedStyle(i).filter:null})()," +
+                "background:getComputedStyle(document.body).backgroundColor,color:getComputedStyle(document.body).color," +
+                "shadowHosts:Array.prototype.filter.call(document.querySelectorAll('*'),function(e){return !!e.shadowRoot}).length,elements:document.querySelectorAll('*').length})"
+        )
+        return runCatching { JSONObject(unquote(raw)) }.getOrNull() ?: JSONObject()
     }
 
     /**
@@ -550,5 +628,8 @@ class ExtensionScrollBudget : DemoHarness("ext-scroll-state.json", "ext-scroll",
         /** How long the runtime gets to configure a set (six extensions' units compile on the io thread) and to start a background. */
         private const val CONFIGURE_MS = 90_000L
         private const val BACKGROUND_MS = 30_000L
+        /** The priming's wait for the onboarding tabs: the tab list still for this long, within the bound. */
+        private const val PRIME_QUIET_MS = 15_000L
+        private const val PRIME_MS = 120_000L
     }
 }
