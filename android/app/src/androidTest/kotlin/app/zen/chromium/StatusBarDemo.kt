@@ -301,7 +301,12 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
         check("[$scene] the status bar is showing", statusBarsVisible())
         check("[$scene] the status bar icons match the scheme (dark chrome, light icons)", lightStatusBarIcons() == !chromeDark)
         check("[$scene] the chrome's scheme is the one set", chromeDark == dark)
-        if (dock == "top") {
+        // The dock as drawn (the row above or below the page frame), not as asked: a session the
+        // old core wrote late can bring the bar up at the other edge, and the edge's claim must
+        // be judged where the bar is.
+        val drawnDock = if (rowTop >= 0 && frameTop >= 0 && rowTop < frameTop) "top" else "bottom"
+        check("[$scene] the bar is docked where the setting says ($dock)", drawnDock == dock)
+        if (drawnDock == "top") {
             check("[$scene] the bar's row starts at or below the status bar inset", rowTop >= insets.top - 1)
             check("[$scene] the page frame ends at or above the navigation bar inset", frameBottom <= insets.windowHeight - insets.bottom + 1)
             pillTree?.let { check("[$scene] the pill's accessibility bounds start below the status bar", it.top >= insets.top - 1) }

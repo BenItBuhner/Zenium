@@ -27,10 +27,6 @@ on:
         options:
           - '34'
           - '35'
-  # TEMPORARY (removed before the PR is marked ready): the PR's own run, gated below on the head
-  # commit saying [status-bar-run]; a push run asserts and records the before take.
-  push:
-    branches: [cursor/android-status-bar-inset-5775]
 
 permissions:
   contents: read
@@ -42,14 +38,16 @@ concurrency:
 jobs:
   record:
     name: Status bar demo
+    # The `[status-bar-run]` gate stays for a PR's temporary push trigger (the run budget is one
+    # run and one retry): under one, only a head commit that says so records.
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[status-bar-run]')
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
       script: .github/scripts/android-status-bar-demo.sh
       api-level: ${{ inputs.api-level || '35' }}
       script-env: |
-        STATUS_BAR_ASSERT=${{ (github.event_name == 'push' || inputs.assert) && 'true' || 'false' }}
-        BEFORE_APK_DIR=${{ (github.event_name == 'push' || inputs.before) && 'before/android/app/build/outputs/apk/debug' || '' }}
+        STATUS_BAR_ASSERT=${{ inputs.assert && 'true' || 'false' }}
+        BEFORE_APK_DIR=${{ inputs.before && 'before/android/app/build/outputs/apk/debug' || '' }}
       # The "before" take needs main's APK: check main out beside the working tree and build it.
       setup-script: |
         if [ -z "$BEFORE_APK_DIR" ]; then exit 0; fi
@@ -73,8 +71,8 @@ jobs:
       script: .github/scripts/android-status-bar-demo.sh
       api-level: ${{ inputs.api-level || '35' }}
       script-env: |
-        STATUS_BAR_ASSERT=${{ (github.event_name == 'push' || inputs.assert) && 'true' || 'false' }}
-        BEFORE_APK_DIR=${{ (github.event_name == 'push' || inputs.before) && 'before/android/app/build/outputs/apk/debug' || '' }}
+        STATUS_BAR_ASSERT=${{ inputs.assert && 'true' || 'false' }}
+        BEFORE_APK_DIR=${{ inputs.before && 'before/android/app/build/outputs/apk/debug' || '' }}
       setup-script: |
         if [ -z "$BEFORE_APK_DIR" ]; then exit 0; fi
         git fetch --depth=1 origin main
