@@ -654,8 +654,11 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     void stageAutofill(browser, target.surface, tab).then((page) => {
       // A manager state is the Settings tab on its Autofill section (staged vault behind it):
       // reached the way a page state is. Any other surface mounts on the next render; the
-      // sheets take a moment to rise.
+      // sheets take a moment to rise. Steps on one of those (the manager over the page,
+      // `login-note`) wait for its entrance to settle.
+      const then = target.then ?? []
       if (page) settlePage(target, seed, finish)
+      else if (then.length > 0) setTimeout(() => steps(then, finish), STEP_SETTLE_MS)
       else requestAnimationFrame(() => requestAnimationFrame(() => done(spec)))
     })
   } else if (target.kind === 'page') {

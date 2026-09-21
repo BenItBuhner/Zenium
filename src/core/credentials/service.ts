@@ -155,7 +155,8 @@ export class PasswordService {
       error: this.unlockError,
       checkup: this.checkup,
       checkupSummary: this.checkupSummary(),
-      leaks: this.leaks.active()
+      leaks: this.leaks.active(),
+      leakChecks: this.leaks.checking()
     }
   }
 

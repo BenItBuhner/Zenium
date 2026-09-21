@@ -3867,6 +3867,15 @@ function passwordsSection({ state, tab, set }: SectionContext): RowGroup[] {
       id: 'passwords-security',
       heading: 'Security',
       rows: [
+        {
+          kind: 'switch',
+          id: 'passwords-leak-detection',
+          label: PASSWORDS_COPY.leakDetection.label,
+          description: PASSWORDS_COPY.leakDetection.description,
+          keywords: ['leak', 'breach', 'compromised', 'data breach', 'exposed', 'pwned'],
+          checked: s.leakDetection,
+          onChange: (v) => patch({ leakDetection: v })
+        },
         choice({
           id: 'passwords-reauth-grace',
           label: PASSWORDS_COPY.grace.label,
