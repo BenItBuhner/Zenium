@@ -3213,7 +3213,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("hjngolefdpdnooamgdldlkjgmdcmcjnc", "Equatio - Math made digital", "equatio", core = accountGate("Equatio", Regex("texthelp|everway|equatio|loginWindow", RegexOption.IGNORE_CASE), page = "loginWindow/index.html", gate = "a Texthelp (Everway) account")),
         Row("fnpbeacklnhmkkilekogeiekaglbmmka", "Norton Safe Web", "norton-safe-web", core = siteVerdict("Norton Safe Web")),
         Row("lgblnfidahcdcjddiepkckcfdhpknnjh", "Stands AdBlocker", "stands-adblocker", core = ::adBlocker),
-        Row("bihmplhobchoageeokmgbdihknkjbknd", "Touch VPN", "touch-vpn", core = vpn("Touch VPN", consent = true)),
+        Row("bihmplhobchoageeokmgbdihknkjbknd", "Touch VPN", "touch-vpn", core = vpn("Touch VPN", pac = true, consent = true)),
         Row("mcbpblocgmgfnpjjppndjkmgjaogfceg", "FireShot", "fireshot", core = popupCapture("FireShot", "/capture visible part|visible part|capture visible/i")),
         Row("chhjbpecpncaggjpdakmflnfcopglcmi", "Rakuten: Get Cash Back For Shopping", "rakuten", core = accountGate("Rakuten", Regex("rakuten\\.com", RegexOption.IGNORE_CASE), gate = "a Rakuten account")),
         Row("ofpnmcalabcbjgholdjcjblkibolbppb", "Monica: All-In-One AI Assist", "monica", core = domMarker("Monica's in-page widget mounted by its content script", "page-a.html?monica", injectedAny("monica"), settleMs = 30_000)),
@@ -3255,7 +3255,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         // Stylish's slider is a fixed 360 px host div whose iframe (index.html) sits under a CLOSED
         // shadow root: the host is what the page's DOM shows, the iframe is not reachable from it.
         Row("fjnbnpbmkenffdnngjfgmeleoegfcffe", "Stylish - Custom themes for any website", "stylish", core = accountGate("Stylish", Regex("userstyles|stylish", RegexOption.IGNORE_CASE), injects = "div[id^='stylish-main-extension-slider']", gate = "its styles gateway listing styles for the site (none for the runner on the desktop) and a Stylish account")),
-        Row("hnmpcagpplmpfojmgmnngilcnanddlhb", "Free VPN For Chrome - VPN Extension - Windscribe", "windscribe", core = vpn("Windscribe")),
+        Row("hnmpcagpplmpfojmgmnngilcnanddlhb", "Free VPN For Chrome - VPN Extension - Windscribe", "windscribe", core = vpn("Windscribe", pac = true)),
         Row("agionbommeaifngbhincahgmoflcikhm", "Image downloader - Imageye", "imageye", core = imageList("Imageye")),
         Row("nmigaijibiabddkkmjhlehchpmgbokfj", "Sound Booster - increase volume up", "sound-booster", core = ::soundBooster),
         Row("bfogiafebfohielmmehodmfbbebbbpei", "Keeper Password Manager & Digital Vault", "keeper", account = true, core = popupLogin("Keeper")),
