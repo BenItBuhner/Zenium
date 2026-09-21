@@ -10810,6 +10810,28 @@
     transition-property: opacity !important;
   }
   /*
+   * The page's visibility is a cut, on the page and on everything in it. The new tab page is
+   * kept mounted and unpainted under the omnibox (`.zen-ntp[data-hidden]`, ContentArea.tsx),
+   * and comes back the frame the morph's closing begins; `visibility` transitions, and the
+   * 0.01 ms rule above made that change a transition too – one that is play-pending until the
+   * compositor starts its batch, and a pending transition draws its start value: the page stayed
+   * `hidden` past the commit that showed it, a frame on a phone, 0.7 to 1.1 s on the emulator
+   * (run 3's reduced-bottom: the omnibox gone, the field home by the machine, the page blank at
+   * rest with nothing pending on anything the sampler watched). `visibility` inherits, so each
+   * descendant would take a pending transition of its own when the page cuts – the field before
+   * its words, the tiles before their letters, as the emulator drew it. Nothing in the page
+   * transitions but the fades on `.zen-ntp-fades` (the page's opacity over the value's jump, the
+   * morph's rule above, at its 120 ms): opacity is their one property, written after the page's
+   * rule at equal specificity.
+   */
+  :root[data-form-factor='phone'] .zen-ntp,
+  :root[data-form-factor='phone'] .zen-ntp * {
+    transition-property: none !important;
+  }
+  :root[data-form-factor='phone'] .zen-ntp-fades {
+    transition-property: opacity !important;
+  }
+  /*
    * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
    * the pop's scale dropped (lib/portals.tsx keeps the panel until this ends). Not the phone's:
    * there the sheet chassis runs the leave.

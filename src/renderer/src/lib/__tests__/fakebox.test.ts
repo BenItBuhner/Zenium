@@ -491,3 +491,40 @@ describe('the layout the morph measures (main.css): no transition under reduced 
     expect(reduced.slice(fade, reduced.indexOf('}', fade))).toContain('transition: opacity 120ms')
   })
 })
+
+/*
+ * The page under the omnibox is kept mounted and unpainted (`visibility: hidden` on
+ * `.zen-ntp[data-hidden]`, ContentArea.tsx) and comes back the frame the closing begins.
+ * `visibility` transitions, and under reduced motion's 0.01 ms rule that change was a transition
+ * too: play-pending until the compositor starts its batch, and a pending transition draws its
+ * start value, so the page stayed hidden past the commit that showed it (run 3's reduced-bottom on
+ * the emulator: blank at rest for 0.7 to 1.1 s with nothing pending on anything the sampler
+ * watched; a frame on a phone). It inherits, so each descendant would take its own when the page
+ * cuts. Nothing in the page transitions but the page's own fades, on opacity alone.
+ */
+describe('the page under the omnibox (main.css): its visibility cuts under reduced motion', () => {
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'))
+  const rule = (from: string, selector: string): string => {
+    const at = from.indexOf(`${selector} {`)
+    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
+    return from.slice(at, from.indexOf('}', at))
+  }
+  const page = ":root[data-form-factor='phone'] .zen-ntp, :root[data-form-factor='phone'] .zen-ntp *"
+  const fades = ":root[data-form-factor='phone'] .zen-ntp-fades"
+
+  it('the page and everything in it transition nothing', () => {
+    // The property that made the rule necessary: the page waits under the omnibox unpainted.
+    expect(rule(css, ":root[data-form-factor='phone'] .zen-ntp[data-hidden]")).toContain('visibility: hidden')
+    expect(rule(reduced, page)).toContain('transition-property: none !important')
+  })
+
+  it('the page’s fades keep opacity, their one property, written after the page’s rule at equal specificity', () => {
+    expect(rule(reduced, fades)).toContain('transition-property: opacity !important')
+    expect(reduced.indexOf(`${fades} {`)).toBeGreaterThan(reduced.indexOf(`${page} {`))
+    // The fade they keep: the page's opacity over the value's jump, at v2 §11.3's 120 ms.
+    const jump = reduced.indexOf(":root[data-fakebox='closing'] .zen-ntp-fades {")
+    expect(jump).toBeGreaterThan(-1)
+    expect(reduced.slice(jump, reduced.indexOf('}', jump))).toContain('transition: opacity 120ms')
+  })
+})
