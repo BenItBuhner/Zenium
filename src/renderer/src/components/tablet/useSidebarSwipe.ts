@@ -3,6 +3,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent
 } from 'react'
+import { uiStore } from '@renderer/lib/ui'
 
 /** Sideways travel (px) that counts as a swipe; well past a tap's slop and a scroll's wobble. */
 const SWIPE = 48
@@ -23,7 +24,8 @@ export interface SidebarSwipeHandlers {
  * toggle by gesture. The list keeps its vertical scroll (the browser takes an up-or-down pan and
  * cancels the pointer; nothing here fights it) and its taps: only a mostly sideways move past
  * `SWIPE` counts, once per touch, and the click that may follow the finger's lift is swallowed
- * so the row under it does not also activate. A mouse is not a finger and is left alone.
+ * so the row under it does not also activate. A mouse is not a finger and is left alone, and so
+ * is a finger that has lifted a tab row (`useTabTouch`): its sideways travel is the row's drag.
  */
 export function useSidebarSwipe({
   side,
@@ -52,6 +54,10 @@ export function useSidebarSwipe({
     onPointerMove: (e) => {
       const t = touch.current
       if (!t || t.id !== e.pointerId || t.done) return
+      if (uiStore.get().drag) {
+        touch.current = null
+        return
+      }
       const dx = e.clientX - t.x
       const dy = e.clientY - t.y
       if (Math.abs(dx) < SWIPE || Math.abs(dx) < Math.abs(dy) * AXIS_RATIO) return
