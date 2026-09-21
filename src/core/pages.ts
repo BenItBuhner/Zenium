@@ -17,10 +17,12 @@
  * favicon and snapshot, and `tab.back` is the view's. Only opening, reuse, deep links and typed
  * addresses come through here.
  *
- * Hosts without `capabilities.pageTabs` (the desktop today) cannot draw chrome into the content
- * frame, so a chrome page opens as its `overlay` from the same entry point: every caller –
- * menus, commands, typed URLs, deep links – goes through {@link PageService.open} and the
- * platform decides the presentation. Document pages are tabs on every host.
+ * Hosts without `capabilities.pageTabs` cannot draw chrome into the content frame, and a page
+ * may name the layouts it is a tab in (`layouts`: History, Bookmarks and Downloads are tabs on
+ * the desktop and the tablet, the phone's panels and sheets otherwise); anywhere else a chrome
+ * page opens as its `overlay` from the same entry point: every caller – menus, commands, typed
+ * URLs, deep links – goes through {@link PageService.open} and the platform and layout decide
+ * the presentation (`pageOpensAsTab`). Document pages are tabs on every host.
  *
  * A page tab is never private, as Chrome keeps chrome:// pages out of Incognito: asked from a
  * private window it opens in a regular window ({@link PageService.tabWindowFor}), asked from a
@@ -31,6 +33,7 @@ import type { ZenWindow } from './window'
 import type { Browser } from './browser'
 import type {
   InternalPageDefinition,
+  InternalPageQuery,
   InternalPageRef,
   InternalPageRegistry
 } from '../shared/internalPages'
@@ -38,6 +41,7 @@ import {
   INTERNAL_PAGES,
   internalPageOf,
   internalPageUrl,
+  pageOpensAsTab,
   parseInternalPageUrl,
   sameInternalPage
 } from '../shared/internalPages'
@@ -71,9 +75,29 @@ export class PageService {
     readonly pages: InternalPageRegistry = INTERNAL_PAGES
   ) {}
 
-  /** Whether this host can hold a chrome page in a tab (else it opens the page's overlay). */
+  /** Whether this host can hold a chrome page in a tab at all (else every one opens its overlay). */
   get asTabs(): boolean {
     return this.browser.platform.capabilities.pageTabs
+  }
+
+  /**
+   * Whether `page` is a tab when asked from `win`: the host has page tabs and the layout the
+   * asking window's chrome shows (its host window's, for a popup) is one the page is a tab in
+   * (`layouts`; `pageOpensAsTab`). Otherwise the page opens as its overlay – the phone's
+   * history panel, bookmarks panel and downloads sheet.
+   */
+  opensAsTab(page: InternalPageDefinition, win: ZenWindow): boolean {
+    return pageOpensAsTab(
+      page,
+      this.browser.platform.capabilities,
+      this.hostWindowFor(win).formFactor
+    )
+  }
+
+  /** {@link opensAsTab} by page id; false for a page this host has not got. */
+  opensPageAsTab(id: string, win: ZenWindow): boolean {
+    const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
+    return page !== undefined && this.available(page) && this.opensAsTab(page, win)
   }
 
   /** The page a `zen://` / `zenium://` address names, when it is one this service routes. */
@@ -166,26 +190,31 @@ export class PageService {
    * with no opener tab (the asking window's tab is not in that window), the asking window left
    * as it was. A page tab never takes the private container: from a private tab (a host with
    * private tabs in its one window) it opens as a regular-container tab that still remembers
-   * the private tab as its opener. A chrome page on a host without page tabs opens as its
-   * overlay, over the asking window (or a popup's opener) – private or not. Returns the tab id;
-   * null for an overlay or an unregistered page.
+   * the private tab as its opener. A chrome page on a host without page tabs, or on a layout
+   * the page is not a tab in ({@link opensAsTab}), opens as its overlay, over the asking window
+   * (or a popup's opener) – private or not. `query` is the page's own parameters
+   * (`InternalPageQuery`: History's `q`, the manager's `folder`); given with a reused tab it
+   * moves the tab there, as a section does. Returns the tab id; null for an overlay or an
+   * unregistered page.
    */
   open(
     id: string,
     section: string | null | undefined,
     win: ZenWindow = this.browser.focusedWindow(),
     openerTabId?: string | null,
-    opts: { fromIntent?: boolean } = {}
+    opts: { fromIntent?: boolean; query?: InternalPageQuery } = {}
   ): string | null {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
     if (!page || !this.available(page)) return null
     const asked = win
-    if (page.render === 'chrome' && !this.asTabs) {
+    if (!this.opensAsTab(page, asked)) {
       win = this.hostWindowFor(asked)
       if (page.overlay) {
+        // The overlay's contract predates the query: the manager's `folder` is the overlay's
+        // `folderId` (the phone's bookmarks panel opens on it); the rest has no overlay reading.
         this.browser.emit(
           'overlay.open',
-          { kind: page.overlay, section: section ?? undefined },
+          { kind: page.overlay, section: section ?? undefined, folderId: opts.query?.folder },
           win
         )
         // An overlay sent to another window is brought to the front there.
@@ -207,7 +236,11 @@ export class PageService {
       openerTabId === undefined ? tabs.activeTabFor(win) : tabs.tab(openerTabId ?? undefined)
     const existing = page.singleton ? this.findInWindow(page, win) : undefined
     if (existing) {
-      if (section !== undefined) this.navigate(existing.id, section)
+      // A section moves the tab there; a query alone moves it within the section it shows.
+      if (section !== undefined || opts.query !== undefined) {
+        const shown = this.parse(existing.url)?.section ?? null
+        this.navigate(existing.id, section === undefined ? shown : section, false, opts.query)
+      }
       // Re-focused rather than opened: the page now comes from this opener (the rows that read
       // "the page you came from", the root back rule), not the one it was first opened from; a
       // request from the page tab itself leaves its opener as it is.
@@ -216,7 +249,7 @@ export class PageService {
       raise()
       return existing.id
     }
-    const url = internalPageUrl({ id: page.id, section: section ?? null })
+    const url = internalPageUrl({ id: page.id, section: section ?? null, query: opts.query })
     const tab = tabs.createTab(
       {
         url,
@@ -252,7 +285,7 @@ export class PageService {
   ): boolean {
     const ref = this.parse(url)
     if (!ref) return false
-    this.open(ref.id, ref.section, win, openerTabId, opts)
+    this.open(ref.id, ref.section, win, openerTabId, { ...opts, query: ref.query })
     return true
   }
 
@@ -275,11 +308,13 @@ export class PageService {
     const tab = tabs.tab(tabId)
     if (page.render === 'chrome') {
       if (tab && sameInternalPage(tab.url, url, this.pages)) {
-        this.navigate(tabId, ref.section)
+        this.navigate(tabId, ref.section, false, ref.query)
         tabs.activateTab(tabId, tabs.windowFor(tabId))
         return true
       }
-      this.open(ref.id, ref.section, tab ? tabs.windowFor(tabId) : undefined, tabId)
+      this.open(ref.id, ref.section, tab ? tabs.windowFor(tabId) : undefined, tabId, {
+        query: ref.query
+      })
       return true
     }
     if (!page.singleton || !tab) return false
@@ -292,17 +327,23 @@ export class PageService {
   }
 
   /**
-   * Move a page tab to a section of its page. A chrome page records a new history entry, or with
-   * `replace` rewrites the current one (the two-pane layout's nav, v2 §10.5); a move to the
-   * section already shown records nothing. A document page loads the section's address in its
-   * view, whose own history takes it from there.
+   * Move a page tab to a section of its page, with the page's `query` when it has one (a section
+   * without a query drops the one shown: the address is the section's). A chrome page records a
+   * new history entry, or with `replace` rewrites the current one (the two-pane layout's nav, v2
+   * §10.5); a move to the address already shown records nothing. A document page loads the
+   * section's address in its view, whose own history takes it from there.
    */
-  navigate(tabId: string, section: string | null, replace = false): void {
+  navigate(
+    tabId: string,
+    section: string | null,
+    replace = false,
+    query?: InternalPageQuery
+  ): void {
     const tab = this.browser.tabs.tab(tabId)
     const page = this.pageOf(tab)
     const ref = tab ? this.parse(tab.url) : null
     if (!tab || !page || !ref) return
-    const url = internalPageUrl({ id: ref.id, section })
+    const url = internalPageUrl({ id: ref.id, section, query })
     if (page.render === 'document') {
       if (url !== tab.url) this.browser.tabs.navigate(tabId, url)
       return

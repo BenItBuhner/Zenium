@@ -1,4 +1,11 @@
 import type { LucideIcon } from 'lucide-react'
+import {
+  INTERNAL_PAGES,
+  pageForOverlayKind,
+  pageOpensAsTab,
+  type InternalPageId,
+  type InternalPageQuery
+} from '@shared/internalPages'
 import type {
   BookmarkNodeType,
   ContentCover,
@@ -8,39 +15,24 @@ import type {
   MenuDescriptor,
   OverlayKind,
   Rect,
-  UIState,
   UrlbarOpenMode,
   WebAppInstallPrompt
 } from '@shared/types'
 import { TOAST_SHOW_MS } from '@shared/toastCard'
 import type { Anchor } from './anchor'
 import type { PopoverAlignment } from './portals'
-import { cmd, onEvent, run } from './api'
+import { cmd, run } from './api'
+import { browserStore } from './browserStore'
+import { viewportStore } from './formFactor'
 import { afterKeyRelease } from './keyRelease'
 import { pageCovered, pageOffScreen, pageViewStore, type Hold } from './pageView'
 import { activeTab } from './selectors'
 import { createStore } from './store'
 import { rememberThumbnail, thumbnailOf } from './thumbnails'
 
-// ---------------------------------------------------------------------------
-// Browser state mirrored from the main process
-// ---------------------------------------------------------------------------
-
-export const browserStore = createStore<{ state: UIState | null }>({ state: null }, 'browser')
-
-export function useBrowser(): UIState {
-  const state = browserStore.use((s) => s.state)
-  if (!state) throw new Error('Browser state not loaded')
-  return state
-}
-
-export function startBrowserSync(): void {
-  const flags = globalThis as unknown as { __zenSyncStarted?: boolean }
-  if (flags.__zenSyncStarted) return
-  flags.__zenSyncStarted = true
-  onEvent('state', (state) => browserStore.set({ state }))
-  void cmd('app.getState', undefined).then((state) => browserStore.set({ state }))
-}
+// The browser state mirrored from the main process lives in `browserStore.ts` (the layout reads
+// it too); it is still reached from here.
+export { browserStore, startBrowserSync, useBrowser } from './browserStore'
 
 // ---------------------------------------------------------------------------
 // Renderer-local UI state
@@ -796,17 +788,38 @@ export function snapshotHeld(tabId: string | null): boolean {
   return tabId !== null && ui.snapshotTabId === tabId && ui.snapshot !== null
 }
 
-/** The overlays that are sections of the Settings page: a tab on a host with page tabs. */
-const SETTINGS_OVERLAYS: ReadonlySet<OverlayKind> = new Set(['settings', 'shortcuts', 'sync'])
+/**
+ * The page tab a request for the overlay `kind` opens instead, where the page is a tab
+ * (`pageForOverlayKind`, `pageOpensAsTab`: the host has page tabs and this layout is one of the
+ * page's): Settings with Shortcuts and Sync, its sections, on every such host; History, the
+ * bookmarks manager and Downloads on the desktop and the tablet, whose phone panels and sheets
+ * stay overlays. Null where `kind` is an overlay here. The overlay's `section` and `folderId`
+ * become the page's: a Settings section, the manager's `folder` (`InternalPageQuery`).
+ */
+function pageForOverlay(
+  kind: OverlayKind,
+  folderId: string | null = null,
+  section: string | null = null
+): { id: InternalPageId; section: string | null; query?: InternalPageQuery } | null {
+  const ref = pageForOverlayKind(kind)
+  const state = browserStore.get().state
+  if (!ref || !state) return null
+  const page = INTERNAL_PAGES[ref.id as InternalPageId]
+  if (!pageOpensAsTab(page, state.capabilities, viewportStore.get().formFactor)) return null
+  return {
+    id: page.id as InternalPageId,
+    section: ref.section ?? section,
+    query: page.id === 'bookmarks' && folderId ? { folder: folderId } : undefined
+  }
+}
 
 /**
- * Whether `kind` opens as an overlay on this host at all. Settings (with Shortcuts and Sync, its
- * sections) is a tab wherever the host has page tabs (`page.open`, `lib/pages.ts`): the overlay
- * is the desktop's until its program adopts the tab, and nothing may draw it over a phone.
+ * Whether `kind` opens as an overlay on this host and layout at all: false where it is a page's
+ * overlay and the page is a tab here (`page.open`, `lib/pages.ts`), so nothing draws the
+ * overlay over a page tab's host; the phone keeps its History, Bookmarks and Downloads panels.
  */
 export function overlayAvailable(kind: OverlayKind): boolean {
-  if (!SETTINGS_OVERLAYS.has(kind)) return true
-  return !browserStore.get().state?.capabilities.pageTabs
+  return pageForOverlay(kind) === null
 }
 
 export async function openOverlay(
@@ -816,12 +829,10 @@ export async function openOverlay(
   folderId: string | null = null,
   section: string | null = null
 ): Promise<void> {
-  if (!overlayAvailable(kind)) {
-    // The Settings page's tab, through the core's one route (a section for Shortcuts / Sync).
-    run('page.open', {
-      id: 'settings',
-      section: kind === 'settings' ? section : kind
-    })
+  const page = pageForOverlay(kind, folderId, section)
+  if (page) {
+    // The page's tab, through the core's one route (a Settings section for Shortcuts / Sync).
+    run('page.open', page)
     return
   }
   await captureActiveTab(activeTabId)

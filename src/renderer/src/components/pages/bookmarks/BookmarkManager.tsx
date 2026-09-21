@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefObject } from 'react'
+import type { JSX, KeyboardEvent, MouseEvent, PointerEvent, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownAZ,
@@ -7,17 +7,14 @@ import {
   Download,
   Ellipsis,
   ExternalLink,
-  FolderPlus,
-  FolderTree as FolderTreeIcon,
   Link,
   ListChecks,
-  Plus,
-  Star,
   Trash2,
   Upload,
   X
 } from 'lucide-react'
-import type { BookmarkNode, Platform, UIState } from '@shared/types'
+import type { BookmarkNode, Platform, Tab, UIState } from '@shared/types'
+import { parseInternalPageUrl } from '@shared/internalPages'
 import {
   BOOKMARKS_BAR_ID,
   type BookmarkTree,
@@ -28,33 +25,43 @@ import {
 } from '@shared/bookmarks'
 import { type ManagerSort, sortManagerRows } from '@shared/bookmarkViews'
 import { shortcutHint } from '@shared/shortcuts'
+import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { cmd, run } from '@renderer/lib/api'
+import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { useViewport } from '@renderer/lib/formFactor'
-import { ChromePortal, FrameDialogHost } from '@renderer/lib/portals'
 import { contextMenuAnchor, handleMenuKey } from '@renderer/lib/menuKeys'
-import { activeTab } from '@renderer/lib/selectors'
-import { browserStore, closeOverlay, uiStore } from '@renderer/lib/ui'
+import { ChromePortal } from '@renderer/lib/portals'
+import { closeBookmarkChrome, openBookmarkChrome, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { EmptyNote, OverlayShell } from '../overlays/OverlayShell'
-import { BookmarkIcon, BookmarkRow } from './BookmarkRow'
+import { BookmarkIcon } from '../../bookmarks/BookmarkIcon'
+import { useEscapeTrap } from '../../bookmarks/escape'
+import { nodeLabel, useBookmarkTree } from '../../bookmarks/tree'
+import {
+  PageEmpty,
+  PageGroup,
+  PageSearchField,
+  PageTitleBlock,
+  TWO_PANE_MIN_WIDTH
+} from '../PageFrame'
+import { usePageSearch } from '../usePageSearch'
+import { BookmarkRow } from './BookmarkRow'
 import { Breadcrumb } from './Breadcrumb'
 import { DropIndicator } from './DropIndicator'
-import { EditBookmarkDialog } from './EditBookmarkDialog'
 import { FolderTree } from './FolderTree'
-import { nodeLabel, useBookmarkTree } from './tree'
 import { type BookmarkDrag, useBookmarkDrag } from './useBookmarkDrag'
 import { useFlip } from './useFlip'
-import { useEscapeTrap } from './escape'
 
 const SEARCH_LIMIT = 200
 const DRAG_THRESHOLD = 5
 /** The drag ghost: a compact copy of the row, drawn a little to the side of the pointer. */
 const GHOST_MAX_WIDTH = 320
 const GHOST_GAP = 14
+const LIST_HEADING_ID = 'zen-bm-list-heading'
 
 /**
- * The folder the manager opens on: the bookmarks bar on desktop (Chrome), the platform's own
- * root on phones; when that one is empty, the first root with anything in it.
+ * The folder the manager opens on when its URL names none: the bookmarks bar (Chrome) on the
+ * desktop, the platform's own root elsewhere; when that one is empty, the first root with
+ * anything in it.
  */
 function initialFolder(tree: BookmarkTree, platform: Platform): string {
   const preferred = platform === 'android' ? defaultBookmarkFolderId(platform) : BOOKMARKS_BAR_ID
@@ -63,45 +70,87 @@ function initialFolder(tree: BookmarkTree, platform: Platform): string {
 }
 
 /**
- * Chrome's bookmark manager: folders on the left, the shown folder's contents on the right,
- * search across the whole tree, drag and drop, sorting, multi-select, context menus and
- * keyboard navigation. On phones the tree stacks above the list behind a toggle.
+ * The bookmarks manager (`zen://bookmarks`, Ctrl+Shift+O; Chrome's `chrome://bookmarks`): a
+ * chrome page tab on the shared page frame (design language v2 §10.1, `pages/PageFrame.tsx`),
+ * two panes where they fit (§10.5, `TWO_PANE_MIN_WIDTH`). The header – the 22/600 title block
+ * "Bookmarks" with Add bookmark, Add folder and the page's ⋮ (sort order, import, export) in
+ * its trailing slot, the §9.12 search field under it – stays put over both panes and draws
+ * §9.7's hairline once either pane has scrolled under it. The left pane is the folder tree
+ * (`FolderTree`, the Settings nav's 234 column of 34 px rows); the right the shown folder's
+ * items as §9.21 two-line rows (`BookmarkRow`) under the folder's path as the group's heading
+ * (`Breadcrumb`, its last segment the `h2`) with the count aside, or every folder's matches
+ * under "Results for …" while searching. Narrower than two panes the tree column goes and the
+ * breadcrumb is the way up.
+ *
+ * The tab's URL is the page's state: `?folder=<id>` is the shown folder – every way of opening a
+ * folder (the tree, the breadcrumb, a folder row, Right and Left, a "Bookmark Manager" entry
+ * on a folder, the import's "Show in manager") is a `page.navigate` with a history entry, so
+ * back returns to the folder before, as Chrome's manager does – and `?q=<text>` the search
+ * (`usePageSearch`: replaced, not pushed), so a restored tab comes back where it was.
+ *
+ * Chrome's manager otherwise: search across the whole tree, drag and drop with §9.4's caret and
+ * outlines (`useBookmarkDrag`), the manual order and the sorts, multi-select (click, Ctrl, Shift,
+ * Ctrl+A; the selected on `--v2-selected`, §9.6), the row and empty-space context menus, the
+ * row's ⋮, cut / copy / paste, F2 and the inline rename (§9.12), Delete, Enter and double-click
+ * to open (Ctrl for a new tab), and the keyboard model of a file list (§9.22). The Edit dialog
+ * (#271) is the frame's (`TabDialogs`): a URL edit asked for here opens it over this page; a
+ * folder rename asked for by the menus is done in place when the folder is in view.
  */
-export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
+export function BookmarkManager({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
   const tree = useBookmarkTree(state)
-  const viewport = useViewport()
-  const phone = viewport.formFactor === 'phone'
-  const coarse = viewport.coarse
-  const tab = activeTab(state)
-  const edit = uiStore.use((s) => s.bookmarkEdit)
+  const { width: windowWidth, coarse } = useViewport()
+  const root = useRef<HTMLDivElement>(null)
+  const measured = useElementWidth(root)
+  const twoPane = (measured || windowWidth) >= TWO_PANE_MIN_WIDTH
   const starChord = shortcutHint(state.shortcuts, 'bookmark.add', state.platform)
 
-  const [shownFolderId, setFolderId] = useState(() => {
-    const requested = uiStore.get().overlayFolderId
-    return requested && tree.get(requested)?.type === 'folder'
-      ? requested
+  const ref = parseInternalPageUrl(tab.url)
+  const urlFolder = ref?.query?.folder ?? ''
+  const urlQuery = ref?.query?.q ?? ''
+  // The URL's folder, when it names one that exists; the default one otherwise (a deleted
+  // shown folder – the menus, sync, another window – falls back the same way).
+  const folderId =
+    urlFolder && tree.get(urlFolder)?.type === 'folder'
+      ? urlFolder
       : initialFolder(tree, state.platform)
-  })
-  const [query, setQuery] = useState('')
+
   const [sort, setSort] = useState<ManagerSort>('manual')
   const [rawSelection, setSelection] = useState<ReadonlySet<string>>(() => new Set())
   const [rawAnchorId, setAnchorId] = useState<string | null>(null)
   const [rawFocusId, setFocusId] = useState<string | null>(null)
   const [rawRenamingId, setRenamingId] = useState<string | null>(null)
-  const [treeOpen, setTreeOpen] = useState(false)
-  // The list's toolbar gets its hairline only while rows are scrolled under it (v2 §9.7).
-  const [scrolled, setScrolled] = useState(false)
   const [selectMode, setSelectMode] = useState(false)
+  const [scrolled, setScrolled] = useState({ tree: false, list: false })
   const listRef = useRef<HTMLDivElement>(null)
+  const rowsRef = useRef<HTMLUListElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const pointerDown = useRef<{ x: number; y: number } | null>(null)
 
-  // Nodes deleted elsewhere (context menu, sync, another window) drop out of the view state;
-  // a deleted shown folder falls back to the default root.
-  const folderId =
-    tree.get(shownFolderId)?.type === 'folder'
-      ? shownFolderId
-      : defaultBookmarkFolderId(state.platform)
+  const clearSelection = useCallback((): void => {
+    setSelection(new Set())
+    setAnchorId(null)
+  }, [])
+
+  // The search and the URL, kept as one (`usePageSearch`); a new search – typed or brought by
+  // the URL – starts over with nothing picked. The folder rides along in the URL.
+  const { query, setQuery, text } = usePageSearch({
+    urlQuery,
+    push: (value) =>
+      run('page.navigate', {
+        tabId: tab.id,
+        section: null,
+        replace: true,
+        query: pageQuery(urlFolder, value)
+      }),
+    onAdopt: () => {
+      clearSelection()
+      setFocusId(null)
+      setRenamingId(null)
+    }
+  })
+  const searching = text.length > 0
+
+  // Nodes deleted elsewhere drop out of the view state.
   const selection = useMemo((): ReadonlySet<string> => {
     const live = [...rawSelection].filter((id) => tree.get(id))
     return live.length === rawSelection.size ? rawSelection : new Set(live)
@@ -110,13 +159,12 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   const anchorId = rawAnchorId && tree.get(rawAnchorId) ? rawAnchorId : null
   const renamingId = rawRenamingId && tree.get(rawRenamingId) ? rawRenamingId : null
 
-  const searching = query.trim().length > 0
   const rows = useMemo(
     () =>
       searching
-        ? searchBookmarks(tree, query, SEARCH_LIMIT)
+        ? searchBookmarks(tree, text, SEARCH_LIMIT)
         : sortManagerRows(tree.children(folderId), sort),
-    [tree, folderId, query, sort, searching]
+    [tree, folderId, text, sort, searching]
   )
   const rowIds = useMemo(() => rows.map((r) => r.id), [rows])
   useFlip(listRef, rowIds.join('|'))
@@ -133,11 +181,6 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   // ---------------------------------------------------------------------------
   // Selection
   // ---------------------------------------------------------------------------
-
-  const clearSelection = useCallback((): void => {
-    setSelection(new Set())
-    setAnchorId(null)
-  }, [])
 
   /** The selection in display order (moves and pastes keep the relative order). */
   const orderedSelection = useCallback(
@@ -158,7 +201,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     setSelection(next)
     setAnchorId(id)
     setFocusId(id)
-    // Deselecting the last row on a phone leaves selection mode.
+    // Deselecting the last row on a touch screen leaves selection mode.
     if (!next.size) setSelectMode(false)
   }
 
@@ -179,53 +222,32 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   // Navigation
   // ---------------------------------------------------------------------------
 
+  /** Show a folder: the URL moves (a history entry), and the list starts over. */
   const navigate = useCallback(
     (id: string): void => {
       if (tree.get(id)?.type !== 'folder') return
-      setFolderId(id)
-      setQuery('')
       setRenamingId(null)
       setSelection(new Set())
       setAnchorId(null)
       setFocusId(null)
-      setTreeOpen(false)
-      listRef.current?.scrollTo({ top: 0 })
+      setSelectMode(false)
+      run('page.navigate', {
+        tabId: tab.id,
+        section: null,
+        replace: false,
+        query: pageQuery(id, '')
+      })
     },
-    [tree]
+    [tree, tab.id]
   )
-  const navigateRef = useRef(navigate)
-  useEffect(() => {
-    navigateRef.current = navigate
-  }, [navigate])
 
-  // "Bookmark all tabs" and the import land in a folder and ask the manager (already open or
-  // not) to show it. The folder may reach the renderer a moment after the request does.
+  // A folder change (ours, back, forward, a link) scrolls the list to its top.
+  const lastFolder = useRef(folderId)
   useEffect(() => {
-    let last = uiStore.get().overlayFolderId
-    let pending: string | null = null
-    const has = (id: string): boolean =>
-      (browserStore.get().state?.bookmarks ?? []).some((n) => n.id === id && n.type === 'folder')
-    const apply = (): void => {
-      if (pending && has(pending)) {
-        const id = pending
-        pending = null
-        navigateRef.current(id)
-      }
-    }
-    const unsubscribeUi = uiStore.subscribe(() => {
-      const id = uiStore.get().overlayFolderId
-      if (id === last) return
-      last = id
-      pending = id
-      apply()
-    })
-    const unsubscribeBrowser = browserStore.subscribe(apply)
-    if (last && !has(last)) pending = last
-    return () => {
-      unsubscribeUi()
-      unsubscribeBrowser()
-    }
-  }, [])
+    if (lastFolder.current === folderId) return
+    lastFolder.current = folderId
+    listRef.current?.scrollTo({ top: 0 })
+  }, [folderId])
 
   const goUp = (): void => {
     const parent = tree.get(folderId)?.parentId
@@ -241,10 +263,18 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   const changeQuery = (value: string): void => {
     setQuery(value)
     setRenamingId(null)
+    if (!value.trim()) return
     setSelection(new Set())
     setAnchorId(null)
     setFocusId(null)
   }
+
+  useChromeShortcut('find.open', (request) => {
+    if (request.tabId !== tab.id) return false
+    searchRef.current?.focus()
+    searchRef.current?.select()
+    return true
+  })
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -255,8 +285,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
       navigate(node.id)
       return
     }
-    run('bookmark.open', { id: node.id, newTab: newTab || !tab, tabId: tab?.id ?? null })
-    if (!newTab) closeOverlay()
+    run('bookmark.open', { id: node.id, newTab, tabId: tab.id })
   }
 
   const openAll = (ids: string[]): void => {
@@ -278,19 +307,21 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     setAnchorId(next)
   }
 
+  /** Rename: a folder in place; a bookmark in the frame's Edit dialog (#271). */
   const rename = (node: BookmarkNode): void => {
     if (isBookmarkRoot(node.id)) return
     if (node.type === 'folder') setRenamingId(node.id)
     else
-      uiStore.set({
-        bookmarkEdit: { id: node.id, parentId: node.parentId ?? folderId, type: 'url' }
-      })
+      void openBookmarkChrome(
+        { bookmarkEdit: { id: node.id, parentId: node.parentId ?? folderId, type: 'url' } },
+        tab.id
+      )
   }
 
   const renamed = (node: BookmarkNode, title: string): void => {
     setRenamingId(null)
     if (title && title !== node.title) run('bookmark.update', { id: node.id, title })
-    listRef.current?.focus({ preventScroll: true })
+    rowsRef.current?.focus({ preventScroll: true })
   }
 
   const createFolder = useCallback(
@@ -310,7 +341,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   )
 
   const addBookmark = (): void =>
-    uiStore.set({ bookmarkEdit: { id: null, parentId: folderId, type: 'url' } })
+    void openBookmarkChrome({ bookmarkEdit: { id: null, parentId: folderId, type: 'url' } }, tab.id)
 
   const pasteIndex = (): number | undefined => {
     if (!canReorder || !focusId) return undefined
@@ -318,7 +349,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     return node && node.parentId === folderId ? node.index + 1 : undefined
   }
 
-  const contextMenu = (e: React.MouseEvent, node: BookmarkNode | null): void => {
+  const contextMenu = (e: MouseEvent, node: BookmarkNode | null): void => {
     e.preventDefault()
     e.stopPropagation()
     let ids: string[] = []
@@ -332,45 +363,57 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     run('bookmark.contextMenu', { ids, folderId, ...contextMenuAnchor(e) })
   }
 
+  /** The row's ⋮ and the Menu key: the row's menu hung from the button, or from the row. */
+  const rowMenu = (node: BookmarkNode, anchor: Element, keyboard: boolean): void => {
+    const ids = selection.has(node.id) ? orderedSelection() : [node.id]
+    if (!selection.has(node.id)) selectOnly(node.id)
+    const box = anchor.getBoundingClientRect()
+    run('bookmark.contextMenu', {
+      ids,
+      folderId,
+      x: Math.round(box.right),
+      y: Math.round(box.bottom),
+      keyboard
+    })
+  }
+
   const importBookmarks = (): void => {
     void cmd('bookmark.import', undefined).then((result) => {
       if (result) navigate(result.folderId)
     })
   }
 
-  // The context menu's "Rename" / "Add New Folder" arrive from the main process as edit requests;
-  // URL edits are a dialog (rendered below), folder edits happen in place.
-  const createFolderRef = useRef(createFolder)
-  useEffect(() => {
-    createFolderRef.current = createFolder
-  }, [createFolder])
+  // The menus' "Rename…" on a folder and "Add New Folder" arrive from the main process as edit
+  // requests (`bookmark.edit`, set on the store by `openBookmarkChrome`): a new folder is made
+  // and named in place, a folder in view is renamed in place; anything else – a bookmark, a
+  // folder the list does not show (the bar's, while this page is up) – is the frame's dialog.
   useEffect(() => {
     const unsubscribe = uiStore.subscribe(() => {
       const request = uiStore.get().bookmarkEdit
       if (!request || request.type !== 'folder') return
-      uiStore.set({ bookmarkEdit: null })
+      if (request.id && !rowIds.includes(request.id)) return
+      closeBookmarkChrome({ bookmarkEdit: null }, { keepFocus: true })
       if (request.id) setRenamingId(request.id)
-      else createFolderRef.current(request.parentId)
+      else createFolder(request.parentId)
     })
-    return () => {
-      unsubscribe()
-      uiStore.set({ bookmarkEdit: null })
-    }
-  }, [])
+    return unsubscribe
+  }, [rowIds, createFolder])
 
   // Keyboard navigation starts in the list; the search takes over once you type.
   useEffect(() => {
-    if (!coarse) listRef.current?.focus({ preventScroll: true })
-  }, [coarse])
+    if (!coarse && !urlQuery) rowsRef.current?.focus({ preventScroll: true })
+    // Only on mount: a later search or folder must not pull the focus from the field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Row events
   // ---------------------------------------------------------------------------
 
-  const onRowPointerDown = (e: React.PointerEvent<HTMLDivElement>, node: BookmarkNode): void => {
+  const onRowPointerDown = (e: PointerEvent<HTMLLIElement>, node: BookmarkNode): void => {
     pointerDown.current = { x: e.clientX, y: e.clientY }
     if (e.pointerType !== 'mouse' || e.button !== 0 || renamingId === node.id) return
-    if ((e.target as HTMLElement).closest('input')) return
+    if ((e.target as HTMLElement).closest('input, button')) return
     let ids: string[]
     if (selection.has(node.id)) ids = orderedSelection()
     else {
@@ -381,13 +424,14 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     startDrag(e, topLevelSelection(tree, ids), e.currentTarget)
   }
 
-  const movedSinceDown = (e: React.MouseEvent): boolean => {
+  const movedSinceDown = (e: MouseEvent): boolean => {
     const down = pointerDown.current
     return Boolean(down && Math.hypot(e.clientX - down.x, e.clientY - down.y) >= DRAG_THRESHOLD)
   }
 
-  const onRowClick = (e: React.MouseEvent<HTMLDivElement>, node: BookmarkNode): void => {
+  const onRowClick = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (renamingId === node.id || movedSinceDown(e)) return
+    if ((e.target as HTMLElement).closest('input, button')) return
     if (coarse) {
       if (selectMode || selection.size) toggleSelected(node.id)
       else open(node, false)
@@ -398,21 +442,21 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     else selectOnly(node.id)
   }
 
-  const onRowDoubleClick = (e: React.MouseEvent<HTMLDivElement>, node: BookmarkNode): void => {
+  const onRowDoubleClick = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (coarse || renamingId === node.id) return
-    if ((e.target as HTMLElement).closest('input')) return
+    if ((e.target as HTMLElement).closest('input, button')) return
     open(node, e.ctrlKey || e.metaKey)
   }
 
-  const onRowAuxClick = (e: React.MouseEvent<HTMLDivElement>, node: BookmarkNode): void => {
+  const onRowAuxClick = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (e.button !== 1) return
     e.preventDefault()
     if (node.type === 'url') run('bookmark.open', { id: node.id, newTab: true, tabId: null })
   }
 
-  const onRowContextMenu = (e: React.MouseEvent<HTMLDivElement>, node: BookmarkNode): void => {
+  const onRowContextMenu = (e: MouseEvent<HTMLLIElement>, node: BookmarkNode): void => {
     if (renamingId === node.id) return
-    // A long press on a phone selects (selection mode) and offers the menu for the selection.
+    // A long press on a touch screen selects (selection mode) and offers the menu for the row.
     if (coarse && !selection.has(node.id)) {
       setSelectMode(true)
       toggleSelected(node.id)
@@ -428,7 +472,7 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
   // Keyboard
   // ---------------------------------------------------------------------------
 
-  const onListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+  const onListKeyDown = (e: KeyboardEvent<HTMLUListElement>): void => {
     if (renamingId) return
     if ((e.target as HTMLElement).closest('input, textarea')) return
     const mod = e.ctrlKey || e.metaKey
@@ -475,11 +519,6 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         }
         return
       case 'ArrowLeft':
-        if (!searching) {
-          e.preventDefault()
-          goUp()
-        }
-        return
       case 'Backspace':
         if (!searching) {
           e.preventDefault()
@@ -507,6 +546,20 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
         if (focused) {
           e.preventDefault()
           rename(focused)
+        }
+        return
+      case 'ContextMenu':
+        if (focused) {
+          e.preventDefault()
+          const row = document.getElementById(`bm-row-${focused.id}`)
+          if (row) rowMenu(focused, row, true)
+        }
+        return
+      case 'F10':
+        if (e.shiftKey && focused) {
+          e.preventDefault()
+          const row = document.getElementById(`bm-row-${focused.id}`)
+          if (row) rowMenu(focused, row, true)
         }
         return
       case 'Escape':
@@ -552,16 +605,13 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
     }
   }
 
-  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+  const onSearchKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (!(e.target as HTMLElement).matches('input')) return
     if (e.key === 'ArrowDown' || (e.key === 'Enter' && rowIds.length)) {
       e.preventDefault()
       const first = rowIds[0]
       if (first) selectOnly(first)
-      listRef.current?.focus({ preventScroll: true })
-    } else if (e.key === 'Escape' && query) {
-      e.preventDefault()
-      e.stopPropagation()
-      changeQuery('')
+      rowsRef.current?.focus({ preventScroll: true })
     }
   }
 
@@ -571,171 +621,179 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
 
   const current = tree.get(folderId)
   const lifted = new Set(drag && !drag.settling ? drag.ids : [])
-  const search = (
-    <div className={cn('relative', phone ? 'w-full' : 'w-[260px]')}>
-      <input
-        ref={searchRef}
-        type="search"
-        placeholder="Search bookmarks"
-        aria-label="Search bookmarks"
-        value={query}
-        spellCheck={false}
-        autoComplete="off"
-        onChange={(e) => changeQuery(e.target.value)}
-        onKeyDown={onSearchKeyDown}
-        className={cn('zen-field text-[15px]', phone ? 'h-10' : 'h-8', query && 'pr-8')}
-      />
-      {query && (
-        <button
-          type="button"
-          aria-label="Clear search"
-          className="absolute top-1/2 right-1 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-[4px] opacity-60 hover:opacity-100"
-          onClick={() => {
-            changeQuery('')
-            searchRef.current?.focus()
-          }}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      )}
-    </div>
-  )
-
-  const overflow = (
-    <OverflowMenu
-      sort={sort}
-      onSort={setSort}
-      onAddBookmark={addBookmark}
-      onAddFolder={() => createFolder(folderId)}
-      onImport={importBookmarks}
-      onExport={() => run('bookmark.export', undefined)}
-    />
-  )
-
   const count = rows.length
   const summary = searching
     ? `${count === SEARCH_LIMIT ? `${count}+` : count} ${count === 1 ? 'result' : 'results'}`
     : `${count} ${count === 1 ? 'item' : 'items'}`
+  const selecting = coarse && (selectMode || selection.size > 0)
+
+  const actions = selecting ? (
+    <>
+      <span className="zen-page-title-count" aria-live="polite">
+        {selection.size ? `${selection.size} selected` : 'Tap items to select'}
+      </span>
+      <button
+        type="button"
+        className="zen-v2-icon-button"
+        aria-label="Open all"
+        disabled={!selection.size}
+        onClick={() => openAll(orderedSelection())}
+      >
+        <ExternalLink aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="zen-v2-icon-button"
+        aria-label="Delete"
+        disabled={!selection.size}
+        onClick={() => remove(orderedSelection())}
+      >
+        <Trash2 aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="zen-v2-icon-button"
+        aria-label="More"
+        aria-haspopup="menu"
+        disabled={!selection.size}
+        onClick={(e) => {
+          const box = e.currentTarget.getBoundingClientRect()
+          run('bookmark.contextMenu', {
+            ids: orderedSelection(),
+            folderId,
+            x: Math.round(box.right),
+            y: Math.round(box.bottom),
+            keyboard: e.detail === 0
+          })
+        }}
+      >
+        <Ellipsis aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="zen-v2-icon-button"
+        aria-label="Done"
+        onClick={() => {
+          clearSelection()
+          setSelectMode(false)
+        }}
+      >
+        <X aria-hidden />
+      </button>
+    </>
+  ) : (
+    <>
+      <button type="button" className="zen-v2-button" onClick={addBookmark}>
+        Add bookmark
+      </button>
+      <button type="button" className="zen-v2-button" onClick={() => createFolder(folderId)}>
+        Add folder
+      </button>
+      <OverflowMenu
+        sort={sort}
+        onSort={setSort}
+        onImport={importBookmarks}
+        onExport={() => run('bookmark.export', undefined)}
+      />
+    </>
+  )
+
+  const heading = searching ? (
+    <h2 id={LIST_HEADING_ID} className="zen-page-heading-text">
+      Results for “{text}”
+    </h2>
+  ) : (
+    <Breadcrumb
+      tree={tree}
+      folderId={folderId}
+      onOpen={navigate}
+      dropFolderId={dropFolderId}
+      headingId={LIST_HEADING_ID}
+    />
+  )
 
   return (
-    <>
-      <OverlayShell
-        title="Bookmarks"
-        variant="full"
-        className="zen-bm-page"
-        testId="bookmarks-manager"
-        actions={
-          <div className="flex items-center gap-1.5">
-            {tab && !tab.url.startsWith('zen://') && (
-              <button
-                type="button"
-                className="zen-toolbar-button h-7 w-7"
-                title={tab.bookmarked ? 'Edit bookmark for this page' : 'Bookmark this page'}
-                aria-label={tab.bookmarked ? 'Edit bookmark for this page' : 'Bookmark this page'}
-                onClick={() => run('bookmark.star', { tabId: tab.id })}
-              >
-                <Star className="h-4 w-4" fill={tab.bookmarked ? 'currentColor' : 'none'} />
-              </button>
-            )}
-            {overflow}
-          </div>
-        }
+    <div
+      ref={root}
+      className="zen-page zen-bm-page"
+      data-testid="bookmarks-manager"
+      data-layout={twoPane ? 'two-pane' : 'one-pane'}
+      data-folder={searching ? undefined : folderId}
+    >
+      <header
+        className="zen-page-header zen-bm-header"
+        data-scrolled={scrolled.list || scrolled.tree || undefined}
+        onKeyDown={onSearchKeyDown}
       >
-        <div className={cn('flex h-full min-h-0', phone ? 'flex-col' : 'flex-row')}>
-          {(!phone || treeOpen) && (
-            <aside
-              className={cn(
-                'shrink-0 overflow-y-auto',
-                phone ? 'max-h-[40%] px-2 pt-2' : 'w-[236px] p-2 pr-0'
-              )}
-            >
-              <FolderTree
-                tree={tree}
-                currentId={searching ? '' : folderId}
-                onOpen={navigate}
-                onContextMenu={(id, e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  run('bookmark.contextMenu', { ids: [id], folderId: id, ...contextMenuAnchor(e) })
-                }}
-                dropFolderId={dropFolderId}
-              />
-            </aside>
-          )}
-
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {phone && <div className="px-3 pt-3 pb-1">{search}</div>}
-            {!phone && <div className="px-3 pt-2">{search}</div>}
-            <div
-              data-scrolled={scrolled || undefined}
-              className={cn(
-                'zen-bm-toolbar flex shrink-0 items-center gap-1.5 px-3',
-                phone ? 'h-11' : 'h-10'
-              )}
-            >
-              {phone && (
-                <button
-                  type="button"
-                  className={cn(
-                    'zen-toolbar-button h-8 w-8 shrink-0',
-                    treeOpen && 'bg-[var(--zen-element-bg-active)]'
-                  )}
-                  aria-label="Folders"
-                  aria-pressed={treeOpen}
-                  onClick={() => setTreeOpen((v) => !v)}
-                >
-                  <FolderTreeIcon className="h-4 w-4" />
-                </button>
-              )}
-              {searching ? (
-                <span className="truncate text-[15px] font-semibold">
-                  Results for “{query.trim()}”
-                </span>
-              ) : (
-                <Breadcrumb
-                  tree={tree}
-                  folderId={folderId}
-                  onOpen={navigate}
-                  dropFolderId={dropFolderId}
-                  className="min-w-0 flex-1"
-                />
-              )}
-              <span className="zen-bm-dim ml-auto shrink-0 text-[13px] tabular-nums">
-                {summary}
-              </span>
-              {coarse && !selectMode && count > 0 && (
-                <button
-                  type="button"
-                  className="zen-toolbar-button h-8 w-8 shrink-0"
-                  aria-label="Select items"
-                  onClick={() => setSelectMode(true)}
-                >
-                  <ListChecks className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-
-            <div
-              ref={listRef}
-              role="listbox"
-              aria-multiselectable
-              aria-label={searching ? 'Search results' : (current?.title ?? 'Bookmarks')}
-              aria-activedescendant={focusId ? `bm-row-${focusId}` : undefined}
-              tabIndex={0}
-              data-bm-drop={searching ? undefined : `list:${folderId}`}
-              data-target={target?.position === 'append' || undefined}
-              className="zen-bm-list relative min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none"
-              onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
-              onKeyDown={onListKeyDown}
-              onClick={(e) => {
-                if (e.target === e.currentTarget) clearSelection()
+        <PageTitleBlock title="Bookmarks" actions={actions} />
+        <PageSearchField
+          value={query}
+          onChange={changeQuery}
+          placeholder="Search bookmarks"
+          field={searchRef}
+          testId="bookmarks-search"
+        />
+      </header>
+      <div className="zen-bm-panes">
+        {twoPane && (
+          <nav
+            className="zen-bm-nav"
+            aria-label="Folders"
+            onScroll={(e) => {
+              const top = e.currentTarget.scrollTop > 0
+              setScrolled((s) => (s.tree === top ? s : { ...s, tree: top }))
+            }}
+          >
+            <FolderTree
+              tree={tree}
+              currentId={searching ? '' : folderId}
+              onOpen={navigate}
+              onContextMenu={(id, e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                run('bookmark.contextMenu', { ids: [id], folderId: id, ...contextMenuAnchor(e) })
               }}
-              onContextMenu={(e) => {
-                if (e.target === e.currentTarget) contextMenu(e, null)
-              }}
+              dropFolderId={dropFolderId}
+            />
+          </nav>
+        )}
+        <div
+          ref={listRef}
+          className="zen-bm-list"
+          data-bm-drop={searching ? undefined : `list:${folderId}`}
+          data-target={target?.position === 'append' || undefined}
+          onScroll={(e) => {
+            const top = e.currentTarget.scrollTop > 0
+            setScrolled((s) => (s.list === top ? s : { ...s, list: top }))
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) clearSelection()
+          }}
+          onContextMenu={(e) => {
+            if (e.target === e.currentTarget) contextMenu(e, null)
+          }}
+        >
+          <div className="zen-page-body">
+            <PageGroup
+              headingElement={heading}
+              headingId={LIST_HEADING_ID}
+              aside={summary}
+              control={
+                coarse && !selectMode && count > 0 ? (
+                  <button
+                    type="button"
+                    className="zen-v2-icon-button"
+                    aria-label="Select items"
+                    onClick={() => setSelectMode(true)}
+                  >
+                    <ListChecks aria-hidden />
+                  </button>
+                ) : undefined
+              }
+              data-testid="bookmarks-list"
             >
               {rows.length === 0 ? (
-                <EmptyNote>
+                <PageEmpty testId="bookmarks-empty">
                   {searching
                     ? 'No matching bookmarks'
                     : current && isBookmarkRoot(current.id) && tree.size <= 3
@@ -743,9 +801,24 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                         ? `Press ${starChord} on any page to bookmark it`
                         : 'Bookmark any page from the star in the address bar'
                       : 'This folder is empty'}
-                </EmptyNote>
+                </PageEmpty>
               ) : (
-                <div className="flex flex-col">
+                <ul
+                  ref={rowsRef}
+                  role="listbox"
+                  aria-multiselectable
+                  aria-labelledby={LIST_HEADING_ID}
+                  aria-activedescendant={focusId ? `bm-row-${focusId}` : undefined}
+                  tabIndex={0}
+                  className="zen-page-rows zen-bm-rows"
+                  onKeyDown={onListKeyDown}
+                  onClick={(e) => {
+                    if (e.target === e.currentTarget) clearSelection()
+                  }}
+                  onContextMenu={(e) => {
+                    if (e.target === e.currentTarget) contextMenu(e, null)
+                  }}
+                >
                   {rows.map((node) => (
                     <BookmarkRow
                       key={node.id}
@@ -757,63 +830,45 @@ export function BookmarkManager({ state }: { state: UIState }): JSX.Element {
                       renaming={renamingId === node.id}
                       lifted={lifted.has(node.id)}
                       dropInto={target?.position === 'into' && target.rowId === node.id}
-                      compact={coarse}
                       onPointerDown={onRowPointerDown}
                       onClick={onRowClick}
                       onDoubleClick={onRowDoubleClick}
                       onAuxClick={onRowAuxClick}
                       onContextMenu={onRowContextMenu}
+                      onMenu={(e, n) => rowMenu(n, e.currentTarget, e.detail === 0)}
                       onRenamed={renamed}
                     />
                   ))}
-                </div>
+                </ul>
               )}
-              <DropIndicator target={target} container={listRef} />
-            </div>
-
-            {coarse && (selectMode || selection.size > 0) && (
-              <SelectionBar
-                count={selection.size}
-                onOpenAll={() => openAll(orderedSelection())}
-                onDelete={() => remove(orderedSelection())}
-                onMore={(e) =>
-                  run('bookmark.contextMenu', {
-                    ids: orderedSelection(),
-                    folderId,
-                    x: e.clientX,
-                    y: e.clientY
-                  })
-                }
-                onDone={() => {
-                  clearSelection()
-                  setSelectMode(false)
-                }}
-              />
-            )}
-          </section>
+            </PageGroup>
+          </div>
+          <DropIndicator target={target} container={listRef} />
         </div>
-      </OverlayShell>
+      </div>
 
       {drag && (
         <ChromePortal>
           <DragGhost drag={drag} tree={tree} ghostRef={ghostRef} />
         </ChromePortal>
       )}
-      {/* The manager's own edit dialog: over the page it is, in the frame's box, on its own host. */}
-      <FrameDialogHost>
-        {edit?.type === 'url' && (
-          <EditBookmarkDialog key={edit.id ?? 'new'} state={state} edit={edit} />
-        )}
-      </FrameDialogHost>
-    </>
+    </div>
   )
+}
+
+/** The page's URL query: the folder first, the search after it – one order, one URL per state. */
+function pageQuery(folder: string, q: string): Record<string, string> | undefined {
+  const query: Record<string, string> = {}
+  if (folder) query.folder = folder
+  if (q) query.q = q
+  return Object.keys(query).length ? query : undefined
 }
 
 // ---------------------------------------------------------------------------
 // Pieces
 // ---------------------------------------------------------------------------
 
-/** What travels under the pointer: the first picked row and how many came along. */
+/** What travels under the pointer: the first picked row and how many came along (§9.4). */
 function DragGhost({
   drag,
   tree,
@@ -841,75 +896,15 @@ function DragGhost({
       style={{ width: drag.width }}
     >
       <div
-        className="zen-bm-lift absolute flex h-8 items-center gap-2 rounded-[4px] px-2.5"
+        className="zen-bm-lift zen-bm-drag-ghost"
         style={{ ...beside, top: drag.dy - 16, maxWidth: GHOST_MAX_WIDTH }}
       >
-        <BookmarkIcon node={first} className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[13px]">{nodeLabel(first)}</span>
+        <BookmarkIcon node={first} className="zen-bm-drag-ghost-icon" />
+        <span className="zen-bm-drag-ghost-label">{nodeLabel(first)}</span>
         {drag.ids.length > 1 && (
-          <span className="rounded-full bg-[var(--v2-accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--v2-on-accent)] tabular-nums">
-            {drag.ids.length}
-          </span>
+          <span className="zen-v2-badge zen-bm-drag-ghost-count">{drag.ids.length}</span>
         )}
       </div>
-    </div>
-  )
-}
-
-/** Phone selection mode: the actions for the picked rows. */
-function SelectionBar({
-  count,
-  onOpenAll,
-  onDelete,
-  onMore,
-  onDone
-}: {
-  count: number
-  onOpenAll: () => void
-  onDelete: () => void
-  onMore: (e: React.MouseEvent) => void
-  onDone: () => void
-}): JSX.Element {
-  return (
-    <div className="zen-animate-in flex h-12 shrink-0 items-center gap-1 px-3 shadow-[0_-1px_0_var(--zen-border)]">
-      <span className="flex-1 text-[13px] font-medium">
-        {count ? `${count} selected` : 'Tap items to select'}
-      </span>
-      <button
-        type="button"
-        className="zen-toolbar-button h-9 w-9"
-        aria-label="Open all"
-        disabled={!count}
-        onClick={onOpenAll}
-      >
-        <ExternalLink className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-9 w-9"
-        aria-label="Delete"
-        disabled={!count}
-        onClick={onDelete}
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-9 w-9"
-        aria-label="More"
-        disabled={!count}
-        onClick={onMore}
-      >
-        <Ellipsis className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className="zen-toolbar-button h-9 w-9"
-        aria-label="Done"
-        onClick={onDone}
-      >
-        <X className="h-4 w-4" />
-      </button>
     </div>
   )
 }
@@ -917,21 +912,12 @@ function SelectionBar({
 interface OverflowProps {
   sort: ManagerSort
   onSort: (sort: ManagerSort) => void
-  onAddBookmark: () => void
-  onAddFolder: () => void
   onImport: () => void
   onExport: () => void
 }
 
-/** The manager's own menu: new items, the view's sort order, import and export. */
-function OverflowMenu({
-  sort,
-  onSort,
-  onAddBookmark,
-  onAddFolder,
-  onImport,
-  onExport
-}: OverflowProps): JSX.Element {
+/** The page's own menu (§9.3 icon button, §9.20 menu): the view's sort order, import and export. */
+function OverflowMenu({ sort, onSort, onImport, onExport }: OverflowProps): JSX.Element {
   // Open, and whether the keyboard opened it: then the first item takes focus; a pointer leaves
   // focus on the menu itself so the arrows start from the top (v2 draft §9.22).
   const [open, setOpen] = useState<'keyboard' | 'pointer' | null>(null)
@@ -949,7 +935,7 @@ function OverflowMenu({
     const first = menu?.querySelector<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')
     if (open === 'keyboard') first?.focus()
     else menu?.focus()
-    const onDown = (e: MouseEvent): void => {
+    const onDown = (e: globalThis.MouseEvent): void => {
       if (!ref.current?.contains(e.target as Node)) setOpen(null)
     }
     window.addEventListener('mousedown', onDown, true)
@@ -980,8 +966,8 @@ function OverflowMenu({
 
   // Arrow keys walk the rows (from the top when the menu itself has focus), Home and End jump,
   // Tab wraps through them and a letter goes to or runs the row it names (lib/menuKeys.ts);
-  // Escape is trapped above so it closes the menu, not the manager.
-  const onMenuKeyDown = (e: React.KeyboardEvent): void => {
+  // Escape is trapped above so it closes the menu and nothing else.
+  const onMenuKeyDown = (e: KeyboardEvent): void => {
     const rows = [...(ref.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])]
     handleMenuKey(e, rows, { mnemonics: true, tab: true })
   }
@@ -991,14 +977,14 @@ function OverflowMenu({
       <button
         ref={buttonRef}
         type="button"
-        className={cn('zen-toolbar-button h-7 w-7', open && 'bg-[var(--zen-element-bg-active)]')}
+        className={cn('zen-v2-icon-button', open && 'zen-bm-menu-open')}
         aria-label="More options"
         aria-haspopup="menu"
         aria-expanded={open !== null}
         // A click's `detail` is its count; Enter and Space report 0.
         onClick={(e) => setOpen((v) => (v ? null : e.detail === 0 ? 'keyboard' : 'pointer'))}
       >
-        <Ellipsis className="h-4 w-4" />
+        <Ellipsis aria-hidden />
       </button>
       {open && (
         <div
@@ -1007,9 +993,6 @@ function OverflowMenu({
           className="zen-bm-menu zen-animate-pop absolute top-[calc(100%+6px)] right-0 z-20 outline-none"
           onKeyDown={onMenuKeyDown}
         >
-          {item('Add New Bookmark…', <Plus className="h-4 w-4" />, onAddBookmark)}
-          {item('Add New Folder', <FolderPlus className="h-4 w-4" />, onAddFolder)}
-          <div className="zen-bm-menu-sep" />
           <div className="zen-bm-menu-heading">Sort by</div>
           {item(
             'Manual Order',

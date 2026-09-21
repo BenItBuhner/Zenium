@@ -14,7 +14,7 @@
 // a copy of any value; `v2Tokens.test.ts` lists the page among the v2 surfaces.
 import chromeStylesheet from '../renderer/src/assets/main.css?raw'
 import { PHONE_MAX_WIDTH } from './formFactor'
-import type { CertificateDetails, OverlayKind, Platform as PlatformOs } from './types'
+import type { CertificateDetails, Platform as PlatformOs } from './types'
 import { SAFE_BROWSING_THREAT_LABELS, type SafeBrowsingThreat } from './privacy'
 import { INTERSTITIAL_MESSAGE_KEY, type InterstitialAction } from './interstitial'
 import { isCertificateError } from './siteInfo'
@@ -884,26 +884,6 @@ export function parseZenUrl(rawUrl: string): URL | null {
   } catch {
     return null
   }
-}
-
-/**
- * `zen://` addresses that are chrome surfaces rather than documents, and the overlay each opens.
- * Settings is not one of them any more: it is an internal page that opens as a tab
- * (`shared/internalPages.ts`, `core/pages.ts`), or as its overlay on hosts without page tabs.
- */
-const OVERLAY_PAGES: Record<string, OverlayKind> = {
-  bookmarks: 'bookmarks',
-  downloads: 'downloads',
-  history: 'history'
-}
-
-/**
- * The chrome overlay a `zen://` address stands for (`zen://history` → the history page), or
- * `null` for a real page. Navigating to one of these opens the overlay instead of loading.
- */
-export function overlayForUrl(rawUrl: string): OverlayKind | null {
-  const url = parseZenUrl(rawUrl)
-  return url ? (OVERLAY_PAGES[url.hostname] ?? null) : null
 }
 
 /** HTML for any `zen://` URL (unknown pages fall back to the blank page). */

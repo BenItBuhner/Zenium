@@ -2013,7 +2013,10 @@ export class Menus {
         { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) },
         {
           label: 'Bookmark Manager',
-          click: () => this.browser.emit('overlay.open', { kind: 'bookmarks', folderId }, win)
+          click: () =>
+            this.browser.pages.open('bookmarks', null, win, undefined, {
+              query: folderId ? { folder: folderId } : undefined
+            })
         }
       )
     }
@@ -2107,7 +2110,11 @@ export class Menus {
   // History page
   // ---------------------------------------------------------------------------
 
-  /** Context menu of one visit on the history page. */
+  /**
+   * Context menu of one visit on the history page. "Select" picks the row on the page (the page's
+   * selection is a mode entered from here, by Ctrl/Shift-click or Ctrl+A; the checkboxes show
+   * while it lasts) so several can be removed at once.
+   */
   showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
@@ -2133,6 +2140,7 @@ export class Menus {
         { type: 'separator' },
         { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
         { type: 'separator' },
+        { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
         { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
         {
           label: 'Forget About This Page',
@@ -2140,10 +2148,12 @@ export class Menus {
         },
         { type: 'separator' },
         {
+          // Chrome's "More from this site": the History page searching the host
+          // (`chrome://history/?q=<host>`), in the tab the window has or a new one.
           label: 'More from This Site',
           enabled: Boolean(host),
           click: () =>
-            this.browser.emit('overlay.open', { kind: 'history', section: `host:${host}` }, win)
+            this.browser.pages.open('history', null, win, undefined, { query: { q: host ?? '' } })
         }
       ],
       win,
@@ -2289,7 +2299,7 @@ export class Menus {
         { type: 'separator' },
         {
           label: 'Show Full History',
-          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+          click: () => this.browser.pages.open('history', undefined, win)
         }
       ],
       win,
@@ -2455,7 +2465,7 @@ export class Menus {
             {
               label: 'Show Bookmarks',
               action: 'bookmark.sidebar',
-              click: () => this.browser.emit('overlay.open', { kind: 'bookmarks' }, win)
+              click: () => this.browser.pages.open('bookmarks', undefined, win)
             },
             ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
             { type: 'separator' },
@@ -2479,14 +2489,14 @@ export class Menus {
         {
           label: 'History',
           action: 'history.sidebar',
-          click: () => this.browser.emit('overlay.open', { kind: 'history' }, win)
+          click: () => this.browser.pages.open('history', undefined, win)
         },
         // Phone slot: "Recent Tabs" (tabs open on other devices, from sync) goes here.
         ...desktop(this.recentlyClosedSubmenu(win)),
         {
           label: 'Downloads',
           action: 'downloads.open',
-          click: () => this.browser.emit('overlay.open', { kind: 'downloads' }, win)
+          click: () => this.browser.pages.open('downloads', undefined, win)
         },
         ...when(caps.passwords, {
           label: 'Passwords',

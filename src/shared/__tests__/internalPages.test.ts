@@ -13,6 +13,8 @@ import {
   matchSections,
   matchesQuery,
   namesInternal,
+  pageForOverlayKind,
+  pageOpensAsTab,
   parseInternalPageUrl,
   refusedFromDocument,
   sameInternalPage
@@ -24,7 +26,14 @@ const ALL = new Proxy({} as HostCapabilities, { get: () => true })
 
 describe('the page registry', () => {
   it('registers Settings with stable section ids in nav order', () => {
-    expect(Object.keys(INTERNAL_PAGES)).toEqual(['settings', 'print', 'pdf'])
+    expect(Object.keys(INTERNAL_PAGES)).toEqual([
+      'settings',
+      'history',
+      'bookmarks',
+      'downloads',
+      'print',
+      'pdf'
+    ])
     expect(INTERNAL_PAGES.settings.title).toBe('Settings')
     // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
@@ -66,6 +75,63 @@ describe('the page registry', () => {
     for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9-]*$/)
   })
 
+  it('registers History, Bookmarks and Downloads as singleton chrome pages of the desktop and tablet layouts (v2 §10.1)', () => {
+    for (const [id, title, glyph] of [
+      ['history', 'History', 'history'],
+      ['bookmarks', 'Bookmarks', 'star'],
+      ['downloads', 'Downloads', 'download']
+    ] as const) {
+      expect(INTERNAL_PAGES[id]).toMatchObject({
+        id,
+        title,
+        render: 'chrome',
+        singleton: true,
+        glyph,
+        // Nothing of the browser's own is bookmarked, and a page has no lock or site chip.
+        pill: { showStar: false },
+        splittable: false,
+        // The phone keeps its panel; the same kind is what a host without page tabs opens.
+        overlay: id,
+        layouts: ['desktop', 'tablet'],
+        // The day groups and the folder tree are in the page, not sections of the address.
+        sections: []
+      })
+    }
+  })
+
+  it('opens a chrome page as a tab where the host draws page tabs and the layout is one of its own', () => {
+    const tabs = { pageTabs: true }
+    const none = { pageTabs: false }
+    for (const id of ['history', 'bookmarks', 'downloads'] as const) {
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], tabs, 'desktop')).toBe(true)
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], tabs, 'tablet')).toBe(true)
+      // The phone's layout is left out: the page opens as its overlay, page tabs or not.
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], tabs, 'phone')).toBe(false)
+      expect(pageOpensAsTab(INTERNAL_PAGES[id], none, 'desktop')).toBe(false)
+    }
+    // Settings names no layouts: a tab on every one of them, given page tabs.
+    expect(pageOpensAsTab(INTERNAL_PAGES.settings, tabs, 'phone')).toBe(true)
+    expect(pageOpensAsTab(INTERNAL_PAGES.settings, none, 'desktop')).toBe(false)
+    // A document page is a tab whatever the host.
+    expect(pageOpensAsTab(INTERNAL_PAGES.pdf, none, 'phone')).toBe(true)
+  })
+
+  it('names the page an overlay kind stands for: a page’s own overlay, or a Settings section by id', () => {
+    expect(pageForOverlayKind('history')).toEqual({ id: 'history', section: null })
+    expect(pageForOverlayKind('bookmarks')).toEqual({ id: 'bookmarks', section: null })
+    expect(pageForOverlayKind('downloads')).toEqual({ id: 'downloads', section: null })
+    expect(pageForOverlayKind('settings')).toEqual({ id: 'settings', section: null })
+    expect(pageForOverlayKind('shortcuts')).toEqual({ id: 'settings', section: 'shortcuts' })
+    expect(pageForOverlayKind('sync')).toEqual({ id: 'settings', section: 'sync' })
+    // Overlays in their own right stay overlays – the Boosts and Passwords panels too, although
+    // a Settings category shares their id.
+    expect(pageForOverlayKind('theme')).toBeNull()
+    expect(pageForOverlayKind('space-editor')).toBeNull()
+    expect(pageForOverlayKind('boosts')).toBeNull()
+    expect(pageForOverlayKind('passwords')).toBeNull()
+    expect(pageForOverlayKind('addons')).toBeNull()
+  })
+
   it('gates the print preview and the PDF viewer on the host that can show them', () => {
     // Print is Chrome's tab-modal preview: a chrome-drawn singleton over the page, never split.
     expect(INTERNAL_PAGES.print).toMatchObject({
@@ -102,10 +168,39 @@ describe('parsing page addresses', () => {
       id: 'settings',
       section: 'privacy'
     })
+    // A query is the page's own parameters; a fragment is dropped.
     expect(parseInternalPageUrl('zenium://settings/look?from=menu#top')).toEqual({
+      id: 'settings',
+      section: 'look',
+      query: { from: 'menu' }
+    })
+    expect(parseInternalPageUrl('zen://settings/look?#top')).toEqual({
       id: 'settings',
       section: 'look'
     })
+  })
+
+  it('carries a page’s parameters as the address’s query, never in the alias the pill shows', () => {
+    // chrome://history/?q=, chrome://bookmarks/?id=: what "More from This Site", the omnibox's
+    // @history / @bookmarks scopes and the bar's "Bookmark Manager" open the page with.
+    expect(parseInternalPageUrl('zen://history?q=example.com')).toEqual({
+      id: 'history',
+      section: null,
+      query: { q: 'example.com' }
+    })
+    expect(parseInternalPageUrl('zenium://bookmarks?folder=f1&q=zen')).toEqual({
+      id: 'bookmarks',
+      section: null,
+      query: { folder: 'f1', q: 'zen' }
+    })
+    expect(internalPageUrl({ id: 'history', section: null, query: { q: 'a b&c' } })).toBe(
+      'zen://history?q=a+b%26c'
+    )
+    expect(parseInternalPageUrl('zen://history?q=a+b%26c')?.query).toEqual({ q: 'a b&c' })
+    expect(internalPageUrl({ id: 'downloads', section: null, query: {} })).toBe('zen://downloads')
+    expect(internalPageAliasUrl('zen://history?q=example.com')).toBe('zenium://history')
+    expect(internalPageAliasUrl('zen://bookmarks?folder=f1')).toBe('zenium://bookmarks')
+    expect(sameInternalPage('zen://history?q=a', 'zen://history')).toBe(true)
   })
 
   it('opens the landing page for a section it does not know (a stale deep link still lands)', () => {
@@ -117,7 +212,7 @@ describe('parsing page addresses', () => {
 
   it('refuses documents, sites and unregistered pages', () => {
     expect(parseInternalPageUrl('zen://error?code=-105')).toBeNull()
-    expect(parseInternalPageUrl('zen://history')).toBeNull()
+    expect(parseInternalPageUrl('zen://newtab')).toBeNull()
     expect(parseInternalPageUrl('zen://blank')).toBeNull()
     expect(parseInternalPageUrl('zenium://nothing')).toBeNull()
     expect(parseInternalPageUrl('https://settings/')).toBeNull()
@@ -133,7 +228,14 @@ describe('parsing page addresses', () => {
     expect(internalPageAliasUrl('zenium://settings')).toBe('zenium://settings')
     expect(internalPageAliasUrl('https://example.com/')).toBe('https://example.com/')
     expect(isInternalPageUrl('zen://settings/look')).toBe(true)
-    expect(isInternalPageUrl('zen://history')).toBe(false)
+    expect(isInternalPageUrl('zen://history')).toBe(true)
+    expect(isInternalPageUrl('zen://newtab')).toBe(false)
+    for (const id of ['history', 'bookmarks', 'downloads']) {
+      expect(internalPageUrl({ id, section: null })).toBe(`zen://${id}`)
+      expect(internalPageAliasUrl(`zen://${id}`)).toBe(`zenium://${id}`)
+      // No sections: a stale or made-up one lands on the page.
+      expect(parseInternalPageUrl(`zenium://${id}/today`)).toEqual({ id, section: null })
+    }
   })
 
   it('calls the tab Settings on every section and keeps the section label for the header', () => {

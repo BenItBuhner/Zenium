@@ -3,7 +3,7 @@ import type { BookmarkTree } from '@shared/bookmarks'
 import { run } from '@renderer/lib/api'
 import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
 import { VelocityTracker } from '@renderer/lib/motion/velocity'
-import { forbiddenTargets } from './tree'
+import { forbiddenTargets } from '../../bookmarks/tree'
 
 /**
  * Drop targets are DOM elements carrying `data-bm-drop`:

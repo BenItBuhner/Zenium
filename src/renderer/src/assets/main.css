@@ -3566,11 +3566,6 @@
       var(--zen-shadow-2);
     scale: 1.02;
   }
-  /* The list's empty space is the append target of a drag. */
-  .zen-bm-list[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
   /*
    * The empty bar's hint (#226): a sentence in the window family's deemphasised ink – the
    * theme's foreground at 69%, which `data-surface="window"` resolves per theme (§9.29) – at
@@ -3922,23 +3917,6 @@
     box-shadow: var(--v2-shadow-sheet);
     color: var(--v2-text);
   }
-  .zen-bm-page {
-    border-radius: 8px;
-    background: var(--v2-page);
-    backdrop-filter: none;
-    border: 1px solid var(--v2-border);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  /* Page header (v2 §9.7): no hairline at rest; the list's toolbar is the sticky edge rows
-   * scroll under, so that is where the 1px line appears while scrolled. */
-  .zen-bm-toolbar {
-    border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
-  }
-  .zen-bm-toolbar[data-scrolled='true'] {
-    border-color: var(--v2-border);
-  }
   /* Form fields (§9.12): the label above the field, 15/400, 4px to the field. */
   .zen-bm-label {
     display: flex;
@@ -3949,116 +3927,6 @@
     line-height: var(--v2-line-small);
     font-weight: 400;
   }
-  .zen-bm-dim {
-    color: var(--v2-text-deemphasized);
-  }
-
-  /*
-   * Manager rows (v2 §9.2): label 15/20 over a 13/20 description, 6px block padding, so a row is
-   * 52 and grows with its content; rows touch (§9.21). The icon sits on the first text line,
-   * (line − glyph) / 2 below its top.
-   */
-  .zen-bm-row {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    min-height: var(--v2-row-two-line);
-    padding: 6px 10px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    outline: none;
-    user-select: none;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease),
-      opacity 100ms var(--zen-ease);
-  }
-  .zen-bm-row:hover {
-    background: var(--v2-fill);
-  }
-  /* A selected row: the control accent at 16% (the draft names no token for list selection). */
-  .zen-bm-row[aria-selected='true'] {
-    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
-  }
-  .zen-bm-row[data-focused='true'] {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: -2px;
-  }
-  .zen-bm-row[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
-  .zen-bm-row[data-lifted='true'] {
-    opacity: 0.4;
-  }
-  .zen-bm-row-icon {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-  }
-  .zen-bm-row-title {
-    overflow: hidden;
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .zen-bm-row-desc {
-    overflow: hidden;
-    color: var(--v2-text-deemphasized);
-    font-size: 13px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .zen-bm-row-meta {
-    flex-shrink: 0;
-    width: 88px;
-    color: var(--v2-text-deemphasized);
-    font-size: 13px;
-    line-height: var(--v2-line-body);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* The folder tree is the page's nav column: 34px items, the shown folder filled with a 3px bar. */
-  .zen-bm-tree-row {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 34px;
-    padding-right: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    color: var(--v2-text);
-    font-size: 15px;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease);
-  }
-  .zen-bm-tree-row:hover {
-    background: var(--v2-fill);
-  }
-  .zen-bm-tree-row[aria-selected='true'] {
-    background: var(--v2-nav-active);
-  }
-  .zen-bm-tree-row[aria-selected='true']::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 3px;
-    background: var(--v2-accent);
-  }
-  .zen-bm-tree-row[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
-
   /*
    * The folder chooser (components/bookmarks/FolderChooser.tsx; §9.21, §9.6, §9.30): the tree in
    * the folder menulist's place in the star bubble and the dialogs, its rows the shared
@@ -4112,35 +3980,6 @@
   }
   .zen-bm-pick-rename {
     margin-block: -2px;
-  }
-
-  /* Breadcrumb segments: buttons and drop-into targets. */
-  .zen-bm-crumb {
-    max-width: 220px;
-    overflow: hidden;
-    padding: 2px 6px;
-    border-radius: 4px;
-    color: var(--v2-text-deemphasized);
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease);
-  }
-  .zen-bm-crumb:hover:not(:disabled) {
-    background: var(--v2-fill);
-    color: var(--v2-text);
-  }
-  .zen-bm-crumb[aria-current='location'] {
-    color: var(--v2-text);
-    font-weight: 600;
-  }
-  .zen-bm-crumb[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-    color: var(--v2-text);
   }
 
   /* In-place title editor: a 24px field on the row, focus ring only. */
@@ -4313,18 +4152,6 @@
 }
 
 /*
- * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
- * purpose: OverlayShell's header carries utility classes (`border-b`, `text-[14px]`), and the
- * utilities layer would beat anything in `@layer components`.
- */
-.zen-bm-page > header {
-  border-color: transparent;
-}
-.zen-bm-page > header > h2 {
-  font-size: 22px;
-  letter-spacing: -0.014em;
-}
-/*
  * The tab search popover's section headings (components/tabsearch/TabSearchPopover.tsx) on the
  * shared `.zen-v2-heading`: a popover's list of two-line rows takes a tighter beat than the
  * primitive's 20 / 4 – 12 above, 4 below, the first 4 under the title block. A modifier on the
@@ -4340,37 +4167,25 @@
 
 @layer components {
   /*
-   * Downloads (design language v2 draft): page surfaces on the v2 token block above. The
-   * bubble is a §9.20 popover on the shared `.zen-bm-popover` chrome (radius 8, `--v2-panel`,
-   * 1px border, the panel shadow) with a §9.23 title block; the `zen://downloads` page is a
-   * neutral page surface. Rows are the shared `.zen-v2-row` (§9.34) as §9.2 two-line rows (a
-   * 15/20 name over a 13/20 status, 6px block padding, 52 tall) that grow around a progress bar
-   * or a warning's sentence; the glyph sits on the first line (§9.2) and the trailing controls
+   * Downloads (design language v2 draft): the bubble and the toolbar button on the v2 token
+   * block above (the `zen://downloads` page tab is the list pages' block, `pages/PageFrame.tsx`,
+   * further down, and shares the row pieces here). The bubble is a §9.20 popover on the shared
+   * `.zen-bm-popover` chrome (radius 8, `--v2-panel`, 1px border, the panel shadow) with a §9.23
+   * title block. Rows are the shared `.zen-v2-row` (§9.34) as §9.2 two-line rows (a 15/20 name
+   * over a 13/20 status, 6px block padding, 52 tall) that grow around a progress bar or a
+   * warning's sentence; the glyph sits on the first line (§9.2) and the trailing controls
    * centre on the row (§9.18); rows touch (§9.21). What a download row adds sits on the
    * `.zen-dl-row` modifier, unlayered beside the primitive after this block. Row actions are the
    * shared `.zen-v2-icon-button` (§9.3, §9.34); text buttons are the chassis `.zen-button`. The
-   * one tone the block does not name (a progress track) derives from the text's alpha; the focus
-   * ring is the v2 controls' own, offset -2 in dark. Disabled is .4 on the whole control, busy a
-   * 16px spinner in place of the label (§9.30).
+   * one tone the block does not name (a progress track) derives from the text's alpha. Disabled
+   * is .4 on the whole control, busy a 16px spinner in place of the label (§9.30).
    */
   .zen-dl-surface {
     --zen-dl-track: rgb(var(--v2-text-rgb) / 0.12);
-    --zen-dl-focus-offset: 0px;
     color: var(--v2-text);
-  }
-  :root[data-theme='dark'] .zen-dl-surface {
-    --zen-dl-focus-offset: -2px;
   }
   .zen-dl-deemph {
     color: var(--v2-text-deemphasized);
-  }
-  /* The page fills the content frame; the shared shell's tint, blur and 16 radius do not apply. */
-  .zen-panel.zen-dl-page {
-    background: var(--v2-page);
-    backdrop-filter: none;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    box-shadow: var(--v2-shadow-frame);
   }
   .zen-dl-pop-out {
     animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
@@ -4426,8 +4241,8 @@
     outline-offset: -2px;
   }
   /*
-   * Empty states (§9.17): one sentence 15 at 69%, centred inside a 32 gutter, its line 32 below
-   * the header (the bubble's title block, the page's search row); top-anchored, no glyph.
+   * The bubble's empty state (§9.17): one sentence 15 at 69%, centred inside a 32 gutter, its
+   * line 32 below the title block; top-anchored, no glyph.
    */
   .zen-dl-empty {
     margin: 0;
@@ -4566,64 +4381,6 @@
     border-radius: 50%;
     animation: zen-spin 800ms linear infinite;
   }
-  /*
-   * The page: §5's content column (664 at a 32 side margin), the search row's controls 8
-   * apart, day groups 24 apart under a 15/600 sub-heading whose first row starts 8 below it
-   * (§9.27) and whose text sits on the rows' 16 gutter, the empty sentence 32 below the search
-   * row.
-   */
-  .zen-dl-page-body {
-    display: flex;
-    width: 100%;
-    max-width: var(--v2-content-max);
-    margin: 0 auto;
-    padding: 24px 32px 32px;
-    flex-direction: column;
-  }
-  .zen-dl-page-tools {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .zen-dl-page-empty {
-    padding: 32px 32px 0;
-  }
-  .zen-dl-day {
-    margin-top: 24px;
-  }
-  .zen-dl-day-title {
-    margin: 0 0 8px;
-    padding: 0 16px;
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-body);
-  }
-  /* The search field: 32 tall, radius 4, 1px border, the accent ring on focus. */
-  .zen-dl-field {
-    height: var(--v2-control);
-    border-radius: var(--v2-radius-control);
-    border: 1px solid var(--v2-border);
-    background: var(--v2-page);
-    transition: outline-color 120ms var(--zen-ease);
-  }
-  .zen-dl-field:focus-within {
-    outline: 2px solid var(--v2-ring);
-    outline-offset: var(--zen-dl-focus-offset);
-  }
-  .zen-dl-input {
-    background: transparent;
-    color: var(--v2-text);
-    border-radius: var(--v2-radius-control);
-    font-size: var(--v2-font-small);
-  }
-  .zen-dl-input::placeholder {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-dl-input::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    appearance: none;
-  }
-
   /*
    * The toolbar button: a stroke-dashoffset ring for the aggregate progress around the glyph,
    * a count badge, and a fill-and-scale pulse when a transfer starts (transform and opacity only).
@@ -8479,198 +8236,638 @@
 }
 
 /* ---------------------------------------------------------------------------
- * History page (design language v2 draft: plain page surface, 32 px rows, 15/600 day headings).
+ * List pages as chrome page tabs – History, the bookmarks manager, Downloads (design language
+ * v2 §10.1, `pages/PageFrame.tsx`): the page fills the content frame on `--v2-page`; its column
+ * scrolls under a sticky header – the 22/600 title block (§9.26) with the page's actions in its
+ * trailing slot (§9.23), the §9.12 search field under it – that draws §9.7's hairline along its
+ * bottom edge once the column has scrolled under it. The body is the Settings content column's
+ * geometry (§10.5, §5): the text column at most 664 inside 32 side margins (the page's 16 plus
+ * the rows' 16 gutter), left-aligned as Zen's; groups are §9.27 sub-headings over §9.21 rows.
+ * Nothing here states a row's or a control's size – those are the primitives' tokens – only
+ * what the pages add: the header's beat, the column, the two-line row's slots and the reveal.
+ * Unlayered like the Settings tab's rules, after them.
  * ------------------------------------------------------------------------- */
-.zen-history {
-  --zen-page-bg: #fbfbfe;
-  --zen-page-fg: #15141a;
-  --zen-page-fg-soft: rgb(21 20 26 / 0.69);
-  --zen-page-hover: rgb(21 20 26 / 0.06);
-  --zen-page-active: rgb(21 20 26 / 0.1);
-  --zen-page-line: rgb(0 0 0 / 0.15);
-  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --zen-page-menu-bg: #f4f4f4;
-  --zen-page-menu-line: rgb(0 0 0 / 0.15);
-  --zen-page-mark: rgb(255 214 0 / 0.45);
-  background: var(--zen-page-bg);
-  color: var(--zen-page-fg);
-  font-size: 15px;
-  line-height: 1.3;
+.zen-page {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
-:root[data-theme='dark'] .zen-history {
-  --zen-page-bg: #1c1b22;
-  --zen-page-fg: #fbfbfe;
-  --zen-page-fg-soft: rgb(251 251 254 / 0.69);
-  --zen-page-hover: rgb(251 251 254 / 0.08);
-  --zen-page-active: rgb(251 251 254 / 0.12);
-  --zen-page-line: rgb(255 255 255 / 0.12);
-  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --zen-page-menu-bg: #1f1f1f;
-  --zen-page-menu-line: rgb(255 255 255 / 0.12);
-  --zen-page-mark: rgb(255 214 0 / 0.3);
+/*
+ * The column scrolls on its own. Its bar is the chassis' §9.20 overlay scrollbar (the base-layer
+ * rule on every scroller of a mouse's chrome, in the page ink here): nothing to state.
+ */
+.zen-page-scroll {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
-.zen-history mark {
-  background: var(--zen-page-mark);
-  color: inherit;
-  border-radius: 2px;
-}
-.zen-history-soft {
-  color: var(--zen-page-fg-soft);
-}
-.zen-history-title {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 28px;
-}
-.zen-history-heading {
+/*
+ * The header: sticky at the column's top on the page tone; the hairline is its own `::after`,
+ * off at rest (§9.7: no hairline at rest) and on while the column is scrolled.
+ */
+.zen-page-header {
   position: sticky;
   top: 0;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  height: 40px;
-  background: var(--zen-page-bg);
-  font-size: 15px;
-  font-weight: 600;
+  background: var(--v2-page);
 }
-.zen-history-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 4px;
-}
-.zen-history-row:hover,
-.zen-history-row:focus-within {
-  background: var(--zen-page-hover);
-}
-.zen-history-row[data-selected='true'] {
-  background: color-mix(in srgb, var(--zen-page-control) 14%, transparent);
-}
-.zen-history-row .zen-history-hover {
-  visibility: hidden;
-}
-.zen-history-row:hover .zen-history-hover,
-.zen-history-row:focus-within .zen-history-hover,
-.zen-history [data-selecting='true'] .zen-history-hover {
-  visibility: visible;
-}
-.zen-history-time {
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-}
-/* 16 px checkbox, radius 2, accent when checked. */
-.zen-history-check {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  flex-shrink: 0;
-  border: 1px solid var(--zen-page-fg-soft);
-  border-radius: 2px;
-  background: transparent;
-  display: inline-grid;
-  place-content: center;
-  cursor: pointer;
-}
-.zen-history-check:checked {
-  border-color: var(--zen-page-control);
-  background: var(--zen-page-control);
-}
-.zen-history-check:checked::after {
+.zen-page-header::after {
   content: '';
-  width: 4px;
-  height: 8px;
-  margin-top: -2px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
 }
-:root[data-theme='dark'] .zen-history-check:checked::after {
-  border-color: #1c1b22;
+.zen-page-scroll[data-scrolled] > .zen-page-header::after {
+  opacity: 1;
 }
-/* Icon buttons 28 px with 16 px glyphs; text buttons 32 px, radius 4, weight 500. */
-.zen-history-icon-btn {
-  display: inline-flex;
+/*
+ * The title block (§9.26, §10.2): "History" 22/600 on its 28 line, padding 16 16 12, the title's
+ * text at the column's 32 (the block's 16 plus a 16 inset that is the rows' gutter); its
+ * actions – 32 px `zen-v2-button` secondaries – on the title's line at the column's trailing
+ * edge, their 2 px over the line taken from their own margins so the line stays 28.
+ */
+.zen-page-title-block {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 16px 16px 12px;
+}
+.zen-page-title-row {
+  display: flex;
+  min-height: var(--v2-line-title-box);
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  color: var(--zen-page-fg);
+  gap: 12px;
+  padding: 0 16px;
+}
+.zen-page-title {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-page-title-actions {
+  display: flex;
   flex-shrink: 0;
-}
-.zen-history-icon-btn:hover {
-  background: var(--zen-page-hover);
-}
-.zen-history-icon-btn:active {
-  background: var(--zen-page-active);
-}
-.zen-history-btn {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 4px;
-  border: 1px solid var(--zen-page-line);
-  background: transparent;
-  color: var(--zen-page-fg);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 8px;
+  margin-block: calc((var(--v2-line-title-box) - var(--v2-control)) / 2);
+}
+/* A live count beside the actions ("3 selected"): 13 at 69 %, tabular (§4). */
+.zen-page-title-count {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
   white-space: nowrap;
 }
-.zen-history-btn:hover {
-  background: var(--zen-page-hover);
+.zen-page-title-desc {
+  margin: 4px 0 0;
+  padding: 0 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
 }
-.zen-history-btn:active {
-  background: var(--zen-page-active);
+/*
+ * The search field (§9.12, as Find in Settings draws it): the shared 32 px field at the text
+ * column's width, its 16 px glyph 12 in from its start (the text after the glyph's 16 and a 8),
+ * the clear icon button inside its trailing end; 12 under it to the header's edge, so the first
+ * heading's 8 above makes §9.27's 20 from the field's box.
+ */
+.zen-page-search {
+  position: relative;
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 0 32px 12px;
 }
-.zen-history-btn[data-primary='true'] {
-  border-color: transparent;
-  background: var(--zen-page-control);
-  color: #fff;
+.zen-page-search-glyph {
+  position: absolute;
+  top: calc((var(--v2-control) - var(--v2-icon)) / 2);
+  left: calc(32px + 12px);
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+  pointer-events: none;
 }
-:root[data-theme='dark'] .zen-history-btn[data-primary='true'] {
-  color: #1c1b22;
+.zen-v2-field.zen-page-search-field {
+  padding-left: calc(12px + var(--v2-icon) + 8px);
+  padding-right: calc(4px + var(--v2-icon-button));
 }
-.zen-history-btn[data-primary='true']:hover {
-  filter: brightness(1.08);
+.zen-page-search-clear {
+  position: absolute;
+  top: calc((var(--v2-control) - var(--v2-icon-button)) / 2);
+  right: calc(32px + 2px);
 }
-.zen-history-input {
-  height: 32px;
-  width: 100%;
-  border-radius: 4px;
-  border: 1px solid var(--zen-page-line);
-  background: transparent;
-  padding: 0 10px 0 32px;
-  color: var(--zen-page-fg);
-  font-size: 15px;
-  outline: none;
+/* The body: the text column, its rows edge to edge inside it (their text at 32). */
+.zen-page-body {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 0 16px 40px;
 }
-.zen-history-input:focus {
-  border-color: var(--zen-page-control);
-  box-shadow: 0 0 0 1px var(--zen-page-control);
+.zen-page-group {
+  display: flex;
+  flex-direction: column;
 }
-.zen-history-input::placeholder {
-  color: var(--zen-page-fg-soft);
-}
-/* Floating action row for the multi-selection (a small panel per v2: radius 8, hairline, soft shadow). */
-.zen-history-actions {
-  position: sticky;
-  bottom: 12px;
-  z-index: 2;
+/*
+ * A group's heading (§9.27, §10.3): the shared 15/600 primitive laid out as a row – the name,
+ * its aside (a count, 13 at 69 % tabular) and a trailing §9.3 icon button whose 28 box takes
+ * its 4 over the line from its own margins, so the heading's box stays the 20 line. On the
+ * desktop the first row's box is 8 under the heading (§9.27: 14 to its text through the row's
+ * 6), and the first heading under the pinned header is 8 under it (§10.3).
+ */
+.zen-v2-heading.zen-page-heading {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: max-content;
-  margin: 0 auto;
-  padding: 8px 8px 8px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--zen-page-menu-line);
-  background: var(--zen-page-menu-bg);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+  margin-bottom: 8px;
+}
+.zen-page-body > .zen-page-group:first-child > .zen-page-heading {
+  margin-top: 8px;
+}
+.zen-page-heading-text {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+.zen-page-heading-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
+}
+.zen-page-heading > .zen-v2-icon-button {
+  margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
+}
+/*
+ * A heading's control that follows the rows' rule (§10.1, the History page's day ⋮ and Recently
+ * closed's clear): there for the keyboard (opacity, never visibility), painted while the pointer
+ * is over the heading's line or the focus is in it. Its 28 box stands over the rows' own ⋮
+ * slot, 12 from the count as the rows' slot is from their times (the heading's other gaps stay
+ * 8), so at rest the count and the times end on one edge – Chrome's date headers are text alone.
+ */
+.zen-page-heading > .zen-page-heading-reveal {
+  margin-inline-start: 4px;
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-heading:hover > .zen-page-heading-reveal,
+.zen-page-heading:focus-within > .zen-page-heading-reveal {
+  opacity: 1;
+}
+.zen-page-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/*
+ * A two-line row (§9.2, §9.21) on the shared primitive: the 16 favicon at the row's 16 on the
+ * first text line (the (line − box) / 2 offset, §9.2), the label 15/20 over the host 13/20
+ * deemphasised at 44, the time 13 at 69 % and the ⋮ centred on the row's height (§9.18). The
+ * row's text is a button – the target that opens the entry – and the row's fill follows the
+ * pointer over any of it. Selection is a mode (§9.6, §10.1): no slot is held for a checkbox at
+ * rest; while anything is picked every row leads with the checkbox column (`.zen-page-row-check`,
+ * the favicons moving once), and a picked row (`data-selected`) sits on `--v2-selected`, under
+ * the pointer too, its checkbox filled in the accent by the primitive.
+ */
+.zen-page-row {
+  gap: 12px;
+}
+.zen-page-row[data-selected],
+.zen-page-row[data-selected]:hover {
+  background: var(--v2-selected);
+}
+.zen-page-row-check {
+  width: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+.zen-page-row-lead {
+  display: flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
+}
+.zen-page-row-favicon {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: contain;
+}
+.zen-page-row-favicon-fallback {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+/* A page tab's registered glyph in the slot (§10.1): the row's own ink, the icon stroke. */
+.zen-page-row-glyph {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text);
+}
+.zen-page-row-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  color: inherit;
+}
+.zen-page-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-page-row-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-page-row-time {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
+  white-space: nowrap;
+}
+/*
+ * What a row shows on approach – its ⋮ – is there at rest for the keyboard (opacity, never
+ * visibility: a hidden control is not in the tab order) and paints under the pointer, while the
+ * row has the focus, while it is picked, and on every row while anything on the page is picked.
+ */
+.zen-page-row .zen-page-row-reveal {
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-row:hover .zen-page-row-reveal,
+.zen-page-row:focus-within .zen-page-row-reveal,
+.zen-page-row[data-selected] .zen-page-row-reveal,
+[data-selecting] .zen-page-row .zen-page-row-reveal {
+  opacity: 1;
+}
+/* A search's matches in a row: the text's own ink on a light accent tint, no colour of its own. */
+.zen-page mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--v2-accent) 22%, transparent);
+  color: inherit;
+}
+/* "Show more" under the last group: one secondary, hugging, centred on the column (§9.11). */
+.zen-page-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px 16px 0;
+}
+/*
+ * The page's empty state (§9.17): one sentence 15/400 at 69 %, centred inside a 32 gutter, its
+ * line 32 under the header; the one optional follow-up 16 beneath it, a hugging secondary.
+ */
+.zen-page-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 32px 0;
+  text-align: center;
+}
+.zen-page-empty > p {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+
+/* -------------------------------------------------------------------------
+ * The bookmarks manager (components/pages/bookmarks/*, §10.1, §10.5): the page frame above,
+ * split under its header into the Settings tab's two panes – the folder tree in the nav
+ * column's 234, the shown folder's rows in the content column – each scrolling on its own,
+ * the header staying put over both and drawing §9.7's hairline once either has scrolled under
+ * it. Narrower than `TWO_PANE_MIN_WIDTH` the tree column goes (`data-layout="one-pane"`) and
+ * the breadcrumb is the way up. Only what the two panes add: the primitives above draw the
+ * header, the rows and the headings.
+ * ------------------------------------------------------------------------- */
+.zen-bm-header {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.zen-bm-header[data-scrolled]::after {
+  opacity: 1;
+}
+.zen-bm-panes {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+/* The folder column (§10.5): the nav's 234, its first row 8 under the header (§10.3), no scrollbar. */
+.zen-bm-nav {
+  width: 234px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 0 24px;
+  scrollbar-width: none;
+}
+.zen-bm-nav::-webkit-scrollbar {
+  display: none;
+}
+/*
+ * The list column: the page body's geometry inside it, the drag's insertion caret positioned in
+ * it, and – while a drag hovers its empty space – the shown folder's append target (§9.4).
+ */
+.zen-bm-list {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zen-bm-list[data-target] {
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+/*
+ * The tree (§10.5, §9.22): 34 px rows edge to edge in the column, each level 16 further in (the
+ * row's own inline padding) – the 20 twisty round a 16 chevron that turns down while the branch
+ * is open, the 16 folder glyph in the deemphasised ink 4 after it (the bar's chips' folder), the
+ * name 15/400 12 after that; the shown folder on `--v2-nav-active` with the 3 px accent bar down
+ * the column's edge, as the Settings nav's open category; a folder a drag hovers takes the
+ * drop-into ring. The ring of the one tab stop stands inside the column's clip.
+ */
+.zen-bm-tree,
+.zen-bm-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.zen-bm-tree-row {
+  position: relative;
+  display: flex;
+  height: var(--v2-nav-item);
+  align-items: center;
+  gap: 4px;
+  padding-right: 16px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  cursor: default;
+  user-select: none;
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-bm-tree-row:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-bm-tree-row:active {
+  background: var(--v2-fill);
+}
+.zen-bm-tree-row[aria-selected='true'],
+.zen-bm-tree-row[aria-selected='true']:hover {
+  background: var(--v2-nav-active);
+}
+.zen-bm-tree-row[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--v2-accent);
+}
+.zen-bm-tree-row[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+.zen-bm-tree-row:focus-visible {
+  outline-offset: -2px;
+}
+.zen-bm-tree-twisty {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--v2-text-deemphasized);
+}
+.zen-bm-tree-twisty > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-bm-tree-twisty > svg[data-open] {
+  transform: rotate(90deg);
+}
+.zen-bm-tree-twisty-none {
+  visibility: hidden;
+}
+.zen-bm-tree-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+.zen-bm-tree-label {
+  min-width: 0;
+  flex: 1;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The folder's path as the list's heading line (§9.27): every ancestor a 15/400 deemphasised
+ * button and a drop-into target, the 16 chevrons between them at 69 %, the shown folder the
+ * group's 15/600 `h2` at the end; the steps' 6 side padding is taken back at the line's start
+ * so the first name's text stands at the column's 32 with the other headings'.
+ */
+.zen-bm-crumbs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  margin-left: -6px;
+}
+.zen-bm-crumb-step {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 1;
+  align-items: center;
+}
+.zen-bm-crumb {
+  min-width: 0;
+  max-width: 220px;
+  margin: 0;
+  padding: 0 6px;
+  border-radius: var(--v2-radius-control);
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease),
+    color 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  button.zen-bm-crumb:hover {
+    background: var(--v2-fill);
+    color: var(--v2-text);
+  }
+}
+.zen-bm-crumb[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+  color: var(--v2-text);
+}
+.zen-bm-crumb-current {
+  flex-shrink: 0;
+  max-width: none;
+  color: var(--v2-text);
+  font-weight: var(--v2-weight-heading);
+}
+.zen-bm-crumbs .zen-bm-crumb-current {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.zen-bm-crumb-chevron {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+/*
+ * The rows as a listbox's options (§9.6, §9.22): the keyboard's cursor is the row the list's
+ * `aria-activedescendant` names, ringed while the list has the focus (the list itself draws no
+ * ring); a folder a drag hovers takes the drop-into ring (§9.4); a row travelling under the
+ * pointer fades to its placeholder; a folder's and an unfaviconed bookmark's glyph are the
+ * deemphasised ink; the rename field (§9.12) stands on the label's line, its 24 centred on the 20.
+ */
+.zen-bm-rows:focus-visible {
+  outline: none;
+}
+.zen-bm-rows:focus-visible > .zen-bm-row[data-focused] {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: -2px;
+}
+.zen-bm-row {
+  user-select: none;
+}
+.zen-bm-row[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+.zen-bm-row[data-lifted] {
+  opacity: 0.4;
+}
+.zen-bm-row-glyph.zen-bm-glyph-folder,
+.zen-bm-row-glyph.zen-bm-glyph-globe {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+  opacity: 1;
+}
+.zen-bm-row-rename {
+  display: flex;
+  height: var(--v2-line-body-box);
+  align-items: center;
+}
+.zen-bm-row-rename > .zen-bm-rename {
+  margin-block: -2px;
+}
+/*
+ * What travels under the pointer (§9.4): a compact copy of the first picked row – its glyph and
+ * name on a 32 line, the count badge after them when more came along – lifted as the bar's
+ * chips are (`.zen-bm-lift`), beside the pointer so the row under it stays in view.
+ */
+.zen-bm-drag-ghost {
+  position: absolute;
+  display: flex;
+  height: var(--v2-control);
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--v2-radius-control);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  white-space: nowrap;
+}
+.zen-bm-drag-ghost-icon {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+}
+.zen-bm-drag-ghost-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zen-bm-drag-ghost-count {
+  flex-shrink: 0;
+}
+
+/* -------------------------------------------------------------------------
+ * The Downloads page (components/pages/downloads/DownloadsPage.tsx, §10.1): the page frame
+ * above with the downloads bubble's row pieces (`.zen-dl-glyph`, `.zen-dl-name`, the status
+ * tones, `.zen-dl-bar`, `.zen-dl-detail`) inside its §9.21 two-line rows. Only what the page
+ * adds: the row's two-line floor (§9.2), the progress track's one derived tone, the trailing
+ * slot with its actions 8 apart (§9.21) and centred on the row (§9.18), and the greyed Deleted
+ * row. The state's verbs stand at rest; Open, Show in folder and the ⋮ are the row's reveal.
+ * ------------------------------------------------------------------------- */
+.zen-downloads-page {
+  --zen-dl-track: rgb(var(--v2-text-rgb) / 0.12);
+}
+.zen-v2-row.zen-dl-page-row {
+  min-height: var(--v2-row-two-line);
+}
+/* The trailing slot: the state's verb, Open, Show in folder, the ⋮, or the Keep / Delete pair. */
+.zen-dl-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+/*
+ * Chrome's greyed Deleted row, and a cancelled one: the name in the deemphasised ink (the
+ * bubble's `.zen-dl-name` states the text ink in its layer; the page's row says otherwise here,
+ * unlayered), the glyph at .4 from the piece itself, the controls whole.
+ */
+.zen-v2-row.zen-dl-page-row:is([data-deleted], [data-state='cancelled']) .zen-dl-name {
+  color: var(--v2-text-deemphasized);
 }
 
 /*
