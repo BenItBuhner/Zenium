@@ -5,8 +5,8 @@
 # documents (deferred boot documents) and whose parsed snapshot (`safebrowsing/tables.bin`) is
 # not there, so the host parses the feeds at boot while the chrome fetches them. Each APK in
 # APKS (`<label>=<path or directory>=<applicationId>`, space separated) is installed in turn; for every dock and scheme the
-# profile is seeded through root, the snapshot removed, the app started cold on Settings >
-# Updates (Bennett's page) and a full frame taken as <label>-<scheme>-<dock>.png under
+# profile is seeded through root (its active tab Settings > Updates, Bennett's page), the
+# snapshot removed, the app started cold and a full frame taken as <label>-<scheme>-<dock>.png under
 # artifacts/android-status-bar-stills/.
 set -euo pipefail
 
@@ -59,7 +59,7 @@ adb shell wm density | tee -a "$out/display.txt" || true
 state_json() {
   local edge=$1
   cat << EOF
-{"version":2,"activeSpaceId":"space_work","spaces":[{"id":"space_work","name":"Work","icon":"W","containerId":"default","theme":{"type":"gradient","colors":[{"c":[96,110,235],"x":0.3,"y":0.35,"isPrimary":true},{"c":[214,92,160],"x":0.7,"y":0.65}],"opacity":0.55,"texture":0,"algorithm":"floating","monochrome":false,"rotation":40},"tabIds":["tab_example"],"activeTabId":"tab_example","pinnedCollapsed":false}],"folders":[],"tabs":[{"id":"tab_example","spaceId":"space_work","containerId":"default","folderId":null,"url":"https://example.com/","title":"Example Domain","pinned":false,"essential":false}],"essentialTabIds":[],"containers":[],"splitGroups":[],"settings":{"onboardingDone":true,"colorScheme":"system","phoneBarPosition":"$edge","gestureHintDone":true,"updates":{"autoCheck":false,"autoDownload":false,"channel":"stable"}},"shortcutOverrides":{},"windows":[{"id":"window_main","bounds":null,"maximized":false,"activeSpaceId":"space_work","selection":{"space_work":"tab_example"},"compact":false}]}
+{"version":2,"activeSpaceId":"space_work","spaces":[{"id":"space_work","name":"Work","icon":"W","containerId":"default","theme":{"type":"gradient","colors":[{"c":[96,110,235],"x":0.3,"y":0.35,"isPrimary":true},{"c":[214,92,160],"x":0.7,"y":0.65}],"opacity":0.55,"texture":0,"algorithm":"floating","monochrome":false,"rotation":40},"tabIds":["tab_example","tab_settings"],"activeTabId":"tab_settings","pinnedCollapsed":false}],"folders":[],"tabs":[{"id":"tab_example","spaceId":"space_work","containerId":"default","folderId":null,"url":"https://example.com/","title":"Example Domain","pinned":false,"essential":false},{"id":"tab_settings","spaceId":"space_work","containerId":"default","folderId":null,"url":"zen://settings/updates","title":"Settings","pinned":false,"essential":false}],"essentialTabIds":[],"containers":[],"splitGroups":[],"settings":{"onboardingDone":true,"colorScheme":"system","phoneBarPosition":"$edge","gestureHintDone":true,"updates":{"autoCheck":false,"autoDownload":false,"channel":"stable"}},"shortcutOverrides":{},"windows":[{"id":"window_main","bounds":null,"maximized":false,"activeSpaceId":"space_work","selection":{"space_work":"tab_settings"},"compact":false}]}
 EOF
 }
 
@@ -72,15 +72,16 @@ seed_profile() {
   adb shell "chown -R $uid:$uid /data/data/$app_id/files && restorecon -R /data/data/$app_id/files" || true
 }
 
-# A cold process start on Bennett's page.
+# A cold process start; the seeded session's active tab is Bennett's page (Settings > Updates),
+# so its view is created at boot. Nothing opens a tab afterwards: a WebView attached once the
+# chrome is up makes Android dispatch the insets again, which hid the loss behind the bisect's
+# deep link whenever that link had a new tab to create.
 launch() {
   local app_id=$1
   adb shell am force-stop "$app_id" || true
   sleep 1
   adb shell am start -W -n "$app_id/app.zen.chromium.MainActivity" > /dev/null
   sleep "$settle"
-  adb shell am start -n "$app_id/app.zen.chromium.MainActivity" -a android.intent.action.VIEW -d "zenium://settings/updates" > /dev/null || true
-  sleep 6
 }
 
 for entry in $apks; do
