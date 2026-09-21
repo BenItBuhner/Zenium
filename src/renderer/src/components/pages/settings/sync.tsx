@@ -1,5 +1,5 @@
 import { FolderX } from 'lucide-react'
-import type { FormFactor, SyncStatus } from '@shared/types'
+import type { SyncStatus } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { SYNC_COPY, SYNC_SCOPES, syncSetupStore, syncStatusLine } from '@renderer/lib/syncSetup'
@@ -25,17 +25,17 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  * removing this device's file from the folder, is a checkbox row submitted with the action.
  *
  * The desktop and tablet page keeps what the pane it replaces had (#193's inventory: no row of
- * the pane is lost): the same rows under the builder's headings, and the pane's two ways off as
- * two rows – Turn off sync with its confirmation and, destructive, Turn off and remove this
- * device's data with its own – where the phone folds the second into the first's sheet.
+ * the pane is lost): the same rows under the builder's headings, and one way off. The pane's
+ * second button, Turn off and remove this device's data, is that checkbox in Turn off sync's
+ * prompt – the design lead's ruling on #261's desktop page: a choice that only means something
+ * together with the footer's action is a checkbox row inside the prompt (§9.23), not a second
+ * action – so the phone's sheet and the desktop's dialog (`dialogs.tsx`'s form dialog, the title
+ * block over the same form) are the one composition, Chrome's and Firefox's shape.
  */
 export function syncGroups({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
   return sync.enabled ? connectedGroups(sync) : setupGroups(sync)
 }
-
-/** The shells the desktop vocabulary serves (`SettingsRow.layouts`). */
-const DESKTOP_LAYOUTS: readonly FormFactor[] = ['desktop', 'tablet']
 
 // ---------------------------------------------------------------------------
 // Before setup
@@ -198,68 +198,33 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       empty: SYNC_COPY.noDevices
     },
     scopeGroup(sync),
-    { id: 'sync-off', heading: null, rows: offRows() }
+    { id: 'sync-off', heading: null, rows: [turnOffRow()] }
   ]
 }
 
 /**
- * The ways off, each shell's own (`layouts`; the Tab unloading and Sleeping tabs rows are built
- * the same way). The phone's one row: Turn off sync, whose §9.23 sheet holds the wipe as a
- * checkbox row submitted with the action. The desktop and tablet page's two, as the pane had
- * them (#193's inventory): Turn off sync confirming in its dialog, and the wipe as a destructive
- * row with its own – each the whole of what it says, so the dialog offers no second choice.
+ * The one way off, the same row on every shell: Turn off sync, whose §9.23 prompt – a sheet on
+ * the phone, the form dialog on the desktop, opened by the row's `button` in the danger ink
+ * (§10.5) – holds the wipe as a checkbox row submitted with the destructive action ("Also
+ * remove this device's data from the folder"). Never a row of its own: removing the data only
+ * means something together with turning off.
  */
-function offRows(): SettingsRow[] {
-  return [
-    {
-      kind: 'action',
-      id: 'sync-disconnect',
-      label: SYNC_COPY.turnOff,
-      description: SYNC_COPY.turnOffHint,
-      keywords: OFF_KEYWORDS,
-      layouts: ['phone'],
-      destructive: true,
-      form: {
-        title: SYNC_COPY.turnOffTitle,
-        description: SYNC_COPY.turnOffDescription,
-        render: (close) => <SyncDisconnectForm close={close} />
-      }
-    },
-    {
-      kind: 'action',
-      id: 'sync-turn-off',
-      label: SYNC_COPY.turnOff,
-      description: SYNC_COPY.turnOffHint,
-      keywords: OFF_KEYWORDS,
-      layouts: DESKTOP_LAYOUTS,
-      button: 'Turn off…',
-      confirm: {
-        title: SYNC_COPY.turnOffTitle,
-        description: SYNC_COPY.turnOffDescription,
-        action: SYNC_COPY.turnOffAction
-      },
-      onPress: () => run('sync.disconnect', { wipeRemote: false })
-    },
-    {
-      kind: 'action',
-      id: 'sync-wipe',
-      label: SYNC_COPY.wipeRow,
-      description: SYNC_COPY.wipeRemoteHint,
-      keywords: OFF_KEYWORDS,
-      layouts: DESKTOP_LAYOUTS,
-      button: 'Remove…',
-      destructive: true,
-      confirm: {
-        title: SYNC_COPY.wipeTitle,
-        description: SYNC_COPY.wipeDescription,
-        action: SYNC_COPY.wipeAction
-      },
-      onPress: () => run('sync.disconnect', { wipeRemote: true })
+function turnOffRow(): SettingsRow {
+  return {
+    kind: 'action',
+    id: 'sync-disconnect',
+    label: SYNC_COPY.turnOff,
+    description: SYNC_COPY.turnOffHint,
+    keywords: ['disconnect', 'stop', 'remove', 'wipe'],
+    button: 'Turn off…',
+    destructive: true,
+    form: {
+      title: SYNC_COPY.turnOffTitle,
+      description: SYNC_COPY.turnOffDescription,
+      render: (close) => <SyncDisconnectForm close={close} />
     }
-  ]
+  }
 }
-
-const OFF_KEYWORDS = ['disconnect', 'stop', 'remove', 'wipe'] as const
 
 // ---------------------------------------------------------------------------
 // Shared rows
