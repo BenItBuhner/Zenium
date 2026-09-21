@@ -145,16 +145,14 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * `private.lock` event): armed as the window leaves the screen ([onStop]), in memory only.
      */
     val privateLock = PrivateLock()
-    /**
-     * The private page views this host hid itself as the lock went on ([onStop]), for which the
-     * core has not yet asked the same ([setTabVisible] takes a tab off the list as it does): on
-     * release they are the ones to bring back here, the rest the core's next layout brings back.
-     */
-    private val lockHidden = HashSet<String>()
     /** Links that leave the web: held here while the core (and the user) decide. */
     override val externalProtocols = ExternalProtocols(this)
-    /** Device credential and biometric prompts, and the Keystore-wrapped password vault key. */
-    val reauth = Reauth(activity)
+    /**
+     * Device credential and biometric prompts, and the Keystore-wrapped password vault key. Every
+     * prompt's answer reaches the private lock first: a stop seen under the prompt, not passed,
+     * was a departure ([onStop], [onPromptAnswered]).
+     */
+    val reauth = Reauth(activity) { ok -> onPromptAnswered(ok) }
     val vault = VaultKeystore(activity, reauth, io, main)
     /** The extension store's files and downloads (installs live under `files/zen/extensions`). */
     val extStore = ExtensionStore(this, io, main)
@@ -413,7 +411,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 val tabId = args.str("tabId")
                 tabs.destroy(tabId)
                 // A view the lock held hidden is gone with its tab: the guard follows what is left.
-                if (lockHidden.remove(tabId)) refreshGuard()
+                if (privateLock.forget(tabId)) refreshGuard()
                 reply(null)
             }
             "view.bind" -> { tabs.bind(args.str("viewId"), args.str("tabId")); reply(null) }
@@ -876,21 +874,32 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         voice.abort()
         // A camera scanning a screen that is gone: the session ends, the sheet with it (#187).
         qrScan.abort()
-        // "Lock private tabs when you leave Zenium": the lock goes on as the window leaves. The
-        // private page views on screen go now, so the app's first frame back shows the chrome's
-        // cover and never the page ahead of the chrome's own report of it hidden. Not while our
-        // own prompt has the window (the device-credential fallback is an activity of its own,
-        // which stops us): the switch's confirmation is not a departure, and a cancelled one
-        // would otherwise leave the tabs locked that were in view a moment before.
-        if (!reauth.prompting && privateLock.onLeave(reauth.available())) {
-            for (tab in tabs.all()) {
-                if (!Profiles.isPrivate(tab.containerId) || tab.visibility != View.VISIBLE) continue
-                tabs.setVisible(tab.tabId, false)
-                lockHidden.add(tab.tabId)
-            }
-            refreshGuard()
-            announcePrivateLock()
+        // "Lock private tabs when you leave Zenium": the lock goes on as the window leaves. Under
+        // a prompt of ours the stop is only noted and the prompt's answer decides – on Android 11
+        // and later the system's prompt never stops us, so a stop then is a departure with the
+        // prompt open (Home, a call, the screen off) and the system takes the prompt down as the
+        // task leaves; a pass means the user was there (PrivateLock, onPromptAnswered).
+        if (privateLock.onLeave(reauth.available(), prompting = reauth.prompting)) onPrivateLockArmed()
+    }
+
+    /** A prompt of ours answered ([Reauth]): a stop seen under it, not passed, was a departure – the lock goes on now. */
+    private fun onPromptAnswered(ok: Boolean) {
+        if (privateLock.onPromptAnswered(ok, reauth.available())) onPrivateLockArmed()
+    }
+
+    /**
+     * The lock went on: the private page views on screen go now, so the app's first frame back
+     * shows the chrome's cover and never the page ahead of the chrome's own report of it hidden;
+     * the guard follows and the chrome hears.
+     */
+    private fun onPrivateLockArmed() {
+        for (tab in tabs.all()) {
+            if (!Profiles.isPrivate(tab.containerId) || tab.visibility != View.VISIBLE) continue
+            tabs.setVisible(tab.tabId, false)
+            privateLock.hide(tab.tabId)
         }
+        refreshGuard()
+        announcePrivateLock()
     }
 
     /**
@@ -899,8 +908,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      * ones it asked hidden itself), the guard follows and the chrome hears.
      */
     private fun onPrivateLockReleased() {
-        for (tabId in lockHidden) tabs.setVisible(tabId, true)
-        lockHidden.clear()
+        for (tabId in privateLock.takeHidden()) tabs.setVisible(tabId, true)
         refreshGuard()
         announcePrivateLock()
     }
@@ -924,7 +932,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
 
     /** The one call on the window's screenshot guard: the chrome's word, and the lock's hidden views. */
     private fun refreshGuard() {
-        PrivateBrowsing.guard(activity.window, privateSurface, lockedContent = lockHidden.isNotEmpty())
+        PrivateBrowsing.guard(activity.window, privateSurface, lockedContent = privateLock.holdsHiddenViews)
     }
 
     /** Back while in Zenium's own fullscreen (and nothing is fullscreen on the page) leaves it. */
@@ -1284,22 +1292,23 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
      *
      * The private lock's invariant: while the lock holds, no private page view is shown, whatever
      * the chrome's layout says – a locked private tab brought to the front (the media
-     * notification's tap, a card under the cover) is kept hidden here and noted in [lockHidden],
-     * so the release brings it back; the chrome's cover is over it meanwhile, and the guard stays
-     * up. The chrome's own hide of such a view is the same word as the host's.
+     * notification's tap, a card under the cover) is kept hidden here and held by the lock
+     * ([PrivateLock.refusesShow]), so the release brings it back; the chrome's cover is over it
+     * meanwhile, and the guard stays up. The chrome's own hide of such a view is the same word as
+     * the host's.
      */
     private fun setTabVisible(tabId: String, visible: Boolean) {
         val view = tabs.get(tabId)
-        if (visible && view != null && privateLock.locked && Profiles.isPrivate(view.containerId)) {
+        if (visible && view != null && privateLock.refusesShow(tabId, Profiles.isPrivate(view.containerId))) {
             Log.d(TAG, "show of private $tabId refused under the lock")
             // The core believes it shown: the release is what brings it back.
-            if (lockHidden.add(tabId)) refreshGuard()
+            refreshGuard()
             return
         }
         // The core's word on a view this host hid under the private lock replaces the host's: the
         // core now brings it back itself (its layout, once the lock is off), or asks it hidden as
         // the lock cover is up – then it is the core's to bring back, not the release's.
-        if (lockHidden.remove(tabId)) refreshGuard()
+        if (privateLock.forget(tabId)) refreshGuard()
         val ticket = pageVisibility.request(tabId, visible) ?: return
         // A page on its way off the screen has its card picture taken while it is still there. The
         // chrome may have just captured its cover for the same frame: the copy is shared, and a
