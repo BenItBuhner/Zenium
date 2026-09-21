@@ -167,7 +167,8 @@ describe('the publisher', () => {
     expect(big.open).toHaveLength(HISTORY_OPEN_MAX)
     expect(big.open[0]).toEqual(visit(0, 1))
     expect(big.open.at(-1)).toEqual({ type: 'cleared', at: NOW })
-    expect(big.open[1]).toEqual(visit(4, 5))
+    // Four over the cap (the written one, the two extra visits, the clear): visits 1-4 went.
+    expect(big.open[1]).toEqual(visit(5, 6))
   })
 
   it('plans full pages as sealed, the rest as the open page, and only what is not yet in the folder', () => {
@@ -236,14 +237,16 @@ describe('the reader', () => {
   it('applies runs of visits as one import each, deletions through the delete paths, in stream order', () => {
     const t = target()
     const memory = emptyDeletions()
+    // A day ago: inside the retention window the deletion memory keeps.
+    const T = NOW - 86_400_000
     const entries: HistoryEntry[] = [
-      visit(1, 10),
-      visit(2, 20),
-      { type: 'removed', at: 25, keys: [{ url: 'https://e.example/1', at: 10 }] },
-      visit(3, 30),
-      { type: 'range-removed', at: 35, from: 0, to: 15 },
-      { type: 'cleared', at: 40 },
-      visit(4, 50)
+      visit(1, T + 10),
+      visit(2, T + 20),
+      { type: 'removed', at: T + 25, keys: [{ url: 'https://e.example/1', at: T + 10 }] },
+      visit(3, T + 30),
+      { type: 'range-removed', at: T + 35, from: T, to: T + 15 },
+      { type: 'cleared', at: T + 40 },
+      visit(4, T + 50)
     ]
     const result = applyEntries(t, entries, 0, memory, NOW)
     expect(t.imported.map((b) => b.map((v) => v.url))).toEqual([
@@ -251,23 +254,23 @@ describe('the reader', () => {
       ['https://e.example/3'],
       ['https://e.example/4']
     ])
-    expect(t.deleted).toEqual([[{ url: 'https://e.example/1', at: 10 }]])
+    expect(t.deleted).toEqual([[{ url: 'https://e.example/1', at: T + 10 }]])
     expect(t.ranges).toEqual([
-      [0, 15],
-      [0, 41]
+      [T, T + 15],
+      [0, T + 41]
     ])
     expect(result).toEqual({ imported: 4, deleted: 3 })
     // Every deletion is remembered: a visit an older page brings later stays deleted.
-    expect(isDeleted(memory, { url: 'https://e.example/1', at: 10 })).toBe(true)
-    expect(isDeleted(memory, { url: 'https://e.example/9', at: 12 })).toBe(true)
-    expect(isDeleted(memory, { url: 'https://e.example/9', at: 40 })).toBe(true)
-    expect(isDeleted(memory, { url: 'https://e.example/9', at: 41 })).toBe(false)
+    expect(isDeleted(memory, { url: 'https://e.example/1', at: T + 10 })).toBe(true)
+    expect(isDeleted(memory, { url: 'https://e.example/9', at: T + 12 })).toBe(true)
+    expect(isDeleted(memory, { url: 'https://e.example/9', at: T + 40 })).toBe(true)
+    expect(isDeleted(memory, { url: 'https://e.example/9', at: T + 41 })).toBe(false)
     const late = target()
-    expect(applyEntries(late, [visit(7, 12), visit(8, 60)], 0, memory, NOW)).toEqual({
+    expect(applyEntries(late, [visit(7, T + 12), visit(8, T + 60)], 0, memory, NOW)).toEqual({
       imported: 1,
       deleted: 0
     })
-    expect(late.imported).toEqual([[{ url: 'https://e.example/8', at: 60 }]])
+    expect(late.imported).toEqual([[{ url: 'https://e.example/8', at: T + 60 }]])
   })
 
   it('resumes a page from the cursor and skips nothing before it', () => {

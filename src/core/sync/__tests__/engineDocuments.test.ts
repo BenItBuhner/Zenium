@@ -309,7 +309,7 @@ describe('tabs from other devices', () => {
     expect(version).toBeGreaterThan(0)
 
     // A closes a tab: the list follows on the next rounds; the version moves once it did.
-    a.browser.tabs.closeTab(one.id, win)
+    a.browser.tabs.closeTab(one.id, false, win)
     await round(a, b)
     expect(b.engine.tabsFromDevices()[0].tabs.map((t) => t.url)).not.toContain('https://a.example/one')
     expect(b.engine.status().remoteTabsVersion).toBeGreaterThan(version)

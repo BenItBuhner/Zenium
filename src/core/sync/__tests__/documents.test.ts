@@ -53,7 +53,7 @@ describe('document names', () => {
   })
 
   it('serialises a document with its identity in the clear and parses back, refusing garbage', () => {
-    const envelope = { v: 1 as const, salt: 'c2FsdA==', iv: 'aXY=', data: 'ZGF0YQ==' }
+    const envelope = { v: 1 as const, salt: 'c2FsdA==', iv: 'aXY=', tag: 'dGFn', ciphertext: 'ZGF0YQ==' }
     const text = serializeDocument({
       kind: 'history',
       deviceId: 'device_a',
@@ -169,14 +169,17 @@ describe('the open-tabs record', () => {
         { tabId: 'https://b.example/', url: 'https://b.example/', title: 'https://b.example/', favicon: null, lastActive: 0, windowId: null }
       ]
     })
+    // Newest list first; an empty list and one older than 30 days are not shown.
+    const DAY = 86_400_000
+    const now = 40 * DAY
     const lists = sortDeviceTabs(
       [
-        { deviceId: 'a', deviceName: 'A', updatedAt: 10, tabs: [] },
-        { deviceId: 'b', deviceName: 'B', updatedAt: 20, tabs: [{ tabId: 't', url: 'https://x.example/', title: 'X', favicon: null, lastActive: 1, windowId: null }] },
-        { deviceId: 'c', deviceName: 'C', updatedAt: 30, tabs: [{ tabId: 't', url: 'https://y.example/', title: 'Y', favicon: null, lastActive: 1, windowId: null }] },
-        { deviceId: 'stale', deviceName: 'S', updatedAt: 1, tabs: [{ tabId: 't', url: 'https://z.example/', title: 'Z', favicon: null, lastActive: 1, windowId: null }] }
+        { deviceId: 'a', deviceName: 'A', updatedAt: now - 3 * DAY, tabs: [] },
+        { deviceId: 'b', deviceName: 'B', updatedAt: now - 2 * DAY, tabs: [{ tabId: 't', url: 'https://x.example/', title: 'X', favicon: null, lastActive: 1, windowId: null }] },
+        { deviceId: 'c', deviceName: 'C', updatedAt: now - DAY, tabs: [{ tabId: 't', url: 'https://y.example/', title: 'Y', favicon: null, lastActive: 1, windowId: null }] },
+        { deviceId: 'stale', deviceName: 'S', updatedAt: now - 35 * DAY, tabs: [{ tabId: 't', url: 'https://z.example/', title: 'Z', favicon: null, lastActive: 1, windowId: null }] }
       ],
-      40 * 86_400_000
+      now
     )
     expect(lists.map((d) => d.deviceId)).toEqual(['c', 'b'])
   })

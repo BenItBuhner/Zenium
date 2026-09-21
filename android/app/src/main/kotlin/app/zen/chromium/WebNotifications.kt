@@ -33,15 +33,22 @@ import java.util.concurrent.Executor
  * blocked). A notification with a tag replaces the site's earlier one under the same tag, a tap
  * brings the page's tab forward (`notification.event` `click`, through [MainActivity]), a swipe
  * reports `close`. Icons are fetched off the main thread; the card is posted from there.
+ *
+ * The browser's own notifications ride the same path with `channel` set: a tab sent from one
+ * of the user's other devices (the sync engine's `send-tab`) posts under the app's "Sharing"
+ * channel ([SharingChannel], Chrome Android's), never a site's, and never counts against the
+ * site's permission; its tap opens the URL (the core's `onHostEvent` path for a notification it
+ * never showed itself).
  */
 class WebNotifications(private val host: Host, private val io: Executor) {
     private val context: Context = host.activity.applicationContext
     private val manager = NotificationManagerCompat.from(context)
     private val main = Handler(Looper.getMainLooper())
     private val channels = SitesChannels(context)
+    private val sharing = SharingChannel(context)
 
     /** A notification up (or being posted), by the core's id. */
-    private class Shown(val origin: String, val tag: String)
+    private class Shown(val origin: String, val tag: String, val sharing: Boolean)
     private val shown = LinkedHashMap<String, Shown>()
     private var destroyed = false
 
@@ -82,11 +89,14 @@ class WebNotifications(private val host: Host, private val io: Executor) {
             reply(false)
             return
         }
-        val channelId = channels.ensure(origin)
+        val isSharing = isSharing(args)
+        val channelId = if (isSharing) sharing.ensure() else channels.ensure(origin)
         if (channels.blocked(channelId)) {
             // The user blocked the site in the system's notification settings: Chrome makes that
-            // the site's permission, so the page reads `denied` from now on rather than posting into the void.
-            host.hostEvent("notification.blocked", json("origin" to origin))
+            // the site's permission, so the page reads `denied` from now on rather than posting into
+            // the void. The Sharing channel blocked says nothing about the site: the core hears
+            // `false` and opens the sent tab right away instead.
+            if (!isSharing) host.hostEvent("notification.blocked", json("origin" to origin))
             reply(false)
             return
         }
@@ -99,7 +109,7 @@ class WebNotifications(private val host: Host, private val io: Executor) {
                 host.hostEvent("notification.event", json("id" to replaced, "event" to "replaced"))
             }
         }
-        shown[id] = Shown(origin, tag)
+        shown[id] = Shown(origin, tag, isSharing)
         val iconUrl = args.strOrNull("icon")?.takeIf(String::isNotEmpty)
         val post = { icon: android.graphics.Bitmap? ->
             // Closed while the icon was on its way: nothing to post.
@@ -125,10 +135,10 @@ class WebNotifications(private val host: Host, private val io: Executor) {
         manager.cancel(notificationTag(id, entry.origin, entry.tag), NOTIFICATION_ID)
     }
 
-    /** `notification.forgetOrigin`: the site's permission was withdrawn – its notifications and its channel go. */
+    /** `notification.forgetOrigin`: the site's permission was withdrawn – its notifications and its channel go (a sent tab's stays: it was never the site's). */
     fun forgetOrigin(origin: String) {
         for ((id, entry) in shown.entries.toList()) {
-            if (entry.origin != origin) continue
+            if (entry.origin != origin || entry.sharing) continue
             shown.remove(id)
             manager.cancel(notificationTag(id, origin, entry.tag), NOTIFICATION_ID)
         }
@@ -226,6 +236,45 @@ class WebNotifications(private val host: Host, private val io: Executor) {
          */
         fun notificationTag(id: String, origin: String, tag: String): String =
             if (tag.isNotEmpty()) "zenium.web/$origin/tag:$tag" else "zenium.web/$id"
+
+        /** A `WebNotificationRequest` the browser posts for itself under the Sharing channel (`channel: 'sharing'`), not a page's. */
+        fun isSharing(args: JSONObject): Boolean = args.strOrNull("channel") == SharingChannel.KIND
+    }
+}
+
+/**
+ * The app's "Sharing" notification channel, Chrome Android's for tabs sent from the user's
+ * other devices: one fixed channel of the app's own, beside the sites' group, so the user
+ * silences sent tabs without touching any site. Made on first use; blocked here, the core is
+ * told `false` and opens the tab right away instead.
+ */
+class SharingChannel(private val context: Context) {
+    private val system: NotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    private var made = false
+
+    /** The channel, made if the app has none yet; its id. */
+    fun ensure(): String {
+        if (made) return ID
+        runCatching {
+            if (system.getNotificationChannel(ID) == null) {
+                system.createNotificationChannel(
+                    NotificationChannel(ID, NAME, NotificationManager.IMPORTANCE_DEFAULT).apply {
+                        description = DESCRIPTION
+                    }
+                )
+            }
+        }
+        made = true
+        return ID
+    }
+
+    companion object {
+        /** The request's `channel` value (`WebNotificationRequest.channel`). */
+        const val KIND = "sharing"
+        const val ID = "zenium.sharing"
+        /** Chrome's channel name. */
+        const val NAME = "Sharing"
+        const val DESCRIPTION = "Tabs sent from your other devices"
     }
 }
 
