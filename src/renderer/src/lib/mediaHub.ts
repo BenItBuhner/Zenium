@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { MediaState, Tab, UIState } from '@shared/types'
 import { orderMediaEntries } from '@shared/mediaHub'
 import { displayHost } from '@shared/url'
@@ -109,26 +109,20 @@ export function mediaHubFolded(): boolean {
  * The DOM is the store: the snapshot is re-read after every commit of the row (the snapshot
  * function is new each render, so React checks it once the row's own changes – the button
  * mounting or unmounting with the media, or with the width under the tier – are in the
- * document) and whenever the button's box changes under a stylesheet (a `ResizeObserver` on
- * the button, re-attached as the button comes and goes with the media) or the window resizes.
+ * document) and whenever the window resizes, which is when a stylesheet could fold the button
+ * without a render. Not a `ResizeObserver` on the button: the row's own width observer
+ * (`useElementWidth`) unmounts the button inside the same delivery pass when the sidebar
+ * crosses 270 → 240, and an observer on a node detached by that pass fires at depth 0 – shallower
+ * than the pass in flight – which Chromium reports as "ResizeObserver loop completed with
+ * undelivered notifications" on every crossing with media (the shell pass (a) drive's finding).
  */
-export function useMediaHubFolded(state: UIState): boolean {
-  const present = mediaHubVisible(state)
-  const subscribe = useCallback(
-    (onChange: () => void): (() => void) => {
-      window.addEventListener('resize', onChange)
-      const button = present ? document.querySelector(MEDIA_HUB_BUTTON) : null
-      const observer =
-        button && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onChange) : null
-      if (button) observer?.observe(button)
-      return () => {
-        window.removeEventListener('resize', onChange)
-        observer?.disconnect()
-      }
-    },
-    [present]
-  )
-  return useSyncExternalStore(subscribe, () => mediaHubFolded())
+export function useMediaHubFolded(): boolean {
+  return useSyncExternalStore(subscribeToWindowResize, () => mediaHubFolded())
+}
+
+function subscribeToWindowResize(onChange: () => void): () => void {
+  window.addEventListener('resize', onChange)
+  return () => window.removeEventListener('resize', onChange)
 }
 
 /**

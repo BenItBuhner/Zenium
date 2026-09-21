@@ -202,7 +202,7 @@ export function NavRow({
     (compact ||
       mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
-  const mediaFolded = useMediaHubFolded(state)
+  const mediaFolded = useMediaHubFolded()
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
     // the menu and leaves the focus here (design language v2 §9.22).

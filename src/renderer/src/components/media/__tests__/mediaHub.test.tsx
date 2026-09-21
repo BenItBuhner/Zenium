@@ -573,6 +573,42 @@ describe('the hub from the app menu (§9.29)', () => {
     }
   })
 
+  /*
+   * The row's width observer (`useElementWidth`) unmounts the hub button inside its own delivery
+   * pass when the sidebar crosses 270 → 240; an observer on the button would then fire for the
+   * detached node at depth 0, shallower than the pass, and Chromium would report "ResizeObserver
+   * loop completed with undelivered notifications" on every crossing with media. The fold is
+   * re-read from the DOM after each commit and on the window's resize instead.
+   */
+  it('keeps no ResizeObserver on the hub button: the row measures itself, the pill its content box, and the fold is read from the DOM', () => {
+    const observed: Element[] = []
+    const Native = window.ResizeObserver
+    class RecordingResizeObserver {
+      private readonly targets = new Set<Element>()
+      observe(target: Element): void {
+        this.targets.add(target)
+        observed.push(target)
+      }
+      unobserve(target: Element): void {
+        this.targets.delete(target)
+      }
+      disconnect(): void {
+        this.targets.clear()
+      }
+    }
+    window.ResizeObserver = RecordingResizeObserver as unknown as typeof ResizeObserver
+    try {
+      render(<NavRow state={rowState([track()])} tab={music} compact={false} />)
+      const hubButton = q('[data-zen-media-hub-button]')!
+      expect(hubButton).not.toBeNull()
+      expect(observed).not.toContain(hubButton)
+      expect(observed.some((el) => el.hasAttribute('data-zen-nav-row'))).toBe(true)
+      expect(observed.some((el) => el.hasAttribute('data-address-pill'))).toBe(true)
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
   it('the menu request carries the fold, so the core builds the row only for a folded button', () => {
     const state = rowState([track()])
     render(<NavRow state={state} tab={music} compact={false} />)
