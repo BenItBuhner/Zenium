@@ -173,6 +173,8 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
+  // The page dialogs' message (alert, confirm, prompt): 13 px on the small line (§4, §9.2).
+  'components/dialogs/PageDialog.tsx',
   // The extension details page's error line in the danger ink (#68).
   'components/extensions/ExtensionDetails.tsx',
   // The new tab page's shortcut dialog: its validation line in the danger ink (#148).
