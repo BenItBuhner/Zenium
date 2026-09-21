@@ -867,15 +867,16 @@ describe('the v2 primitives (§9.34)', () => {
     expect(panels).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
 
-  it('paint a message row’s lead and description in the status ink through the row’s one data-tone (§9.33 in §1’s ink; pr-261)', () => {
+  it('paint a message row’s status glyph and description in the status ink through the row’s one data-tone (§9.33 in §1’s ink; pr-261)', () => {
     // The tone is the row's attribute: the two rules sit beside the row rule in main.css,
-    // unlayered, and reach the lead glyph and the description THROUGH the row, so a consumer
-    // sets nothing on the span. Each states the status token and nothing else.
+    // unlayered, and reach the status glyph – leading where every row of a list carries one,
+    // trailing on a lone status row – and the description THROUGH the row, so a consumer sets
+    // nothing on the span or the glyph. Each states the status token and nothing else.
     for (const [tone, token] of [
       ['danger', '--v2-danger'],
       ['warn', '--v2-warn']
     ] as const) {
-      const selector = `.zen-v2-row[data-tone='${tone}'] .zen-v2-row-lead,\n.zen-v2-row[data-tone='${tone}'] .zen-v2-description`
+      const selector = `.zen-v2-row[data-tone='${tone}'] .zen-v2-row-lead,\n.zen-v2-row[data-tone='${tone}'] .zen-v2-row-trail,\n.zen-v2-row[data-tone='${tone}'] .zen-v2-description`
       const at = bare.indexOf(`\n${selector} {`)
       expect(at, `rule "${selector}"`).toBeGreaterThanOrEqual(0)
       expect(at).toBeGreaterThan(ruleAt('.zen-v2-row[data-static]'))
@@ -884,24 +885,42 @@ describe('the v2 primitives (§9.34)', () => {
         `  color: var(${token});`
       ])
     }
-    // The span carries no tone of its own anywhere: no stylesheet colours `.zen-v2-description`
-    // or `.zen-v2-row-lead` by an attribute on the element, and the settings page's description
-    // and its leading glyph read the same row attribute (`.zen-settings-row[data-tone]`), not
-    // one on the span or a class on the glyph.
+    // The trailing status glyph (§9.33, §9.3): one unlayered rule beside the tone rules – 16 on
+    // both platforms at the size's stroke token, in the deemphasised ink until the row's tone
+    // inks it – and no second copy anywhere.
+    const trail = ruleAt('.zen-v2-row-trail')
+    expect(trail).toBeGreaterThan(ruleAt('.zen-v2-row[data-static]'))
+    expect(nesting(trail)).toBe(0)
+    expect(bare.slice(trail, bare.indexOf('\n}', trail)).match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  flex-shrink: 0;',
+      '  width: 16px;',
+      '  height: 16px;',
+      '  stroke-width: var(--v2-icon-stroke);',
+      '  color: var(--v2-text-deemphasized);'
+    ])
+    expect(bare.match(/\n\.zen-v2-row-trail \{/g)).toHaveLength(1)
+    // The span and the glyph carry no tone of their own anywhere: no stylesheet colours
+    // `.zen-v2-description`, `.zen-v2-row-lead` or `.zen-v2-row-trail` by an attribute on the
+    // element, and the settings page's description and its trailing glyph read the same row
+    // attribute (`.zen-settings-row[data-tone]`), not one on the span or a class on the glyph.
     const root = fileURLToPath(new URL('../../', import.meta.url))
     for (const file of readdirSync(root, { recursive: true, encoding: 'utf8' })
       .map((f) => f.split('\\').join('/'))
-      .filter((f) => f.endsWith('.css')))
-      expect(readFileSync(join(root, file), 'utf8'), `${file} tones the span`).not.toMatch(
-        /\.zen-v2-(description|row-lead)\[data-tone|\.zen-settings-(description|glyph)\[data-tone/
+      .filter((f) => f.endsWith('.css'))) {
+      const text = readFileSync(join(root, file), 'utf8')
+      expect(text, `${file} tones the span`).not.toMatch(
+        /\.zen-v2-(description|row-lead|row-trail)\[data-tone|\.zen-settings-(description|glyph|trailing-glyph)\[data-tone/
       )
+      if (file !== 'assets/main.css')
+        expect(text, `${file} restates the trailing glyph`).not.toMatch(/\.zen-v2-row-trail/)
+    }
     for (const [tone, token] of [
       ['danger', '--v2-danger'],
       ['warn', '--v2-warn']
     ] as const) {
       for (const part of [
         '.zen-settings-description',
-        '.zen-settings-leading > .zen-settings-glyph'
+        '.zen-settings-trailing > .zen-settings-trailing-glyph'
       ]) {
         const selector = `.zen-settings-row[data-tone='${tone}'] ${part}`
         const at = bare.indexOf(`\n${selector} {`)
@@ -910,6 +929,9 @@ describe('the v2 primitives (§9.34)', () => {
           `  color: var(${token});`
         ])
       }
+      // The leading slot is not toned through the row: a lead glyph is a list's structural
+      // column (every row fills it), a lone status row's glyph trails (§9.33).
+      expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
   })
 })

@@ -8,9 +8,10 @@ import { defaultScope } from '@core/sync/records'
 
 /*
  * The desktop Sync pane (ID-08): the folder-lost notice is the §9.17 / §9.33 message row on the
- * shared static row primitive – the state's glyph and the way out in the danger ink, the label
- * in the text's, one trailing secondary action, no card and no hue of its own – and the toggle
- * list runs in Chrome's order from the list the phone page shares.
+ * shared static row primitive – the way out and the state's trailing 16 glyph in the danger
+ * ink, the label in the text's, one trailing secondary action after the glyph, no card and no
+ * hue of its own – and the toggle list runs in Chrome's order from the list the phone page
+ * shares.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -78,12 +79,11 @@ describe('the desktop Sync pane', () => {
     )?.[1]
     expect(notice).toBeTruthy()
     // The shared row, static, toned – not a card: no border or fill class of its own. The tone
-    // is the row's one attribute; the lead and the description carry none of their own (the
+    // is the row's one attribute; the glyph and the description carry none of their own (the
     // row rule in main.css paints them through it).
     expect(notice).toMatch(
       /<div class="zen-v2-row" data-static="" data-lines="2" data-tone="danger">/
     )
-    expect(notice).toContain('class="lucide lucide-folder-x zen-v2-row-lead"')
     expect(notice).toContain(
       '<span class="zen-v2-label">The sync folder is no longer accessible</span>'
     )
@@ -91,7 +91,12 @@ describe('the desktop Sync pane', () => {
       '<span class="zen-v2-description">Choose it again to keep syncing.</span>'
     )
     expect(notice?.match(/data-tone/g)).toHaveLength(1)
-    expect(notice).toMatch(/<button type="button" class="zen-v2-button">Choose folder<\/button>/)
+    // A lone status row trails its 16 glyph before the one trailing button (§9.33), so the pane
+    // keeps one label edge: no lead glyph, the glyph after the text and before Choose folder.
+    expect(notice).not.toContain('zen-v2-row-lead')
+    expect(notice).toMatch(
+      /<\/span><\/span><svg[^>]*class="lucide lucide-folder-x zen-v2-row-trail"[^>]*>[\s\S]*?<\/svg><button type="button" class="zen-v2-button">Choose folder<\/button>/
+    )
     expect(notice).not.toMatch(/red-|border-|rounded-|bg-/)
     // The engine's error is the sentence the row says: the status card shows the folder instead.
     expect(html.match(/The sync folder is no longer accessible/g)).toHaveLength(1)

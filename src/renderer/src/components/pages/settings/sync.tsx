@@ -17,8 +17,9 @@ import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncFor
  * derived and the folder read); What you sync in Chrome's order follows, so a device can leave a
  * type out before its first push. Connected: Sync now with the status line as its description,
  * the merge question as a sheet while the first sync waits on it, the §9.17 / §9.33 message row
- * when the folder is lost (ink and a tinted glyph, no card) over the folder row that chooses it
- * again, the device name, the other devices with their last-seen time, the toggles, and Turn off
+ * when the folder is lost (ink and a trailing tinted glyph, no card) over the folder row that
+ * chooses it again, the device name, the other devices with their last-seen time and their
+ * count (0 when none, §9.17), the toggles, and Turn off
  * sync – a §9.23 prompt whose one choice, removing this device's file from the folder, is a
  * checkbox row submitted with the action.
  */
@@ -98,10 +99,11 @@ const FOLDER_KEYWORDS = [
 function connectedGroups(sync: SyncStatus): RowGroup[] {
   const status: SettingsRow[] = []
   if (sync.folderLost) {
-    // The §9.17 / §9.33 message row: the state's glyph on the label's line and the way out as
-    // the description, both in the danger ink through the row's one `tone` (the glyph carries
-    // no ink class of its own), and nothing to press – the folder row under it is the follow-up
-    // (§9.17: a group's next row is its action).
+    // The §9.17 / §9.33 message row: the way out as the description and the state's glyph
+    // trailing at 16 – a lone status row trails its glyph (§9.33), never leading in a group
+    // whose other row, Sync now, has none (§10.4's mixing rule) – both in the danger ink through
+    // the row's one `tone` (the glyph carries no ink class of its own), and nothing to press:
+    // the folder row under it is the follow-up (§9.17: a group's next row is its action).
     status.push({
       kind: 'info',
       id: 'sync-folder-lost',
@@ -109,7 +111,7 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       description: SYNC_COPY.folderLostHint,
       tone: 'danger',
       keywords: ['error', 'lost', 'revoked'],
-      leading: <FolderX className="zen-settings-glyph" aria-hidden="true" />
+      trailing: <FolderX className="zen-settings-trailing-glyph" aria-hidden="true" />
     })
   }
   if (sync.pendingMerge) {
@@ -165,7 +167,9 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
     {
       id: 'sync-devices',
       heading: SYNC_COPY.devices,
-      aside: sync.devices.length > 0 ? sync.devices.length.toLocaleString() : undefined,
+      // The count reads 0 rather than disappearing (§9.17): over the empty sentence it is the
+      // one number on the page that says the state, and the sentence explains it.
+      aside: sync.devices.length.toLocaleString(),
       rows: [...sync.devices]
         .sort((a, b) => b.lastSeen - a.lastSeen)
         .map((device) => ({

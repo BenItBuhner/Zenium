@@ -264,8 +264,10 @@ export function V2TitleBlock({
  * surfaces' anatomy (§9.2, §9.18): the leading glyph and the text travel together and sit on the
  * first text line – the glyph (line − glyph) / 2 below the line's top – while whatever trails the
  * text centres on the row's height. A `tone` makes it a message row (§9.33's anatomy in §1's
- * ink only): one `data-tone` on the row, and main.css's row rule paints the lead glyph and the
- * description in the status ink through it; the label stays in the text's.
+ * ink only): one `data-tone` on the row, and main.css's row rule paints the status glyph and the
+ * description in the status ink through it; the label stays in the text's at the row's 15/400.
+ * The glyph leads only in a list where every row carries one; a status row that stands alone
+ * trails it as a child (`.zen-v2-row-trail`, 16) before any trailing button (§9.33).
  */
 export function V2Row({
   label,

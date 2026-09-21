@@ -3362,7 +3362,8 @@ describe('ID-08’s Sync category on a phone', () => {
     const empty = section('sync', syncState(connected({ devices: [] })))
     const devices = empty.groups.find((g) => g.id === 'sync-devices')
     expect(devices?.rows).toEqual([])
-    expect(devices?.aside).toBeUndefined()
+    // The heading's count reads 0 rather than disappearing (§9.17; the lead's nit 2 on #261).
+    expect(devices?.aside).toBe('0')
     expect(devices?.empty).toBe('No other device has synced to this folder yet')
 
     const first = row(section('sync', syncState(connected({ lastSyncAt: null }))), 'sync-now')
@@ -3380,7 +3381,7 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(failed).toMatchObject({ description: 'Could not read the folder', tone: 'danger' })
   })
 
-  it('the folder-lost notice is a §9.17 / §9.33 message row over the folder row: an info row in the danger ink with a glyph, nothing pressable; Sync now waits', () => {
+  it('the folder-lost notice is a §9.17 / §9.33 message row over the folder row: an info row in the danger ink with its glyph trailing, nothing pressable; Sync now waits', () => {
     const model = section(
       'sync',
       syncState(
@@ -3398,9 +3399,12 @@ describe('ID-08’s Sync category on a phone', () => {
       description: 'Choose it again to keep syncing.',
       tone: 'danger'
     })
-    // The glyph takes the danger ink through the row's one tone: no ink class of its own.
-    if (!isValidElement<{ className?: string }>(notice.leading)) throw new Error('no glyph')
-    expect(notice.leading.props.className).toBe('zen-settings-glyph')
+    // A lone status row trails its 16 glyph (§9.33; never leading in a group whose other row,
+    // Sync now, has none – §10.4's mixing rule), and the glyph takes the danger ink through the
+    // row's one tone: no ink class of its own.
+    expect(notice.leading).toBeUndefined()
+    if (!isValidElement<{ className?: string }>(notice.trailing)) throw new Error('no glyph')
+    expect(notice.trailing.props.className).toBe('zen-settings-trailing-glyph')
     // The status line does not repeat the sentence the row above already says.
     const now = row(model, 'sync-now')
     if (now.kind !== 'action') throw new Error('not an action')

@@ -131,16 +131,14 @@ function Connected({ state }: { state: UIState }): JSX.Element {
     <>
       {sync.folderLost && (
         // The folder went away (an unmounted drive, a revoked tree): the §9.17 / §9.33 message row
-        // on the shared static row – the state's glyph in the danger ink on the label's line, the
-        // way out as the description in the same ink, one trailing secondary action that chooses
-        // the folder again – no card, no hue of its own; the phone draws the same row.
+        // on the shared static row – the way out as the description and the state's glyph
+        // trailing at 16 before the one secondary action that chooses the folder again (a lone
+        // status row trails its glyph, §9.33, so the pane keeps one label edge), both in the
+        // danger ink through the row's one `tone` – no card, no hue of its own; the phone draws
+        // the same row.
         <div className="zen-v2" data-testid="sync-folder-lost">
-          <V2Row
-            lead={FolderX}
-            tone="danger"
-            label={SYNC_COPY.folderLost}
-            description={SYNC_COPY.folderLostHint}
-          >
+          <V2Row tone="danger" label={SYNC_COPY.folderLost} description={SYNC_COPY.folderLostHint}>
+            <FolderX className="zen-v2-row-trail" aria-hidden="true" />
             <V2Button disabled={sync.syncing} onClick={chooseFolder}>
               {SYNC_COPY.chooseAgain}
             </V2Button>
