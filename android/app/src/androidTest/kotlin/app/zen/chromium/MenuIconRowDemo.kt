@@ -401,7 +401,7 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         val raw = chromeJs(
             "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.zen-menu-icon-row button'),function(b){" +
                 "var r=b.getBoundingClientRect();var s=b.querySelector('svg');var g=s?s.getBoundingClientRect():null;" +
-                "var cs=getComputedStyle(b);var f=b.querySelector('.zen-menu-star > span:last-child');" +
+                "var cs=getComputedStyle(b);var f=b.querySelector('.zen-star-glyph > span:last-child');" +
                 "var sf=b.closest('[data-surface]');" +
                 "return {label:b.getAttribute('aria-label'),disabled:b.disabled,opacity:cs.opacity,background:cs.backgroundColor," +
                 "active:b.matches(':active'),w:r.width,h:r.height,glyph:g?g.width:0,filled:b.getAttribute('data-filled')," +
@@ -503,7 +503,7 @@ class MenuIconRowDemo : DemoHarness("history-bookmarks-demo-state.json", "menu-r
         private const val FILL_SAMPLER =
             "(function(){window.__rowFill=[];window.__rowFillOn=false;" +
                 "window.__rowFillStart=function(){window.__rowFill=[];window.__rowFillOn=true;var t0=performance.now();" +
-                "var tick=function(){if(!window.__rowFillOn)return;var s=document.querySelector('.zen-menu-star > span:last-child');" +
+                "var tick=function(){if(!window.__rowFillOn)return;var s=document.querySelector('.zen-menu-icon-row .zen-star-glyph > span:last-child');" +
                 "window.__rowFill.push([Math.round(performance.now()-t0),s?parseFloat(s.style.opacity):null,s?s.style.transform:null," +
                 "!!document.querySelector('.zen-menu-icon-row')]);requestAnimationFrame(tick)};requestAnimationFrame(tick)};" +
                 "window.__rowFillStop=function(){window.__rowFillOn=false;return JSON.stringify(window.__rowFill)}})()"
