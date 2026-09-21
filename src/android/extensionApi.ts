@@ -20,7 +20,12 @@ import {
 } from '@core/extensions/api/systemStorage'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
-import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
+import {
+  chromeExtensionOrigin,
+  extensionIdOfUrl,
+  presentExtensionUrl,
+  toServedUrl
+} from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import {
   extensionOrigin,
@@ -544,7 +549,7 @@ export class ExtensionApi {
       case 'tabs':
         return this.tabsCall(ext, endpoint, method, args)
       case 'windows':
-        return this.windowsCall(ext, method, args)
+        return this.windowsCall(ext, endpoint, method, args)
       case 'action':
       case 'browserAction':
       case 'pageAction':
@@ -693,7 +698,10 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const tab = tabs.createTab(
           {
-            url: typeof props.url === 'string' ? props.url : undefined,
+            url:
+              typeof props.url === 'string'
+                ? tabUrlFrom(ext.record.id, endpoint.url, props.url)
+                : undefined,
             active: props.active === undefined ? true : Boolean(props.active),
             pinned: Boolean(props.pinned)
           },
@@ -706,7 +714,8 @@ export class ExtensionApi {
         const props = asRecord(second ?? first)
         const target = targetOrActive(first)
         if (!target) throw new Error('No active tab.')
-        if (typeof props.url === 'string') tabs.navigate(target.id, props.url)
+        if (typeof props.url === 'string')
+          tabs.navigate(target.id, tabUrlFrom(ext.record.id, endpoint.url, props.url))
         if (props.active === true) tabs.activateTab(target.id, win)
         if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
           tabs.toggleMute(target.id)
@@ -974,7 +983,12 @@ export class ExtensionApi {
     return undefined
   }
 
-  private windowsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
+  private windowsCall(
+    ext: AttachedExtension,
+    endpoint: Endpoint,
+    method: string,
+    args: unknown[]
+  ): unknown {
     switch (method) {
       case 'get':
       case 'getCurrent':
@@ -986,7 +1000,10 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
-          this.host.browser.tabs.createTab({ url, active: true }, this.host.window())
+          this.host.browser.tabs.createTab(
+            { url: tabUrlFrom(ext.record.id, endpoint.url, url), active: true },
+            this.host.window()
+          )
         return this.tabs.chromeWindow(ext)
       }
       case 'update':
@@ -1686,6 +1703,30 @@ function safeOrigin(url: string): string {
     return new URL(url).origin
   } catch {
     return ''
+  }
+}
+
+/**
+ * The URL `tabs.create`, `tabs.update` or `windows.create` names, as Chrome reads it: a
+ * fully-qualified URL as it is (Chrome's rule: it "must include a scheme"), anything else
+ * relative to the calling page within the extension – `callerUrl`, the endpoint's own page in
+ * either spelling, or the extension's root for a caller that has no page of the extension's
+ * (a content script) – in Chrome's spelling of the extension's origin, which the tab model
+ * keeps and the WebView loads as the served one (`ExtensionUrls.toServed`). Awesome
+ * Screenshot's worker opens its editor as `tabs.create({ url: 'edit-react.html' })`, which
+ * the runtime had loaded as a web URL (`https://edit-react.html`, "Secure connection not
+ * available"). A value no URL parser takes goes through as it was.
+ */
+export function tabUrlFrom(extensionId: string, callerUrl: string | null, url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url
+  const base =
+    callerUrl && extensionIdOfUrl(callerUrl) === extensionId
+      ? presentExtensionUrl(callerUrl)
+      : `${chromeExtensionOrigin(extensionId)}/`
+  try {
+    return new URL(url, base).href
+  } catch {
+    return url
   }
 }
 

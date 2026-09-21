@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { languageCodeOf, offscreenUrl } from '../extensionApi'
+import { languageCodeOf, offscreenUrl, tabUrlFrom } from '../extensionApi'
 import { packageRelativePath, pickMessages, type ExtRequestEvent } from '../extensionRuntime'
 import {
   type FakeAuthSheet,
@@ -1385,6 +1385,50 @@ describe('AndroidExtensionRuntime: chrome.offscreen', () => {
     )
     expect(h.kt.offscreens.has(ID)).toBe(false)
     expect((await call(h, 'bg1', 'offscreen', 'hasDocument', [])).result).toBe(false)
+  })
+})
+
+describe('tabUrlFrom: the URL a tabs.create / tabs.update / windows.create names', () => {
+  const origin = `https://${ID}.ext.zenium.invalid`
+
+  it("a relative URL resolves against the calling page of the extension, in Chrome's spelling (Awesome Screenshot's editor)", () => {
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, 'edit-react.html')).toBe(
+      `chrome-extension://${ID}/edit-react.html`
+    )
+    expect(tabUrlFrom(ID, `${origin}/pages/popup.html`, 'editor.html?shot=1#top')).toBe(
+      `chrome-extension://${ID}/pages/editor.html?shot=1#top`
+    )
+    expect(tabUrlFrom(ID, `chrome-extension://${ID}/pages/popup.html`, '/index.html')).toBe(
+      `chrome-extension://${ID}/index.html`
+    )
+    expect(tabUrlFrom(ID, `${origin}/pages/popup.html`, '../other.html')).toBe(
+      `chrome-extension://${ID}/other.html`
+    )
+  })
+
+  it("a caller without a page of the extension's resolves against the extension's root", () => {
+    expect(tabUrlFrom(ID, 'https://example.com/article', 'list.html')).toBe(
+      `chrome-extension://${ID}/list.html`
+    )
+    expect(tabUrlFrom(ID, null, 'list.html')).toBe(`chrome-extension://${ID}/list.html`)
+    expect(tabUrlFrom(ID, `https://${ID2}.ext.zenium.invalid/x.html`, 'list.html')).toBe(
+      `chrome-extension://${ID}/list.html`
+    )
+  })
+
+  it('a fully-qualified URL goes through as it is, a value with no host too', () => {
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, 'https://example.com/a?b#c')).toBe(
+      'https://example.com/a?b#c'
+    )
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, `chrome-extension://${ID2}/page.html`)).toBe(
+      `chrome-extension://${ID2}/page.html`
+    )
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, 'about:blank')).toBe('about:blank')
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, `${origin}/served.html`)).toBe(`${origin}/served.html`)
+    // Chrome's own reading of a host without a scheme: a path of the extension's.
+    expect(tabUrlFrom(ID, `${origin}/sw.js`, 'www.example.com')).toBe(
+      `chrome-extension://${ID}/www.example.com`
+    )
   })
 })
 
