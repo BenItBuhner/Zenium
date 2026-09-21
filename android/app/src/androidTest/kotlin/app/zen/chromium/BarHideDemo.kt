@@ -24,8 +24,9 @@ import kotlin.math.roundToInt
  * Records the phone bar hiding on scroll (Chrome / Edge parity, `lib/barHide.ts` and
  * `BarHideGesture.kt`) on a device and judges it as it goes: a long page served from this
  * process is scrolled with INJECTED touch drags (real pointer events through UiAutomation, the
- * path a finger takes), and after each the chrome's own value – `--zen-bar-hide` on its root, 0
- * shown … 1 hidden, what the bar and the host paint from – is read and held against the claim:
+ * path a finger takes), and after each the chrome's own value – `--zen-bar-hide` on its bar
+ * element, 0 shown … 1 hidden, what the bar and the host paint from – is read and held against
+ * the claim:
  *
  *  1. a long drag down the page takes the bar off, and once it rests off the page has grown by
  *     the bar's band (the page's `innerHeight` and the WebView's frame, both read directly);
@@ -913,9 +914,13 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     // --- reads -------------------------------------------------------------------------------------
 
-    /** The chrome's `--zen-bar-hide` as computed on its root: 0 with the bar shown, 1 with it off. */
+    /**
+     * The chrome's `--zen-bar-hide` as computed on the bar element (where `lib/barHide.ts` writes it
+     * since #270; a property of that element alone, so the root computes 0 at all times): 0 with
+     * the bar shown, 1 with it off. The store's progress stands in when there is no bar element.
+     */
     private fun hideValue(): String {
-        val raw = chromeJs("getComputedStyle(document.documentElement).getPropertyValue('--zen-bar-hide').trim()")
+        val raw = chromeJs(BAR_HIDE_READ)
         return (JSONTokener(raw).nextValue() as? String)?.ifEmpty { "(unset)" } ?: "(unset)"
     }
 
@@ -1117,6 +1122,17 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     }
 
     companion object {
+        /**
+         * `--zen-bar-hide` as computed on the bar element (a registered property of that element
+         * alone since #270, so it computes to a number there, `0` at rest); without a bar element
+         * the store's `progress`. Shared with [BarHidePerfDemo].
+         */
+        const val BAR_HIDE_READ =
+            "(function(){var b=document.querySelector('.zen-phone-bar:not([aria-hidden])');" +
+                "var v=b?getComputedStyle(b).getPropertyValue('--zen-bar-hide').trim():'';" +
+                "if(v)return v;var s=(window.__zenStores||{})['bar-hide'];var p=s&&s.get?s.get().progress:undefined;" +
+                "return typeof p==='number'?String(p):''})()"
+
         private const val PORT = 18142
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         /** The short pages (`bar-hide-demo-short.html`): the body is the viewport plus the `over` query, CSS px. */

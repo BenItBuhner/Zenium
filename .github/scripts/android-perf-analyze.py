@@ -719,8 +719,9 @@ def build_report(record, gfx_by_label, blink_by_page, perfetto, scenes_flat):
     lines.append("")
     lines.append(
         "A frame or task is the chrome's when a chrome mark lies inside it (`c:scroll` a `barScroll` report arriving, `c:style` a write of "
-        "`--zen-bar-hide`, `c:frame` the chrome's next animation frame after a write, `c:hidden` a `data-bar-hidden` flip, `c:column` the content "
-        "column's padding changing), the page's when a page mark does (`p:scroll` its scroll event, `p:resize` its resize event); "
+        "`--zen-bar-hide`, `c:frame` the chrome's next animation frame after a write, `c:hidden` a `data-bar-hidden` flip, `c:away` a "
+        "`data-bar-away` flip, `c:column` the content column's padding changing), the page's when a page mark does (`p:scroll` its scroll "
+        "event, `p:resize` its resize event); "
         "`c:stamp` says the marks' names did not survive the controller's filter and the chrome's `console.timeStamp` instants stood in "
         "(the chrome is told, the page is not). Without marks (a trace from before they were planted) everything is unmarked."
     )
@@ -743,23 +744,28 @@ def build_report(record, gfx_by_label, blink_by_page, perfetto, scenes_flat):
     # Table 4: the in-process counters.
     lines.append("### The in-process counters per scene")
     lines.append("")
-    lines.append("| page | scene | UI layouts | UI draws | page WebView resizes | barScroll in | root style writes | data-bar-hidden flips | page resize events | page scroll events | innerHeight | hide |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
+    lines.append("| page | scene | UI layouts | UI draws | page WebView resizes | barScroll in | style writes (root) | data-bar-hidden flips | data-bar-away flips | column resizes | host frames (one way) | page resize events | page scroll events | innerHeight | hide |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
     for scene in scenes_flat:
         v = scene.get("views", {})
         c = scene.get("chrome", {})
         p = scene.get("pageCounters", {})
         lines.append(
             f"| {scene['pageKey']} | {scene['name']} | {fmt(v.get('layouts'))} | {fmt(v.get('draws'))} | {fmt(v.get('pageBounds'))} | {fmt(c.get('barScroll'))} | "
-            f"{fmt(c.get('styleWrites'))} | {fmt(c.get('hiddenFlips'))} | {fmt(p.get('resizes'))} | {fmt(p.get('scrolls'))} | "
+            f"{fmt(c.get('styleWrites'))} ({fmt(c.get('rootStyleWrites'))}) | {fmt(c.get('hiddenFlips'))} | {fmt(c.get('awayFlips'))} | {fmt(c.get('columnChanges'))} | "
+            f"{fmt(c.get('hostFrames'))} ({fmt(c.get('hostPosts'))}) | {fmt(p.get('resizes'))} | {fmt(p.get('scrolls'))} | "
             f"{fmt(scene.get('innerHeightBefore'))} → {fmt(scene.get('innerHeightAfter'))} | {fmt(scene.get('hideBefore'))} → {fmt(scene.get('hideAfter'))} |"
         )
     lines.append("")
     lines.append(
         "UI layouts / draws: layout passes and draws of the app's window (`OnGlobalLayoutListener`, `OnDrawListener`); page WebView resizes: "
-        "changes of the page view's bounds; barScroll in: scroll reports the host streamed into the chrome; root style writes: writes of "
-        "`--zen-bar-hide` on the chrome's root (each is a host frame back, `chrome.setBarHide`); page resize events: the page's own `resize` "
-        "events (its viewport changed)."
+        "changes of the page view's bounds; barScroll in: scroll reports the host streamed into the chrome; style writes: writes of "
+        "`--zen-bar-hide` per frame, on the bar element and the root together, the root's alone in brackets (#200 wrote the root every frame, "
+        "which recalculated the whole chrome's style; #270 writes the bar element, a property of that element alone); data-bar-hidden / "
+        "data-bar-away flips: the root's attributes for the column's layout (the hidden rest) and the message frame's box (off the shown rest); "
+        "column resizes: the content column (`main`) changing size (the page WebView's frame follows it); host frames: `chrome.setBarHide` "
+        "commands to the host, in brackets those sent one way (#270's `post`, answered with no `resolve` on the chrome's thread; a dash where "
+        "the bridge object could not be wrapped); page resize events: the page's own `resize` events (its viewport changed)."
     )
     lines.append("")
 

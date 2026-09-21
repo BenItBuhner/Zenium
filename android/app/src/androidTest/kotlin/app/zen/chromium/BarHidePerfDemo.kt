@@ -216,8 +216,9 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
             "[$label] ${summary.optInt("frames")} frames, ${summary.optInt("janky")} janky (${summary.optString("jankyPercent")}%), " +
                 "50/90/95/99th ${summary.optInt("p50")}/${summary.optInt("p90")}/${summary.optInt("p95")}/${summary.optInt("p99")} ms; " +
                 "window ${(endBoot - startBoot) / 1_000_000} ms; ui layouts ${views["layouts"]}, draws ${views["draws"]}, page bounds changes ${views["pageBounds"]}; " +
-                "chrome barScroll ${chrome.optInt("barScroll")}, root style writes ${chrome.optInt("styleWrites")}, data-bar-hidden flips ${chrome.optInt("hiddenFlips")}, " +
-                "column resizes ${chrome.optInt("columnChanges")}, host frames ${chrome.opt("hostFrames") ?: "?"}; " +
+                "chrome barScroll ${chrome.optInt("barScroll")}, style writes ${chrome.optInt("styleWrites")} (root ${chrome.optInt("rootStyleWrites")}), " +
+                "data-bar-hidden flips ${chrome.optInt("hiddenFlips")}, data-bar-away flips ${chrome.optInt("awayFlips")}, " +
+                "column resizes ${chrome.optInt("columnChanges")}, host frames ${chrome.opt("hostFrames") ?: "?"} (one way ${chrome.opt("hostPosts") ?: "?"}); " +
                 "page resizes ${pageCounts.optInt("resizes")}, scroll events ${pageCounts.optInt("scrolls")}, " +
                 "innerHeight $innerBefore -> $innerAfter, scrollTop $scrollBefore -> $scrollAfter, hide $hideBefore -> $hideAfter"
         )
@@ -340,11 +341,16 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
 
     /**
      * Counters in the chrome for what the hypotheses ask: how many `barScroll` reports the host
-     * streamed in (a wrapper on `__zenHost.barScroll`), how many times the root's `style`
-     * attribute was written (`--zen-bar-hide` per frame: a MutationObserver), how often
-     * `data-bar-hidden` flipped, how often the content column (`main`) changed size (a
+     * streamed in (a wrapper on `__zenHost.barScroll`), how many times the value was written
+     * (`--zen-bar-hide` per frame, a MutationObserver on the `style` attribute: `styleWrites`
+     * counts the bar element's and the root's together, `rootStyleWrites` the root's alone –
+     * #200 wrote the root every frame, #270 writes the bar element and never the root), how
+     * often `data-bar-hidden` flipped and how often `data-bar-away` did (the message frame's
+     * box, twice per gesture by design), how often the content column (`main`) changed size (a
      * ResizeObserver: the page WebView's frame follows it), and – where the injected bridge
-     * object lets its `call` be wrapped – how many `chrome.setBarHide` frames went back to the host.
+     * object lets its `call` and `post` be wrapped – how many `chrome.setBarHide` frames went
+     * back to the host (`hostFrames`), of them how many one way (`hostPosts`: #270's `post`,
+     * which the host answers with no `resolve` on this thread).
      *
      * Each count also plants a mark in the Chromium trace (`performance.mark('zenperf c:…')`,
      * category `blink.user_timing`; the name is all WebView's tracing controller keeps of it):
@@ -358,22 +364,26 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
      */
     private fun installChromeCounters(): String = chromeJs(
         "(function(){if(window.__perf)return 'kept';" +
-            "var p=window.__perf={barScroll:0,styleWrites:0,hiddenFlips:0,columnChanges:0,hostFrames:0,wrapped:false};" +
+            "var p=window.__perf={barScroll:0,styleWrites:0,rootStyleWrites:0,hiddenFlips:0,awayFlips:0,columnChanges:0,hostFrames:0,hostPosts:0,wrapped:false};" +
             "var mark=function(l){try{performance.mark('zenperf c:'+l);console.timeStamp('zenperf c:'+l)}catch(e){}};" +
             "var pending=false;var frame=function(){if(pending)return;pending=true;requestAnimationFrame(function(){pending=false;mark('frame')})};" +
             "var h=window.__zenHost;if(h&&typeof h.barScroll==='function'){var o=h.barScroll;h.barScroll=function(){p.barScroll++;mark('scroll');return o.apply(this,arguments)}}" +
             "var n=window.__zenNative;if(n){try{var oc=n.call;var w=function(json){if(typeof json==='string'&&json.indexOf('chrome.setBarHide')>=0)p.hostFrames++;return oc.call(n,json)};" +
-            "n.call=w;p.wrapped=(n.call===w)}catch(e){p.wrapError=String(e)}}" +
-            "new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].attributeName;" +
-            "if(a==='style'){p.styleWrites++;mark('style');frame()}else if(a==='data-bar-hidden'){p.hiddenFlips++;mark('hidden');frame()}}})" +
-            ".observe(document.documentElement,{attributes:true,attributeFilter:['style','data-bar-hidden']});" +
+            "n.call=w;p.wrapped=(n.call===w);" +
+            "if(typeof n.post==='function'){var op=n.post;var wp=function(json){if(typeof json==='string'&&json.indexOf('chrome.setBarHide')>=0){p.hostFrames++;p.hostPosts++}return op.call(n,json)};n.post=wp;p.wrapped=p.wrapped&&(n.post===wp)}" +
+            "}catch(e){p.wrapError=String(e)}}" +
+            "var onRoot=function(rs){for(var i=0;i<rs.length;i++){var a=rs[i].attributeName;" +
+            "if(a==='style'){p.styleWrites++;p.rootStyleWrites++;mark('style');frame()}else if(a==='data-bar-hidden'){p.hiddenFlips++;mark('hidden');frame()}else if(a==='data-bar-away'){p.awayFlips++;mark('away');frame()}}};" +
+            "new MutationObserver(onRoot).observe(document.documentElement,{attributes:true,attributeFilter:['style','data-bar-hidden','data-bar-away']});" +
+            "var bar=document.querySelector('.zen-phone-bar:not([aria-hidden])');" +
+            "if(bar)new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){if(rs[i].attributeName==='style'){p.styleWrites++;mark('style');frame()}}}).observe(bar,{attributes:true,attributeFilter:['style']});" +
             "var main=document.querySelector('main');if(main&&window.ResizeObserver)new ResizeObserver(function(){p.columnChanges++;mark('column')}).observe(main);" +
-            "return 'installed, native call wrapped: '+p.wrapped+', column observed: '+!!main})()"
+            "return 'installed, native call wrapped: '+p.wrapped+', post: '+(n&&typeof n.post==='function')+', bar observed: '+!!bar+', column observed: '+!!main})()"
     )
 
     private fun resetChromeCounters() {
         chromeJs(
-            "window.__perf&&Object.assign(window.__perf,{barScroll:0,styleWrites:0,hiddenFlips:0,columnChanges:0,hostFrames:0});" +
+            "window.__perf&&Object.assign(window.__perf,{barScroll:0,styleWrites:0,rootStyleWrites:0,hiddenFlips:0,awayFlips:0,columnChanges:0,hostFrames:0,hostPosts:0});" +
                 "performance.clearMarks()"
         )
     }
@@ -414,8 +424,9 @@ class BarHidePerfDemo : DemoHarness("bar-hide-demo-state.json", "perf-bar-hide",
 
     // --- reads (outside the windows only) -------------------------------------------------------------------
 
+    /** `--zen-bar-hide` off the bar element (the store's progress without one): [BarHideDemo.BAR_HIDE_READ]. */
     private fun hideValue(): String {
-        val raw = chromeJs("getComputedStyle(document.documentElement).getPropertyValue('--zen-bar-hide').trim()")
+        val raw = chromeJs(BarHideDemo.BAR_HIDE_READ)
         return (JSONTokener(raw).nextValue() as? String)?.ifEmpty { "(unset)" } ?: "(unset)"
     }
 
