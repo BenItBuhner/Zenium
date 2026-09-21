@@ -70,6 +70,8 @@ export interface StreamCursor {
   seq: number
   /** Entries of page `seq` already applied. */
   index: number
+  /** `updatedAt` of page `seq`'s document when it was last read: unchanged, it is not decrypted again. */
+  updatedAt?: number
 }
 
 /** What `sync.json` keeps for the history record. */
@@ -84,8 +86,11 @@ export interface HistorySyncState {
   pages: Array<{ seq: number; to: number }>
   /** Where this device is in every other device's stream, by device id. */
   cursors: Record<string, StreamCursor>
-  /** The backlog export under way: the floor and the model's cursor; null once done. */
-  seed: { since: number; cursor: string | null } | null
+  /**
+   * The backlog export under way: visits in `[since, until)` through the model's `exportVisits`,
+   * `cursor` its page cursor; null once done (or never started).
+   */
+  seed: { since: number; until: number; cursor: string | null } | null
   /** The newest visit time this device has published (the floor of a later re-seed). */
   publishedUntil: number
   deletions: DeletionMemory
@@ -129,8 +134,15 @@ export function readHistoryState(raw: unknown): HistorySyncState {
       : [],
     cursors: {},
     seed:
-      r.seed && typeof r.seed === 'object' && typeof r.seed.since === 'number'
-        ? { since: r.seed.since, cursor: typeof r.seed.cursor === 'string' ? r.seed.cursor : null }
+      r.seed &&
+      typeof r.seed === 'object' &&
+      typeof r.seed.since === 'number' &&
+      typeof r.seed.until === 'number'
+        ? {
+            since: r.seed.since,
+            until: r.seed.until,
+            cursor: typeof r.seed.cursor === 'string' ? r.seed.cursor : null
+          }
         : null,
     publishedUntil: num(r.publishedUntil, 0),
     deletions: readDeletions(r.deletions)
@@ -138,8 +150,10 @@ export function readHistoryState(raw: unknown): HistorySyncState {
   if (out.written > out.open.length) out.written = out.open.length
   if (r.cursors && typeof r.cursors === 'object') {
     for (const [id, c] of Object.entries(r.cursors as Record<string, Partial<StreamCursor>>)) {
-      if (c && typeof c.seq === 'number' && typeof c.index === 'number')
+      if (c && typeof c.seq === 'number' && typeof c.index === 'number') {
         out.cursors[id] = { seq: Math.max(0, c.seq), index: Math.max(0, c.index) }
+        if (typeof c.updatedAt === 'number') out.cursors[id].updatedAt = c.updatedAt
+      }
     }
   }
   return out
@@ -250,6 +264,33 @@ export function entriesFromVisits(visits: ImportedVisit[]): HistoryEntry[] {
   return visits.map((visit) => ({ type: 'visit', visit: wireVisit(visit) }))
 }
 
+/** The model's pure export, as the seed needs it. */
+export interface HistoryExporter {
+  exportVisits(query: {
+    since: number
+    until?: number
+    limit?: number
+    cursor?: string | null
+  }): { visits: ImportedVisit[]; next: string | null }
+}
+
+/**
+ * Where a backlog export starts: `since` (the retention window, or just past what was published
+ * before), raised so that at most `HISTORY_SEED_MAX` visits – the newest – are in `[floor, until)`.
+ * Pure reads of the model, page by page.
+ */
+export function seedFloor(history: HistoryExporter, since: number, until: number): number {
+  const times: number[] = []
+  let cursor: string | null = null
+  do {
+    const page = history.exportVisits({ since, until, cursor })
+    for (const v of page.visits) times.push(v.at)
+    cursor = page.next
+  } while (cursor !== null)
+  if (times.length <= HISTORY_SEED_MAX) return since
+  return Math.max(since, times[times.length - HISTORY_SEED_MAX])
+}
+
 /** The newest time an entry speaks of (a visit's time, a deletion's moment). */
 export function entryTime(entry: HistoryEntry): number {
   return entry.type === 'visit' ? entry.visit.at : entry.at
@@ -288,49 +329,54 @@ export interface PageWrite {
   page: HistoryPage
 }
 
+/** The publisher's fields `planWrites` moves: taken over once every write succeeded. */
+export type PublisherState = Pick<HistorySyncState, 'seq' | 'written' | 'open' | 'pages'>
+
 /**
  * Turn the buffer into the pages to write: every full `HISTORY_PAGE_ENTRIES` from the front is
  * sealed at the current sequence number and the number advances; what remains is the open page,
- * written when it holds entries not yet in the folder. The state is updated as if the writes
- * succeeded; a caller whose write fails keeps the previous state (`structuredClone` it first).
+ * written when it holds entries not yet in the folder. Pure: `after` is the publisher's state
+ * once the writes have succeeded (`takeWrites`); a caller whose write fails keeps `state` as it
+ * was.
  */
-export function planWrites(state: HistorySyncState): PageWrite[] {
+export function planWrites(state: HistorySyncState): { writes: PageWrite[]; after: PublisherState } {
   const writes: PageWrite[] = []
-  while (state.open.length >= HISTORY_PAGE_ENTRIES) {
-    const entries = state.open.slice(0, HISTORY_PAGE_ENTRIES)
-    writes.push({ seq: state.seq, page: { v: 1, seq: state.seq, sealed: true, entries } })
-    state.pages.push({ seq: state.seq, to: Math.max(...entries.map(entryTime)) })
-    state.open = state.open.slice(HISTORY_PAGE_ENTRIES)
-    state.seq += 1
-    state.written = 0
+  const after: PublisherState = {
+    seq: state.seq,
+    written: state.written,
+    open: [...state.open],
+    pages: [...state.pages]
   }
-  if (state.open.length > 0 && state.open.length > state.written) {
+  while (after.open.length >= HISTORY_PAGE_ENTRIES) {
+    const entries = after.open.slice(0, HISTORY_PAGE_ENTRIES)
+    writes.push({ seq: after.seq, page: { v: 1, seq: after.seq, sealed: true, entries } })
+    after.pages.push({ seq: after.seq, to: Math.max(...entries.map(entryTime)) })
+    after.open = after.open.slice(HISTORY_PAGE_ENTRIES)
+    after.seq += 1
+    after.written = 0
+  }
+  if (after.open.length > 0 && after.open.length > after.written) {
     writes.push({
-      seq: state.seq,
-      page: { v: 1, seq: state.seq, sealed: false, entries: [...state.open] }
+      seq: after.seq,
+      page: { v: 1, seq: after.seq, sealed: false, entries: [...after.open] }
     })
-    state.written = state.open.length
+    after.written = after.open.length
   }
-  return writes
+  return { writes, after }
 }
 
 /**
- * Seal the open page even though it is not full (the stream's owner starts a backlog export and
- * wants the live entries to stay ahead of nothing): the page is written sealed, the number
- * advances. Nothing to seal when the page is empty.
+ * The writes went through: the state takes `after` over, and whatever `state.open` gained while
+ * they were in flight (it held `plannedOpen` entries when `planWrites` looked) is queued again
+ * behind it.
  */
-export function sealOpen(state: HistorySyncState): PageWrite | null {
-  if (state.open.length === 0) return null
-  const entries = state.open
-  const write: PageWrite = {
-    seq: state.seq,
-    page: { v: 1, seq: state.seq, sealed: true, entries }
-  }
-  state.pages.push({ seq: state.seq, to: Math.max(...entries.map(entryTime)) })
-  state.open = []
-  state.written = 0
-  state.seq += 1
-  return write
+export function takeWrites(state: HistorySyncState, after: PublisherState, plannedOpen: number): void {
+  const appended = state.open.slice(plannedOpen)
+  state.seq = after.seq
+  state.written = after.written
+  state.pages = after.pages
+  state.open = after.open
+  appendOpen(state, appended)
 }
 
 /** Sealed pages past the retention window or beyond the count cap: their sequence numbers. */

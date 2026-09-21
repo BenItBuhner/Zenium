@@ -4089,6 +4089,7 @@ describe('ID-08’s Sync category on a phone', () => {
       syncing: false,
       devices: [],
       pendingMerge: false,
+      remoteTabsVersion: 0,
       ...patch
     }
   }
