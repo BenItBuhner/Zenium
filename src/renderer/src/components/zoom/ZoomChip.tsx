@@ -13,12 +13,26 @@ import { defaultZoomFor, isZoomed } from './bubble'
  * pressing it again puts the bubble away. The percentage itself is in the chip's name and
  * tooltip; the bubble shows it large.
  */
-export function ZoomChip({ state, tab }: { state: UIState; tab: Tab }): JSX.Element | null {
+export function ZoomChip({
+  state,
+  tab,
+  collapsed = false
+}: {
+  state: UIState
+  tab: Tab
+  /**
+   * The pill cannot hold the chip beside its address (`pillChipTiers.ts`, §9.29): it stays
+   * away – the zoom is in the app menu and on the keyboard – unless its bubble is up, which
+   * keeps its anchor (§9.20).
+   */
+  collapsed?: boolean
+}): JSX.Element | null {
   const open = uiStore.use((s) => s.zoomBubble?.tabId === tab.id)
   const { pageControls } = state.settings
   // The host with the page-controls sheet (Android) shows the zoom there, as Chrome does.
   if (state.capabilities.pageControls) return null
   if (!isZoomed(tab, pageControls, state.pageEnvironment)) return null
+  if (collapsed && !open) return null
   const zoomedIn = tab.zoom > defaultZoomFor(tab.url, pageControls, state.pageEnvironment)
   const label = `Zoom: ${formatZoom(tab.zoom)}`
   // One of the pill's chips (`PillChip`, v2 draft §9.22): a 20px chip like Reader View's, whose

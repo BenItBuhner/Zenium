@@ -2042,6 +2042,24 @@ function searchSection({ state, set }: SectionContext): RowGroup[] {
           checked: s.searchSuggestions,
           onChange: (v) => set({ searchSuggestions: v })
         },
+        // Suggestion privacy (omnibox-45): the local sources each behind their own switch, as
+        // Edge's; private windows show neither whatever these say.
+        {
+          kind: 'switch',
+          id: 'history-suggestions',
+          label: 'Show history suggestions',
+          description: 'Pages you visited, and completing an address you typed before.',
+          checked: s.historySuggestions !== false,
+          onChange: (v) => set({ historySuggestions: v })
+        },
+        {
+          kind: 'switch',
+          id: 'bookmark-suggestions',
+          label: 'Show bookmark suggestions',
+          description: 'Bookmarks whose title or address matches what you type.',
+          checked: s.bookmarkSuggestions !== false,
+          onChange: (v) => set({ bookmarkSuggestions: v })
+        },
         // The desktop URL bar shows the whole URL at rest (§10.1); the phone pill shows hosts
         // only, so the row is the desktop and tablet shells'.
         {

@@ -1980,6 +1980,14 @@ export interface Settings {
   searchEngines?: SearchEngine[]
   searchSuggestions: boolean
   /**
+   * Suggestion privacy (omnibox-45, Chrome's "Autocomplete searches and URLs", Edge's per-source
+   * switches): rows from the browsing history (and the inline address completion), and rows
+   * from the bookmarks. Absent in profiles from before they existed (read as on). Private
+   * windows show neither whatever these say.
+   */
+  historySuggestions?: boolean
+  bookmarkSuggestions?: boolean
+  /**
    * Chrome's "Always show full URLs": the address pill keeps the scheme and `www.` instead of
    * eliding them at rest. Absent in profiles from before it existed (read as false).
    */
@@ -2985,8 +2993,17 @@ export interface Suggestion {
   inline?: boolean
   /** Chromium-style relevance the rows were ordered by (1300 is the verbatim query). */
   relevance?: number
-  /** The row's owner lets the user remove it (Delete; `omnibox.onDeleteSuggestion`). */
+  /**
+   * The row can be removed by the user (Shift+Delete, the hover X; omnibox-22): a history row,
+   * a remembered search, an omnibox row its extension marked deletable
+   * (`omnibox.onDeleteSuggestion`). Bookmarks and open tabs are not, as in Chrome.
+   */
   deletable?: boolean
+  /**
+   * The section the row is listed under (zero-suggest's "Recent searches", omnibox-20): the
+   * popup draws a heading where a new group starts. Rows without one are in no section.
+   */
+  group?: string
 }
 
 export interface CommandDescriptor {
@@ -3427,17 +3444,45 @@ export interface Commands {
     result: void
   }
 
-  'urlbar.suggest': { args: { query: string; tabId: string | null }; result: Suggestion[] }
+  'urlbar.suggest': {
+    args: {
+      query: string
+      tabId: string | null
+      /**
+       * The bar is in keyword or search mode for this engine (tab-to-search, Ctrl+K, the `?`
+       * prefix; omnibox-08, -26): `query` is what to search, never an address, and the rows are
+       * that engine's – no address, history, bookmark or tab rows.
+       */
+      engineId?: string
+    }
+    result: Suggestion[]
+  }
   'urlbar.submit': {
     args: {
       input: string
       newTab: boolean
       tabId: string | null
-      /** Alt+Enter in Firefox → open in new tab; Shift+Enter → new window (ignored). */
+      /** Alt+Shift+Enter, Ctrl+click, a middle click: a tab behind the current one. */
       background?: boolean
+      /** Shift+Enter, Ctrl+Shift+Enter, Shift+click: a new window of this window's kind. */
+      newWindow?: boolean
+      /**
+       * What the user typed before choosing this destination, for the shortcuts provider
+       * (omnibox-03): the next typing of it boosts the destination. Absent when nothing was
+       * typed (a zero-suggest pick) or the pick is not one to learn from.
+       */
+      learn?: {
+        typed: string
+        /** The row's title, shown on the boosted row; the query for a search. */
+        title: string
+        /** A search or an address; left to the core for the verbatim text. */
+        kind?: 'url' | 'search'
+      }
     }
     result: void
   }
+  /** The X on a remembered search (a shortcut row, omnibox-22): forget every shortcut to `url`. */
+  'urlbar.forgetShortcut': { args: { url: string }; result: void }
   'urlbar.runCommand': { args: { action: string }; result: void }
   /**
    * Chrome's URL-bar menu items: the clipboard's text goes where typed text would (a URL

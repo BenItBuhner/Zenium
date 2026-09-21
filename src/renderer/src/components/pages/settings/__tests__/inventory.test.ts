@@ -436,6 +436,8 @@ const INVENTORY: Record<string, readonly string[]> = {
   search: [
     'Default search engine',
     'Show search suggestions',
+    'Show history suggestions',
+    'Show bookmark suggestions',
     'Always show full URLs',
     'Engine keywords'
   ],

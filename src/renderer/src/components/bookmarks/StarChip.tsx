@@ -18,12 +18,19 @@ import { TOOLBAR_STROKE } from '../v2/controls'
 export function StarChip({
   tab,
   filled,
-  title
+  title,
+  collapsed = false
 }: {
   tab: Tab
   filled: boolean
   title: string
-}): JSX.Element {
+  /**
+   * The pill cannot hold the star beside its address (`pillChipTiers.ts`, §9.29): it stays
+   * away – Bookmark This Tab is in the app menu, the tab's menu and on Ctrl+D – unless its
+   * bubble is up, which keeps its anchor (§9.20).
+   */
+  collapsed?: boolean
+}): JSX.Element | null {
   const glyph = useRef<HTMLSpanElement>(null)
   const shown = useRef({ tabId: tab.id, filled })
   useEffect(() => {
@@ -41,6 +48,7 @@ export function StarChip({
   }, [filled, tab.id])
 
   const open = uiStore.use((s) => s.starDialog?.tabId === tab.id)
+  if (collapsed && !open) return null
   // One of the pill's chips (`PillChip`, v2 draft §9.22): a real button in the tab order after
   // the address, whose popup is the bubble. A 28px icon button (§9.3) that keeps its pressed
   // fill and `aria-expanded` while the bubble is open (§9.20). Whether the page is bookmarked is
