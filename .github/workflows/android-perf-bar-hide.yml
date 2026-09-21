@@ -17,9 +17,6 @@ name: Android bar hide profile
 # and the main-thread work (the chrome renderer's style, layout, paint and script; the app's
 # traversals) is representative of a device.
 on:
-  # TEMPORARY (PERF-4 item 1, the after-profile of the return relayout timing): worker tokens cannot dispatch; reverted before merge.
-  push:
-    branches: [cursor/android-perf-motion-audit-e3a6]
   workflow_dispatch:
     inputs:
       record:
