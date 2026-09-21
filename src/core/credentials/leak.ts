@@ -64,7 +64,7 @@ export function savedLoginFor(
 }
 
 export interface LeakCheckContext {
-  /** Settings › Passwords › Warn you if passwords are exposed in a data breach. */
+  /** Settings › Passwords › Warn about exposed passwords (Chrome's leak detection switch). */
   enabled: boolean
   /** The tab is private: the check runs and warns, but nothing is remembered. */
   isPrivate: boolean

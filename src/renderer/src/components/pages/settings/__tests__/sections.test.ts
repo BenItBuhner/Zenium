@@ -1348,15 +1348,16 @@ describe('the section model', () => {
       passwords: { ...DEFAULT_SETTINGS.passwords, offerToSave: false }
     })
 
-    // ID-31's switch opens Security with Chrome's label; it is on by default, as Chrome's.
+    // ID-31's switch opens Security with a one-line label (Chrome's wraps on a phone, §9.2)
+    // over a one-sentence description; it is on by default, as Chrome's.
     const leak = row(passwords, 'passwords-leak-detection')
     expect(leak).toMatchObject({
       kind: 'switch',
-      label: 'Warn you if passwords are exposed in a data breach',
+      label: 'Warn about exposed passwords',
       checked: true
     })
     expect(leak.description).toBe(
-      'Checks passwords you sign in with against known breaches. They never leave this device.'
+      'Zenium checks passwords you sign in with against known data breaches.'
     )
     if (leak.kind !== 'switch') throw new Error('not a switch')
     leak.onChange(false)
@@ -1772,6 +1773,8 @@ describe('the section model', () => {
     const passwords = row(privacy, 'safety-check:passwords')
     if (passwords.kind !== 'action') throw new Error('not an action')
     expect(passwords.description).toBe('3 passwords not checked yet')
+    // Nothing compromised: the description stays at 69% (no tone on the row).
+    expect(passwords.tone).toBeUndefined()
     passwords.onPress?.()
     expect(invoke).toHaveBeenCalledWith('passwords.checkupRun', undefined)
 
@@ -1797,10 +1800,13 @@ describe('the section model', () => {
       } as Partial<UIState>)
     )
     const review = row(compromised, 'safety-check:passwords')
+    // The description is the status sentence, so the row carries the warning tone and the
+    // description takes the glyph's ink (§9.33; `data-tone` on the row, pr-261).
     expect(review).toMatchObject({
       kind: 'action',
       label: 'Passwords',
       description: '2 compromised passwords found; change them now · Last checked 3 h ago',
+      tone: 'warn',
       leaves: 'chevron'
     })
     if (review.kind !== 'action') throw new Error('not an action')

@@ -41,6 +41,8 @@ export function LoginForm({
   const [generating, setGenerating] = useState(false)
   const domain = domainFromInput(url)
   const noteError = noteOverLimit(notes.length)
+  // A live number: tabular figures keep the message's width still as the count moves (§4).
+  const counter = noteCounter(notes.length)
   const ready =
     url.trim().length > 0 && (existing ? true : password.length > 0) && noteError === null
   return (
@@ -117,7 +119,7 @@ export function LoginForm({
       <Field
         id="login-notes"
         label="Notes"
-        description={noteCounter(notes.length)}
+        description={counter && <span className="tabular-nums">{counter}</span>}
         error={noteError}
       >
         {(aria) => (

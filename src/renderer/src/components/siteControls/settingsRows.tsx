@@ -108,6 +108,10 @@ export function safetyCheckGroups({ state, tab, navigate }: SectionContext): Row
           id,
           label: row.label,
           description: row.summary,
+          // The Passwords row's description is the status sentence ("2 compromised passwords
+          // found; change them now"), so it takes the glyph's ink with it (§9.33, one `data-tone`
+          // on the row – pr-261's contract); the list's other rows are their owner's pass.
+          tone: row.id === 'passwords' && row.state === 'warning' ? 'warn' : undefined,
           keywords: [row.action.label],
           leading,
           leaves:
