@@ -62,6 +62,26 @@ export interface UrlbarState {
   typed?: boolean
   /** Anchor the bar to the top instead of floating when the user clicked the address pill. */
   attached: boolean
+  /**
+   * The bar is the empty pane's field (split-04): `tabId` is the blank tab of the split on
+   * screen, whose pane the chrome draws itself (no view is placed there), so the bar floats in
+   * that pane and the other panes stay live – it covers no page and hides none.
+   */
+  pane?: boolean
+}
+
+/**
+ * The tab search popover in its pick mode (split-04): "Choose a tab for this pane", hanging
+ * from the empty pane's button, placed inside that pane – the popover may not overhang the
+ * live panes beside it – and putting the chosen tab in the pane (`split.pickTab`).
+ */
+export interface TabPickRequest {
+  /** The blank tab shown in the pane to fill. */
+  paneTabId: string
+  /** The split the pane belongs to; the popover leaves with it. */
+  groupId: string
+  /** The pane's box, in window coordinates: the popover's viewport. */
+  pane: Rect
 }
 
 export type ToastKind = 'info' | 'error'
@@ -394,9 +414,10 @@ export interface UiState {
    * The tab search popover (tabs-17, Ctrl+Shift+A) is up from the sidebar's top row. `keyboard`:
    * a chrome control had the focus when it opened, so the page does not take it back on close.
    * A request only, as `translateSelection`: the popover holds the capture and the keyboard
-   * itself (`useFloatingChrome`).
+   * itself (`useFloatingChrome`). With `pick` it is the empty pane's picker instead
+   * (`TabPickRequest`), hanging from the pane's button and holding no capture.
    */
-  tabSearch: { keyboard: boolean } | null
+  tabSearch: { keyboard: boolean; pick?: TabPickRequest } | null
   /**
    * The group editor bubble (tabs-13) is up beside a folder's header row in the sidebar.
    * `keyboard`: the header had the focus when it opened (Space or Enter, the folder menu from
@@ -1128,9 +1149,11 @@ export function closeMediaSheet(): void {
 export async function openUrlbar(
   mode: UrlbarOpenMode,
   activeTabId: string | null,
-  opts: { text?: string; attached?: boolean } = {}
+  opts: { text?: string; attached?: boolean; pane?: boolean } = {}
 ): Promise<void> {
-  await captureActiveTab(activeTabId)
+  // The empty pane's bar covers no page (`UrlbarState.pane`): there is nothing to capture, and
+  // the panes beside it stay live.
+  if (!opts.pane) await captureActiveTab(activeTabId)
   run('focus.chrome', undefined)
   uiStore.set({
     urlbar: {
@@ -1138,7 +1161,8 @@ export async function openUrlbar(
       mode,
       tabId: mode === 'new-tab' ? null : activeTabId,
       initialText: opts.text,
-      attached: Boolean(opts.attached)
+      attached: Boolean(opts.attached),
+      pane: Boolean(opts.pane) && mode !== 'new-tab'
     },
     drawerOpen: false
   })
@@ -1483,11 +1507,15 @@ export async function showLocalMenu(
   await showMenu(descriptor, activeTabId)
 }
 
-/** True when a chrome overlay covers the content area (tab views must be hidden). */
+/**
+ * True when a chrome overlay covers the content area (tab views must be hidden). The URL bar
+ * floating in an empty split pane is the exception (`UrlbarState.pane`): it lies over the
+ * chrome's own pane and the pages beside it stay live.
+ */
 export function overlayCoversContent(ui: UiState): boolean {
   return (
     ui.overlay !== 'none' ||
-    ui.urlbar.open ||
+    (ui.urlbar.open && !ui.urlbar.pane) ||
     ui.drag !== null ||
     ui.drawerOpen ||
     ui.menu !== null ||

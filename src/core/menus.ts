@@ -45,7 +45,7 @@ import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
 import { isInFlight, isQuarantined } from './downloads'
 import { mayAutoOpen } from './downloads/danger'
-import { applicationMenu, menuSignature, runFromMenuBar } from './menuBar'
+import { applicationMenu, menuSignature, runFromMenuBar, splitViewSubmenu } from './menuBar'
 import { folderTabs } from './model'
 
 type Template = MenuItemTemplate[]
@@ -2461,6 +2461,14 @@ export class Menus {
         // row is a submenu whose label carries the live percentage and whose Reset says where
         // it goes; the Fullscreen item below is the row's fullscreen glyph.
         ...when(!caps.pageControls, this.zoomSubmenu(active)),
+        // Where Edge's users look for "Split screen" (split-01): the sidebar layouts' menu; a
+        // phone has no split view. The tab row's "Split with Current Tab" stays as it is.
+        ...desktop(
+          splitViewSubmenu(
+            active,
+            active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
+          )
+        ),
         ...desktop({
           label: 'Fullscreen',
           type: 'checkbox',

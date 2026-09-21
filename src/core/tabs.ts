@@ -45,6 +45,7 @@ import {
   extensionPageOf,
   httpsOnlyPageUrl,
   interstitialKindOf,
+  isBlankTabUrl,
   isEmptyTabUrl,
   isNavigableUrl,
   presentedUrl,
@@ -624,14 +625,20 @@ export class TabManager {
       onContextMenu: (params) =>
         this.browser.menus.showPageContextMenu(tabId, params, ownerWindow()),
       onKey: (input) => this.browser.keys.handle(input, tabId, ownerWindow()),
-      onFocused: () => this.browser.emit('focus.page', { tabId }, ownerWindow()),
+      onFocused: () => {
+        this.activatePaneOf(tabId)
+        this.browser.emit('focus.page', { tabId }, ownerWindow())
+      },
       onTargetUrl: (url) => this.browser.emit('status', { text: url }, ownerWindow()),
       onDomReady: () => {
         this.sendPageFlags(tabId)
         this.browser.onPageReady(tabId)
       },
       onDestroyed: () => this.onViewGone(tabId),
-      onUserActivation: () => this.browser.popups.activate(tabId),
+      onUserActivation: () => {
+        this.activatePaneOf(tabId)
+        this.browser.popups.activate(tabId)
+      },
       onOpenWindow: (url, disposition, userGesture, features = '') => {
         const plan = planWindowOpen(url, disposition, features)
         if (plan.action === 'deny') return null
@@ -2610,6 +2617,40 @@ export class TabManager {
     this.browser.state.commit()
   }
 
+  /**
+   * The user is in a pane of the shown split other than the active one – its page's view took
+   * the keyboard, or a press or a key landed in it (`isActivatingInput`: a scroll or a hover
+   * never does, as in Chromium's activation model): that pane's tab becomes the active tab, so
+   * the toolbar – back / forward / reload, the address pill, zoom, find – acts on the pane the
+   * user is in and its header takes the accent bar (split-06; Chrome activates the view on a
+   * click, Edge the pane). Only the panes of the split on screen trade the active state this
+   * way: a page's view focused anywhere else (a Glance, a window this tab is not active in)
+   * changes nothing.
+   */
+  private activatePaneOf(tabId: string): void {
+    const tab = this.tab(tabId)
+    if (!tab?.splitGroupId) return
+    const win = this.windowFor(tabId)
+    const active = this.activeTabFor(win)
+    if (!active || active.id === tabId || active.splitGroupId !== tab.splitGroupId) return
+    this.activateTab(tabId, win)
+  }
+
+  /**
+   * Ctrl+Alt+Shift+Right / Left: the active state moves to the next / previous pane of the
+   * shown split, in the split's order and around its end. Outside a split the chord does nothing
+   * (no toast: the cycle-tab chords are the tab strip's).
+   */
+  cyclePane(delta: 1 | -1, win: ZenWindow): void {
+    const active = this.activeTabFor(win)
+    const group = active?.splitGroupId ? this.model.splitGroups[active.splitGroupId] : undefined
+    if (!active || !group) return
+    const n = group.tabIds.length
+    const idx = group.tabIds.indexOf(active.id)
+    const next = group.tabIds[(((idx + delta) % n) + n) % n]
+    if (next && next !== active.id) this.activateTab(next, win)
+  }
+
   unsplit(groupId?: string, tabId?: string, win: ZenWindow = this.browser.focusedWindow()): void {
     let id = groupId
     if (!id) {
@@ -2660,7 +2701,7 @@ export class TabManager {
       )
       if (group) addTabToSplit(this.model, group.id, tab.id)
       this.activateTab(tab.id, win)
-      this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+      this.openEmptyPaneField(win)
       return
     }
     const tab = this.createTab(
@@ -2669,7 +2710,19 @@ export class TabManager {
     )
     this.createSplit([active.id, tab.id], 'vertical', win)
     this.activateTab(tab.id, win)
-    this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    this.openEmptyPaneField(win)
+  }
+
+  /**
+   * The URL bar for the empty pane just made (split-04): once the window holds the split, so the
+   * bar opens as the pane's own field, floating in the pane beside the live page, and not over
+   * the whole frame (BUG-040: the split was there but hidden under the bar until the first
+   * address was typed).
+   */
+  private openEmptyPaneField(win: ZenWindow): void {
+    this.browser.state.afterBroadcast(() =>
+      this.browser.emit('urlbar.toggle', { mode: 'edit', text: '' }, win)
+    )
   }
 
   addToSplit(groupId: string, tabId: string): void {
@@ -2683,6 +2736,29 @@ export class TabManager {
       if (win) this.claim(tabId, win)
       this.browser.state.commit()
     }
+  }
+
+  /**
+   * "Choose a tab" in an empty pane (split-04, Edge's picker in the empty right pane): `tabId`
+   * takes the pane over from the blank tab shown there – as a tab dropped on the pane does
+   * (`replaceTabInSplit`, the tab moving into the split's space) – and is shown; the blank tab
+   * was the pane's placeholder, nothing the user made, so it closes rather than staying behind
+   * in the strip (an unvisited blank tab leaves no "Recently closed" entry). Only a blank tab of
+   * a split is a pane to fill: the picker is offered nowhere else.
+   */
+  pickTabForPane(paneTabId: string, tabId: string, win: ZenWindow): boolean {
+    const m = this.model
+    const pane = this.tab(paneTabId)
+    const tab = this.tab(tabId)
+    const group = pane?.splitGroupId ? m.splitGroups[pane.splitGroupId] : null
+    if (!pane || !tab || !group || !isBlankTabUrl(pane.url) || pane.id === tabId) return false
+    if (group.tabIds.includes(tabId)) return false
+    if (!this.browser.pages.splittable(tab) || !this.joinable(tab, group.spaceId, win)) return false
+    this.bringIntoSpace(tab, group.spaceId)
+    if (!replaceTabInSplit(m, group.id, pane.id, tabId)) return false
+    this.activateTab(tabId, win)
+    this.closeTab(pane.id, true, win)
+    return true
   }
 
   /**

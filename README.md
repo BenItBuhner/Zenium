@@ -329,6 +329,7 @@ media elements).
 | Next / previous space                              | Ctrl+Alt+→ / Ctrl+Alt+←              |
 | Split view grid / vertical / horizontal / unsplit  | Ctrl+Alt+G / V / H / U               |
 | New empty split                                    | Ctrl+Shift+*                         |
+| Next / previous split pane                         | Ctrl+Alt+Shift+→ / Ctrl+Alt+Shift+←  |
 | Pin / unpin tab                                    | Ctrl+Shift+D                         |
 | Copy URL / as Markdown                             | Ctrl+Shift+C / Ctrl+Shift+Alt+C      |
 | Expand Glance into a tab                           | Ctrl+O                               |
