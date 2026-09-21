@@ -3752,26 +3752,17 @@
   /*
    * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
    * §5, §6, §9.20): the shared `.zen-v2-panel` chrome and `.zen-v2-menu` rows (intrinsic 232–332,
-   * `--v2-menu-row` rows at 4 in from the edges – the ring's room – with a 16 glyph). Only what
-   * those do not say lives here: the panel is a fixed element of the chrome layer that the
-   * placement helpers position, its rows scroll under a thin bar past the height cap, and it
-   * takes the keys without drawing a ring of its own. A folder row keeps the fill while its
-   * panel stands beside it (`aria-expanded`); the submenu chevron trails in the deemphasised
-   * ink; a drop's target row (§9.4) is the fill with the accent inset, the panel whose end takes
-   * it the accent inset, the chip in the hand thinned to 40% in its own row.
+   * `--v2-menu-row` rows inside the panel's 6 padding with a 16 glyph, a folder's row keeping
+   * the fill while its panel stands beside it and trailing the shared chevron – all the
+   * primitive's). Only what it does not say lives here: the panel is a fixed element of the
+   * chrome layer that the placement helpers position; a drop's target row (§9.4) is the fill
+   * with the accent inset, the panel whose end takes it the accent inset, the chip in the hand
+   * thinned to 40% in its own row.
    */
   .zen-bm-panel {
     position: fixed;
     z-index: 80;
-    outline: none;
     will-change: transform;
-  }
-  /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
-  .zen-bm-panel .zen-v2-menu-item {
-    flex-shrink: 0;
-  }
-  .zen-bm-panel .zen-v2-menu-item[aria-expanded='true'] {
-    background: var(--v2-fill);
   }
   .zen-bm-panel .zen-v2-menu-item[data-target='true'] {
     background: var(--v2-fill);
@@ -3789,10 +3780,6 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-  }
-  .zen-bm-panel-chevron {
-    margin-left: auto;
-    color: var(--v2-text-deemphasized);
   }
 
   /*
@@ -6928,6 +6915,107 @@
 }
 .zen-v2-check-row .zen-v2-checkbox:disabled {
   opacity: 1;
+}
+
+/*
+ * The shared menu (§4, §5, §6, §9.6, §9.20, §9.22, §9.30, §9.34; shell pass 7(b)): the one
+ * vocabulary of every menu the renderer draws – a `···`'s `LocalMenu`, the bookmarks bar's
+ * folder panels, the descriptor menus of a host without native popups (`MenuSheet`'s mouse
+ * pose) – on the `.zen-v2-panel` chrome (`--v2-panel`, radius 8, the hairline, the panel
+ * shadow; a right-click's context menu radius 6, §2). The panel holds 6 of padding on every
+ * side; its rows are `--v2-menu-row` (31 on a mouse: §4's 14 px chrome menu size on a 15 line
+ * with 8 above and below; 44 on a phone) at radius 4, edge to edge inside the padding, with a
+ * 16 glyph slot before the label when any row of the menu has one (an icon, a check), the
+ * accelerator (`-hint`) in the deemphasised ink at the trailing edge, a folder's or submenu's
+ * 16 chevron (`-chevron`) there instead; the separators are the hairline with 6 above and 6
+ * below. The keyboard cursor (a focused row) and the pointer's hover take `--v2-fill` – a
+ * cursor, never `--v2-selected` (§9.6) – with no ring of their own, as Firefox's menus
+ * highlight; a row whose panel stands beside it keeps the fill (`aria-expanded`); a disabled
+ * row is §9.30's .4 on the whole row. The panel itself takes the keys (opened by the pointer
+ * it holds the focus, §9.22) without a ring of its own. Width is intrinsic within §5's 232–332
+ * (`placePopover`'s measured mode, §9.20) and past the height cap the rows scroll under the
+ * thin bar. Unlayered like the primitives below, so a surface's modifier wins by specificity
+ * alone.
+ */
+.zen-v2-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 232px;
+  max-width: 332px;
+  padding: 6px;
+  font-size: 14px;
+  line-height: 15px;
+  outline: none;
+  overflow-y: auto;
+}
+.zen-v2-menu[data-context] {
+  border-radius: var(--v2-radius-inner);
+}
+.zen-v2-menu-item {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: var(--v2-menu-row);
+  padding: 0 8px;
+  border-radius: var(--v2-radius-control);
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-menu-item .lucide {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+/* The glyph slot: 16 wide whether or not this row has a glyph, so the labels share one edge. */
+.zen-v2-menu-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+}
+.zen-v2-menu-item:focus-visible,
+.zen-v2-menu-item[aria-expanded='true'] {
+  background: var(--v2-fill);
+  outline: none;
+}
+@media (hover: hover) {
+  .zen-v2-menu-item:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+.zen-v2-menu-item:active:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-v2-menu-item:disabled {
+  opacity: 0.4;
+}
+.zen-v2-menu-item[data-danger] {
+  color: var(--v2-danger);
+}
+.zen-v2-menu-separator {
+  flex-shrink: 0;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--v2-border);
+}
+.zen-v2-menu-hint {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+.zen-v2-menu-chevron {
+  margin-left: auto;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-menu-hint + .zen-v2-menu-chevron {
+  margin-left: 0;
 }
 
 /*
