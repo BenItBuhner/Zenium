@@ -1,28 +1,17 @@
 import type { JSX } from 'react'
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { useEscape } from '@renderer/hooks/useEscape'
 import { useFloatingChrome } from '@renderer/hooks/useFloatingChrome'
-import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
-import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
-import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, popoverStyle, useLightDismiss, type PopoverBox } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
+import { MenulistPopover, type MenulistOption } from '../menus/MenulistPopover'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { V2Radio } from './v2'
 
-export interface MenulistOption<T extends string> {
-  value: T
-  label: string
-  /**
-   * One line under the label (§9.13: where a voice runs and its quality, a model's size): the
-   * popover's row grows to 48 around the two and clamps it to one line; the phone sheet's row
-   * is a §9.2 description.
-   */
-  description?: string
-}
+export type { MenulistOption }
 
 interface PopupProps<T extends string> {
   anchor: Anchor
@@ -36,14 +25,14 @@ interface PopupProps<T extends string> {
 /**
  * A menulist (v2 draft §6, §9.13): the rectangular control, 32 tall (40 on a phone) with a 1px
  * border and a 16 chevron, whose popup is never the native `<select>`'s. On a mouse the options
- * are a `--v2-panel` popover under the control at radius 12 with 6 padding: 28 rows at radius 6,
- * the current one marked by a trailing 16 check, a row with a description 48 around its two
- * lines. On a finger they are a bottom sheet of 44 rows (64 with a description, §9.2) with a
- * radio glyph (§9.14) on the current option. Picking one closes the popup. The popover
- * hangs flush under the control (§9.20, at its own width and height) and takes focus on its
- * current option; the arrow keys move it, Escape gives it back to the control (§9.22); the
- * chrome layer's light dismiss closes it otherwise (§9.20 amended) – the control's own press
- * included, which does not reopen it.
+ * are the shared `MenulistPopover` (components/menus): a `--v2-panel` popover flush under the
+ * control at radius 12 with 6 padding, 28 rows at radius 6, the current one marked by a trailing
+ * 16 check, a row with a description 48 around its two lines, as wide as the control at least
+ * and as its longest row at most, flipped above the control near the window's bottom, with the
+ * §9.22 keyboard (the current option focused, arrows, Home, End, type-ahead, Escape back to the
+ * control) and the chrome layer's light dismiss. On a finger they are a bottom sheet of 44 rows
+ * (64 with a description, §9.2) with a radio glyph (§9.14) on the current option. Picking one
+ * closes the popup. Down or Up on the control opens it, as a click does.
  */
 export function V2Menulist<T extends string>({
   label,
@@ -82,6 +71,9 @@ export function V2Menulist<T extends string>({
     },
     onClose: () => setAnchor(null)
   }
+  const open = (el: HTMLElement): void => {
+    if (!readOnly) setAnchor(anchorOf(el))
+  }
   return (
     <>
       <button
@@ -93,86 +85,20 @@ export function V2Menulist<T extends string>({
         aria-readonly={readOnly || undefined}
         disabled={disabled}
         autoFocus={autoFocus}
-        onClick={(e) => {
-          if (!readOnly) setAnchor(anchorOf(e.currentTarget))
+        onClick={(e) => open(e.currentTarget)}
+        onKeyDown={(e) => {
+          if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && anchor === null) {
+            e.preventDefault()
+            open(e.currentTarget)
+          }
         }}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
         <ChevronDown />
       </button>
-      {popup && (viewport.coarse ? <MenulistSheet {...popup} /> : <MenulistPopover {...popup} />)}
+      {popup &&
+        (viewport.coarse ? <MenulistSheet {...popup} /> : <MenulistPopover {...popup} overPage />)}
     </>
-  )
-}
-
-function MenulistPopover<T extends string>({
-  anchor,
-  label,
-  value,
-  options,
-  onPick,
-  onClose
-}: PopupProps<T>): JSX.Element | null {
-  // Opened from the keyboard the page did not have focus and does not get it back (§9.22).
-  const [fromKeyboard] = useState(openedFromKeyboard)
-  const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
-  const ref = useRef<HTMLDivElement>(null)
-  const [box, setBox] = useState<PopoverBox | null>(null)
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    // The list keeps its intrinsic width (no less than the control's) and is as tall as its
-    // options, measured as layout size, not the client rect, which the pop animation's first
-    // frame scales to .94.
-    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
-  }, [anchor, options.length, ready])
-  usePopover(ref, {
-    onClose,
-    active: ready && box !== null,
-    initial: (root) => root.querySelector<HTMLElement>('[aria-selected="true"]')
-  })
-  useArrowKeys(ref, '.zen-v2-menulist-option')
-  useLightDismiss(ref, onClose, { anchor: () => anchor.element ?? null })
-  if (!ready) return null
-  return (
-    <ChromePortal>
-      <div
-        ref={ref}
-        role="listbox"
-        aria-label={label}
-        className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-animate-pop fixed select-none"
-        style={{
-          ...(box ? popoverStyle(box) : { left: anchor.x, top: anchor.y + anchor.height }),
-          minWidth: anchor.width,
-          visibility: box ? 'visible' : 'hidden',
-          transformOrigin: box ? popOrigin(anchor, box) : undefined
-        }}
-      >
-        {options.map((option) => {
-          const selected = option.value === value
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={selected}
-              className="zen-v2-menulist-option"
-              onClick={() => onPick(option.value)}
-            >
-              {option.description ? (
-                <span className="zen-v2-menulist-option-text">
-                  <span className="truncate">{option.label}</span>
-                  <span className="zen-v2-menulist-option-description">{option.description}</span>
-                </span>
-              ) : (
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              )}
-              {selected && <Check />}
-            </button>
-          )
-        })}
-      </div>
-    </ChromePortal>
   )
 }
 

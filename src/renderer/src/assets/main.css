@@ -7089,19 +7089,23 @@
   opacity: 0.4;
 }
 /*
- * Its popover on a mouse (§9.13, §9.20): a `--v2-panel` at radius 12 with 6 padding, the panel
+ * Its popover on a mouse (§9.13, §9.20; components/menus/MenulistPopover.tsx, the one
+ * implementation every menulist opens): a `--v2-panel` at radius 12 with 6 padding, the panel
  * shadow and the hairline, 28 rows at radius 6 with a trailing 16 check on the current option.
- * A menulist's list is one of the native-like menus §9.20 exempts from the fixed widths: it
- * sizes to its longest row within §5's 232–332 and no less than its trigger (`--zen-anchor-width`,
- * the trigger's width set inline by the renderer), and the chrome layer's placement caps its
- * height. An option's description (a model's size) is a second line under the label, clamped to
- * one line (§9.13: the anchor's space is borrowed), the row growing to 48 around the two. The
- * keyboard walks the options as focus, so the focused option carries the hover fill.
+ * A menulist's list is one of the native-like menus §9.20 exempts from the fixed widths: it is
+ * at least as wide as its trigger (`--zen-anchor-width`, the trigger's width set inline by the
+ * renderer) and grows to its longest row up to §5's 332 – §5's 232 floor is for menus, not for
+ * it (§9.13) – and the chrome layer's placement caps its height. An option's description (a
+ * model's size) is a second line under the label, clamped to one line (§9.13: the anchor's space
+ * is borrowed), the row growing to 48 around the two. The keyboard walks the options as focus
+ * and the focused option is the list's cursor (§9.6): it carries the fill whether the focus is
+ * visible or not – the current option lit as the list opens under a pointer, as a `<select>`'s
+ * is – and no ring besides.
  */
 .zen-v2-menulist-popup {
   display: flex;
-  min-width: max(232px, var(--zen-anchor-width, 0px));
-  max-width: 332px;
+  min-width: var(--zen-anchor-width, 0px);
+  max-width: max(332px, var(--zen-anchor-width, 0px));
   flex-direction: column;
   padding: 6px;
   overflow-y: auto;
@@ -7129,9 +7133,11 @@
   white-space: nowrap;
   transition: background 120ms var(--zen-ease);
 }
-.zen-v2-menulist-option:focus-visible,
+.zen-v2-menulist-option:focus,
 .zen-v2-menulist-option:active {
   background: var(--v2-fill);
+}
+.zen-v2-menulist-option:focus-visible {
   outline: none;
 }
 @media (hover: hover) {
