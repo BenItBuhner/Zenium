@@ -295,6 +295,31 @@ describe('PageDown and PageUp (omnibox-50)', () => {
     await key(input(el), 'ArrowDown')
     expect(selectedRow(el)?.textContent).toContain('Page 1')
   })
+
+  it('the highlighted row is brought into view when the list scrolls (the field keeps the focus, so nothing else would)', async () => {
+    const scrolled: Element[] = []
+    const spy = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this)
+      })
+    try {
+      suggestions = (q) => (q ? [1, 2, 3].map(history) : [])
+      const el = await render(desktop())
+      await typeAndList(el, 'pa', 3)
+      expect(scrolled).toEqual([])
+      await key(input(el), 'ArrowDown')
+      await key(input(el), 'ArrowDown')
+      expect(scrolled.map((r) => r.textContent)).toEqual([
+        rows(el)[0].textContent,
+        rows(el)[1].textContent
+      ])
+      expect(scrolled.every((r) => r.classList.contains('zen-omnibox-row'))).toBe(true)
+      expect(spy).toHaveBeenLastCalledWith({ block: 'nearest' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })
 
 describe('Tab through the rows and their remove X, then out of the bar (omnibox-50, -22)', () => {

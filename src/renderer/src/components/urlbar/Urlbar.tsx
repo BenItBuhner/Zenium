@@ -995,6 +995,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     })
 
   const activeRow = selected >= 0 ? `zen-omnibox-row-${selected}` : undefined
+  // The highlight stays in view once the list scrolls (§9.20's scrolling chrome): the row the
+  // keyboard moved to is brought to the nearer edge, as a menulist's option is – the field, not
+  // the row, holds the focus, so no focus() scrolls for it.
+  useEffect(() => {
+    if (!activeRow || phoneEdge) return
+    const option = document.getElementById(activeRow)
+    ;(option?.closest('.zen-omnibox-row') ?? option)?.scrollIntoView({ block: 'nearest' })
+  }, [activeRow, phoneEdge])
   // An address or text dragged over the field goes where a submit would (lib/dnd.ts, Chrome's
   // paste and go); the field shows it will take the drop (§9.4).
   const dropInto = dropStore.use((s) => s.key === 'address:')

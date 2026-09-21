@@ -1351,7 +1351,12 @@ export function prepareMenu(activeTabId: string | null): void {
   })
 }
 
-export function closeMenu(notifyHost = true): void {
+/**
+ * Close the open menu without a pick. `keepKeyboard`: the keyboard stays in the chrome – a menu
+ * the keyboard opened is closing onto the control that opened it (§9.22, Escape's way back), so
+ * the page does not take the focus; otherwise the page gets it back as after any overlay.
+ */
+export function closeMenu(notifyHost = true, { keepKeyboard = false } = {}): void {
   const menu = uiStore.get().menu
   if (!menu) return
   uiStore.set({ menu: null })
@@ -1359,7 +1364,7 @@ export function closeMenu(notifyHost = true): void {
     // Nothing to tell the host about a menu it never knew.
   } else if (notifyHost) run('menu.close', { menuId: menu.id })
   invalidateSnapshot()
-  returnFocusToPage()
+  if (!keepKeyboard) returnFocusToPage()
 }
 
 export function pickMenuItem(itemId: string): void {

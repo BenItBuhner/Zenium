@@ -180,6 +180,30 @@ describe('the popover menu', () => {
     expect(calls('menu.close')).toEqual([['menu.close', { menuId: 'menu_1' }]])
   })
 
+  it('Escape closes a menu the keyboard opened onto the control that opened it, the page not taking the keyboard; one the pointer opened hands the keyboard back to the page', () => {
+    const control = document.createElement('button')
+    document.body.appendChild(control)
+    try {
+      control.focus()
+      show(tabMenu({ keyboard: true }))
+      expect(document.activeElement).toBe(rowOf('reload'))
+      key('Escape')
+      expect(uiStore.get().menu).toBeNull()
+      // The host clears the descriptor; the popover goes with the focus still in it.
+      act(() => root!.unmount())
+      root = null
+      expect(document.activeElement).toBe(control)
+      expect(calls('focus.content')).toEqual([])
+      show(tabMenu({ id: 'menu_2' }))
+      expect(document.activeElement).toBe(menus()[0])
+      key('Escape')
+      expect(uiStore.get().menu).toBeNull()
+      expect(calls('focus.content')).toHaveLength(1)
+    } finally {
+      control.remove()
+    }
+  })
+
   it('a letter goes to the row it names, and a pick tells the host once the menu is unpainted', async () => {
     vi.useFakeTimers()
     try {

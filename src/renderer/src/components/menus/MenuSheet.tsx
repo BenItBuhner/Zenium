@@ -369,9 +369,12 @@ function menuRows(panel: HTMLElement | null | undefined): HTMLElement[] {
  * the arrows, Home and End move within the level, Right opens a submenu row's panel on its first
  * row, Left and Backspace close the deepest level onto the row that opened it (at the root, the
  * menu), a letter goes to or runs the row it names (mnemonics, a11y-08), Enter and Space run the
- * row; Escape closes the deepest level, then the menu. Light dismiss is the chrome layer's
- * (§9.20 amended): a press outside the cascade, a scroll, a resize or another popover closes it.
- * The host is told of a pick (`pickMenuItem`) and of a close (`closeMenu`).
+ * row; Escape closes the deepest level, then the menu – a menu the keyboard opened closing onto
+ * the control that opened it, which keeps the keyboard (the page does not take it back), as
+ * `LocalMenu` does through `usePopover`; a menu the pointer opened hands it back to the page.
+ * Light dismiss is the chrome layer's (§9.20 amended): a press outside the cascade, a scroll, a
+ * resize or another popover closes it. The host is told of a pick (`pickMenuItem`) and of a
+ * close (`closeMenu`).
  */
 function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
@@ -388,6 +391,33 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const levels = useMemo(() => cascadeLevels(menu.items, path), [menu.items, path])
   const groupRef = useRef<HTMLDivElement>(null)
   const panelEls = useRef<(HTMLDivElement | null)[]>([])
+
+  // The control the keyboard opened the menu from – what had the focus as the menu mounted –
+  // for Escape's way back (§9.22). None when the pointer opened it or nothing of the chrome's
+  // had the focus (the page did): the page takes the keyboard back then, as after any overlay.
+  const [opener] = useState<HTMLElement | null>(() =>
+    fromKeyboard &&
+    document.activeElement instanceof HTMLElement &&
+    document.activeElement !== document.body
+      ? document.activeElement
+      : null
+  )
+  const returning = useRef(false)
+  /** The keyboard closes the whole menu (Escape, Left or Backspace at the root). */
+  const closeFromKeyboard = (): void => {
+    returning.current = opener !== null && opener.isConnected
+    closeMenu(true, { keepKeyboard: returning.current })
+  }
+  useLayoutEffect(
+    () => () => {
+      // A layout cleanup runs before React removes the nodes: the focus, if it is still in the
+      // cascade, has not fallen to the body yet, and the opener can take it back in one step.
+      if (!returning.current || !opener?.isConnected) return
+      if (!groupRef.current?.contains(document.activeElement)) return
+      opener.focus({ preventScroll: true })
+    },
+    [opener]
+  )
   const [focusWanted, setFocusWanted] = useState<FocusWanted | null>(() => ({
     depth: 0,
     target: fromKeyboard ? 'first' : 'panel'
@@ -410,7 +440,7 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   useLightDismiss(groupRef, () => closeMenu())
   useEscape(() => {
     if (path.length) closeTo(path.length - 1, true)
-    else closeMenu()
+    else closeFromKeyboard()
   })
 
   // The pointer: a submenu row opens beside after a rest, any other row closes what is deeper.
@@ -456,7 +486,7 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
       case 'ArrowLeft':
       case 'Backspace':
         if (depth > 0) closeTo(depth - 1, true)
-        else closeMenu()
+        else closeFromKeyboard()
         break
       default:
         // The arrows, Home, End and a letter, as in Chrome's native menus (lib/menuKeys.ts).
