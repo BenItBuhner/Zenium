@@ -1895,6 +1895,69 @@ export function installExtensionApi(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Native messaging: Zenium runs no native messaging hosts, so every host an extension names is
+  // one Chrome would report as not installed. The engine's own bindings answer a policy refusal
+  // instead ("Access to the native messaging host was disabled by the system administrator.",
+  // Electron's messaging delegate disallowing every host), which an extension probing for its
+  // desktop companion does not recognise; Chrome's "not found" is what makes it offer the
+  // installer (Signer.Digital) or carry on without the companion (1Password). Chrome exposes both
+  // members only to extensions declaring `nativeMessaging`, as the engine does.
+  // ---------------------------------------------------------------------------
+
+  if (declaredPermissions.includes('nativeMessaging')) {
+    const NATIVE_HOST_NOT_FOUND = 'Specified native messaging host not found.'
+    const connectQualified = 'runtime.connectNative(string application)'
+    const sendQualified =
+      'runtime.sendNativeMessage(string application, object message, optional function callback)'
+    for (const root of roots) {
+      const runtime = namespaceOn(root, 'runtime')
+      // A Port at once, as Chrome's; the disconnect a moment later, with `lastError` set while
+      // its listeners run. A message posted before that is accepted (Chrome queues it for the
+      // host that then fails to start) and dropped.
+      define(runtime, 'connectNative', function (...raw: unknown[]): unknown {
+        const [application] = normalizeArgs(connectQualified, raw, [
+          { name: 'application', type: 'string' }
+        ])
+        let connected = true
+        const onMessage = localEvent()
+        const onDisconnect = localEvent()
+        const port: Any = {
+          name: application,
+          onMessage,
+          onDisconnect,
+          postMessage(message: unknown): void {
+            if (!connected) throw new Error('Attempting to use a disconnected port object')
+            if (message === undefined) {
+              throw new TypeError(
+                'Error in invocation of runtime.Port.postMessage(any message): No matching signature.'
+              )
+            }
+          },
+          disconnect(): void {
+            connected = false
+          }
+        }
+        setTimeout(() => {
+          if (!connected) return
+          connected = false
+          withLastError('runtime.Port.onDisconnect', NATIVE_HOST_NOT_FOUND, () => {
+            onDisconnect.dispatch(port)
+          })
+        }, 0)
+        return port
+      })
+      define(runtime, 'sendNativeMessage', function (...raw: unknown[]): unknown {
+        const callback = takeCallback(raw)
+        normalizeArgs(sendQualified, raw, [
+          { name: 'application', type: 'string' },
+          { name: 'message', type: 'object' }
+        ])
+        return settle(sendQualified, Promise.reject(new Error(NATIVE_HOST_NOT_FOUND)), callback)
+      })
+    }
+  }
+
   /** A click on an item created with `onclick`: Chrome calls that handler besides `onClicked`. */
   function menuClicked(args: unknown[]): void {
     const info = args[0]
