@@ -7001,6 +7001,15 @@
   background: var(--v2-fill);
   outline: none;
 }
+/*
+ * A menu the keyboard opened (`MenuSheet`'s popover from Alt+F / F10 while the page had the
+ * keyboard: the shortcut is the main process's, no key event reaches this document, and
+ * `:focus-visible` has nothing to key on): the row the menu focuses is the cursor from its
+ * first focus (§9.22), not from the first arrow key.
+ */
+.zen-v2-menu-keyboard .zen-v2-menu-item:focus {
+  background: var(--v2-fill);
+}
 @media (hover: hover) {
   .zen-v2-menu-item:hover:not(:disabled) {
     background: var(--v2-fill);

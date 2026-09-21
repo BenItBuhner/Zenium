@@ -564,7 +564,14 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
 
   return (
     <ChromePortal>
-      <div ref={groupRef} className="contents" onKeyDown={onKeyDown}>
+      {/* A menu the keyboard opened paints the focused row as the cursor from its first focus
+          (§9.22): from Alt+F / F10 while the page had the keyboard no key event reaches this
+          document, so `:focus-visible` alone would leave the first row bare. */}
+      <div
+        ref={groupRef}
+        className={cn('contents', fromKeyboard && 'zen-v2-menu-keyboard')}
+        onKeyDown={onKeyDown}
+      >
         {levels.map((level, depth) => (
           <MenuLevel
             key={`${depth}/${level.parentId ?? ''}`}

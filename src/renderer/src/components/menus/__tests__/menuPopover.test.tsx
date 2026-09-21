@@ -150,6 +150,17 @@ describe('the popover menu', () => {
     expect(document.activeElement).toBe(rowOf('reload'))
   })
 
+  it('a keyboard open marks the cascade so the focused row is the cursor from its first focus (§9.22); a pointer open does not', () => {
+    // From Alt+F / F10 while the page had the keyboard no key event reaches the chrome document,
+    // so `:focus-visible` would leave the first row bare: the class draws the fill on `:focus`.
+    show(tabMenu({ keyboard: true }))
+    expect(menus()[0].closest('.zen-v2-menu-keyboard')).not.toBeNull()
+    act(() => root!.unmount())
+    root = null
+    show(tabMenu({ id: 'menu_2' }))
+    expect(menus()[0].closest('.zen-v2-menu-keyboard')).toBeNull()
+  })
+
   it('Right opens a submenu row’s level beside it on its first row; Left closes it onto the row', () => {
     show(tabMenu({ keyboard: true }))
     key('ArrowDown')
