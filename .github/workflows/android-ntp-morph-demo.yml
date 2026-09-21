@@ -40,9 +40,6 @@ name: Android new tab page morph demo
 # never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
 on:
   workflow_dispatch:
-  # Run 3's dispatch (the branch has no dispatch token): taken off again in the next commit.
-  push:
-    branches: [cursor/android-ntp-fakebox-morph-52eb]
 
 permissions:
   contents: read
