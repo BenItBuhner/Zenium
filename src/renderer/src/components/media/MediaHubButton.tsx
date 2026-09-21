@@ -9,26 +9,8 @@ import {
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { APP_MENU_BUTTON } from '@renderer/lib/shortcuts'
 import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
-
-/** The button the hub's popover hangs from and returns the keyboard to (§9.22). */
-export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
-
-/**
- * The control the hub's popover hangs from and gives the keyboard back to: its toolbar button
- * while that is in the row and laid out, else the "⋯" menu button – the hub folds into the app
- * menu's "Now Playing" row at the 240 sidebar (design language v2 §9.29), and the row's pick
- * opens the hub from there. Looked up on each use: the row remounts its buttons with the tab and
- * the width. The fold is the toolbar's tier's to make, by unmounting the button or by hiding it
- * from a stylesheet; either way a button without a box is no anchor (`checkVisibility`).
- */
-export function mediaHubAnchor(): HTMLElement | null {
-  const button = document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)
-  if (button?.checkVisibility()) return button
-  return document.querySelector<HTMLElement>(APP_MENU_BUTTON)
-}
 
 /**
  * The accent dot that says something plays: on the hub's toolbar button, and – the same dot,

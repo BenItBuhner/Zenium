@@ -503,9 +503,7 @@ describe('the app menu', () => {
 
     it('clips a long title as a page title in a menu is clipped', () => {
       const h = pageHarness(DESKTOP)
-      h.browser.state.media = [
-        media(h.tabId, { title: 'A'.repeat(60), artist: 'B'.repeat(40) })
-      ]
+      h.browser.state.media = [media(h.tabId, { title: 'A'.repeat(60), artist: 'B'.repeat(40) })]
       const label = appMenu(h)[0]
       expect(label.startsWith(`Now Playing: ${'A'.repeat(31)}…`)).toBe(true)
       expect(label.length).toBeLessThanOrEqual('Now Playing: '.length + 48)

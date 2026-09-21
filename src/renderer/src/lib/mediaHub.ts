@@ -1,6 +1,7 @@
 import type { MediaState, UIState } from '@shared/types'
 import { orderMediaEntries } from '@shared/mediaHub'
 import { run } from '@renderer/lib/api'
+import { APP_MENU_BUTTON } from '@renderer/lib/shortcuts'
 import { createStore } from '@renderer/lib/store'
 
 /**
@@ -56,6 +57,23 @@ export function mediaPlaying(state: UIState): boolean {
  * on its cards, like a menu, and its name lives on the control that opens it).
  */
 export const MEDIA_HUB_NAME = 'Media controls'
+
+/** The toolbar button the hub's popover hangs from and returns the keyboard to (§9.22). */
+export const MEDIA_HUB_BUTTON = '[data-zen-media-hub-button]'
+
+/**
+ * The control the hub's popover hangs from and gives the keyboard back to: its toolbar button
+ * while that is in the row and laid out, else the "⋯" menu button – the hub folds into the app
+ * menu's "Now Playing" row at the 240 sidebar (design language v2 §9.29), and the row's pick
+ * opens the hub from there. Looked up on each use: the row remounts its buttons with the tab and
+ * the width. The fold is the toolbar's tier's to make, by unmounting the button or by hiding it
+ * from a stylesheet; either way a button without a box is no anchor (`checkVisibility`).
+ */
+export function mediaHubAnchor(): HTMLElement | null {
+  const button = document.querySelector<HTMLElement>(MEDIA_HUB_BUTTON)
+  if (button?.checkVisibility()) return button
+  return document.querySelector<HTMLElement>(APP_MENU_BUTTON)
+}
 
 /** The button's name: what is playing, or that the players are there. */
 export function mediaHubLabel(entries: MediaState[]): string {

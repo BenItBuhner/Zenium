@@ -22,6 +22,7 @@ import { formatMediaTime, handlesAction, mediaDetail } from '@renderer/lib/media
 import {
   MEDIA_HUB_NAME,
   closeMediaHub,
+  mediaHubAnchor,
   mediaHubEntries,
   mediaHubUi,
   mediaTitle
@@ -41,7 +42,6 @@ import { cn } from '@renderer/lib/utils'
 import { V2IconButton } from '../extensions/v2'
 import { Slider } from '../ui/slider'
 import { V2_GLYPH } from '../v2/controls'
-import { mediaHubAnchor } from './MediaHubButton'
 
 /** Rows with trailing controls: the 400 popover (§9.20). */
 const WIDTH = POPOVER_WIDTH.form

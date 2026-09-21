@@ -403,7 +403,16 @@ describe('the hub from the app menu (§9.29)', () => {
     const button = document.createElement('button')
     button.setAttribute('data-zen-app-menu-button', '')
     button.getBoundingClientRect = () =>
-      ({ x: 980, y: 6, left: 980, top: 6, right: 1008, bottom: 34, width: 28, height: 28 }) as DOMRect
+      ({
+        x: 980,
+        y: 6,
+        left: 980,
+        top: 6,
+        right: 1008,
+        bottom: 34,
+        width: 28,
+        height: 28
+      }) as DOMRect
     bar.appendChild(button)
     document.body.appendChild(bar)
     return button
@@ -429,7 +438,10 @@ describe('the hub from the app menu (§9.29)', () => {
 
   it('opens from the row’s pick hanging from the "⋯" button when the toolbar button has folded, with every player', async () => {
     const button = mountMenuButton()
-    const state = stateWith([track(), track({ tabId: 't2', title: 'A film', video: true, session: false })])
+    const state = stateWith([
+      track(),
+      track({ tabId: 't2', title: 'A film', video: true, session: false })
+    ])
     browserStore.set({ state })
     // The folded row: no hub button in it, the layer alone.
     render(<MediaHubLayer />)
