@@ -1,6 +1,7 @@
 package app.zen.chromium.ext
 
 import android.annotation.SuppressLint
+import android.graphics.Canvas
 import android.graphics.Color
 import android.webkit.ConsoleMessage
 import android.webkit.RenderProcessGoneDetail
@@ -65,6 +66,26 @@ class ExtensionWebView(
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(this, extensions.pageScript(served, context), setOf(origin))
         }
+    }
+
+    /** The background page and the offscreen document: in the window (`Host.attachHidden`), never on the screen. */
+    val hidden: Boolean get() = context == "background" || context == "offscreen"
+
+    /**
+     * A hidden view records no draw. It sits in the window at one pixel so the renderer holds its
+     * page visible (a detached or invisible view's page gets the background timer throttling a
+     * background page must not), but a WebView in the window is otherwise part of every frame the
+     * chrome draws: HWUI syncs its functor – a round trip to the renderer's compositor for this
+     * view's frame – and issues its draw, per hidden view, per frame of a scroll. The extension
+     * runtime frame budget (compat round 6) read that at 450-500 ms a live background view on the
+     * slow recipe's software GPU, the term that put the six-extension scroll over the gate, with
+     * the renderer main thread idle and the bridge silent. Nothing of the page's depends on the
+     * draw: its timers and messages run on a visible page whatever the window paints, and a hidden
+     * page never runs `requestAnimationFrame` in Chrome either (the worker page has none).
+     */
+    override fun onDraw(canvas: Canvas) {
+        if (hidden) return
+        super.onDraw(canvas)
     }
 
     override fun destroy() {
