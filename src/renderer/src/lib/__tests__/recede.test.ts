@@ -410,7 +410,6 @@ describe('the registry', () => {
  */
 describe('the surfaces', () => {
   const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
-  const passwords = readFileSync(resolve(__dirname, '../../assets/passwords.css'), 'utf8')
 
   it('a registered surface carries the value from registration, every frame, and drops it on release', () => {
     const el = document.createElement('div')
@@ -489,29 +488,8 @@ describe('the surfaces', () => {
     expect(folded).toMatch(/@property --zen-layer-radius \{ syntax: '\*'; inherits: false; \}/)
   })
 
-  it('every rule reading --zen-recede reads it on a surface a component registers (the value does not inherit)', () => {
-    // The elements `useRecedeSurface` is on: ContentArea's frame, LoadProgress's layer, the
-    // shell's message frame and bar, the passwords PageShell. A rule reading the value on any
-    // other element would see the property's initial 0 – add the surface, or the rule is dead.
-    const registered = [
-      '.zen-content-frame',
-      '.zen-load-progress-layer',
-      '.zen-message-frame',
-      ".zen-phone-bar[data-edge='bottom']",
-      '.zen-v2-pw-page'
-    ]
-    // `var(--zen-recede,` or `var(--zen-recede)`: not `--zen-recede-gain`, which every element reads.
-    const sheets = `${css}\n${passwords}`.replace(/\/\*[\s\S]*?\*\//g, '')
-    const rules = [...sheets.matchAll(/([^{}]+)\{([^{}]*var\(--zen-recede\s*[,)][^{}]*)\}/g)]
-    expect(rules.length).toBeGreaterThanOrEqual(4)
-    for (const [, selectorList] of rules) {
-      for (const selector of selectorList.split(',')) {
-        const subject = selector.trim().split(/\s+/).at(-1) ?? ''
-        expect(
-          registered.some((s) => subject.endsWith(s)),
-          `${selector.trim()} reads --zen-recede`
-        ).toBe(true)
-      }
-    }
-  })
+  // Which elements the stylesheets read the value on, and that each is registered by its
+  // component (or tagged), is `recedeSurfaces.test.ts`'s: derived from the stylesheets and paired
+  // over the components' source, so a new reader without its `useRecedeSurface`, or a component
+  // dropping its hook, fails there. The hook's runtime is `hooks/__tests__/useRecedeSurface.test.tsx`'s.
 })
