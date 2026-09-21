@@ -11,12 +11,14 @@ name: Android tablet layout demo
 # through a scroll, the star's bubble closed by the system back, the URL bar's popup as wide as
 # its pill, the app menu as a 332 px popover, the tab overview pulled down the toolbar and a
 # sheet docked centred at 480, and live resize through `wm size`: 1280 x 590 is the phone chrome
-# with the same tab at the same scroll, 600 x 1000 the tablet with the rail docked and the
-# sidebar as a drawer (its spring traced), 800 x 1280 the portrait tablet. The driver judges
-# every step from the chrome's and the core's own state and fails the run when a claim does not
-# hold; see TabletLayoutDemo.kt. Dispatch-only, like the gesture demo, once it is on main; until
-# then GitHub knows a workflow only from an event on its branch, so a push of this file on the
-# PR's branch registers it and is the run (#243's recipe) – the push trigger goes with the merge.
+# with the same tab at the same place on the page (the block under the view's top edge, which
+# Blink anchors through the reflow; the page is not loaded again), 600 x 1000 the tablet with
+# the rail docked and the sidebar as a drawer (its spring traced), 800 x 1280 the portrait
+# tablet. The driver judges every step from the chrome's and the core's own state and fails the
+# run when a claim does not hold; see TabletLayoutDemo.kt. Dispatch-only, like the gesture demo,
+# once it is on main; until then GitHub knows a workflow only from an event on its branch, so a
+# push of this file on the PR's branch registers it and is the run (#243's recipe; the retry
+# after run 35654472828 is the second such push) – the push trigger goes with the merge.
 # The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
 # driver, the profile, the display and the colour scheme.
 on:
