@@ -463,6 +463,12 @@ export class Actions {
   private async togglePictureInPicture(tabId: string, win: ZenWindow): Promise<void> {
     const view = this.browser.tabs.view(tabId)
     if (!view) return
+    const tab = this.browser.tabs.tab(tabId)
+    if (tab && this.browser.tabs.isPrivate(tab)) {
+      // Withheld from private tabs, as Chrome withholds it from Incognito (ruled 2026-09-21).
+      this.browser.toast("Picture-in-Picture isn't available in private tabs.", 'info', win)
+      return
+    }
     if (!this.browser.state.capabilities.pictureInPicture) {
       this.browser.toast('Picture-in-Picture is not available on this device.', 'info', win)
       return

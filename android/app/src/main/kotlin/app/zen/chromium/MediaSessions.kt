@@ -329,7 +329,7 @@ class MediaSessions(private val host: Host, private val io: Executor) {
     /** `media.pip`: the window into picture-in-picture for the video of `json`'s tab; answers whether it went (never for a chrome player). */
     fun enterPictureInPicture(json: JSONObject, reply: (Any?) -> Unit) {
         val info = MediaSessionInfo.parse(json)
-        if (info == null || info.chrome || !pictureInPictureSupported || destroyed) {
+        if (info == null || info.chrome || info.private || !pictureInPictureSupported || destroyed) {
             reply(false)
             return
         }
@@ -395,7 +395,9 @@ class MediaSessions(private val host: Host, private val io: Executor) {
      * WebView's (the tab's element is in the host's fullscreen layer). Never for a chrome player.
      */
     private fun autoEnter(info: MediaSessionInfo?): Boolean {
-        if (info == null || info.chrome) return false
+        // Never from a private tab (Chrome withholds PiP from Incognito): the window that left for
+        // the small video would never stop, and the private tab lock would never arm.
+        if (info == null || info.chrome || info.private) return false
         return MediaControls.autoEnterPictureInPicture(info) ||
             (info.video && info.playing && host.fullscreenTab?.tabId == info.tabId)
     }

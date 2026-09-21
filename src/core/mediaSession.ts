@@ -184,6 +184,7 @@ export class MediaSessionService {
         state.positionAt = tracked.at
         state.actions = report.actions
         state.pictureInPicture = this.pipTabId === tabId
+        if (isPrivate) state.private = true
       }
       states.push(state)
     }
@@ -435,6 +436,9 @@ export class MediaSessionService {
     if (!tracked || !tracked.report.video) return false
     const tab = this.browser.tabs.tab(tabId)
     const isPrivate = tab ? this.browser.tabs.isPrivate(tab) : false
+    // Withheld from private tabs, as Chrome withholds it from Incognito: a window that left for
+    // the small video never stops, so the private tab lock would never arm (ruled 2026-09-21).
+    if (isPrivate) return false
     const { report } = tracked
     return host.enterPictureInPicture({
       tabId,

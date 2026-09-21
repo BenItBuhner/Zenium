@@ -68,7 +68,7 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
     if (!media) sheet.current?.dismiss()
   }, [media])
 
-  const pip = Boolean(state.capabilities.pictureInPicture && media?.video)
+  const pip = Boolean(state.capabilities.pictureInPicture && media?.video && !media?.private)
   const elsewhere = activeTab(state)?.id !== tabId
   const contentKey = `${tabId}:${pip ? 'pip' : ''}:${elsewhere ? 'switch' : ''}`
 
