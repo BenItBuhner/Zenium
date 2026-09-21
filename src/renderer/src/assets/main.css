@@ -8552,9 +8552,11 @@
  */
 @layer components {
   /*
-   * The find bar (§9.21): a panel row of control + 8 under the page, a 320px field with Chrome's
-   * n/m count inside it (13 tabular at 69%), 28px icon buttons at 8. Plain: the hairline above
-   * is the only edge, the miss shows in the count alone.
+   * The find bar (§9.32): a docked row at the bottom of the content frame, `--v2-control` + 8
+   * tall on `--v2-panel`, the 1 px `--v2-border` top edge its only edge. In it the shared 320
+   * field (§9.12, `.zen-v2-field`; its width is a modifier beside the primitive, below), then
+   * the match count 13/20 at 69 % in `tabular-nums`, then previous, next and close as the shared
+   * §9.3 icon buttons (`.zen-v2-icon-button`), 8 apart. Plain: the miss shows in the count alone.
    */
   .zen-find-bar {
     height: calc(var(--v2-control) + 8px);
@@ -8564,51 +8566,15 @@
     background: var(--v2-panel);
     color: var(--v2-text);
   }
-  .zen-find-field {
-    display: flex;
-    width: 320px;
-    max-width: 100%;
-    height: var(--v2-control);
-    align-items: center;
-    padding: 0 12px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-control);
-  }
-  .zen-find-field:focus-within {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
-  }
-  .zen-find-field > input {
-    min-width: 0;
-    flex: 1;
-    height: 100%;
-    background: transparent;
-    color: var(--v2-text);
-    font-size: 13px;
-    outline: none;
-  }
-  .zen-find-field > input::placeholder {
-    color: var(--v2-text-deemphasized);
-  }
   .zen-find-count {
     flex-shrink: 0;
-    padding-left: 8px;
     color: var(--v2-text-deemphasized);
-    font-size: 13px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     font-variant-numeric: tabular-nums;
   }
-  .zen-find-field[data-no-match='true'] .zen-find-count {
+  .zen-find-count[data-no-match='true'] {
     color: var(--v2-danger);
-  }
-  .zen-find-button {
-    border-radius: 6px;
-    color: var(--v2-text);
-  }
-  .zen-find-button:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
-  .zen-find-button:active:not(:disabled) {
-    background: var(--v2-fill-hover);
   }
 
   /*
@@ -8627,6 +8593,12 @@
     padding: 0;
     color: var(--v2-text);
   }
+}
+/* The find bar's field (§9.32): the shared field at the 320 width, giving way in a narrow frame.
+   A modifier on the primitive, unlayered as the primitive is (§9.34). */
+.zen-v2-field.zen-find-field {
+  width: 320px;
+  max-width: 100%;
 }
 
 /*
