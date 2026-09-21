@@ -252,8 +252,8 @@ describe('the split group row stylesheet (§9.35)', () => {
     expect(seg).toContain('flex: 1 1 0')
     expect(seg).toContain('border-radius: 8px')
     expect(seg).toContain('container-type: inline-size')
-    // The tab row's height is one token, read by the row and raised for a coarse pointer.
-    expect(css).toContain('--zen-tab-row: 36px')
+    // The tab row's height is one token – §5's 32 – read by the row and raised for a coarse pointer.
+    expect(css).toContain('--zen-tab-row: 32px')
     expect(css).toMatch(/:root\[data-pointer='coarse'\] \{\n\s+--zen-tab-row: 42px;/)
     expect(css).toMatch(/\.zen-tab \{[^}]*height: var\(--zen-tab-row\)/)
   })

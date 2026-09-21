@@ -244,7 +244,9 @@ function StripRowItem({
 /**
  * The pinned section's header: the space's name, folding its pinned rows. A strip item
  * (lib/tabStrip.ts): Enter, Space, Left and Right fold and unfold it; `fallback` makes it the
- * strip's tab stop while it hides the active row.
+ * strip's tab stop while it hides the active row. A row of the strip (§5's 32, radius 8, the
+ * window hover fill) with the name as §4's small label – 13/600, the sidebar "Space" form – in
+ * full ink: a Space's name in the strip is a name, never deemphasised (§9.29).
  */
 function SpaceHeader({
   space,
@@ -260,7 +262,7 @@ function SpaceHeader({
   return (
     <button
       type="button"
-      className="mb-1 flex h-7 w-full items-center gap-2 rounded-lg px-2 text-[12px] font-medium text-[var(--zen-fg)] hover:bg-[var(--zen-element-bg)]"
+      className="mb-1 flex h-[var(--zen-tab-row)] w-full items-center gap-2 rounded-lg px-2 text-[13px] font-semibold text-[var(--zen-fg)] hover:bg-[var(--v2-window-fill-hover)]"
       title={space.pinnedCollapsed ? 'Show pinned tabs' : 'Collapse pinned tabs'}
       aria-label={`${space.name} pinned tabs`}
       aria-expanded={!space.pinnedCollapsed}
@@ -340,7 +342,7 @@ function NewTabButton({
     <button
       type="button"
       className={cn(
-        'zen-tab h-8 text-[var(--zen-fg)]',
+        'zen-tab text-[var(--zen-fg)]',
         compact && 'justify-center px-0',
         spaced && 'mt-0.5'
       )}
@@ -354,7 +356,7 @@ function NewTabButton({
       }}
     >
       <Plus className="h-4 w-4 shrink-0" />
-      {!compact && <span className="text-[13px]">New Tab</span>}
+      {!compact && <span>New Tab</span>}
     </button>
   )
 }
@@ -401,7 +403,7 @@ function FolderRow({
   return (
     <div className="flex flex-col gap-0.5">
       <div
-        className={cn('zen-tab h-8', compact && 'justify-center px-0')}
+        className={cn('zen-tab', compact && 'justify-center px-0')}
         role="button"
         aria-label={folder.name}
         aria-description={`${live ? 'Live folder' : 'Folder'}, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`}
@@ -439,8 +441,10 @@ function FolderRow({
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         <span className="text-sm leading-none">{folder.icon}</span>
         {folder.color && !compact && (
+          // The folder's colour as a swatch with the ink's 20 % hairline (a11y-30, §9.14; the
+          // space glyph's rule), so it keeps an edge on a like-coloured window.
           <span
-            className="h-2 w-2 shrink-0 rounded-full"
+            className="h-2 w-2 shrink-0 rounded-full border border-[rgb(var(--zen-fg-rgb)/0.2)]"
             style={{ background: FOLDER_COLORS[folder.color] }}
           />
         )}
@@ -454,16 +458,21 @@ function FolderRow({
                 <span
                   className={cn(
                     'h-1.5 w-1.5 shrink-0 rounded-full',
-                    liveError ? 'bg-red-500' : 'zen-live-dot bg-[var(--zen-accent)]'
+                    liveError
+                      ? 'bg-[var(--v2-danger)]'
+                      : 'zen-live-dot bg-[var(--v2-control-accent)]'
                   )}
                   title={liveError ?? 'Live folder – updates automatically'}
                 />
               )}
-              <span className="text-[11px] text-[var(--zen-muted)]">{tabs.length}</span>
+              {/* The count and the chevron are supplementary: the deemphasised ink (§9.29). */}
+              <span className="text-[13px] tabular-nums text-[var(--v2-control-text-deemphasized)]">
+                {tabs.length}
+              </span>
               {folder.collapsed ? (
-                <ChevronRight className="h-3.5 w-3.5 opacity-60" />
+                <ChevronRight className="h-3.5 w-3.5 text-[var(--v2-control-text-deemphasized)]" />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                <ChevronDown className="h-3.5 w-3.5 text-[var(--v2-control-text-deemphasized)]" />
               )}
             </>
           ))}
@@ -507,7 +516,7 @@ function FolderRename({ folder }: { folder: Folder }): JSX.Element {
         if (e.key === 'Escape') commit(false)
         e.stopPropagation()
       }}
-      className="min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-[var(--zen-accent)]"
+      className="min-w-0 flex-1 rounded-md bg-[var(--v2-control-fill)] px-1.5 py-0.5 outline-none ring-1 ring-[var(--v2-control-accent)]"
     />
   )
 }

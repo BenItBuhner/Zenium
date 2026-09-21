@@ -82,7 +82,10 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
         </div>
       )}
       {status && !compact && (
-        <div className="truncate px-1 text-[11px] text-[var(--zen-muted)]" title={status}>
+        <div
+          className="truncate px-1 text-[11px] text-[var(--v2-control-text-deemphasized)]"
+          title={status}
+        >
           {status}
         </div>
       )}
@@ -189,12 +192,13 @@ function SpaceIcon({
     <button
       type="button"
       className={cn(
-        'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-[10px] px-1 text-[17px] leading-none transition-all',
+        'zen-squircle relative flex h-8 min-w-8 items-center justify-center rounded-lg px-1 text-[17px] leading-none transition-all',
         // The other spaces stand back, but no further than 3:1 on the window (a11y-30): at 45 %
-        // a glyph's thin strokes fell to 1.9:1 on a light gradient.
+        // a glyph's thin strokes fell to 1.9:1 on a light gradient. The fills are the window
+        // family's (§9.29): the current space on `--v2-window-fill`, hover on `-hover`.
         active
-          ? 'bg-[var(--zen-element-bg-active)] opacity-100'
-          : 'opacity-70 hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--zen-element-bg)]',
+          ? 'bg-[var(--v2-window-fill)] opacity-100'
+          : 'opacity-70 hover:opacity-100 focus-visible:opacity-100 hover:bg-[var(--v2-window-fill-hover)]',
         isDrop && 'opacity-100'
       )}
       data-drop-into={isDrop || undefined}

@@ -278,7 +278,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
           {trailing && agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {trailing && foreign && active && (
             <MonitorSmartphone
-              className="h-3.5 w-3.5 shrink-0 opacity-60"
+              className="h-3.5 w-3.5 shrink-0 text-[var(--v2-control-text-deemphasized)]"
               aria-label="Shown in another window"
             />
           )}
@@ -301,7 +301,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
             <button
               type="button"
               tabIndex={-1}
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
               title="Frozen by the resource governor – click to wake"
               onClick={(e) => {
                 e.stopPropagation()
@@ -315,7 +315,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
             <button
               type="button"
               tabIndex={-1}
-              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--zen-muted)]"
+              className="zen-toolbar-button h-6 w-6 shrink-0 text-[var(--v2-control-text-deemphasized)]"
               title={`CPU throttled ×${tab.cpuThrottle} by the resource governor – click to lift`}
               onClick={(e) => {
                 e.stopPropagation()
@@ -392,7 +392,7 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
     <span
       className={cn(
         'zen-tab-alert flex h-6 w-6 shrink-0 items-center justify-center',
-        alert === 'pip' ? 'text-[var(--zen-muted)]' : 'text-[var(--zen-danger)]'
+        alert === 'pip' ? 'text-[var(--v2-control-text-deemphasized)]' : 'text-[var(--v2-danger)]'
       )}
       data-alert={alert}
       role="img"
@@ -454,7 +454,7 @@ function RenameInput({ tab }: { tab: Tab }): JSX.Element {
         e.stopPropagation()
       }}
       onPointerDown={(e) => e.stopPropagation()}
-      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--zen-element-bg)] px-1.5 py-0.5 text-[13px] outline-none ring-1 ring-[var(--zen-accent)]"
+      className="zen-no-drag zen-squircle min-w-0 flex-1 rounded-md bg-[var(--v2-control-fill)] px-1.5 py-0.5 outline-none ring-1 ring-[var(--v2-control-accent)]"
     />
   )
 }

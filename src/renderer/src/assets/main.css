@@ -90,9 +90,10 @@
   --zen-corner: squircle;
   /* Zen 1.22: sidebar type got larger for readability. */
   --zen-sidebar-font: 14px;
-  /* The tab row's height, read by the row and by the split group's row that stands in for rows
-     (design language v2 §9.35); the coarse-pointer block raises it. */
-  --zen-tab-row: 36px;
+  /* The tab row's height – §5's 32 px row – read by the row, the folder and space headers, the
+     New Tab row and the split group's row that stands in for rows (design language v2 §9.35);
+     the coarse-pointer block raises it (a hit target, not the vocabulary). */
+  --zen-tab-row: 32px;
 }
 
 :root[data-theme='dark'] {
@@ -1120,6 +1121,14 @@
     line-height: var(--v2-line-small);
   }
 
+  /*
+   * The sidebar's tab row (design language v2 §5, §6, §9.29; shell pass 7(a)): §5's 32 px row
+   * at radius 8 in the window family – the theme's ink at `--zen-sidebar-font`, the hover fill
+   * `--v2-window-fill-hover`, the active tab `--v2-window-fill` as one shape with no frame (the
+   * sidebar has no borders, §10.3). The folder header, the New Tab row and the split group's
+   * segments are this row; a folder header keeps the hover fill while its editor bubble stands
+   * beside it (§9.20's lit anchor).
+   */
   .zen-tab {
     position: relative;
     display: flex;
@@ -1127,19 +1136,19 @@
     gap: 9px;
     height: var(--zen-tab-row);
     padding: 0 8px 0 10px;
-    border-radius: 11px;
+    border-radius: 8px;
     color: var(--zen-fg);
     font-size: var(--zen-sidebar-font);
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
-  .zen-tab:hover {
-    background: var(--zen-element-bg);
+  .zen-tab:hover,
+  .zen-tab[data-editing]:not([data-active='true']) {
+    background: var(--v2-window-fill-hover);
   }
   .zen-tab[data-active='true'] {
-    background: var(--zen-element-bg-active);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
+    background: var(--v2-window-fill);
   }
   /* Multi-selected tabs (Ctrl / Shift+click) get the accent outline Zen uses. */
   .zen-tab[data-selected],
@@ -1284,28 +1293,34 @@
     height: 1px;
   }
 
+  /*
+   * An Essentials tile (§5: 44 tall, radius 8, the window fill – Zen's posters; §9.29): it
+   * spends `--v2-window-fill` at rest, so hover and the active tile take `--v2-window-fill-hover`
+   * and the active one is told apart by the window's hairline inside its edge (`--zen-border`,
+   * §9.29), as the split group's rail column is (§9.35) – the two window fills are the whole
+   * vocabulary, and nothing here adds a third.
+   */
   .zen-essential {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     height: 44px;
-    border-radius: 14px;
-    background: rgb(var(--zen-fg-rgb) / 0.1);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.06);
+    border-radius: 8px;
+    background: var(--v2-window-fill);
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
   .zen-essential:hover {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-window-fill-hover);
   }
   .zen-essential:active {
     transform: scale(0.97);
   }
   .zen-essential[data-active='true'] {
-    background: rgb(var(--zen-fg-rgb) / 0.22);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.1);
+    background: var(--v2-window-fill-hover);
+    box-shadow: inset 0 0 0 1px var(--zen-border);
   }
   .zen-essential[data-discarded='true'] img {
     opacity: 0.69;
@@ -1828,17 +1843,20 @@
    * first response, the accent turning forwards once the document is coming in (the colour
    * eases over between them). The favicon that takes the ring's place fades back in over
    * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
-   * 60 %, a sleeping row's 69 %). Reduced motion collapses both to the global 0.01 ms.
+   * 60 %, a sleeping row's 69 %). Reduced motion collapses both to the global 0.01 ms. The ring
+   * draws in its surface's family (§9.29): the deemphasised ink and the accent of the control
+   * roles – the theme's on the sidebar's rows, the page's in tab search – and, where no surface
+   * root resolves them (the phone's overview cards), the v1 inks they alias.
    */
   .zen-tab-throbber {
-    border-color: var(--zen-muted);
+    border-color: var(--v2-control-text-deemphasized, var(--zen-muted));
     border-top-color: transparent;
     animation: zen-spin 900ms linear infinite reverse;
   }
   /* The ease sits on the second phase only: the ring enters in its colours, never eased from
      whatever stood there before. */
   .zen-tab-throbber[data-phase='loading'] {
-    border-color: var(--zen-accent);
+    border-color: var(--v2-control-accent, var(--zen-accent));
     border-top-color: transparent;
     animation-direction: normal;
     transition: border-color 150ms var(--zen-ease);
@@ -3858,9 +3876,6 @@
   .zen-group-editor-count {
     margin-left: auto;
     flex-shrink: 0;
-  }
-  .zen-tab[data-editing]:not([data-active='true']) {
-    background: var(--zen-element-bg);
   }
   /*
    * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
@@ -6211,11 +6226,9 @@
 :root[data-form-factor='phone'][data-text-scale] .zen-overview-card-close {
   border-top-right-radius: 8px;
 }
+/* A coarse pointer's tab row is taller (a hit target); its radius 8 is the vocabulary's (§5). */
 :root[data-pointer='coarse'] {
   --zen-tab-row: 42px;
-}
-:root[data-pointer='coarse'] .zen-tab {
-  border-radius: 11px;
 }
 /* Hover-revealed row actions (close a tab, remove an entry) have nothing to hover under a finger. */
 :root[data-pointer='coarse'] .zen-tab .zen-tab-close,
