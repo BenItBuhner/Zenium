@@ -2255,6 +2255,455 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         return Grade(if (found.optBoolean("pass")) "P" else "F", "Google Dictionary: double-click on \"${word.optString("word")}\" -> bubble ${found.toString().take(240)}", extra)
     }
 
+    // --- the core checks of compat round 6 (ranks 91-120 by installs) ----------------------------
+
+    /** `CLICK_TARGET` for a label regex literal (`/.../i`): the smallest visible element whose text matches, its centre. */
+    private fun clickTarget(words: String): String = CLICK_TARGET.replace("__RE__", words)
+
+    /** `INJECTED_ANY` for a tag / id / class pattern: the extension's elements on the page, the visible ones counted. */
+    private fun injectedAny(pattern: String): String = INJECTED_ANY.replace("__PATTERN__", JSONObject.quote(pattern))
+
+    /**
+     * An effect read off a live page (BTRoblox on roblox.com, BetterTTV on twitch.tv: rows whose
+     * content scripts match one site and nothing else, which the phone has no host mapping to
+     * bring a fixture under): the page opens, its document completes, and `expr` (a
+     * `JSON.stringify` of `{pass, ...}`) is polled. The site's own state is recorded with the
+     * outcome: a page that reads as a challenge or a refusal, or drew nothing, is `n/m` – the
+     * site not serving the runner – with what it showed.
+     */
+    private fun liveMarker(label: String, url: String, expr: String, settleMs: Long = 45_000): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val tab = createTab(url)
+        val view = waitForView(tab)
+        val complete = poll(scaled(45_000, factor), 500) { if (tabEval(view, "String(document.readyState === 'complete')") == "true") true else null } == true
+        SystemClock.sleep(scaled(2_000, factor))
+        val found = pollExpr(view, expr, scaled(settleMs, factor))
+        val page = json(tabEval(view, DOM_REPORT))
+        val extra = JSONObject().put("page", found).put("document", page).put("complete", complete).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-live")
+        val text = page.optString("text")
+        when {
+            found.optBoolean("pass") -> Grade("P", "$label: on ${url.take(60)}: ${found.toString().take(220)}", extra)
+            CHALLENGE_WORDS.containsMatchIn(text) || text.isEmpty() ->
+                Grade("n/m", "$label: ${url.take(60)} did not serve its page to the runner (\"${text.take(80)}\", complete $complete, ${page.optInt("els")} elements); nothing for the extension to act on (not measurable here)", extra)
+            else -> Grade("F", "$label: on ${url.take(60)} (\"${text.take(60)}\"): ${found.toString().take(200)}", extra)
+        }
+    }
+
+    /**
+     * DeepL: a selection on the Spanish fixture brings up its inline trigger
+     * (`deepl-inline-trigger`, a shadow host whose own box is 0x0 while its shadow content shows;
+     * the desktop's round-4 grader measures the shadow content), and a tap on it translates the
+     * selection in its popover. The selection is made by script with the events a mouse's
+     * selection yields (`mouseup`, `selectionchange`); the phone's own selection handles are the
+     * chrome's, not the extension's. Trigger without a translation is `PARTIAL`.
+     */
+    private fun deepL(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("translate.html?deepl", factor, 3_000)
+        extra.put("selected", tabEval(view, DEEPL_SELECT))
+        var trigger = pollExpr(view, DEEPL_TRIGGER, scaled(15_000, factor))
+        if (!trigger.optBoolean("pass")) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("selectedAgain", tabEval(view, DEEPL_SELECT))
+            trigger = pollExpr(view, DEEPL_TRIGGER, scaled(15_000, factor))
+        }
+        extra.put("trigger", trigger)
+        var translation = JSONObject()
+        if (trigger.optBoolean("pass")) {
+            screenPoint(view, trigger)?.let { tap(it.first, it.second) }
+            translation = pollExpr(view, DEEPL_TRANSLATION, scaled(25_000, factor))
+            if (!translation.optBoolean("pass")) {
+                extra.put("clickedByScript", tabEval(view, DEEPL_CLICK))
+                translation = pollExpr(view, DEEPL_TRANSLATION, scaled(25_000, factor))
+            }
+        }
+        extra.put("translation", translation).put("console", JSONArray(consoleOf(view).takeLast(10)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        if (!trigger.optBoolean("pass")) extra.put("errors", targetErrors(view))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-translation")
+        return Grade(
+            when {
+                translation.optBoolean("pass") -> "P"
+                trigger.optBoolean("pass") -> "PARTIAL"
+                else -> "F"
+            },
+            "DeepL: inline trigger ${trigger.toString().take(160)}; translation ${translation.toString().take(200)}",
+            extra
+        )
+    }
+
+    /**
+     * Google Input Tools: Hindi transliteration added on its options page (a Closure tree, no
+     * `<select>`: the filter narrows it, a double-click on the row moves it to `#selected`),
+     * turned on from the popup, and `namaste` typed into the fixture's textarea with the
+     * emulator's keys gives a candidate window or Devanagari in the field (the desktop's method).
+     * Added and turned on with nothing transliterated is `PARTIAL`.
+     */
+    private fun inputTools(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val optionsUrl = entry.optJSONObject("options")?.optJSONObject("detail")?.optString("page", "")?.ifEmpty { null } ?: "chrome-extension://${row.id}/options.html"
+        val optionsTab = createTab(optionsUrl)
+        val optionsView = waitForView(optionsTab)
+        poll(scaled(20_000, factor), 500) { if (tabEval(optionsView, "String(document.readyState === 'complete')") == "true") true else null }
+        SystemClock.sleep(scaled(3_000, factor))
+        val added = pollExpr(optionsView, INPUT_TOOLS_ADD, scaled(25_000, factor))
+        extra.put("options", added).put("optionsConsole", JSONArray(consoleOf(optionsView).takeLast(8)))
+        snap("${entry.optString("slug")}-options")
+        val (tab, view) = fixture("editor.html?inputtools", factor, 2_500)
+        val popup = openPopup(row, factor)
+        var enabled = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            enabled = poll(scaled(8_000, factor), 1_000) { json(tabEval(popup, clickTarget("/hindi|हिन्दी|हिंदी/i"))).takeIf { it.optBoolean("clicked") } }
+                ?: json(tabEval(popup, clickTarget("/hindi|हिन्दी|हिंदी/i")))
+            if (enabled.optBoolean("clicked")) {
+                screenPoint(popup, enabled)?.let { tap(it.first, it.second) }
+                SystemClock.sleep(800)
+                if (popupView() != null) enabled.put("byScript", tabEval(popup, CLICK_TARGET_SYNTH))
+            }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("popup", enabled)
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        SystemClock.sleep(1_000)
+        showTab(tab)
+        val centre = json(tabEval(view, ELEMENT_CENTRE.replace("%SELECTOR%", "#editor")))
+        screenPoint(view, centre)?.let { tap(it.first, it.second) }
+        SystemClock.sleep(600)
+        tabEval(view, "(function(){var e=document.getElementById('editor');e.focus();e.value='';return 'ok'})()")
+        awaitIme(true, 4_000)
+        for (c in "namaste") key(KeyEvent.KEYCODE_A + (c - 'a'))
+        SystemClock.sleep(scaled(2_500, factor))
+        val candidates = pollExpr(view, INPUT_TOOLS_RESULT, scaled(8_000, factor))
+        key(KeyEvent.KEYCODE_SPACE)
+        val result = pollExpr(view, INPUT_TOOLS_RESULT, scaled(8_000, factor))
+        extra.put("candidates", candidates).put("result", result).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        snap("${entry.optString("slug")}-typed")
+        if (imeShown()) back() else tabEval(view, "(function(){document.activeElement&&document.activeElement.blur();return 'ok'})()")
+        SystemClock.sleep(600)
+        val pass = result.optBoolean("pass") || candidates.optBoolean("pass")
+        return Grade(
+            if (pass) "P" else if (added.optBoolean("pass") || enabled.optBoolean("clicked")) "PARTIAL" else "F",
+            "Google Input Tools: options ${added.toString().take(140)}; popup ${enabled.toString().take(80)}; typed namaste -> ${result.toString().take(160)}",
+            extra
+        )
+    }
+
+    /**
+     * ColorZilla: "Pick Color From Page" in its popup injects the eyedropper into the page (its
+     * content script's overlay and toolbar); that UI on the fixture is the pass. The colour under
+     * a pointer needs a mouse; the injected picker is the effect the phone can show.
+     */
+    private fun colorZilla(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?colorzilla", factor, 2_000)
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(2_500, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget("/pick color from page|page color picker|color picker/i"))).takeIf { it.optBoolean("clicked") } }
+                ?: json(tabEval(popup, clickTarget("/pick color from page|page color picker|color picker/i")))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var injected = pollExpr(view, injectedAny("colorzilla|cz-|czp-|cz_"), scaled(15_000, factor))
+        if (!injected.optBoolean("pass") && click.optBoolean("clicked") && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup!!, CLICK_TARGET_SYNTH))
+            injected = pollExpr(view, injectedAny("colorzilla|cz-|czp-|cz_"), scaled(15_000, factor))
+        }
+        extra.put("injected", injected).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-picker")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (injected.optBoolean("pass")) "P" else "F",
+            "ColorZilla: popup ${if (popup == null) "did not render" else "\"Pick Color From Page\" ${click.toString().take(80)}"}; picker on the page ${injected.toString().take(180)}",
+            extra
+        )
+    }
+
+    /**
+     * Picture-in-Picture (by Google): the action click has its content script call
+     * `requestPictureInPicture()` on the page's playing video. The WebView has no
+     * picture-in-picture window for a page's element (`document.pictureInPictureEnabled` is
+     * false; the app's own PiP is the window's, `MediaControls`), so the row is a WebView limit,
+     * `n/a`, once the click ran and that is what the page reports; a video that did enter is `P`.
+     */
+    private fun pictureInPicture(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("video.html?pip", factor, 3_000)
+        val before = json(tabEval(view, PIP_STATE))
+        extra.put("before", before)
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val after = pollExpr(view, PIP_STATE, scaled(15_000, factor))
+        extra.put("after", after).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-pip")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return when {
+            after.optBoolean("pass") -> Grade("P", "Picture-in-Picture: the action click put the video into picture-in-picture: ${after.toString().take(160)}", extra)
+            !before.optBoolean("enabled") -> Grade("n/a", "Picture-in-Picture: document.pictureInPictureEnabled is false in the WebView, so the extension's requestPictureInPicture() has no window to enter (WebView limit); after the click: ${after.toString().take(140)}", extra)
+            else -> Grade("F", "Picture-in-Picture: the WebView reports picture-in-picture enabled but the click entered nothing within ${scaled(15_000, factor) / 1000} s: ${after.toString().take(160)}", extra)
+        }
+    }
+
+    /**
+     * DuckDuckGo: its tracker protections on the ad fixture (the row's blocking half; the
+     * fixture's host `10.0.2.2` is one DuckDuckGo may treat as local and leave unprotected, as in
+     * Chrome, which the desktop's round 4 met on `127.0.0.1`), else its `search_provider`
+     * override taking the URL bar's search (the row's search half): either is `P`.
+     */
+    private fun duckDuckGo(row: Row, entry: JSONObject): Grade {
+        val blocked = adBlocker(row, entry)
+        if (blocked.verdict == "P") return blocked
+        closeExtraTabs()
+        val search = searchOverride("DuckDuckGo", Regex("duckduckgo\\.com", RegexOption.IGNORE_CASE), Regex("duckduckgo", RegexOption.IGNORE_CASE))(row, entry)
+        val extra = JSONObject().put("adBlock", blocked.extra ?: JSONObject()).put("search", search.extra ?: JSONObject())
+        return Grade(
+            search.verdict,
+            "DuckDuckGo: ad fixture ${blocked.verdict} (${blocked.note.take(140)}; the fixture host may read as local to it, protections off there as in Chrome); search ${search.note.take(200)}",
+            extra
+        )
+    }
+
+    /**
+     * A screenshot row whose popup item runs `tabs.captureVisibleTab` and opens the extension's
+     * own editor page with the image (FireShot's "Capture visible part"): the popup rendered, the
+     * item tapped (by script when the tap did not open anything), a new own-page tab with a
+     * canvas or an image over 200 px is the pass.
+     */
+    private fun popupCapture(label: String, clickWords: String): (Row, JSONObject) -> Grade = { row, entry ->
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?capture", factor, 2_000)
+        val before = tabUrls().keys
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget(clickWords))).takeIf { it.optBoolean("clicked") } } ?: json(tabEval(popup, clickTarget(clickWords)))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var result = poll(scaled(20_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) } }
+        if (result == null && click.optBoolean("clicked") && popup != null && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup, CLICK_TARGET_SYNTH))
+            result = poll(scaled(25_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) } }
+        }
+        var image = JSONObject()
+        if (result != null) {
+            val resultView = waitForView(result.key)
+            image = pollExpr(resultView, ANNOTATOR_IMAGE, scaled(30_000, factor))
+            extra.put("editor", image).put("editorUrl", result.value).put("editorConsole", JSONArray(consoleOf(resultView).takeLast(10)))
+            showTab(result.key)
+            SystemClock.sleep(800)
+        }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        snap("${entry.optString("slug")}-capture")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        Grade(
+            if (image.optBoolean("pass")) "P" else "F",
+            "$label: popup ${if (popup == null) "did not render" else "item ${click.toString().take(90)}"}; result page ${if (result == null) "never opened within ${scaled(45_000, factor) / 1000} s" else "opened (${result.value.substringAfterLast('/').take(50)}): ${image.toString().take(160)}"}",
+            extra
+        )
+    }
+
+    /**
+     * Immersive Translate: the popup's translate control has its content script rewrite the
+     * Spanish fixture with its target wrappers (`immersive-translate-target-wrapper`) carrying
+     * the English; wrappers without English (the service unreachable) are `PARTIAL`. Its floating
+     * ball on every page says the content script runs and is recorded beside.
+     */
+    private fun immersiveTranslate(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("translate.html?immersive", factor, 3_000)
+        extra.put("ball", json(tabEval(view, injectedAny("immersive-translate"))))
+        val popup = openPopup(row, factor)
+        var click = JSONObject().put("clicked", false)
+        if (popup != null) {
+            SystemClock.sleep(scaled(3_000, factor))
+            extra.put("popupText", json(tabEval(popup, DEEP_TEXT)).optString("text").take(200))
+            click = poll(scaled(6_000, factor), 1_000) { json(tabEval(popup, clickTarget("/^translate( this)?( page| website)?$|^translate$|translate page|translate the page/i"))).takeIf { it.optBoolean("clicked") } }
+                ?: json(tabEval(popup, clickTarget("/translate/i")))
+            if (click.optBoolean("clicked")) screenPoint(popup, click)?.let { tap(it.first, it.second) }
+            extra.put("popupConsole", JSONArray(consoleOf(popup).takeLast(8)))
+        }
+        extra.put("click", click)
+        var found = pollExpr(view, IMMERSIVE_TRANSLATED, scaled(25_000, factor))
+        if (!found.optBoolean("pass") && found.optInt("wrappers") == 0 && click.optBoolean("clicked") && popup != null && popupView() != null) {
+            extra.put("clickedByScript", tabEval(popup, CLICK_TARGET_SYNTH))
+            found = pollExpr(view, IMMERSIVE_TRANSLATED, scaled(25_000, factor))
+        }
+        extra.put("page", found).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-translated")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            when {
+                found.optBoolean("pass") -> "P"
+                found.optInt("wrappers") > 0 -> "PARTIAL"
+                else -> "F"
+            },
+            "Immersive Translate: popup ${if (popup == null) "did not render" else "translate ${click.toString().take(80)}"}; page ${found.toString().take(200)}",
+            extra
+        )
+    }
+
+    /**
+     * WhatFont: the action click has its worker inject the tool into the page
+     * (`scripting.executeScript` under `activeTab`, which the phone grants on the click; the
+     * desktop's Electron does not, its settled F); the tool up on the fixture and a font read
+     * off a paragraph (a pointer's hover, synthesised) is the pass; the tool up alone is
+     * `PARTIAL`.
+     */
+    private fun whatFont(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("page-a.html?whatfont", factor, 2_000)
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val injected = pollExpr(view, injectedAny("whatfont|wf_|wfont|__wf"), scaled(20_000, factor))
+        extra.put("injected", injected)
+        var font = JSONObject()
+        if (injected.optBoolean("pass")) {
+            extra.put("hovered", tabEval(view, WHATFONT_HOVER))
+            font = pollExpr(view, WHATFONT_READ, scaled(10_000, factor))
+        }
+        extra.put("font", font).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-tool")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            when {
+                font.optBoolean("pass") -> "P"
+                injected.optBoolean("pass") -> "PARTIAL"
+                else -> "F"
+            },
+            "WhatFont: the action click ${if (injected.optBoolean("pass")) "injected the tool (${injected.optJSONArray("tags")?.toString()?.take(100)})" else "injected nothing within ${scaled(20_000, factor) / 1000} s (${injected.toString().take(100)})"}; font read ${font.toString().take(160)}",
+            extra
+        )
+    }
+
+    /**
+     * Wappalyzer: the popup lists the technologies its content script found on the fixture (a
+     * WordPress generator meta, jQuery, Bootstrap, React's hook, a Google tag); any of them named
+     * is the pass.
+     */
+    private fun wappalyzer(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("tech.html?wappalyzer", factor, 4_000)
+        SystemClock.sleep(scaled(3_000, factor))
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(popup, TECH_LIST, scaled(30_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found).put("console", JSONArray(consoleOf(view).takeLast(8)))
+        if (worlds) worldEval(view, row.id, WORLD_REPORT)?.let { extra.put("world", json(it)) }
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-technologies")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return Grade(
+            if (found.optBoolean("pass")) "P" else "F",
+            "Wappalyzer: popup ${if (popup == null) "did not render" else "lists ${found.optJSONArray("found")?.toString()?.take(120) ?: "nothing"} (\"${found.optString("text").take(120)}\")"}",
+            extra
+        )
+    }
+
+    /**
+     * Google Scholar Button: the popup searches Scholar for the page's title and lists results
+     * ("Cited by", "[PDF]"); a popup reporting that it could not reach the server is the service
+     * refusing the runner (`scholar.google.com` answered 403 to the desktop's VM in round 4),
+     * `n/m`.
+     */
+    private fun scholarButton(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        fixture("page-a.html?scholar", factor, 2_000)
+        val popup = openPopup(row, factor)
+        var found = JSONObject()
+        if (popup != null) {
+            found = pollExpr(popup, SCHOLAR_RESULTS, scaled(30_000, factor))
+            found.put("console", JSONArray(consoleOf(popup).takeLast(10)))
+        }
+        extra.put("popup", found)
+        SystemClock.sleep(600)
+        snap("${entry.optString("slug")}-results")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        val text = found.optString("text")
+        return when {
+            found.optBoolean("pass") -> Grade("P", "Google Scholar Button: the popup lists results for the page (\"${text.take(120)}\")", extra)
+            popup == null -> Grade("F", "Google Scholar Button: popup did not render in the core check", extra)
+            Regex("unable to access|server|try again|error|unusual traffic|not a robot", RegexOption.IGNORE_CASE).containsMatchIn(text) ->
+                Grade("n/m", "Google Scholar Button: the popup reports \"${text.take(100)}\": scholar.google.com refuses the runner (service, as on the desktop; not measurable here)", extra)
+            else -> Grade("F", "Google Scholar Button: the popup shows no results within ${scaled(30_000, factor) / 1000} s (\"${text.take(120)}\")", extra)
+        }
+    }
+
+    /**
+     * Tag Assistant: the action opens its side panel (the phone has no panel to host it: opened
+     * as a tab), which embeds `tagassistant.google.com` in a cross-origin frame and lists the
+     * fixture's Google tag there. The panel and its frame rendered is what the phone can read
+     * (the frame's own text is not readable from the harness, the desktop read it through
+     * DevTools): `n/m` with the frame's size, the screenshot the evidence; no panel is `F`.
+     */
+    private fun tagAssistant(row: Row, entry: JSONObject): Grade {
+        val factor = speedFactor(entry)
+        val extra = JSONObject()
+        val (_, view) = fixture("gtag.html?ta", factor, 2_000)
+        extra.put("dataLayer", poll(scaled(15_000, factor), 500) { tabEval(view, "String(!!(window.dataLayer && window.dataLayer.length > 0))").takeIf { it == "true" } } ?: "empty")
+        val before = tabUrls().keys
+        val since = StepEvidence(row)
+        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+        val panel = poll(scaled(30_000, factor), 700) { tabUrls().entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) } }
+        var frame = JSONObject()
+        if (panel != null) {
+            val panelView = waitForView(panel.key)
+            frame = pollExpr(panelView, TA_PANEL, scaled(30_000, factor))
+            extra.put("panel", frame).put("panelUrl", panel.value).put("panelConsole", JSONArray(consoleOf(panelView).takeLast(10)))
+            showTab(panel.key)
+            SystemClock.sleep(scaled(4_000, factor))
+        } else {
+            popupView()?.let { extra.put("popupInstead", json(tabEval(it, DEEP_TEXT)).optString("text").take(160)) }
+        }
+        backgroundView(row.id)?.let { extra.put("workerConsole", JSONArray(consoleOf(it).takeLast(8))) }
+        since.record(extra, "atEnd")
+        snap("${entry.optString("slug")}-panel")
+        runCatching { coreInvoke("extension.closePopup", "null") }
+        return when {
+            panel != null && frame.optBoolean("pass") ->
+                Grade("n/m", "Tag Assistant: its side panel opened as a tab (${panel.value.substringAfterLast('/').take(40)}) and embeds tagassistant.google.com (${frame.optInt("w")}x${frame.optInt("h")} css px); the tag list inside the cross-origin frame is not readable from the phone's harness, the screenshot shows it (not measurable here)", extra)
+            panel != null -> Grade("PARTIAL", "Tag Assistant: its side panel opened as a tab but its frame did not render: ${frame.toString().take(200)}", extra)
+            else -> Grade("F", "Tag Assistant: the action click opened no panel within ${scaled(30_000, factor) / 1000} s (tabs: ${tabUrls().values.joinToString().take(160)})", extra)
+        }
+    }
+
     // --- the table -------------------------------------------------------------------------------
 
     /** The desktop sweep's thirty, the twenty-seven the feasibility table calls feasible first, the three it does not last. */
@@ -2369,9 +2818,45 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         Row("gkojfkhlekighikafcpjkiklfbnlmeio", "Hola VPN", "hola-vpn", core = vpn("Hola VPN", pac = true, consent = true, connectWords = "/^(connect|start|turn on|enable|quick connect|protect me|unblock|get started|connect now)/i")),
         Row("nlipoenfbbikpbjkfpfillcgkoblgpmj", "Awesome Screen Recorder & Screenshot", "awesome-screenshot", core = ::awesomeScreenshot),
         Row("hehijbfgiekmjfkfjpbkbammjbdenadd", "IE Tab", "ie-tab", core = accountGate("IE Tab", Regex("ietab|nhc\\.htm", RegexOption.IGNORE_CASE), gate = "its Windows-only native host (ietabhelper)")),
-        Row("mgijmajocgfcbeboacabfgobmjgjcoja", "Google Dictionary (by Google)", "google-dictionary", core = ::dictionary)
+        Row("mgijmajocgfcbeboacabfgobmjgjcoja", "Google Dictionary (by Google)", "google-dictionary", core = ::dictionary),
         // Round 5's rows 31 and 32, Read&Write and Kami, are round 4's rows above (one row per id:
         // `only` selects by id), graded again on the runtime fixes.
+        // Compat round 6: the desktop's round-4 list (ranks 91-120 by installs,
+        // `.github/scripts/ext-compat/next30-round4.json`). Feasibility on the phone as before:
+        // a row whose effect lives on one live site the phone has no host mapping to bring a
+        // fixture under (BTRoblox, BetterTTV, Keepa) is read on that site and is `n/m` when the
+        // site does not serve the runner; an account, a native companion or a vendor's cloud is
+        // `n/m` with its gate surface rendered; a WebView limit is `n/a` with the limit named.
+        Row("cofdbpoegempjloogbagkncekinflcnj", "DeepL Translate", "deepl", core = ::deepL),
+        Row("eofcbnmajmjmplflapaojjnihcjkigck", "Avast SafePrice", "avast-safeprice", core = serviceBacked("Avast SafePrice", "its offers bar needs Avast's offers cloud to return offers for a product page on a shop it supports (the desktop's round 4 got none for the runner), and the phone has no host mapping to bring a fixture under a shop's host")),
+        Row("ophjlpahpchlmihnnnihgmmeilfjmjjc", "LINE", "line", core = accountGate("LINE", Regex("line\\.me|index\\.html", RegexOption.IGNORE_CASE), page = "index.html", gate = "a LINE account (its QR or email sign-in)")),
+        Row("hbkpclpemjeibhioopcebchdmohaieln", "BTRoblox", "btroblox", core = liveMarker("BTRoblox", "https://www.roblox.com/games/920587237", injectedAny("btroblox|btr-|btr_"))),
+        Row("mclkkofklkfljcocdinagocijmpgbhab", "Google Input Tools", "google-input-tools", core = ::inputTools),
+        Row("neebplgakaahbhdphmkckjjcegoiijjo", "Keepa - Amazon Price Tracker", "keepa", core = liveMarker("Keepa", "https://www.amazon.com/dp/B0CHX3QBCH", injectedAny("keepa"))),
+        Row("bhlhnicpbhignbdhedgjhgdocnmhomnp", "ColorZilla", "colorzilla", core = ::colorZilla),
+        Row("hkgfoiooedgoejojocmhlaklaeopbecg", "Picture-in-Picture Extension (by Google)", "picture-in-picture", core = ::pictureInPicture),
+        Row("bkdgflcldnnnapblkhphbgpggdiikppg", "DuckDuckGo Privacy Essentials", "duckduckgo", core = ::duckDuckGo),
+        Row("ejcfepkfckglbgocfkanmcdngdijcgld", "ChatGPT search", "chatgpt-search", core = searchOverride("ChatGPT search", Regex("chatgpt\\.com", RegexOption.IGNORE_CASE), Regex("chatgpt", RegexOption.IGNORE_CASE))),
+        Row("hjngolefdpdnooamgdldlkjgmdcmcjnc", "Equatio - Math made digital", "equatio", core = accountGate("Equatio", Regex("texthelp|everway|equatio|loginWindow", RegexOption.IGNORE_CASE), page = "loginWindow/index.html", gate = "a Texthelp (Everway) account")),
+        Row("fnpbeacklnhmkkilekogeiekaglbmmka", "Norton Safe Web", "norton-safe-web", core = siteVerdict("Norton Safe Web")),
+        Row("lgblnfidahcdcjddiepkckcfdhpknnjh", "Stands AdBlocker", "stands-adblocker", core = ::adBlocker),
+        Row("bihmplhobchoageeokmgbdihknkjbknd", "Touch VPN", "touch-vpn", core = vpn("Touch VPN", consent = true)),
+        Row("mcbpblocgmgfnpjjppndjkmgjaogfceg", "FireShot", "fireshot", core = popupCapture("FireShot", "/capture visible part|visible part|capture visible/i")),
+        Row("chhjbpecpncaggjpdakmflnfcopglcmi", "Rakuten: Get Cash Back For Shopping", "rakuten", core = accountGate("Rakuten", Regex("rakuten\\.com", RegexOption.IGNORE_CASE), gate = "a Rakuten account")),
+        Row("ofpnmcalabcbjgholdjcjblkibolbppb", "Monica: All-In-One AI Assist", "monica", core = domMarker("Monica's in-page widget mounted by its content script", "page-a.html?monica", injectedAny("monica"), settleMs = 30_000)),
+        Row("ndnaehgpjlnokgebbaldlmgkapkpjkkb", "Mailtrack - Email Tracker for Gmail", "mailtrack", core = accountGate("Mailtrack", Regex("mailtrack|mailsuite", RegexOption.IGNORE_CASE), gate = "a Mailtrack sign-in, and Gmail for the tracking")),
+        Row("mfidniedemcgceagapgdekdbmanojomk", "Coupert - Automatic Coupon Finder & Cash Back", "coupert", core = accountGate("Coupert", Regex("coupert", RegexOption.IGNORE_CASE), gate = "a Coupert account and a merchant's checkout")),
+        Row("ajopnjidmegmdimjlfnijceegpefgped", "BetterTTV", "betterttv", core = liveMarker("BetterTTV", "https://www.twitch.tv/twitch", injectedAny("bttv|betterttv"))),
+        Row("ahmpjcflkgiildlgicmcieglgoilbfdp", "Free Download Manager", "free-download-manager", core = serviceBacked("Free Download Manager", "downloads hand off to the Free Download Manager desktop app over native messaging (the `fdm` host)", native = true)),
+        Row("ejkiikneibegknkgimmihdpcbcedgmpo", "Volume Booster", "volume-booster", core = captureLimit("Volume Booster", "/\\\\d+ ?%|volume|boost/i")),
+        Row("fbgcedjacmlbgleddnoacbnijgmiolem", "Microsoft Bing Search with Rewards", "bing-search-rewards", core = searchOverride("Bing Search with Rewards", Regex("\\bbing\\.com", RegexOption.IGNORE_CASE), Regex("bing", RegexOption.IGNORE_CASE))),
+        Row("dagcmkpagjlhakfdhnbomgmjdpkdklff", "Mendeley Web Importer", "mendeley-web-importer", core = accountGate("Mendeley Web Importer", Regex("mendeley|elsevier", RegexOption.IGNORE_CASE), page = "index.html", injects = "iframe[src*='dagcmkpagjlhakfdhnbomgmjdpkdklff']", gate = "a Mendeley (Elsevier) account")),
+        Row("bpoadfkcbjbfhfodiogcnhhhpibjhbnh", "Immersive Translate", "immersive-translate", core = ::immersiveTranslate),
+        Row("jabopobgcpjmedljpbcaablpmlmfcogm", "WhatFont", "whatfont", core = ::whatFont),
+        Row("gppongmhjkpfnbhagpmjfkannfbllamg", "Wappalyzer", "wappalyzer", core = ::wappalyzer),
+        Row("ldipcbpaocekfooobnbcddclnhejkcpn", "Google Scholar Button", "google-scholar-button", core = ::scholarButton),
+        Row("fdgfkebogiimcoedlicjlajpkdmockpc", "Meta Ads Data Advisor", "meta-ads-data-advisor", core = accountGate("Meta Ads Data Advisor", Regex("side-panel|facebook\\.com", RegexOption.IGNORE_CASE), page = "side-panel/index.html", gate = "a Meta business account (its panel reads \"No Pixels found\" on the fixture)")),
+        Row("kejbdjndbnbjgmefkgdddjlbokphdefk", "Tag Assistant Companion", "tag-assistant", core = ::tagAssistant)
     )
 
     // --- stages and evidence ---------------------------------------------------------------------
@@ -3375,5 +3860,116 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var host=document.getElementById('gdx-bubble-host');var root=host&&host.shadowRoot;var main=root&&root.querySelector('#gdx-bubble-main');var meaning=(((root&&root.querySelector('#gdx-bubble-meaning'))||{}).textContent||'').replace(/\\s+/g,' ').trim();" +
                 "var query=(((root&&root.querySelector('#gdx-bubble-query'))||{}).textContent||'').trim();var shown=!!main&&getComputedStyle(main).display!=='none'&&host.getBoundingClientRect().width>0;" +
                 "return JSON.stringify({pass:shown&&(meaning.length>0||query.length>0),host:!!host,shown:shown,query:query.slice(0,30),meaning:meaning.slice(0,120),selection:String(getSelection()).trim().slice(0,30)})})()"
+
+        // --- compat round 6 ---------------------------------------------------------------------
+
+        /**
+         * [CLICK_LABEL] that also keeps the control it hit on `window.__zenClickTarget`, so
+         * [CLICK_TARGET_SYNTH] can send it a pointer's full event sequence when its `click()` and
+         * the tap at its centre both left the extension unmoved (a popup drawn by a framework that
+         * listens to `pointerdown` / `mousedown`, not `click`).
+         */
+        private const val CLICK_TARGET =
+            "(function(){var re=__RE__;var visible=function(n){var r=n.getBoundingClientRect();return r.width>10&&r.height>10};" +
+                "var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var cands=[];" +
+                "var walk=function(root){var all=root.querySelectorAll('button, a, [role=button], [role=menuitem], [role=option], input[type=button], input[type=submit], label, div, span, li, p, option');for(var i=0;i<all.length;i++){var e=all[i];var l=label(e);if(l.length>0&&l.length<60&&re.test(l)&&(visible(e)||e.tagName==='OPTION'))cands.push(e);if(e.shadowRoot)walk(e.shadowRoot)}};" +
+                "if(document.body)walk(document.body);var leaves=cands.filter(function(e){return !cands.some(function(o){return o!==e&&e.contains(o)})});" +
+                "var hit=cands.find(function(e){return /^(BUTTON|A|INPUT)$/.test(e.tagName)||/^(button|menuitem|option)$/.test(e.getAttribute('role')||'')})||leaves[0]||null;window.__zenClickTarget=hit;" +
+                "if(!hit)return JSON.stringify({clicked:false,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,100):''});var r=hit.getBoundingClientRect();try{hit.click()}catch(e){}" +
+                "return JSON.stringify({clicked:true,label:label(hit).slice(0,40),tag:hit.tagName,x:r.left+r.width/2,y:r.top+r.height/2})})()"
+        /** The pointer's sequence (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`) at the centre of the control [CLICK_TARGET] kept. */
+        private const val CLICK_TARGET_SYNTH =
+            "(function(){var el=window.__zenClickTarget;if(!el)return 'no target';var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,composed:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0,buttons:1,pointerId:1,pointerType:'mouse',isPrimary:true,view:window};" +
+                "try{el.dispatchEvent(new PointerEvent('pointerdown',o));el.dispatchEvent(new MouseEvent('mousedown',o));o.buttons=0;el.dispatchEvent(new PointerEvent('pointerup',o));el.dispatchEvent(new MouseEvent('mouseup',o));el.dispatchEvent(new MouseEvent('click',o));return 'dispatched on '+el.tagName}catch(e){return 'threw: '+String(e&&e.message||e)}})()"
+        /**
+         * The extension's elements on the page: every element (through open shadow roots) whose
+         * tag, id or class matches `__PATTERN__` (a regex source, case-insensitive), the ones drawn
+         * counted apart; `pass` when there is at least one.
+         */
+        private const val INJECTED_ANY =
+            "(function(){var re=new RegExp(__PATTERN__,'i');var found=[];var shown=0;var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');" +
+                "if(re.test(key)){found.push(key.replace(/\\s+/g,' ').trim().slice(0,40));var r=e.getBoundingClientRect();if(r.width>0&&r.height>0)shown++}if(e.shadowRoot)walk(e.shadowRoot)}};if(document.documentElement)walk(document.documentElement);" +
+                "return JSON.stringify({pass:found.length>0,n:found.length,visible:shown,tags:found.slice(0,6)})})()"
+        /** A live page that is not serving the runner: a challenge, a refusal, a block page. */
+        private val CHALLENGE_WORDS = Regex("access denied|captcha|unusual traffic|verify (that )?you are|not a robot|attention required|just a moment|checking your browser|enable javascript|rate limit|error 403|forbidden|service unavailable|temporarily unavailable|something went wrong|blocked", RegexOption.IGNORE_CASE)
+        /** DeepL: the Spanish phrase selected by script with the events a mouse's selection ends in (`mouseup`, `selectionchange`). */
+        private const val DEEPL_SELECT =
+            "(function(){var el=document.getElementById('phrase')||document.querySelector('p');if(!el)return 'no phrase';var r=document.createRange();r.selectNodeContents(el);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);var b=r.getBoundingClientRect();" +
+                "var o={bubbles:true,cancelable:true,clientX:b.right-2,clientY:b.top+b.height/2,button:0,view:window};el.dispatchEvent(new MouseEvent('mousedown',o));el.dispatchEvent(new MouseEvent('mouseup',o));document.dispatchEvent(new Event('selectionchange'));" +
+                "return 'selected '+String(sel).trim().slice(0,40)})()"
+        /**
+         * DeepL's inline trigger (`deepl-inline-trigger`, a shadow host whose own box is 0x0 while
+         * its shadow content shows): the shadow content's centre, as the desktop's grader measures.
+         */
+        private const val DEEPL_TRIGGER =
+            "(function(){var host=document.querySelector('deepl-inline-trigger, [class*=\"deepl-inline-trigger\"], [id*=\"deepl\"]');if(!host)return JSON.stringify({pass:false,hosts:document.querySelectorAll('[class*=\"deepl\"], [id*=\"deepl\"]').length,selection:String(getSelection()).trim().slice(0,30)});" +
+                "var box=host.getBoundingClientRect();var inner=host.shadowRoot?Array.prototype.slice.call(host.shadowRoot.querySelectorAll('*')).map(function(e){return e.getBoundingClientRect()}).filter(function(r){return r.width>4&&r.height>4})[0]:null;var r=inner||box;" +
+                "return JSON.stringify({pass:r.width>4&&r.height>4,x:r.left+r.width/2,y:r.top+r.height/2,w:r.width,h:r.height,tag:host.tagName,hostBox:Math.round(box.width)+'x'+Math.round(box.height),shadow:!!host.shadowRoot})})()"
+        /** A script's click on the trigger's shadow content (its host's box is 0x0). */
+        private const val DEEPL_CLICK =
+            "(function(){var host=document.querySelector('deepl-inline-trigger');if(!host)return 'no trigger';var target=host.shadowRoot?Array.prototype.slice.call(host.shadowRoot.querySelectorAll('button, [role=button], div, span')).find(function(e){var r=e.getBoundingClientRect();return r.width>4&&r.height>4}):null;var el=target||host;" +
+                "var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,composed:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2,button:0,view:window};el.dispatchEvent(new PointerEvent('pointerdown',o));el.dispatchEvent(new MouseEvent('mousedown',o));el.dispatchEvent(new PointerEvent('pointerup',o));el.dispatchEvent(new MouseEvent('mouseup',o));el.dispatchEvent(new MouseEvent('click',o));return 'clicked '+el.tagName})()"
+        /**
+         * DeepL's translation popover (`deepl-inline-translate` / `deepl-inline-popover`, shadow
+         * hosts): its text, `pass` on a translation – text longer than a few words that is not the
+         * Spanish source and holds an English word of it ("good morning", "friend", "weather", "walk").
+         */
+        private const val DEEPL_TRANSLATION =
+            "(function(){var hosts=Array.prototype.slice.call(document.querySelectorAll('deepl-inline-translate, deepl-inline-popover, deepl-inline-translation, [class*=\"deepl-inline-translate\"], [class*=\"deepl-popover\"], [class*=\"deepl-inline-popover\"]'));" +
+                "var text=function(root){var parts=[];var it=document.createNodeIterator(root,NodeFilter.SHOW_TEXT);var n;while((n=it.nextNode())){var p=n.parentNode;if(p&&/^(SCRIPT|STYLE)$/.test(p.nodeName))continue;var t=n.textContent.replace(/\\s+/g,' ').trim();if(t)parts.push(t)}var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++)if(all[i].shadowRoot)parts.push(text(all[i].shadowRoot));return parts.join(' ')};" +
+                "var t=hosts.map(function(h){return text(h.shadowRoot||h)}).join(' ').replace(/\\s+/g,' ').trim();var english=/good morning|friend|weather|walk|today|nice|fine/i.test(t);var status=/translat|loading|error|sign in|log in|limit/i.test(t)?t.match(/translat[a-z]*|loading|error|sign in|log in|limit/i)[0]:null;" +
+                "return JSON.stringify({pass:hosts.length>0&&english&&t.length>12,hosts:hosts.length,tags:hosts.map(function(h){return h.tagName}).slice(0,3),text:t.slice(0,160),status:status})})()"
+        /**
+         * Google Input Tools' options page: Hindi transliteration added to the selected input
+         * tools. The page is a Closure UI: a list (select or listbox) of the available tools, an
+         * arrow to add the selected one, a list of the selected. Every shape it has had is tried:
+         * an `<option>` whose text says Hindi selected then the add control clicked, or a list
+         * item that says Hindi clicked then the add control, or a Hindi entry that adds on click.
+         * `pass` when a selected-side element says Hindi afterwards.
+         */
+        private const val INPUT_TOOLS_ADD =
+            "(function(){var hindi=/hindi|\\u0939\\u093f(\\u0928|\\u0902)\\u0926\\u0940/i;var label=function(e){return ((e.getAttribute&&(e.getAttribute('aria-label')||e.getAttribute('title')))||e.value||e.textContent||'').replace(/\\s+/g,' ').trim()};var shown=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0};" +
+                "var selectedSide=function(){var els=Array.prototype.slice.call(document.querySelectorAll('select, [role=listbox], ul, ol, table, div'));var right=els.filter(function(e){return shown(e)&&/selected|chosen|enabled|active|right|second/i.test(e.id+' '+e.className+' '+(e.getAttribute('aria-label')||''))});" +
+                "return right.some(function(e){return hindi.test(e.textContent||Array.prototype.map.call(e.options||[],function(o){return o.text}).join(' '))})};" +
+                "if(selectedSide())return JSON.stringify({pass:true,how:'already'});var picked=null;var opts=Array.prototype.slice.call(document.querySelectorAll('option'));var opt=opts.find(function(o){return hindi.test(o.text)&&!/transliteration.*keyboard|keyboard/i.test(o.text)})||opts.find(function(o){return hindi.test(o.text)});" +
+                "if(opt){opt.selected=true;opt.parentNode.dispatchEvent(new Event('change',{bubbles:true}));opt.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));picked='option '+opt.text.slice(0,30)}" +
+                "else{var items=Array.prototype.slice.call(document.querySelectorAll('li, [role=option], [role=listitem], tr, div, span')).filter(function(e){return shown(e)&&hindi.test(label(e))&&label(e).length<60});var leaf=items.filter(function(e){return !items.some(function(o){return o!==e&&e.contains(o)})})[0];if(leaf){leaf.click();picked='item '+label(leaf).slice(0,30)}}" +
+                "var add=Array.prototype.slice.call(document.querySelectorAll('button, a, [role=button], input[type=button], div, span, img')).filter(shown).find(function(e){var l=label(e)+' '+(e.id||'')+' '+(e.className||'')+' '+(e.getAttribute('alt')||'');return /^(add|>>|>|\\u2192|\\u25b6|\\u25ba)$|add|arrow-?right|to-?right|moveRight|move-right/i.test(l)&&!/remove|left|delete/i.test(l)});" +
+                "if(add)add.click();return JSON.stringify({pass:selectedSide(),picked:picked,add:add?(label(add)||add.id||add.className||add.tagName).slice(0,30):null,selects:document.querySelectorAll('select').length,options:opts.length,text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
+        /**
+         * Google Input Tools on the editor: Devanagari in the textarea (a transliteration of what
+         * was typed), or its candidate window (`ita-` classes / ids) drawn on the page.
+         */
+        private const val INPUT_TOOLS_RESULT =
+            "(function(){var e=document.getElementById('editor');var v=e?e.value:'';var candidates=document.querySelectorAll('[class*=\"ita-\"], [id*=\"ita-\"], [class*=\"ita_\"], [id*=\"ita_\"], [class*=\"gwt-\"], iframe[src*=\"mclkkofklkfljcocdinagocijmpgbhab\"]');var shown=Array.prototype.filter.call(candidates,function(c){var r=c.getBoundingClientRect();return r.width>0&&r.height>0});" +
+                "var deva=/[\\u0900-\\u097F]/.test(v);return JSON.stringify({pass:deva,value:v.replace(/\\s+/g,' ').trim().slice(-40),devanagari:deva,candidates:candidates.length,candidatesShown:shown.length,active:document.activeElement?document.activeElement.id||document.activeElement.tagName:null})})()"
+        /** The video fixture's picture-in-picture state. */
+        private const val PIP_STATE =
+            "(function(){var v=document.getElementById('clip')||document.querySelector('video');return JSON.stringify({pass:!!document.pictureInPictureElement,enabled:!!document.pictureInPictureEnabled,paused:v?v.paused:null,readyState:v?v.readyState:null,disablePip:v?v.disablePictureInPicture:null,event:window.__pip||null,state:(document.getElementById('state')||{}).textContent||''})})()"
+        /** Immersive Translate's translations on the page: its target wrappers, with text. */
+        private const val IMMERSIVE_TRANSLATED =
+            "(function(){var w=document.querySelectorAll('.immersive-translate-target-wrapper, [class*=\"immersive-translate-target\"], font.immersive-translate-target-inner, [data-immersive-translate-walked] [class*=\"target\"]');var texts=Array.prototype.map.call(w,function(e){return (e.textContent||'').replace(/\\s+/g,' ').trim()}).filter(function(t){return t.length>2});" +
+                "var walked=document.querySelectorAll('[data-immersive-translate-walked], [data-immersive-translate-paragraph]').length;return JSON.stringify({pass:texts.length>0,wrappers:w.length,walked:walked,sample:texts.slice(0,2).join(' | ').slice(0,120),english:/good morning|friend|weather|walk|test page/i.test(texts.join(' '))})})()"
+        /** A pointer over the first paragraph, as WhatFont's inspector follows. */
+        private const val WHATFONT_HOVER =
+            "(function(){var p=document.querySelector('p')||document.body;var r=p.getBoundingClientRect();var o={bubbles:true,cancelable:true,composed:true,clientX:r.left+Math.min(40,r.width/2),clientY:r.top+r.height/2,view:window};" +
+                "['pointerover','pointerenter','mouseover','mouseenter','pointermove','mousemove'].forEach(function(t){p.dispatchEvent(/^pointer/.test(t)?new PointerEvent(t,o):new MouseEvent(t,o))});return 'hovered '+p.tagName})()"
+        /** WhatFont's tip: its elements' text (a font family name), through shadow roots. */
+        private const val WHATFONT_READ =
+            "(function(){var re=/whatfont|wf_|wfont|__wf|wf-/i;var texts=[];var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');if(re.test(key)){var t=(e.textContent||'').replace(/\\s+/g,' ').trim();if(t.length>1)texts.push(t.slice(0,80))}if(e.shadowRoot)walk(e.shadowRoot)}};walk(document.documentElement);" +
+                "var joined=texts.join(' | ');var font=/roboto|system-ui|sans-serif|serif|arial|helvetica|noto|droid|inter|segoe|times|georgia|monospace|[a-z]+ ?(sans|serif|mono)/i.test(joined);return JSON.stringify({pass:font,n:texts.length,text:joined.slice(0,160)})})()"
+        /** Wappalyzer's popup: the technologies it lists, the fixture's expected ones named. */
+        private const val TECH_LIST =
+            "(function(){var t=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';var links=Array.prototype.map.call(document.querySelectorAll('a[href*=\"wappalyzer.com/technologies\"], .technology, .detection, [class*=\"technology\"]'),function(a){return (a.textContent||'').replace(/\\s+/g,' ').trim()}).filter(Boolean);" +
+                "var want=['WordPress','jQuery','Bootstrap','React','Google Analytics','Google Tag Manager','Google Font API','Google Hosted Libraries','jsDelivr'];var found=want.filter(function(w){return new RegExp(w.replace(/ /g,'\\\\s*'),'i').test(t)});" +
+                "return JSON.stringify({pass:found.length>=2,found:found,links:links.slice(0,8),text:t.slice(0,200)})})()"
+        /** Google Scholar Button's popup: results (`.gs_r` rows, "Cited by" links) or the service's word. */
+        private const val SCHOLAR_RESULTS =
+            "(function(){var t=document.body?document.body.innerText.replace(/\\s+/g,' ').trim():'';var rows=document.querySelectorAll('.gs_r, .gs_ri, .gs_rt, [class*=\"gs_r\"], a[href*=\"scholar.google\"], a[href*=\"cites=\"]');" +
+                "return JSON.stringify({pass:rows.length>0||/cited by|\\bcitations?\\b|\\[PDF\\]|\\[HTML\\]/i.test(t),n:rows.length,text:t.slice(0,200),iframes:document.querySelectorAll('iframe').length})})()"
+        /** Tag Assistant's panel page: the tagassistant.google.com frame it embeds, with its size. */
+        private const val TA_PANEL =
+            "(function(){var f=Array.prototype.slice.call(document.querySelectorAll('iframe')).map(function(i){var r=i.getBoundingClientRect();return {src:(i.src||'').slice(0,80),w:Math.round(r.width),h:Math.round(r.height)}});var ta=f.find(function(x){return /tagassistant\\.google\\.com/.test(x.src)&&x.w>100&&x.h>100});" +
+                "return JSON.stringify({pass:!!ta,w:ta?ta.w:0,h:ta?ta.h:0,src:ta?ta.src:null,frames:f.slice(0,3),text:document.body?document.body.innerText.replace(/\\s+/g,' ').trim().slice(0,120):''})})()"
     }
 }
