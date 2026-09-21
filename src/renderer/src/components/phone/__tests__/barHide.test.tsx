@@ -734,7 +734,50 @@ describe('the published hide progress', () => {
     expect(last()).toMatchObject({ offset: 0, tall: false })
     expectAgreement()
 
-    // A reset from mid-gesture (the gate closing at once, an edge change): home, at rest, short.
+    // A finger landing on the spring mid-return (`settling` → `dragging`): the bar is caught where
+    // the spring left it and the page stays tall – a return that did not rest lays nothing out.
+    scroll([24, -12])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get().phase).toBe('settling')
+    settle(2)
+    expect(barHideStore.get()).toMatchObject({ phase: 'settling', tall: true })
+    expect(barHideStore.get().progress).toBeGreaterThan(0)
+    dispatchBarScroll('t1', 'start', null)
+    expect(barHideStore.get()).toMatchObject({ phase: 'dragging', tall: true })
+    expect(last()).toMatchObject({ tall: true })
+    expect(last()?.offset).toBeCloseTo(barHideStore.get().progress * 48, 1)
+    expect(root().dataset.barAway).toBe('true')
+    expectAgreement()
+    // That finger brings the bar home and lifts: tall under it at 0, short at the rest.
+    now += 100
+    dispatchBarScroll('t1', 'move', { delta: -12, time: now })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expectAgreement()
+
+    // The gate closing AT ONCE mid-drag (a sheet over a bottom-docked bar, §11.1: the bar is back
+    // under the recede's fade, no spring): the reset is a rest with the bar home, so the page is
+    // short at once, with the sheet's arrival – and the host then hears there is nothing to follow.
+    scroll([12])
+    expect(last()).toMatchObject({ offset: 12, tall: true })
+    uiStore.set({ menu: { items: [] } as never })
+    expect(barHideStore.get()).toMatchObject({
+      progress: 0,
+      phase: 'rest',
+      tall: false,
+      allowed: false
+    })
+    expect(root().dataset.barAway).toBeUndefined()
+    expect(hostFrames[hostFrames.length - 2]).toMatchObject({ offset: 0, tall: false })
+    expect(last()).toBeNull()
+    expectAgreement()
+    uiStore.set({ menu: null })
+    expect(barHideStore.get().allowed).toBe(true)
+
+    // A reset from mid-gesture (an edge change, the preview's reset): home, at rest, short.
     scroll([12])
     expect(last()).toMatchObject({ offset: 12, tall: true })
     resetBarHide()
