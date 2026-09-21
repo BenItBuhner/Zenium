@@ -63,7 +63,13 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
     private lateinit var server: DemoServer
     private lateinit var notes: File
     private lateinit var frameDumps: File
-    private val frameScenes = LinkedHashMap<String, FrameScene?>()
+    /**
+     * The driver's own per-scene table (`scene` below: this PR's reading of `dumpsys gfxinfo`,
+     * written into notes.txt), named apart from the harness's `frameScenes` – the record of the
+     * scenes measured through `measureFrames` (#268), which this driver moves onto with its next
+     * run. Null marks a scene that did not play.
+     */
+    private val sceneStats = LinkedHashMap<String, FrameScene?>()
     private var shots = 0
     private val startedAt = SystemClock.uptimeMillis()
     /** How many times the second device has written its file (its second round adds a bookmark). */
@@ -947,7 +953,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
         val elapsed = SystemClock.uptimeMillis() - started
         val dump = shell("dumpsys gfxinfo $pkg framestats")
         val stats = parseGfxInfo(dump, elapsed)
-        frameScenes[name] = if (played) stats else null
+        sceneStats[name] = if (played) stats else null
         frameDumps.appendText("=== $name (${if (played) "played" else "NOT played"}, $elapsed ms) ===\n$dump\n\n")
         when {
             stats == null -> note("  frames [$name]: no HWUI summary for $pkg in the dump (${dump.length} chars)")
@@ -1080,7 +1086,7 @@ class SyncDemo : DemoHarness("sync-demo-state.json", "services-sync-android-andr
                 "janky is HWUI's count of frames past their deadline; the app menu is the baseline main had before this PR)"
         )
         note("  %-22s %7s %16s %8s %8s %8s".format(Locale.US, "scene", "frames", "janky", "p50", "p90", "p99"))
-        for ((name, s) in frameScenes) {
+        for ((name, s) in sceneStats) {
             if (s == null) {
                 note("  %-22s %s".format(Locale.US, name, "not played"))
                 continue
