@@ -2,12 +2,14 @@ import type {
   AddressEntry,
   AddressInput,
   Credential,
+  CredentialLeakFields,
   ImportConflict,
   ImportResult,
   PasskeyEntry,
   PaymentCard,
   PaymentCardInput
 } from '../../shared/types'
+import { NOTE_MAX_LENGTH, emptyLeakFields } from '../../shared/types'
 import { newId } from '../../shared/ids'
 import type { KeyWrapHost, StoreIO } from '../platform'
 import { bytesEqual, newDataKey } from './crypto'
@@ -66,7 +68,12 @@ interface Snapshot {
 }
 
 const MAX_FIELD = 4096
-const MAX_NOTES = 16 * 1024
+/**
+ * A note written on this device clips at Chrome's limit (`NOTE_MAX_LENGTH`); one that arrives
+ * from another device is kept as it came (up to this bound) so both copies stay identical and
+ * the sync engine's hashes agree – a device on an older build may hold a longer note.
+ */
+const MAX_SYNCED_NOTES = 16 * 1024
 
 /**
  * The credential store: plaintext logins, addresses, payment cards and passkey records in memory
@@ -367,10 +374,11 @@ export class CredentialStore {
       username: clip(input.username, MAX_FIELD),
       password: clip(input.password, MAX_FIELD),
       realm: input.realm ?? null,
-      notes: clip(input.notes ?? '', MAX_NOTES),
+      notes: clip(input.notes ?? '', NOTE_MAX_LENGTH),
       createdAt: now,
       updatedAt: now,
-      lastUsedAt: null
+      lastUsedAt: null,
+      ...emptyLeakFields()
     }
     this.credentials.set(credential.id, credential)
     this.changed([credential.id])
@@ -388,11 +396,47 @@ export class CredentialStore {
       credential.url = normalizeUrl(patch.url)
     }
     if (patch.username !== undefined) credential.username = clip(patch.username, MAX_FIELD)
-    if (patch.password !== undefined) credential.password = clip(patch.password, MAX_FIELD)
-    if (patch.notes !== undefined) credential.notes = clip(patch.notes, MAX_NOTES)
+    if (patch.password !== undefined) {
+      const password = clip(patch.password, MAX_FIELD)
+      // The breach state describes one password value: a new value starts unchecked.
+      if (password !== credential.password) Object.assign(credential, emptyLeakFields())
+      credential.password = password
+    }
+    if (patch.notes !== undefined) credential.notes = clip(patch.notes, NOTE_MAX_LENGTH)
     credential.updatedAt = now
     this.changed([id])
     return credential
+  }
+
+  /**
+   * Record what the breach lookup found for a login's current password (`breached`: the count,
+   * 0 when clean) and, when the sign-in check warned or the user ignored the warning, when. Only
+   * the fields given change; nothing else about the login does (its `updatedAt` stays).
+   */
+  recordLeak(
+    id: string,
+    fields: Partial<CredentialLeakFields>,
+    now: number = Date.now()
+  ): Credential | null {
+    this.requireKey()
+    const credential = this.credentials.get(id)
+    if (!credential) return null
+    if (fields.breached !== undefined) {
+      credential.breached = fields.breached
+      credential.checkedAt = fields.checkedAt === undefined ? now : fields.checkedAt
+    } else if (fields.checkedAt !== undefined) credential.checkedAt = fields.checkedAt
+    if (fields.leakWarnedAt !== undefined) credential.leakWarnedAt = fields.leakWarnedAt
+    if (fields.leakIgnoredAt !== undefined) credential.leakIgnoredAt = fields.leakIgnoredAt
+    this.changed([id])
+    return credential
+  }
+
+  /** Logins known breached whose warning the user has not ignored (Safety Check's compromised count). */
+  compromisedCount(): number {
+    let n = 0
+    for (const c of this.credentials.values())
+      if (c.breached !== null && c.breached > 0 && c.leakIgnoredAt === null) n++
+    return n
   }
 
   /** Remove a login and hand it back so the caller can offer undo. */
@@ -441,10 +485,14 @@ export class CredentialStore {
       username: clip(login.username, MAX_FIELD),
       password: clip(login.password, MAX_FIELD),
       realm: login.realm,
-      notes: clip(login.notes, MAX_NOTES),
+      notes: clip(login.notes, MAX_SYNCED_NOTES),
       createdAt: login.createdAt,
       updatedAt: login.updatedAt,
-      lastUsedAt: login.lastUsedAt
+      lastUsedAt: login.lastUsedAt,
+      breached: login.breached,
+      checkedAt: login.checkedAt,
+      leakWarnedAt: login.leakWarnedAt,
+      leakIgnoredAt: login.leakIgnoredAt
     })
     this.changed([login.id])
   }
@@ -545,8 +593,10 @@ export class CredentialStore {
           continue
         }
         if (conflict === 'replace') {
+          // Another password value (the equal case was skipped above): its breach state starts over.
+          Object.assign(existing, emptyLeakFields())
           existing.password = clip(row.password, MAX_FIELD)
-          if (row.notes) existing.notes = clip(row.notes, MAX_NOTES)
+          if (row.notes) existing.notes = clip(row.notes, NOTE_MAX_LENGTH)
           existing.updatedAt = now
           touched.push(existing.id)
           result.replaced++
@@ -560,10 +610,11 @@ export class CredentialStore {
         username,
         password: clip(row.password, MAX_FIELD),
         realm,
-        notes: clip(row.notes, MAX_NOTES),
+        notes: clip(row.notes, NOTE_MAX_LENGTH),
         createdAt: row.createdAt ?? now,
         updatedAt: now,
-        lastUsedAt: row.lastUsedAt ?? null
+        lastUsedAt: row.lastUsedAt ?? null,
+        ...emptyLeakFields()
       }
       this.credentials.set(credential.id, credential)
       if (!existing) byKey.set(keyOf(origin, username, realm), credential)

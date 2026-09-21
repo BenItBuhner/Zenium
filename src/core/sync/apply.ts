@@ -264,7 +264,15 @@ export function applyRemote(browser: Browser, winners: SyncRecord[]): void {
         if (data.kind === 'login') {
           const { kind: _kind, ...login } = data
           void _kind
-          browser.passwords.applySyncedLogin({ id: r.id, ...login })
+          browser.passwords.applySyncedLogin({
+            id: r.id,
+            ...login,
+            // Absent on the wire (unset, or a device on an older build): unknown here too.
+            breached: login.breached ?? null,
+            checkedAt: login.checkedAt ?? null,
+            leakWarnedAt: login.leakWarnedAt ?? null,
+            leakIgnoredAt: login.leakIgnoredAt ?? null
+          })
         } else {
           const { kind: _kind, ...passkey } = data
           void _kind

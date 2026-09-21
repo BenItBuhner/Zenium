@@ -69,6 +69,11 @@ interface LoginPayload {
   createdAt: number
   updatedAt: number
   lastUsedAt: number | null
+  /** The breach state of the password value (ID-31); absent in vaults written before it existed. */
+  breached?: number | null
+  checkedAt?: number | null
+  leakWarnedAt?: number | null
+  leakIgnoredAt?: number | null
 }
 
 type AddressPayload = { kind: 'address' } & Omit<AddressEntry, 'id'>
@@ -198,7 +203,11 @@ function payloadOf(record: VaultRecord): EntryPayload {
         notes: c.notes,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
-        lastUsedAt: c.lastUsedAt
+        lastUsedAt: c.lastUsedAt,
+        breached: c.breached,
+        checkedAt: c.checkedAt,
+        leakWarnedAt: c.leakWarnedAt,
+        leakIgnoredAt: c.leakIgnoredAt
       }
     }
     case 'address':
@@ -283,7 +292,11 @@ function recordOf(id: string, payload: EntryPayload): VaultRecord {
           notes: str(p.notes),
           createdAt: num(p.createdAt),
           updatedAt: num(p.updatedAt),
-          lastUsedAt: nullableNum(p.lastUsedAt)
+          lastUsedAt: nullableNum(p.lastUsedAt),
+          breached: nullableNum(p.breached),
+          checkedAt: nullableNum(p.checkedAt),
+          leakWarnedAt: nullableNum(p.leakWarnedAt),
+          leakIgnoredAt: nullableNum(p.leakIgnoredAt)
         }
       }
   }
