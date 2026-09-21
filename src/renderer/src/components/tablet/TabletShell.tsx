@@ -169,8 +169,10 @@ export function TabletShell({ state, ui, isDark }: Props): JSX.Element {
           <div className="relative min-h-0 flex-1">
             <ContentArea state={state} ui={ui} hostsUrlbar={false} />
             {/* Messages on the content frame's box (v2 §9.33): banners from its top edge, the
-                toast at its bottom, over the page and under the dialogs. */}
-            <div className="zen-message-frame pointer-events-none absolute inset-0 z-[36]">
+                toast at its bottom, over the page and under the dialogs. Its own name: the
+                phone's `.zen-message-frame` is a `--zen-recede` reader that recedes with the
+                phone's frame (PERF-2's registry), and nothing recedes on the tablet. */}
+            <div className="zen-tablet-message-frame pointer-events-none absolute inset-0 z-[36]">
               <MessageLayer />
             </div>
             {/*

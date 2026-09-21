@@ -2401,7 +2401,7 @@ export class Menus {
         // button has folded (design language v2 §9.29: the sidebar's width tier folds it at 240,
         // and this row is where it goes; with the button up, the button is the hub). The phone
         // has its own chip and sheet (§9.33).
-        ...desktop(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
+        ...sidebar(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
         // switcher searches on its own.

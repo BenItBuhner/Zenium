@@ -16,11 +16,17 @@ import { placeCascade, placeRootMenu, resolveMenuAnchor } from './tabletMenuPlac
  * The tablet's menu (v2 §9.36, §9.20): the app menu and the context menus as anchored popovers
  * – Chrome's and Firefox's tablet menus anchor; a bottom sheet at the foot of a 1280 window is
  * a phone pattern whose origin is a reach away from the ⋯ that opened it. One panel at Zen's
- * 332 on the §9.20 chassis, 44 rows with a 20 glyph slot (the check of a checked row, an item's
- * favicon), hairline separators, the labels in the core's Title Case; it pops from where the
- * anchor meets it and closes without motion. A row with a submenu opens it as a second panel
- * flush beside the first (the cascade), the row keeping its lit fill and `aria-expanded` while
- * the child is up; picking a row anywhere runs it and closes the whole menu.
+ * 332 in the shared `.zen-v2-menu` vocabulary (shell pass 7(b): the vocabulary `LocalMenu`,
+ * `MenuSheet`'s mouse pose and the bookmarks bar's folder panels draw in), which the tablet
+ * root's tokens set to touch – 44 rows with a 20 glyph slot, hairline separators, the labels in
+ * the core's Title Case. The tablet pose differs from the mouse's in what §9.36 pins: the one
+ * width (`main.css`'s tablet modifier), the anchor as the control's box so the panel end-aligns
+ * under the ⋯ (`tabletMenuPlacement.ts`; a mouse's hangs from a point), the glyph slot on every
+ * row so the labels share one edge at the fixed width, and a submenu row that opens on its tap
+ * rather than a hover's rest. It pops from where the anchor meets it and closes without motion.
+ * A row with a submenu opens it as a second panel flush beside the first (the cascade), the row
+ * keeping its lit fill and `aria-expanded` while the child is up; picking a row anywhere runs it
+ * and closes the whole menu.
  *
  * Light dismiss is the chrome layer's (`useLightDismiss`): a press outside the panels closes
  * the menu and is consumed, the ⋯'s own press closes it without reopening, a scroll, a resize
@@ -110,10 +116,12 @@ interface PanelProps {
 }
 
 /**
- * One panel of rows: the root, or a cascade. `role="menu"` with `menuitem` rows (checkbox and
- * radio rows carry their state, A11Y-01) straight under it in the tree – the `<li>` wrappers
- * are `role="none"`, a `menu` owns only items, groups and separators; the arrows and mnemonics
- * move among its own rows. The panel takes focus itself (`tabIndex -1`) when a finger opened it.
+ * One panel of rows: the root, or a cascade – the shared `.zen-v2-panel` and `.zen-v2-menu`.
+ * `role="menu"` with `menuitem` rows (checkbox and radio rows carry their state, A11Y-01)
+ * straight under it in the tree and in layout – the `<li>` wrappers are `role="none"` and
+ * `display: contents`, so a `menu` owns only items, groups and separators and each row is the
+ * column's own flex item, as the mouse's panel lays them; the arrows and mnemonics move among
+ * its own rows. The panel takes focus itself (`tabIndex -1`) when a finger opened it.
  */
 function MenuPanel({ ref, items, label, style, depth, onLeft, ...data }: PanelProps): JSX.Element {
   const [open, setOpen] = useState<string | null>(null)
@@ -140,7 +148,7 @@ function MenuPanel({ ref, items, label, style, depth, onLeft, ...data }: PanelPr
       role="menu"
       aria-label={label}
       tabIndex={-1}
-      className="zen-tablet-menu zen-animate-pop fixed flex flex-col select-none outline-none"
+      className="zen-v2 zen-v2-panel zen-v2-menu zen-animate-pop fixed select-none"
       style={{ ...style, zIndex: 91 + depth }}
       data-depth={depth}
       onKeyDown={onKeyDown}
@@ -149,7 +157,7 @@ function MenuPanel({ ref, items, label, style, depth, onLeft, ...data }: PanelPr
     >
       {items.map((item) =>
         item.type === 'separator' ? (
-          <li key={item.id} role="separator" className="zen-tablet-menu-sep" />
+          <li key={item.id} role="separator" className="zen-v2-menu-separator" />
         ) : (
           <MenuRow
             key={item.id}
@@ -185,7 +193,7 @@ function MenuRow({
   const checkable = item.type === 'checkbox' || item.type === 'radio'
   const submenu = item.submenu && item.enabled ? item.submenu : null
   return (
-    <li role="none" className="relative">
+    <li role="none" className="contents">
       <button
         ref={(el) => {
           row.current = el
@@ -203,7 +211,8 @@ function MenuRow({
         aria-haspopup={submenu ? 'menu' : undefined}
         aria-expanded={submenu ? expanded : undefined}
         disabled={!item.enabled}
-        className="zen-tablet-menu-item"
+        className="zen-v2-menu-item"
+        data-menu-row={item.id}
         data-danger={item.danger || undefined}
         onClick={() => {
           if (submenu) onToggle()
@@ -218,17 +227,16 @@ function MenuRow({
           }
         }}
       >
-        <span className="zen-tablet-menu-glyph" aria-hidden>
+        {/* The slot stands on every row (§9.36's 20 glyph) so the labels share one edge at the fixed width. */}
+        <span className="zen-v2-menu-glyph" aria-hidden>
           {checkable && item.checked ? (
-            <Check strokeWidth={1.75} />
+            <Check />
           ) : item.icon ? (
-            <img src={item.icon} alt="" />
+            <img src={item.icon} alt="" className="h-5 w-5 rounded-sm" draggable={false} />
           ) : null}
         </span>
         <span className="min-w-0 flex-1 truncate">{item.label}</span>
-        {submenu && (
-          <ChevronRight className="zen-tablet-menu-chevron" strokeWidth={1.75} aria-hidden />
-        )}
+        {submenu && <ChevronRight className="zen-v2-menu-chevron" aria-hidden />}
       </button>
       {submenu && expanded && (
         <Cascade
@@ -276,17 +284,16 @@ function Cascade({
   useLayoutEffect(() => {
     const el = panel.current
     const rowEl = parentRow.current
-    const parentPanel = rowEl?.closest<HTMLElement>('.zen-tablet-menu')
+    const parentPanel = rowEl?.closest<HTMLElement>('.zen-v2-menu')
     if (!el || !rowEl || !parentPanel) return
     const parent = parentPanel.getBoundingClientRect()
     const row = rowEl.getBoundingClientRect()
+    // Level with the row: the cascade's own padding and border above its first row taken back
+    // (read off the panel, so the shared vocabulary's numbers are the one source).
+    const cs = getComputedStyle(el)
+    const above = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.borderTopWidth) || 0)
     setPos(
-      placeCascade(
-        { left: parent.left, width: parent.width },
-        // Level with the row, the panel's padding above the first row taken back.
-        row.top - 4 - 1,
-        el.scrollHeight + 2
-      )
+      placeCascade({ left: parent.left, width: parent.width }, row.top - above, el.scrollHeight + 2)
     )
   }, [parentRow, items])
   useLightDismiss(panel, () => closeMenu(), { anchor: parentRow })

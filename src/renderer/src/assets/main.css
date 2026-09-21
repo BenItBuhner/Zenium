@@ -6401,76 +6401,22 @@
  * The tablet's menus (`components/tablet/TabletMenu.tsx`; §9.36, §9.20): the app menu and the
  * context menus as popovers anchored to their button or touch point – a bottom sheet at the foot
  * of a 1280 window is a phone pattern whose origin is a reach away from the ⋯ that opened it –
- * on the §9.20 panel (radius 8, `--v2-panel`, the hairline edge, the panel shadow) at Zen's
- * 332, rows 44 tall (`--v2-menu-row`, growing with the system font size) with a 20 glyph slot
- * and Android's 14 px, hairline separators at §6's 4 px margins, the thin overlay scrollbar
- * of §9.20's scrolling chrome. A submenu is a second panel flush beside its parent, its first
- * row level with the row that opened it, which keeps its lit fill while the child is up.
+ * drawn in the shared `.zen-v2-menu` vocabulary above (shell pass 7(b): the `.zen-v2-panel`
+ * chrome, 6 of padding, the rows at `--v2-menu-row`, the glyph slot at `--v2-icon`, the
+ * hairline separators 4 above and below, the cursor fill), which the tablet root's tokens
+ * already set to touch – 44 rows, 20 glyphs at stroke 1.75 – so the pose states only what
+ * §9.36 pins differently from a mouse's menu: Zen's 332 as the one width (a mouse's is intrinsic
+ * within 232–332) and the scroll under the 60% cap kept inside the panel (a finger's overscroll
+ * must not reach the page). The scrollbar is the chassis's coarse-pointer rule (§9.20). A
+ * submenu is a second panel flush beside its parent, its first row level with the row that
+ * opened it, which keeps its lit fill while the child is up (`aria-expanded`, the shared rule).
  */
-:root[data-form-factor='tablet'] .zen-tablet-menu {
+:root[data-form-factor='tablet'] .zen-v2-menu {
   width: 332px;
-  padding: 4px;
+  min-width: 332px;
+  max-width: 332px;
   overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--v2-text) 30%, transparent) transparent;
   overscroll-behavior: contain;
-  border: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-card);
-  background: var(--v2-panel);
-  box-shadow: var(--v2-shadow-panel);
-  color: var(--v2-text);
-  corner-shape: var(--zen-corner);
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-item {
-  display: flex;
-  width: 100%;
-  height: var(--v2-menu-row);
-  align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  border-radius: calc(var(--v2-radius-card) - 4px);
-  color: var(--v2-text);
-  text-align: left;
-  font-size: 14px;
-  font-weight: var(--v2-weight-body);
-  line-height: var(--v2-line-body);
-  transition: background 120ms var(--zen-ease);
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-item:active:not(:disabled),
-:root[data-form-factor='tablet'] .zen-tablet-menu-item[aria-expanded='true'] {
-  background: var(--v2-fill);
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-item:disabled {
-  opacity: 0.4;
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-item[data-danger] {
-  color: var(--v2-danger);
-}
-/* The glyph slot: the check of a checked row, an item's favicon; 20 wide on every row so the labels align. */
-:root[data-form-factor='tablet'] .zen-tablet-menu-glyph {
-  display: flex;
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-glyph > svg,
-:root[data-form-factor='tablet'] .zen-tablet-menu-glyph > img {
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-item > .zen-tablet-menu-chevron {
-  width: var(--v2-icon);
-  height: var(--v2-icon);
-  flex-shrink: 0;
-  color: var(--v2-text-deemphasized);
-}
-:root[data-form-factor='tablet'] .zen-tablet-menu-sep {
-  height: 1px;
-  margin: 4px 8px;
-  background: var(--v2-border);
 }
 
 @layer components {

@@ -79,13 +79,13 @@ const MENU: MenuDescriptor = {
 }
 
 function panel(depth = 0): HTMLElement {
-  const el = document.querySelector<HTMLElement>(`.zen-tablet-menu[data-depth="${depth}"]`)
+  const el = document.querySelector<HTMLElement>(`.zen-v2-menu[data-depth="${depth}"]`)
   if (!el) throw new Error(`no panel at depth ${depth}`)
   return el
 }
 
 function rowNamed(label: string): HTMLButtonElement {
-  const el = [...document.querySelectorAll<HTMLButtonElement>('.zen-tablet-menu-item')].find(
+  const el = [...document.querySelectorAll<HTMLButtonElement>('.zen-v2-menu-item')].find(
     (b) => b.textContent?.trim() === label
   )
   if (!el) throw new Error(`no row ${label}`)
@@ -187,7 +187,7 @@ describe('TabletMenu', () => {
     expect(cascade.contains(document.activeElement)).toBe(true)
     // Left closes the cascade alone and puts focus back on the row that opened it.
     key(document.activeElement!, 'ArrowLeft')
-    expect(document.querySelector('.zen-tablet-menu[data-depth="1"]')).toBeNull()
+    expect(document.querySelector('.zen-v2-menu[data-depth="1"]')).toBeNull()
     expect(bookmarks.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(bookmarks)
     expect(closeMenu).not.toHaveBeenCalled()
@@ -195,7 +195,7 @@ describe('TabletMenu', () => {
     key(bookmarks, 'ArrowRight')
     expect(document.activeElement).toBe(rowNamed('All Bookmarks'))
     key(document.activeElement!, 'Escape')
-    expect(document.querySelector('.zen-tablet-menu[data-depth="1"]')).toBeNull()
+    expect(document.querySelector('.zen-v2-menu[data-depth="1"]')).toBeNull()
     expect(closeMenu).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(bookmarks)
     key(bookmarks, 'Escape')
