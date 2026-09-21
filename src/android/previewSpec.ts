@@ -39,8 +39,13 @@ export type PreviewStep =
   | { kind: 'overview' }
   | { kind: 'urlbar' }
 
-/** The chrome's own sheets a preview state may open by name (`sheet=<name>`). */
-export const PREVIEW_SHEETS = ['extensions'] as const
+/**
+ * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
+ * sheet, the new tab page's customise sheet (`customise`), which mounts above whichever page
+ * is up, and the default-browser promo (`promo`: the core's campaign made due over the active
+ * page, as the third session raises it).
+ */
+export const PREVIEW_SHEETS = ['extensions', 'customise', 'promo'] as const
 export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
 
 /** An extension id as Chrome forms them: 32 letters a–p. */
@@ -205,6 +210,8 @@ export type PreviewState =
       show?: string
       /** A sheet that opens at its peek detent: tap its handle so it rests expanded. */
       expand?: boolean
+      /** Steps taken once the overlay is open (a row held for selection mode, a row tapped). */
+      then?: PreviewStep[]
     }
   | {
       kind: 'menu'
@@ -522,6 +529,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const show = params.get('show')
     if (show) state.show = show
     if (params.has('expand')) state.expand = true
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
     return state
   }
   const menu = params.get('menu')
