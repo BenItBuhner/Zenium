@@ -550,6 +550,51 @@ describe('desktop pill (NavRow)', () => {
     expect(css.match(/\.zen-pill-chip\b/g)).toHaveLength(1)
   })
 
+  /*
+   * The tier measures the pill's content box through a ResizeObserver. The icon rail unmounts
+   * the pill (the compact row has none) and the expanded sidebar brings a new one: the observer
+   * must follow it – left on the rail's node it would report that node's 0 for good, which the
+   * tier reads as "hide nothing yet", and a 110 px pill would draw every chip over a field with
+   * no room (the shell pass (a) drive's finding at the 270 sidebar after the rail).
+   */
+  it('re-measures the pill the row has after the icon rail has come and gone', () => {
+    const observed: Element[] = []
+    const live = new Set<Element>()
+    const Native = window.ResizeObserver
+    class RecordingResizeObserver {
+      private readonly targets = new Set<Element>()
+      observe(target: Element): void {
+        this.targets.add(target)
+        observed.push(target)
+        live.add(target)
+      }
+      unobserve(target: Element): void {
+        this.targets.delete(target)
+        live.delete(target)
+      }
+      disconnect(): void {
+        for (const t of this.targets) live.delete(t)
+        this.targets.clear()
+      }
+    }
+    window.ResizeObserver = RecordingResizeObserver as unknown as typeof ResizeObserver
+    try {
+      const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
+      const first = el.querySelector<HTMLElement>('[data-address-pill]')!
+      expect(observed).toContain(first)
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact />))
+      expect(el.querySelector('[data-address-pill]')).toBeNull()
+      expect(live.has(first)).toBe(false)
+      act(() => root!.render(<NavRow state={state(page)} tab={page} compact={false} />))
+      const again = el.querySelector<HTMLElement>('[data-address-pill]')!
+      expect(again).not.toBe(first)
+      expect(live.has(again)).toBe(true)
+      expect(live.has(first)).toBe(false)
+    } finally {
+      window.ResizeObserver = Native
+    }
+  })
+
   it('shows the key chip before the star only while a save prompt is pending for the page', () => {
     const el = render(<NavRow state={state(page)} tab={page} compact={false} />)
     expect(el.querySelector('[data-af-chip]')).toBeNull()

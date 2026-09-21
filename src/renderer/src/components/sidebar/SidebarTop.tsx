@@ -238,7 +238,7 @@ export function NavRow({
   // like the star), and the address gives way to them – below the floor the pill drops its text
   // altogether, which on the reader page costs nothing, since the document's own header carries
   // the title, byline and host.
-  const pillInner = usePillInnerWidth(pill)
+  const pillInner = usePillInnerWidth(pill, !compact)
   const shieldState =
     tab && isWebPage && state.capabilities.requestBlocking
       ? siteBlockingState(tab, state.blocking, state.settings.blocking)
@@ -722,12 +722,16 @@ function useAddressFits(
  * The pill's content-box width – what its address and chips share – kept current by a
  * ResizeObserver; 0 until measured, which the tier reads as "hide nothing yet". (The row's
  * `useElementWidth` measures a border box; the pill has padding, so it measures its own.)
+ * `mounted` says the pill is in the row (the compact sidebar has none): the observer is bound
+ * to the pill the row has now, and let go with it – left on the pill the icon rail unmounted,
+ * it would report that node's 0 and never see the pill the expanded sidebar brings back, and
+ * the tier would show every chip over a field with no room (the harness's finding at 270).
  */
-function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>): number {
+function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>, mounted: boolean): number {
   const [width, setWidth] = useState(0)
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!mounted || !el) return
     const style = getComputedStyle(el)
     const pad = (v: string): number => parseFloat(v) || 0
     setWidth(Math.max(0, el.clientWidth - pad(style.paddingLeft) - pad(style.paddingRight)))
@@ -737,7 +741,7 @@ function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>): number {
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [ref])
+  }, [ref, mounted])
   return width
 }
 
