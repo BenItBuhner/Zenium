@@ -28,7 +28,7 @@ class ExtensionScriptsTest {
         ).replace("\\/", "/")
         val config = script.indexOf("""config:{"kind":"content","token":"t"}""")
         val css = script.indexOf(""""abcdefghijklmnopabcdefghijklmnop/style.css":"body{color:red}"""")
-        val source = script.indexOf(""""abcdefghijklmnopabcdefghijklmnop/0":function(window,self,globalThis,chrome,browser){""")
+        val source = script.indexOf(""""abcdefghijklmnopabcdefghijklmnop/0":function(window,self,globalThis,chrome,browser,__zenMirror){""")
         val bootstrap = script.indexOf("/*bootstrap*/")
         assertTrue(config in 0 until css)
         assertTrue(css in 0 until source)
@@ -60,8 +60,41 @@ class ExtensionScriptsTest {
         assertTrue(fn.contains("var shared = 1 // trailing comment\n;\n(function(){ return shared })()\n;"))
         assertFalse(fn.contains("with(window)"))
         val withMode = StringBuilder().also { ExtensionScripts.appendGroupFunction(it, ExtensionScripts.Group(group.extensionId, 1, group.sources, "with")) }.toString()
-        assertTrue(withMode.startsWith("function(window,self,globalThis,chrome,browser){with(window){"))
+        assertTrue(withMode.startsWith("function(window,self,globalThis,chrome,browser,__zenMirror){with(window){"))
         assertTrue(withMode.endsWith("}\n}"))
+    }
+
+    @Test
+    fun `a group's top-level declarations are mirrored onto the scope after its files, inside the with block, each name once`() {
+        val files = listOf(
+            "var readAloudDoc = new function() { this.x = 1 }\nfunction getTexts() { return [] }",
+            "var readAloudDoc = { y: 2 }; const brapi = chrome; let count = 0, total\nclass Player {}\nvar $ = 1"
+        )
+        val shadow = StringBuilder().also { ExtensionScripts.appendGroupFunction(it, ExtensionScripts.Group.of(group.extensionId, 0, files, "shadow")) }.toString()
+        val tail = "\n;" + listOf("readAloudDoc", "getTexts", "brapi", "count", "total", "Player", "$").joinToString("") { """try{__zenMirror("$it",$it)}catch(e){}""" }
+        assertTrue(shadow.endsWith(files[1] + "\n;" + tail + "\n}"))
+        assertEquals(1, shadow.split("\"readAloudDoc\"").size - 1)
+        val withMode = StringBuilder().also { ExtensionScripts.appendGroupFunction(it, ExtensionScripts.Group.of(group.extensionId, 0, files, "with")) }.toString()
+        assertTrue(withMode.endsWith(files[1] + "\n;" + tail + "}\n}"))
+        // The same tail after an executeScript's code or files; a func has none (its declarations are its own in Chrome too).
+        val id = group.extensionId
+        val code = ExtensionScripts.exec("tok", id, "js", JSONObject(), files[0], null, null)
+        assertTrue(code.contains(files[0] + "\n;" + """try{__zenMirror("readAloudDoc",readAloudDoc)}catch(e){}try{__zenMirror("getTexts",getTexts)}catch(e){}""" + "\n})"))
+        val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "() => { var local = 1; return local }", "[]")
+        assertFalse(func.contains("__zenMirror(\""))
+        val dir = createTempDir("ext-scripts-mirror")
+        try {
+            val a = File(dir, "a.js").apply { writeText(files[0]) }
+            val b = File(dir, "b.js").apply { writeText(files[1]) }
+            val streamed = ExtensionScripts.execScript("tok", id, "js", JSONObject(), null, listOf(a, b), null, null, null, false)
+            assertEquals(ExtensionScripts.guarded(ExtensionScripts.exec("tok", id, "js", JSONObject(), files[0] + "\n;\n" + files[1], null, null)), streamed)
+            assertTrue(streamed.contains(tail + "\n})"))
+        } finally {
+            dir.deleteRecursively()
+        }
+        // The document-start script is sized for the tails: no growth past the presized builder.
+        val script = ExtensionScripts.documentStart("/*bootstrap*/", "{}", listOf(ExtensionScripts.Group.of(id, 0, files, "shadow")), emptyMap(), false)
+        assertTrue(script.contains(tail))
     }
 
     @Test
@@ -89,7 +122,7 @@ class ExtensionScriptsTest {
     fun `executeScript wrapper turns func plus args into a call and code into a body`() {
         val withFunc = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject("""{"world":"MAIN"}"""), null, "(a, b) => a + b", "[1,2]")
         // A document without the bootstrap answers with Chrome's refusal, not a TypeError about the bridge.
-        assertTrue(withFunc.startsWith("""(typeof __zenExtExec==="function"?__zenExtExec:function(){throw new Error("${ExtensionScripts.NO_ACCESS}")})("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser){"""))
+        assertTrue(withFunc.startsWith("""(typeof __zenExtExec==="function"?__zenExtExec:function(){throw new Error("${ExtensionScripts.NO_ACCESS}")})("tok","abcdefghijklmnopabcdefghijklmnop","js",{"world":"MAIN"},function(window,self,globalThis,chrome,browser,__zenMirror){"""))
         assertTrue(ExtensionScripts.NO_ACCESS.startsWith("Cannot access contents of the page."))
         assertTrue(withFunc.contains("return ((a, b) => a + b).apply(null,[1,2]);"))
         val withCode = ExtensionScripts.exec("tok", "abcdefghijklmnopabcdefghijklmnop", "js", JSONObject(), "document.title", null, null)
@@ -104,12 +137,12 @@ class ExtensionScriptsTest {
         // A Lit-built file: the write goes to globalThis, the read is the bare name; both must be the scope's.
         val lit = "globalThis.litPropertyMetadata = new WeakMap(); litPropertyMetadata.get(1)"
         val scoped = ExtensionScripts.exec("tok", id, "js", JSONObject(), lit, null, null, scoped = true)
-        assertTrue(scoped.contains("function(window,self,globalThis,chrome,browser){with(window){\n$lit\n}})"))
+        assertTrue(scoped.contains("function(window,self,globalThis,chrome,browser,__zenMirror){with(window){\n$lit\n}})"))
         val func = ExtensionScripts.exec("tok", id, "js", JSONObject(), null, "() => litPropertyMetadata", "[]", scoped = true)
         assertTrue(func.contains("{with(window){\nreturn (() => litPropertyMetadata).apply(null,[]);\n}})"))
         // Unscoped (an isolated world, a MAIN-world injection): the bare function body.
         val plain = ExtensionScripts.exec("tok", id, "js", JSONObject("""{"world":"MAIN"}"""), lit, null, null)
-        assertTrue(plain.contains("function(window,self,globalThis,chrome,browser){\n$lit\n})"))
+        assertTrue(plain.contains("function(window,self,globalThis,chrome,browser,__zenMirror){\n$lit\n})"))
         assertFalse(plain.contains("with(window)"))
         // The streamed form composes the same text, with a file in place of the code.
         val dir = createTempDir("ext-scripts-scoped")

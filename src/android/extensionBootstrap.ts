@@ -89,7 +89,9 @@ type GroupFunction = (
   self: unknown,
   globalThis: unknown,
   chrome: unknown,
-  browser: unknown
+  browser: unknown,
+  /** The host's mirror line calls it per top-level declaration of the files, after they ran (`TopLevelDeclarations.kt`). */
+  mirror: (name: string, value: unknown) => void
 ) => unknown
 
 interface Boot {
@@ -707,8 +709,32 @@ declare const __zenExtBoot: Boot
     chrome: unknown
     browser: unknown
     isolation: IsolationMode
+    /**
+     * What a script's top-level declaration becomes once the script ran: a property of the
+     * scope's `window`, as Chrome's world has `var`, `function`, `let`, `const` and `class` at
+     * a content script's top level as globals of the world, so the next injection of the same
+     * extension (Read Aloud's `content.js`, then `js/content/html-doc.js` declaring
+     * `readAloudDoc`; a `func` probe of `typeof brapi`) finds them by their bare names. The host
+     * scans each file as it assembles the script and ends the function literal with one guarded
+     * call per name (`TopLevelDeclarations.kt`); the function literal itself keeps a file's
+     * declarations as its locals, which the bootstrap cannot see. A browser global's name is
+     * left alone: the body already wrote through the proxy's setter (`with`) or shadowed it
+     * (world), and `window.location = location` again would navigate.
+     */
+    mirror: (name: string, value: unknown) => void
   }
   const scopes = new Map<string, Scope>()
+
+  const mirrorOnto = (target: Any): ((name: string, value: unknown) => void) => {
+    return (name, value) => {
+      if (typeof name !== 'string' || builtins.has(name)) return
+      try {
+        target[name] = value
+      } catch {
+        /* a non-writable global of the page's: Chrome's world would have shadowed it; the body did */
+      }
+    }
+  }
 
   /**
    * How a content script sees the world: `world` – this very global, `chrome` lives on it;
@@ -730,7 +756,8 @@ declare const __zenExtBoot: Boot
         window: realWindow,
         chrome: realWindow.chrome,
         browser: realWindow.browser,
-        isolation
+        isolation,
+        mirror: mirrorOnto(realWindow)
       }
       scopes.set(key, scope)
       return scope
@@ -756,7 +783,8 @@ declare const __zenExtBoot: Boot
       window: root,
       chrome: engine ? engine.chrome : undefined,
       browser: engine ? (root.browser ?? engine.chrome) : undefined,
-      isolation
+      isolation,
+      mirror: mirrorOnto(root)
     }
     scopes.set(key, scope)
     return scope
@@ -781,7 +809,7 @@ declare const __zenExtBoot: Boot
     if (fn) {
       const w = scope.window
       try {
-        fn.call(w, w, w, w, scope.chrome, scope.browser)
+        fn.call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
       } catch (e) {
         error = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
         primordials.error(
@@ -846,7 +874,7 @@ declare const __zenExtBoot: Boot
     }
     if (typeof fn !== 'function') throw new Error('no script')
     const w = scope.window
-    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser)
+    return (fn as GroupFunction).call(w, w, w, w, scope.chrome, scope.browser, scope.mirror)
   }
 
   // --- matching and scheduling -----------------------------------------------------------------
