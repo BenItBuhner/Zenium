@@ -1,0 +1,149 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_browse",
+  "spaces": [
+    {
+      "id": "space_browse",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          { "c": [96, 110, 235], "x": 0.3, "y": 0.35, "isPrimary": true },
+          { "c": [214, 92, 160], "x": 0.7, "y": 0.65 }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_home",
+        "tab_web",
+        "tab_rfc",
+        "tab_news",
+        "tab_tablets",
+        "tab_zenium",
+        "tab_tea",
+        "tab_coffee"
+      ],
+      "activeTabId": "tab_home",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [
+    {
+      "id": "folder_reading",
+      "spaceId": "space_browse",
+      "name": "Coffee and tea",
+      "icon": "📚",
+      "collapsed": false,
+      "color": "blue"
+    }
+  ],
+  "tabs": [
+    {
+      "id": "tab_home",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/",
+      "title": "Tablet demo",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_web",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/web.html",
+      "title": "World Wide Web",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_rfc",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/rfc2324.html",
+      "title": "RFC 2324: HTCPCP/1.0",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_news",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/news.html",
+      "title": "Morning news",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tablets",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/tablets.html",
+      "title": "Tablet computer",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_zenium",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": null,
+      "url": "http://127.0.0.1:18165/zenium.html",
+      "title": "Zenium",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_tea",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": "folder_reading",
+      "url": "http://127.0.0.1:18165/tea.html",
+      "title": "RFC 7168: HTCPCP-TEA",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_coffee",
+      "spaceId": "space_browse",
+      "containerId": "default",
+      "folderId": "folder_reading",
+      "url": "http://127.0.0.1:18165/coffee.html",
+      "title": "Coffee",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "sidebarExpanded": true,
+    "updates": { "autoCheck": false, "autoDownload": false, "channel": "stable" }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_browse",
+      "selection": { "space_browse": "tab_home" },
+      "compact": false
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+name: Android tablet layout demo
+
+# Records the TABLET chrome (TABLET-01, TABLET-02, TABLET-06, GN-27) on a hardware-accelerated
+# emulator of the pixel_tablet profile, laid out at 1280 x 800 dp at one px per dp (`wm size
+# 1280x800`, `wm density 160`: the tablet layout at a quarter of the profile's native pixels, as
+# the phone demos take a Pixel 6's layout at 720 x 1600), and uploads the video, the stills and
+# the driver's findings: the expanded sidebar with its 44 px rows beside the page under the
+# tablet toolbar, a tap, a hold released in place (the tab menu as a popover at the finger), a
+# hold and a drag (the reorder, traced for the jank table), the rail from the toolbar's toggle
+# and back by a sideways swipe, the toolbar's Reload / Back / Forward and the toolbar staying
+# through a scroll, the star's bubble closed by the system back, the URL bar's popup as wide as
+# its pill, the app menu as a 332 px popover, the tab overview pulled down the toolbar and a
+# sheet docked centred at 480, and live resize through `wm size`: 1280 x 590 is the phone chrome
+# with the same tab at the same scroll, 600 x 1000 the tablet with the rail docked and the
+# sidebar as a drawer (its spring traced), 800 x 1280 the portrait tablet. The driver judges
+# every step from the chrome's and the core's own state and fails the run when a claim does not
+# hold; see TabletLayoutDemo.kt. Dispatch-only, like the gesture demo. The build, the emulator
+# and its caches live in android-emulator-demo.yml; this file picks the driver, the profile, the
+# display and the colour scheme.
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: Colour scheme the profile is seeded with
+        type: choice
+        default: light
+        options:
+          - light
+          - dark
+      jank-gate:
+        description: >-
+          The jank budget's gate for the scenes this driver measures (the sidebar reorder under
+          the finger, the app menu's open, the overview pull, the drawer's spring): soft reports
+          a scene over its budget, hard fails it
+        type: choice
+        default: soft
+        options:
+          - soft
+          - hard
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tablet-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Tablet layout demo (${{ inputs.theme || 'light' }})
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the driver's claims are about the layout a 600 dp+ short side gets.
+      profile: pixel_tablet
+      api-level: '34'
+      # The shared driver chooses the demo and the display from its environment (see the
+      # script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletLayoutDemo
+        DEMO_DIR=tablet-demo
+        DEMO_OUT=artifacts/android-tablet-demo
+        DEMO_VIDEO=tablet-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_DISPLAY=1280x800@160
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-tablet-demo-${{ inputs.theme || 'light' }}
+      artifact-path: artifacts/android-tablet-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Tablet layout demo (${{ inputs.theme || 'light' }}), second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletLayoutDemo
+        DEMO_DIR=tablet-demo
+        DEMO_OUT=artifacts/android-tablet-demo
+        DEMO_VIDEO=tablet-demo-${{ inputs.theme || 'light' }}.mp4
+        DEMO_THEME=${{ inputs.theme || 'light' }}
+        DEMO_DISPLAY=1280x800@160
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      artifact-name: android-tablet-demo-${{ inputs.theme || 'light' }}-second-boot
+      artifact-path: artifacts/android-tablet-demo/
