@@ -6681,6 +6681,63 @@
 }
 
 /*
+ * The shared v2 link (§9.10; the first surface to land it was the extension details' Source
+ * row, #68, whose stylesheet held it in the accent with no underline at rest until the #294
+ * ruling moved it here): an inline link in chrome text is text – the surrounding size, weight
+ * and ink, never larger – underlined at 40 % of its own ink with a 2 px offset, and swaps to
+ * its family's accent on hover and focus-visible with the underline following. Zen sets
+ * `--link-color` to its foreground and `--link-color-hover` to its primary, so its links read
+ * as text with an underline, not as blue; visited is not distinguished. A link that leaves the
+ * app trails the external-link glyph (16, 20 on a phone: `--v2-icon`) 4 after its last word; a
+ * link that navigates inside the app carries none. The rule sets no `display`: a link in a
+ * sentence stays inline and wraps as the sentence does; one that carries a glyph is an
+ * inline-flex (the glyph centred on the line, never orphaned at a line's end), and a row's link
+ * is a flex item like any other. A link that stands alone on its line (the login detail's site
+ * under its title) carries `data-touch`: on a phone its hit area grows to the row height around
+ * the unchanged text – never in running prose, where the box would cover its neighbours. The
+ * focus ring is the shared `zen-v2-` rule above. One unlayered rule, tokens only (§9.34): an
+ * `<a>` or a `<button>` on any surface takes the class and adds nothing; no stylesheet restates
+ * the ink, the underline or a link under another name.
+ */
+.zen-v2-link {
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.zen-v2-link:has(> svg) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zen-v2-link > svg {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+@media (hover: hover) {
+  .zen-v2-link:hover {
+    color: var(--v2-control-accent, var(--v2-accent));
+    text-decoration-color: currentColor;
+  }
+}
+.zen-v2-link:focus-visible {
+  color: var(--v2-control-accent, var(--v2-accent));
+  text-decoration-color: currentColor;
+}
+.zen-v2-link[data-touch] {
+  position: relative;
+}
+:root[data-form-factor='phone'] .zen-v2-link[data-touch]::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--v2-row) - 100%) / -2) 0;
+}
+
+/*
  * The shared v2 segment (§9.34; the first to land it is the tab overview's Tabs | Private,
  * TAB-02): two or three text tabs switching the views of one surface – never a setting's choice,
  * which is a radio or a value row. A `role="tablist"` row of `role="tab"` buttons, a row tall
