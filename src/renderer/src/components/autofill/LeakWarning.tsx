@@ -168,10 +168,12 @@ function LeakDialog({
 
 /**
  * The prompt sheet: no 48 header – the grip strip, the chassis' title block with the 20 px
- * shield, the body, the §9.11 footer whose two peers share the width. The chassis owns the
- * focus on open, the Tab trap, the inert chrome, the recede and the stack's scrim; what a
- * button, the link, the scrim, back, Escape or a drag decided is answered once the sheet has
- * left (`onDismissed`), so the page comes back under nothing.
+ * shield, the body, the §9.11 footer whose two peers share the width. The chassis owns the Tab
+ * trap, the inert chrome, the recede and the stack's scrim; the focus on open is this
+ * surface's: a title-and-notice sheet focuses its container (§9.22) – named by the title,
+ * described by the sentence – where the chassis' rule would land on the first control, the
+ * inline manager link. What a button, the link, the scrim, back, Escape or a drag decided is
+ * answered once the sheet has left (`onDismissed`), so the page comes back under nothing.
  */
 function LeakSheet({
   warning,
@@ -181,6 +183,7 @@ function LeakSheet({
   respond: Respond
 }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const descriptionId = useId()
   const answer = useRef<CredentialLeakAction>('dismiss')
@@ -188,6 +191,10 @@ function LeakSheet({
     answer.current = action
     sheet.current?.dismiss()
   }
+  // Runs after the chassis' own focus effect (a child's effects run first) and so wins.
+  useEffect(() => {
+    bodyRef.current?.closest<HTMLElement>('[role="dialog"]')?.focus({ preventScroll: true })
+  }, [])
   useFrameDialog({ onScrimPress: () => leave('dismiss'), ownScrim: true })
   useBackSurface({
     name: 'credential-leak',
@@ -204,11 +211,12 @@ function LeakSheet({
       onDismissed={() => respond(answer.current)}
       handleLabel="Dismiss"
       labelledBy={titleId}
+      describedBy={descriptionId}
       className="zen-v2-af zen-v2-af-sheet"
       fitContent
     >
       <InSheet.Provider value>
-        <div className="zen-v2-af" data-surface="page" data-credential-leak="">
+        <div ref={bodyRef} className="zen-v2-af" data-surface="page" data-credential-leak="">
           <SheetTitleBlock
             id={titleId}
             icon={ShieldAlert}

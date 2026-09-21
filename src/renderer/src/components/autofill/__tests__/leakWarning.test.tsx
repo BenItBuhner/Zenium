@@ -30,7 +30,11 @@ vi.mock('@renderer/lib/credentialLeak', async (importOriginal) => {
   }
 })
 
-/** A stand-in for the sheet chassis: the leave is a step the test completes. */
+/**
+ * A stand-in for the sheet chassis: the leave is a step the test completes; the dialog element
+ * is the real one's shape (`role="dialog"`, `tabIndex -1`, named and described as told) and
+ * takes the chassis' default focus – its first control – on mount, as the real one does.
+ */
 interface FakeSheet {
   id: number
   leaving: boolean
@@ -47,13 +51,17 @@ vi.mock('../../sheet/BottomSheet', () => ({
     children,
     onDismissed,
     hosted,
-    fitContent
+    fitContent,
+    labelledBy,
+    describedBy
   }: {
     ref: React.Ref<BottomSheetHandle>
     children: ReactNode
     onDismissed: () => void
     hosted?: boolean
     fitContent?: boolean
+    labelledBy?: string
+    describedBy?: string
   }): JSX.Element => {
     const me = useRef<FakeSheet | null>(null)
     if (!me.current) {
@@ -76,13 +84,25 @@ vi.mock('../../sheet/BottomSheet', () => ({
       commitBack: () => undefined,
       cancelBack: () => undefined
     }))
-    useEffect(
-      () => () => {
+    const dialog = useRef<HTMLDivElement>(null)
+    useEffect(() => {
+      dialog.current?.querySelector<HTMLElement>('button, a[href]')?.focus()
+      return () => {
         me.current!.unmounted = true
-      },
-      []
+      }
+    }, [])
+    return (
+      <div
+        ref={dialog}
+        role="dialog"
+        tabIndex={-1}
+        aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
+        data-fake-sheet={me.current.id}
+      >
+        {children}
+      </div>
     )
-    return <div data-fake-sheet={me.current.id}>{children}</div>
   }
 }))
 
@@ -248,6 +268,18 @@ describe('the phone sheet (§9.23)', () => {
     expect(answers()).toEqual([])
     act(() => sheets[0].onDismissed())
     expect(answers()).toEqual([{ id: 'L1', action: 'changePassword' }])
+  })
+
+  it('is a title-and-notice sheet: the dialog itself takes the focus over the chassis’ first-control rule, named by the title and described by the sentence (§9.22)', () => {
+    show(state([warning]))
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(document.activeElement).toBe(dialog)
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe(
+      'Change your password'
+    )
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe(
+      'The password you just used was found in a data breach. Zenium recommends changing it now.'
+    )
   })
 
   it('a drag away, the scrim or back – a departure no button asked for – is a dismissal', () => {

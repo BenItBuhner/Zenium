@@ -152,6 +152,10 @@ textarea.zen-v2-field {
   background: var(--v2-panel);
   box-shadow: var(--v2-shadow-sheet);
 }
+/* A title-and-notice dialog takes the focus itself as it opens (§9.22, `tabIndex -1`); it draws no ring for it, as the popover and the sheet chassis do not. */
+.zen-v2-af-dialog:focus {
+  outline: none;
+}
 /*
  * A phone sheet is the shared BottomSheet chassis as it comes (`.zen-sheet` in main.css: the
  * panel face, one hairline, radius 12, the sheet shadow, the chassis scrim – which is `--v2-scrim`
