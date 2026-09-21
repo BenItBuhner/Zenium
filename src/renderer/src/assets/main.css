@@ -5552,7 +5552,11 @@
    * next as §9.3 icon buttons at 8 apart, centred, the middle one's glyph solid as the row's one
    * emphasis, the way Chrome's controls draw it (as the phone's `.zen-media-*` sheet does), the
    * track buttons disabled at .4 (§9.30) until the page handles them. The toolbar button wears
-   * a 6 accent dot at its corner while anything plays.
+   * a 6 accent dot at its corner while anything plays – and the "⋯" menu button wears it in its
+   * stead once the width tier has folded the toolbar button (§9.29). Both buttons sit on the
+   * toolbar row's window surface, so the dot draws the window's accent, `--zen-accent`, never
+   * the page family's `--v2-accent` (§9.29: no page token on the window; a private window's
+   * purple follows).
    */
   .zen-mhub-body {
     display: flex;
@@ -5634,7 +5638,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--v2-accent);
+    background: var(--zen-accent);
   }
 }
 
