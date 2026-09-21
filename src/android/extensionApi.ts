@@ -11,6 +11,7 @@ import {
   normalizeCaptureOptions
 } from '@core/extensions/api/capture'
 import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/api/engine'
+import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
@@ -22,6 +23,7 @@ import {
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
+import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
@@ -114,6 +116,9 @@ export interface ApiHost {
   ): void
   /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
   emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
+  /** `chrome.contextMenus` items of a lazy-background extension, kept across worker starts and sessions (Chrome's `MenuManager` storage). */
+  contextMenuItems(id: string): unknown
+  setContextMenuItems(id: string, items: PersistedMenuItem[]): void
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
   icon(id: string): string | null
   readFile(id: string, path: string): Promise<string | null>
@@ -408,7 +413,9 @@ export class ExtensionApi {
       chromeTab: (tab) => this.tabs.chromeTab(tab),
       visibleTo: (ext, tab) => this.tabs.visibleTo(ext, tab),
       icon: (id) => host.icon(id),
-      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab))
+      grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab)),
+      persistedItems: (id) => host.contextMenuItems(id),
+      persistItems: (id, items) => host.setContextMenuItems(id, items)
     })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -463,6 +470,11 @@ export class ExtensionApi {
       ext.manifest.permissions.includes(permission) ||
       ext.manifest.optionalPermissions.includes(permission)
     )
+  }
+
+  /** The extension attached: what this layer restores before its background runs. */
+  load(ext: AttachedExtension): void {
+    this.contextMenus.load(ext)
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -699,6 +711,21 @@ export class ExtensionApi {
     throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)
   }
 
+  /**
+   * The URL an API navigation (`tabs.create` / `tabs.update` / `windows.create`) lands on: a
+   * path is the extension's own page; a `file://` address needs the extension's file-access
+   * switch, as in Chrome, which refuses the call ("Cannot navigate to a file URL without local
+   * file access.") instead of opening the file. Without the check the phone opened a tab on
+   * the address, where the tab WebView (no file access) shows an error page and the
+   * extension (Enable local file links) never learns to ask for the switch.
+   */
+  private navigationUrl(ext: AttachedExtension, url: string): string {
+    const full = tabUrlFrom(ext.record.id, url)
+    if (isFileNavigation(full) && ext.record.allowFileAccess !== true)
+      throw new Error(FILE_URL_WITHOUT_ACCESS_ERROR)
+    return full
+  }
+
   // --- tabs ------------------------------------------------------------------
 
   private tabsCall(
@@ -763,10 +790,7 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const tab = tabs.createTab(
           {
-            url:
-              typeof props.url === 'string'
-                ? tabUrlFrom(ext.record.id, props.url)
-                : undefined,
+            url: typeof props.url === 'string' ? this.navigationUrl(ext, props.url) : undefined,
             active: props.active === undefined ? true : Boolean(props.active),
             pinned: Boolean(props.pinned)
           },
@@ -780,7 +804,7 @@ export class ExtensionApi {
         const target = targetOrActive(first)
         if (!target) throw new Error('No active tab.')
         if (typeof props.url === 'string')
-          tabs.navigate(target.id, tabUrlFrom(ext.record.id, props.url))
+          tabs.navigate(target.id, this.navigationUrl(ext, props.url))
         if (props.active === true) tabs.activateTab(target.id, win)
         if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
           tabs.toggleMute(target.id)
@@ -1076,7 +1100,7 @@ export class ExtensionApi {
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
           this.host.browser.tabs.createTab(
-            { url: tabUrlFrom(ext.record.id, url), active: true },
+            { url: this.navigationUrl(ext, url), active: true },
             this.host.window()
           )
         return this.tabs.chromeWindow(ext)

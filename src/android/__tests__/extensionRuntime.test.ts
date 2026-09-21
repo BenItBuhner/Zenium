@@ -1419,6 +1419,29 @@ describe('tabUrlFrom: the URL a tabs.create / tabs.update / windows.create names
   })
 })
 
+describe('AndroidExtensionRuntime: a file:// navigation from the API', () => {
+  it("is refused with Chrome's message until the extension's file-access switch is on", async () => {
+    const h = harness()
+    const rec = record(h, { allowFileAccess: false })
+    await h.runtime.attach(rec)
+    backgroundUp(h, 'bg1')
+    const refused = await call(h, 'bg1', 'tabs', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(refused.ok).toBe(false)
+    expect(refused.error).toBe('Cannot navigate to a file URL without local file access.')
+    const window = await call(h, 'bg1', 'windows', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(window.error).toBe('Cannot navigate to a file URL without local file access.')
+    expect(h.created).toHaveLength(0)
+    // Other schemes and the extension's own pages are untouched by the gate.
+    const page = await call(h, 'bg1', 'tabs', 'create', [{ url: 'options.html' }])
+    expect(page.ok).toBe(true)
+    expect(h.created).toHaveLength(1)
+    await h.runtime.reconfigure({ ...rec, allowFileAccess: true })
+    const allowed = await call(h, 'bg1', 'tabs', 'create', [{ url: 'file:///sdcard/page.html' }])
+    expect(allowed.ok).toBe(true)
+    expect(h.created).toHaveLength(2)
+  })
+})
+
 describe('offscreenUrl and languageCodeOf', () => {
   it('maps the forms of createDocument({ url }) onto the served origin and refuses the rest', () => {
     const origin = `https://${ID}.ext.zenium.invalid`

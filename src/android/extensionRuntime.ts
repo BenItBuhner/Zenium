@@ -30,6 +30,7 @@ import {
   splitDue,
   type Alarm
 } from '@core/extensions/api/alarms'
+import type { PersistedMenuItem } from '@core/extensions/api/contextMenus'
 import {
   applyClear,
   applyRemove,
@@ -245,6 +246,8 @@ interface RuntimeData {
   alarms: Record<string, Alarm[]>
   /** id → `chrome.<ns>.<event>` names the background listened for: what wakes a stopped worker. */
   listeners: Record<string, string[]>
+  /** id → the `chrome.contextMenus` tree of a lazy-background extension (Chrome's `MenuManager` storage). */
+  contextMenus: Record<string, PersistedMenuItem[]>
 }
 
 type StorageDoc = { local: StorageItems; sync: StorageItems }
@@ -359,7 +362,8 @@ function emptyData(): RuntimeData {
     registered: {},
     userScriptMessaging: {},
     alarms: {},
-    listeners: {}
+    listeners: {},
+    contextMenus: {}
   }
 }
 
@@ -375,6 +379,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.userScriptMessaging = saved.userScriptMessaging ?? {}
   data.alarms = saved.alarms ?? {}
   data.listeners = saved.listeners ?? {}
+  data.contextMenus = saved.contextMenus ?? {}
   return data
 }
 
@@ -656,6 +661,11 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       configureStats: previous?.configureStats ?? null
     }
     this.extensions.set(record.id, ext)
+    // The last run's menu items come back before the background runs (the store detaches
+    // before every re-attach, so a `previous` here is a bare double attach: it starts over from
+    // what is persisted, as the desktop's unload + load does).
+    if (previous) this.api.contextMenus.forget(record.id)
+    this.api.load(ext)
     this.background.configure(
       record.id,
       backgroundKindOf(manifest),
@@ -799,6 +809,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.userScriptMessaging[id]
     delete this.data.alarms[id]
     delete this.data.listeners[id]
+    delete this.data.contextMenus[id]
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -1067,6 +1078,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     if (!this.router.endpoint(endpointId)) return
     if (this.listens(endpointId, `${ns}.${name}`)) return
     this.sendTo(endpointId, { t: 'event', ns, name, args })
+  }
+
+  contextMenuItems(id: string): unknown {
+    return this.data.contextMenus[id] ?? []
+  }
+
+  setContextMenuItems(id: string, items: PersistedMenuItem[]): void {
+    if (items.length === 0) delete this.data.contextMenus[id]
+    else this.data.contextMenus[id] = items
+    this.save()
   }
 
   icon(id: string): string | null {
