@@ -41,7 +41,7 @@ export function feedFile(id: string): string {
  * itself and keeps the document's metadata only, when the document's own `entries` is missing.
  */
 export function prefixCountOf(prefixes: string): number {
-  const text = prefixes.replace(/\s+/g, '')
+  const text = /\s/.test(prefixes) ? prefixes.replace(/\s+/g, '') : prefixes
   if (text.length === 0) return 0
   const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
   const bytes = Math.floor((text.length * 3) / 4) - padding

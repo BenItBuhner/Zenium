@@ -155,12 +155,32 @@ export class SafeBrowsingService {
     return this.enabled && this.apiKey.length > 0
   }
 
-  /** Load the persisted tables, seed the snapshot where a feed has none, start the schedule. */
+  /** The host holds the tables (`PrivacyHost.safeBrowsingTables: 'host'`); the service keeps none. */
+  private get hostTables(): boolean {
+    return this.browser.platform.privacy?.safeBrowsingTables === 'host'
+  }
+
+  /**
+   * Load the persisted tables, seed the snapshot where a feed has none, start the schedule.
+   * With the tables at the host, the documents are read {@link DOCUMENT_LOAD_DELAY_MS} after
+   * this instead – asynchronously, for their metadata, off the boot path – and the service is
+   * ready (the status card, the seed, the schedule) once they are in.
+   */
   start(): void {
+    if (this.hostTables) {
+      this.startupTimer = setTimeout(() => void this.loadDocuments(), DOCUMENT_LOAD_DELAY_MS)
+      this.changed()
+      return
+    }
     for (const rt of this.feeds.values()) {
       const doc = parseFeedDocument(this.io.readSync(feedFile(rt.feed.id)), rt.feed.id)
       if (doc) this.adopt(rt, doc)
     }
+    this.loaded()
+  }
+
+  /** The persisted documents are in: ready, the snapshot seeded where a feed has none, the schedule. */
+  private loaded(): void {
     this.ready = true
     void this.seedBundled().then(() => {
       if (this.stopped) return
@@ -168,6 +188,31 @@ export class SafeBrowsingService {
       this.sweepTimer = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS)
     })
     this.changed()
+  }
+
+  /**
+   * With the tables at the host: the documents, read once the chrome is up (`StoreIO.read`
+   * where the host has it – Android fetches the file off its main thread – `readSync` else), in
+   * parallel. A feed refreshed in the meantime keeps what the refresh brought.
+   */
+  private async loadDocuments(): Promise<void> {
+    this.startupTimer = null
+    await Promise.all(
+      [...this.feeds.values()].map(async (rt) => {
+        const doc = parseFeedDocument(await this.readDocument(feedFile(rt.feed.id)), rt.feed.id)
+        if (doc && !rt.doc && !this.stopped) this.adopt(rt, doc)
+      })
+    )
+    if (!this.stopped) this.loaded()
+  }
+
+  private async readDocument(name: string): Promise<string | null> {
+    try {
+      return this.io.read ? await this.io.read(name) : this.io.readSync(name)
+    } catch (error) {
+      console.warn(`[zenium] Safe Browsing document ${name} not read:`, describeError(error))
+      return null
+    }
   }
 
   stop(): void {
@@ -194,7 +239,10 @@ export class SafeBrowsingService {
     let lastUpdatedAt: number | null = null
     let updating = false
     for (const rt of this.feeds.values()) {
-      entries += rt.table.size
+      // The document's count is the table's (`adopt`, `fetchFeed`), and all there is where the
+      // host holds the tables.
+      const size = rt.doc?.entries ?? rt.table.size
+      entries += size
       updating ||= rt.updating
       const updatedAt = rt.doc?.updatedAt ?? null
       if (updatedAt && !rt.doc?.bundled && (lastUpdatedAt === null || updatedAt > lastUpdatedAt))
@@ -204,7 +252,7 @@ export class SafeBrowsingService {
         name: rt.feed.name,
         homepage: rt.feed.homepage,
         licence: rt.feed.licence,
-        entries: rt.table.size,
+        entries: size,
         updatedAt,
         bundled: rt.doc?.bundled ?? false,
         updating: rt.updating,
@@ -405,10 +453,30 @@ export class SafeBrowsingService {
   verdictProvider(): DangerVerdictProvider {
     return {
       verdict: async (request: DangerVerdictRequest) => {
-        const hit = this.lookup(request.url) ?? (await this.checkRemote(request.url))
+        const hit = (await this.lookupTables(request.url)) ?? (await this.checkRemote(request.url))
         if (!hit) return null
         return makeDanger('dangerous', 'url-verdict', dangerSentence(hit.threat))
       }
+    }
+  }
+
+  /**
+   * The tables' word on `url` wherever they are: the service's own ({@link lookup}: the test
+   * hosts and a remembered remote answer too), or the host's where it holds them, asked
+   * asynchronously (`PrivacyHost.lookupSafeBrowsing`, under the host's own switch and bypasses
+   * as well as this side's). Null for nothing listed, and for a host that cannot answer.
+   */
+  private async lookupTables(url: string): Promise<SafeBrowsingHit | null> {
+    const local = this.lookup(url)
+    if (local || !this.hostTables) return local
+    const host = this.browser.platform.privacy
+    if (!host?.lookupSafeBrowsing) return null
+    if (!this.enabled || !/^https?:\/\//i.test(url) || this.isBypassed(url)) return null
+    try {
+      return await host.lookupSafeBrowsing(url)
+    } catch (error) {
+      console.warn("[zenium] the host's Safe Browsing lookup failed:", describeError(error))
+      return null
     }
   }
 
@@ -444,10 +512,31 @@ export class SafeBrowsingService {
     }
   }
 
+  /** A persisted (or bundled) document becomes the feed's: its table decoded, or not, see {@link keep}. */
   private adopt(rt: FeedRuntime, doc: FeedDocument): void {
-    rt.table = PrefixTable.fromBase64(doc.prefixes)
+    if (this.hostTables) {
+      const entries = doc.entries || prefixCountOf(doc.prefixes)
+      this.keep(rt, { ...doc, entries }, PrefixTable.empty())
+      return
+    }
+    const table = PrefixTable.fromBase64(doc.prefixes)
+    this.keep(rt, { ...doc, entries: table.size }, table)
+  }
+
+  /**
+   * The feed's document and table from here on. Where the host holds the tables, the document's
+   * header alone: no table (the host decodes and sorts the prefixes from the file, once; a second
+   * copy in this heap would serve nothing) and not the megabytes of base64 either.
+   */
+  private keep(rt: FeedRuntime, doc: FeedDocument, table: PrefixTable): void {
+    if (this.hostTables) {
+      rt.table = PrefixTable.empty()
+      rt.doc = { ...doc, prefixes: '' }
+    } else {
+      rt.table = table
+      rt.doc = doc
+    }
     this.hostCache.clear()
-    rt.doc = { ...doc, entries: rt.table.size }
   }
 
   private async sweep(): Promise<void> {
@@ -490,7 +579,11 @@ export class SafeBrowsingService {
       })
       if (response.status === 304 && rt.doc) {
         rt.doc = { ...rt.doc, updatedAt: Date.now() }
-        await this.io.write(feedFile(rt.feed.id), JSON.stringify(rt.doc))
+        // The check's time goes to the file too – but not where the host holds the tables: the
+        // header here has no prefixes to write back, and a rewrite would have the host decode
+        // the megabytes again for a date. The file keeps the content's time there; the next
+        // start's sweep asks the server once more (a conditional request, no body) and moves on.
+        if (!this.hostTables) await this.io.write(feedFile(rt.feed.id), JSON.stringify(rt.doc))
         rt.lastError = null
         return
       }
@@ -514,9 +607,7 @@ export class SafeBrowsingService {
         bundled: false,
         prefixes: table.toBase64()
       }
-      rt.table = table
-      rt.doc = doc
-      this.hostCache.clear()
+      this.keep(rt, doc, table)
       rt.lastError = null
       await this.io.write(feedFile(rt.feed.id), JSON.stringify(doc))
     } catch (error) {
@@ -538,19 +629,21 @@ export class SafeBrowsingService {
     const rt = this.feeds.get(id)
     const feed = safeBrowsingFeed(id)
     if (!rt || !feed) return
-    rt.table = table
-    this.hostCache.clear()
-    rt.doc = {
-      version: FEED_DOCUMENT_VERSION,
-      id,
-      threat: feed.threat,
-      entries: table.size,
-      updatedAt,
-      etag: null,
-      lastModified: null,
-      bundled: false,
-      prefixes: table.toBase64()
-    }
+    this.keep(
+      rt,
+      {
+        version: FEED_DOCUMENT_VERSION,
+        id,
+        threat: feed.threat,
+        entries: table.size,
+        updatedAt,
+        etag: null,
+        lastModified: null,
+        bundled: false,
+        prefixes: table.toBase64()
+      },
+      table
+    )
     this.changed()
   }
 

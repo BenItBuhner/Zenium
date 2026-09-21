@@ -5,10 +5,13 @@
  * as a file on the app origin instead, fetched off the main thread like any resource.
  *
  *  - Boot documents. The boot payload inlines the core's documents while they are small; the
- *    rest (a Safe Browsing feed's prefix table, an extension's rule-set document under
- *    `blocking/sets/`) it lists by name, size and version tag, and {@link fetchDeferredDocuments}
- *    brings them in from `/zen-docs/<name>` while the platform and the core are built, so that
- *    the core's synchronous reads at start find them as before.
+ *    rest (a session grown big, an extension's rule-set document under `blocking/sets/`) it
+ *    lists by name, size and version tag, and {@link fetchDeferredDocuments} brings them in from
+ *    `/zen-docs/<name>` while the platform and the core are built, so that the core's
+ *    synchronous reads at start find them as before.
+ *  - Documents read after boot. The Safe Browsing feed documents (megabytes of prefixes once the
+ *    feeds were refreshed) are not in the payload at all: the core reads them once it is up
+ *    (`AndroidStoreIO.read`), and {@link fetchStoredDocument} brings one in from the same handler.
  *  - Fetched bodies. `net.fetch` answers a body over the host's inline limit as `{token, bytes}`;
  *    {@link readSpilledBody} fetches `/zen-net/<token>` and releases the file.
  *  - The bundled Safe Browsing snapshot, an asset of the APK, is fetched from the asset path.
@@ -102,32 +105,50 @@ async function fetchDocument(
   doc: DeferredDocument,
   reader: DeferredDocumentReader
 ): Promise<string | null> {
+  return fetchStoredDocument(doc.name, reader, doc.etag)
+}
+
+/**
+ * One document the handler serves (`Storage.isServedDocument`), by name, at any time: a Safe
+ * Browsing feed document the core reads once it is up (`AndroidStoreIO.read`), or a boot
+ * document the payload deferred. The text; or what the bridge has when the handler cannot bring
+ * it (404 – not a served name, or no such file – an error, a fetch that does not settle within
+ * the timeout, a chrome on another origin), which is null for a document that does not exist.
+ * With `etag`, the manifest's tag of a deferred document, a different tag on the answer is
+ * noted: the core rewrote the document in between, and the fetched text is the newer one.
+ */
+export async function fetchStoredDocument(
+  name: string,
+  reader: DeferredDocumentReader,
+  etag?: string
+): Promise<string | null> {
   try {
     const text = await withTimeout(
-      fetchDocumentText(doc, reader),
+      fetchDocumentText(name, reader, etag),
       reader.timeoutMs ?? FETCH_TIMEOUT_MS
     )
     if (text !== null) return text
   } catch (error) {
-    console.warn(`[zen] could not fetch ${doc.name} from the document handler:`, error)
+    console.warn(`[zen] could not fetch ${name} from the document handler:`, error)
   }
-  return reader.readSync(doc.name)
+  return reader.readSync(name)
 }
 
 /** The document's text from the handler, or null for an answer that is not the document (404, an error status). */
 async function fetchDocumentText(
-  doc: DeferredDocument,
-  reader: DeferredDocumentReader
+  name: string,
+  reader: DeferredDocumentReader,
+  etag?: string
 ): Promise<string | null> {
-  const response = await reader.fetch(documentUrl(doc.name, reader.origin), { cache: 'no-store' })
+  const response = await reader.fetch(documentUrl(name, reader.origin), { cache: 'no-store' })
   if (response.ok) {
     const tag = response.headers.get('ETag')?.replace(/^"|"$/g, '') ?? null
-    if (tag !== null && tag !== doc.etag)
-      console.info(`[zen] ${doc.name} was rewritten while booting (${doc.etag} → ${tag})`)
+    if (etag !== undefined && tag !== null && tag !== etag)
+      console.info(`[zen] ${name} was rewritten while booting (${etag} → ${tag})`)
     return await response.text()
   }
   if (response.status !== 404)
-    console.warn(`[zen] the document handler answered ${response.status} for ${doc.name}`)
+    console.warn(`[zen] the document handler answered ${response.status} for ${name}`)
   return null
 }
 
