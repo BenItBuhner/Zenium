@@ -248,6 +248,8 @@ interface RuntimeData {
   listeners: Record<string, string[]>
   /** id → the `chrome.contextMenus` tree of a lazy-background extension (Chrome's `MenuManager` storage). */
   contextMenus: Record<string, PersistedMenuItem[]>
+  /** id → `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`. */
+  sidePanelOnActionClick: Record<string, boolean>
 }
 
 type StorageDoc = { local: StorageItems; sync: StorageItems }
@@ -345,9 +347,14 @@ const CONTEXTS: readonly EngineContextKind[] = [
   'background',
   'popup',
   'options',
+  'sidePanel',
   'offscreen',
   'page'
 ]
+
+/** A document the runtime's sheet shows: on screen and focused while the sheet is up. */
+const inSheet = (endpoint: Endpoint): boolean =>
+  endpoint.context === 'popup' || endpoint.context === 'sidePanel'
 
 /** The extension's own pages are the clients of its service worker; frames in tabs are not. */
 const isServiceWorkerClient = (endpoint: Endpoint): boolean =>
@@ -363,7 +370,8 @@ function emptyData(): RuntimeData {
     userScriptMessaging: {},
     alarms: {},
     listeners: {},
-    contextMenus: {}
+    contextMenus: {},
+    sidePanelOnActionClick: {}
   }
 }
 
@@ -380,6 +388,7 @@ function readData(saved: Partial<RuntimeData> | null): RuntimeData {
   data.alarms = saved.alarms ?? {}
   data.listeners = saved.listeners ?? {}
   data.contextMenus = saved.contextMenus ?? {}
+  data.sidePanelOnActionClick = saved.sidePanelOnActionClick ?? {}
   return data
 }
 
@@ -466,6 +475,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
    */
   private readonly swPorts = new Map<string, { client: string; extensionId: string }>()
   private popupOpen: string | null = null
+  /** What the open sheet hosts (`ext.popup.open`'s context); the side panel hears of its sheet going. */
+  private sheetContext: 'popup' | 'options' | 'sidePanel' | null = null
   /**
    * `offscreen.createDocument` calls waiting for their page to say hello, by extension: the
    * document counts as present from the call on (a second call while it loads is refused, as in
@@ -810,6 +821,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     delete this.data.alarms[id]
     delete this.data.listeners[id]
     delete this.data.contextMenus[id]
+    delete this.data.sidePanelOnActionClick[id]
     this.startupFired.delete(id)
     this.save()
     // Settle the debounced document first so no pending write brings it back after the remove.
@@ -1084,6 +1096,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return this.data.contextMenus[id] ?? []
   }
 
+  sidePanelOnActionClick(id: string): boolean {
+    return this.data.sidePanelOnActionClick[id] === true
+  }
+
+  setSidePanelOnActionClick(id: string, on: boolean): void {
+    if (on) this.data.sidePanelOnActionClick[id] = true
+    else delete this.data.sidePanelOnActionClick[id]
+    this.save()
+  }
+
   setContextMenuItems(id: string, items: PersistedMenuItem[]): void {
     if (items.length === 0) delete this.data.contextMenus[id]
     else this.data.contextMenus[id] = items
@@ -1264,7 +1286,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     return `data:${mimeType};base64,${shot.data}`
   }
 
-  openPopup(id: string): void {
+  openPopup(id: string, fromApi = false): void {
     const ext = this.extensions.get(id)
     if (!ext) return
     // A toolbar click is the user gesture `activeTab` waits for. A private tab the extension may
@@ -1274,18 +1296,40 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     // The tab's own popup when `action.setPopup` named one for it, else the global one.
     const action = this.api.actionStateFor(id, tab ? this.api.tabs.chromeIdFor(tab.id) : undefined)
     if (!action.enabled) return
+    // `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`: the tap toggles the panel
+    // (Chrome decides this before the popup; `action.openPopup()` from the API still opens the popup).
+    if (!fromApi && this.api.sidePanel.opensOnActionClick(ext)) {
+      this.api.sidePanel.toggle(ext)
+      return
+    }
     if (!action.popup) {
       const ns = ext.manifest.manifestVersion === 3 ? 'action' : 'browserAction'
       this.emit(id, ns, 'onClicked', [tab ? this.api.tabs.chromeTab(tab) : null])
       return
     }
+    this.openSheet(id, extensionUrl(id, action.popup), 'popup', ext.manifest.name || id)
+  }
+
+  /** `chrome.sidePanel`: the panel document takes the sheet, as a popup or an options page would. */
+  showSidePanel(ext: Attached, url: string): void {
+    this.openSheet(ext.record.id, url, 'sidePanel', ext.manifest.name || ext.record.id)
+  }
+
+  hideSidePanel(): void {
+    if (this.sheetContext === 'sidePanel') this.closePopup()
+  }
+
+  /** One sheet at a time: a panel it showed is closed to its extension when another document takes it. */
+  private openSheet(
+    id: string,
+    url: string,
+    context: 'popup' | 'options' | 'sidePanel',
+    title: string
+  ): void {
+    if (this.sheetContext === 'sidePanel' && context !== 'sidePanel') this.api.sidePanel.sheetGone()
     this.popupOpen = id
-    this.bridge.send('ext.popup.open', {
-      id,
-      url: extensionUrl(id, action.popup),
-      context: 'popup',
-      title: ext.manifest.name || id
-    })
+    this.sheetContext = context
+    this.bridge.send('ext.popup.open', { id, url, context, title })
   }
 
   openOptions(id: string, win: ZenWindow = this.windowOf()): void {
@@ -1297,19 +1341,16 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       this.browser.tabs.createTab({ url, active: true }, win)
       return
     }
-    this.popupOpen = id
-    this.bridge.send('ext.popup.open', {
-      id,
-      url,
-      context: 'options',
-      title: ext.manifest.name || id
-    })
+    this.openSheet(id, url, 'options', ext.manifest.name || id)
   }
 
   closePopup(): void {
     if (!this.popupOpen) return
     this.popupOpen = null
+    const context = this.sheetContext
+    this.sheetContext = null
     this.bridge.send('ext.popup.close')
+    if (context === 'sidePanel') this.api.sidePanel.sheetGone()
   }
 
   /**
@@ -1547,8 +1588,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
             from: endpoint.id,
             url: endpoint.url,
             context: endpoint.context,
-            focused: endpoint.context === 'popup' || endpoint.tabId === this.activeTabId,
-            visible: endpoint.context === 'popup' || endpoint.tabId === this.activeTabId,
+            focused: inSheet(endpoint) || endpoint.tabId === this.activeTabId,
+            visible: inSheet(endpoint) || endpoint.tabId === this.activeTabId,
             data: message.data,
             ports
           }
@@ -1565,7 +1606,7 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       .of(id)
       .filter(isServiceWorkerClient)
       .map((endpoint) => {
-        const shown = endpoint.context === 'popup' || endpoint.tabId === this.activeTabId
+        const shown = inSheet(endpoint) || endpoint.tabId === this.activeTabId
         return {
           id: endpoint.id,
           url: endpoint.url,
@@ -1668,6 +1709,9 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
 
   onPopupClosed(): void {
     this.popupOpen = null
+    const context = this.sheetContext
+    this.sheetContext = null
+    if (context === 'sidePanel') this.api.sidePanel.sheetGone()
   }
 
   /** An auth sheet's navigation (the way back ends the flow), load, failure or dismissal. */

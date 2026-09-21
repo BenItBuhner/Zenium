@@ -649,7 +649,7 @@ export function record(
 export function hello(
   h: Harness,
   ep: string,
-  ctx: 'content' | 'background' | 'popup' | 'offscreen' | 'page',
+  ctx: 'content' | 'background' | 'popup' | 'options' | 'sidePanel' | 'offscreen' | 'page',
   extra: { tabId?: string | null; top?: boolean; url?: string } = {}
 ): void {
   const url =

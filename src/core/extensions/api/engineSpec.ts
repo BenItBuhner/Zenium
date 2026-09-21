@@ -409,13 +409,15 @@ export const ENGINE_SPEC: ApiSpec = {
   },
   sidePanel: {
     methods: {
-      setOptions: stub(object('options')),
-      getOptions: stub(object('options')),
-      setPanelBehavior: stub(object('behavior')),
-      getPanelBehavior: stub(),
-      open: stub(object('options'))
+      setOptions: routed(object('options')),
+      getOptions: routed(object('options', true)),
+      setPanelBehavior: routed(object('behavior')),
+      getPanelBehavior: routed(),
+      open: routed(object('options')),
+      close: routed(object('options')),
+      getLayout: routed()
     },
-    events: {}
+    events: { onOpened: {}, onClosed: {} }
   },
   userScripts: {
     methods: {
@@ -715,11 +717,11 @@ export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'fontSettings.setDefaultFontSize',
   'extension.setUpdateUrlData',
   'webRequest.handlerBehaviorChanged',
-  // No omnibox keyword and no side panel on the phone; the setters are start-up calls
-  // (Raindrop.io, OneTab, Bitwarden) whose rejection would be the only error of the worker.
-  'omnibox.setDefaultSuggestion',
-  'sidePanel.setOptions',
-  'sidePanel.setPanelBehavior'
+  // No omnibox keyword on the phone; the setter is a start-up call (Raindrop.io, OneTab,
+  // Bitwarden) whose rejection would be the only error of the worker. The side panel's setters
+  // sat here while the phone had no panel; the runtime hosts one in its sheet now
+  // (`android/extensionSidePanel.ts`) and answers every member.
+  'omnibox.setDefaultSuggestion'
 ])
 
 /**

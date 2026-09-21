@@ -46,6 +46,7 @@ import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 import { answerProxySetting } from './extensionProxy'
+import { AndroidSidePanel } from './extensionSidePanel'
 import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
 import { AndroidTts } from './extensionTts'
 
@@ -151,8 +152,15 @@ export interface ApiHost {
   forgetNotifications(extensionId: string): void
   /** Whether the app may post notifications right now (`getPermissionLevel`). */
   notificationsAllowed(): Promise<boolean>
-  openPopup(id: string): void
+  /** The toolbar tap, or `action.openPopup()` from the API (`fromApi`: the popup even where the tap would open the side panel). */
+  openPopup(id: string, fromApi?: boolean): void
   openOptions(id: string): void
+  /** `chrome.sidePanel`: the panel document in the runtime's sheet (`extensionSidePanel.ts`). */
+  showSidePanel(ext: AttachedExtension, url: string): void
+  hideSidePanel(): void
+  /** `sidePanel.setPanelBehavior({ openPanelOnActionClick })`, kept across sessions. */
+  sidePanelOnActionClick(id: string): boolean
+  setSidePanelOnActionClick(id: string, on: boolean): void
   /**
    * `chrome.offscreen`: the extension's one hidden document. `openOffscreen` resolves once the
    * page said hello (Chrome's `createDocument` resolves when the document is created), or
@@ -388,6 +396,7 @@ export class TabIds {
 export class ExtensionApi {
   readonly tabs: TabIds
   readonly contextMenus: AndroidContextMenus
+  readonly sidePanel: AndroidSidePanel
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
@@ -416,6 +425,18 @@ export class ExtensionApi {
       grantActiveTab: (id, tab) => this.activeTab.grant(id, tab, this.tabs.urlOf(tab)),
       persistedItems: (id) => host.contextMenuItems(id),
       persistItems: (id, items) => host.setContextMenuItems(id, items)
+    })
+    this.sidePanel = new AndroidSidePanel({
+      attached: (id) => host.attached(id),
+      tabFor: (ext, value) => this.tabs.tabFor(ext, value),
+      chromeIdFor: (tabId) => this.tabs.chromeIdFor(tabId),
+      activeTabFor: (ext) => this.tabs.activeTabFor(ext),
+      activateTab: (tabId) => host.browser.tabs.activateTab(tabId, host.window()),
+      showSheet: (ext, url) => host.showSidePanel(ext, url),
+      hideSheet: () => host.hideSidePanel(),
+      emit: (id, ns, name, args) => host.emit(id, ns, name, args),
+      behavior: (id) => host.sidePanelOnActionClick(id),
+      setBehavior: (id, on) => host.setSidePanelOnActionClick(id, on)
     })
     this.cookies = new AndroidCookies({
       read: (containerId, url) => host.readCookies(containerId, url),
@@ -475,12 +496,14 @@ export class ExtensionApi {
   /** The extension attached: what this layer restores before its background runs. */
   load(ext: AttachedExtension): void {
     this.contextMenus.load(ext)
+    this.sidePanel.load(ext)
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
   forget(id: string): void {
     this.actions.delete(id)
     this.contextMenus.forget(id)
+    this.sidePanel.forget(id)
     this.activeTab.forget(id)
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
@@ -597,6 +620,7 @@ export class ExtensionApi {
 
   /** A tab closed: the overrides extensions set for it go. */
   tabRemoved(chromeTabId: number): void {
+    this.sidePanel.tabRemoved(chromeTabId)
     let changed = false
     for (const record of this.actions.values())
       changed = record.perTab.delete(chromeTabId) || changed
@@ -637,6 +661,8 @@ export class ExtensionApi {
         return this.tts.call(id, endpoint.id, method, args, true)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
+      case 'sidePanel':
+        return this.sidePanel.call(ext, method, args)
       case 'webNavigation':
         return this.webNavigationCall(ext, method, args)
       case 'cookies': {
@@ -1193,7 +1219,7 @@ export class ExtensionApi {
       case 'isEnabled':
         return state.enabled
       case 'openPopup':
-        this.host.openPopup(id)
+        this.host.openPopup(id, true)
         return undefined
       case 'getUserSettings':
         return { isOnToolbar: true }
@@ -1853,6 +1879,8 @@ export function contextTypeOf(context: EngineContextKind): string {
       return 'BACKGROUND'
     case 'popup':
       return 'POPUP'
+    case 'sidePanel':
+      return 'SIDE_PANEL'
     case 'offscreen':
       return 'OFFSCREEN_DOCUMENT'
     default:
