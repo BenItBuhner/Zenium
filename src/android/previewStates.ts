@@ -218,7 +218,6 @@ function apply(browser: Browser, spec: string): void {
     unseedExtensions()
     unseedSync()
     unseedImport()
-    unseedCheckup()
     unseedTranslate()
     unseedFavicon()
     unseedMedia()
@@ -632,14 +631,12 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const lastImport = params.get('import')
   const translate = params.get('translate')
   const favicon = params.get('favicon')
-  const checkup = params.get('checkup')
   const seed = (): void => {
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
     if (sync) seedSync(sync)
     if (lastImport) seedImport(lastImport)
-    if (checkup) seedCheckup(checkup)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
   }
@@ -1706,56 +1703,6 @@ function seedImport(variant: string): void {
 function unseedImport(): void {
   importSeed?.()
   importSeed = null
-}
-
-// ---------------------------------------------------------------------------
-// The last Password Checkup, seeded
-// ---------------------------------------------------------------------------
-
-/** Lets go of the checkup summary the current spec holds over the core's pushes. */
-let checkupSeed: (() => void) | null = null
-
-/** How long ago the seeded checkup ran: Safety Check's "Last checked 2 days ago". */
-const CHECKUP_SEED_AGE_MS = 2 * 24 * 60 * 60 * 1000
-
-/**
- * Safety Check's Passwords row with the last checkup's counts (ID-19 / PS-20): the chrome's copy
- * of the browser state is patched with a `checkupSummary` – `checkup=<compromised>,<weak>,<reused>`,
- * checked two days ago; a missing or unparsable count is 0 – and patched again over every state
- * the core pushes while the spec stands, as the import state is. The device-local summary a
- * real checkup writes needs a vault and a range answer per login; the seed stands for its result.
- */
-function seedCheckup(spec: string): void {
-  unseedCheckup()
-  let seeded: UIState | null = null
-  const patch = (): void => {
-    const state = browserStore.get().state
-    if (!state || state === seeded) return
-    seeded = checkupFixture(state, spec, Date.now())
-    browserStore.set({ state: seeded })
-  }
-  patch()
-  checkupSeed = browserStore.subscribe(patch)
-}
-
-/** Stop holding a seeded checkup summary over the core's pushes. */
-function unseedCheckup(): void {
-  checkupSeed?.()
-  checkupSeed = null
-}
-
-export function checkupFixture(state: UIState, spec: string, now: number): UIState {
-  const [compromised = 0, weak = 0, reused = 0] = spec
-    .split(',')
-    .map((part) => Math.max(0, Math.floor(Number(part))))
-    .map((n) => (Number.isFinite(n) ? n : 0))
-  return {
-    ...state,
-    passwords: {
-      ...state.passwords,
-      checkupSummary: { compromised, weak, reused, checkedAt: now - CHECKUP_SEED_AGE_MS }
-    }
-  }
 }
 
 export function importFixture(state: UIState, variant: string, now: number): UIState {

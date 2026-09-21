@@ -1,6 +1,4 @@
 import type { Browser } from '@core/browser'
-import { HIBP_RANGE_URL } from '@core/credentials/checkup'
-import { sha1Hex } from '@core/credentials/crypto'
 import { normalizeOrigin, siteLabel } from '@core/credentials/origins'
 import type { FormFieldKind, FormGroup, Tab } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
@@ -12,6 +10,8 @@ import {
 } from '@renderer/lib/autofill'
 import { browserStore, openOverlay, uiStore } from '@renderer/lib/ui'
 import type { HostGlobal } from './boot'
+import { PREVIEW_SAMPLE_ORIGIN } from './preview'
+import { PREVIEW_BREACHED_PASSWORD } from './previewRange'
 import type { PreviewAutofillSurface } from './previewSpec'
 
 /*
@@ -22,20 +22,16 @@ import type { PreviewAutofillSurface } from './previewSpec'
  * section (`page.open`, the phone's `autofill` builder in `pages/settings/sections.tsx`) over
  * a vault unlocked through the preview's keystore stand-in and seeded with an address, two
  * cards and a passkey record. The sign-in leak warning (ID-31) is the detector's own, raised by
- * a sample sign-in it checks against the stand-in range answer below (`previewRangeAnswer`);
- * the note (ID-34) is a seeded login's, the manager opened over the page.
+ * a sample sign-in it checks against the stand-in range answer (`previewRange.ts`, through the
+ * preview's `net.fetch`); the note (ID-34) is a seeded login's, the manager opened over the page.
  */
 
 /** The sample site when no tab is open to take one from. */
 const SITE = 'shop.example'
 const ORIGIN = `https://${SITE}`
 
-/**
- * The sample sign-in's password, one the stand-in range answer lists as breached; never sent
- * anywhere (the preview's `net.fetch` answers the range request itself).
- */
-const BREACHED_PASSWORD = 'correct-horse-battery'
-const BREACH_COUNT = 27_314
+/** How long the stand-in page is given to show in its frame before the sign-in is checked. */
+const SAMPLE_PAGE_SETTLE_MS = 400
 
 /**
  * The note the seeded login carries (ID-34): two lines, as a user's would be – the multi-line
@@ -45,24 +41,32 @@ export const SAMPLE_NOTE =
   'Recovery codes are in the safe (top drawer).\nSecurity question: first concert \u2013 use the venue, not the band.'
 
 /**
- * The stand-in for the Pwned Passwords range API (`HIBP_RANGE_URL`): the preview's `net.fetch`
- * answers a range request for the sample password's prefix with its suffix and count, padded
- * like the real answer, and any other prefix with padding alone (clean), so no preview state
- * reaches the real service. Null for any other URL.
+ * Logins for a Password Checkup to sort (`safety-check`), beside the sample site's breached one:
+ * a weak password (a zxcvbn score under 3) and one password on two sites (reused); the pair's
+ * password is strong, so each login lands in one list and the row's counts read apart.
  */
-export async function previewRangeAnswer(
-  url: string
-): Promise<{ ok: boolean; status: number; text: string } | null> {
-  if (!url.startsWith(HIBP_RANGE_URL)) return null
-  const prefix = url.slice(HIBP_RANGE_URL.length).toUpperCase()
-  const hash = (await sha1Hex(BREACHED_PASSWORD)).toUpperCase()
-  const lines: string[] = []
-  if (hash.startsWith(prefix)) lines.push(`${hash.slice(5)}:${BREACH_COUNT}`)
-  // Padding entries carry a count of 0 (`Add-Padding`), the way HIBP's do.
-  for (let i = 0; i < 12; i++) {
-    lines.push(`${(i + 1).toString(16).toUpperCase().padStart(35, 'A')}:0`)
+const CHECKUP_LOGINS = [
+  { url: 'https://forum.example', username: 'ada', password: 'letmein1' },
+  { url: 'https://mail.example', username: 'ada@example.com', password: 'Tq7#vLm2!pXz9-wR' },
+  { url: 'https://news.example', username: 'ada', password: 'Tq7#vLm2!pXz9-wR' }
+] as const
+
+/** The most a checkup over the seeded vault is waited for (the range answers are local). */
+const CHECKUP_WAIT_MS = 20_000
+
+/**
+ * Run the Password Checkup and wait for it to end: the counts Safety check reads are written
+ * as it finishes (`writeSummary`), not as it starts. Bounded, so a checkup that cannot end
+ * (the scorer failing to load) still lets the state be reached, with whatever the row says.
+ */
+async function runCheckupToEnd(browser: Browser): Promise<void> {
+  browser.passwords.runCheckup()
+  const deadline = Date.now() + CHECKUP_WAIT_MS
+  while (Date.now() < deadline) {
+    const checkup = browser.passwords.status().checkup
+    if (!checkup.running && checkup.finishedAt !== null) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
-  return { ok: true, status: 200, text: lines.sort().join('\r\n') }
 }
 
 /**
@@ -214,14 +218,21 @@ export async function stageAutofill(
       // The detector's own warning: the sample sign-in checked against the stand-in range answer
       // (`previewRangeAnswer`, through the preview's `net.fetch`). The vault is locked first, so
       // the sign-in counts as unsaved and warns every time the state is reached (a saved login
-      // would remember having warned, and the next reach would show nothing).
+      // would remember having warned, and the next reach would show nothing). The tab is taken
+      // to the stand-in page this host can picture first, so the warning rises over the page's
+      // picture as it does on a device (a site's frame cannot be read; see `overlay.snapshot`).
       browser.passwords.lock()
+      const signedInAt = `${PREVIEW_SAMPLE_ORIGIN}/account`
+      if (!tab?.url.startsWith(PREVIEW_SAMPLE_ORIGIN)) {
+        await cmd('tab.navigate', { tabId, input: signedInAt })
+        await new Promise((resolve) => setTimeout(resolve, SAMPLE_PAGE_SETTLE_MS))
+      }
       await browser.passwords.leaks.check({
         tabId,
-        origin,
-        url: `${origin}/login`,
+        origin: PREVIEW_SAMPLE_ORIGIN,
+        url: signedInAt,
         username: 'ada@example.com',
-        password: BREACHED_PASSWORD
+        password: PREVIEW_BREACHED_PASSWORD
       })
       return false
     }
@@ -232,6 +243,17 @@ export async function stageAutofill(
       await openOverlay('passwords', tabId)
       return false
     }
+    case 'safety-check':
+      // Safety check's Passwords row over a real Password Checkup (ID-19): the vault open and
+      // holding logins the checkup finds breached (against the stand-in range answer), weak and
+      // reused, the checkup run to its end – the device keeps its counts – then Safety check
+      // run, and the Settings tab on its Privacy section, where the row reads them and offers
+      // Review.
+      await unlockAndSeed(browser, { note: true, checkup: true })
+      await runCheckupToEnd(browser)
+      await cmd('privacy.safetyCheck', undefined)
+      run('page.open', { id: 'settings', section: 'privacy' })
+      return true
     case 'manager-locked':
       // The vault as the preview starts it – locked, so the section shows its gate – which an
       // earlier state's unlock must not have undone.
@@ -276,7 +298,8 @@ export async function stageAutofill(
  * as its passphrase) and, unless `seed` is off, holding the sample entries the managers show.
  * With `logins`, two logins for that origin as well (one of them on its accounts subdomain), so
  * the login picker has rows and auto sign-in has no lone login to fill; with `note`, the sample
- * site's login carrying `SAMPLE_NOTE` (ID-34), for the manager's detail and edit views. Returns
+ * site's login carrying `SAMPLE_NOTE` (ID-34), for the manager's detail and edit views; with
+ * `checkup`, the logins a Password Checkup sorts into its three lists (`CHECKUP_LOGINS`). Returns
  * the first card's id for the card editor and whether the vault is behind a passphrase
  * (`?vault=none`): there, re-authentication asks for the passphrase in the chrome, and since
  * unlocking with it starts the grace period, that runs out here first – the staged states are
@@ -285,7 +308,12 @@ export async function stageAutofill(
  */
 async function unlockAndSeed(
   browser: Browser,
-  { seed = true, logins, note = false }: { seed?: boolean; logins?: string; note?: boolean } = {}
+  {
+    seed = true,
+    logins,
+    note = false,
+    checkup = false
+  }: { seed?: boolean; logins?: string; note?: boolean; checkup?: boolean } = {}
 ): Promise<{ cardId: string | null; passphraseVault: boolean }> {
   const passwords = browser.passwords
   let outcome = await passwords.unlock()
@@ -299,7 +327,7 @@ async function unlockAndSeed(
   if (outcome.status !== 'ok' || !seed) return { cardId: null, passphraseVault }
   const store = browser.passwords.store
   if (logins && store.findForOrigin(logins).length === 0) {
-    store.add({ url: logins, username: 'ada@example.com', password: BREACHED_PASSWORD })
+    store.add({ url: logins, username: 'ada@example.com', password: PREVIEW_BREACHED_PASSWORD })
     const accounts = new URL(logins)
     accounts.hostname = `accounts.${accounts.hostname.replace(/^www\./, '')}`
     store.add({ url: accounts.origin, username: 'ada.lovelace', password: 'staple-battery' })
@@ -312,11 +340,17 @@ async function unlockAndSeed(
       store.add({
         url: `${ORIGIN}/login`,
         username: 'ada@example.com',
-        password: BREACHED_PASSWORD,
+        password: PREVIEW_BREACHED_PASSWORD,
         notes: SAMPLE_NOTE
       })
     } else if (existing.notes !== SAMPLE_NOTE) {
       store.update(existing.id, { notes: SAMPLE_NOTE })
+    }
+  }
+  if (checkup) {
+    for (const login of CHECKUP_LOGINS) {
+      if (!store.findForOrigin(login.url).some((c) => c.username === login.username))
+        store.add(login)
     }
   }
   const autofill = browser.autofill

@@ -293,6 +293,11 @@ describe('the checkup summary', () => {
       checkedAt: 1_000
     })
     expect(bad.summary).toBe('2 compromised passwords found; change them now')
+    // One reads as one.
+    expect(
+      composeSafetyCheck(input({ checkupSummary: { ...summary, compromised: 1 } })).passwords
+        .summary
+    ).toBe('1 compromised password found; change it now')
 
     const soft = composeSafetyCheck(
       input({ checkupSummary: { ...summary, compromised: 0 } })

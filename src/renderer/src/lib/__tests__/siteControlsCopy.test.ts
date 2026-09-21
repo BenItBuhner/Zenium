@@ -360,7 +360,7 @@ describe('Safety check card', () => {
       result({
         passwords: {
           state: 'warning',
-          summary: '1 compromised password found; change them now',
+          summary: '1 compromised password found; change it now',
           compromised: 1,
           weak: 0,
           reused: 0,
@@ -371,7 +371,7 @@ describe('Safety check card', () => {
       { ...state, passwords: { locked: true, count: 4 } } as unknown as UIState
     ).find((r) => r.id === 'passwords')
     expect(locked?.action).toBeNull()
-    expect(locked?.summary.startsWith('1 compromised password found; change them now · ')).toBe(
+    expect(locked?.summary.startsWith('1 compromised password found; change it now · ')).toBe(
       true
     )
   })
