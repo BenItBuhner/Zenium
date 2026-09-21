@@ -6,8 +6,7 @@ import type {
   ContainerIcon as ContainerIconName,
   ResourceGauge,
   SearchEngine,
-  Space,
-  SyncScope
+  Space
 } from '@shared/types'
 import {
   APP_ICON_DESKTOP,
@@ -22,7 +21,6 @@ import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
 import { searchTemplateProblem } from '@shared/search'
 import { inputToUrl } from '@shared/url'
-import { cmd } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
@@ -863,97 +861,6 @@ export function ResourceMeter({
       {note && (
         <span className="zen-settings-description zen-settings-description-full">{note}</span>
       )}
-    </div>
-  )
-}
-
-/**
- * Sync › Set up sync (§9.12): the folder a cloud drive keeps in sync, chosen through the host's
- * picker; the passphrase, typed twice (the second field marked while the two differ); this
- * device's name; the primary button held until a folder is chosen and the passphrases agree at
- * eight characters or more. `sync.setup` runs with the scope the settings already hold.
- */
-export function SyncSetupForm({
-  deviceName: initialDeviceName,
-  scope,
-  close
-}: {
-  deviceName: string
-  scope: SyncScope
-  close: () => void
-}): JSX.Element {
-  const [folder, setFolder] = useState<string | null>(null)
-  const [passphrase, setPassphrase] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [deviceName, setDeviceName] = useState(initialDeviceName)
-  const [busy, setBusy] = useState(false)
-  const mismatch = confirm.length > 0 && confirm !== passphrase
-  const ready =
-    Boolean(folder) && passphrase.length >= 8 && confirm === passphrase && deviceName.trim() !== ''
-  return (
-    <div className="zen-settings-form">
-      <div className="zen-settings-field-block">
-        <span className="zen-settings-label">Sync folder</span>
-        <div className="zen-settings-picker-row">
-          <span className="zen-settings-picker-value" title={folder ?? undefined}>
-            {folder ?? 'Choose a folder that your cloud drive keeps in sync'}
-          </span>
-          <button
-            type="button"
-            className="zen-v2-button"
-            onClick={() => void cmd('sync.chooseFolder', undefined).then((f) => f && setFolder(f))}
-          >
-            Choose…
-          </button>
-        </div>
-      </div>
-      <Field
-        id="sync-passphrase"
-        label="Passphrase"
-        description="Use the same passphrase on every device. It is never stored in the folder and cannot be recovered – without it the synced data is unreadable."
-      >
-        <input
-          id="sync-passphrase"
-          className="zen-settings-input zen-v2-field"
-          type="password"
-          autoComplete="new-password"
-          placeholder="At least 8 characters"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.target.value)}
-        />
-      </Field>
-      <Field id="sync-confirm" label="Confirm passphrase">
-        <input
-          id="sync-confirm"
-          className="zen-settings-input zen-v2-field"
-          type="password"
-          autoComplete="new-password"
-          aria-invalid={mismatch || undefined}
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-        />
-        {mismatch && <ValidationMessage message="The passphrases differ" />}
-      </Field>
-      <Field id="sync-device" label="This device">
-        <input
-          id="sync-device"
-          className="zen-settings-input zen-v2-field"
-          value={deviceName}
-          onChange={(e) => setDeviceName(e.target.value)}
-        />
-      </Field>
-      <SheetActions
-        action="Start syncing"
-        disabled={!ready || busy}
-        onCancel={close}
-        onAction={() => {
-          if (!folder) return
-          setBusy(true)
-          void cmd('sync.setup', { folder, passphrase, deviceName: deviceName.trim(), scope })
-            .then(() => close())
-            .finally(() => setBusy(false))
-        }}
-      />
     </div>
   )
 }

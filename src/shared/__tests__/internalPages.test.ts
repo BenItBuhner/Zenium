@@ -272,13 +272,13 @@ describe('the landing list', () => {
     expect(runs[2]).toEqual(['about'])
   })
 
-  it('holds the Sync category off the phone landing until its builder lands (ID-08 UI PR)', () => {
+  it('lists Sync on the phone landing behind the capability, at the head of Zen’s second run (ID-08)', () => {
     const phone = availableSections(page, ALL, 'phone').map((s) => s.id)
-    expect(phone).not.toContain('sync')
+    expect(phone).toContain('sync')
     const runs = landingRuns(page, availableSections(page, ALL, 'phone')).map((run) =>
       run.map((s) => s.id)
     )
-    expect(runs[1]).toEqual(['import', 'accessibility', 'updates'])
+    expect(runs[1]).toEqual(['sync', 'import', 'accessibility', 'updates'])
   })
 
   it('keeps a break when the section it precedes is missing and drops a run left empty', () => {

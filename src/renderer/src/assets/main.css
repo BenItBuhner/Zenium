@@ -6552,6 +6552,41 @@
   }
 }
 /*
+ * The message row (§9.33's anatomy in §1's status ink only; pr-261): the row carries `data-tone`
+ * and its status glyph and its description take the state's ink THROUGH the row – the label
+ * stays in the text's, the row keeps no fill and no border of its own, and a consumer sets the
+ * one attribute (`V2Row tone` on an extension surface; `SettingsRow tone` on the Settings page
+ * of either host, whose own text classes read the same attribute in the Settings block below).
+ * The glyph leads
+ * (`.zen-v2-row-lead`, the extension surfaces' anatomy) only in a list where every row carries
+ * one; a status row that stands alone – Sync's folder-lost row – trails it (`.zen-v2-row-trail`,
+ * below) before any trailing button, so the list keeps one label edge (§9.33, §10.4's mixing
+ * rule). The tokens are the toast's and the field message's; no per-host colour.
+ */
+.zen-v2-row[data-tone='danger'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='danger'] .zen-v2-row-trail,
+.zen-v2-row[data-tone='danger'] .zen-v2-description {
+  color: var(--v2-danger);
+}
+.zen-v2-row[data-tone='warn'] .zen-v2-row-lead,
+.zen-v2-row[data-tone='warn'] .zen-v2-row-trail,
+.zen-v2-row[data-tone='warn'] .zen-v2-description {
+  color: var(--v2-warn);
+}
+/*
+ * The trailing status glyph (§9.33): 16 on both platforms at the size's stroke (§9.3 – a
+ * trailing indicator, not the 20 lead of a phone row), centred on the row like anything that
+ * trails the text (§9.18), in the deemphasised ink until the row's tone above inks it; the slot
+ * is per-row and stays empty when there is nothing to tell.
+ */
+.zen-v2-row-trail {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+/*
  * The selected row (§9.6): a picked item – the current option in a picker sheet's radio rows, a
  * row in a selection mode (`aria-selected`) – takes `--v2-selected`, the accent at 12% / 16%,
  * and keeps it under the pointer: never `--v2-fill` (the press and hover) and never the text
@@ -7361,11 +7396,27 @@
   display: block;
   -webkit-line-clamp: none;
 }
-/* A description that reports a status (a load error, a retirement notice): §1 status ink, text only. */
-.zen-settings-description[data-tone='warn'] {
+/*
+ * A description that reports a status (a load error, a retirement notice, the folder-lost
+ * sentence): §1 status ink, text only, read off the row's one `data-tone` – the primitive's
+ * attribute above – not off the span.
+ */
+.zen-settings-row[data-tone='warn'] .zen-settings-description {
   color: var(--v2-warn);
 }
-.zen-settings-description[data-tone='danger'] {
+.zen-settings-row[data-tone='danger'] .zen-settings-description {
+  color: var(--v2-danger);
+}
+/*
+ * The trailing status glyph of the same row (§9.33: a lone status row trails its 16 glyph, never
+ * leading in a group whose other rows have none): the same ink through the same attribute, so a
+ * message row sets its tone once – the phone's slot is the settings page's
+ * `.zen-settings-trailing`, which the primitive's `.zen-v2-row-trail` rule does not reach.
+ */
+.zen-settings-row[data-tone='warn'] .zen-settings-trailing > .zen-settings-trailing-glyph {
+  color: var(--v2-warn);
+}
+.zen-settings-row[data-tone='danger'] .zen-settings-trailing > .zen-settings-trailing-glyph {
   color: var(--v2-danger);
 }
 /* A sheet whose description is a load error (an extension's details, §9.23): the same ink. */
@@ -7501,8 +7552,12 @@
 .zen-settings-radio-list > .zen-settings-label {
   margin-bottom: 4px;
 }
-/* Radio rows in a form or a sheet run edge to edge like the page's rows (§9.25). */
-.zen-settings-form .zen-settings-radio-row {
+/*
+ * Radio and checkbox rows in a form or a sheet run edge to edge like the page's rows (§9.25): the
+ * row's own 16 is the sheet's one gutter, so its box sits where the title block's text starts.
+ */
+.zen-settings-form .zen-settings-radio-row,
+.zen-settings-form .zen-v2-check-row {
   margin: 0 -16px;
   width: calc(100% + 32px);
 }
