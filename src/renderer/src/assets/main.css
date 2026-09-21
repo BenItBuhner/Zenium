@@ -308,9 +308,21 @@
   --v2-icon: 20px;
   --v2-icon-stroke: 1.75;
 }
+/*
+ * Tablets too (TABLET-01): a finger on a 600 dp+ window. The rows, controls and checkboxes of its
+ * sheets, menus and panels take the phone's touch numbers, rows growing with the system font size
+ * as the phone's do (A11Y-05) – the menu sheet on the tablet is the phone's chassis – and the
+ * icon button §9.3's tablet box: 40 × 40 with the 20 glyph.
+ */
 :root[data-form-factor='tablet'] {
+  --v2-row: calc(var(--v2-line-body-box) + 24px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 24px);
+  --v2-control: 40px;
+  --v2-checkbox: 20px;
+  --v2-menu-row: calc(var(--v2-line-body-box) + 24px);
   --v2-icon-button: 40px;
   --v2-icon: 20px;
+  --v2-icon-stroke: 1.75;
 }
 /*
  * Two token families, never mixed (§9.29). A window surface – toolbars, the URL pill and its
@@ -6213,6 +6225,233 @@
   font-size: 12px;
 }
 
+/*
+ * The tablet layout (TABLET-01 / 02 / 06; `components/tablet/*`), to v2 §9.36: the desktop's
+ * window – Zen's vertical sidebar as the tab surface, a toolbar row above the page – at the
+ * touch sizes of v2 §9.3. Unlayered like the coarse rules above so they beat Tailwind's
+ * utilities, and on the tablet root so they beat the coarse rules where the two meet (the 32
+ * icon button, the 42 row, the always-full close). The vocabulary is the desktop's: only the
+ * boxes grow. Everything here is scoped to the tablet root and the tablet shell's own classes,
+ * so the desktop and the phone read none of it.
+ */
+/*
+ * The toolbar row: §9.3's tablet icon button (40 × 40, 20 glyph, radius 8) in flow at a 4 px
+ * gap – a 44 pitch, no overlap; the overlap is the phone band's compromise for the pill's room,
+ * and a tablet has the room. The row stands 8 from the edge, so the leading sidebar toggle's
+ * box (8 → 48) centres on 28, the rail's axis: the column reads toggle, space, tabs.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar [data-zen-nav-row] {
+  gap: 4px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button {
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  border-radius: 8px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-toolbar-button > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+}
+/*
+ * The address pill in the row: as tall as the row's buttons (40), radius 12, the address at the
+ * phone pill's 14 px; its chips – the site glyph, the star, the blocked count – on 32 boxes with
+ * the row's 20 glyph (the §9.29 sidebar-pill tiering keeps deciding which chips are in it).
+ */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill {
+  height: var(--v2-icon-button);
+  margin: 0 4px;
+  padding: 0 12px;
+  gap: 6px;
+  border-radius: 12px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill > button > span {
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill-label {
+  font-size: 13px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill [data-pill-chip] {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 8px;
+  margin: 0;
+}
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill [data-pill-chip] > svg,
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill [data-pill-chip] > span > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+}
+/* The hover-revealed extras (Copy, Boost) have no hover under a finger: a tap opens the field. */
+:root[data-form-factor='tablet'] .zen-tablet-toolbar .zen-pill .zen-pill-extra {
+  display: none;
+}
+
+/*
+ * The sidebar (§9.36): 240 wide, 44 rows on a 46 pitch, the 20 favicon, the row's text at 14
+ * (§4's Android menu size). A sleeping tab is told by ink alone – favicon and title at the
+ * deemphasised 69%, the desktop's `data-discarded` rule, Firefox's pending tab – never by the
+ * moon: the row's own tap wakes it, so a glyph for the state is a button that does nothing the
+ * row does not, and it cost the title 44 px of a 240 row. The close: a 44 box with a 16 X at the
+ * row's trailing edge on every row – Zen's hover-only close has no touch form, and Chrome's and
+ * Firefox's tablet strips show one on every tab – quieted by its ink, 69% on the inactive rows,
+ * full on the active one and under a pointer's hover. The row's other state buttons – frozen,
+ * slowed, audio, the pinned reset – are indicators first and keep the 32 box the coarse rule
+ * gives them.
+ */
+:root[data-form-factor='tablet'] .zen-tab {
+  height: var(--v2-row, 44px);
+  min-height: 44px;
+  border-radius: 12px;
+  padding-right: 2px;
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-tab .zen-tab-sleeping {
+  display: none;
+}
+:root[data-form-factor='tablet'] .zen-tab .zen-tab-close {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  opacity: 0.69;
+}
+:root[data-form-factor='tablet'] .zen-tab .zen-tab-close > svg {
+  width: 16px;
+  height: 16px;
+}
+:root[data-form-factor='tablet'] .zen-tab[data-active='true'] .zen-tab-close {
+  opacity: 1;
+}
+@media (hover: hover) {
+  :root[data-form-factor='tablet'] .zen-tab:hover .zen-tab-close {
+    opacity: 1;
+  }
+}
+/*
+ * Narrower than the width at which the title keeps 100 px (the sidebar width setting turned
+ * down; 240 gives it 139 with the moon gone) only the active row shows its close, as Chrome's
+ * and Safari's strips hide the inactive closes when narrow; the other rows close from their
+ * long-press menu and from the overview. The sidebar column is the query's container: the row
+ * is 10 + 20 + 9 in from its start and 44 + 2 from its end, so the title has 100 px at a 201 px
+ * column.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-sidebar > aside,
+:root[data-form-factor='tablet'] .zen-tablet-drawer-panel > aside {
+  container: zen-tablet-sidebar / inline-size;
+}
+@container zen-tablet-sidebar (max-width: 200px) {
+  .zen-tab:not([data-active='true']) .zen-tab-close {
+    display: none;
+  }
+}
+/*
+ * The first row 8 under the toolbar in every form (§9.36), not 22: the separator Zen draws
+ * between the pinned and the regular tabs stands first in a space with nothing pinned, and its
+ * 13 px would be dead room at the top of the list; it draws only under a pinned section here.
+ * The "Clear unpinned tabs" brush on it is a hover affordance with no hover under a finger (the
+ * coarse rule shows it at .7 on the phone-sized desktop layout); on the tablet the action is the
+ * space menu's – a long press on the space – and the brush stays out of the list's rhythm.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-sidebar .group\/sep:first-child,
+:root[data-form-factor='tablet'] .zen-tablet-drawer .group\/sep:first-child {
+  display: none;
+}
+:root[data-form-factor='tablet'] .zen-tablet-sidebar .group\/sep .zen-toolbar-button,
+:root[data-form-factor='tablet'] .zen-tablet-drawer .group\/sep .zen-toolbar-button {
+  display: none;
+}
+/*
+ * The rail (§9.36): 56 wide – Zen's 48 + 6 × 2 – its items 44 at a 6 inset, centred on 28 under
+ * the toolbar's toggle, on the rows' 46 pitch; a folder's rows lose their indent, which has no
+ * title to indent (the desktop's rail keeps its own habit).
+ */
+:root[data-form-factor='tablet']
+  .zen-tablet[data-sidebar='rail']
+  .zen-tablet-sidebar
+  [data-tab-scroller] {
+  padding-inline: 6px;
+}
+:root[data-form-factor='tablet'] .zen-tab.justify-center {
+  margin-left: 0;
+  padding: 0;
+}
+/* Section rows with a toggle – a space's pinned header – meet the 40 px target. */
+:root[data-form-factor='tablet'] .zen-tablet-sidebar button[data-strip-item^='header:'],
+:root[data-form-factor='tablet'] .zen-tablet-drawer button[data-strip-item^='header:'] {
+  height: 40px;
+  font-size: 13px;
+}
+/* The sidebar's footer buttons (new space, the palette) at the tablet icon button. */
+:root[data-form-factor='tablet']
+  .zen-tablet-sidebar
+  .zen-toolbar-button:not(.zen-tab .zen-toolbar-button),
+:root[data-form-factor='tablet']
+  .zen-tablet-drawer
+  .zen-toolbar-button:not(.zen-tab .zen-toolbar-button) {
+  width: var(--v2-icon-button);
+  height: var(--v2-icon-button);
+  border-radius: 8px;
+}
+
+/*
+ * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
+ * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
+ * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
+ * own width sizes the panel; the scrim over the page is the chassis scrim at the drawer's
+ * progress. Both are set per frame from `tabletDrawerStore`.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-drawer-panel {
+  width: max-content;
+  padding-top: 4px;
+}
+:root[data-form-factor='tablet'] .zen-tablet-drawer-panel > aside {
+  height: 100%;
+}
+/*
+ * The docked sidebar's list keeps its vertical pan; the sideways swipe is the rail toggle
+ * (`useSidebarSwipe`), and on the drawer the swipe shut. The rule sits on the list's scroller
+ * as well as on the column: Blink reads a touch's allowed pans from the touched element up to
+ * the nearest element that scrolls, and a scroller re-enables the pans it implements, so a
+ * `pan-y` on the column above the `[data-tab-scroller]` never reaches a finger on a row – its
+ * sideways pan would start a scroll (nothing scrolls that way; the pointer is cancelled all the
+ * same) and the swipe would never see a move.
+ */
+:root[data-form-factor='tablet'] .zen-tablet-sidebar,
+:root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
+:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+  touch-action: pan-y;
+}
+
+/*
+ * Sheets that stay sheets on the tablet – prompts, pickers, the site-information sheet where it
+ * is one – dock at the bottom centred at §9.20's 480 (§9.36), over the chassis's 520.
+ */
+:root[data-form-factor='tablet'] .zen-sheet {
+  max-width: 480px;
+}
+
+/*
+ * The tablet's menus (`components/tablet/TabletMenu.tsx`; §9.36, §9.20): the app menu and the
+ * context menus as popovers anchored to their button or touch point – a bottom sheet at the foot
+ * of a 1280 window is a phone pattern whose origin is a reach away from the ⋯ that opened it –
+ * drawn in the shared `.zen-v2-menu` vocabulary above (shell pass 7(b): the `.zen-v2-panel`
+ * chrome, 6 of padding, the rows at `--v2-menu-row`, the glyph slot at `--v2-icon`, the
+ * hairline separators 4 above and below, the cursor fill), which the tablet root's tokens
+ * already set to touch – 44 rows, 20 glyphs at stroke 1.75 – so the pose states only what
+ * §9.36 pins differently from a mouse's menu: Zen's 332 as the one width (a mouse's is intrinsic
+ * within 232–332) and the scroll under the 60% cap kept inside the panel (a finger's overscroll
+ * must not reach the page). The scrollbar is the chassis's coarse-pointer rule (§9.20). A
+ * submenu is a second panel flush beside its parent, its first row level with the row that
+ * opened it, which keeps its lit fill while the child is up (`aria-expanded`, the shared rule).
+ */
+:root[data-form-factor='tablet'] .zen-v2-menu {
+  width: 332px;
+  min-width: 332px;
+  max-width: 332px;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
 @layer components {
   /*
    * The phone bar's controls (`BarButton`). One with nothing to do right now is drawn dimmed
@@ -6701,6 +6940,63 @@
    padding). */
 .zen-v2-icon-button.zen-print-page-step {
   border-radius: 9999px;
+}
+
+/*
+ * The shared v2 link (§9.10; the first surface to land it was the extension details' Source
+ * row, #68, whose stylesheet held it in the accent with no underline at rest until the #294
+ * ruling moved it here): an inline link in chrome text is text – the surrounding size, weight
+ * and ink, never larger – underlined at 40 % of its own ink with a 2 px offset, and swaps to
+ * its family's accent on hover and focus-visible with the underline following. Zen sets
+ * `--link-color` to its foreground and `--link-color-hover` to its primary, so its links read
+ * as text with an underline, not as blue; visited is not distinguished. A link that leaves the
+ * app trails the external-link glyph (16, 20 on a phone: `--v2-icon`) 4 after its last word; a
+ * link that navigates inside the app carries none. The rule sets no `display`: a link in a
+ * sentence stays inline and wraps as the sentence does; one that carries a glyph is an
+ * inline-flex (the glyph centred on the line, never orphaned at a line's end), and a row's link
+ * is a flex item like any other. A link that stands alone on its line (the login detail's site
+ * under its title) carries `data-touch`: on a phone its hit area grows to the row height around
+ * the unchanged text – never in running prose, where the box would cover its neighbours. The
+ * focus ring is the shared `zen-v2-` rule above. One unlayered rule, tokens only (§9.34): an
+ * `<a>` or a `<button>` on any surface takes the class and adds nothing; no stylesheet restates
+ * the ink, the underline or a link under another name.
+ */
+.zen-v2-link {
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.zen-v2-link:has(> svg) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zen-v2-link > svg {
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+}
+@media (hover: hover) {
+  .zen-v2-link:hover {
+    color: var(--v2-control-accent, var(--v2-accent));
+    text-decoration-color: currentColor;
+  }
+}
+.zen-v2-link:focus-visible {
+  color: var(--v2-control-accent, var(--v2-accent));
+  text-decoration-color: currentColor;
+}
+.zen-v2-link[data-touch] {
+  position: relative;
+}
+:root[data-form-factor='phone'] .zen-v2-link[data-touch]::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--v2-row) - 100%) / -2) 0;
 }
 
 /*

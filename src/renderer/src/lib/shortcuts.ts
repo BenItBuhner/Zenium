@@ -2,7 +2,7 @@ import type { ShortcutAction, UIState } from '@shared/types'
 import { shortcutHint, withShortcutHint } from '@shared/shortcuts'
 import { run } from './api'
 import { mediaHubFolded } from './mediaHub'
-import { browserStore } from './ui'
+import { browserStore, menuAnchor } from './ui'
 
 /** `Label (Ctrl+R)` from the active key table: tooltips never quote a chord the user rebound. */
 export function hint(label: string, state: UIState, action: ShortcutAction): string {
@@ -41,5 +41,7 @@ export function openAppMenu(button: HTMLElement | null, keyboard = false): void 
     rect && rect.width > 0
       ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
       : undefined
+  // The tablet's popover menu hangs from the button's box, not from the point the core echoes.
+  menuAnchor.element = anchor ? button : null
   run('app.menu', { anchor, keyboard, mediaHubFolded: mediaHubFolded() })
 }

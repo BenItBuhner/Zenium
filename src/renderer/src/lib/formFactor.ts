@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { classifyViewport, type ViewportMetrics } from '@shared/formFactor'
+import { classifyViewport, touchLayout, type ViewportMetrics } from '@shared/formFactor'
 import type { FormFactor, WindowChrome } from '@shared/types'
 import { run } from './api'
 import { browserStore } from './browserStore'
@@ -13,7 +13,8 @@ export type { FormFactor }
  * window on a laptop gets the phone one, and a phone stays a phone whichever way it is held.
  *
  *  - `phone`   – bottom bar, sidebar in a drawer, sheets instead of popovers.
- *  - `tablet`  – a touch screen with room for the desktop layout, with touch-sized controls.
+ *  - `tablet`  – a touch screen 600 px or more on its short side: the vertical sidebar as the tab
+ *                surface, sized for a finger, under a toolbar row of its own (`TabletShell`).
  *  - `desktop` – everything else.
  *
  * Toolbar-only popup windows (`window.open` with a size) are the exception: a page-sized popup
@@ -67,10 +68,33 @@ export function chromeSurface(): string | null {
   return new URLSearchParams(location.search).get('surface')
 }
 
+const FORM_FACTORS: readonly FormFactor[] = ['phone', 'tablet', 'desktop']
+
+/**
+ * A layout forced through the chrome document's URL (`index.html?formFactor=tablet`): the
+ * preview host and the screenshot scripts show a layout at any window size and with any pointer,
+ * so a tablet's chrome can be looked at in a desktop browser. A real host never passes it.
+ */
+export function forcedFormFactor(search: string | null = chromeSearch()): FormFactor | null {
+  if (!search) return null
+  const value = new URLSearchParams(search).get('formFactor')
+  return (FORM_FACTORS as readonly string[]).includes(value ?? '') ? (value as FormFactor) : null
+}
+
+function chromeSearch(): string | null {
+  return typeof location === 'undefined' ? null : location.search
+}
+
 function compute(): ViewportInfo {
   if (!hasViewport()) return NO_WINDOW
   const width = window.innerWidth
   const height = window.innerHeight
+  const forced = forcedFormFactor()
+  if (forced) {
+    // The pointer follows the forced layout: a phone or tablet is a finger, a desktop a mouse.
+    const touch = forced !== 'desktop'
+    return { formFactor: forced, width, height, coarse: touch, hover: !touch }
+  }
   const hover = window.matchMedia('(hover: hover)').matches
   // Android's WebView reports `pointer: fine` on plain touch screens; a touch digitiser without
   // hover is a finger. A mouse (DeX, tablet trackpad) brings hover back and gets desktop sizing.
@@ -130,4 +154,13 @@ export function useFormFactorReport(formFactor: FormFactor): void {
 
 export function isPhone(): boolean {
   return viewportStore.get().formFactor === 'phone'
+}
+
+/**
+ * The layouts a finger drives – the phone's and the tablet's (`touchLayout`): they share the
+ * chrome the desktop has no use for (the overview, the docked read-aloud player, the private
+ * theme on the window while a private tab is in view), while each keeps its own composition.
+ */
+export function isTouchLayout(formFactor: FormFactor = viewportStore.get().formFactor): boolean {
+  return touchLayout(formFactor)
 }
