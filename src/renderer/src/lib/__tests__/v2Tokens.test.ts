@@ -37,6 +37,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the
   // lock, a paused state) in the deemphasised window ink.
   ['.zen-phone-pill-docked {', '.zen-pill-well {'],
+  // The tablet layout (components/tablet/*, TABLET-01 / 02 / 06): the toolbar row's icon buttons
+  // and pill, the sidebar's rows and close buttons and the drawer at §9.3's tablet sizes, read
+  // from the scale tokens the tablet root sets. Unlayered, right before the phone bar's layer.
+  [
+    ' * The tablet layout (TABLET-01 / 02 / 06',
+    "@layer components {\n  /*\n   * The phone bar's controls"
+  ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
@@ -260,6 +267,7 @@ const lightBlockStart = css.lastIndexOf(':root {', lightStart)
 const light = declared(':root', lightBlockStart)
 const dark = declared(":root[data-theme='dark']", lightStart)
 const phone = declared(":root[data-form-factor='phone']", lightStart)
+const tablet = declared(":root[data-form-factor='tablet']", lightStart)
 
 const SURFACE = [
   'page',
@@ -373,6 +381,16 @@ describe('design language v2 tokens', () => {
       expect(SURFACE, `${name} must not change per form factor`).not.toContain(name)
   })
 
+  // TABLET-01: the tablet root scales the same names, and only those – the touch rows and
+  // controls with §9.3's 40 / 20 icon button – so a tablet never forks the vocabulary either.
+  it('scales the tablet the same way, at the tablet icon button', () => {
+    expect([...tablet].sort()).toEqual([...phone].sort())
+    const tabletBlock = block(":root[data-form-factor='tablet']", lightStart)
+    expect(tabletBlock).toMatch(/--v2-icon-button: 40px;/)
+    expect(tabletBlock).toMatch(/--v2-icon: 20px;/)
+    expect(tabletBlock).toMatch(/--v2-row: calc\(var\(--v2-line-body-box\) \+ 24px\);/)
+  })
+
   // §9.3, one stroke per toolbar row: the constant the toolbar row's and the app title bar's
   // glyphs pass as Lucide's `strokeWidth` is the desktop value of the glyph-stroke token, so
   // the row and the v2 glyphs drawn from the token cannot drift apart (#245 chassis (d)).
@@ -404,14 +422,14 @@ describe('design language v2 tokens', () => {
     // `-box` line tokens read the four line tokens (A11Y-05: what a line box measures at the
     // text zoom, four reads), the rows derive from the line boxes so they grow with the system
     // font size (§9.2, A11Y-05: `--v2-row`, `--v2-row-two-line` and `--v2-menu-row` in the base
-    // block and again in the phone block, four reads each), the tab card's title row
-    // `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05: once at
-    // rest, once as the two-line row from scale 1.5), the group card's title row
+    // block and again in the phone block and the tablet block, four reads each), the tab card's
+    // title row `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05:
+    // once at rest, once as the two-line row from scale 1.5), the group card's title row
     // `--zen-overview-group-header` from the same line box (one line at every size), and the two
     // §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      9 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
+      9 + 4 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
     expect(inside).toMatch(

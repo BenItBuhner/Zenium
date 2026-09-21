@@ -32,6 +32,11 @@
 #   DEMO_INSTRUMENT_FLAGS – extra flags for `am instrument` (`--no-hidden-api-checks` lets a
 #                 driver reach a @TestApi such as UiAutomation's input-filter injection, which
 #                 hands a swipe to TalkBack the way a finger's does)
+#   DEMO_DISPLAY – the display the chrome is laid out on, `<width>x<height>@<density>` for
+#                 `wm size` and `wm density`; `720x1600@280` by default (a Pixel 6's 411 CSS px
+#                 wide phone layout at 2.3x fewer pixels, see below). The tablet demo on the
+#                 pixel_tablet profile passes `1280x800@160`: the 1280 x 800 dp tablet layout at
+#                 one px per dp, a quarter of that profile's native 2560 x 1600
 #   JANK_GATE   – `soft` (the default) or `hard`: how the harness's jank budget acts on a scene
 #                 over its budget (DemoHarness.measureFrames; the shared workflow's `jank-gate`
 #                 input). Passed to the instrumentation as the `jankGate` argument.
@@ -179,9 +184,12 @@ if [ -n "${WEBVIEW_APK:-}" ]; then
   adb shell dumpsys webviewupdate > "$out/webviewupdate.txt" 2>&1 || true
 fi
 # The same 411 CSS px wide layout a Pixel 6 gets, at 2.3x fewer pixels: the emulator renders,
-# snapshots and records through a software GPU, and every pixel costs.
-adb shell wm size 720x1600
-adb shell wm density 280
+# snapshots and records through a software GPU, and every pixel costs. A demo of another layout
+# (the tablet's) names its own display through DEMO_DISPLAY.
+display=${DEMO_DISPLAY:-720x1600@280}
+echo "display: ${display%@*} at density ${display#*@}"
+adb shell wm size "${display%@*}"
+adb shell wm density "${display#*@}"
 # No "isn't responding" dialogs over the browser (the launcher re-inflating at the new density
 # is slow enough to trigger one); restart it cleanly instead.
 adb shell settings put global hide_error_dialogs 1 || true

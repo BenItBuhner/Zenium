@@ -10,7 +10,7 @@ import {
   type RGB,
   type ResolvedTheme
 } from '@shared/theme'
-import type { FormFactor } from '@renderer/lib/formFactor'
+import { isTouchLayout, type FormFactor } from '@renderer/lib/formFactor'
 import { reducedMotion } from '@renderer/lib/motion/spring'
 import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
@@ -115,11 +115,12 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
   // The space's gradient at full strength, for surfaces that show it as a wallpaper (the new tab page).
   const wallpaper = useMemo(() => resolveWallpaper(space.theme, dark), [space.theme, dark])
 
-  // Phones only: on the desktop private browsing is a window, and the core gives it its theme.
-  const privateActive = usePrivateSurface(state) && formFactor === 'phone'
+  // The touch layouts only – the phone's and the tablet's, whose private tabs share the window
+  // with the others: on the desktop private browsing is a window, and the core gives it its theme.
+  const privateActive = usePrivateSurface(state) && isTouchLayout(formFactor)
   const target = privateActive ? PRIVATE_RESOLVED : resolved
-  // The blend is the phone's (§11 is the phone's motion); the desktop cuts to its theme.
-  const blends = formFactor === 'phone'
+  // The blend is the touch chassis's (§11 is its motion); the desktop cuts to its theme.
+  const blends = isTouchLayout(formFactor)
 
   // The theme as painted on the root last – where the next blend starts from; null before the
   // first paint.

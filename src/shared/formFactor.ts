@@ -25,13 +25,26 @@ export const PHONE_MAX_WIDTH = 600
  *
  * A touch screen that cannot hover is held in the hand: its class follows the shorter side of the
  * window, like Android's smallest-width qualifier, so a phone turned sideways keeps its bar and
- * overview and a tablet keeps the desktop layout in either orientation. A pointer that hovers (a
+ * overview and a tablet keeps its sidebar layout in either orientation. A pointer that hovers (a
  * mouse or trackpad: a laptop, a DeX desktop, a tablet with a keyboard) means a windowed desktop,
  * where only a window too narrow for the sidebar layout gets the phone one.
+ *
+ * The class follows the window, not the device: a tablet window narrowed in split screen to
+ * under 600 px on its short side is a phone for as long as it stays so, and a tablet again when
+ * it is widened back.
  */
 export function classifyViewport({ width, height, coarse, hover }: ViewportMetrics): FormFactor {
   const handheld = coarse && !hover
   const side = handheld ? Math.min(width, height) : width
   if (side < PHONE_MAX_WIDTH) return 'phone'
   return coarse ? 'tablet' : 'desktop'
+}
+
+/**
+ * The layouts a finger drives, the phone's and the tablet's: they share what the desktop has no
+ * use for (the docked read-aloud player, a menu's sheet, the tab overview) while each keeps its
+ * own composition. The desktop layout is the mouse's, DeX included.
+ */
+export function touchLayout(formFactor: FormFactor): boolean {
+  return formFactor !== 'desktop'
 }
