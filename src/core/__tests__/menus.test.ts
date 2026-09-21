@@ -42,6 +42,7 @@ import {
   SELECTION_TEXT_MAX,
   selectionUrl
 } from '../menus'
+import { HELP_URL, ISSUES_URL } from '../menuBar'
 import { serialiseMenu } from '../rendererMenus'
 
 /**
@@ -369,14 +370,16 @@ function appMenuFolded(h: Harness, win = h.win): string[] {
   return labels(h.shown())
 }
 
-/** The desktop app menu as it was before the phone variant existed. */
+/**
+ * The desktop app menu: Firefox's groups (design language v2 §6 "Menus") – the tabs and windows;
+ * the library; the page's actions; the app's – with the rest in submenus, so it stands on an
+ * 800 px window. Submenus flattened one level (`labels`); the More Tools and Help submenus are
+ * asserted whole below.
+ */
 const DESKTOP_APP_MENU = [
   'New Tab',
   'Search Tabs…',
-  'New Space…',
-  '-',
   'New Window',
-  'New Blank Window',
   'New Private Window',
   '-',
   'Bookmarks',
@@ -389,65 +392,181 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
   'History',
-  'Recently Closed',
+  'History > Show Full History',
+  'History > -',
+  'History > Recently Closed',
   'Downloads',
   'Passwords',
   'Add-ons and Themes',
   '-',
-  'Compact Mode',
-  'Change Theme…',
+  'Find in Page…',
   'Zoom',
   'Zoom > Zoom In',
   'Zoom > Zoom Out',
   'Zoom > Reset Zoom',
-  'Split View',
-  'Split View > Grid',
-  'Split View > Vertical',
-  'Split View > Horizontal',
-  'Split View > -',
-  'Split View > Unsplit View',
-  'Split View > New Empty Split View',
-  'Fullscreen',
-  '-',
-  'Find in Page…',
-  'Reader View',
+  'Zoom > -',
+  'Zoom > Fullscreen',
   'Print…',
   'Save Page As…',
-  'Take Screenshot',
-  'Capture Full Page',
+  'Reader View',
+  'More Tools',
+  'More Tools > New Space…',
+  'More Tools > New Blank Window',
+  'More Tools > -',
+  'More Tools > Compact Mode',
+  'More Tools > Split View',
+  'More Tools > Change Theme…',
+  'More Tools > -',
+  'More Tools > Take Screenshot',
+  'More Tools > Capture Full Page',
+  'More Tools > -',
+  'More Tools > Resources',
+  'More Tools > Developer Tools',
   '-',
-  'Resources',
-  'Resources > Memory 0 MB · CPU 0% · 0 live, 0 frozen',
-  'Resources > -',
-  'Resources > Free Up Memory Now',
-  'Resources > Freeze Other Tabs',
-  'Resources > Wake All Tabs',
-  'Resources > -',
-  'Resources > Resource Settings…',
-  'Keyboard Shortcuts',
   'Settings',
-  'Developer Tools',
-  '-',
-  'About Zenium 1.2.3',
+  'Help',
+  'Help > Zenium Help',
+  'Help > Keyboard Shortcuts',
+  'Help > -',
+  'Help > Report an Issue…',
+  'Help > -',
+  'Help > About Zenium 1.2.3',
   'Quit'
 ]
+
+/** The desktop menu's top level alone: Firefox's count, at most four separators (§6). */
+const DESKTOP_APP_MENU_TOP = DESKTOP_APP_MENU.filter((l) => !l.includes(' > '))
 
 const DESKTOP_ONLY = [
   'Search Tabs…',
-  'Keyboard Shortcuts',
-  'Compact Mode',
-  'Split View',
-  'Fullscreen',
+  'Help > Keyboard Shortcuts',
+  'More Tools > Compact Mode',
+  'More Tools > Split View',
+  'Zoom > Fullscreen',
   'Quit'
 ]
 
+/** The item labelled `label` anywhere in `items`, submenus included. */
+function deepItem(items: MenuItemTemplate[], label: string): MenuItemTemplate {
+  const found = allItems(items).find((i) => i.label === label)
+  if (!found) throw new Error(`no "${label}" in ${topLabels(items).join(', ')}`)
+  return found
+}
+
 describe('the app menu', () => {
-  it('is unchanged on the desktop', () => {
+  it("on the desktop has Firefox's groups: the tabs and windows, the library, the page's actions, the app's (§6)", () => {
     expect(appMenu(harness(DESKTOP))).toEqual(DESKTOP_APP_MENU)
+  })
+
+  it('stands on an 800 px window: about eighteen top-level rows and three separators, four with the Now Playing… row (§6)', () => {
+    const rows = (h: Harness): string[] => topLabels(h.shown()).filter((l) => l !== '-')
+    // The DESKTOP harness has no translate host and no speech engine: Firefox's eighteen.
+    const bare = harness(DESKTOP)
+    appMenu(bare)
+    expect(rows(bare)).toEqual(DESKTOP_APP_MENU_TOP.filter((l) => l !== '-'))
+    expect(rows(bare)).toHaveLength(18)
+    expect(separators(bare.shown())).toBe(3)
+    // A build with a translate host carries Translate Page… (the Linux build: 19), one with a
+    // speech engine Listen to This Page too: 20, "about eighteen", every row Title Case (§9.1).
+    const full = pageHarness({ ...DESKTOP, readAloud: true }, { translate: true, speech: true })
+    appMenu(full)
+    expect(rows(full)).toHaveLength(20)
+    expect(separators(full.shown())).toBe(3)
+    for (const row of rows(full)) expect(row).toMatch(/^[A-Z]/)
+    // With the media hub folded the Now Playing… row and its separator lead: four at most.
+    full.browser.state.media = [
+      { tabId: full.tabId, playing: true, title: 'Nocturne', session: true }
+    ]
+    appMenuFolded(full)
+    expect(rows(full)).toHaveLength(21)
+    expect(separators(full.shown())).toBe(4)
+  })
+
+  it('loses nothing the flat menu could do: every earlier row is a row or a submenu row now', () => {
+    const before = [
+      'New Tab',
+      'Search Tabs…',
+      'New Space…',
+      'New Window',
+      'New Blank Window',
+      'New Private Window',
+      'Bookmarks',
+      'History',
+      'Recently Closed',
+      'Downloads',
+      'Passwords',
+      'Add-ons and Themes',
+      'Compact Mode',
+      'Change Theme…',
+      'Zoom',
+      'Split View',
+      'Fullscreen',
+      'Find in Page…',
+      'Reader View',
+      'Print…',
+      'Save Page As…',
+      'Take Screenshot',
+      'Capture Full Page',
+      'Resources',
+      'Keyboard Shortcuts',
+      'Settings',
+      'Developer Tools',
+      'About Zenium 1.2.3',
+      'Quit'
+    ]
+    const h = harness(DESKTOP)
+    appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
+    for (const label of before) expect(everywhere).toContain(label)
+    // The History page is the submenu's first row and keeps its chord; the recently closed
+    // list follows under Chrome's header, greyed while nothing was closed (§9.17).
+    const history = item(h.shown(), 'History').submenu!
+    expect(history[0]).toMatchObject({ label: 'Show Full History', action: 'history.sidebar' })
+    expect(history.at(-1)).toMatchObject({ label: 'Recently Closed', enabled: false })
+    const closed = h.browser.tabs.createTab(
+      { url: 'https://closed.example/', active: false },
+      h.win
+    )
+    h.browser.tabs.closeTab(closed.id, false, h.win)
+    appMenu(h)
+    expect(labels(item(h.shown(), 'History').submenu!)).toEqual([
+      'Show Full History',
+      '-',
+      'Recently Closed',
+      'closed.example',
+      '-',
+      'Restore All',
+      'Clear List'
+    ])
+    expect(deepItem(h.shown(), 'closed.example').action).toBe('tab.reopenClosed')
   })
 
   it('gives a tablet the desktop menu', () => {
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(DESKTOP_APP_MENU)
+  })
+
+  it("on a tablet with page controls keeps Fullscreen with the window's toggles under More Tools, the zoom being the sheet", () => {
+    const menu = appMenu(harness(ANDROID, 'tablet'))
+    expect(menu).toContain('Zoom…')
+    expect(menu).not.toContain('Zoom > Fullscreen')
+    expect(menu).toContain('More Tools > Fullscreen')
+    expect(menu.indexOf('More Tools > Fullscreen')).toBe(
+      menu.indexOf('More Tools > Change Theme…') + 1
+    )
+  })
+
+  it("Help carries the menu bar's entries: Zenium Help and Report an Issue… open their pages, About closes it", () => {
+    const opened: string[] = []
+    const h = harness(DESKTOP)
+    h.browser.platform.shell.openExternal = (url: string): Promise<void> => {
+      opened.push(url)
+      return Promise.resolve()
+    }
+    appMenu(h)
+    deepItem(h.shown(), 'Zenium Help').click?.()
+    deepItem(h.shown(), 'Report an Issue…').click?.()
+    expect(opened).toEqual([HELP_URL, ISSUES_URL])
+    expect(deepItem(h.shown(), 'About Zenium 1.2.3').enabled).toBe(false)
   })
 
   describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
@@ -566,23 +685,24 @@ describe('the app menu', () => {
 
   it('keeps the desktop menu until the chrome reports a phone layout', () => {
     const h = harness(ANDROID)
-    expect(appMenu(h)).toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'phone' })
-    expect(appMenu(h)).not.toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).not.toContain('Help > Keyboard Shortcuts')
+    expect(appMenu(h)).not.toContain('Help')
   })
 
   it('opens Keyboard Shortcuts through page.open: the Settings overlay on its Shortcuts section on the desktop (a tablet with page tabs gets the tab)', () => {
     const desktop = pageHarness(DESKTOP)
     appMenu(desktop)
     desktop.sent.length = 0
-    desktop.click('Keyboard Shortcuts')
+    deepItem(desktop.shown(), 'Keyboard Shortcuts').click?.()
     expect(desktop.sent).toContain('overlay.open')
     expect(desktop.browser.tabs.activeTabFor(desktop.win)?.url).toBe(PAGE_URL)
 
     const tablet = pageHarness(ANDROID, { formFactor: 'tablet' })
     appMenu(tablet)
     tablet.sent.length = 0
-    tablet.click('Keyboard Shortcuts')
+    deepItem(tablet.shown(), 'Keyboard Shortcuts').click?.()
     expect(tablet.browser.tabs.activeTabFor(tablet.win)?.url).toBe('zen://settings/shortcuts')
     expect(tablet.sent).not.toContain('overlay.open')
   })
@@ -649,8 +769,22 @@ describe('the app menu', () => {
   })
 
   it('on a phone drops what only a desktop window can use', () => {
-    const menu = appMenu(harness(ANDROID, 'phone'))
+    const h = harness(ANDROID, 'phone')
+    const menu = appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
     for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
+    for (const label of [
+      'Search Tabs…',
+      'Keyboard Shortcuts',
+      'Compact Mode',
+      'Split View',
+      'Fullscreen',
+      'Quit',
+      // Chrome's phone menu is one flat list: the desktop's submenus are not folded into it.
+      'More Tools',
+      'Help'
+    ])
+      expect(everywhere).not.toContain(label)
     // The host has no windows, extensions, devtools or resource governor.
     for (const label of [
       'New Window',
@@ -660,7 +794,7 @@ describe('the app menu', () => {
       'Developer Tools',
       'Resources'
     ])
-      expect(menu).not.toContain(label)
+      expect(everywhere).not.toContain(label)
   })
 
   it('on a phone opens on the icon row and keeps the page and library items in their desktop order', () => {
@@ -894,7 +1028,7 @@ describe('the app menu', () => {
     const h = harness(ANDROID, 'phone')
     expect(appMenu(h)).not.toContain('Quit')
     h.browser.handleCommand(h.win, 'window.formFactor', { formFactor: 'tablet' })
-    expect(appMenu(h)).toContain('Keyboard Shortcuts')
+    expect(appMenu(h)).toContain('Help > Keyboard Shortcuts')
   })
 })
 
