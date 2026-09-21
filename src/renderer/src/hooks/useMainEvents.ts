@@ -177,7 +177,7 @@ export function useMainEvents(): void {
         toggleTabSearch()
       }),
       onEvent('mediahub.open', () => {
-        // The app menu's "Now playing…" row (§9.29): the hub's popover from the "⋯" button the
+        // The app menu's "Now Playing…" row (§9.29): the hub's popover from the "⋯" button the
         // row's menu hung from (`mediaHubAnchor`: the toolbar button, were it up – but the row
         // is the fold's). A menu command, not a press on the surface: the core focused the
         // chrome for it, so the page has no focus to get back and the popover takes the keyboard

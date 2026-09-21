@@ -33,7 +33,7 @@ export const APP_MENU_EVENT = 'zen-app-menu'
  * Chrome's and Firefox's do – or at the pointer when the button is not on screen. From the
  * keyboard the first item starts selected, so the arrow keys and Enter work at once. The request
  * says whether the media hub's toolbar button has folded (design language v2 §9.29): the core
- * builds the menu without the toolbar's width, and the "Now playing…" row is the folded state's.
+ * builds the menu without the toolbar's width, and the "Now Playing…" row is the folded state's.
  */
 export function openAppMenu(button: HTMLElement | null, keyboard = false): void {
   const rect = button?.getBoundingClientRect()

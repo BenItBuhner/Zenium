@@ -11,7 +11,7 @@ import { createStore } from '@renderer/lib/store'
  * share – the position carried forward, the times, the detail line and the track handlers are
  * `lib/media.ts`'s, the seek row's state `useMediaSeek`'s, as the phone's media sheet reads
  * them – and the hub's own open state. The players' order is `shared/mediaHub.ts`'s, so the app
- * menu's "Now playing…" row the core builds where the toolbar button has folded (design
+ * menu's "Now Playing…" row the core builds where the toolbar button has folded (design
  * language v2 §9.29) leads with the same card this hub does.
  */
 
@@ -44,7 +44,7 @@ export function mediaHubVisible(state: UIState): boolean {
 /**
  * Something plays: the accent dot on the hub's toolbar button, and – while that button has
  * folded (`mediaHubFolded`) – the same dot on the "⋯" menu button, whose menu then carries the
- * "Now playing…" row (§9.29 – Firefox's badge on its menu button).
+ * "Now Playing…" row (§9.29 – Firefox's badge on its menu button).
  */
 export function mediaPlaying(state: UIState): boolean {
   return mediaHubEntries(state).some((m) => m.playing)
@@ -110,7 +110,7 @@ export function useMediaHubFolded(state: UIState): boolean {
 /**
  * The control the hub's popover hangs from and gives the keyboard back to: its toolbar button
  * while that is in the row and laid out, else the "⋯" menu button – the hub folds into the app
- * menu's "Now playing…" row at the 240 sidebar (design language v2 §9.29), and the row's pick
+ * menu's "Now Playing…" row at the 240 sidebar (design language v2 §9.29), and the row's pick
  * opens the hub from there. Looked up on each use: the row remounts its buttons with the tab and
  * the width. The fold is the toolbar's tier's to make, by unmounting the button or by hiding it
  * from a stylesheet; either way a button without a box is no anchor (`checkVisibility`).

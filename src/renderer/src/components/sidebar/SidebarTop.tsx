@@ -622,7 +622,7 @@ export function NavRow({
       {/*
         The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
         button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
-        menu's "Now playing…" row, and the dot on the menu button is Firefox's badge saying so;
+        menu's "Now Playing…" row, and the dot on the menu button is Firefox's badge saying so;
         with the button up, the button wears the dot and ⋯ says nothing twice). The name says it
         for the tree, keeping the chord the title shows.
       */}

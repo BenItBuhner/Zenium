@@ -450,7 +450,7 @@ describe('the app menu', () => {
     expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(DESKTOP_APP_MENU)
   })
 
-  describe('the Now playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
+  describe('the Now Playing… row (design language v2 §9.29: the hub folded into the menu)', () => {
     /** A media entry for `tabId`, the OS controls' session by default. */
     const media = (tabId: string, over: Partial<MediaState> = {}): MediaState => ({
       tabId,
@@ -461,7 +461,7 @@ describe('the app menu', () => {
       session: true,
       ...over
     })
-    const ROW = 'Now playing…'
+    const ROW = 'Now Playing…'
 
     it('heads the desktop menu while a session is live and the hub button has folded, and is gone otherwise', () => {
       const h = pageHarness(DESKTOP)
@@ -469,8 +469,9 @@ describe('the app menu', () => {
       expect(without[0]).toBe('New Tab')
       h.browser.state.media = [media(h.tabId)]
       const menu = appMenuFolded(h)
-      // Its name alone, sentence case, the ellipsis of a popover opener: the content is the
-      // hub's on the pick, and a native menu row carrying it would widen the whole menu (§5).
+      // Its name alone, the menu's Title Case (§9.1), the ellipsis of a popover opener: the
+      // content is the hub's on the pick, and a native menu row carrying it would widen the
+      // whole menu (§5).
       expect(menu.slice(0, 3)).toEqual([ROW, '-', 'New Tab'])
       // The rest of the menu is as it was: the row is added at the top, nothing else moves.
       expect(menu.slice(2)).toEqual(without)

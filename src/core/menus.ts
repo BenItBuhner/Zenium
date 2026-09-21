@@ -2350,7 +2350,7 @@ export class Menus {
    * (Chrome's phone menu has none of them either). The desktop menu is unchanged by this: its
    * host has every capability the items ask for. `mediaHubFolded` is the chrome's word that the
    * media hub's toolbar button is off the row (design language v2 §9.29): the menu then heads
-   * with the "Now playing…" row in its stead.
+   * with the "Now Playing…" row in its stead.
    */
   showAppMenu(
     win: ZenWindow,
@@ -2666,19 +2666,22 @@ export class Menus {
   }
 
   /**
-   * The "Now playing…" row at the head of the desktop app menu (design language v2 §9.29,
+   * The "Now Playing…" row at the head of the desktop app menu (design language v2 §9.29,
    * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
    * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
    * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
    * the badge is about. The row is its name alone: a native menu row is one line beside an
    * accelerator column, so any content in the label widens the whole menu past §5's 232–332,
-   * and the title, artist and site are the hub's to show on the pick. Sentence case, as the
-   * ruling and §9.29 write it – it names a state, as the phone's chip does – and the ellipsis
-   * because it opens a popover, as "Search Tabs…" does. Its icon is the hub's first card's
-   * artwork (`shared/mediaHub.ts`: the session first, then what plays) where the host's menus
-   * draw one; without artwork the row has no icon – the kind's glyph (`Music` / `Film` on the
-   * hub's tile) has no rasterised form for a native menu item, and the favicon is not the
-   * card's picture. Its pick opens the hub – every player and the whole transport – from the
+   * and the title, artist and site are the hub's to show on the pick. Title Case, as §9.1
+   * casts the menu's items (the phone's "Now playing" chip is a chip on a page surface, not a
+   * menu item), and the ellipsis because it opens a popover, as "Search Tabs…" does. Its icon
+   * is the hub's first card's artwork (`shared/mediaHub.ts`: the session first, then what
+   * plays) where the host's menus draw one – §9.29's written exception to the all-or-nothing
+   * leading glyph: a native menu is the one place a lone picture icon is allowed, since the
+   * toolkit reserves its icon column for every row and a content picture is not a glyph.
+   * Without artwork the row has no icon – the kind's glyph (`Music` / `Film` on the hub's
+   * tile) has no rasterised form for a native menu item, and the favicon is not the card's
+   * picture. Its pick opens the hub – every player and the whole transport – from the
    * "⋯" button the menu hung from (`mediahub.open`), so the fold loses no control. There while
    * anything is to be controlled (a tab that paused stays until its media goes, as the button
    * does), gone otherwise, and no separate row per player: the hub is the list. The window's
@@ -2697,7 +2700,7 @@ export class Menus {
     if (!first) return []
     return [
       {
-        label: 'Now playing…',
+        label: 'Now Playing…',
         icon: first.artwork || null,
         click: () => this.browser.emit('mediahub.open', undefined, win)
       },

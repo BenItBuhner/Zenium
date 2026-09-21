@@ -3,7 +3,7 @@ import type { MenuItemTemplate } from '../../../core/platform'
 
 /*
  * The host's native menu icons (`platform/menus.ts`): a `data:` or remote picture becomes the
- * item's 16 × 16 image. A favicon is square; the app menu's "Now playing…" row leads with a
+ * item's 16 × 16 image. A favicon is square; the app menu's "Now Playing…" row leads with a
  * media session's artwork, which is often wider than tall, and the hub's tile covers such a
  * picture (`object-fit: cover`) – so the host crops it to its centre square before the resize
  * rather than squashing it.
@@ -92,28 +92,28 @@ describe('native menu icons', () => {
 
   it('crops a wide picture (a 16:9 artwork) to its centre square before the resize, as the hub’s tile covers it', async () => {
     decoded.set('data:image/jpeg;base64,WIDE', image(1200, 630))
-    const [item] = await popup([{ label: 'Now playing…', icon: 'data:image/jpeg;base64,WIDE' }])
+    const [item] = await popup([{ label: 'Now Playing…', icon: 'data:image/jpeg;base64,WIDE' }])
     expect(icon(item).ops).toEqual(['crop 285,0 630×630', 'resize 16×16'])
   })
 
   it('crops a tall picture the same way', async () => {
     decoded.set('data:image/png;base64,TALL', image(300, 500))
-    const [item] = await popup([{ label: 'Now playing…', icon: 'data:image/png;base64,TALL' }])
+    const [item] = await popup([{ label: 'Now Playing…', icon: 'data:image/png;base64,TALL' }])
     expect(icon(item).ops).toEqual(['crop 0,100 300×300', 'resize 16×16'])
   })
 
   it('treats a remote artwork the same, fetched before the menu opens', async () => {
     remote.set('https://music.example.com/cover.jpg', image(640, 360))
     const [item] = await popup([
-      { label: 'Now playing…', icon: 'https://music.example.com/cover.jpg' }
+      { label: 'Now Playing…', icon: 'https://music.example.com/cover.jpg' }
     ])
     expect(icon(item).ops).toEqual(['crop 140,0 360×360', 'resize 16×16'])
   })
 
   it('leaves an item without a decodable picture icon-less', async () => {
-    const [item] = await popup([{ label: 'Now playing…', icon: 'data:image/png;base64,BROKEN' }])
+    const [item] = await popup([{ label: 'Now Playing…', icon: 'data:image/png;base64,BROKEN' }])
     expect(item.icon).toBeUndefined()
-    const [plain] = await popup([{ label: 'Now playing…', icon: null }])
+    const [plain] = await popup([{ label: 'Now Playing…', icon: null }])
     expect(plain.icon).toBeUndefined()
   })
 })

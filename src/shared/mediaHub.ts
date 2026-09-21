@@ -2,7 +2,7 @@ import type { MediaState } from './types'
 
 /**
  * The players' order, on whichever surface lists them: the desktop hub's per-tab cards
- * (`renderer/lib/mediaHub.ts`) and the app menu's "Now playing…" row the core builds where the
+ * (`renderer/lib/mediaHub.ts`) and the app menu's "Now Playing…" row the core builds where the
  * hub's toolbar button has folded by the sidebar's width tier (design language v2 §9.29) – the
  * row's icon is the hub's first card's artwork, so the two must agree on which card is first.
  * The session – the one tab whose media the OS controls show – first, then the ones playing,
