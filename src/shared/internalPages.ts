@@ -67,8 +67,12 @@ export interface InternalPageSection {
   label: string
   /** Terms the settings search matches besides the label (lower case). */
   keywords: readonly string[]
-  /** Host capability the section needs; not listed where it is false. */
-  requires?: keyof HostCapabilities
+  /**
+   * Host capability the section needs; not listed where it is false. A list names alternatives:
+   * the section shows where any one of them is true (Accessibility: page controls or a speech
+   * engine), its builder drawing the groups of those the host has.
+   */
+  requires?: keyof HostCapabilities | readonly (keyof HostCapabilities)[]
   /** Layouts the section applies to; absent means all of them. */
   layouts?: readonly FormFactor[]
   /**
@@ -77,6 +81,14 @@ export interface InternalPageSection {
    * Android keeps its one row under About, whatever the tablet's layout.
    */
   platforms?: readonly Platform[]
+}
+
+/** Whether a host has what a section requires: the one capability, or any of the listed ones. */
+export function sectionAvailable(section: InternalPageSection, caps: HostCapabilities): boolean {
+  const { requires } = section
+  if (requires === undefined) return true
+  if (typeof requires === 'string') return caps[requires]
+  return requires.some((cap) => caps[cap])
 }
 
 export interface InternalPageDefinition {
@@ -321,8 +333,17 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'accessibility',
     label: 'Accessibility',
-    keywords: ['zoom', 'font size', 'text size', 'pinch'],
-    requires: 'pageControls'
+    keywords: [
+      'zoom',
+      'font size',
+      'text size',
+      'pinch',
+      'read aloud',
+      'listen',
+      'voice',
+      'speech'
+    ],
+    requires: ['pageControls', 'readAloud']
   },
   {
     id: 'shortcuts',
@@ -562,7 +583,7 @@ export function availableSections(
 ): InternalPageSection[] {
   return page.sections.filter(
     (s) =>
-      (!s.requires || caps[s.requires]) &&
+      sectionAvailable(s, caps) &&
       (!s.layouts || s.layouts.includes(formFactor)) &&
       (!s.platforms || (platform !== undefined && s.platforms.includes(platform)))
   )

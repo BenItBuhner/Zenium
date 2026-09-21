@@ -223,8 +223,9 @@ export function useMainEvents(): void {
         if (state) dropStalePdfReports(state)
       }),
       onEvent('reader.preferences', ({ tabId }) => {
-        // The app menu's "Text Preferences…" (and the reader page's toolbar button on a phone):
-        // the popover hangs from the pill's chip when it is on screen, the sheet on a phone.
+        // The app menu's "Text Preferences…" (the phone's way in, its pill having no chip): the
+        // popover hangs from the pill's chip, which the reader tab never hides (§9.29;
+        // `openReaderPreferences` finds it), the sheet on a phone.
         closeUrlbar()
         void openReaderPreferences(tabId)
       }),

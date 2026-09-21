@@ -661,6 +661,7 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
     openBarEditor: () => undefined,
     boost: () => undefined,
     autofill: idleAutofillSettings(),
+    readAloudVoices: null,
     dictionary: { ...idleDictionaryWords(), words: ['Zenium'] }
   }
   const models = new Map(sections.map((s) => [s.id, buildSection(s, ctx)]))
@@ -687,13 +688,19 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
       'Security',
       'Sync',
       'Import',
+      'Accessibility',
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
       'About'
     ])
-    // Accessibility is gated by `pageControls`, false on Electron, as the overlay had it.
-    expect(sections.map((s) => s.id)).not.toContain('accessibility')
+    // Accessibility was the overlay's `pageControls` category (false on Electron); the speech
+    // engine (#257, `readAloud`) brings it to the desktop with Read aloud's groups alone – the
+    // zoom groups stay the phone's.
+    expect(models.get('accessibility')!.groups.map((g) => g.id)).toEqual([
+      'read-aloud',
+      'read-aloud-voices'
+    ])
   })
 
   for (const [id, labels] of Object.entries(INVENTORY)) {

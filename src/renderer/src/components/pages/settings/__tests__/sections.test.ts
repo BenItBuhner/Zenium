@@ -319,17 +319,20 @@ function blockingState(patch: Partial<UIState> = {}): UIState {
 }
 
 type AutofillData = Parameters<typeof buildSection>[1]['autofill']
+type VoicesData = Parameters<typeof buildSection>[1]['readAloudVoices']
 type DictionaryWords = Parameters<typeof buildSection>[1]['dictionary']
 
 /**
  * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
- * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the custom
- * dictionary has no words unless `dictionary` brings some.
+ * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the speech
+ * engine's voices are still on their way (null) unless `readAloudVoices` brings the list; the
+ * custom dictionary has no words unless `dictionary` brings some.
  */
 function context(
   s: UIState = state(),
   pointer = false,
   autofill: Partial<AutofillData> = {},
+  readAloudVoices: VoicesData = null,
   dictionary: Partial<DictionaryWords> = {}
 ): {
   ctx: Parameters<typeof buildSection>[1]
@@ -351,6 +354,7 @@ function context(
     },
     boost: (tabId) => boosted.push(tabId),
     autofill: { ...idleAutofillSettings(), ...autofill },
+    readAloudVoices,
     dictionary: { ...idleDictionaryWords(), ...dictionary }
   }
   return {
@@ -1875,6 +1879,164 @@ describe('the section model', () => {
     expect(look.groups.map((g) => g.id)).not.toContain('pages')
     expect(phoneSections(desktop).map((m) => m.section.id)).not.toContain('accessibility')
     expect(findRow(section('about', desktop).groups, 'default-browser')).toBeNull()
+  })
+})
+
+/*
+ * Accessibility › Read aloud (CT-12, CT-13): the speed, the highlight and one voice row per
+ * language the browser reads in, from the one builder both platforms draw – behind
+ * `capabilities.readAloud`, which the Android fixture above leaves off.
+ */
+describe('Accessibility › Read aloud on a host with a speech engine', () => {
+  const speaking = (settings: Partial<Settings> = {}): UIState =>
+    state({ capabilities: { ...ANDROID, readAloud: true } }, settings)
+  const VOICES: NonNullable<VoicesData> = {
+    voices: [
+      { id: 'en-gb-1', name: 'Daniel', lang: 'en-GB', local: true, quality: 'high' },
+      { id: 'en-us-1', name: 'Samantha', lang: 'en-US', local: true, default: true },
+      { id: 'en-us-2', name: 'Ava', lang: 'en-US', local: false },
+      { id: 'fr-1', name: 'Thomas', lang: 'fr-FR', local: true }
+    ],
+    byLanguage: {
+      en: 'en-us-1',
+      'en-gb': 'en-gb-1',
+      'en-us': 'en-us-1',
+      fr: 'fr-1',
+      'fr-fr': 'fr-1'
+    }
+  }
+  const ACCESSIBILITY = PAGE.sections.find((x) => x.id === 'accessibility')!
+  const build = (s: UIState, voices: VoicesData): Model =>
+    buildSection(ACCESSIBILITY, context(s, false, {}, voices).ctx)
+
+  it('stays off without the engine, and adds its two groups after the zoom groups with it', () => {
+    expect(section('accessibility').groups.map((g) => g.id)).toEqual(['zoom', 'site-zooms'])
+    const model = build(speaking(), VOICES)
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'zoom',
+      'site-zooms',
+      'read-aloud',
+      'read-aloud-voices'
+    ])
+    expect(model.groups.map((g) => g.heading)).toEqual([
+      'Page zoom',
+      'Sites with their own zoom',
+      'Read aloud',
+      'Voices'
+    ])
+    for (const group of model.groups) expect(groupShows(group)).toBe(true)
+  })
+
+  it('is the whole category on a desktop without page controls, and lists the category there', () => {
+    const desktop = state({
+      platform: 'linux',
+      capabilities: { ...ANDROID, pageControls: false, readAloud: true }
+    })
+    expect(phoneSections(desktop).map((m) => m.section.id)).toContain('accessibility')
+    expect(build(desktop, VOICES).groups.map((g) => g.id)).toEqual([
+      'read-aloud',
+      'read-aloud-voices'
+    ])
+  })
+
+  it('offers the speed on the model’s ladder and the highlight in Edge’s words, run as commands', () => {
+    const model = build(
+      speaking({ readAloud: { rate: 1.2, voiceByLanguage: {}, highlight: 'both' } }),
+      VOICES
+    )
+    const speed = row(model, 'read-aloud-rate')
+    if (speed.kind !== 'value') throw new Error('not a value row')
+    expect(speed.label).toBe('Speed')
+    expect(currentOptionLabel(speed)).toBe('1.2×')
+    expect(speed.options.map((o) => o.label)).toEqual([
+      '0.5×',
+      '0.8×',
+      '1×',
+      '1.2×',
+      '1.5×',
+      '2×',
+      '3×',
+      '4×'
+    ])
+    speed.onChange('2')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setRate', { rate: 2 })
+
+    const highlight = row(model, 'read-aloud-highlight')
+    if (highlight.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(highlight)).toBe('Sentence and word')
+    expect(highlight.options.map((o) => o.label)).toEqual([
+      'Sentence and word',
+      'Sentence',
+      'Word',
+      'Off'
+    ])
+    highlight.onChange('off')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setHighlight', { mode: 'off' })
+  })
+
+  it('has a voice row per language the browser reads in, plus any the player chose a voice for', () => {
+    const model = build(
+      speaking({
+        readAloud: { rate: 1, voiceByLanguage: { 'en-gb': 'en-gb-1', de: 'x' }, highlight: 'both' }
+      }),
+      VOICES
+    )
+    const voices = model.groups.find((g) => g.id === 'read-aloud-voices')!
+    expect(voices.rows.map((r) => r.id)).toEqual([
+      'read-aloud-voice:en',
+      'read-aloud-voice:fr',
+      'read-aloud-voice:en-gb',
+      'read-aloud-voice:de'
+    ])
+    expect(voices.rows.map((r) => r.label)).toEqual([
+      'English',
+      'French',
+      'English (United Kingdom)',
+      'German'
+    ])
+    // English: every English voice, the engine's default as the value, regions on the options.
+    const english = row(model, 'read-aloud-voice:en')
+    if (english.kind !== 'value') throw new Error('not a value row')
+    expect(english.value).toBe('en-us-1')
+    expect(english.options.map((o) => o.label)).toEqual(['Daniel', 'Samantha', 'Ava'])
+    expect(english.options[0]?.description).toBe(
+      'English (United Kingdom) · On this device · High quality'
+    )
+    expect(english.options[2]?.description).toBe('English (United States) · Needs a network')
+    english.onChange('en-gb-1')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setVoice', { voiceId: 'en-gb-1', lang: 'en' })
+    // British English: the saved choice is the value.
+    const british = row(model, 'read-aloud-voice:en-gb')
+    if (british.kind !== 'value') throw new Error('not a value row')
+    expect(british.value).toBe('en-gb-1')
+    // German: nothing speaks it – a fact, not a picker.
+    expect(row(model, 'read-aloud-voice:de')).toMatchObject({
+      kind: 'info',
+      description: 'No voice for this language on this device'
+    })
+  })
+
+  it('says the list is on its way, then that the device has none', () => {
+    const waiting = build(speaking(), null).groups.find((g) => g.id === 'read-aloud-voices')!
+    expect(waiting.rows).toEqual([
+      { kind: 'info', id: 'read-aloud-voices-loading', label: 'Looking for voices…' }
+    ])
+    const none = build(speaking(), { voices: [], byLanguage: {} }).groups.find(
+      (g) => g.id === 'read-aloud-voices'
+    )!
+    expect(none.rows).toEqual([])
+    expect(none.empty).toBe('No voices on this device')
+    expect(groupShows(none)).toBe(true)
+  })
+
+  it('is found by the landing’s search under its category', () => {
+    const models = buildSections(
+      availableSections(PAGE, speaking().capabilities, 'phone'),
+      context(speaking(), false, {}, VOICES).ctx
+    )
+    const hits = searchRows(models, 'voice')
+    expect(hits.map((h) => h.caption)).toContain('Accessibility › Voices')
+    expect(searchRows(models, 'speed').map((h) => h.row.id)).toContain('read-aloud-rate')
   })
 })
 
@@ -3590,15 +3752,10 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
       }
     })
     const removed: string[] = []
-    const c = context(
-      s,
-      false,
-      {},
-      {
-        words: ['Zenium', 'colour'],
-        remove: (word) => removed.push(word)
-      }
-    )
+    const c = context(s, false, {}, null, {
+      words: ['Zenium', 'colour'],
+      remove: (word) => removed.push(word)
+    })
     const def = PAGE.sections.find((x) => x.id === 'languages')!
     const languages = buildSection(def, c.ctx)
     const dictionary = languages.groups.find((g) => g.id === 'spellcheck-dictionary')
@@ -3623,7 +3780,7 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
     expect(groupShows(waiting.groups.find((g) => g.id === 'spellcheck-dictionary')!)).toBe(false)
     expect(findRow(waiting.groups, 'spellcheck-add-word')).not.toBeNull()
     // Read and empty: the §9.17 line.
-    const none = buildSection(def, context(s, false, {}, { words: [] }).ctx)
+    const none = buildSection(def, context(s, false, {}, null, { words: [] }).ctx)
     expect(none.groups.find((g) => g.id === 'spellcheck-dictionary')?.empty).toBe('No words yet')
 
     // Both groups are the desktop shell's: a phone builds neither, a desktop both.
@@ -3644,6 +3801,7 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
         ),
         false,
         {},
+        null,
         { words: ['Zenium'] }
       ).ctx
     )

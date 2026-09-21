@@ -145,7 +145,7 @@ import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
-import { sanitizeReaderPreferences, type ReaderPreferences } from '../shared/reader'
+import { sanitizeReaderPreferences } from '../shared/reader'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -2172,13 +2172,6 @@ export class Browser {
     if (!tab || !message || typeof message.type !== 'string') return
     if (message.type === 'webapp') {
       this.webApps.handleMessage(tabId, message)
-      return
-    }
-    if (message.type === 'reader') {
-      // Only a reader page of the tab's own may change the preferences (the page script relays
-      // the message from `zen:` documents alone; the tab's URL is the second check).
-      if (this.reader.isReaderUrl(tab.url))
-        this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
       return
     }
     if (message.type === 'opensearch') {
