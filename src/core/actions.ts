@@ -78,6 +78,10 @@ export class Actions {
         return tabs.unsplit(undefined, undefined, win)
       case 'split.newEmpty':
         return tabs.newEmptySplit(win)
+      case 'split.nextPane':
+        return tabs.cyclePane(1, win)
+      case 'split.prevPane':
+        return tabs.cyclePane(-1, win)
 
       // --- tabs ---
       case 'tab.new':
