@@ -10791,6 +10791,25 @@
     transition-property: none !important;
   }
   /*
+   * The bar's box likewise. A change of dock moves the clip box from one edge to the other
+   * (`top` / `bottom`) and swaps the bar's inset paddings; under full motion those are cuts, and
+   * the 0.01 ms rule above would hold each of them at the old edge's value until the compositor
+   * starts it – on a slow one, frames. The morph measures the pill's slot the frame the page's
+   * frame has moved (`fakeboxMorph.ts` on the layout reporter's store), and in that window the
+   * bar still had the bottom dock's paddings inside a clip still at the top edge's old `top`:
+   * the slot read 48 px above its rest – the clip's inset short and the padding's – and the
+   * scrub carried the double along a line to a slot that was not there (run 3's
+   * reduced-top-scrub on the emulator: 31 frames off the line, by 48 px times the way along it).
+   * The bar keeps its opacity as the one property that may transition: the morph's rule above
+   * fades it over the value's jump.
+   */
+  :root[data-form-factor='phone'] .zen-phone-bar-clip {
+    transition-property: none !important;
+  }
+  :root[data-form-factor='phone'] .zen-phone-bar {
+    transition-property: opacity !important;
+  }
+  /*
    * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
    * the pop's scale dropped (lib/portals.tsx keeps the panel until this ends). Not the phone's:
    * there the sheet chassis runs the leave.

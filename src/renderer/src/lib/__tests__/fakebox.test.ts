@@ -456,3 +456,38 @@ describe('the well (main.css): the words on the handover alone', () => {
     expect(rule('.zen-animate-fade')).toMatch(/animation: zen-fade \d+ms/)
   })
 })
+
+/*
+ * What the morph measures against is laid out, never transitioned (main.css, not loaded here).
+ * Under reduced motion every property change becomes a 0.01 ms transition the compositor starts
+ * a frame late – frames late on a slow one – and the controller measures the pill's slot and the
+ * page's frame the frame the layout reporter says the frame has moved: a box still on its way
+ * from the old dock's values is measured where it is not (run 2's reduced-top-scrub: the content
+ * column's padding; run 3's: the bar clip's edge and the bar's inset paddings, the slot read
+ * 48 px above its rest). The bar keeps opacity alone: the morph fades it over the value's jump.
+ */
+describe('the layout the morph measures (main.css): no transition under reduced motion', () => {
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) { * { animation-duration: 0.01ms !important'))
+  const rule = (selector: string): string => {
+    const at = reduced.indexOf(`${selector} {`)
+    expect(at, `a reduced-motion rule for ${selector}`).toBeGreaterThan(-1)
+    return reduced.slice(at, reduced.indexOf('}', at))
+  }
+
+  it('the content column, the bar clip and the bar cut to the new dock', () => {
+    expect(rule(":root[data-form-factor='phone'] .zen-content-column")).toContain('transition-property: none !important')
+    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar-clip")).toContain('transition-property: none !important')
+    expect(rule(":root[data-form-factor='phone'] .zen-phone-bar")).toContain('transition-property: opacity !important')
+  })
+
+  it('the bar’s opacity rule after the value’s jump still transitions, and is the one written before the bar’s own', () => {
+    // The morph's fade of the bar over the opening (`transition: opacity 120ms`) must come before
+    // the bar's rule at equal specificity, so `opacity` is what both leave as the property.
+    const fade = reduced.indexOf(":root[data-fakebox='opening'] .zen-phone-bar, :root[data-fakebox='opening'] .zen-ntp-fades")
+    const bar = reduced.indexOf(":root[data-form-factor='phone'] .zen-phone-bar {")
+    expect(fade).toBeGreaterThan(-1)
+    expect(bar).toBeGreaterThan(fade)
+    expect(reduced.slice(fade, reduced.indexOf('}', fade))).toContain('transition: opacity 120ms')
+  })
+})
