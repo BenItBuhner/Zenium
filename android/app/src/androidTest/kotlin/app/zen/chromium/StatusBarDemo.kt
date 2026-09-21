@@ -420,12 +420,14 @@ class StatusBarDemo : MediaDemoBase("android-status-bar") {
 
     companion object {
         /**
-         * Visits in the seeded history: about 125 bytes each, some 2 MB, the size of a phone's
-         * Safe Browsing feed document once the fourth feed has refreshed (4 MB in run 1's notes).
-         * A small deferred document is fetched before the page's `load` more often than not and
-         * the chrome wins the race; a document this size makes the drop the rule (run 1: the
-         * unfixed chrome passed its first three boots at 0.8 MB and lost every boot from 4 MB on).
+         * Visits in the seeded history: about 125 bytes each, some 5.6 MB, what a phone's
+         * deferred documents add up to once the Safe Browsing phishing-database feed (4 MB) has
+         * refreshed. The drop is a race against the fetch of the deferred documents: at 0.8 MB
+         * the unfixed chrome won its first three boots and lost every boot from 4.9 MB on (run
+         * 35549548671); at 2.3 MB it lost one boot in nine (run 35552348291). This size makes
+         * the loss the rule, so the `before` take shows it in every dock and scheme. Under the
+         * core's `MAX_VISITS` (50 000), all within the retention window.
          */
-        const val SEEDED_VISITS = 15_000
+        const val SEEDED_VISITS = 45_000
     }
 }
