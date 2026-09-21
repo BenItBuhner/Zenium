@@ -2348,7 +2348,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
     private fun inputTools(row: Row, entry: JSONObject): Grade {
         val factor = speedFactor(entry)
         val extra = JSONObject()
-        val optionsUrl = entry.optJSONObject("options")?.optJSONObject("detail")?.optString("page", "")?.ifEmpty { null } ?: "chrome-extension://${row.id}/options.html"
+        // The options stage records the manifest's page as written (`options.html`, relative to the
+        // extension's root); the tab wants the absolute URL.
+        val optionsPage = entry.optJSONObject("options")?.optJSONObject("detail")?.optString("page", "")?.ifEmpty { null } ?: "options.html"
+        val optionsUrl = if (optionsPage.contains("://")) optionsPage else "chrome-extension://${row.id}/${optionsPage.trimStart('/')}"
         val optionsTab = createTab(optionsUrl)
         val optionsView = waitForView(optionsTab)
         poll(scaled(20_000, factor), 500) { if (tabEval(optionsView, "String(document.readyState === 'complete')") == "true") true else null }
