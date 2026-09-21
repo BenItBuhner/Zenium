@@ -56,12 +56,17 @@ export type SafetyAction =
 
 /**
  * The Passwords row's sentence: the engine's (the counts, or what to do next) and, once a
- * checkup has run on this device, when – "No compromised passwords found · Checked 3 days ago"
- * – so the row reads as the checkup summary it is (PS-20 / ID-19).
+ * checkup has run on this device, when – "No compromised passwords found · Last checked 3 d
+ * ago", the Passwords section's own checkup row's shape – so the row reads as the checkup
+ * summary it is (PS-20 / ID-19).
  */
-export function passwordsSummary(passwords: SafetyCheckResult['passwords']): string {
+export function passwordsSummary(
+  passwords: SafetyCheckResult['passwords'],
+  now = Date.now()
+): string {
   if (passwords.checkedAt === null) return passwords.summary
-  return `${passwords.summary} · Checked ${relativeTime(passwords.checkedAt).toLowerCase()}`
+  const when = relativeTime(passwords.checkedAt, now)
+  return `${passwords.summary} · Last checked ${when === 'Just now' ? 'just now' : when}`
 }
 
 export interface SafetyRow {

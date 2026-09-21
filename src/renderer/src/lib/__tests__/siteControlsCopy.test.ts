@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BrowsingDataCount, PermissionRule, SafetyCheckResult, UIState } from '@shared/types'
 import { contentSetting } from '@shared/contentSettings'
 import { RANGE_OPTIONS, clearedToast, countLine } from '../browsingData'
-import { headline, safetyRows, worstState } from '../safetyCheck'
+import { headline, passwordsSummary, safetyRows, worstState } from '../safetyCheck'
 import {
   bySite,
   count,
@@ -282,6 +282,98 @@ describe('Safety check card', () => {
       { ...state, capabilities: { extensions: false } } as unknown as UIState
     )
     expect(noExt.find((r) => r.id === 'extensions')?.action).toBeNull()
+  })
+
+  it('reads the checkup summary into the Passwords row (PS-20 / ID-19): the counts’ sentence with when the checkup last ran, and Review into the manager while any login is compromised', () => {
+    const state = {
+      updates: { phase: 'idle', mode: 'auto' },
+      passwords: { locked: false, count: 4 },
+      capabilities: { extensions: true }
+    } as unknown as UIState
+    const at = 1_700_000_000_000
+
+    // The engine's sentence keeps its words; the time of the last run follows it in the shape of
+    // the Passwords section's own checkup row.
+    expect(passwordsSummary({ ...result().passwords, checkedAt: at }, at + 20_000)).toBe(
+      'No compromised passwords · Last checked just now'
+    )
+    expect(passwordsSummary({ ...result().passwords, checkedAt: at }, at + 3 * 3_600_000)).toBe(
+      'No compromised passwords · Last checked 3 h ago'
+    )
+    // Never run on this device: nothing to date, the engine's offer stands alone.
+    expect(
+      passwordsSummary({
+        ...result().passwords,
+        state: 'info',
+        summary: 'Run Password Checkup to look for compromised passwords',
+        known: false,
+        checkedAt: null
+      })
+    ).toBe('Run Password Checkup to look for compromised passwords')
+
+    // Compromised logins – a checkup's finding, or a sign-in's leak before any checkup ran –
+    // turn the row's action into a review of them in the manager's checkup view.
+    const flagged = safetyRows(
+      result({
+        passwords: {
+          state: 'warning',
+          summary: '2 compromised passwords found; change them now',
+          compromised: 2,
+          weak: 1,
+          reused: 0,
+          known: true,
+          checkedAt: null
+        }
+      }),
+      state
+    ).find((r) => r.id === 'passwords')
+    expect(flagged).toMatchObject({
+      state: 'warning',
+      summary: '2 compromised passwords found; change them now',
+      action: {
+        label: 'Review',
+        ariaLabel: 'Review compromised passwords',
+        act: { kind: 'passwords-review' }
+      }
+    })
+    // Weak or reused only: the checkup is the answer again, run once more.
+    const weak = safetyRows(
+      result({
+        passwords: {
+          state: 'info',
+          summary: '1 weak password, 2 reused passwords',
+          compromised: 0,
+          weak: 1,
+          reused: 2,
+          known: true,
+          checkedAt: at
+        }
+      }),
+      state
+    ).find((r) => r.id === 'passwords')
+    expect(weak?.action?.act).toEqual({ kind: 'passwords-checkup' })
+    expect(weak?.summary.startsWith('1 weak password, 2 reused passwords · Last checked ')).toBe(
+      true
+    )
+    // A locked vault: the sentence still speaks (the summary lives outside the vault), no button.
+    const locked = safetyRows(
+      result({
+        passwords: {
+          state: 'warning',
+          summary: '1 compromised password found; change them now',
+          compromised: 1,
+          weak: 0,
+          reused: 0,
+          known: true,
+          checkedAt: at
+        }
+      }),
+      { ...state, passwords: { locked: true, count: 4 } } as unknown as UIState
+    ).find((r) => r.id === 'passwords')
+    expect(locked?.action).toBeNull()
+    expect(locked?.summary.startsWith('1 compromised password found; change them now · ')).toBe(
+      true
+    )
   })
 })
 

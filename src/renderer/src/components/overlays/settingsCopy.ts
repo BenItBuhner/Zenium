@@ -136,7 +136,7 @@ export const PASSWORDS_COPY = {
   leakDetection: {
     label: 'Warn you if passwords are exposed in a data breach',
     description:
-      'After you sign in, Zenium checks the password against known breaches without sending it anywhere.'
+      'After you sign in, Zenium checks the password against known breaches. The password itself never leaves this device.'
   },
   protection: { label: 'Vault protection' },
   lock: {
