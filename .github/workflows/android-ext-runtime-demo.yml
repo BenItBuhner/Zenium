@@ -1,16 +1,25 @@
 name: Android extension runtime demo
 
 # Exercises the extension runtime on a hardware-accelerated Android emulator: probes what the
-# system WebView is and is not (EngineProbe), lays out five Chrome Web Store extensions fetched as
-# CRX3 packages as store installs next to the probe extension, drives them through the runtime
-# while recording the screen (ExtensionDemo: load, content scripts, messaging, storage, popups,
-# each extension's core function, isolation, late injection, frames, private tabs) and uploads
-# the recording, the screenshots and the JSON results the driver grades stage by stage.
+# system WebView is and is not (EngineProbe), measures the runtime's frame budget
+# (ExtensionScrollBudget: a long fixture page flung and dragged under measureFrames with no
+# extension, three and six attached, the scenes read against the empty scroll and rendered by the
+# jank report), then lays out five Chrome Web Store extensions fetched as CRX3 packages as store
+# installs next to the probe extension and drives them through the runtime while recording the
+# screen (ExtensionDemo: load, content scripts, messaging, storage, popups, each extension's core
+# function, isolation, late injection, frames, private tabs) and uploads the recording, the
+# screenshots, the frame statistics and the JSON results the drivers grade stage by stage.
 # Dispatch-only: it takes a quarter of an hour per job. The build, the emulator and the Gradle
-# cache live in android-emulator-demo.yml; this file picks the driver and fetches what it
-# sideloads.
+# cache live in android-emulator-demo.yml; this file picks the drivers and fetches what they
+# sideload.
 on:
   workflow_dispatch:
+    inputs:
+      jank-gate:
+        description: How the jank budget acts on a scene over it (soft reports, hard fails the scene)
+        type: choice
+        options: [soft, hard]
+        default: soft
 
 permissions:
   contents: read
@@ -27,12 +36,13 @@ jobs:
       script: .github/scripts/android-ext-runtime-demo.sh
       artifact-name: android-ext-runtime-demo
       artifact-path: artifacts/android-ext-runtime-demo/
-      # Dark Reader, Vimium, Return YouTube Dislike, Stylus, uBlock Origin Lite.
-      setup-script: >-
-        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi
-        clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh
-        | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
-      timeout-minutes: 60
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
+      # The demo's five (Dark Reader, Vimium, Return YouTube Dislike, Stylus, uBlock Origin Lite)
+      # and the frame budget's extras (Grammarly, LanguageTool, Bitwarden).
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
+      timeout-minutes: 75
 
   # The API 34 image bundles a WebView far behind current Chromium; isolated-world injection
   # (androidx.webkit 1.17, JS_INJECTION_IN_FRAME_AND_WORLD) needs 146+. This job swaps in a Chromium
@@ -45,6 +55,7 @@ jobs:
       script: .github/scripts/android-ext-runtime-demo.sh
       artifact-name: android-ext-runtime-demo-modern-webview
       artifact-path: artifacts/android-ext-runtime-demo/
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
       target: default
       # The renderer is the reusable workflow's emulator-gpu (swangle since #149; a -gpu word here
       # would be dropped). Measured under swangle on this AOSP image: the app draws one frame every
@@ -60,6 +71,7 @@ jobs:
       # (minSdk 29) with x86_64 and x86 native code.
       setup-script: |
         echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
         echo "chromium snapshot revision $rev"
@@ -70,4 +82,4 @@ jobs:
         curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
         unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
         ls -la artifacts/webview
-      timeout-minutes: 60
+      timeout-minutes: 75

@@ -16,7 +16,11 @@ import java.security.MessageDigest
  *    it does not change its files) – held softly: every source is also inside the assembled
  *    script, so under heap pressure the GC takes the raw texts back and the next reconfigure
  *    reads them again (Grammarly's ten million characters of sources are that much heap twice,
- *    on a 192 MB debug heap that also holds the other extensions' units);
+ *    on a 192 MB debug heap that also holds the other extensions' units). A file of
+ *    [LARGE_SOURCE_CHARS] or more is not held at all: it goes into the script as a
+ *    [ExtensionScripts.Source.transient] text released as it is copied in, and a re-plan reads
+ *    it from disk again (Monica's 28 million characters of `content.js`: a soft copy of it kept
+ *    the heap at its limit, and the assembly's third copy of it was the allocation that failed);
  *  - a unit whose inputs (config, groups, CSS, debug flag) did not change keeps its assembled
  *    script, so a reconfigure that re-sends an unchanged unit costs a hash, not an assembly;
  *  - every other extension's cache is untouched, and a new version starts from nothing.
@@ -85,9 +89,9 @@ class UnitCompiler(private val bootstrap: () -> String) {
                 val files = g.optJSONArray("js") ?: JSONArray()
                 val sources = List(files.length()) { k ->
                     val path = files.optString(k, "")
-                    if (path.startsWith(INLINE_CODE)) path.substring(INLINE_CODE.length)
+                    if (path.startsWith(INLINE_CODE)) ExtensionScripts.Source(path.substring(INLINE_CODE.length))
                     else source(entry, path, read)
-                        ?: "console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});"
+                        ?: ExtensionScripts.Source("console.error(${JSONObject.quote("[Zenium] extension $ext: missing content script $path")});")
                 }
                 groups.add(ExtensionScripts.Group(ext, g.optInt("index"), sources, g.optString("isolation", "with")))
             }
@@ -95,7 +99,7 @@ class UnitCompiler(private val bootstrap: () -> String) {
             for (j in 0 until cssJson.length()) {
                 val c = cssJson.optJSONObject(j) ?: continue
                 val path = c.optString("path")
-                val text = source(entry, path, read) ?: continue
+                val text = text(entry, path, read) ?: continue
                 css["${c.optString("ext", id)}/${path.trimStart('/')}"] = text
             }
             val script = ExtensionScripts.documentStart(bootstrap(), config, groups, css, debug)
@@ -129,20 +133,38 @@ class UnitCompiler(private val bootstrap: () -> String) {
         cache[id]?.sources?.values?.forEach { (it as? SoftReference<*>)?.clear() }
     }
 
-    private fun source(entry: ExtensionCache, path: String, read: (String) -> String?): String? {
+    /** A script file as the assembly takes it: held (small, soft-cached) or transient (large, released as it is copied in). */
+    private fun source(entry: ExtensionCache, path: String, read: (String) -> String?): ExtensionScripts.Source? {
+        val text = text(entry, path, read) ?: return null
+        return if (text.length >= LARGE_SOURCE_CHARS) ExtensionScripts.Source.transient(text) else ExtensionScripts.Source(text)
+    }
+
+    /** The file's text: from the soft cache, or read now (and cached when under [LARGE_SOURCE_CHARS]). */
+    private fun text(entry: ExtensionCache, path: String, read: (String) -> String?): String? {
         if (path.isEmpty()) return null
         when (val held = entry.sources[path]) {
             MISSING -> return null
             is SoftReference<*> -> (held.get() as String?)?.let { return it }
         }
         val text = runCatching { read(path) }.getOrNull()
-        entry.sources[path] = if (text == null) MISSING else SoftReference(text)
+        when {
+            text == null -> entry.sources[path] = MISSING
+            text.length < LARGE_SOURCE_CHARS -> entry.sources[path] = SoftReference(text)
+        }
         return text
     }
 
     companion object {
         /** Marks a path whose file is missing or unreadable, so it is not read again for the version. */
         private val MISSING = Any()
+
+        /**
+         * From this many characters a file is not soft-cached and travels into the script as a
+         * transient source: a megabyte of text is two megabytes of heap held for a re-plan that
+         * may never come, and the files this size are the ones whose second and third copies do
+         * not fit (Monica's `content.js`, 28 M).
+         */
+        const val LARGE_SOURCE_CHARS = 1 shl 20
 
         /**
          * A `js` entry that is the script's text rather than a path: `userScripts.register` takes

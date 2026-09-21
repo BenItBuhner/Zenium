@@ -735,7 +735,8 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     /**
      * Keep a WebView alive without showing it (extension background pages). It sits behind the
      * chrome at one pixel: a view that is not attached, or invisible, counts as hidden to the
-     * renderer and gets background timer throttling, which a background page must not.
+     * renderer and gets background timer throttling, which a background page must not. The view
+     * itself records no draw (`ExtensionWebView.onDraw`), so it costs the chrome's frames nothing.
      */
     fun attachHidden(view: View) {
         root.addView(view, 0, FrameLayout.LayoutParams(1, 1))

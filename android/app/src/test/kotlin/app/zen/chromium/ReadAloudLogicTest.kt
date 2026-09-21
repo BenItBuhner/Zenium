@@ -132,6 +132,24 @@ class ReadAloudLogicTest {
         assertEquals("abcdef", ReadAloudLogic.clip("abcdef", 0))
     }
 
+    @Test
+    fun chromeTtsPitchAndVolumeAreClampedToWhatTheEngineTakesAndANonNumberIsOne() {
+        // Chrome's pitch runs 0–2 with 1 the voice's own; `setPitch` refuses 0, so the floor sits just above it.
+        assertEquals(1f, ReadAloudLogic.speechPitch(1.0))
+        assertEquals(1.5f, ReadAloudLogic.speechPitch(1.5))
+        assertEquals(0.1f, ReadAloudLogic.speechPitch(0.0))
+        assertEquals(2f, ReadAloudLogic.speechPitch(7.0))
+        assertEquals(1f, ReadAloudLogic.speechPitch(Double.NaN))
+        // Volume 0–1 as `KEY_PARAM_VOLUME` takes it.
+        assertEquals(1f, ReadAloudLogic.speechVolume(1.0))
+        assertEquals(0.25f, ReadAloudLogic.speechVolume(0.25))
+        assertEquals(0f, ReadAloudLogic.speechVolume(-1.0))
+        assertEquals(1f, ReadAloudLogic.speechVolume(3.0))
+        assertEquals(1f, ReadAloudLogic.speechVolume(Double.POSITIVE_INFINITY))
+        // Read aloud sends neither: the options default to the voice's own.
+        assertEquals(ReadAloudLogic.Options(null, "en", 1f, 1f, 1f), ReadAloudLogic.Options(null, "en", 1f))
+    }
+
     // --- the one-utterance queue ------------------------------------------------------------------------
 
     @Test
@@ -176,6 +194,27 @@ class ReadAloudLogicTest {
         assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_ADD, "s2", emptyList(), faster, had))
         assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s3", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), faster, had))
         assertEquals(ReadAloudLogic.SpeakPlan.IGNORE, ReadAloudLogic.speakPlan("s3", ReadAloudLogic.QUEUE_ADD, "s2", listOf("s3"), faster, mapOf("s2" to old, "s3" to old)))
+        // `chrome.tts`'s knobs count as options too: a pitch or a volume changed restarts the current utterance with it.
+        assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), old.copy(pitch = 1.4f), had))
+        assertEquals(ReadAloudLogic.SpeakPlan.FLUSH, ReadAloudLogic.speakPlan("s2", ReadAloudLogic.QUEUE_FLUSH, "s2", emptyList(), old.copy(volume = 0.5f), had))
+    }
+
+    @Test
+    fun aFlushReportsWhatItTookFromTheEngineAsInterruptedAndARestartIsNoInterruption() {
+        // Another speaker's utterance and the one queued behind it go when a `speak` flushes the engine.
+        assertEquals(listOf("s1", "s2"), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.FLUSH, "x1", "s1", listOf("s2")))
+        assertEquals(listOf("s1"), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.FLUSH, "x1", "s1", emptyList()))
+        assertEquals(emptyList<String>(), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.FLUSH, "x1", null, emptyList()))
+        // The current utterance spoken again with new options is restarted, not interrupted; what waited behind it does go.
+        assertEquals(listOf("s3"), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.FLUSH, "s2", "s2", listOf("s3")))
+        // A prepare queues behind, an ignored speak changes nothing: nothing is dropped.
+        assertEquals(emptyList<String>(), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.ADD, "s3", "s2", emptyList()))
+        assertEquals(emptyList<String>(), ReadAloudLogic.dropped(ReadAloudLogic.SpeakPlan.IGNORE, "s2", "s2", listOf("s3")))
+        // The report is the speech host's `error` with the shared `interrupted` message, so the core and `chrome.tts` read it the same way.
+        val event = ReadAloudLogic.interruptedEvent("s1")
+        assertEquals("s1", event.getString("utteranceId"))
+        assertEquals("error", event.getString("type"))
+        assertEquals("interrupted", event.getString("message"))
     }
 
     // --- the events -------------------------------------------------------------------------------------

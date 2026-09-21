@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -45,6 +46,14 @@ import java.util.Locale
  * speaks the sentence again from its start on resume, so `pause` / `resume` are absent here as
  * the interface allows. Every callback of the engine's arrives on a binder thread and is posted
  * to the main thread before it reaches the chrome (`evaluateJavascript` is main-thread only).
+ *
+ * The engine is shared with `chrome.tts` (`src/android/extensionTts.ts`: an extension's
+ * utterances come through the same `speech.speak`, with the `pitch` and `volume` Chrome's
+ * options carry, which read aloud never sends). A `speak` that flushes another speaker's
+ * utterance, and a `stop` that cuts one, report the dropped utterance as `interrupted`
+ * ([ReadAloudLogic.interruptedEvent]: an `error` whose message is `interrupted`, the desktop
+ * speech host's spelling), so the speaker that lost it does not wait on an `end` that never
+ * comes; whoever asked for the stop or the flush knows and drops the report about its own.
  *
  * The engine is bound on first use (`speech.voices` from the picker, or the first `speak`), not
  * at boot: binding a speech service costs a second or two and most sessions never read aloud.
@@ -180,7 +189,13 @@ class ReadAloud(private val host: Host) {
         val text = args.str("text")
         val voiceId = args.strOrNull("voiceId")
         val lang = args.str("lang")
-        val rate = args.num("rate", 1.0)
+        val options = ReadAloudLogic.Options(
+            voiceId,
+            lang,
+            ReadAloudLogic.speechRate(args.num("rate", 1.0)),
+            ReadAloudLogic.speechPitch(args.num("pitch", 1.0)),
+            ReadAloudLogic.speechVolume(args.num("volume", 1.0))
+        )
         val queue = args.str("queue", ReadAloudLogic.QUEUE_FLUSH)
         val asked = stops
         whenReady { ready ->
@@ -190,18 +205,26 @@ class ReadAloud(private val host: Host) {
             }
             // A stop while the engine bound (the player closed before it spoke): the utterance is dropped with the queue.
             if (asked != stops) return@whenReady
-            speakNow(utteranceId, text, voiceId, lang, rate, queue)
+            speakNow(utteranceId, text, options, queue)
         }
     }
 
-    /** `speech.stop`: whatever speaks or waits is dropped; the engine says nothing more about it (`onStop`, not `onDone`, and that is not an event). */
+    /**
+     * `speech.stop`: whatever speaks or waits is dropped. The engine says nothing more about it
+     * (`onStop`, not `onDone`, and that is not an event); this class does, one `interrupted`
+     * per dropped utterance ([ReadAloudLogic.interruptedEvent]), for the other speaker on the
+     * shared engine: read aloud's stop cuts a `chrome.tts` utterance and the extension hears so,
+     * and the other way round. Whoever asked knows and drops the report about its own.
+     */
     fun stop() {
         stops++
+        val dropped = listOfNotNull(current) + queued
         current = null
         queued.clear()
         enqueued.clear()
-        val engine = tts ?: return
-        if (state == EngineState.READY) runCatching { engine.stop() }
+        val engine = tts
+        if (engine != null && state == EngineState.READY) runCatching { engine.stop() }
+        for (id in dropped) event(ReadAloudLogic.interruptedEvent(id))
     }
 
     /**
@@ -304,9 +327,9 @@ class ReadAloud(private val host: Host) {
         defaultVoiceName
     )
 
-    private fun speakNow(utteranceId: String, text: String, voiceId: String?, lang: String, rate: Double, queue: String) {
+    private fun speakNow(utteranceId: String, text: String, asked: ReadAloudLogic.Options, queue: String) {
         val engine = tts ?: return
-        val options = ReadAloudLogic.Options(voiceId?.takeIf { it in voicesByName }, lang, ReadAloudLogic.speechRate(rate))
+        val options = asked.copy(voiceId = asked.voiceId?.takeIf { it in voicesByName })
         val had = enqueued[utteranceId]
         val plan = ReadAloudLogic.speakPlan(utteranceId, queue, current, queued, options, enqueued)
         if (plan == ReadAloudLogic.SpeakPlan.IGNORE) {
@@ -318,10 +341,13 @@ class ReadAloud(private val host: Host) {
         val why = if (utteranceId == current && had != null) " (${describe(had)} -> ${describe(options)}: the current utterance restarted with the change)" else ""
         Log.i(TAG, "speak $utteranceId: $plan at ${describe(options)}$why \"${text.take(40)}${if (text.length > 40) "…" else ""}\"")
         runCatching { engine.setSpeechRate(options.rate) }
-        applyVoice(engine, voiceId, lang)
+        runCatching { engine.setPitch(options.pitch) }
+        applyVoice(engine, asked.voiceId, asked.lang)
         val clipped = ReadAloudLogic.clip(text, runCatching { TextToSpeech.getMaxSpeechInputLength() }.getOrDefault(4000))
         val mode = if (plan == ReadAloudLogic.SpeakPlan.FLUSH) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        val result = runCatching { engine.speak(clipped, mode, null, utteranceId) }.getOrDefault(TextToSpeech.ERROR)
+        val dropped = ReadAloudLogic.dropped(plan, utteranceId, current, queued)
+        val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, options.volume) }
+        val result = runCatching { engine.speak(clipped, mode, params, utteranceId) }.getOrDefault(TextToSpeech.ERROR)
         if (result != TextToSpeech.SUCCESS) {
             Log.w(TAG, "speak refused ($result) for $utteranceId")
             event(ReadAloudLogic.errorEvent(utteranceId, ReadAloudLogic.errorName(result)))
@@ -337,10 +363,18 @@ class ReadAloud(private val host: Host) {
             queued.addLast(utteranceId)
         }
         enqueued[utteranceId] = options
+        // The flush took these from the engine (another speaker's utterances, or this one's
+        // earlier ones): each is reported as interrupted, for the listener that still waits on it.
+        for (id in dropped) event(ReadAloudLogic.interruptedEvent(id))
     }
 
-    private fun describe(options: ReadAloudLogic.Options): String =
-        "${options.rate}x, ${options.voiceId?.let { "voice $it" } ?: "the ${options.lang.ifEmpty { "default" }} voice"}"
+    private fun describe(options: ReadAloudLogic.Options): String {
+        val prosody = buildString {
+            if (options.pitch != 1f) append(", pitch ${options.pitch}")
+            if (options.volume != 1f) append(", volume ${options.volume}")
+        }
+        return "${options.rate}x, ${options.voiceId?.let { "voice $it" } ?: "the ${options.lang.ifEmpty { "default" }} voice"}$prosody"
+    }
 
     /**
      * The voice the core chose (`voiceId`, a `Voice.getName()` from the list), else the engine's

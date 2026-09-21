@@ -1110,7 +1110,10 @@ export class Browser {
       tab.readerable = false
       this.webApps.onNavigated(tabId, tab.url, inPage)
     }
-    this.extensions.closePopup()
+    // An action popup goes when the page under it navigates; a tab no window shows navigating
+    // behind it leaves it open, as Chrome's does (Read Aloud's popup opens its player in a
+    // background tab and reads the page through it; the popup closing dropped the reading).
+    if (!inPage && this.tabs.windowsShowing(tabId).length > 0) this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)

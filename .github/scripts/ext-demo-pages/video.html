@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium video fixture</title>
+    <style>
+      body {
+        font: 18px system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      video {
+        display: block;
+        width: 100%;
+        max-width: 640px;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Video fixture</h1>
+    <p>One muted clip, playing in a loop, for the extensions that act on the page's video (picture-in-picture, playback controls).</p>
+    <video id="clip" src="/clip.webm" muted autoplay loop playsinline></video>
+    <p>State: <span id="state">loading</span></p>
+    <script>
+      var v = document.getElementById('clip')
+      var state = document.getElementById('state')
+      function report() {
+        state.textContent = (v.paused ? 'paused' : 'playing') + ' at ' + v.currentTime.toFixed(1) + ' s' + (document.pictureInPictureElement ? ', in picture-in-picture' : '')
+      }
+      v.addEventListener('playing', report)
+      v.addEventListener('pause', report)
+      v.addEventListener('enterpictureinpicture', function () { window.__pip = 'entered'; report() })
+      v.addEventListener('leavepictureinpicture', function () { window.__pip = 'left'; report() })
+      setInterval(report, 1000)
+      v.play().catch(function (e) { state.textContent = 'play refused: ' + e.message })
+    </script>
+  </body>
+</html>

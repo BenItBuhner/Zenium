@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Runs on the workflow runner once the emulator has booted. Two instrumentation runs:
+# Runs on the workflow runner once the emulator has booted. Three instrumentation runs:
 #
 #   1. EngineProbe – what the system WebView is (provider version, androidx.webkit feature flags,
 #      reflection dump, chrome-extension:// behaviour, an https origin served only through
 #      shouldInterceptRequest). Writes files/ext-probe/engine-probe.json.
-#   2. ExtensionDemo – the demo extensions laid out as store installs, run on the runtime and
+#   2. ExtensionScrollBudget – the runtime's frame budget: the long fixture page scroll.html
+#      flung and dragged under DemoHarness.measureFrames with no extension, with three and with
+#      six attached (the demo's plus what BUDGET_EXT_DIR holds), every scene traced and read
+#      against the empty scroll. Writes files/ext-budget/frames.jsonl (the workflow's jank report
+#      renders it), the traces, budget.json and findings.txt. Skipped with SKIP_BUDGET=1. Not
+#      recorded: it runs before the demo so the baseline exists even when the demo fails.
+#   3. ExtensionDemo – the demo extensions laid out as store installs, run on the runtime and
 #      recorded. The runner serves the local probe pages (reachable from the emulator as
 #      10.0.2.2) and the driver writes files/ext-demo/results.json plus screenshots.
 #
@@ -12,6 +18,13 @@
 #   files/ext-demo/record     – written by the driver once the extensions are configured
 #   files/ext-demo/recording  – written here once screenrecord is rolling
 #   files/ext-demo/done       – written by the driver when the visible sequence is over
+# The budget driver makes the same handshake (files/ext-budget/); it is answered at once, no
+# recorder runs for it.
+#
+# Environment: EXT_DIR (the demo's unpacked extensions, default artifacts/ext), BUDGET_EXT_DIR
+# (the budget's extra ones, default artifacts/ext-budget; both go under files/zen/extensions/,
+# the extras are removed again before the demo), SKIP_BUDGET=1 / SKIP_DEMO=1 to run one driver
+# alone, JANK_GATE (soft, the default, or hard: the shared workflow's input), SOFT_FAIL=1 (below).
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -19,7 +32,9 @@ runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnit
 out=artifacts/android-ext-runtime-demo
 video=ext-android-runtime-demo.mp4
 ext_dir=${EXT_DIR:-artifacts/ext}
+budget_ext_dir=${BUDGET_EXT_DIR:-artifacts/ext-budget}
 pages=.github/scripts/ext-demo-pages
+jank_gate=${JANK_GATE:-soft}
 mkdir -p "$out"
 
 # SOFT_FAIL=1: a best-effort run (the swapped-WebView job) reports what it found and never fails
@@ -35,7 +50,9 @@ fail() {
 
 # What the run was fed, next to what it produced.
 cp -f "$ext_dir/fetch.json" "$out/fetch.json" 2> /dev/null || true
+cp -f "$budget_ext_dir/fetch.json" "$out/fetch-budget.json" 2> /dev/null || true
 cp -f artifacts/webview/REVISIONS.json "$out/webview-REVISIONS.json" 2> /dev/null || true
+echo "jank gate: $jank_gate"
 
 adb wait-for-device
 nproc
@@ -124,22 +141,91 @@ adb exec-out run-as "$app_id" cat files/ext-probe/engine-probe.json > "$out/engi
 tail -n 5 "$out/instrument-engine-probe.txt"
 adb shell am force-stop "$app_id" || true
 
-# --- 2. Sideload the demo extensions ----------------------------------------------------------
+# --- 2. Sideload the extensions ---------------------------------------------------------------
 # One tar through /data/local/tmp (readable by every uid), unpacked by the app's own uid so the
 # files end up owned by it under files/zen/extensions/<id>/.
-if [ -d "$ext_dir" ]; then
-  tar -C "$ext_dir" --exclude='*.crx' --exclude='*.zip' --exclude='fetch.json' -cf /tmp/ext.tar .
+sideload() {
+  local dir=$1
+  tar -C "$dir" --exclude='*.crx' --exclude='*.zip' --exclude='fetch.json' -cf /tmp/ext.tar .
   ls -la /tmp/ext.tar
   adb push /tmp/ext.tar /data/local/tmp/ext.tar
   adb shell run-as "$app_id" mkdir -p files/zen/extensions
   adb shell run-as "$app_id" tar -xf /data/local/tmp/ext.tar -C files/zen/extensions
-  adb shell run-as "$app_id" ls files/zen/extensions
   adb shell rm /data/local/tmp/ext.tar || true
+}
+if [ -d "$ext_dir" ]; then
+  sideload "$ext_dir"
 else
   echo "::warning::no unpacked extensions under $ext_dir; the demo runs with the probe extension only"
 fi
+# The budget's extras (Grammarly, LanguageTool, Bitwarden) next to the demo's five: the budget
+# driver attaches uBlock Origin Lite, Dark Reader and Vimium from the demo's set and these three
+# on top; they are taken out again below so the recorded demo sees its own five.
+budget_extras=()
+if [ -z "${SKIP_BUDGET:-}" ] && [ -d "$budget_ext_dir" ]; then
+  sideload "$budget_ext_dir"
+  for d in "$budget_ext_dir"/*/; do
+    d=${d%/}
+    [ -f "$d/manifest.json" ] && budget_extras+=("$(basename "$d")")
+  done
+fi
+adb shell run-as "$app_id" ls files/zen/extensions
 
-# --- 3. The recorded demo ---------------------------------------------------------------------
+# --- 3. The frame budget ----------------------------------------------------------------------
+# Not recorded (a recording is main-thread and GPU work of its own: the frame numbers must not
+# carry it); the driver's handshake is answered as soon as it asks. Its frames.jsonl is the one
+# the workflow's jank report renders under `ext-budget`, its verdicts are the budget's own
+# (soft: reported; hard: the driver fails at the end, the demo still runs).
+budget_ok=1
+if [ -z "${SKIP_BUDGET:-}" ]; then
+  echo "frame budget (ExtensionScrollBudget)"
+  adb shell run-as "$app_id" rm -rf files/ext-budget || true
+  adb shell am instrument -w -e class app.zen.chromium.ExtensionScrollBudget -e jankGate "$jank_gate" "$runner" > "$out/instrument-budget.txt" 2>&1 &
+  budget_pid=$!
+  for _ in $(seq 1 2400); do
+    if adb shell run-as "$app_id" test -f files/ext-budget/record 2>/dev/null; then
+      adb shell run-as "$app_id" touch files/ext-budget/recording
+      break
+    fi
+    if ! kill -0 "$budget_pid" 2>/dev/null; then break; fi
+    sleep 0.25
+  done
+  wait "$budget_pid" || true
+  sleep 2
+  mkdir -p "$out/ext-budget"
+  for name in $(adb shell run-as "$app_id" ls files/ext-budget 2>/dev/null | tr -d '\r'); do
+    case "$name" in
+      *.png | *.txt | *.json | *.jsonl | *.json.gz) adb exec-out run-as "$app_id" cat "files/ext-budget/$name" > "$out/ext-budget/$name" ;;
+    esac
+  done
+  tail -n 5 "$out/instrument-budget.txt"
+  if [ -f "$out/ext-budget/frames.txt" ]; then
+    echo "== frame budget (frames.txt)"
+    cat "$out/ext-budget/frames.txt"
+  fi
+  if [ -f "$out/ext-budget/findings.txt" ]; then
+    echo "== frame budget (findings.txt)"
+    cat "$out/ext-budget/findings.txt"
+  fi
+  grep -q '^OK (' "$out/instrument-budget.txt" || budget_ok=0
+  adb shell am force-stop "$app_id" || true
+  # The extras out, and the storage the six wrote (files/zen/ext-storage/<id>.json): the demo
+  # starts from the profile it always had, five unpacked folders and no extension state.
+  for id in "${budget_extras[@]}"; do
+    adb shell run-as "$app_id" rm -rf "files/zen/extensions/$id" || true
+  done
+  adb shell run-as "$app_id" rm -rf files/zen/ext-storage || true
+  adb shell run-as "$app_id" ls files/zen/extensions
+fi
+
+if [ -n "${SKIP_DEMO:-}" ]; then
+  kill "$logcat_pid" "$monitor_pid" "$http_pid" 2> /dev/null || true
+  ls -la "$out" "$out/ext-budget" 2> /dev/null || true
+  [ "$budget_ok" -eq 1 ] || fail "the frame budget driver did not finish cleanly"
+  exit 0
+fi
+
+# --- 4. The recorded demo ---------------------------------------------------------------------
 adb shell am instrument -w -e class app.zen.chromium.ExtensionDemo "$runner" > "$out/instrument.txt" 2>&1 &
 driver_pid=$!
 
@@ -209,10 +295,11 @@ elif [ "${#parts[@]}" -gt 1 ]; then
 fi
 for name in $(adb shell run-as "$app_id" ls files/ext-demo 2>/dev/null | tr -d '\r'); do
   case "$name" in
-    *.png | *.json) adb exec-out run-as "$app_id" cat "files/ext-demo/$name" > "$out/$name" ;;
+    *.png | *.json | *.jsonl | *.txt | *.json.gz) adb exec-out run-as "$app_id" cat "files/ext-demo/$name" > "$out/$name" ;;
   esac
 done
 
 cat "$out/instrument.txt"
 ls -la "$out"
+[ "$budget_ok" -eq 1 ] || fail "the frame budget driver did not finish cleanly (see instrument-budget.txt)"
 grep -q '^OK (' "$out/instrument.txt" || fail "the demo driver did not finish cleanly"
