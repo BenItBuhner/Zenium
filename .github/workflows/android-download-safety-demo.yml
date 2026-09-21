@@ -16,6 +16,9 @@ name: Android download safety demo
 # android-emulator-demo.yml; this file picks the driver and names the artifact.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - cursor/services-download-safety-ui-24d1
 
 permissions:
   contents: read
