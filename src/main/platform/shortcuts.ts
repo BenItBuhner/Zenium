@@ -134,6 +134,12 @@ export class ElectronShortcuts implements ShortcutHost {
     }
   }
 
+  /**
+   * Remove the launcher's files, directories and the profile's app folder. A recursive `rm` can
+   * lose a race with a file still being written or listed (EBUSY / ENOTEMPTY / EPERM) – Node
+   * retries those with `maxRetries`; what still fails is reported, not swallowed, so a launcher
+   * left behind shows in the log (the v0.3.81 release run failed on a bundle that survived).
+   */
   async unpin(id: string): Promise<void> {
     const appDir = join(this.dir, appSlug(id))
     let manifest: LauncherManifest | null = null
@@ -142,10 +148,9 @@ export class ElectronShortcuts implements ShortcutHost {
     } catch {
       manifest = null
     }
-    for (const file of manifest?.files ?? []) await rm(file, { force: true }).catch(() => undefined)
-    for (const directory of manifest?.directories ?? [])
-      await rm(directory, { recursive: true, force: true }).catch(() => undefined)
-    await rm(appDir, { recursive: true, force: true }).catch(() => undefined)
+    for (const file of manifest?.files ?? []) await removeLauncherPath(file, false)
+    for (const directory of manifest?.directories ?? []) await removeLauncherPath(directory, true)
+    await removeLauncherPath(appDir, true)
     if (manifest && this.platform === 'linux') refreshDesktopDatabase(this.paths.applications)
   }
 
@@ -356,6 +361,19 @@ function safePath(get: () => string): string | null {
 function quoteWindowsArg(arg: string): string {
   if (!/[\s"]/.test(arg)) return arg
   return `"${arg.replace(/"/g, '\\"')}"`
+}
+
+/**
+ * `rm` with the transient-error retries Node offers (EBUSY, EMFILE, ENFILE, ENOTEMPTY, EPERM
+ * back off 50, 100, 150 … ms), `force` for a path already gone; a failure after the retries is
+ * logged with the path instead of disappearing.
+ */
+async function removeLauncherPath(path: string, recursive: boolean): Promise<void> {
+  try {
+    await rm(path, { recursive, force: true, maxRetries: 5, retryDelay: 50 })
+  } catch (error) {
+    console.warn(`[zen] web app: could not remove ${path}:`, error)
+  }
 }
 
 /** `update-desktop-database` refreshes the menus' cache where it exists; harmless without it. */

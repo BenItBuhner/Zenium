@@ -292,10 +292,18 @@ export interface UiState {
   /**
    * Reader View's text preferences for a reader tab (CT-20): a popover under the pill's chip on
    * a mouse (`anchor` is the chip; null hangs it under the frame's top edge), the shared sheet
-   * on a phone. Opened by the chip, the app menu's "Text Preferences…" or the reader page's own
-   * toolbar; the page beneath is a picture that is taken again after every change.
+   * on a phone. Opened by the chip or the app menu's "Text Preferences…" (the reader document
+   * carries no toolbar, v2 §10.1); the page beneath is a picture that is taken again after every
+   * change. `anchor` and `bar` are what the desktop popover hangs from – the pill's chip, which
+   * the reader tab never hides (§9.29), whether the chip or the menu asked – and the pill it
+   * sits in (§9.20); both null when no chip is on screen (compact mode; the phone's sheet takes
+   * none).
    */
-  readerPreferences: { tabId: string; anchor: Rect | null } | null
+  readerPreferences: {
+    tabId: string
+    anchor: Rect | null
+    bar: Rect | null
+  } | null
   /**
    * A bookmark the manager should edit, or create (`id: null`) inside `parentId`; on phones the
    * editor sheet (the `bookmark.edit` event, the star toast's Edit).
@@ -319,6 +327,11 @@ export interface UiState {
   permissionPromptOpen: boolean
   /** The Clear browsing data dialog (or sheet) is up over the page or over Settings. */
   clearBrowsingDataOpen: boolean
+  /**
+   * Chrome's "Import bookmarks and settings" dialog is up over Settings (or the page); `source`
+   * is the `ImportSource.id` it opens on (the first-run offer's pick), else the first browser.
+   */
+  importDialog: { source: string | null } | null
   /**
    * Zenium's print preview (`zen://print`, `print/PrintPreviewDialog`): a frame dialog over the
    * page in `tabId`, which it renders to a PDF and shows, with Chrome's options beside it.
@@ -505,6 +518,7 @@ export const uiStore = createStore<UiState>(
     barMenuOpen: false,
     permissionPromptOpen: false,
     clearBrowsingDataOpen: false,
+    importDialog: null,
     printPreview: null,
     autofillPrompt: null,
     autofillPromptCollapsed: null,
@@ -862,6 +876,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.autofillEdit &&
@@ -920,6 +935,7 @@ export function invalidateSnapshot(): void {
     !ui.defaultBrowserPrompt &&
     !ui.install &&
     !ui.clearBrowsingDataOpen &&
+    !ui.importDialog &&
     !ui.printPreview &&
     !ui.autofillPrompt &&
     !ui.stageActive &&
@@ -1540,6 +1556,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.install !== null ||
     ui.mediaSheet !== null ||
     ui.clearBrowsingDataOpen ||
+    ui.importDialog !== null ||
     ui.printPreview !== null ||
     ui.autofillPrompt !== null ||
     ui.stageActive ||
@@ -1720,6 +1737,31 @@ export function closeClearBrowsingData(): void {
 }
 
 /**
+ * Chrome's "Import bookmarks and settings" (`import/ImportDialog`, ID-23): a dialog through the
+ * frame dialog host, over the Settings tab on its Import category where its rows live – or over
+ * the page when a menu asks for it before Settings is up, whose snapshot then has to exist
+ * first for the scrim to dim (a chrome page has none to take, and stays drawn under the dialog).
+ * `source` preselects a browser profile (the first-run offer's pick). `lib/pages.ts`'s
+ * `openImportSurface` brings Settings up first.
+ */
+export async function openImportDialog(
+  activeTabId: string | null,
+  source: string | null = null
+): Promise<void> {
+  if (uiStore.get().importDialog) return
+  if (uiStore.get().overlay === 'none') await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
+  uiStore.set({ importDialog: { source } })
+}
+
+export function closeImportDialog(): void {
+  if (!uiStore.get().importDialog) return
+  uiStore.set({ importDialog: null })
+  invalidateSnapshot()
+  returnFocusToPage()
+}
+
+/**
  * The print preview (`print/PrintPreviewDialog`, the `overlay.open` event with kind `print`
  * from `core/print.ts`): a dialog through the frame dialog host over the page it prints, whose
  * snapshot has to exist first for the scrim to dim. Ctrl+P on an open preview leaves it as it
@@ -1843,29 +1885,55 @@ export function closeZoomBubble(opts: { keepFocus?: boolean } = {}): void {
 // Reader View's text preferences over the page
 // ---------------------------------------------------------------------------
 
+/** The pill's Text preferences chip: what the desktop popover hangs from (§9.20). */
+export const READER_PREFS_CHIP = '[data-reader-prefs-chip]'
+
+/** The chip while it is on screen (null in compact mode, whose row has no pill). */
+export function readerPreferencesChip(): HTMLElement | null {
+  const el = document.querySelector<HTMLElement>(READER_PREFS_CHIP)
+  return el && el.getClientRects().length > 0 ? el : null
+}
+
 /**
- * "Text Preferences…" for a reader tab (the pill's chip, the app menu, the page's toolbar): the
- * surface comes up over a picture of the page, as the zoom bubble does, and the keyboard goes
- * into it. `anchor` is the chip it hangs from on a mouse; without one the popover hangs under
- * the frame's top edge. A second request for the tab whose surface is up puts it away (the
- * chip's toggle).
+ * "Text Preferences…" for a reader tab (the pill's chip, the app menu): the surface comes up
+ * over a picture of the page, as the zoom bubble does, and the keyboard goes into it. `pressed`
+ * is the chip's box when the chip was pressed; `readerPreferencesAnchor` settles what the
+ * popover hangs from either way. A second request for the tab whose surface is up leaves it as
+ * it is (the chip's own press while it is up is the chrome layer's light dismiss).
  */
 export async function openReaderPreferences(
   tabId: string,
-  anchor: DOMRect | Rect | null = null
+  pressed: DOMRect | Rect | null = null
 ): Promise<void> {
   const open = uiStore.get().readerPreferences
   if (open && open.tabId === tabId) return
   await captureActiveTab(tabId)
   run('focus.chrome', undefined)
-  uiStore.set({
-    readerPreferences: {
-      tabId,
-      anchor: anchor
-        ? { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height }
-        : null
-    }
-  })
+  uiStore.set({ readerPreferences: { tabId, ...readerPreferencesAnchor(pressed) } })
+}
+
+/**
+ * Where the desktop popover hangs (§9.20: an anchored panel, its top on its bar's bottom edge,
+ * start-aligned to its anchor, the anchor lit while it is up): from the pill's Text preferences
+ * chip – the one pressed, or the one a request from the app menu finds on screen; the reader
+ * tab never hides it (§9.29) – in the pill. No chip on screen (compact mode, a phone, whose
+ * sheet takes no anchor) leaves both null.
+ */
+function readerPreferencesAnchor(
+  pressed: DOMRect | Rect | null
+): Pick<NonNullable<UiState['readerPreferences']>, 'anchor' | 'bar'> {
+  const chipBox = pressed ?? readerPreferencesChip()?.getBoundingClientRect() ?? null
+  if (!chipBox) return { anchor: null, bar: null }
+  const pill = document.querySelector('.zen-pill')
+  return {
+    anchor: rectOf(chipBox),
+    bar: pill ? rectOf(pill.getBoundingClientRect()) : null
+  }
+}
+
+/** The four numbers of a box (a DOMRect carries more; only these are kept). */
+function rectOf(box: DOMRect | Rect): Rect {
+  return { x: box.x, y: box.y, width: box.width, height: box.height }
 }
 
 /**

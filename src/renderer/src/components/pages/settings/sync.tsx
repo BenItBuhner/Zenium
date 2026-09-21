@@ -1,5 +1,5 @@
 import { FolderX } from 'lucide-react'
-import type { SyncStatus } from '@shared/types'
+import type { FormFactor, SyncStatus } from '@shared/types'
 import { cmd, run } from '@renderer/lib/api'
 import { downloadFolderLabel } from '@renderer/lib/downloadText'
 import { SYNC_COPY, SYNC_SCOPES, syncSetupStore, syncStatusLine } from '@renderer/lib/syncSetup'
@@ -9,24 +9,33 @@ import type { SectionContext } from './sections'
 import { SyncDisconnectForm, SyncMergeForm, SyncPassphraseForm } from './syncForms'
 
 /**
- * Settings › Sync on a phone (design language v2 §10.3–10.4; ID-08's UI), the desktop pane
- * (`overlays/SyncSection.tsx`) in its row form, reading `state.sync` and running the same
- * `sync.*` commands. Before setup: the folder row (the system folder picker, the chosen tree's
- * name as the description), the device name and Turn on sync, whose sheet is the passphrase
- * form (§9.23 title block in Chrome's words, two secret fields, §9.30 busy while the key is
- * derived and the folder read); What you sync in Chrome's order follows, so a device can leave a
- * type out before its first push. Connected: Sync now with the status line as its description,
- * the merge question as a sheet while the first sync waits on it, the §9.17 / §9.33 message row
+ * Settings › Sync (ID-08's UI) on the shared builder: the phone's rows (design language v2
+ * §10.3–10.4) and, since #193 put the desktop Settings tab on the same builder, the desktop's
+ * (§10.5: the same rows in the desktop vocabulary, an action's `button` trailing it – a label
+ * the phone never reads), reading `state.sync` and running the same `sync.*` commands. Before
+ * setup: the folder row (the system folder picker, the chosen tree's name as the description),
+ * the device name and Turn on sync, whose sheet (a dialog on the desktop) is the passphrase form
+ * (§9.23 title block in Chrome's words, two secret fields, §9.30 busy while the key is derived
+ * and the folder read); What you sync in Chrome's order follows, so a device can leave a type
+ * out before its first push. Connected: Sync now with the status line as its description, the
+ * merge question as a sheet while the first sync waits on it, the §9.17 / §9.33 message row
  * when the folder is lost (ink and a trailing tinted glyph, no card) over the folder row that
  * chooses it again, the device name, the other devices with their last-seen time and their
- * count (0 when none, §9.17), the toggles, and Turn off
- * sync – a §9.23 prompt whose one choice, removing this device's file from the folder, is a
- * checkbox row submitted with the action.
+ * count (0 when none, §9.17), the toggles, and Turn off sync – a §9.23 prompt whose one choice,
+ * removing this device's file from the folder, is a checkbox row submitted with the action.
+ *
+ * The desktop and tablet page keeps what the pane it replaces had (#193's inventory: no row of
+ * the pane is lost): the same rows under the builder's headings, and the pane's two ways off as
+ * two rows – Turn off sync with its confirmation and, destructive, Turn off and remove this
+ * device's data with its own – where the phone folds the second into the first's sheet.
  */
 export function syncGroups({ state }: SectionContext): RowGroup[] {
   const sync = state.sync
   return sync.enabled ? connectedGroups(sync) : setupGroups(sync)
 }
+
+/** The shells the desktop vocabulary serves (`SettingsRow.layouts`). */
+const DESKTOP_LAYOUTS: readonly FormFactor[] = ['desktop', 'tablet']
 
 // ---------------------------------------------------------------------------
 // Before setup
@@ -46,6 +55,8 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
           label: SYNC_COPY.folder,
           description: pending ? downloadFolderLabel(pending) : SYNC_COPY.folderUnset,
           keywords: FOLDER_KEYWORDS,
+          // The desktop's button (§10.5): the Downloads folder row's verb once a folder is set.
+          button: pending ? 'Change…' : 'Choose…',
           onPress: () => {
             // A dismissed picker keeps the draft as it is.
             void cmd('sync.chooseFolder', undefined).then((folder) => {
@@ -60,6 +71,7 @@ function setupGroups(sync: SyncStatus): RowGroup[] {
           label: SYNC_COPY.turnOn,
           description: pending ? SYNC_COPY.turnOnHint : SYNC_COPY.turnOnNeedsFolder,
           keywords: ['set up', 'enable', 'passphrase', 'encrypt'],
+          button: 'Turn on…',
           // Nothing to set up without a folder: laid out at 40 %, not pressable (§10.4).
           disabled: pending === null,
           form: {
@@ -121,6 +133,7 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       label: SYNC_COPY.mergeRow,
       description: SYNC_COPY.mergeRowHint,
       keywords: ['merge', 'first sync', 'replace', 'combine'],
+      button: 'Choose…',
       form: {
         title: SYNC_COPY.mergeTitle,
         description: SYNC_COPY.mergeDescription,
@@ -138,6 +151,7 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
     description: error ?? syncStatusLine(sync),
     tone: error ? 'danger' : undefined,
     keywords: ['last synced', 'status', 'refresh'],
+    button: SYNC_COPY.syncNow,
     busy: sync.syncing,
     // Nothing to sync to until the folder is chosen again or the merge is answered.
     disabled: sync.folderLost || sync.pendingMerge,
@@ -155,6 +169,7 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
           label: SYNC_COPY.folder,
           description: sync.folderName ?? sync.folder ?? SYNC_COPY.folderUnset,
           keywords: FOLDER_KEYWORDS,
+          button: 'Change…',
           onPress: () => {
             void cmd('sync.chooseFolder', undefined).then((folder) => {
               if (folder) run('sync.setFolder', { folder })
@@ -183,33 +198,77 @@ function connectedGroups(sync: SyncStatus): RowGroup[] {
       empty: SYNC_COPY.noDevices
     },
     scopeGroup(sync),
+    { id: 'sync-off', heading: null, rows: offRows() }
+  ]
+}
+
+/**
+ * The ways off, each shell's own (`layouts`; the Tab unloading and Sleeping tabs rows are built
+ * the same way). The phone's one row: Turn off sync, whose §9.23 sheet holds the wipe as a
+ * checkbox row submitted with the action. The desktop and tablet page's two, as the pane had
+ * them (#193's inventory): Turn off sync confirming in its dialog, and the wipe as a destructive
+ * row with its own – each the whole of what it says, so the dialog offers no second choice.
+ */
+function offRows(): SettingsRow[] {
+  return [
     {
-      id: 'sync-off',
-      heading: null,
-      rows: [
-        {
-          kind: 'action',
-          id: 'sync-disconnect',
-          label: SYNC_COPY.turnOff,
-          description: SYNC_COPY.turnOffHint,
-          keywords: ['disconnect', 'stop', 'remove', 'wipe'],
-          destructive: true,
-          form: {
-            title: SYNC_COPY.turnOffTitle,
-            description: SYNC_COPY.turnOffDescription,
-            render: (close) => <SyncDisconnectForm close={close} />
-          }
-        }
-      ]
+      kind: 'action',
+      id: 'sync-disconnect',
+      label: SYNC_COPY.turnOff,
+      description: SYNC_COPY.turnOffHint,
+      keywords: OFF_KEYWORDS,
+      layouts: ['phone'],
+      destructive: true,
+      form: {
+        title: SYNC_COPY.turnOffTitle,
+        description: SYNC_COPY.turnOffDescription,
+        render: (close) => <SyncDisconnectForm close={close} />
+      }
+    },
+    {
+      kind: 'action',
+      id: 'sync-turn-off',
+      label: SYNC_COPY.turnOff,
+      description: SYNC_COPY.turnOffHint,
+      keywords: OFF_KEYWORDS,
+      layouts: DESKTOP_LAYOUTS,
+      button: 'Turn off…',
+      confirm: {
+        title: SYNC_COPY.turnOffTitle,
+        description: SYNC_COPY.turnOffDescription,
+        action: SYNC_COPY.turnOffAction
+      },
+      onPress: () => run('sync.disconnect', { wipeRemote: false })
+    },
+    {
+      kind: 'action',
+      id: 'sync-wipe',
+      label: SYNC_COPY.wipeRow,
+      description: SYNC_COPY.wipeRemoteHint,
+      keywords: OFF_KEYWORDS,
+      layouts: DESKTOP_LAYOUTS,
+      button: 'Remove…',
+      destructive: true,
+      confirm: {
+        title: SYNC_COPY.wipeTitle,
+        description: SYNC_COPY.wipeDescription,
+        action: SYNC_COPY.wipeAction
+      },
+      onPress: () => run('sync.disconnect', { wipeRemote: true })
     }
   ]
 }
+
+const OFF_KEYWORDS = ['disconnect', 'stop', 'remove', 'wipe'] as const
 
 // ---------------------------------------------------------------------------
 // Shared rows
 // ---------------------------------------------------------------------------
 
-/** "This device": the name other devices list; the engine keeps it before and after setup. */
+/**
+ * "This device": the name other devices list for this one, the pane's own label on both hosts
+ * (#193's inventory); the engine keeps it before and after setup.
+ */
 function deviceNameRow(sync: SyncStatus): SettingsRow {
   return {
     kind: 'field',

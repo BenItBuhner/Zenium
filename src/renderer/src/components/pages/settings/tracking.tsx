@@ -100,6 +100,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
         label: 'Update lists now',
         disabled: !active,
         busy: status.updating,
+        button: 'Update now',
         onPress: () => run('blocking.updateLists', {})
       },
       ...defaults.map((l) =>
@@ -142,6 +143,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
             id: `tracking-list:${l.id}:remove`,
             label: 'Remove list',
             destructive: true,
+            button: 'Remove…',
             confirm: {
               title: `Remove ${l.name}?`,
               description: 'Its filters stop applying. You can add the list again by its URL.',
@@ -157,6 +159,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
         label: 'Add a list by its URL',
         keywords: ['custom list', 'subscribe'],
         disabled: !active,
+        button: 'Add…',
         form: {
           title: 'Add a list',
           render: (close) => (
@@ -199,6 +202,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
                   : ''
               }`,
         keywords: ['user filters', 'ublock', 'syntax'],
+        button: 'Edit…',
         form: {
           title: 'Your filters',
           description: 'One filter per line.',
@@ -254,6 +258,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
                   kind: 'action',
                   id: `tracking-site:${site}:block`,
                   label: 'Block on this site again',
+                  button: 'Block again',
                   onPress: () => run('blocking.setSiteException', { site, excepted: false })
                 }
               ]
@@ -267,6 +272,7 @@ export function trackingGroups({ state, tab, set }: SectionContext): RowGroup[] 
         label: 'Add a site',
         keywords: ['exception', 'allow'],
         disabled: !active,
+        button: 'Add…',
         form: {
           title: 'Add a site',
           description: 'Nothing is blocked on the site until you block on it again.',
@@ -308,6 +314,7 @@ function updateListRow(l: FilterListStatus, active: boolean): SettingsRow {
     description: l.lastError ? `Update failed: ${l.lastError}` : undefined,
     disabled: !active || !l.enabled,
     busy: l.updating,
+    button: 'Update now',
     onPress: () => run('blocking.updateLists', { id: l.id })
   }
 }

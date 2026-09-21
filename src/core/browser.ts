@@ -145,7 +145,7 @@ import { sanitizeBlockingSettings } from '../shared/blocking'
 import { isShortcutPreset } from '../shared/shortcuts'
 import { sanitizePrivacySettings } from '../shared/privacy'
 import { sanitizeSpellcheck } from '../shared/spellcheck'
-import { sanitizeReaderPreferences, type ReaderPreferences } from '../shared/reader'
+import { sanitizeReaderPreferences } from '../shared/reader'
 import type { ExtensionHost, Governor, PageMessage, Platform, SyncHost } from './platform'
 import { JsonStore } from './store/JsonStore'
 
@@ -189,7 +189,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'bookmark.star',
   'bookmark.edit',
   'webapp.install',
-  'translate.selection'
+  'translate.selection',
+  'import.open'
 ])
 
 /**
@@ -1330,6 +1331,15 @@ export class Browser {
     urls.forEach((url, i) => this.tabs.createTab({ url, active: i === 0 }, win))
   }
 
+  /**
+   * Bookmarks > Import Bookmarks and Settings… (Chrome's `chrome://settings/importData`): the
+   * chrome opens Settings on its Import category with the import dialog up (ID-23). The
+   * Netscape-file import of the bookmark manager's own menu stays `importBookmarks`.
+   */
+  openImportDialog(win: ZenWindow): void {
+    this.emit('import.open', undefined, win)
+  }
+
   async importBookmarks(win: ZenWindow): Promise<BookmarkImportResult | null> {
     const files = await this.platform.dialogs.pickTextFiles(
       { title: 'Import bookmarks', extensions: ['html', 'htm'] },
@@ -2162,13 +2172,6 @@ export class Browser {
     if (!tab || !message || typeof message.type !== 'string') return
     if (message.type === 'webapp') {
       this.webApps.handleMessage(tabId, message)
-      return
-    }
-    if (message.type === 'reader') {
-      // Only a reader page of the tab's own may change the preferences (the page script relays
-      // the message from `zen:` documents alone; the tab's URL is the second check).
-      if (this.reader.isReaderUrl(tab.url))
-        this.reader.setPreferences(message.reader as Partial<ReaderPreferences>)
       return
     }
     if (message.type === 'opensearch') {

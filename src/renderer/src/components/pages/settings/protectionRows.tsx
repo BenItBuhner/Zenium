@@ -133,6 +133,7 @@ export function safeBrowsingGroups(state: UIState, set: Set): RowGroup[] {
           keywords: ['refresh', 'feeds'],
           busy: status.updating,
           disabled: !on || !status.ready,
+          button: 'Update now',
           onPress: () => run('protection.updateFeeds', {})
         },
         ...status.feeds.map((feed) => feedItem(feed, !on))
@@ -234,6 +235,7 @@ export function cookiesGroups(state: UIState, set: Set): RowGroup[] {
           description: related.addDescription,
           keywords: ['exception', 'related sites'],
           disabled: !blocking,
+          button: 'Add…',
           form: {
             title: related.add,
             description: related.description,
@@ -297,6 +299,7 @@ export function httpsOnlyGroups(state: UIState, set: Set): RowGroup[] {
               kind: 'action',
               id: `https-only-site:${site}:forget`,
               label: sites.askAgain(site),
+              button: 'Ask again',
               onPress: () =>
                 run('permissions.set', {
                   origin: `http://${site}`,
@@ -312,6 +315,7 @@ export function httpsOnlyGroups(state: UIState, set: Set): RowGroup[] {
               kind: 'action',
               id: `https-only-session:${site}:forget`,
               label: sites.askAgain(site),
+              button: 'Ask again',
               onPress: () => run('protection.forgetPlaintext', { host: site })
             }
           ])

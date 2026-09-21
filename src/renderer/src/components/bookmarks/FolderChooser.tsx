@@ -1,11 +1,13 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, Folder, FolderPlus } from 'lucide-react'
+import { ChevronRight, Folder } from 'lucide-react'
 import type { BookmarkNode } from '@shared/types'
 import type { BookmarkTree } from '@shared/bookmarks'
 import { cmd, run } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
+import { V2Button } from '../extensions/v2'
 import { RenameField } from './RenameField'
+import { useEscapeTrap } from './escape'
 
 interface Props {
   tree: BookmarkTree
@@ -15,14 +17,22 @@ interface Props {
   disabled?: Set<string>
   /** Offer "New folder" (created inside the selected folder, named in place). */
   allowCreate?: boolean
+  /** Escape in the tree (not while a new folder is being named): the caller puts the tree away. */
+  onEscape?: () => void
   className?: string
 }
 
 /**
  * The nested folder chooser of the star bubble and the dialogs (Chrome's "Choose another
- * folder"): a tree of folders in place of the menulist. Keyboard (v2 draft §9.22): the current
- * folder's row takes focus when the tree appears; Up and Down walk the rows on screen, Right
- * opens a folder or steps into it, Left closes one or steps out, Enter or Space picks.
+ * folder"): the folder tree in the menulist's place, as shared rows (`.zen-v2-row`, v2 draft
+ * §9.21) – 32 tall, the whole row the target with the hover fill, the chosen one on
+ * `--v2-selected` (§9.6), the ones that cannot be chosen at 40% (§9.30) – a 20 twisty and the
+ * 16 folder glyph leading the name, each level 16 further in. The tree runs edge to edge under
+ * its label (out of the form's gutter, so the rows sit where a popover's rows sit and leave the
+ * ring its room, §9.20) and scrolls past eight rows; under it "New folder" as a secondary button.
+ * Keyboard (§9.22): the current folder's row takes focus when the tree appears; Up and Down walk
+ * the rows on screen, Right opens a folder or steps into it, Left closes one or steps out, Enter
+ * or Space picks, Escape hands the tree back to the caller.
  */
 export function FolderChooser({
   tree,
@@ -30,6 +40,7 @@ export function FolderChooser({
   onSelect,
   disabled,
   allowCreate,
+  onEscape,
   className
 }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -46,8 +57,10 @@ export function FolderChooser({
     selectedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [selectedId])
   useEffect(() => {
-    selectedRef.current?.querySelector<HTMLElement>('[data-pick-name]')?.focus()
+    selectedRef.current?.focus()
   }, [])
+  // The name being typed for a new folder takes Escape first (its own trap restores the title).
+  useEscapeTrap(onEscape !== undefined && renaming === null, onEscape ?? (() => undefined))
 
   const toggle = (id: string): void =>
     setExpanded((prev) => {
@@ -105,6 +118,10 @@ export function FolderChooser({
         parent?.focus()
         break
       }
+      case 'Enter':
+      case ' ':
+        if (!disabled?.has(id)) onSelect(id)
+        break
       default:
         return
     }
@@ -118,73 +135,72 @@ export function FolderChooser({
     const off = Boolean(disabled?.has(node.id))
     const selected = node.id === selectedId
     return (
-      <li key={node.id}>
+      <li key={node.id} role="none">
         <div
           ref={selected ? selectedRef : undefined}
           role="treeitem"
+          tabIndex={selected ? 0 : -1}
           aria-selected={selected}
           aria-expanded={children.length ? open : undefined}
-          data-off={off || undefined}
-          className="zen-bm-pick-row"
-          style={{ paddingLeft: 2 + depth * 14 }}
+          aria-disabled={off || undefined}
+          aria-level={depth + 1}
+          data-pick-name={node.id}
+          className="zen-v2-row zen-bm-pick-row"
+          onClick={() => !off && onSelect(node.id)}
+          onDoubleClick={() => children.length && toggle(node.id)}
         >
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label={open ? 'Collapse' : 'Expand'}
-            className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] opacity-60 hover:opacity-100',
-              !children.length && 'invisible'
-            )}
-            onClick={() => toggle(node.id)}
-          >
-            <ChevronRight
-              className={cn('h-4 w-4 transition-transform duration-150', open && 'rotate-90')}
-            />
-          </button>
-          <Folder className="h-4 w-4 shrink-0 opacity-70" />
+          <span className="zen-bm-pick-lead" style={{ paddingLeft: depth * 16 }}>
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label={open ? 'Collapse' : 'Expand'}
+              className={cn('zen-bm-pick-twisty', !children.length && 'invisible')}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggle(node.id)
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <ChevronRight data-open={open || undefined} />
+            </button>
+            <Folder />
+          </span>
           {renaming === node.id ? (
             <RenameField
               title={node.title}
+              className="zen-bm-pick-rename"
               onDone={(title) => {
                 if (title && title !== node.title) run('bookmark.update', { id: node.id, title })
                 setRenaming(null)
+                selectedRef.current?.focus()
               }}
             />
           ) : (
-            <button
-              type="button"
-              disabled={off}
-              tabIndex={selected ? 0 : -1}
-              data-pick-name={node.id}
-              className="min-w-0 flex-1 truncate py-1 text-left"
-              onClick={() => onSelect(node.id)}
-              onDoubleClick={() => children.length && toggle(node.id)}
-            >
-              {node.title}
-            </button>
+            <span className="min-w-0 flex-1 truncate">{node.title}</span>
           )}
         </div>
-        {open && children.length > 0 && <ul>{children.map((c) => renderFolder(c, depth + 1))}</ul>}
+        {open && children.length > 0 && (
+          <ul role="group">{children.map((c) => renderFolder(c, depth + 1))}</ul>
+        )}
       </li>
     )
   }
 
   return (
-    <div className={cn('flex min-h-0 flex-col', className)}>
+    <div className={cn('flex min-h-0 min-w-0 flex-1 flex-col', className)}>
       <ul
         ref={treeRef}
         role="tree"
-        className="min-h-0 flex-1 overflow-y-auto p-1"
+        aria-label="Folder"
+        className="zen-bm-pick-tree"
         onKeyDown={onKeyDown}
       >
         {tree.roots().map((r) => renderFolder(r, 0))}
       </ul>
       {allowCreate && (
-        <button type="button" className="zen-button mt-2 self-start" onClick={() => void create()}>
-          <FolderPlus className="h-4 w-4" />
+        <V2Button className="mt-3 self-start" onClick={() => void create()}>
           New folder
-        </button>
+        </V2Button>
       )}
     </div>
   )

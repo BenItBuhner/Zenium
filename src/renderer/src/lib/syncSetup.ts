@@ -5,9 +5,9 @@ import { browserStore, forgetToast, uiStore } from './ui'
 import { relativeTime } from './utils'
 
 /**
- * What the Sync settings share between the phone page (`pages/settings/sync.tsx`) and the desktop
- * pane (`overlays/SyncSection.tsx`): the words, the setup draft the phone keeps between its rows,
- * and the setup call turned into a form's answer.
+ * What the Sync settings builder (`pages/settings/sync.tsx`, the one section both hosts draw
+ * since #193 put the desktop on the shared builder) keeps beside its rows: the words, the setup
+ * draft kept between the rows, and the setup call turned into a form's answer.
  */
 
 /** The engine's floor for a passphrase (`core/sync/engine.ts` refuses shorter ones). */
@@ -65,7 +65,15 @@ export const SYNC_COPY = {
     'This device stops syncing and keeps everything it has. Other devices keep syncing with each other.',
   wipeRemote: 'Also remove this device’s data from the folder',
   wipeRemoteHint: 'Other devices forget what this one synced; what they have of their own stays.',
-  turnOffAction: 'Turn off'
+  turnOffAction: 'Turn off',
+  // The desktop and tablet page's second way off (the pane's two buttons, #193's inventory): the
+  // wipe as a row of its own with its confirmation, where the phone folds it into Turn off
+  // sync's sheet as the checkbox row above.
+  wipeRow: 'Turn off and remove this device’s data',
+  wipeTitle: 'Turn off sync and remove this device’s data?',
+  wipeDescription:
+    'This device stops syncing and keeps everything it has. Its records leave the folder, and other devices forget what it synced.',
+  wipeAction: 'Remove'
 } as const
 
 /**

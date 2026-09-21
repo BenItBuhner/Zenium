@@ -4,10 +4,19 @@ import { Check, CircleAlert, Copy } from 'lucide-react'
 import type {
   ContainerColor,
   ContainerIcon as ContainerIconName,
+  ResourceGauge,
   SearchEngine,
   Space
 } from '@shared/types'
-import { APP_ICON_VARIANTS, type AppIconId } from '@shared/appIcon'
+import {
+  APP_ICON_DESKTOP,
+  APP_ICON_INK,
+  APP_ICON_MARK,
+  APP_ICON_VARIANTS,
+  squirclePath,
+  type AppIconId,
+  type AppIconVariant
+} from '@shared/appIcon'
 import { CONTAINER_COLORS, CONTAINER_ICONS, spaceLabel } from '@shared/defaults'
 import { formatZoom } from '@shared/pageControls'
 import { searchTemplateProblem } from '@shared/search'
@@ -15,7 +24,6 @@ import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
-import { AppIconImage } from '../../overlays/AppIconPicker'
 
 /**
  * The blocks of the phone Settings page that are not rows (v2 §10.4's image radio cards and the
@@ -48,6 +56,43 @@ export function AppIconGrid({
         </button>
       ))}
     </div>
+  )
+}
+
+const ICON_VIEW = 100
+const ICON_RING_OUTER = ICON_VIEW * APP_ICON_DESKTOP.ringOuter
+
+/** The desktop icon as vector art, from the same geometry the generated assets come from. */
+export function AppIconImage({
+  variant,
+  className
+}: {
+  variant: AppIconVariant
+  className?: string
+}): JSX.Element {
+  return (
+    <svg
+      viewBox={`0 0 ${ICON_VIEW} ${ICON_VIEW}`}
+      className={className}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={squirclePath(ICON_VIEW)} fill={variant.fill} />
+      <circle
+        cx={ICON_VIEW / 2}
+        cy={ICON_VIEW / 2}
+        r={ICON_RING_OUTER * APP_ICON_MARK.ring}
+        fill="none"
+        stroke={APP_ICON_INK}
+        strokeWidth={ICON_RING_OUTER * APP_ICON_MARK.stroke}
+      />
+      <circle
+        cx={ICON_VIEW / 2}
+        cy={ICON_VIEW / 2}
+        r={ICON_RING_OUTER * APP_ICON_MARK.dot}
+        fill={APP_ICON_INK}
+      />
+    </svg>
   )
 }
 
@@ -649,6 +694,71 @@ export function UrlForm({
 }
 
 /**
+ * Languages › Spell check › Custom dictionary › Add a new word (Chrome's "Customize spell
+ * check"): one word without spaces, refused with the field's own message otherwise, when it is
+ * there already, or when the host declines it; the sheet closes once the word is in.
+ */
+export function WordForm({
+  problem,
+  onAdd,
+  close
+}: {
+  /** Why the typed word cannot go in yet, or nothing (`wordProblem`). */
+  problem: (word: string) => string | undefined
+  onAdd: (word: string) => Promise<string | undefined>
+  close: () => void
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const word = value.trim()
+  const shown = error ?? (word ? (problem(word) ?? null) : null)
+  const ready = Boolean(word) && !shown && !busy
+  const submit = (): void => {
+    if (!ready) return
+    setBusy(true)
+    void onAdd(word)
+      .then((refusal) => {
+        if (refusal) setError(refusal)
+        else close()
+      })
+      .catch(() => setError('This word could not be added'))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <div className="zen-settings-form" data-testid="word-form">
+      <Field
+        id="dictionary-word"
+        label="Add a new word"
+        description={shown ? undefined : 'The checker never marks it.'}
+      >
+        <input
+          id="dictionary-word"
+          className="zen-settings-input zen-v2-field"
+          placeholder="colour"
+          autoCapitalize="off"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          aria-invalid={shown ? true : undefined}
+          readOnly={busy}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            setError(null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+          }}
+        />
+        {shown && <ValidationMessage message={shown} />}
+      </Field>
+      <SheetActions action="Add" disabled={!ready} busy={busy} onCancel={close} onAction={submit} />
+    </div>
+  )
+}
+
+/**
  * The §9.12 form of a new tab page shortcut (Settings › New Tab › Add shortcut): a name and an
  * address, the address read as the URL bar reads typed text (`inputToUrl`), the button held
  * until it makes a URL – the desktop's inline form, as a sheet.
@@ -696,6 +806,61 @@ export function ShortcutForm({
         />
       </Field>
       <SheetActions action="Add" disabled={!valid} onCancel={close} onAction={submit} />
+    </div>
+  )
+}
+
+/**
+ * Resources › Live usage: a gauge as a 4 px bar at radius 2 in --v2-fill, the used part in the
+ * accent – the warning ink from 85 % of a budget, the danger ink at 100 % – with the label and
+ * the numbers on the line above it and a note under. No budget draws the bar against `fallbackMax`
+ * at half strength; a fallback of 0 draws no bar.
+ */
+export function ResourceMeter({
+  label,
+  gauge,
+  fallbackMax,
+  format,
+  note
+}: {
+  label: string
+  gauge: ResourceGauge
+  /** Scale for the bar when there is no budget (0 = no bar). */
+  fallbackMax: number
+  format: (v: number) => string
+  note?: string
+}): JSX.Element {
+  const max = gauge.budget > 0 ? gauge.budget : fallbackMax
+  const pct = max > 0 ? (gauge.used / max) * 100 : 0
+  const tone =
+    gauge.budget === 0 ? 'unbudgeted' : pct >= 100 ? 'over' : pct >= 85 ? 'near' : undefined
+  return (
+    <div className="zen-settings-meter" data-tone={tone}>
+      <div className="zen-settings-meter-head">
+        <span className="zen-settings-label">{label}</span>
+        <span className="zen-settings-meter-value">
+          {format(gauge.used)}
+          {gauge.budget > 0 ? ` / ${format(gauge.budget)}` : ' · no limit'}
+          {gauge.budget > 0 && gauge.budget !== gauge.configured
+            ? ` (${format(gauge.configured)} on mains)`
+            : ''}
+        </span>
+      </div>
+      {max > 0 && (
+        <div
+          className="zen-settings-progress zen-settings-meter-bar"
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(Math.max(0, Math.min(100, pct)))}
+        >
+          <div style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+        </div>
+      )}
+      {note && (
+        <span className="zen-settings-description zen-settings-description-full">{note}</span>
+      )}
     </div>
   )
 }

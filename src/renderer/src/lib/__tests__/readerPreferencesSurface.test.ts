@@ -17,12 +17,29 @@ import {
 
 /*
  * Reader View's text preferences over the page (lib/ui.ts): the surface comes up over a picture
- * of the reader page as the zoom bubble does, takes the keyboard, hangs from the chip it was
- * opened from on a mouse, toggles away on a second request for the same tab, and has the page's
- * picture taken again once a preference has been pushed to it.
+ * of the reader page as the zoom bubble does, takes the keyboard, hangs from the pill's chip on
+ * a mouse – the chip pressed, or the one a request from the app menu finds on screen (the
+ * reader tab never hides it, §9.29) –, stays as it is on a second request for the same tab, and
+ * has the page's picture taken again once a preference has been pushed to it.
  */
 
 const idle = (): UiState => uiStore.get()
+
+/** An element drawn at `box` (happy-dom lays nothing out: the two rect readers are given). */
+function drawn(
+  el: HTMLElement,
+  box: { x: number; y: number; width: number; height: number }
+): void {
+  const rect = {
+    ...box,
+    top: box.y,
+    left: box.x,
+    right: box.x + box.width,
+    bottom: box.y + box.height
+  }
+  el.getBoundingClientRect = () => rect as DOMRect
+  el.getClientRects = () => [rect] as unknown as DOMRectList
+}
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -31,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   uiStore.set({ readerPreferences: null, snapshot: null, snapshotTabId: null, overlay: 'none' })
+  document.body.innerHTML = ''
   vi.clearAllMocks()
   vi.useRealTimers()
 })
@@ -42,7 +60,8 @@ describe('the reader text preferences surface', () => {
     expect(run).toHaveBeenCalledWith('focus.chrome', undefined)
     expect(idle().readerPreferences).toEqual({
       tabId: 't1',
-      anchor: { x: 10, y: 20, width: 30, height: 40 }
+      anchor: { x: 10, y: 20, width: 30, height: 40 },
+      bar: null
     })
     expect(idle().snapshotTabId).toBe('t1')
     // A DOMRect from the chip carries more than the four numbers: only those are kept.
@@ -52,9 +71,30 @@ describe('the reader text preferences surface', () => {
     expect(idle().readerPreferences?.anchor).toEqual({ x: 1, y: 2, width: 3, height: 4 })
   })
 
-  it('hangs under the frame top without a chip (the app menu, the page toolbar)', async () => {
+  it('a request from the app menu hangs from the chip on screen, in its pill (§9.29: the reader tab never hides it)', async () => {
+    document.body.innerHTML = '<div class="zen-pill"><button data-reader-prefs-chip></button></div>'
+    drawn(document.querySelector('.zen-pill')!, { x: 100, y: 42, width: 70, height: 32 })
+    drawn(document.querySelector('[data-reader-prefs-chip]')!, {
+      x: 142,
+      y: 48,
+      width: 20,
+      height: 20
+    })
     await openReaderPreferences('t1')
-    expect(idle().readerPreferences).toEqual({ tabId: 't1', anchor: null })
+    expect(idle().readerPreferences).toEqual({
+      tabId: 't1',
+      anchor: { x: 142, y: 48, width: 20, height: 20 },
+      bar: { x: 100, y: 42, width: 70, height: 32 }
+    })
+  })
+
+  it('hangs under the frame top with no chip on screen (compact mode, a phone)', async () => {
+    // A chip in the document with no box is not on screen either.
+    document.body.innerHTML = '<button data-reader-prefs-chip></button>'
+    const chip = document.querySelector<HTMLElement>('[data-reader-prefs-chip]')!
+    chip.getClientRects = () => [] as unknown as DOMRectList
+    await openReaderPreferences('t1')
+    expect(idle().readerPreferences).toEqual({ tabId: 't1', anchor: null, bar: null })
   })
 
   it('is a lone panel over the page that holds the keyboard, and not over Settings', async () => {

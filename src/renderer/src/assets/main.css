@@ -3254,12 +3254,20 @@
    * the dialogs dim only the content frame and the manager is a page. Chips and the star sit on
    * the window and take the window fills; everything on a panel takes the text fills.
    */
+  /*
+   * The bar (§9.29 window family, §9.3): a 32 row of 28 chips – the toolbar buttons' height –
+   * with 4 under them to the content frame, the chips 4 apart and 4 in from the bar's ends. The
+   * chips draw in the theme's ink at the sidebar's text size (§4: chrome text at 400) with 16
+   * glyphs at the toolbar stroke and 8 of padding either side, hover in the window fill over
+   * 120 ms, and the one whose panel is open keeps the pressed fill through `aria-expanded`
+   * (§9.20). Every distance is box to box (§5).
+   */
   .zen-bm-bar {
     display: flex;
     align-items: center;
-    height: 30px;
+    height: 32px;
     gap: 4px;
-    padding: 0 2px 4px;
+    padding: 0 4px 4px;
   }
   .zen-bm-strip {
     position: relative;
@@ -3267,8 +3275,8 @@
     min-width: 0;
     flex: 1;
     align-items: center;
-    gap: 6px;
-    height: 26px;
+    gap: 4px;
+    height: 28px;
     overflow: hidden;
   }
   .zen-bm-chip {
@@ -3277,24 +3285,30 @@
     flex-shrink: 0;
     align-items: center;
     gap: 6px;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
     color: var(--zen-fg);
-    font-size: 12.5px;
+    font-size: var(--zen-sidebar-font);
     font-weight: 400;
+    line-height: 20px;
     white-space: nowrap;
     outline: none;
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
+  .zen-bm-chip-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
   .zen-bm-chip:hover {
     background: var(--v2-window-fill);
   }
-  /* The chip whose popover is open keeps its pressed fill (§9.20). */
+  /* The chip whose panel is open keeps its pressed fill (§9.20), said by `aria-expanded`. */
   .zen-bm-chip:active,
-  .zen-bm-chip[data-open='true'] {
+  .zen-bm-chip[aria-expanded='true'] {
     background: var(--v2-window-fill-hover);
   }
   /*
@@ -3306,10 +3320,10 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
-  /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
+  /* Drop-into target (§9.4, #215): keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
     background: var(--v2-window-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
+    box-shadow: inset 0 0 0 2px var(--zen-accent);
   }
   .zen-bm-chip[data-lifted='true'] {
     visibility: hidden;
@@ -3322,12 +3336,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The overflow chevron, and a bookmark without a name: the icon alone (Chrome). */
+  /* A bookmark without a name: the icon alone (Chrome), 28 square. */
   .zen-bm-chip[data-icon-only='true'] {
     padding: 0 6px;
   }
   .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
     display: none;
+  }
+  /*
+   * The overflow » (§9.3): the toolbar button, at the chips' radius rather than the toolbar's 9
+   * and in the window fills the chips take; lit with the pressed fill while its panel is open.
+   */
+  .zen-bm-overflow {
+    border-radius: 6px;
+  }
+  .zen-bm-overflow:hover:not(:disabled) {
+    background: var(--v2-window-fill);
+  }
+  .zen-bm-overflow:active:not(:disabled),
+  .zen-bm-overflow[aria-expanded='true'] {
+    background: var(--v2-window-fill-hover);
+    opacity: 1;
+    transform: none;
   }
   /*
    * What travels under the pointer: lifted to level 2, scale(1.02) at 90%. The drag hooks place
@@ -3360,18 +3390,27 @@
     background: var(--v2-fill);
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
+  /*
+   * The empty bar's hint (#226): a sentence in the window family's deemphasised ink – the
+   * theme's foreground at 69%, which `data-surface="window"` resolves per theme (§9.29) – at
+   * the chips' size, standing where the first chip's text would.
+   */
   .zen-bm-empty {
     padding: 0 8px;
-    color: var(--v2-text-deemphasized);
-    font-size: 12.5px;
+    color: var(--v2-control-text-deemphasized);
+    font-size: var(--zen-sidebar-font);
+    line-height: 20px;
     white-space: nowrap;
   }
 
-  /* Insertion caret: a 2px accent line, radius 1, 8px short of either end. */
+  /*
+   * Insertion caret (§9.4): a 2px line in the surface's accent – the theme's on the bar, the
+   * page's in a panel – radius 1, 8px short of either end.
+   */
   .zen-bm-insert {
     position: absolute;
     pointer-events: none;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     border-radius: 1px;
     transition: opacity 100ms var(--zen-ease);
   }
@@ -3386,10 +3425,12 @@
   }
 
   /*
-   * Desktop popovers (§9.20): a folder's panel, the overflow panel and the star bubble. One of
-   * three fixed widths (set in script), the top border flush with the bar or pill the anchor
-   * sits in, radius 8 on the panel surface with the panel shadow, no scrim. The body scrolls
-   * under a sticky header once the content passes 60% of the window.
+   * Desktop popovers (§9.20): the star bubble (at the form width) and the other bubbles on this
+   * chassis – downloads, tab search, the folder editor, blocked pop-ups, share. One of the fixed
+   * widths (set in script), the top border flush with the bar or pill the anchor sits in, radius
+   * 8 on the panel surface with the panel shadow, no arrow, no scrim. The body scrolls under a
+   * sticky title block once the content passes 60% of the window. The bar's folder panels are
+   * menus (`.zen-bm-panel` below), not this.
    */
   .zen-bm-popover {
     border-radius: 8px;
@@ -3532,72 +3573,51 @@
   .zen-tab[data-editing]:not([data-active='true']) {
     background: var(--zen-element-bg);
   }
-  /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
-  .zen-bm-popover-list {
-    padding: 16px;
-  }
-  .zen-bm-popover-row {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 8px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: left;
+  /*
+   * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
+   * §5, §6, §9.20): the shared `.zen-v2-panel` chrome and `.zen-v2-menu` rows (intrinsic 232–332,
+   * `--v2-menu-row` rows at 4 in from the edges – the ring's room – with a 16 glyph). Only what
+   * those do not say lives here: the panel is a fixed element of the chrome layer that the
+   * placement helpers position, its rows scroll under a thin bar past the height cap, and it
+   * takes the keys without drawing a ring of its own. A folder row keeps the fill while its
+   * panel stands beside it (`aria-expanded`); the submenu chevron trails in the deemphasised
+   * ink; a drop's target row (§9.4) is the fill with the accent inset, the panel whose end takes
+   * it the accent inset, the chip in the hand thinned to 40% in its own row.
+   */
+  .zen-bm-panel {
+    position: fixed;
+    z-index: 80;
     outline: none;
+    scrollbar-width: thin;
+    will-change: transform;
   }
-  /* One highlight, native-menu style: the active row follows the pointer and the keyboard. */
-  .zen-bm-popover-row[data-active='true'] {
+  /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
+  .zen-bm-panel .zen-v2-menu-item {
+    flex-shrink: 0;
+  }
+  .zen-bm-panel .zen-v2-menu-item[aria-expanded='true'] {
     background: var(--v2-fill);
   }
-  .zen-bm-popover-row[data-target='true'] {
+  .zen-bm-panel .zen-v2-menu-item[data-target='true'] {
     background: var(--v2-fill);
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
-  .zen-bm-popover-row[data-lifted='true'] {
+  .zen-bm-panel .zen-v2-menu-item[data-lifted='true'] {
     opacity: 0.4;
   }
-  .zen-bm-empty-row {
-    padding: 16px 16px 0;
-    color: var(--v2-text-deemphasized);
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-align: center;
+  .zen-bm-panel[data-append-target='true'] {
+    box-shadow:
+      var(--v2-shadow-panel),
+      inset 0 0 0 2px var(--v2-accent);
   }
-  /*
-   * A pushed-in level's bar header (§9.16): its 28px back button at 6px margins makes 40, the
-   * folder's name at the panel title size (§9.7); the §9.7 hairline only while the rows below
-   * have scrolled under it.
-   */
-  .zen-bm-popover-header {
-    display: flex;
+  .zen-bm-panel-icon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
-    align-items: center;
-    gap: 4px;
-    height: 40px;
-    padding: 0 6px;
-    border-bottom: 1px solid transparent;
-    font-size: 17px;
-    font-weight: 600;
-    letter-spacing: -0.012em;
-    line-height: 22px;
-    transition: border-color 120ms var(--zen-ease);
   }
-  .zen-bm-popover-header[data-scrolled='true'] {
-    border-color: var(--v2-border);
-  }
-  .zen-bm-popover-header .zen-toolbar-button {
-    border-radius: 6px;
-  }
-  .zen-bm-popover-header .zen-toolbar-button:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
-  .zen-bm-menu-level {
-    will-change: transform;
+  .zen-bm-panel-chevron {
+    margin-left: auto;
+    color: var(--v2-text-deemphasized);
   }
 
   /*
@@ -3684,39 +3704,6 @@
     padding: 6px 8px 2px;
     color: var(--v2-text-deemphasized);
     font-size: 13px;
-  }
-
-  /*
-   * The folder field's popup (§9.13 menulist popup): a panel under the trigger, radius 12,
-   * padding 6, 28px rows at radius 6, the current option marked with a trailing 16px check.
-   */
-  .zen-bm-listbox {
-    padding: 6px;
-    border-radius: 12px;
-    corner-shape: var(--zen-corner);
-    overflow: hidden;
-    background: var(--v2-panel);
-    border: 1px solid var(--v2-border);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  .zen-bm-option {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: 6px;
-    color: var(--v2-text);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: left;
-    outline: none;
-  }
-  .zen-bm-option:hover,
-  .zen-bm-option:focus-visible {
-    background: var(--v2-fill);
   }
 
   /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
@@ -3892,32 +3879,60 @@
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
 
-  /* The folder chooser's rows inside a dialog: single line, 32 tall; the keyboard's row is ringed. */
-  .zen-bm-pick-row {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 32px;
-    padding-right: 8px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    font-size: 13px;
-  }
-  .zen-bm-pick-row:hover {
-    background: var(--v2-fill);
+  /*
+   * The folder chooser (components/bookmarks/FolderChooser.tsx; §9.21, §9.6, §9.30): the tree in
+   * the folder menulist's place in the star bubble and the dialogs, its rows the shared
+   * `.zen-v2-row` – here only what the primitive does not say. The tree steps out of the form's
+   * 16 gutter to the body's edge, so its rows stand where a popover's rows stand (the ring-room
+   * modifier on the shared body puts them `--v2-ring-room` in, their content at 16), leaves the
+   * ring the same room above and below its own clip, and scrolls past eight rows. A row leads
+   * with its twisty – 20 around a 16 chevron that turns down while the folder is open – and the
+   * 16 folder glyph, 4 apart, each level 16 further in; the chosen row is on `--v2-selected`, a
+   * row that cannot be chosen at 40%; a new folder's name is typed in place, the 24 editor
+   * centred on the row's 20 line. The ring is the shared one, on the row itself.
+   */
+  .zen-bm-pick-tree {
+    min-height: 0;
+    max-height: calc(8 * var(--v2-row) + 2 * var(--v2-ring-room));
+    margin-inline: -16px;
+    padding-block: var(--v2-ring-room);
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
   .zen-bm-pick-row[aria-selected='true'] {
-    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+    background: var(--v2-selected);
   }
-  .zen-bm-pick-row[data-off='true'] {
+  .zen-bm-pick-row[aria-disabled='true'] {
     opacity: 0.4;
   }
-  .zen-bm-pick-row:has(:focus-visible) {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: -2px;
+  .zen-bm-pick-lead {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
   }
-  .zen-bm-pick-row :focus-visible {
-    outline: none;
+  .zen-bm-pick-lead .lucide {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+  }
+  .zen-bm-pick-twisty {
+    display: flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-bm-pick-twisty .lucide {
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-bm-pick-twisty .lucide[data-open] {
+    transform: rotate(90deg);
+  }
+  .zen-bm-pick-rename {
+    margin-block: -2px;
   }
 
   /* Breadcrumb segments: buttons and drop-into targets. */
@@ -4083,6 +4098,22 @@
 /* The "Not secure" text goes before the address does: it is the address the pill is for. */
 @container (width < 220px) {
   .zen-pill-label {
+    display: none;
+  }
+}
+/*
+ * Narrower still, the tools after the address – the star, zoom, Reader View, Translate, Boost, Copy – go as
+ * well: a pill this narrow is the address, or the name of one of Zenium's pages, and nothing
+ * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
+ * pop-ups chip stays, a notice rather than a tool (#62). The queries read
+ * the pill's content box, 20 px inside its border box (`px-2.5`): 110 here is a 130 px pill. At
+ * the default sidebar width the pill is 100 px, and the star's 26 px are what "Settings" (48 px)
+ * is short of. 130: with the star the field would keep under 58 px, which no host fits, and the
+ * shortest internal address (`zenium://settings`, 102 px) still needs a 149 px pill without the
+ * star, so a sidebar dragged wider never trades the address for the title and back.
+ */
+@container (width < 110px) {
+  .zen-pill-chip {
     display: none;
   }
 }
@@ -6426,8 +6457,9 @@
  * The message row (§9.33's anatomy in §1's status ink only; pr-261): the row carries `data-tone`
  * and its status glyph and its description take the state's ink THROUGH the row – the label
  * stays in the text's, the row keeps no fill and no border of its own, and a consumer sets the
- * one attribute (`V2Row tone` on the desktop pane, `SettingsRow tone` on the phone, whose own
- * text classes read the same attribute in the Settings block below). The glyph leads
+ * one attribute (`V2Row tone` on an extension surface; `SettingsRow tone` on the Settings page
+ * of either host, whose own text classes read the same attribute in the Settings block below).
+ * The glyph leads
  * (`.zen-v2-row-lead`, the extension surfaces' anatomy) only in a list where every row carries
  * one; a status row that stands alone – Sync's folder-lost row – trails it (`.zen-v2-row-trail`,
  * below) before any trailing button, so the list keeps one label edge (§9.33, §10.4's mixing
@@ -6455,6 +6487,17 @@
   height: 16px;
   stroke-width: var(--v2-icon-stroke);
   color: var(--v2-text-deemphasized);
+}
+/*
+ * The selected row (§9.6): a picked item – the current option in a picker sheet's radio rows, a
+ * row in a selection mode (`aria-selected`) – takes `--v2-selected`, the accent at 12% / 16%,
+ * and keeps it under the pointer: never `--v2-fill` (the press and hover) and never the text
+ * `--v2-selection`. A switch row that is on is not selected, so `aria-checked` counts only on
+ * a radio.
+ */
+.zen-v2-row:is([aria-selected='true'], [role='radio'][aria-checked='true']),
+.zen-v2-row:is([aria-selected='true'], [role='radio'][aria-checked='true']):hover {
+  background: var(--v2-selected);
 }
 /*
  * A row in a clipped popover's scrolling body (§9.20, §1; pr-245 chassis (b)): the panel clips
@@ -6713,6 +6756,10 @@
   background: var(--v2-on-accent);
   transform: translateX(16px);
 }
+/* Disabled is one number on the whole control (§9.30), as the field's and the menulist's. */
+.zen-v2-switch:disabled {
+  opacity: 0.4;
+}
 /*
  * The switch row on a window surface – the private new tab page's Block third-party cookies row
  * (NTP-31) – is the row and switch primitives with one modifier beside them, as §9.34 asks of a
@@ -6872,6 +6919,14 @@
  */
 .zen-v2-menulist.zen-print-control,
 .zen-v2-field.zen-print-control {
+  width: 160px;
+}
+/*
+ * The import dialog's From and Profile menulists (components/import/ImportDialog.tsx) take the
+ * same column – one width for the form's two controls, the print preview's 160 – for the same
+ * reason: each menulist would otherwise size to its own text and the column read ragged.
+ */
+.zen-v2-menulist.zen-import-control {
   width: 160px;
 }
 .zen-v2-menulist[data-placeholder] {
@@ -7270,6 +7325,13 @@
 .zen-settings-sheet .zen-sheet-title-block p[data-tone='danger'] {
   color: var(--v2-danger);
 }
+/* The desktop's dialog says the same thing in its §9.23 title block (`dialogs.tsx`). */
+.zen-settings-dialog .zen-v2-title-block-description > [data-tone='danger'] {
+  color: var(--v2-danger);
+}
+.zen-settings-dialog .zen-v2-title-block-description > [data-tone='warn'] {
+  color: var(--v2-warn);
+}
 /* A label that is prose (an error console line): two lines, then an ellipsis (§9.2). */
 .zen-settings-row-clamp .zen-settings-label {
   display: -webkit-box;
@@ -7405,6 +7467,11 @@
 /* Custom blocks sit in the gutter: image radio grids, the zoom stepper, copy rows, code, forms. */
 .zen-settings-custom {
   padding: 8px 16px;
+}
+/* A bare block (a row of its own) under a search result's caption: the caption in the gutter. */
+.zen-settings-custom-bare > .zen-settings-caption {
+  display: block;
+  padding: 8px 16px 0;
 }
 .zen-settings-icon-grid {
   display: grid;
@@ -7682,12 +7749,387 @@
   display: flex;
   flex-direction: column;
 }
-/* Where two panes fit (§10.5), the desktop panel's body draws inside the tab on the page surface. */
+/*
+ * Where two panes fit (§10.5, Zen's about:preferences; `pages/settings/desktop.tsx`): the nav
+ * column and the content column side by side on the one page surface, each scrolling on its
+ * own. Nothing here states a row's or a control's size – those are the primitives' tokens, at
+ * their desktop base values (32 rows, 32 controls, 16 boxes and glyphs) – only the layout the
+ * two panes add: the 234 column, its 34 px items, the content column's 664 and the title sizes
+ * §9.26 sets for a pane.
+ */
 .zen-settings-two-pane {
+  display: flex;
   height: 100%;
-  color: var(--zen-fg);
-  font-size: 13px;
-  line-height: normal;
+}
+/* The nav (§10.5): 234 wide, the gear and "Settings" 22/600 at its top, the categories under. */
+.zen-settings-nav {
+  display: flex;
+  width: 234px;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 0 24px;
+  scrollbar-width: none;
+}
+.zen-settings-nav::-webkit-scrollbar {
+  display: none;
+}
+.zen-settings-nav-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+.zen-settings-nav-title > h1 {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-settings-nav-title-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-nav-list {
+  display: flex;
+  flex-direction: column;
+}
+/*
+ * A nav item (§10.5): 34 tall, the 16 glyph then the Title Case label 12 after it in the 16
+ * gutter, the hover fill; the open one on the `--v2-nav-active` fill with a 3 px accent bar down
+ * its leading edge (§6). Edge to edge in the column, no radius: the bar is the column's edge.
+ */
+.zen-settings-nav-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: var(--v2-nav-item);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  color: var(--v2-text);
+  text-align: left;
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  transition: background 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-settings-nav-item:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-settings-nav-item:active {
+  background: var(--v2-fill);
+}
+.zen-settings-nav-item[aria-current='page'],
+.zen-settings-nav-item[aria-current='page']:hover {
+  background: var(--v2-nav-active);
+}
+.zen-settings-nav-item[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--v2-accent);
+}
+.zen-settings-nav-item-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+.zen-settings-nav-item-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The content column (§10.5, §5): scrolls on its own; its text column is 664 at most inside 32
+ * side margins – the pane's 16 plus the rows' own 16 gutter, so a row's hover fill runs 16
+ * past its text on both sides, as Zen's do, and the section title, the sub-headings and the
+ * rows' labels share one left edge at 32. Left-aligned as Zen's, not centred.
+ */
+.zen-settings-content {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/*
+ * "Find in Settings" (§10.5, §9.12): the column opens with the shared field – 32 tall on the
+ * desktop, its 16 px glyph, the clear icon button – in the text column's 32 margins, sticky at
+ * the column's top on the page tone; §9.7's hairline draws along its bottom edge once the
+ * column has scrolled under it and goes again at the top. The field itself is
+ * `.zen-settings-search` as the phone landing draws it.
+ */
+.zen-settings-find {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 16px 16px 8px;
+  background: var(--v2-page);
+}
+.zen-settings-find > .zen-settings-search {
+  max-width: var(--v2-content-max);
+  margin-bottom: 0;
+}
+.zen-settings-find::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-settings-content[data-scrolled] > .zen-settings-find::after {
+  opacity: 1;
+}
+.zen-settings-pane {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 8px 16px 40px;
+}
+/*
+ * The pane's first element is the category's 22/600 section title on its 28 line (§9.26), 16
+ * from its last line to the first sub-heading's box; the first heading then drops the 20 it
+ * would put above itself, and a first group without a heading starts its rows 16 under the
+ * title the same way.
+ */
+.zen-settings-section-title {
+  margin: 0;
+  padding: 0 16px;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.zen-settings-pane > .zen-settings-body {
+  margin-top: 16px;
+}
+.zen-settings-pane > .zen-settings-body > .zen-settings-group:first-child > .zen-settings-heading {
+  margin-top: 0;
+}
+/*
+ * Sub-headings in a pane (§9.27): the 15/600 heading's box ends 8 above the first row's box
+ * (14 to its text through the row's 6 padding, Zen's Vertical Tabs group); one that carries a
+ * description keeps the phone's 4 to the description and the description's 8 to the row.
+ */
+.zen-settings-pane .zen-settings-heading:not(:has(+ .zen-settings-group-description)) {
+  margin-bottom: 8px;
+}
+/*
+ * Desktop rows (§10.5, `rows.tsx`'s desktop variant), every one the shared `.zen-v2-row`:
+ * - a control row (§9.21) is static text trailing its 32 px control, the row grown to the
+ *   control plus 8 – the 4 above and below its own padding – so rows still touch; with a
+ *   description it is the two-line row's 52;
+ * - a check row is Zen's 16 px checkbox left of its label, the box on the first text line (§9.2),
+ *   the whole row its label;
+ * - an inline field (§9.12) is the one short field the desktop keeps beside its label: 96 for a
+ *   number, 160 at most for text; its validation message takes the line under the field.
+ */
+.zen-settings-control-row {
+  min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.zen-settings-control-row:has(.zen-settings-description) {
+  min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
+}
+.zen-settings-control {
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+/* A menulist in a row sizes to its longest option (Zen's), up to half the text column. */
+.zen-settings-menulist {
+  width: auto;
+  min-width: 0;
+  max-width: calc(var(--v2-content-max) / 2);
+}
+.zen-settings-check-row {
+  align-items: flex-start;
+  cursor: default;
+}
+.zen-settings-inline-field {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.zen-settings-field-number {
+  width: 96px;
+}
+.zen-settings-field-text {
+  width: 160px;
+}
+.zen-settings-inline-error {
+  max-width: 240px;
+  color: var(--v2-danger);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  text-align: right;
+}
+/*
+ * A slider row (§10.4, `rows.tsx`'s `SliderControl`): the zoom sheet's slider (`.zen-zoom-slider`,
+ * its ring in the page's tone here as the Default zoom row's) with the value as 13/69 % text.
+ * On a phone the block is the row's text – label and value on the first line, the slider on
+ * the control line under it; on the desktop the slider trails the text at 160 with the value
+ * at its end, the row grown around the control as any control row.
+ */
+.zen-settings-slider-row {
+  cursor: default;
+}
+.zen-settings-slider-block {
+  gap: 4px;
+}
+.zen-settings-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-slider-value {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-slider-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.zen-settings-slider-control > .zen-settings-slider {
+  width: 160px;
+}
+.zen-settings-slider-control > .zen-settings-slider-value {
+  min-width: 40px;
+  text-align: right;
+}
+.zen-settings-slider [role='slider'] {
+  border-color: var(--v2-page);
+}
+/*
+ * Resources › Live usage (`blocks.tsx`'s `ResourceMeter`): label and numbers on one line, the
+ * 4 px bar under them – the accent, the warning ink from 85 % of a budget, the danger ink at
+ * 100 %, half strength with no budget to measure against – and the note at 13/69 %.
+ */
+.zen-settings-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.zen-settings-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.zen-settings-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-settings-meter-value {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-meter-bar {
+  margin-top: 0;
+}
+.zen-settings-meter[data-tone='near'] > .zen-settings-meter-bar > div {
+  background: var(--v2-warn);
+}
+.zen-settings-meter[data-tone='over'] > .zen-settings-meter-bar > div {
+  background: var(--v2-danger);
+}
+.zen-settings-meter[data-tone='unbudgeted'] > .zen-settings-meter-bar > div {
+  opacity: 0.5;
+}
+/* A folder picked through the host (Sync › Set up sync): the path, truncated, and the button. */
+.zen-settings-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.zen-settings-picker-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+/*
+ * Keyboard Shortcuts › a shortcut row (`ShortcutRow.tsx`): the chord as the row's 32 px button
+ * in tabular figures, 110 wide at least so the column of chords lines up; recording lights the
+ * button's border in the accent, an unbound one reads in the de-emphasised ink, and a row whose
+ * chord another shortcut also holds says so in the warning ink.
+ */
+.zen-settings-chord {
+  min-width: 110px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.zen-settings-chord[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--v2-accent);
+}
+.zen-settings-chord-unbound {
+  color: var(--v2-text-deemphasized);
+}
+.zen-settings-shortcut-row[data-conflict] .zen-settings-description {
+  color: var(--v2-warn);
+}
+
+/*
+ * The dialogs a desktop row opens (`dialogs.tsx`, §9.5, §9.23): the shared `.zen-v2-dialog`
+ * chassis at the form width in the frame's dialog host, a title block over a body that scrolls
+ * between the title and its footer, 16 under the last control (§9.25). The layer sits outside
+ * the page host, so it states the page's type itself, as the phone sheets do.
+ */
+.zen-settings-dialog {
+  display: flex;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 32px);
+  flex-direction: column;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  user-select: none;
+}
+.zen-settings-dialog-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 16px;
+}
+.zen-settings-dialog-body > .zen-settings-sheet-actions {
+  padding: 0 16px;
 }
 
 /*
@@ -9031,14 +9473,32 @@
  * motion keeps the 120 ms fade and cuts the scale (the closing block below). `will-change` only while the panel moves
  * (`data-moving`, §9.33); the reduced-motion fade is written per frame by the component.
  */
+/*
+ * The player's shape is its host's (§9.32, the lead's amendment on #240): inside the content
+ * frame on a desktop or tablet – the §9.7 hairline its top edge, no radius of its own, one row
+ * `--v2-control` + 8 tall like the find bar with the header leading and the transport trailing;
+ * on the phone a second card under the frame – the frame's radius on its top corners, two rows,
+ * 8 under the transport before the bar band. One DOM, laid out by the form factor.
+ */
 .zen-read-aloud {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   background: var(--v2-panel);
   color: var(--v2-text);
   border-top: 1px solid var(--v2-border);
-  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
   font-weight: var(--v2-weight-body);
+}
+:root:not([data-form-factor='phone']) .zen-read-aloud {
+  height: calc(var(--v2-control) + 8px);
+}
+:root[data-form-factor='phone'] .zen-read-aloud {
+  flex-direction: column;
+  align-items: stretch;
+  padding-bottom: 8px;
+  border-radius: var(--v2-radius-sheet) var(--v2-radius-sheet) 0 0;
 }
 .zen-read-aloud[data-moving] {
   will-change: transform, opacity;
@@ -9048,6 +9508,25 @@
 }
 .zen-read-aloud-header {
   min-height: calc(var(--v2-icon-button) + 4px);
+}
+/* In the one-row form the header takes what the transport leaves, the title truncating first. */
+:root:not([data-form-factor='phone']) .zen-read-aloud-header {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+:root:not([data-form-factor='phone']) .zen-read-aloud-controls {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-right: 8px;
+}
+/* The desktop's voice menulist: the §9.13 control at a bounded width, the voice's name truncating. */
+.zen-v2-menulist.zen-read-aloud-voice-list {
+  width: 176px;
+  min-width: 0;
+  margin-right: 8px;
 }
 /* A docked panel's title (§9.32): start-aligned, 15/600 – a bar's label, not a sheet's 17/600 title. */
 .zen-read-aloud-title {

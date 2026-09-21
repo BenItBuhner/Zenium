@@ -379,7 +379,7 @@ const DESKTOP_APP_MENU = [
   'Bookmarks > Show Bookmarks',
   'Bookmarks > Show Bookmarks Bar',
   'Bookmarks > -',
-  'Bookmarks > Import Bookmarks…',
+  'Bookmarks > Import Bookmarks and Settings…',
   'Bookmarks > Export Bookmarks…',
   'History',
   'Recently Closed',
@@ -487,14 +487,21 @@ describe('the app menu', () => {
     }
   })
 
-  it('offers Listen to This Page on a phone with a speech engine, under Reader View and gated as it is', async () => {
-    // No engine, no item; the desktop's turn is the services program's (the reader's own controls).
+  it('offers Listen to This Page on a host with a speech engine, under Reader View and gated as it is', async () => {
+    // No engine, no item – on either host.
     expect(appMenu(pageHarness(ANDROID, { formFactor: 'phone' }))).not.toContain(
       'Listen to This Page'
     )
-    expect(appMenu(pageHarness({ ...DESKTOP, readAloud: true }, { speech: true }))).not.toContain(
-      'Listen to This Page'
-    )
+    expect(appMenu(pageHarness(DESKTOP))).not.toContain('Listen to This Page')
+    // The desktop's menu carries it too (the services program's desktop player, the reader UI
+    // PR): under Reader View, gated by the same readability signal.
+    const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
+    const desktopMenu = appMenu(desktop)
+    expect(desktopMenu.indexOf('Listen to This Page')).toBe(desktopMenu.indexOf('Reader View') + 1)
+    expect(item(desktop.items(), 'Listen to This Page').enabled).toBe(false)
+    desktop.browser.tabs.tab(desktop.tabId)!.readerable = true
+    appMenu(desktop)
+    expect(item(desktop.items(), 'Listen to This Page').enabled).toBe(true)
     const h = pageHarness({ ...ANDROID, readAloud: true }, { formFactor: 'phone', speech: true })
     const menu = appMenu(h)
     expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
@@ -1666,11 +1673,31 @@ describe('the selection toolbar', () => {
     expect(
       pageHarness(ANDROID, PHONE).menu(pageParams({ selectionText: 'quantum foam' }))
     ).not.toContain('Listen')
-    // Nor does the desktop's right-click menu with one: its read aloud is the services program's
-    // own UI, and the item would start the phone's docked player in the desktop frame.
+    // The desktop's right-click menu on a selection carries it too (the reader UI PR's desktop
+    // player), and without an engine it does not; its item reads on from the selection to the
+    // document's end (Edge's, the model's `selection-on`) where the phone's reads it alone.
+    expect(pageHarness(DESKTOP).menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain(
+      'Listen'
+    )
     const desktop = pageHarness({ ...DESKTOP, readAloud: true }, { speech: true })
     expect(desktop.browser.readAloud.available).toBe(true)
-    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).not.toContain('Listen')
+    expect(desktop.menu(pageParams({ selectionText: 'quantum foam' }))).toContain('Listen')
+    desktop.viewCalls.length = 0
+    desktop.click('Listen')
+    await settle()
+    expect(desktop.browser.readAloud.uiState()).toMatchObject({
+      tabId: desktop.tabId,
+      source: 'selection'
+    })
+    expect(
+      desktop.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"selection"') &&
+          call.includes('"then":"document"')
+      )
+    ).toBe(true)
     // The touch starts the core's one session from the selection: the page script is asked for
     // the selection's text (the model reads the selection alone, as Chrome does).
     h.viewCalls.length = 0

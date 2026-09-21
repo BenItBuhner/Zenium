@@ -15,7 +15,7 @@ import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
-import { openSettings } from '@renderer/lib/pages'
+import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   configureThumbnails,
   rememberCard,
@@ -140,6 +140,12 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openOverlay(kind, currentActiveTabId(), null, folderId ?? null, section ?? null)
       }),
+      onEvent('import.open', () => {
+        // Chrome's chrome://settings/importData: Settings on its Import category, the dialog up
+        // over it (the category alone on a phone, whose rows import from files).
+        closeUrlbar()
+        void openImportSurface(currentActiveTabId())
+      }),
       onEvent('theme.open', ({ spaceId }) => {
         closeUrlbar()
         void openOverlay('theme', currentActiveTabId(), spaceId)
@@ -217,8 +223,9 @@ export function useMainEvents(): void {
         if (state) dropStalePdfReports(state)
       }),
       onEvent('reader.preferences', ({ tabId }) => {
-        // The app menu's "Text Preferences…" (and the reader page's toolbar button on a phone):
-        // the popover hangs from the pill's chip when it is on screen, the sheet on a phone.
+        // The app menu's "Text Preferences…" (the phone's way in, its pill having no chip): the
+        // popover hangs from the pill's chip, which the reader tab never hides (§9.29;
+        // `openReaderPreferences` finds it), the sheet on a phone.
         closeUrlbar()
         void openReaderPreferences(tabId)
       }),
