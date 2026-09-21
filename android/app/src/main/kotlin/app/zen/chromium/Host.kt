@@ -378,6 +378,10 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "privacy.bundledFeed" -> reply(privacy.bundledFeed(args.str("id")))
+            // The tables' word on a URL for the core (a download's verdict: `PrivacyHost.lookupSafeBrowsing`),
+            // under the guard's own switch and bypasses, as the request engine would answer; null for
+            // nothing listed. Not a navigation: it never waits for the first load.
+            "privacy.lookup" -> reply(privacy.unsafe(args.str("url"), navigation = false)?.toJson())
 
             // --- tab card thumbnails (the ThumbnailHost contract; `Thumbnails.kt` is the file layer) ---
             "thumbnail.configure" -> { thumbnails.width = args.num("width").toInt(); reply(null) }

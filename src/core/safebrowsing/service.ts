@@ -18,6 +18,7 @@ import {
   FEED_DOCUMENT_VERSION,
   feedFile,
   parseFeedDocument,
+  prefixCountOf,
   SAFE_BROWSING_DIR,
   type FeedDocument
 } from './document'
@@ -42,6 +43,13 @@ import { hostExpressions, PrefixTable, prefixOf } from './prefixes'
  * Browsing key, main-frame navigations the feeds let through are also looked up remotely
  * (`gsb.ts`); a late hit turns the page into the interstitial.
  *
+ * Where the host holds the tables itself (`PrivacyHost.safeBrowsingTables: 'host'`: Android,
+ * whose Kotlin guard reads the documents and reports a refused navigation as a view event), the
+ * service builds none: it reads the documents after start – megabytes once the feeds were
+ * refreshed, off the boot path – for their metadata alone (the schedule, the status), refreshes
+ * and writes them as ever (the host reloads on the file's version tag), and asks the host where
+ * it needs a table's word (a download's verdict, `PrivacyHost.lookupSafeBrowsing`).
+ *
  * Files: `safebrowsing/<feed>.json` under the profile, one {@link FeedDocument} each (`document.ts`).
  */
 
@@ -65,6 +73,12 @@ interface FeedRuntime {
 
 const SWEEP_INTERVAL_MS = 30 * 60 * 1000
 const STARTUP_SWEEP_DELAY_MS = 20_000
+/**
+ * With the tables at the host, how long after `start()` the documents are read: past the
+ * chrome's first frames (a refreshed feed's document is megabytes of JSON to parse, on the main
+ * thread once fetched) and well ahead of the startup sweep.
+ */
+export const DOCUMENT_LOAD_DELAY_MS = 2_000
 const FETCH_TIMEOUT_MS = 90_000
 const REMOTE_TIMEOUT_MS = 6_000
 const PENDING_BLOCK_TTL_MS = 60_000
