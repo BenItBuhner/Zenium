@@ -113,7 +113,7 @@ export function useMainEvents(): void {
         closeUrlbar()
         void openNewTabShortcutDialog(request)
       }),
-      onEvent('overlay.open', ({ kind, folderId, section, tabId }) => {
+      onEvent('overlay.open', ({ kind, folderId, section, tabId, reveal }) => {
         const ui = uiStore.get()
         // The print preview is a frame dialog over the tab it prints (`zen://print` has no panel
         // of its own): the core opens a session for the tab and asks for its surface here.
@@ -138,9 +138,12 @@ export function useMainEvents(): void {
           return
         }
         if (ui.overlay === kind && !folderId) {
-          // Re-opening the same overlay toggles it, unless a specific section was requested.
+          // Re-opening the same overlay toggles it, unless a specific section was requested –
+          // or the core is revealing it for something that happened (a download began while
+          // the phone's Downloads sheet was up: the sheet stays, the new row on top).
           if (section) uiStore.set({ overlaySection: section })
-          else uiStore.set({ overlay: 'none', overlayFolderId: null, overlaySection: null })
+          else if (!reveal)
+            uiStore.set({ overlay: 'none', overlayFolderId: null, overlaySection: null })
           return
         }
         closeUrlbar()
