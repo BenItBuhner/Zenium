@@ -9,7 +9,8 @@ import {
   matchKeyword,
   matchKeywordWord,
   parseSuggestPayload,
-  parseSuggestResponse
+  parseSuggestResponse,
+  searchTermsFromUrl
 } from '../search'
 import { searchCommands } from '../commands'
 
@@ -123,6 +124,32 @@ describe('search engines', () => {
     expect(completeWwwCom('two words')).toBe('two words')
     expect(completeWwwCom('https://x')).toBe('https://x')
     expect(completeWwwCom('')).toBe('')
+  })
+
+  it("reads the terms out of an engine's results page, its own additions and `+` aside; another engine's page or path is not one", () => {
+    expect(searchTermsFromUrl(google, buildSearchUrl(google, 'two words'))).toBe('two words')
+    expect(
+      searchTermsFromUrl(
+        google,
+        'https://www.google.com/search?q=two+words&sourceid=chrome&ie=UTF-8'
+      )
+    ).toBe('two words')
+    // `www.` aside, the host must be the engine's; the path too.
+    expect(searchTermsFromUrl(google, 'https://google.com/search?q=cats')).toBe('cats')
+    expect(searchTermsFromUrl(google, 'https://www.google.com/maps?q=cats')).toBeNull()
+    expect(searchTermsFromUrl(google, 'https://duckduckgo.com/?q=cats')).toBeNull()
+    expect(searchTermsFromUrl(google, 'https://www.google.com/search?tbm=isch')).toBeNull()
+    expect(searchTermsFromUrl(google, 'https://www.google.com/search?q=')).toBeNull()
+    expect(searchTermsFromUrl(google, 'not a url')).toBeNull()
+    const ddg = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'duckduckgo')!
+    expect(searchTermsFromUrl(ddg, 'https://duckduckgo.com/?q=cats&t=h_&ia=web')).toBe('cats')
+    // A template with the terms in its path is not read.
+    expect(
+      searchTermsFromUrl(
+        { searchUrl: 'https://example.com/find/%s' },
+        'https://example.com/find/cats'
+      )
+    ).toBeNull()
   })
 })
 
