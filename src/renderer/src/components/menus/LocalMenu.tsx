@@ -46,14 +46,16 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
 }
 
 /**
- * A menu the renderer owns (v2 draft §6 menus): on a mouse a bordered panel at radius 8 flush
- * under its control (6 for a context menu, §2; §9.20 for where it hangs, through the chrome
- * layer, at its own width and height – §5's 232–332, as tall as its rows) with 31 rows, a 16
- * icon each when any has one, hairline separators and danger rows in the danger ink; on a
- * finger the same rows at 44 in a bottom sheet. Escape closes it, and on the desktop the chrome
- * layer's light dismiss (§9.20 amended: a press outside it, consumed; its control's own press;
- * a scroll, a resize, another popover) – there is no scrim there (§9.5); the sheet's own scrim
- * takes the tap on a phone.
+ * A menu the renderer owns (v2 draft §6 menus, the shared `.zen-v2-menu`): on a mouse a
+ * bordered panel at radius 8 flush under its control (6 for a context menu, §2; §9.20 for where
+ * it hangs, through the chrome layer, at its own width and height – §5's 232–332, as tall as
+ * its rows) with 6 of padding, 31 rows at the 14 px chrome menu size (§4), a 16 glyph slot when
+ * any row has an icon, the accelerator at the trailing edge in the deemphasised ink, hairline
+ * separators 4 above and below and danger rows in the danger ink; on a finger the same rows at
+ * 44 in a bottom sheet. Escape closes it, and on the desktop the chrome layer's light dismiss
+ * (§9.20 amended: a press outside it, consumed; its control's own press; a scroll, a resize,
+ * another popover) – there is no scrim there (§9.5); the sheet's own scrim takes the tap on a
+ * phone.
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -133,12 +135,16 @@ function PopoverMenu({
             }}
           >
             {withIcons && (
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <span className="zen-v2-menu-glyph" aria-hidden>
                 {entry.icon && <entry.icon />}
               </span>
             )}
             <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-            {entry.hint && <span className="zen-v2-menu-hint">{entry.hint}</span>}
+            {entry.hint && (
+              <span className="zen-v2-menu-hint" aria-hidden>
+                {entry.hint}
+              </span>
+            )}
           </button>
         )
       )}

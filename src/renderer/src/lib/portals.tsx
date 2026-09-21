@@ -1223,6 +1223,108 @@ export function placePopover(
     : { side, left, bottom: viewport.height - bar.y, width: w, maxHeight, alignment }
 }
 
+/** Which side of its parent panel a cascaded panel stands on. */
+export type BesideEdge = 'after' | 'before'
+
+/**
+ * The distance from a `.zen-v2-menu` panel's outer top edge to its first row: the 1 px border
+ * and the menu's 6 px padding. A cascaded panel is offset by it so its first row lines up with
+ * the row that opened it, as Chrome's and Firefox's submenus do.
+ */
+export const MENU_PANEL_INSET = 7
+
+/**
+ * `placePopover`'s cascade mode (§9.20): where a panel opened from a row of another panel goes –
+ * a folder panel's sub-folder, a menu's submenu – in viewport coordinates for a `fixed` element
+ * (`popoverStyle` turns it into the inline style). Flush against its parent panel's trailing
+ * edge (gap 0), its first row on the row that opened it (`anchor`, `inset` above the row's
+ * top). Against the window it follows the same order as a popover under a bar, with
+ * `POPOVER_MARGIN`: a panel that would cross the trailing margin flips to the parent's leading
+ * side; if neither side fits it slides the least distance inside the margins on the trailing
+ * side, still overlapping its parent; wider than the window minus 16 it shrinks to that.
+ * Vertically it starts on the row and, when it would cross the bottom margin, flips above – its
+ * last row on the row's bottom – when there is more room above than below (or the room below is
+ * under `POPOVER_HEIGHT_FLOOR`); otherwise it stays and shrinks to the room left, never taller
+ * than the window minus 16. Pure: pass `viewportSize()` for the window. The bookmarks bar's
+ * folder panels were the first caller (its local `placeBeside` folded in here in shell pass
+ * 7(b)); `MenuSheet`'s flyout submenus are the second.
+ */
+export function placeBeside(
+  anchor: Rect,
+  parent: Rect,
+  viewport: Size,
+  size: Size,
+  inset = MENU_PANEL_INSET
+): PopoverBox & { edge: BesideEdge } {
+  const width = Math.max(0, Math.min(size.width, viewport.width - 2 * POPOVER_MARGIN))
+  const minLeft = POPOVER_MARGIN
+  const maxLeft = viewport.width - POPOVER_MARGIN - width
+  const fits = (left: number): boolean => left >= minLeft && left <= maxLeft
+  const after = parent.x + parent.width
+  const before = parent.x - width
+  let edge: BesideEdge = 'after'
+  let left: number
+  if (fits(after)) left = after
+  else if (fits(before)) {
+    edge = 'before'
+    left = before
+  } else left = Math.min(Math.max(minLeft, after), Math.max(minLeft, maxLeft))
+
+  const edgeRoom = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
+  const wanted = Math.max(0, Math.min(size.height, edgeRoom))
+  // Start-aligned: the panel's first row on the anchor row's top, never above the margin.
+  // End-aligned: its last row on the row's bottom, never under the margin.
+  const top = Math.max(POPOVER_MARGIN, anchor.y - inset)
+  const bottom = Math.max(POPOVER_MARGIN, viewport.height - (anchor.y + anchor.height + inset))
+  const below = Math.max(0, viewport.height - POPOVER_MARGIN - top)
+  const above = Math.max(0, viewport.height - POPOVER_MARGIN - bottom)
+  const side: PopoverBox['side'] =
+    wanted <= below ? 'below' : above > below || below < POPOVER_HEIGHT_FLOOR ? 'above' : 'below'
+  const maxHeight = Math.min(wanted, side === 'below' ? below : above)
+  return side === 'below'
+    ? { side, left, top, width, maxHeight, edge }
+    : { side, left, bottom, width, maxHeight, edge }
+}
+
+/**
+ * The pop's origin for a cascaded panel (design-language.md §7): it grows out of the row that
+ * opened it, from the row's vertical centre on the panel's edge nearest its parent.
+ */
+export function besideOrigin(
+  anchor: Rect,
+  box: PopoverBox & { edge: BesideEdge },
+  viewport: Size,
+  height: number
+): string {
+  const top = box.side === 'below' ? box.top : viewport.height - box.bottom - height
+  const y = Math.max(0, Math.min(height, anchor.y + anchor.height / 2 - top))
+  return `${box.edge === 'after' ? '0' : '100%'} ${y}px`
+}
+
+/**
+ * A `fixed` panel's box as laid out – its offsets, which ignore the transform the pop animation
+ * scales it by, where the client rect on the animation's first frame would be 6% off. What
+ * `placeBeside` takes for the parent panel.
+ */
+export function layoutRect(el: HTMLElement): Rect {
+  return { x: el.offsetLeft, y: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight }
+}
+
+/**
+ * A row's box in the viewport, from its offsets inside the panel that holds it (`panel`, the
+ * row's offset parent and its scroll container) and that panel's own `layoutRect`: the offsets
+ * count from the panel's padding edge, so its border (`clientTop` / `clientLeft`) is added back.
+ * What `placeBeside` takes for the anchor row.
+ */
+export function rowRect(row: HTMLElement, panel: HTMLElement, panelBox: Rect): Rect {
+  return {
+    x: panelBox.x + panel.clientLeft + row.offsetLeft,
+    y: panelBox.y + panel.clientTop + row.offsetTop - panel.scrollTop,
+    width: row.offsetWidth,
+    height: row.offsetHeight
+  }
+}
+
 /** The inline style that puts a popover where `placePopover` said, on a `fixed` element. */
 export function popoverStyle(box: PopoverBox): CSSProperties {
   const style: CSSProperties = { left: box.left, width: box.width, maxHeight: box.maxHeight }

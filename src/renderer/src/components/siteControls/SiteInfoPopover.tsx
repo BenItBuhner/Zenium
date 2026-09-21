@@ -526,7 +526,7 @@ function CookiesLevel({
 /** A line naming the rows under it (13 at 69%, in the gutter), as a list's section label. */
 function GroupLabel({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <div className="px-4 pt-2 pb-1 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
+    <div className="px-4 pt-2 pb-1 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]">
       {children}
     </div>
   )
@@ -616,7 +616,7 @@ function PermissionsLevel({
       </Body>
       {changed && (
         <Footer count={1} className="justify-between">
-          <span className="min-w-0 truncate text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
+          <span className="min-w-0 truncate text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]">
             Reload the page to apply
           </span>
           <V2Button disabled={busy} onClick={onReload} aria-label="Reload page">

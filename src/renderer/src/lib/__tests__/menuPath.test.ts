@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closedTo, focusAfterClose, focusAfterOpen, openedAt, openerOf } from '../panelPath'
+import { closedTo, focusAfterClose, focusAfterOpen, openedAt, openerOf } from '../menuPath'
 
 /*
  * The open path of the bar's cascading folder panels (`BarMenu`): `path[d]` is the folder whose

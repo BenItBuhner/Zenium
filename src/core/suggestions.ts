@@ -393,7 +393,9 @@ export class SuggestionService {
         title: engine.keyword,
         subtitle: `Search ${engine.name}`,
         url: null,
-        favicon: null,
+        // The engine's site icon in the row's glyph slot (v2 shell pass 7(b)), the magnifier
+        // where the site offered none.
+        favicon: engine.favicon ?? null,
         targetId: engine.id,
         fill: `${engine.keyword} `,
         relevance: RELEVANCE.keywordStarter - out.length

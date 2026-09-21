@@ -805,7 +805,7 @@ export function Radio({
       <span className="flex min-w-0 flex-col">
         <span className="min-w-0">{label}</span>
         {description && (
-          <span className="min-w-0 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
+          <span className="min-w-0 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]">
             {description}
           </span>
         )}
@@ -926,7 +926,7 @@ export function ListRow({
           {label}
         </div>
         {description && (
-          <div className="line-clamp-2 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]">
+          <div className="line-clamp-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]">
             {description}
           </div>
         )}

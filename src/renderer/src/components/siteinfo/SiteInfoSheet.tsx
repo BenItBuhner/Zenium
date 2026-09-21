@@ -839,7 +839,7 @@ function SheetRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{label}</span>
         {description && (
-          <span className="zen-sheet-item-secondary block text-[13px] leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
             {description}
           </span>
         )}

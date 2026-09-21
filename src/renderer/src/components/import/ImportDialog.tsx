@@ -196,7 +196,7 @@ function canImport(form: ImportForm): boolean {
   return !(form.source.browser === 'firefox' && form.source.running)
 }
 
-const NOTE = cn('flex items-start px-4 text-[13px] leading-5', GLYPH_GAP)
+const NOTE = cn('flex items-start px-4 text-[13px] leading-[var(--v2-line-small)]', GLYPH_GAP)
 // A line with the spinner on it clips: the glyph's rotation would otherwise count as scrollable
 // overflow at the body's bottom edge and put a scrollbar on the dialog for the run's length.
 const SPINNER_LINE = cn(NOTE, 'overflow-hidden text-[var(--v2-text-deemphasized)]')
@@ -380,7 +380,7 @@ function ResultRow({
           <div
             key={i}
             className={cn(
-              'text-[13px] leading-5 [font-variant-numeric:tabular-nums]',
+              'text-[13px] leading-[var(--v2-line-small)] [font-variant-numeric:tabular-nums]',
               danger ? 'text-[var(--v2-danger)]' : 'text-[var(--v2-text-deemphasized)]'
             )}
           >

@@ -164,7 +164,7 @@ export function PreviewPane({
       {showPages && pages.length > 1 && (
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
           <div
-            className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--v2-panel)] p-0.5 text-[13px] leading-5 text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)]"
+            className="pointer-events-auto flex items-center gap-1 rounded-full bg-[var(--v2-panel)] p-0.5 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)]"
             data-testid="print-preview-paging"
           >
             <button

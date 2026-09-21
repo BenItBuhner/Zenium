@@ -772,11 +772,11 @@ describe('the app menu', () => {
     // would show.
     const h = harness({ ...DESKTOP, pinShortcuts: true }, { shortcuts: true })
     h.browser.tabs.createTab({ url: PAGE_URL, active: true }, h.win)
-    expect(appMenu(h)).not.toContain('Create shortcut…')
+    expect(appMenu(h)).not.toContain('Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: true })
-    expect(appMenu(h)).toContain('Create shortcut…')
+    expect(appMenu(h)).toContain('Create Shortcut…')
     h.browser.handleCommand(h.win, 'ui.surface', { surface: 'install', mounted: false })
-    expect(appMenu(h)).not.toContain('Create shortcut…')
+    expect(appMenu(h)).not.toContain('Create Shortcut…')
     // A window that never registered any surface has none.
     expect(h.win.surfaces.size).toBe(0)
   })
