@@ -26,9 +26,11 @@ import java.io.File
  *     already holds one bookmark, so the import lands in a folder as Chrome's does) and the one
  *     repeated URL counted a duplicate. The "Last import" group shows the result; a finger on
  *     "Show imported bookmarks" must open the bookmarks overlay on that folder (a claim of the
- *     run since the third recording: the row found through the tree or, while the tree still
- *     trails the picker's leave, through the chrome's DOM – [awaitRow], [touchRowExpecting]); a
- *     finger on "Dismiss" must clear the group (`UIState.import` null again).
+ *     run: the row found through the tree or, while the tree still trails the picker's leave,
+ *     through the chrome's DOM – [awaitRow], [touchRowExpecting]), and a finger on the overlay's
+ *     Close must take it down (read off the chrome's `overlay` state: the Import page under it is
+ *     a surface of its own and stays up – [closeOverlay]); a finger on "Dismiss" must clear the
+ *     group (`UIState.import` null again).
  *  2. A finger on "Import passwords from a file", the CSV in the picker: four logins added into
  *     a vault the plain Keystore key creates on the way (no device credential on the emulator),
  *     the repeated row a duplicate, the row without a password invalid.
@@ -249,11 +251,9 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
             if (shown) {
                 snap("bookmarks-imported-folder")
                 step.put("folderHeadingShown", findNode { it == IMPORTED_FOLDER } != null || chromeJs("document.body.innerText.indexOf('$IMPORTED_FOLDER') >= 0").trim() == "true")
-                val overlayClosed = scene("imported-bookmarks-overlay-close", JankBudget.Kind.OPEN) {
-                    closeOverlay()
-                    !chromeSurfaceUp()
-                }
-                step.put("overlayClosed", overlayClosed)
+                // Its close: the overlay gone from the chrome's state, the Import page still up under it.
+                val overlayClosed = scene("imported-bookmarks-overlay-close", JankBudget.Kind.OPEN) { closeOverlay() }
+                step.put("overlayClosed", overlayClosed).put("pageUpAfterOverlay", chromeSurfaceUp())
                 claim(overlayClosed, "the bookmarks overlay closed")
             }
         }
@@ -538,17 +538,20 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
     private fun domHasRow(rowId: String): Boolean =
         chromeJs("Boolean(document.querySelector(${JSONObject.quote("[data-row=\"$rowId\"]")}))").trim() == "true"
 
+    /** Where the Settings row with `data-row` `rowId` is on screen, by the chrome's DOM ([domRect]). */
+    private fun domRowRect(rowId: String): Rect? = domRect("[data-row=\"$rowId\"]")
+
     /**
-     * Where the Settings row with `data-row` `rowId` is on screen, by the chrome's DOM: the row
-     * scrolled to the middle of the page first, its `getBoundingClientRect` a moment later, CSS
-     * px to the chrome WebView's px by the display's density, then onto the screen by where the
-     * WebView is ([chromeOrigin]). Null when the chrome has no such row.
+     * Where the chrome's first element matching `selector` is on screen, by its DOM: the element
+     * scrolled to the middle of its scroller first, its `getBoundingClientRect` a moment later,
+     * CSS px to the chrome WebView's px by the display's density, then onto the screen by where
+     * the WebView is ([chromeOrigin]). Null when the chrome has no such element.
      */
-    private fun domRowRect(rowId: String): Rect? {
-        val selector = JSONObject.quote("[data-row=\"$rowId\"]")
-        if (chromeJs("(function(){var r=document.querySelector($selector);if(!r)return false;r.scrollIntoView({block:'center'});return true})()").trim() != "true") return null
+    private fun domRect(selector: String): Rect? {
+        val quoted = JSONObject.quote(selector)
+        if (chromeJs("(function(){var r=document.querySelector($quoted);if(!r)return false;r.scrollIntoView({block:'center'});return true})()").trim() != "true") return null
         SystemClock.sleep(500)
-        val json = chromeJs("(function(){var r=document.querySelector($selector);if(!r)return null;var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})()").trim()
+        val json = chromeJs("(function(){var r=document.querySelector($quoted);if(!r)return null;var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})()").trim()
         if (json.isEmpty() || json == "null") return null
         val box = runCatching { JSONArray(json) }.getOrNull() ?: return null
         if (box.length() != 4) return null
@@ -612,21 +615,41 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
     }
 
     /**
-     * Close the bookmarks overlay: its Close control under a finger, whose result is the host
-     * dropping the surface; a back while the surface is still up should the tree not show it.
+     * Close the bookmarks overlay: its Close control under a finger, whose result is the chrome's
+     * `overlay` leaving `bookmarks` (`closeOverlay` in `lib/ui.ts` sets it `none`) – not the host
+     * dropping its surface, since the Import page the overlay came up over is a surface of its own
+     * and stays up (the third recording's one touch fault: the finger closed the overlay within a
+     * frame, and the driver waited 6 s for a surface that was rightly still there, then backed
+     * out of the page). The control through the tree where it holds it, else off the chrome's
+     * DOM (the panel's `aria-label`); a back while the overlay is still up should neither have it.
+     * True once the overlay is gone.
      */
-    private fun closeOverlay() {
-        if (!chromeSurfaceUp()) return
+    private fun closeOverlay(): Boolean {
+        if (!overlayUp()) return true
+        val closeSelector = ".zen-phone-panel [aria-label=\"$CLOSE_LABEL\"]"
         if (findNode { it == CLOSE_LABEL } != null) {
-            touchTapLabelExpecting(CLOSE_LABEL, "the bookmarks overlay closed", timeoutMs = 6_000) { !chromeSurfaceUp() }
+            touchTapLabelExpecting(CLOSE_LABEL, "the bookmarks overlay closed", timeoutMs = 6_000) { !overlayUp() }
+        } else {
+            val close = domRect(closeSelector)
+            if (close != null) {
+                Log.i(tag, "touch at ${close.exactCenterX()},${close.exactCenterY()} on '$CLOSE_LABEL' (bounds $close from the chrome's DOM)")
+                Finger().tap(close.exactCenterX(), close.exactCenterY())
+                if (!awaitHeld(6_000) { !overlayUp() }) touchFault("a touch on '$CLOSE_LABEL' did not take: not the bookmarks overlay closed within 6000 ms")
+            } else {
+                Log.w(tag, "no '$CLOSE_LABEL' control on screen (tree or DOM) while the bookmarks overlay is up")
+            }
         }
         for (attempt in 1..3) {
-            if (!chromeSurfaceUp()) break
+            if (!overlayUp()) break
             back()
-            awaitSurface(up = false, timeoutMs = 6_000)
+            awaitHeld(6_000) { !overlayUp() }
         }
         SystemClock.sleep(800)
+        return !overlayUp()
     }
+
+    /** Whether the chrome's bookmarks overlay is up (`UiState.overlay`). */
+    private fun overlayUp(): Boolean = overlay() == "bookmarks"
 
     // --- the system's document picker -----------------------------------------------------------
 
