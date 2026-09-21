@@ -194,6 +194,7 @@ export function TitleBlock({
   glyph,
   title,
   description,
+  descriptionId,
   scrolled
 }: {
   id?: string
@@ -202,6 +203,8 @@ export function TitleBlock({
   glyph?: ReactNode
   title: string
   description?: ReactNode
+  /** The description's id, for the surface's `aria-describedby`. */
+  descriptionId?: string
   scrolled?: boolean
 }): JSX.Element {
   return (
@@ -212,7 +215,11 @@ export function TitleBlock({
           {title}
         </h2>
       </div>
-      {description && <p className="zen-v2-af-description">{description}</p>}
+      {description && (
+        <p id={descriptionId} className="zen-v2-af-description">
+          {description}
+        </p>
+      )}
     </div>
   )
 }
@@ -229,13 +236,16 @@ export function SheetTitleBlock({
   icon,
   glyph,
   title,
-  description
+  description,
+  descriptionId
 }: {
   id?: string
   icon?: LucideIcon
   glyph?: ReactNode
   title: string
   description?: ReactNode
+  /** The description's id, for the sheet's `aria-describedby`. */
+  descriptionId?: string
 }): JSX.Element {
   return (
     <div className="zen-sheet-title-block">
@@ -243,7 +253,7 @@ export function SheetTitleBlock({
         <Glyph icon={icon} glyph={glyph} />
         <span className="zen-v2-af-title">{title}</span>
       </h2>
-      {description && <p>{description}</p>}
+      {description && <p id={descriptionId}>{description}</p>}
     </div>
   )
 }

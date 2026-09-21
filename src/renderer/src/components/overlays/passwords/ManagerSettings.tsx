@@ -85,6 +85,12 @@ export function ManagerSettings({ state, gate }: { state: UIState; gate: Gate })
       </Section>
 
       <Section title="Security">
+        <CheckRow
+          label={PASSWORDS_COPY.leakDetection.label}
+          description={PASSWORDS_COPY.leakDetection.description}
+          checked={s.leakDetection}
+          onChange={(v) => set({ passwords: { ...s, leakDetection: v } })}
+        />
         <ChoiceRow
           label={PASSWORDS_COPY.grace.label}
           description={PASSWORDS_COPY.grace.description}

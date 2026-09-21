@@ -14,6 +14,7 @@ import {
 } from '@shared/readAloud'
 import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
+import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
 import { previewPdfVariantOf } from './previewPdf'
 import { emulateTextZoom } from './previewTextZoom'
@@ -36,8 +37,11 @@ const PAGE_ROUTE = '/__zen/page/'
 const PDF_ROUTE = '/__zen/pdf/'
 /** The viewer document's script, as the dev server serves it (a module under the Vite root, `src/android`). */
 const PDF_VIEWER_SCRIPT = '/pdfViewer.ts'
-/** Whether the preview "holds the browser role" (outside the file store: it is not profile data). */
-const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
+/**
+ * Whether the preview "holds the browser role" (outside the file store: it is not profile data);
+ * `sheet=promo` (previewStates.ts) puts the role up for grabs before it raises the campaign.
+ */
+export const DEFAULT_BROWSER_KEY = 'zen-preview-default-browser'
 /** Where the stand-in downloader says files go (`BootInfo.downloadsDir`). */
 const DOWNLOADS_DIR = '/Downloads'
 /** Where the stand-in keeps the tab cards' pictures (Kotlin: `cacheDir/zen-thumbs/<tabId>.jpg`). */
@@ -1041,6 +1045,10 @@ export function createPreviewBridge(): NativeBridge {
     // reaches a site for the chrome: the suggest endpoints and OpenSearch descriptions the core
     // asks for send no CORS headers, so the chrome's own fetch to them would be refused.
     'net.fetch': async ({ url, headers }) => {
+      // The Pwned Passwords range API is answered here (`previewRange.ts`): the leak warning
+      // and the checkup are staged against a stand-in, never the real service.
+      const staged = await previewRangeAnswer(String(url))
+      if (staged) return staged
       try {
         const accept = (headers as Record<string, string> | undefined)?.accept
         const res = await fetch(`${PREVIEW_FETCH_ROUTE}?url=${encodeURIComponent(String(url))}`, {

@@ -1,6 +1,6 @@
 import type { UIEvent } from 'react'
 import { useState } from 'react'
-import type { CredentialSummary, UIState } from '@shared/types'
+import { NOTE_MAX_LENGTH, type CredentialSummary, type UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { relativeTime } from '@renderer/lib/utils'
 import { useViewport } from '@renderer/lib/formFactor'
@@ -55,6 +55,27 @@ export function formatDate(ts: number): string {
 export function relativeTimeInSentence(ts: number): string {
   const text = relativeTime(ts)
   return text === 'Just now' ? 'just now' : text
+}
+
+/** How close to Chrome's note limit (ID-34) the counter under the field comes up. */
+export const NOTE_COUNTER_FROM = NOTE_MAX_LENGTH - 100
+
+/**
+ * The note field's counter, "940 / 1000", once the note is within a hundred characters of the
+ * limit (the field clips there); nothing before, so a short note has no number under it.
+ */
+export function noteCounter(length: number): string | undefined {
+  return length >= NOTE_COUNTER_FROM ? `${length} / ${NOTE_MAX_LENGTH}` : undefined
+}
+
+/**
+ * The validation text for a note over the limit – one that arrived by sync from a device
+ * without the clip – which holds Save until it is shortened; null while the note fits.
+ */
+export function noteOverLimit(length: number): string | null {
+  const over = length - NOTE_MAX_LENGTH
+  if (over <= 0) return null
+  return `The note is ${over} ${over === 1 ? 'character' : 'characters'} over the limit of ${NOTE_MAX_LENGTH}`
 }
 
 /** The same match as `CredentialStore.search`: every term somewhere in site, URL, username or notes. */
