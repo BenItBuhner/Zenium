@@ -198,7 +198,8 @@ object MediaControls {
      * has no video, whatever its fields say).
      */
     fun autoEnterPictureInPicture(session: MediaSessionInfo?): Boolean =
-        session != null && !session.chrome && session.video && session.playing && session.fullscreen
+        session != null && !session.chrome && !session.private &&
+            session.video && session.playing && session.fullscreen
 
     /** The picture-in-picture window's aspect ratio: the video's, within what Android accepts (1:2.39 … 2.39:1). */
     fun aspectRatio(width: Int, height: Int): Pair<Int, Int> {

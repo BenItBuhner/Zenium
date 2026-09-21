@@ -311,6 +311,14 @@ class MediaControlsTest {
     // --- picture-in-picture rules -------------------------------------------------------------------
 
     @Test
+    fun aPrivateTabsVideoNeverEntersPictureInPicture() {
+        // Chrome withholds PiP from Incognito: a window that left for the small video never stops, so
+        // the private tab lock would never arm (ruled 2026-09-21).
+        assertFalse(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = true, private = true)))
+        assertTrue(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = true, private = false)))
+    }
+
+    @Test
     fun onlyAFullscreenPlayingVideoEntersPictureInPictureOnHome() {
         assertTrue(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = true)))
         assertFalse(MediaControls.autoEnterPictureInPicture(session(video = true, playing = true, fullscreen = false)))

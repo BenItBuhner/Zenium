@@ -120,7 +120,7 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
               key={media.tabId}
               media={media}
               tab={state.tabs[media.tabId]}
-              pip={Boolean(state.capabilities.pictureInPicture && media.video)}
+              pip={Boolean(state.capabilities.pictureInPicture && media.video && !media.private)}
             />
           ))}
         </div>

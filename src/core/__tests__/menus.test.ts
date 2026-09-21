@@ -1299,6 +1299,27 @@ describe('the page context menu', () => {
     expect(item(h.items(), 'Save Video As…').enabled).toBe(false)
   })
 
+  it("withholds Picture-in-Picture from a private tab's video (Chrome withholds it from Incognito)", () => {
+    const h = pageHarness()
+    const priv = h.browser.tabs.createTab(
+      { url: PAGE_URL, active: true, containerId: PRIVATE_CONTAINER_ID },
+      h.win
+    )
+    h.browser.menus.showPageContextMenu(
+      priv.id,
+      pageParams({
+        mediaType: 'video',
+        srcURL: 'https://example.com/clip.mp4',
+        mediaFlags: VIDEO_FLAGS
+      }),
+      h.win
+    )
+    const labels = topLabels(h.shown())
+    expect(labels).toContain('Show Controls')
+    expect(labels).not.toContain('Picture-in-Picture')
+    expect(labels).not.toContain('Exit Picture-in-Picture')
+  })
+
   it('gives audio the same menu without Picture-in-Picture', () => {
     const menu = pageHarness().menu(
       pageParams({
