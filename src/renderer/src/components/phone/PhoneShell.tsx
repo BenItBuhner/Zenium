@@ -593,7 +593,7 @@ export function PillContent({
         data-private-mark=""
         aria-hidden="true"
       >
-        <VenetianMask className="h-5 w-5 shrink-0 opacity-60" strokeWidth={1.75} aria-hidden />
+        <VenetianMask className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
       </span>
     ) : shown ? (
       <PillChip
