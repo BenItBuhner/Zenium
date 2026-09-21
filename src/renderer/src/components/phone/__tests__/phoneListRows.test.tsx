@@ -95,17 +95,37 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
     const main = row.firstElementChild!
     expect(main.getAttribute('role')).toBe('checkbox')
     expect(main.getAttribute('aria-checked')).toBe('true')
-    // The checkbox stands in the leading box, filled; the glyph has made way for it.
-    expect(el.querySelector('.zen-list-checkbox[data-checked="true"]')).not.toBeNull()
+    // The checkbox is the shared primitive in its span form (§9.34): a presentational span that
+    // is a direct child of the accessible row carrying `aria-checked`, which is what the
+    // primitive's `[aria-checked='true'] > .zen-v2-checkbox` draws on – no input, no local copy
+    // of the box. It stands where the glyph stood; the glyph has made way for it.
+    const box = main.firstElementChild!
+    expect([...box.classList]).toEqual(['zen-v2-checkbox'])
+    expect(box.getAttribute('aria-hidden')).toBe('true')
+    expect(box.childElementCount).toBe(0)
+    expect(box.parentElement!.getAttribute('aria-checked')).toBe('true')
     expect(el.querySelector('[data-glyph]')).toBeNull()
+    expect(el.querySelector('.zen-list-lead')).toBeNull()
     // The fill is the token, held through a press: the selection outranks the press fill.
     const selected = rule(".zen-v2-row.zen-phone-row[data-selected='true']")
     expect(selected).toMatch(/background: var\(--v2-selected\)/)
     expect(css).toMatch(/\.zen-v2-row\.zen-phone-row\[data-selected='true'\]:active/)
     expect(css).not.toMatch(/--v2-selection\b|--v2-nav-active\b/)
-    expect(rule(".zen-list-checkbox[data-checked='true']")).toMatch(
-      /background: var\(--v2-accent\)/
+    // The panels draw no checkbox of their own: the one rule about it seats the primitive on
+    // the first text line (§9.2) in this centring row, and the primitive's own rule fills it.
+    expect(css).not.toMatch(/zen-list-checkbox|data-checkbox|data-checked/)
+    expect(rule('.zen-list-main > .zen-v2-checkbox').trim()).toBe('align-self: flex-start;')
+    const main_css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
+    expect(main_css).toMatch(
+      /\[aria-checked='true'\] > \.zen-v2-checkbox \{\n {2}background: var\(--v2-accent\);/
     )
+    // An unpicked row while picking: the same span, drawn off by the same rule.
+    const off = render(
+      <PhoneListRow icon={<span data-glyph />} title="Tea - Wikipedia" selecting onTap={noop} />
+    )
+    const offMain = off.querySelector<HTMLElement>('.zen-list-main')!
+    expect(offMain.getAttribute('aria-checked')).toBe('false')
+    expect([...offMain.firstElementChild!.classList]).toEqual(['zen-v2-checkbox'])
   })
 
   it('places a row action as the shared icon button beside the accessible row, not inside it', () => {

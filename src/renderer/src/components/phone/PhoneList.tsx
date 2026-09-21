@@ -1,6 +1,6 @@
 import type { JSX, MouseEvent, ReactNode, RefObject } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Check, Search, Trash2, X } from 'lucide-react'
+import { Search, Trash2, X } from 'lucide-react'
 import { SPRING_SNAPPY, SpringAnimation } from '@renderer/lib/motion/spring'
 import { swipeOutcome, swipeRestTarget, swipeReveal } from '@renderer/lib/gestures/swipeDelete'
 import { cn } from '@renderer/lib/utils'
@@ -249,6 +249,10 @@ export interface PhoneListRowProps {
  * button's sibling. A control inside a button is not valid ARIA, and Android's accessibility
  * tree makes every button a leaf – TalkBack would never reach a row's Remove or 3-dot button
  * nested in it. Focus lands on the accessible row; the ring is drawn around the whole box.
+ * While rows are being picked, the leading box is the shared `.zen-v2-checkbox` in its span
+ * form (9.34): a presentational span, drawn checked by the `aria-checked` on the accessible row
+ * that is the checkbox (`[aria-checked='true'] > .zen-v2-checkbox`, main.css) – no input, no
+ * copy of the box.
  */
 export function PhoneListRow({
   icon,
@@ -295,18 +299,13 @@ export function PhoneListRow({
         className="zen-list-main"
         onKeyDown={onKeyDown}
       >
-        <span className="zen-list-lead" data-checkbox={selecting} aria-hidden>
-          {selecting ? (
-            <span
-              className="zen-list-checkbox flex items-center justify-center"
-              data-checked={selected}
-            >
-              <Check className="h-4 w-4" strokeWidth={2.5} />
-            </span>
-          ) : (
-            icon
-          )}
-        </span>
+        {selecting ? (
+          <span className="zen-v2-checkbox" aria-hidden />
+        ) : (
+          <span className="zen-list-lead" aria-hidden>
+            {icon}
+          </span>
+        )}
         <span className="zen-list-text">
           <span className="zen-list-title truncate">{title}</span>
           {subtitle && <span className="zen-list-subtitle truncate">{subtitle}</span>}
