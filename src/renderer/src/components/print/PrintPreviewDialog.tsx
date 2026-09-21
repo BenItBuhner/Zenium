@@ -514,7 +514,7 @@ function ErrorLine({
       id={id}
       role="alert"
       className={cn(
-        'flex items-start gap-2 pt-1 text-[13px] leading-5 text-[var(--v2-danger)]',
+        'flex items-start gap-2 pt-1 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-danger)]',
         inset && 'px-4 pb-1'
       )}
     >
