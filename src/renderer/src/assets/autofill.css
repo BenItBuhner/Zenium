@@ -167,6 +167,18 @@ textarea.zen-v2-field {
   font-size: var(--v2-font-body);
 }
 /*
+ * A title-and-notice sheet (the leak warning) takes the focus itself as it opens (§9.22). The
+ * chassis draws no ring for that (`.zen-sheet:focus` in main.css) – but that rule sits in the
+ * components layer, and this class puts the dialog element under the unlayered v2 ring rule
+ * (`[class*=' zen-v2-']:focus-visible`), which would outline the whole sheet: the dialog's rule
+ * above, restated for the sheet – with the ring rule's own coarse-pointer form beside it, since
+ * on a phone the root's `data-pointer='coarse'` puts that form ahead on specificity.
+ */
+.zen-v2-af-sheet:focus,
+:root[data-pointer='coarse'] .zen-v2-af-sheet:focus {
+  outline: none;
+}
+/*
  * The picker strip on hosts without a popup surface: docked at the bottom of the content frame,
  * above the keyboard, so the page shrinks around it like it does for the find bar. A panel edge
  * on top, rows at the phone pitch, at most three rows before it scrolls.
