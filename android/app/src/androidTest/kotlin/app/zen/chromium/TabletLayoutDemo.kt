@@ -54,7 +54,9 @@ import kotlin.math.roundToInt
  *     its More button opens a sheet that docks centred at 480; back closes the sheet, back the
  *     overview;
  * 11. live resize through `wm size`: 1280 x 590 is the phone chrome (the short side under 600
- *     dp) with the same tab at the same scroll; 600 x 1000 (a split-screen width) is the tablet
+ *     dp) with the same tab at the same place on the page (the block under the view's top edge,
+ *     which Blink anchors through the reflow the sidebar's 240 forces; not the scroll pixel) and
+ *     no second load of it; 600 x 1000 (a split-screen width) is the tablet
  *     with the rail docked and the expanded sidebar as a drawer over the page (the
  *     `tablet-drawer-open` spring scene, traced), closed by back; 800 x 1280 the portrait tablet
  *     with the sidebar docked; 1280 x 800 again.

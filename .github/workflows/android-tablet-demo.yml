@@ -15,16 +15,14 @@ name: Android tablet layout demo
 # Blink anchors through the reflow; the page is not loaded again), 600 x 1000 the tablet with
 # the rail docked and the sidebar as a drawer (its spring traced), 800 x 1280 the portrait
 # tablet. The driver judges every step from the chrome's and the core's own state and fails the
-# run when a claim does not hold; see TabletLayoutDemo.kt. Dispatch-only, like the gesture demo,
-# once it is on main; until then GitHub knows a workflow only from an event on its branch, so a
-# push of this file on the PR's branch registers it and is the run (#243's recipe; the retry
-# after run 35654472828 is the second such push) – the push trigger goes with the merge.
-# The build, the emulator and its caches live in android-emulator-demo.yml; this file picks the
-# driver, the profile, the display and the colour scheme.
+# run when a claim does not hold; see TabletLayoutDemo.kt. Dispatch-only, like the gesture demo.
+# GitHub knows a workflow only from an event on its branch, so while #273 was open a push of this
+# file on its branch registered it and was the run (#243's recipe): 35654472828, the retry
+# 35661559887 and the merge head's 35662540194 went out that way; the branch-scoped push trigger
+# is gone from the final head, as from the other demos'. The build, the emulator and its caches
+# live in android-emulator-demo.yml; this file picks the driver, the profile, the display and the
+# colour scheme.
 on:
-  push:
-    branches: [cursor/android-tablet-layout-6299]
-    paths: [.github/workflows/android-tablet-demo.yml]
   workflow_dispatch:
     inputs:
       theme:
