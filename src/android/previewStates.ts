@@ -62,6 +62,7 @@ import {
   type FilterListStatus,
   type TrackingLevel
 } from '@shared/blocking'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
@@ -165,8 +166,9 @@ const QR_EVENT_MARGIN_MS = 250
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
- * `translate=<status>` (the active page `offered` for translation, `translated`, `translating`
- * or `error`, or `idle` for none; the bar stays down unless `&bar`; see `seedTranslate`),
+ * `sync=<variant>` for Settings › Sync (see `seedSync`), `translate=<status>` (the active page
+ * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
+ * stays down unless `&bar`; see `seedTranslate`),
  * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page),
  * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
  * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
@@ -206,6 +208,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedSync()
     unseedImport()
     unseedTranslate()
     unseedFavicon()
@@ -588,6 +591,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const blocking = params.get('blocking')
   const blocked = Number(params.get('blocked'))
   const extensions = params.get('extensions')
+  const sync = params.get('sync')
   const lastImport = params.get('import')
   const translate = params.get('translate')
   const favicon = params.get('favicon')
@@ -595,6 +599,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
+    if (sync) seedSync(sync)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
@@ -1138,6 +1143,131 @@ function seedExtensions(variant: string): void {
 function unseedExtensions(): void {
   extensionsSeed?.()
   extensionsSeed = null
+}
+
+// ---------------------------------------------------------------------------
+// Sync, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the sync state the current spec holds over the core's pushes. */
+let syncSeed: (() => void) | null = null
+
+/** The tree the `chosen` variant has picked: a Drive folder, as the system picker names one. */
+const SYNC_FIXTURE_TREE =
+  'content://com.android.externalstorage.documents/tree/primary%3ADrive%2FZenium'
+
+/**
+ * Settings › Sync in states this stand-in host cannot reach (it has no folder to pick and no
+ * other device): the chrome's copy of the browser state is patched with the engine's status,
+ * and patched again over every state the core pushes while the spec stands. Variants: `off`
+ * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
+ * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
+ * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
+ * (connected: two other devices, last synced five minutes ago), `empty` (connected, no other
+ * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
+ * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
+ * the core's, so a tapped toggle shows its new state.
+ */
+function seedSync(variant: string): void {
+  unseedSync()
+  const chosen = variant === 'chosen' || variant === 'busy'
+  syncSetupStore.set({ folder: chosen ? SYNC_FIXTURE_TREE : null })
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = syncFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  const unpatch = browserStore.subscribe(patch)
+  const release = holdSetup(variant)
+  syncSeed = () => {
+    unpatch()
+    release()
+  }
+}
+
+/** Stop holding a seeded sync state over the core's pushes; the setup draft goes with it. */
+function unseedSync(): void {
+  syncSeed?.()
+  syncSeed = null
+  syncSetupStore.set({ folder: null })
+}
+
+/**
+ * While the `busy` fixture stands the chrome's bridge takes `sync.setup` and never answers it,
+ * the way a slow key derivation over a slow tree would look: the passphrase form stays busy
+ * (fields read-only, the primary's spinner, Cancel at .4) for as long as the sheet is up. The
+ * call is left pending on release – the sheet closes with the state, and the form goes with it.
+ * Every other command goes through. Returns the undo.
+ */
+function holdSetup(variant: string): () => void {
+  if (variant !== 'busy') return () => undefined
+  const zen = window.zen
+  const invoke = zen.invoke
+  zen.invoke = <K extends CommandName>(
+    name: K,
+    args: CommandArgs<K>
+  ): Promise<CommandResult<K>> => {
+    if (name === 'sync.setup') return new Promise<CommandResult<K>>(() => undefined)
+    return invoke(name, args)
+  }
+  return () => {
+    if (zen.invoke !== invoke) zen.invoke = invoke
+  }
+}
+
+export function syncFixture(state: UIState, variant: string, now: number): UIState {
+  const base = state.sync
+  const deviceName = 'Pixel 8'
+  if (variant === 'off' || variant === 'chosen' || variant === 'busy') {
+    return {
+      ...state,
+      sync: {
+        ...base,
+        enabled: false,
+        folder: null,
+        folderName: null,
+        folderLost: false,
+        deviceName,
+        lastSyncAt: null,
+        lastError: null,
+        syncing: false,
+        devices: [],
+        pendingMerge: false
+      }
+    }
+  }
+  const lost = variant === 'lost'
+  const merge = variant === 'merge'
+  const devices =
+    variant === 'empty' || merge
+      ? []
+      : [
+          { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS },
+          { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
+        ]
+  return {
+    ...state,
+    sync: {
+      ...base,
+      enabled: true,
+      folder: SYNC_FIXTURE_TREE,
+      folderName: 'Zenium',
+      folderLost: lost,
+      deviceName,
+      lastSyncAt: merge ? null : now - 5 * 60_000,
+      lastError: lost
+        ? 'The sync folder is no longer accessible. Choose it again to keep syncing.'
+        : variant === 'error'
+          ? 'Could not read the folder: the drive is not mounted'
+          : null,
+      syncing: variant === 'syncing',
+      devices,
+      pendingMerge: merge
+    }
+  }
 }
 
 /**

@@ -570,7 +570,10 @@ const INVENTORY: Record<string, readonly string[]> = {
   security: ['meet.example', 'Forget sign-ins and certificates'],
   sync: [
     'Sync now',
-    'Name',
+    // The pane's label for the device's field (`overlays/SyncSection.tsx` at e59cb52e: "This
+    // device"), which #261's builder keeps on both hosts; #193's own port had renamed it "Name"
+    // under a "This device" heading.
+    'This device',
     'Phone',
     'Spaces',
     'Folders',
@@ -640,7 +643,12 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Secure DNS',
     'Privacy signals'
   ],
-  sync: ['Sync across devices', 'This device', 'Devices', 'What to sync'],
+  // #261 put Sync on the shared builder and the pane's rows kept their labels under the builder's
+  // headings: Sync now under Status (#193's port said "Sync across devices"), the device's field
+  // beside the folder row under Folder and device (the port's "This device" group), the device
+  // list under Other devices (the pane's "Devices"), the switches under What you sync (the
+  // pane's "What to sync").
+  sync: ['Status', 'Folder and device', 'Other devices', 'What you sync'],
   import: ['Import from another browser', 'Import from a file'],
   security: ['Site permissions', 'This session'],
   passwords: ['Password manager', 'Saving', 'Security']

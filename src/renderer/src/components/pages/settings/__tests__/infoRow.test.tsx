@@ -8,10 +8,12 @@ import { RowView } from '../rows'
 /*
  * The info row's status inks (§9.33, one ink per row – the §1 status ink on the line that
  * reports the status): a row whose second line is the status carries `tone`, and the renderer
- * puts the ink on the description; a row whose LABEL is the status (a failure's sentence as the
- * row's first line, as a result's headline is) carries `danger`, and the renderer gives the row
- * the danger class whose label rule inks the sentence, the description keeping its 69%. PR #259's
- * independent review found the phone's run-level import failure drawn the other way round.
+ * writes it as the row's one `data-tone` – the primitive's attribute, which main.css's row rule
+ * reads to ink the description (and a trailing status glyph) through the row (PR #261's chassis
+ * fold: nothing on the span itself); a row whose LABEL is the status (a failure's sentence as
+ * the row's first line, as a result's headline is) carries `danger`, and the renderer gives the
+ * row the danger class whose label rule inks the sentence, the description keeping its 69%. PR
+ * #259's independent review found the phone's run-level import failure drawn the other way round.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -60,13 +62,14 @@ describe('the info row’s status ink', () => {
     )
     const description = row.querySelector('.zen-settings-description')
     expect(description?.textContent).toBe('From a bookmarks HTML file')
+    expect(row.hasAttribute('data-tone')).toBe(false)
     expect(description?.hasAttribute('data-tone')).toBe(false)
     // Still not a target (§9.34): static, no role, no fill.
     expect(row.tagName).toBe('DIV')
     expect(row.hasAttribute('data-static')).toBe(true)
   })
 
-  it('a row whose description is the status keeps `tone` on that line alone, no danger class on the row', () => {
+  it('a row whose description is the status carries `tone` as the row’s one data-tone – the ink reaches that line alone through the row; no danger class, nothing on the span', () => {
     const kind: InfoRow = {
       kind: 'info',
       id: 'import-last-bookmarks',
@@ -77,7 +80,9 @@ describe('the info row’s status ink', () => {
     const el = render(<RowView row={kind} ctx={ctx} />)
     const row = rowOf(el, 'import-last-bookmarks')
     expect(row.classList.contains('zen-settings-row-danger')).toBe(false)
-    expect(row.querySelector('.zen-settings-description')?.getAttribute('data-tone')).toBe('danger')
+    expect(row.getAttribute('data-tone')).toBe('danger')
+    expect(row.querySelector('.zen-settings-description')?.hasAttribute('data-tone')).toBe(false)
+    expect(row.querySelector('.zen-settings-label')?.hasAttribute('data-tone')).toBe(false)
   })
 
   it('a plain fact carries neither', () => {
@@ -90,6 +95,7 @@ describe('the info row’s status ink', () => {
     const el = render(<RowView row={fact} ctx={ctx} />)
     const row = rowOf(el, 'about-version')
     expect(row.classList.contains('zen-settings-row-danger')).toBe(false)
+    expect(row.hasAttribute('data-tone')).toBe(false)
     expect(row.querySelector('.zen-settings-description')?.hasAttribute('data-tone')).toBe(false)
   })
 })

@@ -8,9 +8,11 @@ import type {
   ImportSource,
   SafetyCheckResult,
   Settings,
+  SyncStatus,
   Tab,
   UIState
 } from '@shared/types'
+import { defaultScope } from '@core/sync/records'
 import { INTERNAL_PAGES, availableSections } from '@shared/internalPages'
 import {
   DEFAULT_BLOCKING_SETTINGS,
@@ -51,6 +53,7 @@ const { allRows, currentOptionLabel, findRow, groupShows, optionGroups, rowText,
 const { uiStore } = await import('@renderer/lib/ui')
 const { idleAutofillSettings } = await import('@renderer/lib/autofillSettings')
 const { idleDictionaryWords } = await import('@renderer/lib/spellcheckWords')
+const { SYNC_SCOPES, syncSetupStore } = await import('@renderer/lib/syncSetup')
 
 type Model = ReturnType<typeof buildSection>
 type Row = ReturnType<typeof allRows>[number]
@@ -4000,6 +4003,399 @@ describe('CT-22: sleeping tabs in Tab Management on a phone, in Edge’s words',
       expect(excluded.value).toBe('mail.example.com')
       excluded.onCommit('Mail.example.com, notion.so')
       expect(c.patches.at(-1)).toEqual({ unloadExcludedDomains: ['mail.example.com', 'notion.so'] })
+    }
+  })
+})
+
+describe('ID-08’s Sync category on a phone', () => {
+  const TREE = 'content://com.android.externalstorage.documents/tree/primary%3ADrive%2FZenium'
+
+  function syncStatus(patch: Partial<SyncStatus> = {}): SyncStatus {
+    return {
+      enabled: false,
+      folder: null,
+      folderName: null,
+      folderLost: false,
+      deviceId: 'dev-1',
+      deviceName: 'Pixel 8',
+      scope: defaultScope(),
+      lastSyncAt: null,
+      lastError: null,
+      syncing: false,
+      devices: [],
+      pendingMerge: false,
+      ...patch
+    }
+  }
+
+  function connected(patch: Partial<SyncStatus> = {}): SyncStatus {
+    return syncStatus({
+      enabled: true,
+      folder: TREE,
+      folderName: 'Zenium',
+      lastSyncAt: Date.now() - 5 * 60_000,
+      devices: [
+        { id: 'dev-2', name: 'Work laptop', lastSeen: Date.now() - 2 * 3_600_000 },
+        { id: 'dev-3', name: 'Home desktop', lastSeen: Date.now() - 60_000 }
+      ],
+      ...patch
+    })
+  }
+
+  function syncState(sync: SyncStatus): UIState {
+    return state({ capabilities: { ...ANDROID, sync: true }, sync } as Partial<UIState>)
+  }
+
+  beforeEach(() => syncSetupStore.set({ folder: null }))
+  afterEach(() => syncSetupStore.set({ folder: null }))
+
+  it('is listed behind the `sync` capability only, and builds in both states with unique ids', () => {
+    expect(phoneSections().map((m) => m.section.id)).not.toContain('sync')
+    const listed = phoneSections(syncState(syncStatus())).map((m) => m.section.id)
+    expect(listed).toContain('sync')
+    for (const status of [
+      syncStatus(),
+      connected(),
+      connected({ folderLost: true, lastError: 'The sync folder is no longer accessible' }),
+      connected({ pendingMerge: true })
+    ]) {
+      const model = section('sync', syncState(status))
+      expect(model.groups.length).toBeGreaterThan(0)
+      expect(model.groups.every(groupShows)).toBe(true)
+      const ids = allRows(model.groups).map((r) => r.id)
+      expect(new Set(ids).size).toBe(ids.length)
+      for (const r of allRows(model.groups)) expect(r.label, r.id).not.toBe('')
+    }
+  })
+
+  it('before setup: the folder row, the device name and Turn on sync – laid out at 40 % until a folder is chosen – then What you sync', async () => {
+    const model = section('sync', syncState(syncStatus()))
+    expect(model.groups.map((g) => g.id)).toEqual(['sync-setup', 'sync-scope'])
+    expect(model.groups[0]?.heading).toBe('Set up sync')
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-folder',
+      'sync-device-name',
+      'sync-turn-on'
+    ])
+    const folder = row(model, 'sync-folder')
+    expect(folder).toMatchObject({
+      kind: 'action',
+      label: 'Sync folder',
+      description: 'Choose a folder that your cloud drive keeps in sync.'
+    })
+    const turnOn = row(model, 'sync-turn-on')
+    if (turnOn.kind !== 'action') throw new Error('not an action')
+    expect(turnOn.disabled).toBe(true)
+    expect(turnOn.description).toBe('Choose a sync folder first.')
+    expect(turnOn.form?.title).toBe('Create a passphrase')
+    expect(turnOn.form?.description).toMatch(/^Zenium uses your passphrase to encrypt your data\./)
+    // Nothing to render inside the sheet without a folder.
+    expect(turnOn.form?.render(() => undefined)).toBeNull()
+
+    // The system picker: a dismissed one keeps the draft as it was, a chosen tree becomes the
+    // folder row's description (its display name, as the Downloads folder row shows its own).
+    if (folder.kind !== 'action') throw new Error('not an action')
+    invoke.mockResolvedValueOnce(null)
+    folder.onPress?.()
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('sync.chooseFolder', undefined)
+    expect(syncSetupStore.get().folder).toBeNull()
+    invoke.mockResolvedValueOnce(TREE as never)
+    folder.onPress?.()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(syncSetupStore.get().folder).toBe(TREE)
+
+    const chosen = section('sync', syncState(syncStatus()))
+    expect(row(chosen, 'sync-folder').description).toBe('Drive/Zenium')
+    const ready = row(chosen, 'sync-turn-on')
+    if (ready.kind !== 'action') throw new Error('not an action')
+    expect(ready.disabled).toBe(false)
+    expect(ready.description).toBe('Create the passphrase every device will share.')
+    expect(ready.form?.render(() => undefined)).not.toBeNull()
+
+    // The device name is a one-field sheet; a changed name is sent, the same one is not.
+    const name = row(chosen, 'sync-device-name')
+    if (name.kind !== 'field') throw new Error('not a field')
+    expect(name).toMatchObject({ label: 'This device', value: 'Pixel 8', input: 'text' })
+    invoke.mockClear()
+    name.onCommit('Pixel 8')
+    expect(invoke).not.toHaveBeenCalled()
+    name.onCommit('Ben’s phone')
+    expect(invoke).toHaveBeenCalledWith('sync.setDeviceName', { name: 'Ben’s phone' })
+  })
+
+  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, Open tabs, Passwords, Settings first, then Zenium’s own; each runs sync.setScope', () => {
+    const model = section('sync', syncState(syncStatus()))
+    const scope = model.groups.find((g) => g.id === 'sync-scope')
+    expect(scope?.heading).toBe('What you sync')
+    expect(scope?.rows.map((r) => r.label).slice(0, 4)).toEqual([
+      'Bookmarks',
+      'Open tabs',
+      'Passwords',
+      'Settings'
+    ])
+    // Every key of the engine's scope is a switch here, once.
+    const keys = SYNC_SCOPES.map((s) => s.key)
+    expect([...keys].sort()).toEqual(Object.keys(defaultScope()).sort())
+    expect(scope?.rows.map((r) => r.id)).toEqual(keys.map((k) => `sync-scope:${k}`))
+    const openTabs = row(model, 'sync-scope:openTabs')
+    if (openTabs.kind !== 'switch') throw new Error('not a switch')
+    expect(openTabs.checked).toBe(false)
+    const passwords = row(model, 'sync-scope:passwords')
+    if (passwords.kind !== 'switch') throw new Error('not a switch')
+    expect(passwords.checked).toBe(true)
+    passwords.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { passwords: false })
+    // The same group, same order, once connected.
+    const on = section('sync', syncState(connected()))
+    expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(
+      scope?.rows.map((r) => r.id)
+    )
+  })
+
+  it('connected: the status with Sync now, the folder and device, the other devices newest first with their last-seen time, the toggles, and Turn off sync', async () => {
+    const model = section('sync', syncState(connected()))
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'sync-status',
+      'sync-where',
+      'sync-devices',
+      'sync-scope',
+      'sync-off'
+    ])
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['sync-now'])
+    const now = row(model, 'sync-now')
+    if (now.kind !== 'action') throw new Error('not an action')
+    expect(now).toMatchObject({ label: 'Sync now', busy: false, disabled: false })
+    expect(now.description).toBe('Last synced 5 min ago')
+    expect(now.tone).toBeUndefined()
+    now.onPress?.()
+    expect(invoke).toHaveBeenCalledWith('sync.now', undefined)
+    // After the phrase the age is lower case (§9.1); "Just now" keeps its capital only where it
+    // opens a line of its own, the device rows'.
+    const fresh = row(section('sync', syncState(connected({ lastSyncAt: Date.now() }))), 'sync-now')
+    expect(fresh.description).toBe('Last synced just now')
+
+    // The folder row shows the tree's display name and re-chooses through the picker; the chosen
+    // tree goes to the engine at once (there is no draft once sync is on).
+    const folder = row(model, 'sync-folder')
+    if (folder.kind !== 'action') throw new Error('not an action')
+    expect(folder.description).toBe('Zenium')
+    invoke.mockResolvedValueOnce(`${TREE}2` as never)
+    folder.onPress?.()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(invoke).toHaveBeenCalledWith('sync.chooseFolder', undefined)
+    expect(invoke).toHaveBeenCalledWith('sync.setFolder', { folder: `${TREE}2` })
+    expect(syncSetupStore.get().folder).toBeNull()
+
+    const devices = model.groups.find((g) => g.id === 'sync-devices')
+    expect(devices?.heading).toBe('Other devices')
+    expect(devices?.aside).toBe('2')
+    expect(devices?.rows.map((r) => [r.kind, r.label])).toEqual([
+      ['info', 'Home desktop'],
+      ['info', 'Work laptop']
+    ])
+    for (const r of devices?.rows ?? []) {
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.trailing).toBeTruthy()
+    }
+
+    const off = model.groups.find((g) => g.id === 'sync-off')
+    expect(off?.heading).toBeNull()
+    const turnOff = row(model, 'sync-disconnect')
+    if (turnOff.kind !== 'action') throw new Error('not an action')
+    expect(turnOff).toMatchObject({ label: 'Turn off sync', destructive: true })
+    expect(turnOff.form?.title).toBe('Turn off sync?')
+  })
+
+  it('says so where the device list is empty, says Syncing… and is busy while a sync runs, and shows the engine’s error in the danger ink', () => {
+    const empty = section('sync', syncState(connected({ devices: [] })))
+    const devices = empty.groups.find((g) => g.id === 'sync-devices')
+    expect(devices?.rows).toEqual([])
+    // The heading's count reads 0 rather than disappearing (§9.17; the lead's nit 2 on #261).
+    expect(devices?.aside).toBe('0')
+    expect(devices?.empty).toBe('No other device has synced to this folder yet')
+
+    const first = row(section('sync', syncState(connected({ lastSyncAt: null }))), 'sync-now')
+    expect(first.description).toBe('Waiting for first sync')
+
+    const busy = row(section('sync', syncState(connected({ syncing: true }))), 'sync-now')
+    if (busy.kind !== 'action') throw new Error('not an action')
+    expect(busy.busy).toBe(true)
+    expect(busy.description).toBe('Syncing…')
+
+    const failed = row(
+      section('sync', syncState(connected({ lastError: 'Could not read the folder' }))),
+      'sync-now'
+    )
+    expect(failed).toMatchObject({ description: 'Could not read the folder', tone: 'danger' })
+  })
+
+  it('the folder-lost notice is a §9.17 / §9.33 message row over the folder row: an info row in the danger ink with its glyph trailing, nothing pressable; Sync now waits', () => {
+    const model = section(
+      'sync',
+      syncState(
+        connected({
+          folderLost: true,
+          lastError: 'The sync folder is no longer accessible. Choose it again to keep syncing.'
+        })
+      )
+    )
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['sync-folder-lost', 'sync-now'])
+    const notice = row(model, 'sync-folder-lost')
+    if (notice.kind !== 'info') throw new Error('not an info row')
+    expect(notice).toMatchObject({
+      label: 'The sync folder is no longer accessible',
+      description: 'Choose it again to keep syncing.',
+      tone: 'danger'
+    })
+    // A lone status row trails its 16 glyph (§9.33; never leading in a group whose other row,
+    // Sync now, has none – §10.4's mixing rule), and the glyph takes the danger ink through the
+    // row's one tone: no ink class of its own.
+    expect(notice.leading).toBeUndefined()
+    if (!isValidElement<{ className?: string }>(notice.trailing)) throw new Error('no glyph')
+    expect(notice.trailing.props.className).toBe('zen-settings-trailing-glyph')
+    // The status line does not repeat the sentence the row above already says.
+    const now = row(model, 'sync-now')
+    if (now.kind !== 'action') throw new Error('not an action')
+    expect(now.disabled).toBe(true)
+    expect(now.description).toBe('Last synced 5 min ago')
+    expect(now.tone).toBeUndefined()
+    // The folder row is the way out.
+    expect(row(model, 'sync-folder').kind).toBe('action')
+  })
+
+  it('the first sync’s merge question is a row with its sheet while it stands; Sync now waits on it', () => {
+    const model = section('sync', syncState(connected({ pendingMerge: true, lastSyncAt: null })))
+    expect(model.groups[0]?.rows.map((r) => r.id)).toEqual(['sync-merge', 'sync-now'])
+    const merge = row(model, 'sync-merge')
+    if (merge.kind !== 'action') throw new Error('not an action')
+    expect(merge.label).toBe('This folder already has synced data')
+    expect(merge.form?.title).toBe('Combine with the data in this folder?')
+    const now = row(model, 'sync-now')
+    if (now.kind !== 'action') throw new Error('not an action')
+    expect(now.disabled).toBe(true)
+    expect(section('sync', syncState(connected())).groups[0]?.rows.map((r) => r.id)).toEqual([
+      'sync-now'
+    ])
+  })
+
+  it('is found by the landing’s search: a cloud drive’s name lands on the folder row, "passphrase" on Turn on sync', () => {
+    const models = phoneSections(syncState(syncStatus()))
+    const dropbox = searchRows(models, 'dropbox')
+    expect(dropbox.map((h) => h.row.id)).toContain('sync-folder')
+    expect(dropbox.find((h) => h.row.id === 'sync-folder')?.caption).toBe('Sync › Set up sync')
+    expect(searchRows(models, 'passphrase').map((h) => h.row.id)).toContain('sync-turn-on')
+    expect(searchRows(models, 'open tabs').map((h) => h.row.id)).toContain('sync-scope:openTabs')
+  })
+
+  it('is the one section both hosts draw (#193’s shared builder): the desktop layout builds the same groups, and each action row trails its 32 px button (§10.5) that the phone never reads', () => {
+    const def = PAGE.sections.find((x) => x.id === 'sync')!
+    const desktop = (status: SyncStatus): Model =>
+      buildSection(def, { ...context(syncState(status)).ctx, formFactor: 'desktop' })
+    const phone = (status: SyncStatus): Model =>
+      buildSection(def, { ...context(syncState(status)).ctx, formFactor: 'phone' })
+    const buttons = (model: Model): Array<[string, string | undefined]> =>
+      allRows(model.groups).flatMap((r) => (r.kind === 'action' ? [[r.id, r.button]] : []))
+
+    // Before setup: Choose… until a folder is drafted, Change… after; Turn on… opens the form.
+    const fresh = desktop(syncStatus())
+    expect(fresh.groups.map((g) => g.id)).toEqual(phone(syncStatus()).groups.map((g) => g.id))
+    expect(buttons(fresh)).toEqual([
+      ['sync-folder', 'Choose…'],
+      ['sync-turn-on', 'Turn on…']
+    ])
+    syncSetupStore.set({ folder: TREE })
+    expect(buttons(desktop(syncStatus()))[0]).toEqual(['sync-folder', 'Change…'])
+    syncSetupStore.set({ folder: null })
+
+    // Connected: Sync now's button is its own label; the folder changes; the two ways off trail
+    // Turn off… and Remove…; the merge question's button opens its form.
+    const on = desktop(connected())
+    expect(on.groups.map((g) => g.id)).toEqual(phone(connected()).groups.map((g) => g.id))
+    expect(buttons(on)).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-folder', 'Change…'],
+      ['sync-turn-off', 'Turn off…'],
+      ['sync-wipe', 'Remove…']
+    ])
+    expect(buttons(desktop(connected({ pendingMerge: true })))[0]).toEqual([
+      'sync-merge',
+      'Choose…'
+    ])
+    // The folder-lost row is a message row on both hosts – nothing to press, so no button –
+    // over the folder row that chooses again.
+    const lost = desktop(connected({ folderLost: true }))
+    expect(row(lost, 'sync-folder-lost').kind).toBe('info')
+    expect(buttons(lost)).toEqual([
+      ['sync-now', 'Sync now'],
+      ['sync-folder', 'Change…'],
+      ['sync-turn-off', 'Turn off…'],
+      ['sync-wipe', 'Remove…']
+    ])
+  })
+
+  it('keeps every row the desktop pane had (#193’s inventory): the device’s field under the pane’s own label on every shell, and the two ways off as two rows – Turn off sync confirming, the wipe destructive with its own – where the phone folds the wipe into Turn off sync’s sheet', () => {
+    const def = PAGE.sections.find((x) => x.id === 'sync')!
+    const build = (layout: 'phone' | 'tablet' | 'desktop'): Model =>
+      buildSection(def, { ...context(syncState(connected())).ctx, formFactor: layout })
+
+    // The one field, the one command, the pane's label ("This device", not #193's port's "Name").
+    for (const layout of ['phone', 'tablet', 'desktop'] as const) {
+      expect(row(build(layout), 'sync-device-name')).toMatchObject({
+        kind: 'field',
+        label: 'This device',
+        description: 'The name other devices show for this one.'
+      })
+    }
+
+    // The phone's one row, its sheet the §9.23 form with the checkbox.
+    const phoneOff = build('phone').groups.find((g) => g.id === 'sync-off')
+    expect(phoneOff?.rows.map((r) => r.id)).toEqual(['sync-disconnect'])
+    const sheet = row(build('phone'), 'sync-disconnect')
+    if (sheet.kind !== 'action') throw new Error('not an action')
+    expect(sheet.form).toBeDefined()
+    expect(sheet.confirm).toBeUndefined()
+
+    // The desktop's two, each the whole of what it says: no second choice in either dialog.
+    for (const layout of ['desktop', 'tablet'] as const) {
+      const model = build(layout)
+      expect(model.groups.find((g) => g.id === 'sync-off')?.rows.map((r) => r.id)).toEqual([
+        'sync-turn-off',
+        'sync-wipe'
+      ])
+      const off = row(model, 'sync-turn-off')
+      if (off.kind !== 'action') throw new Error('not an action')
+      expect(off).toMatchObject({
+        label: 'Turn off sync',
+        button: 'Turn off…',
+        confirm: { title: 'Turn off sync?', action: 'Turn off' }
+      })
+      expect(off.destructive).toBeUndefined()
+      expect(off.form).toBeUndefined()
+      invoke.mockClear()
+      off.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: false })
+
+      const wipe = row(model, 'sync-wipe')
+      if (wipe.kind !== 'action') throw new Error('not an action')
+      expect(wipe).toMatchObject({
+        label: 'Turn off and remove this device’s data',
+        description:
+          'Other devices forget what this one synced; what they have of their own stays.',
+        button: 'Remove…',
+        destructive: true,
+        confirm: { title: 'Turn off sync and remove this device’s data?', action: 'Remove' }
+      })
+      expect(wipe.form).toBeUndefined()
+      invoke.mockClear()
+      wipe.onPress?.()
+      expect(invoke).toHaveBeenCalledWith('sync.disconnect', { wipeRemote: true })
+    }
+    // Every row of the group names its shells, so neither page's search reaches the other's.
+    for (const r of connectedOffRows()) expect(r.layouts).toBeDefined()
+    function connectedOffRows(): Row[] {
+      const all = buildSection(def, context(syncState(connected())).ctx)
+      return all.groups.find((g) => g.id === 'sync-off')?.rows ?? []
     }
   })
 })

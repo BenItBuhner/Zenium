@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Check, CircleAlert, CreditCard, Fingerprint, MapPin } from 'lucide-react'
+import { Check, CreditCard, Fingerprint, MapPin } from 'lucide-react'
 import type { InternalPageSection } from '@shared/internalPages'
 import type {
   BookmarksBarMode,
@@ -30,7 +30,6 @@ import type {
   Settings,
   ShortcutGroup,
   ShortcutPreset,
-  SyncScope,
   Tab,
   ThirdPartyPinnedBehavior,
   ToolbarLayout,
@@ -139,7 +138,6 @@ import {
   ResourceMeter,
   SearchEngineForm,
   ShortcutForm,
-  SyncSetupForm,
   UpdateStatusBlock,
   UrlForm,
   WordForm,
@@ -155,6 +153,7 @@ import {
   type SectionModel,
   type SettingsRow
 } from './model'
+import { syncGroups } from './sync'
 import {
   cookiesGroups,
   httpsOnlyGroups,
@@ -3570,6 +3569,14 @@ function extensionsSection(ctx: SectionContext): RowGroup[] {
 }
 
 // ---------------------------------------------------------------------------
+// Sync
+// ---------------------------------------------------------------------------
+
+function syncSection(ctx: SectionContext): RowGroup[] {
+  return syncGroups(ctx)
+}
+
+// ---------------------------------------------------------------------------
 // AI Agents
 // ---------------------------------------------------------------------------
 
@@ -4002,230 +4009,6 @@ function permissionRuleRow(rule: PermissionRule): SettingsRow {
     ],
     { keywords }
   )
-}
-
-// ---------------------------------------------------------------------------
-// Sync (hosts with the `sync` capability)
-// ---------------------------------------------------------------------------
-
-const SYNC_SCOPE_LABELS: ReadonlyArray<{
-  key: keyof SyncScope
-  label: string
-  hint?: string
-}> = [
-  { key: 'spaces', label: 'Spaces', hint: 'Names, icons, themes and order' },
-  { key: 'folders', label: 'Folders' },
-  { key: 'pinnedTabs', label: 'Pinned tabs' },
-  { key: 'essentials', label: 'Essentials' },
-  { key: 'openTabs', label: 'Open tabs', hint: 'Unpinned tabs arrive unloaded on other devices' },
-  { key: 'containers', label: 'Containers' },
-  { key: 'bookmarks', label: 'Bookmarks' },
-  {
-    key: 'passwords',
-    label: 'Passwords',
-    hint: 'Saved passwords and passkey records, encrypted with your sync passphrase'
-  },
-  { key: 'settings', label: 'Settings' },
-  { key: 'shortcuts', label: 'Keyboard shortcuts' },
-  { key: 'boosts', label: 'Boosts' }
-]
-
-/**
- * Zen 1.22's "Sync your Spaces across devices" through a folder a cloud drive or Syncthing
- * keeps in sync, encrypted on this device first. Not set up: the explanation and the one action
- * whose dialog is the setup form. Set up: the status with Sync now (or, while the folder cannot
- * be reached, the way to choose one again – ID-08's unmounted drive), a merge question while
- * the folder held data already, this device's name, the other devices, what to sync, and the
- * two ways off – confirmed, the second destructive.
- */
-function syncSection({ state }: SectionContext): RowGroup[] {
-  const sync = state.sync
-  const intro: RowGroup = {
-    id: 'sync',
-    heading: 'Sync across devices',
-    description:
-      'Keep your Spaces, folders, pinned tabs, Essentials, bookmarks, passwords and settings the same on every device, including your phone. Pick a folder that is already synced between your devices (Dropbox, iCloud Drive, Google Drive, OneDrive, Nextcloud, Syncthing…) and a passphrase. Everything is encrypted on this device before it is written – the folder only ever holds ciphertext.',
-    rows: []
-  }
-  if (!sync.enabled) {
-    intro.rows.push({
-      kind: 'action',
-      id: 'sync-setup',
-      label: 'Set up sync',
-      description: 'Choose the folder and a passphrase; this device joins the folder.',
-      keywords: ['folder', 'passphrase', 'connect', 'dropbox', 'syncthing'],
-      button: 'Set up…',
-      form: {
-        title: 'Set up sync',
-        description: 'Use the same folder and passphrase on every device.',
-        render: (close) => (
-          <SyncSetupForm deviceName={sync.deviceName} scope={sync.scope} close={close} />
-        )
-      }
-    })
-    return [intro]
-  }
-  intro.rows.push(
-    {
-      kind: 'info',
-      id: 'sync-status',
-      label: sync.syncing
-        ? 'Syncing…'
-        : sync.lastSyncAt
-          ? `Last synced ${relativeTime(sync.lastSyncAt)}`
-          : 'Waiting for the first sync',
-      description: sync.lastError ?? sync.folderName ?? sync.folder ?? undefined,
-      keywords: ['status', 'folder', 'error'],
-      trailing: sync.lastError ? (
-        <CircleAlert
-          className="zen-settings-trailing-glyph zen-settings-danger"
-          aria-label="Error"
-        />
-      ) : undefined
-    },
-    sync.folderLost
-      ? {
-          // The folder went away (an unmounted drive, a revoked tree): the status line says so and
-          // this takes the user to a folder again; nothing syncs until then.
-          kind: 'action',
-          id: 'sync-choose-folder',
-          label: 'Choose the sync folder again',
-          description: 'The folder cannot be reached. Pick it, or another your devices share.',
-          keywords: ['folder', 'lost', 'unmounted', 'choose'],
-          button: 'Choose…',
-          disabled: sync.syncing,
-          onPress: () =>
-            void cmd('sync.chooseFolder', undefined).then(
-              (folder) => folder && run('sync.setFolder', { folder })
-            )
-        }
-      : {
-          kind: 'action',
-          id: 'sync-now',
-          label: 'Sync now',
-          description: 'Write this device’s changes to the folder and read the other devices’.',
-          button: 'Sync now',
-          busy: sync.syncing,
-          disabled: sync.pendingMerge,
-          onPress: () => run('sync.now', undefined)
-        }
-  )
-  const groups: RowGroup[] = [intro]
-  if (sync.pendingMerge) {
-    groups.push({
-      id: 'sync-merge',
-      heading: 'This folder already contains synced data',
-      description:
-        'Merge it with the Spaces on this device, or keep only this device’s data and replace what the other devices have.',
-      rows: [
-        {
-          kind: 'action',
-          id: 'sync-merge',
-          label: 'Merge with this device',
-          description: 'The folder’s Spaces and this device’s are combined.',
-          button: 'Merge',
-          onPress: () => run('sync.confirmMerge', { merge: true })
-        },
-        {
-          kind: 'action',
-          id: 'sync-keep-mine',
-          label: 'Keep only this device’s data',
-          description: 'What the other devices have is replaced.',
-          button: 'Keep mine…',
-          destructive: true,
-          confirm: {
-            title: 'Replace the other devices’ data?',
-            description:
-              'The folder’s synced data is replaced with this device’s; the other devices take it on their next sync.',
-            action: 'Replace'
-          },
-          onPress: () => run('sync.confirmMerge', { merge: false })
-        }
-      ]
-    })
-  }
-  groups.push(
-    {
-      id: 'sync-device',
-      heading: 'This device',
-      rows: [
-        {
-          kind: 'field',
-          id: 'sync-device-name',
-          label: 'Name',
-          description: 'How the other devices list this one.',
-          value: sync.deviceName,
-          input: 'text',
-          onCommit: (value) => {
-            const name = value.trim()
-            if (!name) return 'Enter a name'
-            if (name !== sync.deviceName) run('sync.setDeviceName', { name })
-            return undefined
-          }
-        }
-      ]
-    },
-    {
-      id: 'sync-devices',
-      heading: 'Devices',
-      rows: sync.devices.map((d) => ({
-        kind: 'info',
-        id: `device:${d.id}`,
-        label: d.name,
-        description: `Last seen ${relativeTime(d.lastSeen)}`
-      })),
-      empty:
-        'No other device has synced to this folder yet – set up sync there with the same folder and passphrase'
-    },
-    {
-      id: 'sync-scope',
-      heading: 'What to sync',
-      rows: SYNC_SCOPE_LABELS.map((entry) => ({
-        kind: 'switch',
-        id: `scope:${entry.key}`,
-        label: entry.label,
-        description: entry.hint,
-        checked: sync.scope[entry.key],
-        onChange: (v: boolean) => run('sync.setScope', { [entry.key]: v })
-      }))
-    },
-    {
-      id: 'sync-off',
-      heading: null,
-      rows: [
-        {
-          kind: 'action',
-          id: 'sync-disconnect',
-          label: 'Turn off sync',
-          description: 'This device keeps its data and stops reading and writing the folder.',
-          button: 'Turn off…',
-          confirm: {
-            title: 'Turn off sync?',
-            description:
-              'This device keeps everything it has; the folder is left as it is for the other devices.',
-            action: 'Turn off'
-          },
-          onPress: () => run('sync.disconnect', { wipeRemote: false })
-        },
-        {
-          kind: 'action',
-          id: 'sync-wipe',
-          label: 'Turn off and remove this device’s data',
-          description: 'Its records leave the folder; the other devices forget it.',
-          button: 'Remove…',
-          destructive: true,
-          confirm: {
-            title: 'Remove this device from sync?',
-            description:
-              'Sync turns off and this device’s records are deleted from the folder. Its Spaces stay on this device.',
-            action: 'Remove'
-          },
-          onPress: () => run('sync.disconnect', { wipeRemote: true })
-        }
-      ]
-    }
-  )
-  return groups
 }
 
 // ---------------------------------------------------------------------------

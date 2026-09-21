@@ -20,6 +20,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DesktopSettings } from './desktop'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
@@ -139,6 +140,9 @@ function PhoneSettings({
   const dictionary = useDictionaryWords(
     current?.id === 'languages' && state.spellcheck.available && formFactor !== 'phone'
   )
+  // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
+  // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
+  syncSetupStore.use((s) => s.folder)
   const ctx: SectionContext = {
     state,
     tab,
