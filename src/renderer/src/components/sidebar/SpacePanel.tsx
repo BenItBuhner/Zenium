@@ -90,6 +90,14 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
             // Zen: double-clicking empty sidebar space opens a new tab.
             if (e.target === e.currentTarget) window.dispatchEvent(new CustomEvent('zen-new-tab'))
           }}
+          onContextMenu={(e) => {
+            // The strip's own menu on its empty space (tabs-35, BUG-049): the room below the
+            // rows, the gaps between them, the list's padding. A row, header or the New Tab
+            // row that opened its own menu has claimed the event by now.
+            if (e.isDefaultPrevented()) return
+            e.preventDefault()
+            run('newtab.contextMenu', contextMenuAnchor(e))
+          }}
         >
           {/* The tab list (a11y-07, a11y-31): the pinned header and rows, folder headers and
               rows, loose rows – one tablist per space, vertical; the New Tab button is the
@@ -179,6 +187,7 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
           />
           <div
             className="relative min-h-6 flex-1"
+            data-strip-empty
             onDoubleClick={() => window.dispatchEvent(new CustomEvent('zen-new-tab'))}
           >
             {drag && <DropZone dropKey={`section:regular:${space.id}`} activeKey={dropKey} tall />}

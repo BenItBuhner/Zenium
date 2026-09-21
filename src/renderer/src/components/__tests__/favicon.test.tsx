@@ -105,3 +105,51 @@ describe('Favicon on an extension page', () => {
     expect(el.textContent).toBe('E')
   })
 })
+
+/*
+ * The throbber (tabs-41): one 16 × 16, 2 px ring in Chrome's two phases – `waiting` until the
+ * document commits, `loading` after – and the icon that takes its place fades back in; an icon
+ * that never spun draws at once.
+ */
+describe('the row’s throbber', () => {
+  const SITE = 'https://www.example.com/'
+  const loading = (waiting: boolean): Parameters<typeof Favicon>[0]['tab'] => ({
+    ...source(SITE, OWN_FAVICON),
+    loading: true,
+    waiting
+  })
+
+  it('spins muted and backwards while waiting, in the accent forwards while loading', () => {
+    const el = render(<Favicon tab={loading(true)} size={16} />)
+    const ring = el.querySelector('.zen-tab-throbber')
+    expect(ring).not.toBeNull()
+    expect(ring?.getAttribute('data-phase')).toBe('waiting')
+    expect(ring?.getAttribute('aria-label')).toBe('Loading')
+    expect(ring?.classList.contains('border-2')).toBe(true)
+    expect((ring as HTMLElement).style.width).toBe('16px')
+    expect(el.querySelector('img')).toBeNull()
+
+    act(() => root?.render(<Favicon tab={loading(false)} size={16} />))
+    expect(el.querySelector('.zen-tab-throbber')?.getAttribute('data-phase')).toBe('loading')
+  })
+
+  it('fades the favicon back in after the ring, and draws one that never spun at once', () => {
+    const el = render(<Favicon tab={loading(true)} size={16} />)
+    act(() => root?.render(<Favicon tab={source(SITE, OWN_FAVICON)} size={16} />))
+    expect(el.querySelector('.zen-tab-throbber')).toBeNull()
+    const img = el.querySelector('img')
+    expect(img?.getAttribute('src')).toBe(OWN_FAVICON)
+    expect(img?.classList.contains('zen-tab-favicon-in')).toBe(true)
+    act(() => root?.unmount())
+    host?.remove()
+
+    const fresh = render(<Favicon tab={source(SITE, OWN_FAVICON)} size={16} />)
+    expect(fresh.querySelector('img')?.classList.contains('zen-tab-favicon-in')).toBe(false)
+  })
+
+  it('shows no ring for a sleeping tab, whatever its load flags say', () => {
+    const el = render(<Favicon tab={{ ...loading(true), discarded: true }} size={16} />)
+    expect(el.querySelector('.zen-tab-throbber')).toBeNull()
+    expect(el.querySelector('img')?.classList.contains('zen-tab-favicon-in')).toBe(false)
+  })
+})

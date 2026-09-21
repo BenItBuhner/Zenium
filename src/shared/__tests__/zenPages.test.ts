@@ -6,9 +6,11 @@ import { INTERSTITIAL_MESSAGE_KEY } from '../interstitial'
 import type { CertificateDetails } from '../types'
 import {
   BLOCKED_BY_CLIENT_CODE,
+  CRASH_ERROR_CODE,
   ERROR_PAGE_ATTRIBUTES_SCRIPT,
   ERROR_PAGE_RULES_START,
   certificateInterstitial,
+  crashCodeName,
   describeNetError,
   errorPageContent,
   errorPageHtml,
@@ -221,10 +223,76 @@ describe('errorPageContent', () => {
     expect(bare.site).toBe('')
   })
 
-  it('renders a crashed renderer as Aw, Snap with the reason as the small line', () => {
-    const content = errorPageContent(-1, 'The page crashed (killed)', 'https://a.example/')
-    expect(content.title).toBe('Aw, Snap!')
-    expect(content.code).toBe('The page crashed (killed)')
+  it("renders a crashed renderer as the sad tab, Chrome's code line under Zenium's words", () => {
+    const content = errorPageContent(CRASH_ERROR_CODE, 'RESULT_CODE_KILLED', 'https://a.example/')
+    expect(content.title).toBe('This page crashed')
+    expect(content.reason).toBe(
+      'Something went wrong while displaying this page. Reload to try again.'
+    )
+    expect(content.code).toBe('Error code: RESULT_CODE_KILLED')
+    expect(content.target).toBe('https://a.example/')
+    expect(content.interstitial).toBeNull()
+    // A host that sent no code leaves the line out rather than writing "Error code: ".
+    expect(errorPageContent(CRASH_ERROR_CODE, '', 'https://a.example/').code).toBe('')
+  })
+
+  it('lays the crash page out with the shared vocabulary: title, reason, code line, Reload', () => {
+    const url = parseZenUrl(
+      errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', 'https://crashed.example/page')
+    )!
+    const html = errorPageHtml(url)
+    expect(html).toContain('<html class="zen-error-document">')
+    expect(html).toContain('<h1>This page crashed</h1>')
+    expect(html).toContain('<p class="zen-error-code">Error code: SIGSEGV</p>')
+    expect(html).toContain('>Reload</button>')
+    expect(html).toContain('location.replace(&quot;https://crashed.example/page&quot;)')
+    expect(html).not.toContain('Aw, Snap')
+  })
+})
+
+describe('crashCodeName', () => {
+  it("names the ends a renderer is put to by Chromium's result codes", () => {
+    // Windows / macOS: `forcefullyCrashRenderer` shuts the process down with RESULT_CODE_HUNG.
+    expect(crashCodeName('killed', 2, 'win32')).toBe('RESULT_CODE_HUNG')
+    expect(crashCodeName('killed', 1, 'win32')).toBe('RESULT_CODE_KILLED')
+    expect(crashCodeName('killed', 3, 'win32')).toBe('RESULT_CODE_KILLED_BAD_MESSAGE')
+    // A POSIX host kills with a signal: the status names it (Chrome's own line for it too).
+    expect(crashCodeName('killed', 15, 'darwin')).toBe('SIGTERM')
+    // POSIX: a process that exited reports its code in the second byte of the wait status.
+    expect(crashCodeName('abnormal-exit', 2 << 8, 'linux')).toBe('RESULT_CODE_HUNG')
+    expect(crashCodeName('abnormal-exit', 7 << 8, 'linux')).toBe('7')
+  })
+
+  it('names the signal a POSIX renderer died of, core-dump bit and platform numbering included', () => {
+    expect(crashCodeName('crashed', 11, 'linux')).toBe('SIGSEGV')
+    expect(crashCodeName('crashed', 11 | 0x80, 'linux')).toBe('SIGSEGV')
+    expect(crashCodeName('crashed', 5, 'linux')).toBe('SIGTRAP')
+    expect(crashCodeName('crashed', 4, 'darwin')).toBe('SIGILL')
+    expect(crashCodeName('crashed', 7, 'linux')).toBe('SIGBUS')
+    expect(crashCodeName('crashed', 10, 'darwin')).toBe('SIGBUS')
+    expect(crashCodeName('crashed', 31, 'linux')).toBe('SIGSYS')
+    expect(crashCodeName('killed', 9, 'linux')).toBe('SIGKILL')
+    // A signal with no name of its own is Chrome's bare number.
+    expect(crashCodeName('crashed', 27, 'linux')).toBe('27')
+  })
+
+  it('names the Windows exception status a renderer died of, or shows the number', () => {
+    expect(crashCodeName('crashed', 0xc0000005 | 0, 'win32')).toBe('STATUS_ACCESS_VIOLATION')
+    expect(crashCodeName('crashed', 0x80000003 | 0, 'win32')).toBe('STATUS_BREAKPOINT')
+    expect(crashCodeName('crashed', 0xc00000fd | 0, 'win32')).toBe('STATUS_STACK_OVERFLOW')
+    expect(crashCodeName('crashed', 5, 'win32')).toBe('5')
+    // A kill whose code names nothing is still a kill.
+    expect(crashCodeName('killed', 77, 'win32')).toBe('RESULT_CODE_KILLED')
+  })
+
+  it("spells the host's reason as the code where there is nothing else to go on", () => {
+    expect(crashCodeName('oom', 11)).toBe('Out of Memory')
+    expect(crashCodeName('memory-eviction')).toBe('Out of Memory')
+    expect(crashCodeName('launch-failed', -3)).toBe('LAUNCH_FAILED')
+    expect(crashCodeName('integrity-failure', 1)).toBe('INTEGRITY_FAILURE')
+    expect(crashCodeName('crashed')).toBe('CRASHED')
+    expect(crashCodeName('abnormal-exit', null)).toBe('ABNORMAL_EXIT')
+    expect(crashCodeName('killed', Number.NaN)).toBe('KILLED')
   })
 
   it('words the site-less reason for the hosts through describeNetError', () => {

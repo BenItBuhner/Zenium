@@ -292,7 +292,7 @@ export class ElectronTabView implements TabView {
           : null
       ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
-    wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
+    wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason, details.exitCode))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -343,8 +343,11 @@ export class ElectronTabView implements TabView {
       if (ev.onWillNavigate(url)) event.preventDefault()
     })
     wc.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame) return
+      // The row's throbber learns here whether the load is a same-document one (tabs-41).
+      ev.onStartNavigation?.(details.url, details.isSameDocument)
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
-      if (!details.isMainFrame || details.isSameDocument) return
+      if (details.isSameDocument) return
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null
