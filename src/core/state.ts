@@ -526,6 +526,8 @@ export class BrowserState {
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
+    // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
+    this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }

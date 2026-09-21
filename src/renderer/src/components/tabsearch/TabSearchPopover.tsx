@@ -17,9 +17,21 @@ import {
   useLightDismiss,
   viewportSize
 } from '@renderer/lib/portals'
-import { activeTab } from '@renderer/lib/selectors'
-import { buildRows, closeTabSearch, isOption, type Option } from '@renderer/lib/tabSearch'
-import { browserStore, holdFloatingChrome, returnFocusToPage, uiStore } from '@renderer/lib/ui'
+import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
+import {
+  buildRows,
+  closeTabSearch,
+  isOption,
+  type Option,
+  pickCandidates
+} from '@renderer/lib/tabSearch'
+import {
+  browserStore,
+  holdFloatingChrome,
+  returnFocusToPage,
+  type TabPickRequest,
+  uiStore
+} from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { usePopover } from '@renderer/hooks/usePopover'
 import { useScrolled } from '../bookmarks/popover'
@@ -41,8 +53,20 @@ const WIDTH = POPOVER_WIDTH.form
 export function TabSearchLayer(): JSX.Element | null {
   const request = uiStore.use((s) => s.tabSearch)
   const state = browserStore.use((s) => s.state)
-  if (!request || !state) return null
-  return <TabSearchPopover state={state} keyboard={request.keyboard} />
+  // The picker is the empty pane's (split-04): it leaves with the pane – the blank tab
+  // navigated, left the split or lost the active state to a pane the user clicked (split-06).
+  const pick = request?.pick
+  const paneLive =
+    !pick ||
+    (state !== null &&
+      isEmptySplitPane(state, pick.paneTabId) &&
+      state.tabs[pick.paneTabId]?.splitGroupId === pick.groupId &&
+      activeTab(state)?.id === pick.paneTabId)
+  useEffect(() => {
+    if (!paneLive) closeTabSearch()
+  }, [paneLive])
+  if (!request || !state || !paneLive) return null
+  return <TabSearchPopover state={state} keyboard={request.keyboard} pick={pick} />
 }
 
 /**
@@ -65,13 +89,23 @@ export function TabSearchLayer(): JSX.Element | null {
  * inside; Escape closes it and hands the keyboard to the row it hangs from (the address), the
  * page keeping none of it. A press elsewhere or a switch gives the page the keyboard back,
  * unless a chrome control had it when the popover opened.
+ *
+ * In its pick mode (`pick`, split-04) it is the empty pane's picker: "Choose a tab for this
+ * pane" over the field, the window's other open tabs as the rows (no close button – the rows
+ * are choices, not the tabs' controls), Enter or a click putting the chosen tab in the pane
+ * (`split.pickTab`) and Escape handing the keyboard back to the pane's button. It hangs from
+ * that button (§9.20 below pose, 400 wide) and is placed inside the pane's box – the panes
+ * beside it stay live, and a popover overhanging them would lie under their pages – so it
+ * holds no picture of the page: the empty pane is the chrome's own surface.
  */
 function TabSearchPopover({
   state,
-  keyboard
+  keyboard,
+  pick
 }: {
   state: UIState
   keyboard: boolean
+  pick: TabPickRequest | undefined
 }): JSX.Element | null {
   const panelRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -83,19 +117,28 @@ function TabSearchPopover({
   const [candidates, setCandidates] = useState<TabSearchCandidate[] | null>(null)
   /** The selected option, for the query it was picked under: a new query starts at the top. */
   const [selection, setSelection] = useState({ query: '', index: 0 })
-  const [box, setBox] = useState<PopoverBox>(() => place(document.querySelector(NAV_ROW)))
+  const [box, setBox] = useState<PopoverBox>(() => measure(pick))
   /** Where the keyboard goes when the popover leaves: the page, or nowhere (Escape, a chrome opener). */
   const focusOnClose = useRef<'page' | 'chrome'>(keyboard ? 'chrome' : 'page')
-  /** The address in the row the popover hangs from, for Escape; a chrome opener keeps its own. */
+  /**
+   * What Escape hands the keyboard to: the address in the row the popover hangs from, or the
+   * pane's button the picker hangs from; a chrome opener keeps its own.
+   */
   const [anchorControl] = useState<HTMLElement | null | undefined>(() =>
-    keyboard ? undefined : document.querySelector<HTMLElement>(ANCHOR_CONTROL)
+    pick
+      ? pickButton(pick)
+      : keyboard
+        ? undefined
+        : document.querySelector<HTMLElement>(ANCHOR_CONTROL)
   )
 
   // The page's view gives way to its picture while the popover overhangs it; the popover holds
   // its first paint until the picture is in place. On release the page gets the keyboard back
-  // unless Escape left it in the chrome or a chrome control opened the popover (§9.22).
-  const [ready, setReady] = useState(false)
+  // unless Escape left it in the chrome or a chrome control opened the popover (§9.22). The
+  // picker overhangs no page and paints at once.
+  const [ready, setReady] = useState(Boolean(pick))
   useEffect(() => {
+    if (pick) return
     const current = browserStore.get().state
     const hold = holdFloatingChrome(current ? (activeTab(current)?.id ?? null) : null, {
       pageHadFocus: false
@@ -107,6 +150,7 @@ function TabSearchPopover({
       hold.release()
       if (focusOnClose.current === 'page') returnFocusToPage()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the request's mode is fixed for its stay
   }, [])
 
   // The tabs of every window: fetched on open and again on every state push while the popover
@@ -122,18 +166,25 @@ function TabSearchPopover({
   }, [state])
 
   // The row is measured again on every state push, so the popover keeps its place on a row
-  // whose controls came or went.
+  // whose controls came or went (the pane's button, on a pane whose split was resized).
   useLayoutEffect(() => {
-    const measure = (): void => {
-      const next = place(document.querySelector(NAV_ROW))
+    const remeasure = (): void => {
+      const next = measure(pick)
       setBox((prev) => (sameBox(prev, next) ? prev : next))
     }
-    measure()
-  }, [state])
+    remeasure()
+  }, [state, pick])
 
+  const group = pick ? state.splitGroups[pick.groupId] : undefined
   const rows = useMemo(
-    () => buildRows(candidates ?? [], state.recentlyClosed, query),
-    [candidates, state.recentlyClosed, query]
+    () =>
+      buildRows(
+        pick ? pickCandidates(candidates ?? [], pick, group) : (candidates ?? []),
+        state.recentlyClosed,
+        query,
+        Boolean(pick)
+      ),
+    [candidates, state.recentlyClosed, query, pick, group]
   )
   const options = useMemo(() => rows.filter(isOption), [rows])
   // A list that shrank under the selection keeps it in range.
@@ -147,11 +198,16 @@ function TabSearchPopover({
     el?.scrollIntoView({ block: 'nearest' })
   }, [selected, options.length])
 
-  const activate = useCallback((option: Option): void => {
-    if (option.kind === 'tab') run('tab.switchTo', { tabId: option.ranked.tab.id })
-    else run('session.restoreClosed', { id: option.ranked.entry.id })
-    closeTabSearch()
-  }, [])
+  const activate = useCallback(
+    (option: Option): void => {
+      if (option.kind === 'tab') {
+        if (pick) run('split.pickTab', { paneTabId: pick.paneTabId, tabId: option.ranked.tab.id })
+        else run('tab.switchTo', { tabId: option.ranked.tab.id })
+      } else run('session.restoreClosed', { id: option.ranked.entry.id })
+      closeTabSearch()
+    },
+    [pick]
+  )
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -187,6 +243,7 @@ function TabSearchPopover({
 
   if (!ready) return null
   const activeId = options[selected] ? optionDomId(listId, options[selected]) : undefined
+  const title = pick ? 'Choose a tab for this pane' : 'Search tabs'
   return (
     <ChromePortal>
       {/* A page surface (§9.29): the rows, the field and the buttons draw in the page family. */}
@@ -195,6 +252,7 @@ function TabSearchPopover({
         role="dialog"
         aria-labelledby={titleId}
         data-tab-search-popover=""
+        data-tab-pick={pick?.paneTabId}
         data-surface="page"
         className="zen-animate-pop zen-bm-popover zen-tab-search fixed z-[70] flex flex-col outline-none"
         style={popoverStyle(box)}
@@ -203,14 +261,14 @@ function TabSearchPopover({
       >
         <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
           <h2 id={titleId} className="zen-bm-title">
-            Search tabs
+            {title}
           </h2>
           <input
             ref={fieldRef}
             type="text"
             className="zen-v2-field mt-3"
             placeholder="Title or address"
-            aria-label="Search tabs"
+            aria-label={title}
             role="combobox"
             aria-expanded="true"
             aria-autocomplete="list"
@@ -258,6 +316,7 @@ function TabSearchPopover({
                     selected={row.index === selected}
                     onSelect={() => select(row.index)}
                     onActivate={() => activate(row)}
+                    closable={!pick}
                   />
                 )
               case 'closed':
@@ -307,15 +366,17 @@ function Highlighted({ text, ranges }: { text: string; ranges: MatchRange[] }): 
  * One open tab: the favicon on the title's line, the host under the title, the sound glyph
  * for a tab playing (or muted), the window glyph for a tab of another window, and the 28 px
  * close button, shown for the selected (hovered) row and when it has the focus. The whole row
- * is the target; the close button stops its press short of it.
+ * is the target; the close button stops its press short of it. The pane picker's rows carry no
+ * close button (`closable` false): they are choices for the pane, not the tabs' controls.
  */
 function TabRow({
   id,
   row,
   selected,
   onSelect,
-  onActivate
-}: RowProps<Extract<Option, { kind: 'tab' }>>): JSX.Element {
+  onActivate,
+  closable
+}: RowProps<Extract<Option, { kind: 'tab' }>> & { closable: boolean }): JSX.Element {
   const { tab, title, host } = row.ranked
   const hostText = searchHost(tab.url)
   const source: FaviconSource = {
@@ -373,21 +434,23 @@ function TabRow({
           <AppWindow className={V2_GLYPH} />
         </span>
       )}
-      <button
-        type="button"
-        className="zen-v2-icon-button zen-tab-search-close"
-        aria-label="Close tab"
-        title="Close tab"
-        // Tab from the field reaches the selected row's button alone (§9.22): the arrows pick
-        // the row, Tab its control, Enter presses it.
-        tabIndex={selected ? 0 : -1}
-        onClick={(e) => {
-          e.stopPropagation()
-          run('tab.close', { tabId: tab.id })
-        }}
-      >
-        <CloseGlyph />
-      </button>
+      {closable && (
+        <button
+          type="button"
+          className="zen-v2-icon-button zen-tab-search-close"
+          aria-label="Close tab"
+          title="Close tab"
+          // Tab from the field reaches the selected row's button alone (§9.22): the arrows pick
+          // the row, Tab its control, Enter presses it.
+          tabIndex={selected ? 0 : -1}
+          onClick={(e) => {
+            e.stopPropagation()
+            run('tab.close', { tabId: tab.id })
+          }}
+        >
+          <CloseGlyph />
+        </button>
+      )}
     </div>
   )
 }
@@ -467,6 +530,16 @@ function CloseGlyph(): JSX.Element {
   )
 }
 
+/** The empty pane's "Choose a tab" button the picker hangs from (`EmptyPane`). */
+function pickButton(pick: TabPickRequest): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-pick-tab="${pick.paneTabId}"]`)
+}
+
+/** Where the popover goes now: from the pane's button in pick mode, else from the sidebar's row. */
+function measure(pick: TabPickRequest | undefined): PopoverBox {
+  return pick ? placeInPane(pick) : place(document.querySelector(NAV_ROW))
+}
+
 /**
  * Where the popover goes: hanging from the sidebar's top row, start-aligned with its leading
  * control; without the row on screen (compact mode), in the window's top leading corner.
@@ -480,6 +553,44 @@ function place(row: Element | null): PopoverBox {
   }
   const anchor = { x: POPOVER_MARGIN, y: POPOVER_MARGIN, width: 28, height: 28 }
   return placePopover(anchor, anchor, viewport, WIDTH)
+}
+
+/**
+ * The picker's place: hanging from the pane's button (§9.20's below pose, flipping above it
+ * when the pane's bottom is nearer), placed against the pane's box as if it were the window –
+ * the 8 px margin, the flip, the slide and the shrink all against the pane's edges – since the
+ * panes beside it hold live pages the popover cannot lie over. `placePopover` is pure and
+ * counts from a (0, 0) origin, so the button is measured in the pane's coordinates and the box
+ * put back in the window's. Without the button on screen (the pane is being laid out), the
+ * popover hangs from where the button would be: the pane's centre.
+ */
+function placeInPane(pick: TabPickRequest): PopoverBox {
+  const { pane } = pick
+  const button = pickButton(pick)
+  const anchor = button
+    ? toRect(button.getBoundingClientRect())
+    : { x: pane.x + pane.width / 2 - 64, y: pane.y + pane.height / 2, width: 128, height: 32 }
+  const local = {
+    x: anchor.x - pane.x,
+    y: anchor.y - pane.y,
+    width: anchor.width,
+    height: anchor.height
+  }
+  const box = placePopover(
+    local,
+    local,
+    { width: pane.width, height: pane.height },
+    WIDTH,
+    undefined,
+    undefined,
+    {
+      column: { x: 0, y: 0, width: pane.width, height: pane.height }
+    }
+  )
+  const left = box.left + pane.x
+  return box.side === 'below'
+    ? { ...box, left, top: box.top + pane.y }
+    : { ...box, left, bottom: box.bottom + (window.innerHeight - (pane.y + pane.height)) }
 }
 
 function sameBox(a: PopoverBox, b: PopoverBox): boolean {

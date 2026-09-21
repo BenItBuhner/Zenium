@@ -615,6 +615,24 @@ function lookSection({ state, set, pointer, openBarEditor }: SectionContext): Ro
       empty: 'No exceptions yet'
     })
   }
+  // Only a mouse drags tabs (a finger scrolls the strip): a touch host is not offered the row.
+  if (pointer) {
+    groups.push({
+      id: 'split-view',
+      heading: 'Split view',
+      rows: [
+        {
+          kind: 'switch',
+          id: 'split-edge-zones',
+          label: 'Split view drag and drop',
+          description: 'Drag a tab to the edge of the page to open it in a split view.',
+          keywords: ['split screen', 'side by side', 'pane', 'drag', 'edge'],
+          checked: s.splitEdgeZones,
+          onChange: (v) => set({ splitEdgeZones: v })
+        }
+      ]
+    })
+  }
   groups.push({
     id: 'glance',
     heading: 'Glance',

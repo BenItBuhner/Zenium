@@ -35,8 +35,10 @@ import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
+import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
 import { startQrScan } from '@renderer/lib/qrScan'
+import { activeTab, isEmptySplitPane } from '@renderer/lib/selectors'
 import { closeUrlbar, uiStore, type UrlbarState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
@@ -457,10 +459,34 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     return () => window.removeEventListener(URLBAR_LEAVE_EVENT, onLeave)
   }, [close])
 
+  // The empty pane's bar (split-04) is the pane's field and goes with the pane: its blank tab
+  // navigated or left the split, or a pane the user pressed in took the active state (split-06)
+  // – the frame-wide bar would have taken that press itself.
+  const paneLive =
+    !urlbar.pane || (isEmptySplitPane(state, urlbar.tabId) && activeTab(state)?.id === urlbar.tabId)
+  useEffect(() => {
+    if (!paneLive) close(true)
+  }, [paneLive, close])
+
   // The system back gesture lifts the bar away like a sheet off the top edge, fading as it goes;
   // commit closes it keeping the draft, like Escape, cancel springs it back. On the phone the
   // suggestions sheet shrinks towards the bar's edge and the field settles back into the pill.
   const panelRef = useRef<HTMLDivElement>(null)
+
+  // The empty pane's bar lets presses through to the chrome around it (its frame is
+  // `pointer-events: none` below), so a press outside the panel is heard here instead: the bar
+  // closes, draft kept, and the press goes on to what it landed on – the pane's "Choose a tab"
+  // button opens the picker with that same press.
+  useEffect(() => {
+    if (!urlbar.pane) return
+    const onPress = (e: PointerEvent): void => {
+      const panel = panelRef.current
+      if (panel && e.target instanceof Node && panel.contains(e.target)) return
+      close(true)
+    }
+    document.addEventListener('pointerdown', onPress, true)
+    return () => document.removeEventListener('pointerdown', onPress, true)
+  }, [urlbar.pane, close])
   const sheetRef = useRef<HTMLDivElement>(null)
   const fieldRef = useRef<HTMLDivElement>(null)
   useBackDismissal('urlbar', {
@@ -892,18 +918,17 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   }
 
   const floating = !urlbar.attached
-  const width = Math.min(907, (area?.width ?? 0) - 32)
   const style = useMemo(() => {
     if (!area) return undefined
-    const top = floating ? Math.max(24, area.height * 0.16) : 8
+    const field = urlbarFieldBox(area, floating)
     return {
-      left: floating ? (area.width - width) / 2 : 8,
-      top,
-      width: floating ? width : area.width - 16,
+      left: field.x,
+      top: field.y,
+      width: field.width,
       // Never grow past the content area – on phones the keyboard takes most of it.
-      maxHeight: Math.max(120, area.height - top - 8)
+      maxHeight: Math.max(120, area.y + area.height - field.y - 8)
     }
-  }, [floating, area, width])
+  }, [floating, area])
 
   const placeholder = inKeyword ? `Search with ${engine.name}` : 'Search or enter address'
   // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current
@@ -1087,12 +1112,19 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     title then ` — ` then the host at 69%. Page tokens only (§9.29).
   */
   return (
-    <div className="absolute inset-0 z-30" onMouseDown={() => close(true)}>
+    // The empty pane's bar (`urlbar.pane`) lets presses through to the chrome around it – the
+    // pane's "Choose a tab" button, the split's headers – and closes on one itself (the
+    // `pointerdown` listener above); the frame-wide bar takes the press and closes on it.
+    <div
+      className={cn('absolute inset-0 z-30', urlbar.pane && 'pointer-events-none')}
+      onMouseDown={urlbar.pane ? undefined : () => close(true)}
+    >
       <div
         ref={panelRef}
-        className="zen-omnibox zen-animate-in absolute flex flex-col overflow-hidden"
+        className="zen-omnibox zen-animate-in absolute flex flex-col overflow-hidden pointer-events-auto"
         data-surface="page"
         data-attached={!floating}
+        data-urlbar-pane={urlbar.pane ? urlbar.tabId : undefined}
         // The open URL bar is the toolbar's field: F6 from it moves on to the next pane and
         // puts it away (lib/panes.ts).
         data-pane="toolbar"

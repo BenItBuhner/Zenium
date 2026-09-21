@@ -1,12 +1,60 @@
 import type { Browser } from './browser'
 import type { MenuItemTemplate } from './platform'
 import type { ZenWindow } from './window'
-import type { BookmarksBarMode, ShortcutAction } from '../shared/types'
+import type {
+  BookmarksBarMode,
+  ShortcutAction,
+  SplitGroup,
+  SplitLayout,
+  Tab
+} from '../shared/types'
 import { BOOKMARKS_BAR_ID } from '../shared/bookmarks'
 import { displayUrl } from '../shared/url'
 import { clipLabel } from './menus'
 
 type Template = MenuItemTemplate[]
+
+/** The layouts as the "Split View" submenu lists them: the chords' order, Ctrl+Alt+G / V / H. */
+const SPLIT_LAYOUT_ITEMS: ReadonlyArray<{
+  layout: SplitLayout
+  label: string
+  action: ShortcutAction
+}> = [
+  { layout: 'grid', label: 'Grid', action: 'split.grid' },
+  { layout: 'vertical', label: 'Vertical', action: 'split.vertical' },
+  { layout: 'horizontal', label: 'Horizontal', action: 'split.horizontal' }
+]
+
+/**
+ * The "Split View" submenu of the application menu (⋯) and of the macOS View menu (split-01:
+ * Edge's "Split screen" sits in its Settings and more menu; Chrome's split view lives on a
+ * toolbar icon, which here is a shell-pass decision, so the menus carry the entry points).
+ * Grid / Vertical / Horizontal run the chords' actions: out of a split they split the active
+ * tab with the tab below it in that layout; in a split they turn it to that layout, and the
+ * layout the split has is checked – choosing it again leaves the split, as the chord does.
+ * Unsplit View and New Empty Split View follow, named as the key table names them. Items name
+ * their `action`, so each shows its chord and the click runs the same code as the key.
+ */
+export function splitViewSubmenu(
+  active: Tab | undefined,
+  group: SplitGroup | undefined
+): MenuItemTemplate {
+  return {
+    label: 'Split View',
+    submenu: [
+      ...SPLIT_LAYOUT_ITEMS.map(({ layout, label, action }): MenuItemTemplate => ({
+        label,
+        type: 'checkbox',
+        action,
+        checked: group?.layout === layout,
+        enabled: Boolean(active)
+      })),
+      { type: 'separator' },
+      { label: 'Unsplit View', action: 'split.unsplit', enabled: Boolean(group) },
+      { label: 'New Empty Split View', action: 'split.newEmpty', enabled: Boolean(active) }
+    ]
+  }
+}
 
 /** Where the Help menu's entries go. */
 export const HELP_URL = 'https://github.com/BenItBuhner/Zenium#readme'
@@ -201,21 +249,10 @@ export function applicationMenu(browser: Browser): Template {
           Boolean(active) &&
           (browser.reader.isReaderUrl(active!.url) || browser.reader.canRead(active!))
       },
-      {
-        label: 'Split View',
-        submenu: [
-          { label: 'Split Vertically', action: 'split.vertical', enabled: Boolean(active) },
-          { label: 'Split Horizontally', action: 'split.horizontal', enabled: Boolean(active) },
-          { label: 'Split as Grid', action: 'split.grid', enabled: Boolean(active) },
-          {
-            label: 'Unsplit View',
-            action: 'split.unsplit',
-            enabled: Boolean(active?.splitGroupId)
-          },
-          { type: 'separator' },
-          { label: 'New Empty Split View', action: 'split.newEmpty', enabled: Boolean(active) }
-        ]
-      },
+      splitViewSubmenu(
+        active,
+        active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
+      ),
       { type: 'separator' },
       {
         label: 'Developer',

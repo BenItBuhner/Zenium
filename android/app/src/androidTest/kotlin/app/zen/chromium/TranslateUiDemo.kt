@@ -1,6 +1,7 @@
 package app.zen.chromium
 
 import android.graphics.PointF
+import android.graphics.Rect
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
@@ -15,7 +16,8 @@ import java.io.File
  * The `android-translate-demo` workflow's `ui` sequence: the translation bar in the phone chrome,
  * driven with real touches on the Spanish fixture page. The page is offered on load (the host
  * raises `domReady`; `esOnLoad` records what the tab reached), the bar is asked for from the app
- * menu all the same, put away and raised again from the glyph at the end of the URL pill, the
+ * menu all the same, put away and raised again from the translate row of the site-information
+ * sheet (the pill carries no translate chip on the phone, v2 §9.29: the sheet's row offers), the
  * page is translated from the bar (model download, translating, translated), the original is
  * shown again, the bar's options sheet is opened and its Translate To list aimed at Basque, and
  * Settings > Languages is visited: the Settings tab's `languages` category (#134) with its rows
@@ -75,18 +77,22 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         beat()
         shot("02-es-offer")
 
-        // --- the glyph at the end of the pill puts the bar away and raises it again ------------
-        val hidden = tapPillGlyph(f, "Hide the translation bar")
+        // --- the translate row of the site-information sheet puts the bar away and raises it again
+        // (v2 §9.29: the offer is the sheet's row, not a pill chip; the pill's address stop speaks
+        // it – "Address, <host>, Translation offered" – and the row keeps the pair on offer) ----
+        results.put("addressSpoken", addressSpoken() ?: JSONObject.NULL)
+        val hidden = tapTranslateRow(f, "Hide the translation bar")
         val dismissed = awaitTab(ES_TAB, 5_000) { it.optBoolean("dismissed") }
         SystemClock.sleep(1_200)
-        results.put("pillGlyphHide", hidden && dismissed?.optBoolean("dismissed") == true && barUp() == false)
+        results.put("sheetRowHide", hidden != null && dismissed?.optBoolean("dismissed") == true && barUp() == false)
         shot("03-es-bar-hidden")
-        val raised = tapPillGlyph(f, "Translate this page")
+        val raised = tapTranslateRow(f, "Translate this page")
         val back = awaitTab(ES_TAB, 5_000) { it.optString("status") == "offered" && !it.optBoolean("dismissed") }
         SystemClock.sleep(1_200)
-        results.put("pillGlyphRaise", raised && back?.optBoolean("dismissed") == false && barUp() == true)
-        Log.i(tag, "pill glyph: hid=$hidden (${results.opt("pillGlyphHide")}) raised=$raised (${results.opt("pillGlyphRaise")})")
-        shot("04-es-bar-from-pill")
+        results.put("sheetRowRaise", raised != null && back?.optBoolean("dismissed") == false && barUp() == true)
+        results.put("sheetRow", raised ?: hidden ?: JSONObject.NULL)
+        Log.i(tag, "translate row: hid=$hidden (${results.opt("sheetRowHide")}) raised=$raised (${results.opt("sheetRowRaise")})")
+        shot("04-es-bar-from-sheet")
 
         // --- Translate: the model comes down, the page turns English ----------------------------
         val t0 = SystemClock.uptimeMillis()
@@ -386,39 +392,64 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
     }
 
     /**
-     * A real touch on the translation glyph at the end of the URL pill, once it says `label` (the
-     * label tells whether the tap raises the bar or puts it away). The glyph is located through the
-     * chrome's DOM: the WebView's accessibility tree does not always carry the pill's inner buttons
-     * (the other demos fall back to a position for the site icon for the same reason), so the tree
-     * only stands in when the DOM has nothing to say.
+     * A real touch on the translate row of the site-information sheet, once it reads `label` (the
+     * label tells whether the touch raises the bar or puts it away). The pill carries no translate
+     * chip on the phone (v2 §9.29, OMN-02): the offer is a row at the top of the sheet the pill's
+     * site icon opens, named by its label and the pair on offer ("Translate this page, Spanish to
+     * English"; `pillChipRows` in components/phone/pillChips.tsx), and the sheet leaves for the
+     * bar. The row is found through the tree as every sheet row is, with the sheet's own DOM
+     * rectangle as the fallback when the tree has not caught up; the row's full name, or null when
+     * nothing to touch was found (the sheet is closed again then).
      */
-    private fun tapPillGlyph(f: Finger, label: String): Boolean {
-        val deadline = SystemClock.uptimeMillis() + 5_000
-        var glyph = pillGlyph()
-        while ((glyph == null || glyph.second != label) && SystemClock.uptimeMillis() < deadline) {
-            SystemClock.sleep(200)
-            glyph = pillGlyph()
+    private fun tapTranslateRow(f: Finger, label: String): String? {
+        openSiteInfo(f)
+        val deadline = SystemClock.uptimeMillis() + 8_000
+        var node: AccessibilityNodeInfo? = null
+        var dom: Pair<PointF, String>? = null
+        while (node == null && dom == null && SystemClock.uptimeMillis() < deadline) {
+            node = findNode { it.startsWith(label) }
+            if (node == null) dom = sheetRow(label)
+            if (node == null && dom == null) SystemClock.sleep(200)
         }
-        val tree = findByLabel(label)
+        val name = node?.let { (it.contentDescription ?: it.text)?.toString() } ?: dom?.second
         val at = when {
-            glyph != null && glyph.second == label -> glyph.first
-            tree != null -> PointF(tree.exactCenterX(), tree.exactCenterY())
-            else -> {
-                Log.w(tag, "no translation glyph labelled '$label' (the DOM says '${glyph?.second ?: "none"}', the tree nothing)")
-                return false
-            }
+            node != null -> touchPoint(steadyBounds(node) ?: Rect().also { node.getBoundsInScreen(it) })
+            dom != null -> dom.first
+            else -> null
         }
-        Log.i(tag, "pill glyph '$label' at $at (${if (tree != null) "in the tree too" else "DOM only"})")
+        if (name == null || at == null) {
+            Log.w(tag, "no translate row reading '$label' in the site-information sheet (tree: ${node != null}, DOM: ${dom != null})")
+            back()
+            SystemClock.sleep(1_000)
+            return null
+        }
+        Log.i(tag, "translate row '$name' at $at (${if (node != null) "in the tree" else "DOM only"})")
         f.tap(at.x, at.y)
-        return true
+        return name
     }
 
-    /** The pill's translation glyph as the chrome's DOM has it: its centre on screen and its label. */
-    private fun pillGlyph(): Pair<PointF, String>? {
+    /** The pill's site icon opens the site-information sheet; the rows settle before a touch. */
+    private fun openSiteInfo(f: Finger) {
+        val icon = findByLabel(SITE_ICON_LABEL)?.takeIf { it.top > height * 0.6 }
+        if (icon != null) f.tap(icon.exactCenterX(), icon.exactCenterY())
+        else {
+            Log.w(tag, "site icon not in the accessibility tree; tapping the start of the pill")
+            f.tap(pill.left + 22 * density, pill.exactCenterY())
+        }
+        SystemClock.sleep(2_500)
+    }
+
+    /** The pill's address stop as TalkBack reads it ("Address, <host>, Translation offered"). */
+    private fun addressSpoken(): String? =
+        findNode { it.startsWith("Address,") }?.let { (it.contentDescription ?: it.text)?.toString() }
+
+    /** The sheet's row reading `label` as the chrome's DOM has it: its centre on screen and its name. */
+    private fun sheetRow(label: String): Pair<PointF, String>? {
         val raw = chrome(
-            "(function(){var b=document.querySelector('.zen-phone-bar [data-translate]');if(!b)return null;" +
+            "(function(){var rows=document.querySelectorAll('[data-testid=\"siteinfo-pill-chips\"] button');" +
+                "for(var i=0;i<rows.length;i++){var b=rows[i];var l=b.getAttribute('aria-label')||'';if(l.indexOf(${JSONObject.quote(label)})!==0)continue;" +
                 "var r=b.getBoundingClientRect();if(!r.width||!r.height)return null;" +
-                "return {x:r.left+r.width/2,y:r.top+r.height/2,dpr:window.devicePixelRatio,label:b.getAttribute('aria-label')||''}})()"
+                "return {x:r.left+r.width/2,y:r.top+r.height/2,dpr:window.devicePixelRatio,label:l}}return null})()"
         )
         if (raw == null || raw == "null") return null
         val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
@@ -448,5 +479,10 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
             SystemClock.sleep(200)
         }
         return tabState(tabId)
+    }
+
+    private companion object {
+        /** The pill's site icon: the button that opens the site-information sheet. */
+        private const val SITE_ICON_LABEL = "Site information"
     }
 }

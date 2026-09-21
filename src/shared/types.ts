@@ -1607,6 +1607,8 @@ export type ShortcutAction =
   | 'split.horizontal'
   | 'split.unsplit'
   | 'split.newEmpty'
+  | 'split.nextPane'
+  | 'split.prevPane'
   | 'tab.copyUrl'
   | 'tab.copyUrlMarkdown'
   | 'tab.togglePin'
@@ -1960,6 +1962,13 @@ export interface Settings {
   hideToolbarOnScroll: boolean
   glanceEnabled: boolean
   glanceTrigger: GlanceTrigger
+  /**
+   * Split view drag and drop (split-12): a tab dragged to an edge of the page opens in a split
+   * view there – the four edge zones over the page. Off, the edges are plain page (the drag
+   * tears the tab off there, as it does past the zones); the panes of a split on screen stay
+   * targets. Absent in profiles from before it existed (read as true).
+   */
+  splitEdgeZones: boolean
   pinnedCloseBehavior: PinnedCloseBehavior
   pinnedResetOnStartup: boolean
   thirdPartyOnPinned: ThirdPartyPinnedBehavior
@@ -3426,6 +3435,11 @@ export interface Commands {
   'split.resize': { args: { groupId: string; sizes: number[] }; result: void }
   'split.newEmpty': { args: void; result: void }
   'split.addTab': { args: { groupId: string; tabId: string }; result: void }
+  /**
+   * "Choose a tab" in an empty pane (split-04): `tabId` takes the pane over from the blank tab
+   * `paneTabId` shown there, which closes. False when nothing changed.
+   */
+  'split.pickTab': { args: { paneTabId: string; tabId: string }; result: boolean }
 
   'glance.open': {
     args: { url: string; parentTabId: string; originX: number; originY: number }

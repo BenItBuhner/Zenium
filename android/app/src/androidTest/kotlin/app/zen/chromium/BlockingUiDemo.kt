@@ -18,8 +18,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Records the request blocking UI on the phone: the address pill's blocked-count chip climbing
- * as the demo page asks nine real ad and tracking hosts again, then the Settings tab's Privacy
+ * Records the request blocking UI on the phone: the blocked count climbing as the demo page asks
+ * nine real ad and tracking hosts again – spoken at the pill's address stop and read on the
+ * shield's row of the site-information sheet, whose finger leads to Settings (the pill carries no
+ * shield on the phone, v2 §9.29 / OMN-02) – then the Settings tab's Privacy
  * and Security section (`pages/settings/tracking.tsx`: the master switch, the level as a picker
  * sheet, the counter, the filter lists as item rows with a sheet each, the sites without
  * blocking), a level change the Kotlin engine follows, the current site excepted from its switch
@@ -109,12 +111,37 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     }
 
     override fun demo() {
-        // 1. The chip: nine requests blocked on the page, the count in the pill.
-        note("\n1. the blocked-count chip")
+        // 1. The count: nine requests blocked on the page. The pill carries no shield on the phone
+        //    (v2 §9.29, OMN-02): its address stop speaks the count, and the count sits on the
+        //    shield's row inside the site-information sheet.
+        note("\n1. the blocked count at the address")
         var s = waitForBlocked(9)
         note("  ${describeTab(s)}")
-        note("  chip: ${chipLabel() ?: "(not in the accessibility tree)"}")
-        shot("01-page-chip-9")
+        note("  address stop: ${addressSpoken() ?: "(not in the accessibility tree)"}")
+        shot("01-page-count-9")
+        beat()
+
+        // 1b. The shield's row: the site icon opens the sheet, the row reads the count, and a
+        //     finger on it leads to Settings > Privacy and Security (the lists and the site
+        //     exceptions), the sheet leaving for the tab; then back to the page as it was.
+        note("\n1b. the shield's row in the site-information sheet")
+        openSiteInfo()
+        note("  shield row: ${rowText("Requests blocked") ?: "(not in the accessibility tree)"}")
+        shot("01b-siteinfo-shield-9")
+        beat()
+        if (touchTapLabelExpecting("Requests blocked", "the Settings tab is at $SECTION", prefix = true) {
+                activeCoreTab()?.optString("url") == "$SETTINGS_URL/privacy"
+            }
+        ) {
+            awaitSurface(up = true, timeoutMs = 6_000)
+            SystemClock.sleep(800)
+            shot("01c-shield-row-to-privacy")
+            activeCoreTab()?.optString("id")?.takeIf { it != DEMO_TAB }?.let { coreInvoke("tab.close", """{"tabId":"$it"}""") }
+            SystemClock.sleep(600)
+        } else {
+            closeSheets()
+        }
+        ensureDemoTab()
         beat()
 
         // 2. The counter rises: the page asks the same hosts again, twice.
@@ -122,12 +149,12 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         askAgain()
         s = waitForBlocked(18)
         note("  ${describeTab(s)}")
-        note("  chip: ${chipLabel() ?: "(not in the accessibility tree)"}")
-        shot("02-page-chip-18")
+        note("  address stop: ${addressSpoken() ?: "(not in the accessibility tree)"}")
+        shot("02-page-count-18")
         askAgain()
         s = waitForBlocked(27)
         note("  ${describeTab(s)}")
-        shot("03-page-chip-27")
+        shot("03-page-count-27")
         beat()
 
         // 3. Settings > Privacy and Security from the app menu (a finger on the menu's Settings
@@ -238,15 +265,21 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
             coreInvoke("blocking.setSiteException", """{"site":"$DEMO_ORIGIN","excepted":true}""")
         }
 
-        // 7. The page again: nothing blocked, the chip says so.
+        // 7. The page again: nothing blocked, the address stop and the shield's row say so.
         note("\n7. the excepted page")
         ensureDemoTab()
         coreInvoke("tab.reload", """{"tabId":"$DEMO_TAB","skipCache":true}""")
         s = waitForTitle("0/9", 25_000)
         note("  ${describeTab(s)}")
-        note("  chip: ${chipLabel() ?: "(not in the accessibility tree)"}")
+        note("  address stop: ${addressSpoken() ?: "(not in the accessibility tree)"}")
         shot("11-page-excepted")
         beat()
+        openSiteInfo()
+        note("  shield row: ${rowText("Requests blocked") ?: "(not in the accessibility tree)"}")
+        shot("11b-siteinfo-shield-excepted")
+        beat()
+        closeSheets()
+        SystemClock.sleep(800)
 
         // 8. Back in Settings the site is an item row; its sheet's action blocks on it again.
         note("\n8. the exception's row and its sheet")
@@ -571,15 +604,29 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
     }
 
     /**
-     * The chip's accessible label in the pill: `<n> requests blocked on this page`, `Nothing
-     * blocked on this page yet`, `Blocking is off for this site` or `Ad and tracker blocking is
-     * off`, each `· Site information` (`blockedChipLabel` in lib/blockingUi.ts).
+     * The pill's address stop as TalkBack reads it: the host, then the shield's state the pill no
+     * longer draws (v2 §9.29: the shield and its count are the site-information sheet's row) –
+     * `Address, <host>, <n> requests blocked`, `…, Blocking off for this site`, `…, Blocking off`;
+     * the host alone on a quiet page (`pillChipsSpoken` in components/phone/pillChips.tsx).
      */
-    private fun chipLabel(): String? =
-        findNode {
-            it.contains("Site information") &&
-                (it.contains("blocked") || it.contains("Nothing") || it.contains("locking is off"))
-        }?.let { it.contentDescription ?: it.text }?.toString()
+    private fun addressSpoken(): String? =
+        findNode { it.startsWith("Address,") }?.let { it.contentDescription ?: it.text }?.toString()
+
+    /**
+     * The pill's site icon opens the site-information sheet, where the shield's row is (its name
+     * runs its label and the count together: "Requests blocked, 9"; `SheetRow` in
+     * components/siteinfo/SiteInfoSheet.tsx). A finger on the icon; the start of the pill when
+     * the tree does not carry the icon (the other demos' fallback).
+     */
+    private fun openSiteInfo() {
+        val icon = findByLabel(SITE_ICON_LABEL)?.takeIf { it.top > height * 0.6 }
+        if (icon != null) Finger().tap(icon.exactCenterX(), icon.exactCenterY())
+        else {
+            note("  (site icon not in the accessibility tree; tapping the start of the pill)")
+            Finger().tap(pill.left + 22 * density, pill.exactCenterY())
+        }
+        SystemClock.sleep(2_500)
+    }
 
     // --- the chrome's bridge --------------------------------------------------------------------
 
@@ -788,6 +835,7 @@ class BlockingUiDemo : DemoHarness("blocking-demo-state.json", "services-blockin
         /** How Settings names the site (`exceptionHost`: scheme and host for anything but https). */
         private const val DEMO_SITE = DEMO_ORIGIN
         private const val SECTION = "Privacy and Security"
+        private const val SITE_ICON_LABEL = "Site information"
         private const val SETTINGS_URL = "zen://settings"
 
         /** The page's nine third-party resources once more, as the page itself asks for them. */

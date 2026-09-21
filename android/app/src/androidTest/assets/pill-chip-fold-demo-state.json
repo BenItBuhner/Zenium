@@ -1,0 +1,80 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_main",
+  "spaces": [
+    {
+      "id": "space_main",
+      "name": "Browse",
+      "icon": "🧭",
+      "containerId": "default",
+      "theme": null,
+      "tabIds": [
+        "tab_github",
+        "tab_example"
+      ],
+      "activeTabId": "tab_github",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_github",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://github.com/BenItBuhner/Zenium",
+      "title": "GitHub - BenItBuhner/Zenium",
+      "pinned": false,
+      "essential": false
+    },
+    {
+      "id": "tab_example",
+      "spaceId": "space_main",
+      "containerId": "default",
+      "folderId": null,
+      "url": "https://example.com/",
+      "title": "Example Domain",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "phoneBarPosition": "top",
+    "phoneBar": {
+      "left": [
+        "back",
+        "reload",
+        "forward"
+      ],
+      "right": [
+        "new-tab",
+        "menu"
+      ]
+    },
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_main",
+      "selection": {
+        "space_main": "tab_github"
+      },
+      "compact": false
+    }
+  ]
+}

@@ -773,12 +773,16 @@ describe('phone pill (PillContent)', () => {
       act(() => root?.unmount())
       host?.remove()
     }
-    // The control: the same offer on a website shows the translate chip.
+    // The control: the same offer on a website is spoken at the address – the offer is the
+    // site-information sheet's row on the phone (OMN-02), never a chip in the pill.
     const site = tab('https://example.com/')
     const s = state(site)
     s.translate = { available: true, tabs: { [site.id]: { status: 'offered' } } } as never
     const el = render(<PillContent state={s} tab={site} space={space} interactive />)
-    expect(el.querySelector('[data-translate]')).not.toBeNull()
+    expect(el.querySelector('[data-translate]')).toBeNull()
+    expect(labels(focusable(el))[0]).toBe(
+      'Address, example.com, Connection is secure, Translation offered'
+    )
   })
 
   it('says "Extension page" for an extension the chrome does not know, never the id, still without a lock', () => {
@@ -855,9 +859,13 @@ describe('phone pill (PillContent)', () => {
     expect(focusable(el).length).toBe(0)
     expect(el.querySelectorAll('button').length).toBe(0)
     expect(el.querySelectorAll('[aria-label]').length).toBe(0)
-    // The two chips are plain hidden spans in the pill's row (the favicon tile is inside one).
+    // The two chips are plain hidden spans: the site icon's in the pill's row (the favicon tile
+    // is inside it), the lock's in the chip run after the address.
     const row = el.firstElementChild!
-    expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(2)
+    expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(1)
+    const run = row.querySelector('[data-testid="pill-chips"]')!
+    expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(1)
+    expect(run.querySelectorAll('button').length).toBe(0)
   })
 
   // The Now playing chip (MW-16): the in-app player's entry, there while a tab holds the media
@@ -890,15 +898,16 @@ describe('phone pill (PillContent)', () => {
       ])
     })
 
-    it('comes after the lock as a chip whose popup is the media sheet, named by the state', () => {
+    it('takes the lock’s slot as a chip whose popup is the media sheet, named by the state (v2 §9.29)', () => {
       const el = render(
         <PillContent state={withMedia(page, [playing()])} tab={page} space={space} interactive />
       )
       const order = focusable(el)
+      // The lock gave way to the live state: the site icon ahead of the address still opens
+      // the site information, and the address keeps speaking the connection's state (A11Y-01).
       expect(labels(order)).toEqual([
         'Address, example.com, Connection is secure',
         'Site information',
-        'Connection is secure',
         'Now playing'
       ])
       const chip = el.querySelector<HTMLElement>('[data-media]')!
@@ -932,6 +941,33 @@ describe('phone pill (PillContent)', () => {
       expect(chip.getAttribute('aria-expanded')).toBe('false')
     })
 
+    it('on a private tab the mask keeps the leading slot and the chip takes the lock’s trailing one (v2 §9.19 with §9.29)', () => {
+      const privatePage = tab('https://example.com/some/path', {
+        containerId: PRIVATE_CONTAINER_ID,
+        favicon: 'data:image/png;base64,AAAA'
+      })
+      const el = render(
+        <PillContent
+          state={withMedia(privatePage, [playing()])}
+          tab={privatePage}
+          space={space}
+          interactive
+        />
+      )
+      const order = focusable(el)
+      expect(labels(order)).toEqual([
+        'Address, example.com, Connection is secure',
+        'Site information',
+        'Now playing'
+      ])
+      // The mask, leading, in place of the favicon: the site-information chip as on any private tab.
+      expect(order[1].hasAttribute('data-private-mark')).toBe(true)
+      expect(order[1].querySelector('svg.lucide-venetian-mask')).not.toBeNull()
+      // The media chip trailing where the lock stood; no lock while the state is live.
+      expect(order[2].hasAttribute('data-media')).toBe(true)
+      expect(el.querySelector('svg.lucide-lock')).toBeNull()
+    })
+
     it('stands on another tab’s pill too, for the session tab', () => {
       // The session belongs to t2, gone from this pill's tab list unless it is there.
       const session = playing({ tabId: 't2' })
@@ -956,10 +992,15 @@ describe('phone pill (PillContent)', () => {
       )
       expect(focusable(el).length).toBe(0)
       expect(el.querySelectorAll('[aria-label]').length).toBe(0)
-      // A third hidden span beside the site icon's and the lock's, with no tap target on it.
+      // One hidden span in the chip run – the media chip in the lock's slot – with no tap
+      // target on it; the site icon is its own hidden span ahead of the address.
       expect(el.querySelector('[data-media]')).toBeNull()
       const row = el.firstElementChild!
-      expect(row.querySelectorAll(':scope > span[aria-hidden]').length).toBe(3)
+      expect(row.querySelector(':scope > span[aria-hidden].order-first')).not.toBeNull()
+      const run = row.querySelector('[data-testid="pill-chips"]')!
+      expect(run.querySelectorAll('[data-chip] > span[aria-hidden]').length).toBe(1)
+      expect(run.querySelector('[data-chip="media"]')).not.toBeNull()
+      expect(run.querySelectorAll('button').length).toBe(0)
     })
   })
 })

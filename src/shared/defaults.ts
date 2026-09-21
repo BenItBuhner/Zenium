@@ -214,6 +214,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hideToolbarOnScroll: true,
   glanceEnabled: true,
   glanceTrigger: 'alt',
+  splitEdgeZones: true,
   pinnedCloseBehavior: 'reset-unload-switch',
   pinnedResetOnStartup: false,
   thirdPartyOnPinned: 'new-tab',

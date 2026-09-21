@@ -137,6 +137,14 @@ export function isEmptyTabUrl(url: string | null | undefined): boolean {
   )
 }
 
+/**
+ * The blank page alone (`zen://blank`, with or without the slash a load adds): the tab an empty
+ * split pane holds until an address is typed into it or a tab is chosen for it (split-04).
+ */
+export function isBlankTabUrl(url: string | null | undefined): boolean {
+  return typeof url === 'string' && url.replace(/\/$/, '') === BLANK_URL
+}
+
 /** `zen://newtab` with or without a trailing slash or query (Chromium normalises the former). */
 export function isNewTabUrl(url: string): boolean {
   return (

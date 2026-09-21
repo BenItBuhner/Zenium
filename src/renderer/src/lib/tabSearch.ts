@@ -5,10 +5,11 @@ import {
   type RankedClosed,
   type RankedTab
 } from '@shared/tabSearch'
-import type { ClosedEntrySummary, TabSearchCandidate } from '@shared/types'
+import { internalPageOf } from '@shared/internalPages'
+import type { ClosedEntrySummary, SplitGroup, TabSearchCandidate } from '@shared/types'
 import { run } from './api'
 import { openedFromKeyboard } from './popover'
-import { closeUrlbar, uiStore } from './ui'
+import { closeUrlbar, type TabPickRequest, uiStore } from './ui'
 
 /*
  * The tab search popover's request (tabs-17): Ctrl+Shift+A, the menu bar's Window › Search
@@ -37,9 +38,40 @@ export function toggleTabSearch(): void {
   uiStore.set({ tabSearch: { keyboard }, drawerOpen: false })
 }
 
+/**
+ * "Choose a tab" in an empty split pane (split-04): the popover in its pick mode, hanging from
+ * the pane's button (`data-pick-tab`), placed inside the pane. The pane's URL bar gives way as it
+ * does to Ctrl+Shift+A, the keyboard staying in the chrome for the popover's field; the popover
+ * closes with the pane (`TabSearchLayer`) and Escape hands the keyboard back to the button.
+ */
+export function openTabPicker(pick: TabPickRequest): void {
+  closeUrlbar({ keepKeyboard: true })
+  run('focus.chrome', undefined)
+  uiStore.set({ tabSearch: { keyboard: true, pick }, drawerOpen: false })
+}
+
 export function closeTabSearch(): void {
   if (!uiStore.get().tabSearch) return
   uiStore.set({ tabSearch: null })
+}
+
+/**
+ * What the picker offers for the pane (split-04): the window's other open tabs – not the tabs
+ * of other windows (a tab is shown in one window), not the tabs already in the split, not the
+ * empty pane itself, and no chrome page (Settings fills the frame itself; `splittable: false`).
+ */
+export function pickCandidates(
+  candidates: TabSearchCandidate[],
+  pick: TabPickRequest,
+  group: SplitGroup | undefined
+): TabSearchCandidate[] {
+  return candidates.filter(
+    (c) =>
+      c.windowLabel === null &&
+      c.id !== pick.paneTabId &&
+      !group?.tabIds.includes(c.id) &&
+      internalPageOf(c.url)?.splittable !== false
+  )
 }
 
 const flags = globalThis as unknown as { __zenTabSearchWired?: boolean }
@@ -81,21 +113,29 @@ export const isOption = (row: Row): row is Option => row.kind === 'tab' || row.k
  * video"), every open tab most recently used first with the current one last, and the newest
  * recently closed entries; with a query, the open tabs and the closed entries it matches, best
  * first. Every selectable row carries its index among the options for the keyboard; a list
- * with none says so in one static row.
+ * with none says so in one static row. The pane picker (`pick`) lists the open tabs alone – a
+ * closed entry cannot fill a pane and the sound section would only repeat rows – under no
+ * heading, the title block naming what the rows are.
  */
 export function buildRows(
   candidates: TabSearchCandidate[],
   recentlyClosed: ClosedEntrySummary[],
-  query: string
+  query: string,
+  pick = false
 ): Row[] {
   const rows: Row[] = []
   const open = rankTabs(candidates, query)
-  const closed = rankClosed(recentlyClosed, query)
+  const closed = pick ? [] : rankClosed(recentlyClosed, query)
   let index = 0
   const tabRows = (list: RankedTab[], section: string): void => {
     for (const ranked of list) {
       rows.push({ kind: 'tab', id: `${section}:${ranked.tab.id}`, ranked, index: index++ })
     }
+  }
+  if (pick) {
+    tabRows(open, 'open')
+    if (index === 0) rows.push({ kind: 'empty', id: 'empty' })
+    return rows
   }
   if (!query.trim()) {
     const media = mediaTabs(open)

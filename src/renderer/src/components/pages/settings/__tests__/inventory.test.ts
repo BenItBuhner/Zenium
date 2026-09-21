@@ -358,6 +358,7 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Apply dark theme to sites',
     'example.net',
     'Remove exception',
+    'Split view drag and drop',
     'Enable Glance',
     'Trigger'
   ],
@@ -604,6 +605,7 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Bookmarks',
     'Sites',
     'Site exceptions',
+    'Split view',
     'Glance'
   ],
   tabs: ['Tabs', 'Window sync', 'Pinned tabs and Essentials', 'Tab unloading'],
