@@ -41,11 +41,12 @@ import { pushToast } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 
 /*
- * Pieces a download row is made of, shared by the bubble and the `zen://downloads` page: the
- * row itself (design language v2 §9.2 two-line row with §9.18 centred trailing controls), the
- * file-type glyph, the middle-truncated name, the status line, the thin progress bar, the hover
- * actions and the Keep / Delete pair for flagged files, all on the engine's commands (PR #69,
- * #166 for Delete file and the file-missing signal behind the Deleted row).
+ * Pieces a download row is made of, shared by the bubble and the `zen://downloads` page tab
+ * (`pages/downloads/DownloadsPage.tsx`): the bubble's row itself (design language v2 §9.2
+ * two-line row with §9.18 centred trailing controls), the file-type glyph, the middle-truncated
+ * name, the status line, the thin progress bar, the row's icon action, the hover actions and
+ * the Keep / Delete pair for flagged files, all on the engine's commands (PR #69, #166 for
+ * Delete file and the file-missing signal behind the Deleted row).
  */
 
 const GLYPHS: Record<FileGlyph, LucideIcon> = {
@@ -120,32 +121,31 @@ export function FileName({
 }
 
 /**
- * The one-line status under the name, set in the tone the status asks for; a failure's line
- * carries the engine's sentence as its tooltip.
+ * The status's words, set in the tone the status asks for (the deemphasised ink of the line
+ * around them, the warning or the danger colour); a failure's carry the engine's sentence as
+ * their tooltip. Nothing while the status has no words.
  */
-export function StatusLine({
-  item,
-  suffix
-}: {
-  item: DownloadItem
-  /** Trails the status after a separator (the page adds the source host). */
-  suffix?: string
-}): JSX.Element {
+export function StatusText({ item }: { item: DownloadItem }): JSX.Element | null {
   const status = downloadStatus(item)
+  if (!status.text) return null
+  return (
+    <span
+      className={cn(
+        status.tone === 'warn' && 'zen-dl-status-warn',
+        status.tone === 'danger' && 'zen-dl-status-danger'
+      )}
+      title={status.hint}
+    >
+      {status.text}
+    </span>
+  )
+}
+
+/** The one-line status under the name. */
+export function StatusLine({ item }: { item: DownloadItem }): JSX.Element {
   return (
     <div className="zen-dl-status truncate tabular-nums">
-      {status.text && (
-        <span
-          className={cn(
-            status.tone === 'warn' && 'zen-dl-status-warn',
-            status.tone === 'danger' && 'zen-dl-status-danger'
-          )}
-          title={status.hint}
-        >
-          {status.text}
-        </span>
-      )}
-      {suffix && (status.text ? ` · ${suffix}` : suffix)}
+      <StatusText item={item} />
     </div>
   )
 }
@@ -219,40 +219,51 @@ export function DlButton({
  * A row's icon button: the shared `.zen-v2-icon-button` (§9.34), which sizes the box and the
  * glyph from the density tokens. Disabled is the whole control at .4; busy keeps full opacity,
  * swaps the glyph for the 16px spinner and says `aria-busy` (§9.30), and ignores presses
- * meanwhile.
+ * meanwhile. `onClick` gets the press, for a menu button that anchors its menu on itself.
  */
-function IconAction({
+export function IconAction({
   title,
   icon: Icon,
   onClick,
   pressed,
   disabled,
   busy,
-  action
+  action,
+  className,
+  menu = false
 }: {
   title: string
   icon: LucideIcon
-  onClick: () => void
+  onClick: (e: ReactMouseEvent<HTMLButtonElement>) => void
   /** A toggle: rendered pressed while on. */
   pressed?: boolean
   disabled?: boolean
   busy?: boolean
   /** Names the control for tests and the harness (`data-zen-dl-action`). */
   action?: string
+  className?: string
+  /** The button opens a menu (`aria-haspopup`). */
+  menu?: boolean
 }): JSX.Element {
   return (
     <button
       type="button"
-      className={cn('zen-v2-icon-button', pressed && 'zen-dl-action-on', busy && 'zen-dl-busy')}
+      className={cn(
+        'zen-v2-icon-button',
+        pressed && 'zen-dl-action-on',
+        busy && 'zen-dl-busy',
+        className
+      )}
       title={title}
       aria-label={title}
       aria-pressed={pressed}
       aria-busy={busy || undefined}
+      aria-haspopup={menu ? 'menu' : undefined}
       disabled={disabled}
       data-zen-dl-action={action}
       onClick={(e) => {
         e.stopPropagation()
-        if (!busy) onClick()
+        if (!busy) onClick(e)
       }}
     >
       <Icon aria-hidden />
@@ -378,26 +389,24 @@ export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
 }
 
 /**
- * One download in a list: the shared `.zen-v2-row` (§9.34) as a §9.2 two-line row (name over
- * status, 52 tall, growing around a progress bar or a warning's sentence) with the glyph on the
- * first line and the controls centred on the row's height (§9.18); rows touch (§9.21), and what
- * a download row adds is the `.zen-dl-row` modifier. Enter or a double click opens a
- * finished file, the name is a button that opens it, a right click or the menu key asks the
- * core for the row's menu, and on desktop hosts a finished file can be dragged out to the OS.
- * A finished file the engine found gone from disk is Chrome's Deleted row: name and glyph in
- * the deemphasised ink, status "Deleted", nothing to open, show or drag, Retry and Remove kept.
+ * One download in the bubble's list: the shared `.zen-v2-row` (§9.34) as a §9.2 two-line row
+ * (name over status, 52 tall, growing around a progress bar or a warning's sentence) with the
+ * glyph on the first line and the controls centred on the row's height (§9.18); rows touch
+ * (§9.21), and what a download row adds is the `.zen-dl-row` modifier. Enter or a double click
+ * opens a finished file, the name is a button that opens it, a right click or the menu key asks
+ * the core for the row's menu, and on desktop hosts a finished file can be dragged out to the
+ * OS. A finished file the engine found gone from disk is Chrome's Deleted row: name and glyph
+ * in the deemphasised ink, status "Deleted", nothing to open, show or drag, Retry and Remove
+ * kept. The page tab draws its own row (`pages/downloads`).
  */
 export function DownloadRow({
   item,
   highlighted = false,
-  source,
   draggable = false
 }: {
   item: DownloadItem
   /** Marked for attention (a notification was clicked): scrolled into view and tinted. */
   highlighted?: boolean
-  /** The page adds where the file came from after the status. */
-  source?: string
   /** The host can start an OS drag of the finished file. */
   draggable?: boolean
 }): JSX.Element {
@@ -463,7 +472,7 @@ export function DownloadRow({
           dim={item.state === 'cancelled' || deleted}
           onOpen={openable ? open : undefined}
         />
-        <StatusLine item={item} suffix={source} />
+        <StatusLine item={item} />
         {status.detail && <p className="zen-dl-detail">{status.detail}</p>}
         {active && <DownloadProgressBar item={item} />}
       </div>

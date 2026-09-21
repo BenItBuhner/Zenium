@@ -4167,37 +4167,25 @@
 
 @layer components {
   /*
-   * Downloads (design language v2 draft): page surfaces on the v2 token block above. The
-   * bubble is a §9.20 popover on the shared `.zen-bm-popover` chrome (radius 8, `--v2-panel`,
-   * 1px border, the panel shadow) with a §9.23 title block; the `zen://downloads` page is a
-   * neutral page surface. Rows are the shared `.zen-v2-row` (§9.34) as §9.2 two-line rows (a
-   * 15/20 name over a 13/20 status, 6px block padding, 52 tall) that grow around a progress bar
-   * or a warning's sentence; the glyph sits on the first line (§9.2) and the trailing controls
+   * Downloads (design language v2 draft): the bubble and the toolbar button on the v2 token
+   * block above (the `zen://downloads` page tab is the list pages' block, `pages/PageFrame.tsx`,
+   * further down, and shares the row pieces here). The bubble is a §9.20 popover on the shared
+   * `.zen-bm-popover` chrome (radius 8, `--v2-panel`, 1px border, the panel shadow) with a §9.23
+   * title block. Rows are the shared `.zen-v2-row` (§9.34) as §9.2 two-line rows (a 15/20 name
+   * over a 13/20 status, 6px block padding, 52 tall) that grow around a progress bar or a
+   * warning's sentence; the glyph sits on the first line (§9.2) and the trailing controls
    * centre on the row (§9.18); rows touch (§9.21). What a download row adds sits on the
    * `.zen-dl-row` modifier, unlayered beside the primitive after this block. Row actions are the
    * shared `.zen-v2-icon-button` (§9.3, §9.34); text buttons are the chassis `.zen-button`. The
-   * one tone the block does not name (a progress track) derives from the text's alpha; the focus
-   * ring is the v2 controls' own, offset -2 in dark. Disabled is .4 on the whole control, busy a
-   * 16px spinner in place of the label (§9.30).
+   * one tone the block does not name (a progress track) derives from the text's alpha. Disabled
+   * is .4 on the whole control, busy a 16px spinner in place of the label (§9.30).
    */
   .zen-dl-surface {
     --zen-dl-track: rgb(var(--v2-text-rgb) / 0.12);
-    --zen-dl-focus-offset: 0px;
     color: var(--v2-text);
-  }
-  :root[data-theme='dark'] .zen-dl-surface {
-    --zen-dl-focus-offset: -2px;
   }
   .zen-dl-deemph {
     color: var(--v2-text-deemphasized);
-  }
-  /* The page fills the content frame; the shared shell's tint, blur and 16 radius do not apply. */
-  .zen-panel.zen-dl-page {
-    background: var(--v2-page);
-    backdrop-filter: none;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-card);
-    box-shadow: var(--v2-shadow-frame);
   }
   .zen-dl-pop-out {
     animation: zen-dl-pop-out 180ms var(--zen-ease) forwards;
@@ -4253,8 +4241,8 @@
     outline-offset: -2px;
   }
   /*
-   * Empty states (§9.17): one sentence 15 at 69%, centred inside a 32 gutter, its line 32 below
-   * the header (the bubble's title block, the page's search row); top-anchored, no glyph.
+   * The bubble's empty state (§9.17): one sentence 15 at 69%, centred inside a 32 gutter, its
+   * line 32 below the title block; top-anchored, no glyph.
    */
   .zen-dl-empty {
     margin: 0;
@@ -4393,64 +4381,6 @@
     border-radius: 50%;
     animation: zen-spin 800ms linear infinite;
   }
-  /*
-   * The page: §5's content column (664 at a 32 side margin), the search row's controls 8
-   * apart, day groups 24 apart under a 15/600 sub-heading whose first row starts 8 below it
-   * (§9.27) and whose text sits on the rows' 16 gutter, the empty sentence 32 below the search
-   * row.
-   */
-  .zen-dl-page-body {
-    display: flex;
-    width: 100%;
-    max-width: var(--v2-content-max);
-    margin: 0 auto;
-    padding: 24px 32px 32px;
-    flex-direction: column;
-  }
-  .zen-dl-page-tools {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .zen-dl-page-empty {
-    padding: 32px 32px 0;
-  }
-  .zen-dl-day {
-    margin-top: 24px;
-  }
-  .zen-dl-day-title {
-    margin: 0 0 8px;
-    padding: 0 16px;
-    font-size: var(--v2-font-body);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-body);
-  }
-  /* The search field: 32 tall, radius 4, 1px border, the accent ring on focus. */
-  .zen-dl-field {
-    height: var(--v2-control);
-    border-radius: var(--v2-radius-control);
-    border: 1px solid var(--v2-border);
-    background: var(--v2-page);
-    transition: outline-color 120ms var(--zen-ease);
-  }
-  .zen-dl-field:focus-within {
-    outline: 2px solid var(--v2-ring);
-    outline-offset: var(--zen-dl-focus-offset);
-  }
-  .zen-dl-input {
-    background: transparent;
-    color: var(--v2-text);
-    border-radius: var(--v2-radius-control);
-    font-size: var(--v2-font-small);
-  }
-  .zen-dl-input::placeholder {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-dl-input::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    appearance: none;
-  }
-
   /*
    * The toolbar button: a stroke-dashoffset ring for the aggregate progress around the glyph,
    * a count badge, and a fill-and-scale pulse when a transfer starts (transform and opacity only).
@@ -8886,6 +8816,36 @@
 }
 .zen-bm-drag-ghost-count {
   flex-shrink: 0;
+}
+
+/* -------------------------------------------------------------------------
+ * The Downloads page (components/pages/downloads/DownloadsPage.tsx, §10.1): the page frame
+ * above with the downloads bubble's row pieces (`.zen-dl-glyph`, `.zen-dl-name`, the status
+ * tones, `.zen-dl-bar`, `.zen-dl-detail`) inside its §9.21 two-line rows. Only what the page
+ * adds: the row's two-line floor (§9.2), the progress track's one derived tone, the trailing
+ * slot with its actions 8 apart (§9.21) and centred on the row (§9.18), and the greyed Deleted
+ * row. The state's verbs stand at rest; Open, Show in folder and the ⋮ are the row's reveal.
+ * ------------------------------------------------------------------------- */
+.zen-downloads-page {
+  --zen-dl-track: rgb(var(--v2-text-rgb) / 0.12);
+}
+.zen-v2-row.zen-dl-page-row {
+  min-height: var(--v2-row-two-line);
+}
+/* The trailing slot: the state's verb, Open, Show in folder, the ⋮, or the Keep / Delete pair. */
+.zen-dl-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+/*
+ * Chrome's greyed Deleted row, and a cancelled one: the name in the deemphasised ink (the
+ * bubble's `.zen-dl-name` states the text ink in its layer; the page's row says otherwise here,
+ * unlayered), the glyph at .4 from the piece itself, the controls whole.
+ */
+.zen-v2-row.zen-dl-page-row:is([data-deleted], [data-state='cancelled']) .zen-dl-name {
+  color: var(--v2-text-deemphasized);
 }
 
 /*

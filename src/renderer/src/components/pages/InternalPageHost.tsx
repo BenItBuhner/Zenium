@@ -2,8 +2,8 @@ import type { JSX } from 'react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { Tab, UIState } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
-import { DownloadsPanel } from '../overlays/DownloadsPanel'
 import { BookmarkManager } from './bookmarks/BookmarkManager'
+import { DownloadsPage } from './downloads/DownloadsPage'
 import { HistoryPage } from './history/HistoryPage'
 import { SettingsPage } from './settings/SettingsPage'
 
@@ -54,7 +54,7 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
     case 'bookmarks':
       return <BookmarkManager state={state} tab={tab} />
     case 'downloads':
-      return <DownloadsPanel state={state} />
+      return <DownloadsPage state={state} tab={tab} />
     default:
       return null
   }

@@ -6,11 +6,11 @@ import type { DownloadDeleteFileResult, DownloadItem } from '@shared/types'
 import { downloadItem } from '@shared/__tests__/downloadFixtures'
 
 /*
- * The download row on the engine's #166 additions, rendered for real: a failed row's
+ * The bubble's download row on the engine's #166 additions, rendered for real: a failed row's
  * `Failed · <reason>` line with the engine's sentence as its tooltip and Retry only where the
  * reason allows one, Chrome's greyed Deleted row for a finished file gone from disk, and the
  * Delete file action – busy while the engine works, the row's state afterwards, a toast when
- * the file would not go.
+ * the file would not go. The page tab's row is `pages/downloads/__tests__/DownloadsPage.test.tsx`.
  */
 
 type Invoke = (name: string, args?: unknown) => Promise<unknown>

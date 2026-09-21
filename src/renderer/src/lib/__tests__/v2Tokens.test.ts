@@ -71,8 +71,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],
-  // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
-  // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
+  // The downloads bubble and toolbar button (components/downloads; the zen://downloads page tab
+  // is the list pages' block below). Its block sits between the bookmark chrome's rules and the
   // comment that ends them, so it is taken out first.
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
