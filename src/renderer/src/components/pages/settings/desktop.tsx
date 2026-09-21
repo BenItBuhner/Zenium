@@ -10,6 +10,8 @@ import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useImportSources } from '@renderer/lib/importSources'
+import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { DialogStack } from './dialogs'
@@ -69,8 +71,16 @@ export function DesktopSettings({
   // The vault's lists while Autofill is the open category (the phone page reads them the same
   // way); a search builds every category with the gate and the switches, not the entries.
   const autofill = useAutofillSettings(state, sectionId === 'autofill')
+  // The speech engine's voices while Accessibility is the open category (Read aloud's voice
+  // rows; a search builds them from the list already kept, or shows none yet).
+  const readAloudVoices = useReadAloudVoices(
+    state.capabilities.readAloud && sectionId === 'accessibility'
+  )
   // The custom dictionary's words the same way, while Languages is the open category.
   const dictionary = useDictionaryWords(sectionId === 'languages' && state.spellcheck.available)
+  // The browsers on this computer likewise, while Import is the open category: its pane names
+  // them (a phone in landscape draws the phone's file rows there, and asks nothing).
+  const importSources = useImportSources(sectionId === 'import' && formFactor !== 'phone')
   const ctx: SectionContext = {
     state,
     tab,
@@ -84,7 +94,9 @@ export function DesktopSettings({
       void openOverlay('boosts', tabId)
     },
     autofill,
-    dictionary
+    readAloudVoices,
+    dictionary,
+    importSources
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

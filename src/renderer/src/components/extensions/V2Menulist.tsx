@@ -16,6 +16,12 @@ import { V2Radio } from './v2'
 export interface MenulistOption<T extends string> {
   value: T
   label: string
+  /**
+   * One line under the label (§9.13: where a voice runs and its quality, a model's size): the
+   * popover's row grows to 48 around the two and clamps it to one line; the phone sheet's row
+   * is a §9.2 description.
+   */
+  description?: string
 }
 
 interface PopupProps<T extends string> {
@@ -31,8 +37,9 @@ interface PopupProps<T extends string> {
  * A menulist (v2 draft §6, §9.13): the rectangular control, 32 tall (40 on a phone) with a 1px
  * border and a 16 chevron, whose popup is never the native `<select>`'s. On a mouse the options
  * are a `--v2-panel` popover under the control at radius 12 with 6 padding: 28 rows at radius 6,
- * the current one marked by a trailing 16 check. On a finger they are a bottom sheet of 44 rows
- * with a radio glyph (§9.14) on the current option. Picking one closes the popup. The popover
+ * the current one marked by a trailing 16 check, a row with a description 48 around its two
+ * lines. On a finger they are a bottom sheet of 44 rows (64 with a description, §9.2) with a
+ * radio glyph (§9.14) on the current option. Picking one closes the popup. The popover
  * hangs flush under the control (§9.20, at its own width and height) and takes focus on its
  * current option; the arrow keys move it, Escape gives it back to the control (§9.22); the
  * chrome layer's light dismiss closes it otherwise (§9.20 amended) – the control's own press
@@ -152,7 +159,14 @@ function MenulistPopover<T extends string>({
               className="zen-v2-menulist-option"
               onClick={() => onPick(option.value)}
             >
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {option.description ? (
+                <span className="zen-v2-menulist-option-text">
+                  <span className="truncate">{option.label}</span>
+                  <span className="zen-v2-menulist-option-description">{option.description}</span>
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              )}
               {selected && <Check />}
             </button>
           )
@@ -189,7 +203,8 @@ function MenulistSheet<T extends string>({
       {/*
         Radio rows (§9.13, §9.14), as the Settings sheets' (§9.34): each row is the shared
         `.zen-v2-row` – its `--v2-row-pad` is what seats the flex-start radio on the text line
-        (§9.2) – and the radio itself, carrying `aria-checked`, which draws the glyph inside it.
+        (§9.2) – and the radio itself, carrying `aria-checked`, which draws the glyph inside it;
+        an option's second line is a §9.2 description under its label.
       */}
       <div className="zen-v2 flex flex-col pb-1" role="radiogroup" aria-label={label}>
         {options.map((option) => (
@@ -202,7 +217,14 @@ function MenulistSheet<T extends string>({
             onClick={() => sheet.current?.dismiss(() => onPick(option.value))}
           >
             <V2Radio />
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
+            {option.description ? (
+              <span className="zen-v2-row-text">
+                <span className="zen-v2-label">{option.label}</span>
+                <span className="zen-v2-description">{option.description}</span>
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+            )}
           </button>
         ))}
       </div>

@@ -330,6 +330,8 @@ describe('the two-pane Settings tab (§10.5)', () => {
       'Security',
       '|',
       'Sync',
+      'Import',
+      'Accessibility',
       'Keyboard Shortcuts',
       'Default Browser',
       'Updates',
@@ -338,10 +340,16 @@ describe('the two-pane Settings tab (§10.5)', () => {
     ])
   })
 
-  it('has no Accessibility category on the desktop, where Chrome keeps zoom in the menu', () => {
+  it('has Accessibility on the desktop for Read aloud alone: Chrome keeps zoom in the menu, and a host with no speech engine has no category', () => {
     const items = navItems(render(state()))
-    expect(items).not.toContain('Accessibility')
     expect(items.slice(0, 2)).toEqual(['Look and Feel', 'Compact Mode'])
+    expect(items).toContain('Accessibility')
+    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/accessibility'))
+    expect(markup).toContain('Read aloud')
+    expect(markup).toContain('Voices')
+    expect(markup).not.toContain('Page zoom')
+    expect(markup).not.toContain('Default zoom')
+    expect(navItems(render(state({ ...DESKTOP, readAloud: false })))).not.toContain('Accessibility')
   })
 
   it('keeps Default Browser off a host that has no way to register (Android in two panes)', () => {
@@ -378,9 +386,15 @@ describe('the two-pane Settings tab (§10.5)', () => {
   })
 
   it('falls back to the first category for a section this host does not have', () => {
-    const markup = render(state(DESKTOP, 'linux', {}, 'zen://settings/accessibility'))
-    expect(markup).toContain('data-section="look"')
+    // A desktop without a speech engine has no Accessibility (neither page controls nor Read aloud).
+    const markup = render(
+      state({ ...DESKTOP, readAloud: false }, 'linux', {}, 'zen://settings/accessibility')
+    )
+    expect(markup).toMatch(
+      /aria-current="page"[^>]*data-section="look"|data-section="look"[^>]*aria-current="page"/
+    )
     expect(markup).not.toContain('Default zoom')
+    expect(markup).not.toContain('Read aloud')
   })
 
   it("keeps Chrome's Page zoom menulist and the per-site zooms under Look and Feel on the desktop", () => {

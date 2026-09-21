@@ -197,11 +197,18 @@ export function NavRow({
   // box and asks which of the chips present fit beside an address that keeps its minimum. The
   // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
   // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
-  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
-  // the stylesheet's container query's, as is the 130 px tier under which every tool after the
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL) are the
+  // stylesheet's container query's, as is the 130 px tier under which every tool after the
   // address goes (`zen-pill-chip`; §9.29's threshold, which the star's return here matches). A
   // hidden chip's action stays in the app menu and the tab's menu; a chip whose popover is up
-  // stays put (§9.20).
+  // stays put (§9.20). On a `zen://reader` tab the lit Reader View exit and the Text preferences
+  // chip are the document's own controls (§10.1 took the reader toolbar away and left the chip
+  // the one home of its type, theme, width, spacing and reading aids), so there both join the
+  // never-hidden class (§9.29, the lead's ruling on #265): they are counted with the state chips
+  // here, carry no `zen-pill-chip` (the lit exit sheds it; unlit, "Enter Reader View" is a tool
+  // like the star), and the address gives way to them – below the floor the pill drops its text
+  // altogether, which on the reader page costs nothing, since the document's own header carries
+  // the title, byline and host.
   const pillInner = usePillInnerWidth(pill)
   const shieldState =
     tab && isWebPage && state.capabilities.requestBlocking
@@ -237,7 +244,10 @@ export function NavRow({
   if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
   if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
   if (tab && !extension && (tab.readerable || isReader)) {
-    chipsPresent.push({ id: 'reader', tier: 'info', width: CHIP_WIDTH.small })
+    chipsPresent.push({ id: 'reader', tier: isReader ? 'state' : 'info', width: CHIP_WIDTH.small })
+  }
+  if (tab && isReader) {
+    chipsPresent.push({ id: 'reader-prefs', tier: 'state', width: CHIP_WIDTH.small })
   }
   const fits = fittingChips(pillInner, chipsPresent)
   return (
@@ -447,8 +457,10 @@ export function NavRow({
                 )}
                 pressed={isReader}
                 className={cn(
-                  'zen-pill-chip flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
-                  isReader && 'text-[var(--zen-accent)] opacity-100'
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  // The lit exit on the reader tab is never hidden (§9.29; the tier comment
+                  // above); unlit it is a tool and goes with the rest under a 130 px pill.
+                  isReader ? 'text-[var(--zen-accent)] opacity-100' : 'zen-pill-chip'
                 )}
                 onActivate={() => run('reader.toggle', { tabId: tab.id })}
               >
@@ -459,10 +471,12 @@ export function NavRow({
               // Edge's Immersive Reader "Text preferences" on its toolbar: a chip beside Reader
               // View's while an article is open, whose popup is the preferences popover;
               // `aria-expanded` follows it and `data-reader-prefs-chip` is what it hangs from
-              // and what its Escape hands the keyboard back to (§9.22). In a narrow pill it goes
-              // with the other extras (`zen-pill-extra`, §9.29): it reports no state the page
-              // does not show itself, and the app menu's "Text Preferences…" and the reader
-              // page's own toolbar keep the surface reachable (the popover then hangs centred).
+              // and what its Escape hands the keyboard back to (§9.22). The reader document
+              // carries no toolbar of its own (§10.1: this popover is the one home of its
+              // controls), so the chip is never hidden on the reader tab, whatever the pill's
+              // width (§9.29: it joins site information and the lit Reader View exit; the
+              // address gives way instead) – no `zen-pill-extra`, and the app menu's "Text
+              // Preferences…" opens the same popover anchored to this chip.
               <PillChip
                 label="Text preferences"
                 title="Text preferences"
@@ -470,7 +484,7 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'zen-pill-extra flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
                   readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
                 )}

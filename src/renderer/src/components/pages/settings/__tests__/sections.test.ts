@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
+import { isValidElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ExtensionErrorEntry,
   ExtensionInfo,
   HostCapabilities,
+  ImportSource,
   SafetyCheckResult,
   Settings,
   Tab,
@@ -317,17 +319,20 @@ function blockingState(patch: Partial<UIState> = {}): UIState {
 }
 
 type AutofillData = Parameters<typeof buildSection>[1]['autofill']
+type VoicesData = Parameters<typeof buildSection>[1]['readAloudVoices']
 type DictionaryWords = Parameters<typeof buildSection>[1]['dictionary']
 
 /**
  * A context that records what the rows ask of the page; a touch host unless `pointer` says so.
- * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the custom
- * dictionary has no words unless `dictionary` brings some.
+ * The vault reads idle (no lists, the gate idle) unless `autofill` brings some; the speech
+ * engine's voices are still on their way (null) unless `readAloudVoices` brings the list; the
+ * custom dictionary has no words unless `dictionary` brings some.
  */
 function context(
   s: UIState = state(),
   pointer = false,
   autofill: Partial<AutofillData> = {},
+  readAloudVoices: VoicesData = null,
   dictionary: Partial<DictionaryWords> = {}
 ): {
   ctx: Parameters<typeof buildSection>[1]
@@ -349,6 +354,7 @@ function context(
     },
     boost: (tabId) => boosted.push(tabId),
     autofill: { ...idleAutofillSettings(), ...autofill },
+    readAloudVoices,
     dictionary: { ...idleDictionaryWords(), ...dictionary }
   }
   return {
@@ -384,6 +390,12 @@ function row(model: Model, id: string): Row {
   return found
 }
 
+/** The class list of a row's glyph element (a Lucide icon rendered with a `className`). */
+function glyphClass(node: ReactNode): string {
+  if (!isValidElement<{ className?: string }>(node)) throw new Error('not a glyph element')
+  return node.props.className ?? ''
+}
+
 beforeEach(() => invoke.mockClear())
 
 describe('the section model', () => {
@@ -404,6 +416,7 @@ describe('the section model', () => {
       'agents',
       'passwords',
       'security',
+      'import',
       'accessibility',
       'updates',
       'about'
@@ -1869,6 +1882,164 @@ describe('the section model', () => {
   })
 })
 
+/*
+ * Accessibility › Read aloud (CT-12, CT-13): the speed, the highlight and one voice row per
+ * language the browser reads in, from the one builder both platforms draw – behind
+ * `capabilities.readAloud`, which the Android fixture above leaves off.
+ */
+describe('Accessibility › Read aloud on a host with a speech engine', () => {
+  const speaking = (settings: Partial<Settings> = {}): UIState =>
+    state({ capabilities: { ...ANDROID, readAloud: true } }, settings)
+  const VOICES: NonNullable<VoicesData> = {
+    voices: [
+      { id: 'en-gb-1', name: 'Daniel', lang: 'en-GB', local: true, quality: 'high' },
+      { id: 'en-us-1', name: 'Samantha', lang: 'en-US', local: true, default: true },
+      { id: 'en-us-2', name: 'Ava', lang: 'en-US', local: false },
+      { id: 'fr-1', name: 'Thomas', lang: 'fr-FR', local: true }
+    ],
+    byLanguage: {
+      en: 'en-us-1',
+      'en-gb': 'en-gb-1',
+      'en-us': 'en-us-1',
+      fr: 'fr-1',
+      'fr-fr': 'fr-1'
+    }
+  }
+  const ACCESSIBILITY = PAGE.sections.find((x) => x.id === 'accessibility')!
+  const build = (s: UIState, voices: VoicesData): Model =>
+    buildSection(ACCESSIBILITY, context(s, false, {}, voices).ctx)
+
+  it('stays off without the engine, and adds its two groups after the zoom groups with it', () => {
+    expect(section('accessibility').groups.map((g) => g.id)).toEqual(['zoom', 'site-zooms'])
+    const model = build(speaking(), VOICES)
+    expect(model.groups.map((g) => g.id)).toEqual([
+      'zoom',
+      'site-zooms',
+      'read-aloud',
+      'read-aloud-voices'
+    ])
+    expect(model.groups.map((g) => g.heading)).toEqual([
+      'Page zoom',
+      'Sites with their own zoom',
+      'Read aloud',
+      'Voices'
+    ])
+    for (const group of model.groups) expect(groupShows(group)).toBe(true)
+  })
+
+  it('is the whole category on a desktop without page controls, and lists the category there', () => {
+    const desktop = state({
+      platform: 'linux',
+      capabilities: { ...ANDROID, pageControls: false, readAloud: true }
+    })
+    expect(phoneSections(desktop).map((m) => m.section.id)).toContain('accessibility')
+    expect(build(desktop, VOICES).groups.map((g) => g.id)).toEqual([
+      'read-aloud',
+      'read-aloud-voices'
+    ])
+  })
+
+  it('offers the speed on the model’s ladder and the highlight in Edge’s words, run as commands', () => {
+    const model = build(
+      speaking({ readAloud: { rate: 1.2, voiceByLanguage: {}, highlight: 'both' } }),
+      VOICES
+    )
+    const speed = row(model, 'read-aloud-rate')
+    if (speed.kind !== 'value') throw new Error('not a value row')
+    expect(speed.label).toBe('Speed')
+    expect(currentOptionLabel(speed)).toBe('1.2×')
+    expect(speed.options.map((o) => o.label)).toEqual([
+      '0.5×',
+      '0.8×',
+      '1×',
+      '1.2×',
+      '1.5×',
+      '2×',
+      '3×',
+      '4×'
+    ])
+    speed.onChange('2')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setRate', { rate: 2 })
+
+    const highlight = row(model, 'read-aloud-highlight')
+    if (highlight.kind !== 'value') throw new Error('not a value row')
+    expect(currentOptionLabel(highlight)).toBe('Sentence and word')
+    expect(highlight.options.map((o) => o.label)).toEqual([
+      'Sentence and word',
+      'Sentence',
+      'Word',
+      'Off'
+    ])
+    highlight.onChange('off')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setHighlight', { mode: 'off' })
+  })
+
+  it('has a voice row per language the browser reads in, plus any the player chose a voice for', () => {
+    const model = build(
+      speaking({
+        readAloud: { rate: 1, voiceByLanguage: { 'en-gb': 'en-gb-1', de: 'x' }, highlight: 'both' }
+      }),
+      VOICES
+    )
+    const voices = model.groups.find((g) => g.id === 'read-aloud-voices')!
+    expect(voices.rows.map((r) => r.id)).toEqual([
+      'read-aloud-voice:en',
+      'read-aloud-voice:fr',
+      'read-aloud-voice:en-gb',
+      'read-aloud-voice:de'
+    ])
+    expect(voices.rows.map((r) => r.label)).toEqual([
+      'English',
+      'French',
+      'English (United Kingdom)',
+      'German'
+    ])
+    // English: every English voice, the engine's default as the value, regions on the options.
+    const english = row(model, 'read-aloud-voice:en')
+    if (english.kind !== 'value') throw new Error('not a value row')
+    expect(english.value).toBe('en-us-1')
+    expect(english.options.map((o) => o.label)).toEqual(['Daniel', 'Samantha', 'Ava'])
+    expect(english.options[0]?.description).toBe(
+      'English (United Kingdom) · On this device · High quality'
+    )
+    expect(english.options[2]?.description).toBe('English (United States) · Needs a network')
+    english.onChange('en-gb-1')
+    expect(invoke).toHaveBeenCalledWith('readAloud.setVoice', { voiceId: 'en-gb-1', lang: 'en' })
+    // British English: the saved choice is the value.
+    const british = row(model, 'read-aloud-voice:en-gb')
+    if (british.kind !== 'value') throw new Error('not a value row')
+    expect(british.value).toBe('en-gb-1')
+    // German: nothing speaks it – a fact, not a picker.
+    expect(row(model, 'read-aloud-voice:de')).toMatchObject({
+      kind: 'info',
+      description: 'No voice for this language on this device'
+    })
+  })
+
+  it('says the list is on its way, then that the device has none', () => {
+    const waiting = build(speaking(), null).groups.find((g) => g.id === 'read-aloud-voices')!
+    expect(waiting.rows).toEqual([
+      { kind: 'info', id: 'read-aloud-voices-loading', label: 'Looking for voices…' }
+    ])
+    const none = build(speaking(), { voices: [], byLanguage: {} }).groups.find(
+      (g) => g.id === 'read-aloud-voices'
+    )!
+    expect(none.rows).toEqual([])
+    expect(none.empty).toBe('No voices on this device')
+    expect(groupShows(none)).toBe(true)
+  })
+
+  it('is found by the landing’s search under its category', () => {
+    const models = buildSections(
+      availableSections(PAGE, speaking().capabilities, 'phone'),
+      context(speaking(), false, {}, VOICES).ctx
+    )
+    const hits = searchRows(models, 'voice')
+    expect(hits.map((h) => h.caption)).toContain('Accessibility › Voices')
+    expect(searchRows(models, 'speed').map((h) => h.row.id)).toContain('read-aloud-rate')
+  })
+})
+
 describe('what a row does', () => {
   it('a switch row patches its setting; a value row patches its choice', () => {
     const c = context()
@@ -2056,6 +2227,403 @@ describe('what a row does', () => {
       kind: 'zoom',
       domain: 'a.test'
     })
+  })
+
+  it('carries ID-23’s Import rows: the two file imports over `dialog.openText`, busy while theirs runs, and the last import until it is dismissed', async () => {
+    // The phone shell's rows (the pane's dialog rows are the mouse layouts', tested below).
+    const def = PAGE.sections.find((x) => x.id === 'import')!
+    const phoneImport = (s: UIState): Model =>
+      buildSection(def, { ...context(s).ctx, formFactor: 'phone' })
+    // Android has no other browser's profile to read: the category is the file rows alone,
+    // the passwords one behind the host's vault.
+    const idle = phoneImport(state({ import: null } as Partial<UIState>))
+    expect(idle.groups.map((g) => g.id)).toEqual(['import-files'])
+    expect(allRows(idle.groups).map((r) => r.id)).toEqual([
+      'import-bookmarks-file',
+      'import-passwords-file'
+    ])
+    expect(idle.groups.every(groupShows)).toBe(true)
+    const noVault = state({
+      import: null,
+      capabilities: { ...ANDROID, passwords: false }
+    } as Partial<UIState>)
+    expect(allRows(phoneImport(noVault).groups).map((r) => r.id)).toEqual(['import-bookmarks-file'])
+
+    // A press asks the engine for that one kind from the file source; the host's file dialog
+    // is the engine's to open.
+    const bookmarks = row(idle, 'import-bookmarks-file')
+    expect(bookmarks).toMatchObject({
+      kind: 'action',
+      label: 'Import bookmarks from a file',
+      busy: false,
+      disabled: false
+    })
+    if (bookmarks.kind !== 'action') throw new Error('not an action')
+    bookmarks.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:bookmarks',
+        kinds: ['bookmarks']
+      })
+    )
+    const passwords = row(idle, 'import-passwords-file')
+    if (passwords.kind !== 'action') throw new Error('not an action')
+    passwords.onPress?.()
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('import.run', {
+        source: 'file:passwords',
+        kinds: ['passwords']
+      })
+    )
+
+    // While the bookmarks file imports its row is busy (§9.30) and the other row waits.
+    const html: ImportSource = {
+      id: 'file:bookmarks',
+      browser: 'file',
+      browserName: 'Bookmarks HTML file',
+      profileId: '',
+      name: 'Bookmarks HTML file',
+      path: '',
+      running: false,
+      kinds: ['bookmarks'],
+      limits: {}
+    }
+    const running = phoneImport(
+      state({
+        import: {
+          source: html,
+          kinds: ['bookmarks'],
+          status: 'running',
+          current: 'bookmarks',
+          results: {},
+          error: null,
+          folderId: null,
+          startedAt: 1,
+          finishedAt: null
+        }
+      } as Partial<UIState>)
+    )
+    expect(row(running, 'import-bookmarks-file')).toMatchObject({ busy: true, disabled: false })
+    expect(row(running, 'import-passwords-file')).toMatchObject({ busy: false, disabled: true })
+    expect(running.groups.map((g) => g.id)).toEqual(['import-files'])
+    invoke.mockClear()
+    const busyRow = row(running, 'import-bookmarks-file')
+    if (busyRow.kind !== 'action') throw new Error('not an action')
+    busyRow.onPress?.()
+    expect(invoke).not.toHaveBeenCalled()
+
+    // The result stays as a group under the rows: the headline in Chrome's words, a row per
+    // kind with what came in and what was skipped, Show imported bookmarks for the folder made,
+    // Dismiss clearing it.
+    const finished = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: { imported: 42, duplicates: 3, unreadable: 0, invalid: 1, error: null }
+        },
+        error: null,
+        folderId: 'imported-folder',
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const last = phoneImport(finished)
+    expect(last.groups.map((g) => g.id)).toEqual(['import-files', 'import-last'])
+    expect(last.groups[1].heading).toBe('Last import')
+    expect(last.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-show',
+      'import-last-dismiss'
+    ])
+    const headline = row(last, 'import-last-headline')
+    expect(headline).toMatchObject({
+      kind: 'info',
+      label: 'Your bookmarks and settings are ready',
+      description: 'From a bookmarks HTML file'
+    })
+    // The kind's lines share the row on the one joiner the pane and the desktop use (` · `).
+    const bookmarksRow = row(last, 'import-last-bookmarks')
+    expect(bookmarksRow).toMatchObject({
+      kind: 'info',
+      label: 'Bookmarks',
+      description: '42 bookmarks imported · 3 already saved, 1 unusable'
+    })
+    expect(headline).not.toHaveProperty('tone')
+    expect(headline).toMatchObject({ danger: false })
+    // The outcome is a trailing 16 px glyph in the status ink (the Updates rows' "Verified"),
+    // never a leading one: the group's action rows have no leading slot, and §10.4 keeps the
+    // labels of one list on one left edge.
+    for (const r of [headline, bookmarksRow]) {
+      if (r.kind !== 'info') throw new Error('not an info row')
+      expect(r.leading).toBeUndefined()
+      expect(glyphClass(r.trailing)).toContain('zen-settings-ok')
+    }
+    expect(row(last, 'import-bookmarks-file')).toMatchObject({ busy: false, disabled: false })
+    const show = row(last, 'import-last-show')
+    if (show.kind !== 'action') throw new Error('not an action')
+    show.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().overlay).toBe('bookmarks'))
+    expect(uiStore.get().overlayFolderId).toBe('imported-folder')
+    uiStore.set({ overlay: 'none', overlayFolderId: null })
+    const dismiss = row(last, 'import-last-dismiss')
+    if (dismiss.kind !== 'action') throw new Error('not an action')
+    dismiss.onPress?.()
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('import.dismiss', undefined))
+
+    // A run-level failure (the picker's bridge call rejected: `ImportService.run`'s outer catch)
+    // is the headline row with the failure as its LABEL – so the row's `danger` puts the ink on
+    // that sentence and the caption under it stays at 69% (§9.33, one ink per row); never `tone`,
+    // which would colour the neutral caption instead. No folder to show.
+    const failed = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'failed',
+        current: null,
+        results: {},
+        error: 'The file picker could not be opened.',
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const failedLast = phoneImport(failed)
+    expect(failedLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-dismiss'
+    ])
+    const failedHeadline = row(failedLast, 'import-last-headline')
+    expect(failedHeadline).toMatchObject({
+      kind: 'info',
+      label: 'The file picker could not be opened.',
+      description: 'From a bookmarks HTML file',
+      danger: true
+    })
+    expect(failedHeadline).not.toHaveProperty('tone')
+    if (failedHeadline.kind !== 'info') throw new Error('not an info row')
+    // The glyph takes the ink of the text beside it: a failure is danger, not the safety warn.
+    expect(glyphClass(failedHeadline.trailing)).toContain('zen-settings-danger')
+
+    // A run whose every kind failed is a failure too (the #259 ruling): the headline names what
+    // could not be imported in the danger ink, and the kind's row carries the reason on its
+    // description – the status ink on the line that is the status, on each row.
+    const noBookmarks = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: {
+            imported: 0,
+            duplicates: 0,
+            unreadable: 0,
+            invalid: 0,
+            error: 'No bookmarks were found in that file.'
+          }
+        },
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const noBookmarksLast = phoneImport(noBookmarks)
+    expect(noBookmarksLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-dismiss'
+    ])
+    const noBookmarksHeadline = row(noBookmarksLast, 'import-last-headline')
+    expect(noBookmarksHeadline).toMatchObject({
+      label: 'Bookmarks could not be imported.',
+      description: 'From a bookmarks HTML file',
+      danger: true
+    })
+    if (noBookmarksHeadline.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksHeadline.trailing)).toContain('zen-settings-danger')
+    const noBookmarksRow = row(noBookmarksLast, 'import-last-bookmarks')
+    expect(noBookmarksRow).toMatchObject({
+      label: 'Bookmarks',
+      description: 'No bookmarks were found in that file.',
+      tone: 'danger'
+    })
+    expect(noBookmarksRow).not.toHaveProperty('danger')
+    if (noBookmarksRow.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksRow.trailing)).toContain('zen-settings-danger')
+
+    // A file pick the user dismissed leaves a cancelled run with nothing reported: no group.
+    const dismissedPick = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'cancelled',
+        current: null,
+        results: {},
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    expect(phoneImport(dismissedPick).groups.map((g) => g.id)).toEqual(['import-files'])
+
+    // The category's search words reach it from the landing.
+    const s = state({ import: null } as Partial<UIState>)
+    const hits = searchRows(phoneSections(s), 'csv').map((h) => h.row.id)
+    expect(hits).toContain('import-passwords-file')
+  })
+
+  it('on a mouse the Import category is the pane that leads to the dialog: the browsers found, two button rows, and the last import as one row (#259’s lead verdict)', async () => {
+    const def = PAGE.sections.find((x) => x.id === 'import')!
+    const mouse = (
+      s: UIState,
+      importSources?: ImportSource[] | null,
+      layout: 'desktop' | 'tablet' = 'desktop'
+    ): Model => buildSection(def, { ...context(s).ctx, formFactor: layout, importSources })
+    const chrome: ImportSource = {
+      id: 'chrome:Default',
+      browser: 'chrome',
+      browserName: 'Google Chrome',
+      profileId: 'Default',
+      name: 'Person 1',
+      path: '',
+      running: false,
+      kinds: ['bookmarks', 'history', 'passwords'],
+      limits: {}
+    }
+    const firefox: ImportSource = {
+      ...chrome,
+      id: 'firefox:a.default',
+      browser: 'firefox',
+      browserName: 'Firefox',
+      profileId: 'a.default',
+      name: 'default'
+    }
+    const html: ImportSource = {
+      id: 'file:bookmarks',
+      browser: 'file',
+      browserName: 'Bookmarks HTML file',
+      profileId: '',
+      name: 'Bookmarks HTML file',
+      path: '',
+      running: false,
+      kinds: ['bookmarks'],
+      limits: {}
+    }
+    const none = state({ import: null } as Partial<UIState>)
+
+    // Two groups, one button row each (§10.5: a command row trails its button); none of the
+    // phone's whole-row file rows. The tablet is the same pane.
+    const idle = mouse(none)
+    expect(idle.groups.map((g) => g.id)).toEqual(['import-browsers', 'import-file'])
+    expect(allRows(idle.groups).map((r) => r.id)).toEqual(['import-browser', 'import-file-dialog'])
+    expect(allRows(mouse(none, undefined, 'tablet').groups).map((r) => r.id)).toEqual([
+      'import-browser',
+      'import-file-dialog'
+    ])
+    expect(row(idle, 'import-browser')).toMatchObject({
+      kind: 'action',
+      label: 'Bookmarks, history and passwords',
+      description: 'From Google Chrome, Chromium, Microsoft Edge, Firefox or Safari',
+      button: 'Import…'
+    })
+    expect(row(idle, 'import-file-dialog')).toMatchObject({
+      kind: 'action',
+      label: 'Bookmarks HTML or passwords CSV',
+      button: 'Import file…'
+    })
+    expect(idle.groups[1].heading).toBe('Import from a file')
+
+    // The first group's line under its heading: looking while the engine's answer is out (or
+    // where nothing asked, the landing's search), the browsers by name, or none – the file
+    // sources are not browsers.
+    expect(idle.groups[0].description).toBe('Looking for other browsers on this computer…')
+    expect(mouse(none, null).groups[0].description).toBe(
+      'Looking for other browsers on this computer…'
+    )
+    expect(mouse(none, [html]).groups[0].description).toBe(
+      'No other browsers were found on this computer.'
+    )
+    expect(mouse(none, [chrome, firefox, html]).groups[0].description).toBe(
+      'Found on this computer: Google Chrome and Firefox.'
+    )
+
+    // The buttons open the dialog over the Settings tab – the file row on the file sources.
+    const browser = row(idle, 'import-browser')
+    if (browser.kind !== 'action') throw new Error('not an action')
+    browser.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().importDialog).toEqual({ source: null }))
+    uiStore.set({ importDialog: null })
+    const file = row(idle, 'import-file-dialog')
+    if (file.kind !== 'action') throw new Error('not an action')
+    file.onPress?.()
+    await vi.waitFor(() => expect(uiStore.get().importDialog).toEqual({ source: 'file:bookmarks' }))
+    uiStore.set({ importDialog: null })
+
+    // The last import is one row on the pane: the headline, then the source and the counts on
+    // one line; its glyph and Dismiss trail (the lead's nit: leading, it indented the pane's
+    // one such label 26 px past its neighbours). The phone's headline, kind and action rows
+    // stay off the pane.
+    const finished = state({
+      import: {
+        source: chrome,
+        kinds: ['bookmarks', 'passwords'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: { imported: 42, duplicates: 3, unreadable: 0, invalid: 1, error: null },
+          passwords: { imported: 7, duplicates: 0, unreadable: 0, invalid: 0, error: null }
+        },
+        error: null,
+        folderId: 'imported-folder',
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const last = mouse(finished, [chrome])
+    expect(last.groups.map((g) => g.id)).toEqual(['import-browsers', 'import-file', 'import-last'])
+    expect(last.groups[2].heading).toBe('Last import')
+    expect(last.groups[2].rows.map((r) => r.id)).toEqual(['import-last-summary'])
+    const summary = row(last, 'import-last-summary')
+    expect(summary).toMatchObject({
+      kind: 'info',
+      label: 'Your bookmarks and settings are ready',
+      description: 'From Google Chrome (Person 1) · 42 bookmarks imported · 7 passwords imported',
+      danger: false,
+      clamp: true
+    })
+    if (summary.kind !== 'info') throw new Error('not an info row')
+    expect(summary.leading).toBeUndefined()
+    expect(isValidElement(summary.trailing)).toBe(true)
+
+    // A failed run: the failure is the label in the danger ink, the source alone under it.
+    const failed = mouse(
+      state({
+        import: {
+          source: chrome,
+          kinds: ['bookmarks'],
+          status: 'failed',
+          current: null,
+          results: {},
+          error: 'Google Chrome is open. Close Google Chrome and try again.',
+          folderId: null,
+          startedAt: 1,
+          finishedAt: 2
+        }
+      } as Partial<UIState>),
+      [chrome]
+    )
+    expect(row(failed, 'import-last-summary')).toMatchObject({
+      label: 'Google Chrome is open. Close Google Chrome and try again.',
+      description: 'From Google Chrome (Person 1)',
+      danger: true
+    })
+    expect(row(failed, 'import-last-summary')).not.toHaveProperty('tone')
   })
 
   it('carries #62’s Security rows: each remembered site answer an item that forgets it, Forget all once there are two, the session’s sign-ins', () => {
@@ -3184,15 +3752,10 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
       }
     })
     const removed: string[] = []
-    const c = context(
-      s,
-      false,
-      {},
-      {
-        words: ['Zenium', 'colour'],
-        remove: (word) => removed.push(word)
-      }
-    )
+    const c = context(s, false, {}, null, {
+      words: ['Zenium', 'colour'],
+      remove: (word) => removed.push(word)
+    })
     const def = PAGE.sections.find((x) => x.id === 'languages')!
     const languages = buildSection(def, c.ctx)
     const dictionary = languages.groups.find((g) => g.id === 'spellcheck-dictionary')
@@ -3217,7 +3780,7 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
     expect(groupShows(waiting.groups.find((g) => g.id === 'spellcheck-dictionary')!)).toBe(false)
     expect(findRow(waiting.groups, 'spellcheck-add-word')).not.toBeNull()
     // Read and empty: the §9.17 line.
-    const none = buildSection(def, context(s, false, {}, { words: [] }).ctx)
+    const none = buildSection(def, context(s, false, {}, null, { words: [] }).ctx)
     expect(none.groups.find((g) => g.id === 'spellcheck-dictionary')?.empty).toBe('No words yet')
 
     // Both groups are the desktop shell's: a phone builds neither, a desktop both.
@@ -3238,6 +3801,7 @@ describe('CT-07 / CT-19: the Spell check group of Languages on a phone', () => {
         ),
         false,
         {},
+        null,
         { words: ['Zenium'] }
       ).ctx
     )

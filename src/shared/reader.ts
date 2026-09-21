@@ -1,8 +1,9 @@
 /**
  * Reader View's text preferences (Chrome's Reading mode "Font" / "Font size" / "Color", Firefox's
  * "Content width"): one setting the core persists, the `zen://reader` page is rendered with, and
- * both the page's own toolbar and the chrome's sheet / popover change through
- * `reader.setPreferences`. Pure model here; the page applies it as `data-*` attributes on its root.
+ * the chrome's sheet / popover (the Text preferences chip's, the one home of these controls;
+ * the document carries no toolbar, §10.1) changes through `reader.setPreferences`. Pure model
+ * here; the page applies it as `data-*` attributes on its root.
  */
 export type ReaderFont = 'serif' | 'sans' | 'mono'
 /** `auto` follows the browser's colour scheme (the page's `prefers-color-scheme`). */
@@ -130,9 +131,6 @@ export function stepReaderFontSize(current: number, direction: number): number {
   const next = Math.max(0, Math.min(sizes.length - 1, index + Math.sign(direction)))
   return sizes[next]
 }
-
-/** The key a page posts its toolbar changes under (`window.postMessage`), relayed by the page script. */
-export const READER_MESSAGE_KEY = '__zenReader'
 
 /**
  * The root attributes the reader page's script renders the extras as (`data-line-focus`,

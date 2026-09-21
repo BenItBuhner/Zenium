@@ -236,7 +236,9 @@ export function RowView({
       )
     case 'info':
       // Not a target (§9.34): the shared row for its geometry, `data-static` for no fill and no
-      // pointer cursor, no role – a div, since static text is not a button.
+      // pointer cursor, no role – a div, since static text is not a button. A row whose label
+      // is the status takes the danger row class the destructive action has: its label rule
+      // puts the ink on the sentence, the description keeps its 69%.
       return (
         <div
           ref={row.trailing ? attachLineCount : undefined}
@@ -244,6 +246,7 @@ export function RowView({
           data-static=""
           className={cn(
             'zen-settings-row zen-v2-row',
+            row.danger && 'zen-settings-row-danger',
             row.disabled && 'zen-settings-row-disabled',
             row.clamp && 'zen-settings-row-clamp'
           )}

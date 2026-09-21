@@ -13,6 +13,7 @@ import type {
   GlanceTrigger,
   GovernorActionKind,
   GpuMode,
+  ImportSource,
   NewTabBackgroundKind,
   NewTabPosition,
   NewTabPreset,
@@ -51,6 +52,16 @@ import {
   setNewTabShortcutsMode
 } from '@shared/newTab'
 import { formatZoom, zoomChoices, zoomKey } from '@shared/pageControls'
+import {
+  READ_ALOUD_RATES,
+  baseLanguage,
+  normalizeLanguageTag,
+  sanitizeReadAloudRate,
+  voiceForLanguage,
+  type ReadAloudHighlightMode,
+  type ReadAloudVoice,
+  type ReadAloudVoicesResult
+} from '@shared/readAloud'
 import { engineHost } from '@shared/search'
 import {
   SHORTCUT_GROUP_LABELS,
@@ -90,6 +101,7 @@ import {
   NEW_TAB_PRESET_LABELS,
   newTabBackgroundValue
 } from '@renderer/lib/newTabSettings'
+import { formatRate } from '@renderer/lib/readAloud'
 import { describePermissionRule, siteLabel } from '@renderer/lib/security'
 import { tabTitle } from '@renderer/lib/selectors'
 import { wordProblem, type DictionaryWords } from '@renderer/lib/spellcheckWords'
@@ -132,6 +144,7 @@ import {
   WordForm,
   ZoomBlock
 } from './blocks'
+import { importGroups } from '../../import/importRows'
 import { extensionsGroups } from './extensions'
 import {
   choice,
@@ -194,10 +207,21 @@ export interface SectionContext {
    */
   autofill: AutofillSettingsData
   /**
+   * The speech engine's voices (`readAloud.voices`, `useReadAloudVoices`) for Accessibility ›
+   * Read aloud's voice rows; null while the list is on its way or where the host has no engine.
+   */
+  readAloudVoices: ReadAloudVoicesResult | null
+  /**
    * The profile's custom spell-check dictionary (Settings › Languages › Spell check) and what
    * moves it (`useDictionaryWords`); `idleDictionaryWords()` where there is none to read.
    */
   dictionary: DictionaryWords
+  /**
+   * What the import engine found on this computer (Settings › Import's pane names the browsers
+   * among them; `useImportSources`): `null` while it looks, left out where the pane is not
+   * drawn – the phone page, whose Import rows read files, and a test.
+   */
+  importSources?: ImportSource[] | null
 }
 
 export function buildSection(section: InternalPageSection, ctx: SectionContext): SectionModel {
@@ -236,6 +260,7 @@ const BUILDERS: Readonly<Record<string, Builder>> = {
   passwords: passwordsSection,
   security: securitySection,
   sync: syncSection,
+  import: importGroups,
   shortcuts: shortcutsSection,
   'default-browser': defaultBrowserSection,
   updates: updatesSection,
@@ -726,7 +751,19 @@ function compactSection({ state, set }: SectionContext): RowGroup[] {
 // Accessibility (page zoom, from #78)
 // ---------------------------------------------------------------------------
 
-function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
+/**
+ * Settings › Accessibility: the page zoom groups on a host with page controls (the phone), and
+ * Read aloud's groups on a host with a speech engine (`readAloudGroups`, both platforms) – the
+ * category shows where either is true.
+ */
+function accessibilitySection(ctx: SectionContext): RowGroup[] {
+  const groups: RowGroup[] = []
+  if (ctx.state.capabilities.pageControls) groups.push(...pageZoomGroups(ctx))
+  if (ctx.state.capabilities.readAloud) groups.push(...readAloudGroups(ctx))
+  return groups
+}
+
+function pageZoomGroups({ state, set }: SectionContext): RowGroup[] {
   const pc = state.settings.pageControls
   const patch = (p: Partial<typeof pc>): void => set({ pageControls: { ...pc, ...p } })
   const fontScale = state.pageEnvironment.fontScale || 1
@@ -791,6 +828,151 @@ function accessibilitySection({ state, set }: SectionContext): RowGroup[] {
       empty: 'No sites yet'
     }
   ]
+}
+
+// ---------------------------------------------------------------------------
+// Read aloud (Accessibility)
+// ---------------------------------------------------------------------------
+
+/**
+ * The highlight modes (`readAloud.setHighlight`) in the picker's order – the default first –
+ * with their labels, Edge's "Text highlighting" words.
+ */
+const READ_ALOUD_HIGHLIGHT_OPTIONS: ReadonlyArray<{
+  value: ReadAloudHighlightMode
+  label: string
+}> = [
+  { value: 'both', label: 'Sentence and word' },
+  { value: 'sentence', label: 'Sentence' },
+  { value: 'word', label: 'Word' },
+  { value: 'off', label: 'Off' }
+]
+
+/**
+ * The languages Settings › Read aloud offers a voice for: the languages Zenium reads in
+ * (Languages › preferred, the first of them the model's own UI language), then any the player
+ * already chose a voice for, in that order and once each; English where nothing names one.
+ */
+export function readAloudLanguages(state: UIState): string[] {
+  const out: string[] = []
+  const add = (tag: string): void => {
+    const clean = normalizeLanguageTag(tag)
+    if (clean && !out.includes(clean)) out.push(clean)
+  }
+  for (const lang of state.translate.preferences.preferred) add(lang)
+  for (const lang of Object.keys(state.settings.readAloud.voiceByLanguage)) add(lang)
+  if (out.length === 0) add('en')
+  return out
+}
+
+/**
+ * Settings › Accessibility › Read aloud (CT-12, CT-13; Chrome for Android keeps Listen to this
+ * page under Accessibility), on hosts with a speech engine – one builder for the phone page and
+ * the desktop panel: the speed the player starts at (the model's ladder, `readAloud.setRate`),
+ * the highlight the page draws while it reads (`readAloud.setHighlight`), then a Voices group
+ * with one value row per language (`readAloudLanguages`) – the engine's voices for it, the
+ * language's current voice (the user's choice, else the engine's default for it) as the value –
+ * writing `readAloud.setVoice` for that language. The player's speed chip and voice picker
+ * write the same settings, so a change here reaches a session under way from its next sentence.
+ * Before the voice list arrives the group holds one line saying so; an engine without a voice
+ * for a language says that in the row.
+ */
+export function readAloudGroups({
+  state,
+  readAloudVoices
+}: Pick<SectionContext, 'state' | 'readAloudVoices'>): RowGroup[] {
+  const prefs = state.settings.readAloud
+  const rate = String(sanitizeReadAloudRate(prefs.rate))
+  const rates = READ_ALOUD_RATES.map((r) => String(r))
+  if (!rates.includes(rate)) rates.push(rate)
+  const voices = readAloudVoices?.voices ?? null
+  const voiceRows: SettingsRow[] = []
+  if (voices !== null && voices.length > 0) {
+    for (const lang of readAloudLanguages(state)) {
+      const base = baseLanguage(lang)
+      const own = voices.filter((v) => baseLanguage(v.lang) === base)
+      const label = languageName(lang)
+      if (own.length === 0) {
+        voiceRows.push({
+          kind: 'info',
+          id: `read-aloud-voice:${lang}`,
+          label,
+          description: 'No voice for this language on this device',
+          keywords: ['voice', 'read aloud']
+        })
+        continue
+      }
+      const current = voiceForLanguage(voices, lang, prefs.voiceByLanguage) ?? own[0]!.id
+      voiceRows.push(
+        choice<string>({
+          id: `read-aloud-voice:${lang}`,
+          label,
+          keywords: ['voice', 'read aloud', 'listen'],
+          sheetDescription: `The voices on this device for ${label}. Read aloud speaks ${label} pages with the one chosen here.`,
+          value: current,
+          options: own.map((voice) => ({
+            value: voice.id,
+            label: voice.name,
+            description: voiceOptionDescription(voice, lang)
+          })),
+          onChange: (voiceId) => run('readAloud.setVoice', { voiceId, lang })
+        })
+      )
+    }
+  }
+  return [
+    {
+      id: 'read-aloud',
+      heading: 'Read aloud',
+      description:
+        'Listen to This Page reads a page sentence by sentence; the player’s own controls change these too.',
+      rows: [
+        choice<string>({
+          id: 'read-aloud-rate',
+          label: 'Speed',
+          keywords: ['rate', 'read aloud', 'listen', 'speech'],
+          value: rate,
+          options: rates.map((value) => ({ value, label: formatRate(Number(value)) })),
+          onChange: (value) => run('readAloud.setRate', { rate: Number(value) })
+        }),
+        choice<ReadAloudHighlightMode>({
+          id: 'read-aloud-highlight',
+          label: 'Highlight while reading',
+          keywords: ['read aloud', 'listen', 'highlight'],
+          value: prefs.highlight,
+          sheetDescription: 'The page marks what is being read: the sentence, the word, or both.',
+          options: READ_ALOUD_HIGHLIGHT_OPTIONS,
+          onChange: (mode) => run('readAloud.setHighlight', { mode })
+        })
+      ]
+    },
+    {
+      id: 'read-aloud-voices',
+      heading: 'Voices',
+      description:
+        'One voice per language, from the voices on this device. Listen picks the language’s voice as it reads.',
+      rows:
+        voices === null
+          ? [{ kind: 'info', id: 'read-aloud-voices-loading', label: 'Looking for voices…' }]
+          : voiceRows,
+      empty: 'No voices on this device'
+    }
+  ]
+}
+
+/**
+ * A voice's second line in the picker: its own language where it is a regional variant of the
+ * row's (`English (United Kingdom)` under English), where it runs, and its quality when the
+ * engine says.
+ */
+function voiceOptionDescription(voice: ReadAloudVoice, lang: string): string {
+  const parts: string[] = []
+  const own = normalizeLanguageTag(voice.lang)
+  if (own && own !== normalizeLanguageTag(lang)) parts.push(languageName(voice.lang))
+  parts.push(voice.local ? 'On this device' : 'Needs a network')
+  if (voice.quality === 'high') parts.push('High quality')
+  else if (voice.quality === 'low') parts.push('Low quality')
+  return parts.join(' · ')
 }
 
 // ---------------------------------------------------------------------------

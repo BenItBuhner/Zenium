@@ -292,9 +292,11 @@ export function applicationMenu(browser: Browser): Template {
       { label: 'Bookmark All Tabs…', action: 'bookmark.allTabs', enabled: Boolean(win) },
       { type: 'separator' },
       { label: 'Show Bookmarks', action: 'bookmark.sidebar' },
+      // Chrome's Bookmarks menu entry: Settings > Import with the dialog up (the bookmark
+      // manager's own menu keeps the plain "Import Bookmarks…" file pick, as Chrome's does).
       {
-        label: 'Import Bookmarks…',
-        click: withWindow((w) => void browser.importBookmarks(w), true)
+        label: 'Import Bookmarks and Settings…',
+        click: withWindow((w) => browser.openImportDialog(w), true)
       },
       {
         label: 'Export Bookmarks…',

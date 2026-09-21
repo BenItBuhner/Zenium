@@ -119,25 +119,6 @@ describe('reader text preferences in the browser', () => {
     expect(JSON.parse(io.files['state.json']).settings.reader).toEqual(want)
   })
 
-  it('takes a reader page’s own toolbar message, and not one from a web page', () => {
-    const { browser, platform, win } = start()
-    const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
-    const web = browser.tabs.createTab({ url: 'https://example.com/', active: false }, win)
-
-    browser.handlePageMessage(web.id, { type: 'reader', reader: { font: 'mono' } })
-    expect(browser.reader.preferences().font).toBe('serif')
-
-    browser.handlePageMessage(reader.id, {
-      type: 'reader',
-      reader: { font: 'mono', width: 'wide' }
-    })
-    expect(browser.reader.preferences()).toMatchObject({ font: 'mono', width: 'wide' })
-    // The page that asked is told too (a second reader tab would follow the same push).
-    expect(platform.scripts.get(reader.id)!.map(applied).filter(Boolean)).toEqual([
-      { ...DEFAULT_READER_PREFERENCES, font: 'mono', width: 'wide' }
-    ])
-  })
-
   it('ignores a patch with nothing valid in it and one that changes nothing', () => {
     const { browser, platform, win } = start()
     const reader = browser.tabs.createTab({ url: READER_URL, active: true }, win)
