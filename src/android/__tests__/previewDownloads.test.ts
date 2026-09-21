@@ -112,6 +112,32 @@ describe('createPreviewDownloads: the downloader retrying its own network failur
     expect(s.events.at(-1)?.payload).toMatchObject({ state: 'interrupted', error: 'file-no-space' })
   })
 
+  it("a server refusing a fresh request leaves nothing to resume (Downloads.kt's rule): canResume false, no partial; a partial refused stays resumable", () => {
+    const s = stage()
+    start(s, spec({ receivedBytes: 0, error: 'server-bad-content' }))
+    expect(s.events.at(-1)?.payload).toMatchObject({
+      state: 'interrupted',
+      error: 'server-bad-content',
+      canResume: false,
+      savePath: ''
+    })
+
+    start(s, spec({ filename: 'partial.bin', receivedBytes: 400, error: 'server-failed' }), 'd2')
+    expect(s.events.at(-1)?.payload).toMatchObject({
+      state: 'interrupted',
+      error: 'server-failed',
+      canResume: true,
+      savePath: '/storage/emulated/0/Download/partial.bin.zeniumdownload'
+    })
+
+    start(s, spec({ filename: 'fresh.bin', receivedBytes: 0, error: 'network-timeout' }), 'd3')
+    expect(s.events.at(-1)?.payload).toMatchObject({
+      state: 'interrupted',
+      error: 'network-timeout',
+      canResume: true
+    })
+  })
+
   it('Resume during the countdown drops the attempt waiting and plays the transfer on from its bytes', () => {
     const s = stage()
     start(s, spec({ error: 'network-timeout', retrying: 3 }))

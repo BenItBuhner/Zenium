@@ -90,7 +90,13 @@ export function createPreviewDownloads(
   ): void => {
     stop(p)
     playing.delete(p.token)
-    const keepFile = state === 'completed' || state === 'interrupted'
+    // `Downloads.kt`'s rule: the network's failure of a transfer whose server takes ranges can
+    // be picked up (the stand-in's server always does), and so can a server's refusal of a
+    // request continuing a partial file; a server refusing a fresh request (a 404, a 5xx, no
+    // ranges) leaves nothing to resume, and the row offers Retry or nothing, per the verbs table.
+    const canResume =
+      state === 'interrupted' && ((error ?? '').startsWith('network-') || p.received > 0)
+    const keepFile = state === 'completed' || canResume
     emit('download.done', {
       token: p.token,
       state,
@@ -99,7 +105,7 @@ export function createPreviewDownloads(
       finalName: p.spec.filename,
       receivedBytes: p.received,
       totalBytes: p.spec.totalBytes,
-      canResume: state === 'interrupted',
+      canResume,
       error: error ?? null,
       mimeType: p.spec.mimeType
     })
