@@ -41,6 +41,7 @@ import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 import { answerProxySetting } from './extensionProxy'
+import { AndroidTts } from './extensionTts'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -53,7 +54,7 @@ import { answerProxySetting } from './extensionProxy'
  * management, commands, idle, offscreen, downloads. W2-2 maps tabs, windows, action, popups,
  * webNavigation, contextMenus, cookies and notifications onto the shared core properly; W2-3
  * routes declarativeNetRequest to `extensionDnr.ts` (the shared translator over the Kotlin
- * blocking engine).
+ * blocking engine); compat round 6 adds tts over the device's speech engine (`extensionTts.ts`).
  */
 
 /** An extension the runtime is running: its record, parsed manifest and the locale it uses. */
@@ -99,8 +100,14 @@ export interface ApiHost {
   /** `userScripts.configureWorld`: whether the user-script world gets `runtime.sendMessage`. */
   userScriptMessaging(id: string): boolean
   setUserScriptMessaging(id: string, messaging: boolean): Promise<void>
-  /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
-  emit(extensionId: string, ns: string, name: string, args: unknown[]): void
+  /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it (`only`: in those of them it names). */
+  emit(
+    extensionId: string,
+    ns: string,
+    name: string,
+    args: unknown[],
+    only?: (endpoint: Endpoint) => boolean
+  ): void
   /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
   emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
@@ -371,6 +378,8 @@ export class ExtensionApi {
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
+  /** `chrome.tts` over the device's speech engine, read aloud's (`extensionTts.ts`). */
+  readonly tts: AndroidTts
   private readonly actions = new Map<string, ActionRecord>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
@@ -410,6 +419,20 @@ export class ExtensionApi {
       allowed: () => host.notificationsAllowed(),
       emit: (id, ns, name, args) => host.emit(id, ns, name, args)
     })
+    this.tts = new AndroidTts({
+      speech: () => host.browser.platform.speech,
+      hasPermission: (id) => host.attached(id)?.manifest.permissions.includes('tts') === true,
+      endpointAlive: (endpointId) => host.router.endpoint(endpointId) !== undefined,
+      emit: (id, endpointId, args) =>
+        host.emit(id, 'tts', 'onEvent', args, (endpoint) => endpoint.id === endpointId),
+      voicesChanged: () => {
+        for (const ext of host.allAttached())
+          if (ext.manifest.permissions.includes('tts'))
+            host.emit(ext.record.id, 'tts', 'onVoicesChanged', [])
+      },
+      readAloudPlaying: () => host.browser.readAloud.uiState()?.status === 'playing',
+      pauseReadAloud: () => host.browser.readAloud.pause()
+    })
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -420,6 +443,7 @@ export class ExtensionApi {
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
     this.notifications.forget(id)
+    this.tts.forget(id)
   }
 
   /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
@@ -564,6 +588,8 @@ export class ExtensionApi {
         return this.host.dnr.call(ext, method, args)
       case 'notifications':
         return this.notifications.call(ext, method, args)
+      case 'tts':
+        return this.tts.call(id, endpoint.id, method, args)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':

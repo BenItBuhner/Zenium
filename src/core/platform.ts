@@ -1950,6 +1950,12 @@ export interface SpeechUtteranceOptions {
   lang: string
   /** 0.5–4 (`READ_ALOUD_RATES`). */
   rate: number
+  /**
+   * `chrome.tts`'s prosody, when an extension speaks through the host (Chrome's 0–2, 1 the
+   * voice's own; 0–1, 1 full): read aloud leaves both out, and a host without the knobs ignores them.
+   */
+  pitch?: number
+  volume?: number
 }
 
 /** What a speech host reports about an utterance it was given. */
@@ -1959,9 +1965,17 @@ export interface SpeechHostEvent {
   charIndex?: number
   /** `word`: how many characters the word spans (hosts that cannot tell leave it out). */
   length?: number
-  /** `error`: the host's message. */
+  /**
+   * `error`: the host's message. `interrupted` (`SPEECH_INTERRUPTED`) when another speaker's
+   * utterance replaced this one, or a `stop` dropped it, before it ended: the host says so about
+   * the one it dropped, so no listener waits on an `end` that never comes (each listener knows
+   * its own stops and speaks, and drops the reports about those).
+   */
   message?: string
 }
+
+/** `SpeechHostEvent.message` of an utterance another speaker (or a `stop`) cut short. */
+export const SPEECH_INTERRUPTED = 'interrupted'
 
 /**
  * The speech engine behind read aloud (`capabilities.readAloud`): the voices on the device, one
