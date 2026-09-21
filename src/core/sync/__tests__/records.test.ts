@@ -34,6 +34,7 @@ import {
 } from '../../../shared/bookmarks'
 import { DEFAULT_CONTAINERS, DEFAULT_SETTINGS } from '../../../shared/defaults'
 import type { BookmarkNode, Space, Tab } from '../../../shared/types'
+import { emptyLeakFields } from '../../../shared/types'
 
 type Fixture = Parameters<typeof collectLocal>[0] & {
   ids: { space: Space; pinned: Tab; regular: Tab; essential: Tab }
@@ -415,7 +416,8 @@ describe('credential records (ID-09)', () => {
     notes: '',
     createdAt: 100,
     updatedAt: 200,
-    lastUsedAt: null
+    lastUsedAt: null,
+    ...emptyLeakFields()
   }
   const passkey = {
     id: 'passkey_1',

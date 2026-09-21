@@ -1,4 +1,5 @@
 import type { Credential } from '../../../shared/types'
+import { emptyLeakFields } from '../../../shared/types'
 import { KeyWrapError } from '../../platform'
 import type { KdfParams, KeyWrapFailure, KeyWrapHost, StoreIO } from '../../platform'
 import { fromBase64, open, seal, toBase64 } from '../crypto'
@@ -102,6 +103,7 @@ export function credential(overrides: Partial<Credential> = {}): Credential {
     createdAt: 1_700_000_000_000 + counter,
     updatedAt: 1_700_000_000_000 + counter,
     lastUsedAt: null,
+    ...emptyLeakFields(),
     ...overrides
   }
 }

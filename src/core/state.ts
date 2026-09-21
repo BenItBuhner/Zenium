@@ -26,6 +26,7 @@ import type {
   NewTabDeviceState,
   NewTabShortcut,
   PageDialog,
+  PasswordsDeviceState,
   PrivateDeviceState,
   ScreenCaptureRequest,
   ShareRequest,
@@ -55,7 +56,9 @@ import type { ContentDefault } from '../shared/contentSettings'
 import {
   DEFAULT_CONTAINER_ID,
   PRIVATE_CONTAINER_ID,
+  emptyPasswordsDevice,
   emptyPrivateDevice,
+  sanitizePasswordsDevice,
   sanitizePrivateDevice
 } from '../shared/types'
 import { sanitizeAppIcon } from '../shared/appIcon'
@@ -203,6 +206,12 @@ export interface Persisted {
    * private tabs when you leave Zenium". Never synced; missing before the switch existed.
    */
   privateDevice?: PrivateDeviceState
+  /**
+   * The password manager's device-local state (the same shape): the last Password Checkup's
+   * counts and time, which Safety Check reads while the vault is locked. Never synced; missing
+   * before the summary existed.
+   */
+  passwordsDevice?: PasswordsDeviceState
 }
 
 /**
@@ -319,6 +328,14 @@ export class BrowserState {
    * screen lock. The lock itself is the phone host's, in memory; the core keeps only the switch.
    */
   privateDevice: PrivateDeviceState = emptyPrivateDevice()
+  /**
+   * The password manager's device-local state, the same shape: the last Password Checkup's
+   * counts and time (`PasswordsStatus.checkupSummary`, Safety Check's Passwords row), kept
+   * outside the vault so a locked vault still tells what the last run found. Replaced whole by
+   * the `PasswordService`, persisted with the profile, never synced (the counts are this
+   * device's view of the vault; another device runs its own checkup).
+   */
+  passwordsDevice: PasswordsDeviceState = emptyPasswordsDevice()
   media: MediaState[] = []
   devtoolsOpenFor = new Set<string>()
   resources: ResourceSnapshot = emptyResourceSnapshot()
@@ -583,6 +600,7 @@ export class BrowserState {
       newTabPhone
     })
     this.privateDevice = sanitizePrivateDevice(data.privateDevice)
+    this.passwordsDevice = sanitizePasswordsDevice(data.passwordsDevice)
     if (Array.isArray(data.windows) && data.windows.length) {
       this.restoredWindows = data.windows.filter((w) => w && typeof w.id === 'string')
     } else {
@@ -980,7 +998,8 @@ export class BrowserState {
       navigation: this.persistedNavigation(m.tabs),
       cleanExit: this.exiting,
       newTabDevice: this.newTabDevice,
-      privateDevice: this.privateDevice
+      privateDevice: this.privateDevice,
+      passwordsDevice: this.passwordsDevice
     }
   }
 

@@ -364,35 +364,42 @@ function safeBrowsingRow(reading: SafeBrowsingReading): SafetyCheckResult['safeB
     : { ...row('warning', 'Safe Browsing is off'), ...base }
 }
 
+/**
+ * The Passwords row reads the device's checkup summary (`PasswordsStatus.checkupSummary`: the
+ * last Password Checkup's counts and time, kept outside the vault, with `compromised` kept live
+ * by the sign-in leak check), so it costs no request and speaks while the vault is locked. A
+ * login a sign-in flagged before any checkup ran shows as compromised, and the row still says
+ * the checkup never ran (`checkedAt: null`) so the chrome offers to run it.
+ */
 function passwordsRow(status: PasswordsStatus | null): SafetyCheckResult['passwords'] {
-  const none = { compromised: 0, weak: 0, reused: 0, known: false }
+  const none = { compromised: 0, weak: 0, reused: 0, known: false, checkedAt: null }
   if (!status) return { ...row('unavailable', 'This device has no password vault'), ...none }
-  if (status.locked)
-    return { ...row('info', 'Unlock the password vault to check your passwords'), ...none }
-  if (status.count === 0) return { ...row('safe', 'No saved passwords'), ...none, known: true }
-  const checkup = status.checkup
-  if (checkup.finishedAt === null)
-    return { ...row('info', 'Run Password Checkup to look for compromised passwords'), ...none }
-  const compromised = checkup.compromised.length
-  const weak = checkup.weak.length
-  const reused = checkup.reused.reduce((n, group) => n + group.length, 0)
-  const counts = { compromised, weak, reused, known: true }
-  if (compromised > 0)
+  const summary = status.checkupSummary
+  const counts = { ...summary, known: true }
+  if (status.locked) {
+    if (summary.checkedAt === null && summary.compromised === 0)
+      return { ...row('info', 'Unlock the password vault to check your passwords'), ...none }
+  } else if (status.count === 0) return { ...row('safe', 'No saved passwords'), ...none, known: true }
+  if (summary.compromised > 0)
     return {
-      ...row('warning', `${plural(compromised, 'compromised password')} found; change them now`),
+      ...row(
+        'warning',
+        `${plural(summary.compromised, 'compromised password')} found; change them now`
+      ),
       ...counts
     }
-  if (weak > 0 || reused > 0) {
+  if (summary.checkedAt === null)
+    return { ...row('info', 'Run Password Checkup to look for compromised passwords'), ...none }
+  if (summary.weak > 0 || summary.reused > 0) {
     const parts: string[] = []
-    if (weak > 0) parts.push(plural(weak, 'weak password'))
-    if (reused > 0) parts.push(plural(reused, 'reused password'))
+    if (summary.weak > 0) parts.push(plural(summary.weak, 'weak password'))
+    if (summary.reused > 0) parts.push(plural(summary.reused, 'reused password'))
     return { ...row('info', parts.join(', ')), ...counts }
   }
-  if (checkup.unchecked.length > 0)
-    return {
-      ...row('info', `${plural(checkup.unchecked.length, 'password')} could not be checked`),
-      ...counts
-    }
+  // The run in this session left logins unchecked (network): neither safe nor compromised.
+  const unchecked = status.checkup.finishedAt === null ? 0 : status.checkup.unchecked.length
+  if (unchecked > 0)
+    return { ...row('info', `${plural(unchecked, 'password')} could not be checked`), ...counts }
   return { ...row('safe', 'No compromised passwords found'), ...counts }
 }
 

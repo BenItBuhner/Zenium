@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FormsCommand, FormsEvent } from '../../shared/forms'
 import type { Rect, Tab } from '../../shared/types'
+import { emptyPasswordsDevice } from '../../shared/types'
 import { sanitizeAutofillSettings, sanitizePasswordSettings } from '../../shared/defaults'
 import { AutofillService } from '../autofill'
 import type { Browser } from '../browser'
@@ -119,6 +120,8 @@ function setup(
         passwords: sanitizePasswordSettings(undefined),
         autofill: sanitizeAutofillSettings(undefined)
       },
+      passwordsDevice: emptyPasswordsDevice(),
+      commit: vi.fn(),
       commitVolatile: vi.fn()
     },
     history: { faviconsByDomain: () => new Map<string, string>() },

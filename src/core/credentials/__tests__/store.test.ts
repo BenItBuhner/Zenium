@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { NOTE_MAX_LENGTH } from '../../../shared/types'
 import { CredentialStore } from '../store'
 import { VAULT_DOCUMENT, VaultError } from '../vault'
 import { FakeKeyWrap, MemoryIO, corruptBase64 } from './fakes'
@@ -352,7 +353,8 @@ describe('CredentialStore writes', () => {
     })
     expect(login.username).toHaveLength(4096)
     expect(login.password).toHaveLength(4096)
-    expect(login.notes).toHaveLength(16 * 1024)
+    // Chrome's limit for a note written here (ID-34).
+    expect(login.notes).toHaveLength(NOTE_MAX_LENGTH)
   })
 })
 

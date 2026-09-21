@@ -421,14 +421,38 @@ export class CredentialStore {
     this.requireKey()
     const credential = this.credentials.get(id)
     if (!credential) return null
+    this.applyLeak(credential, fields, now)
+    this.changed([id])
+    return credential
+  }
+
+  /** `recordLeak` for a whole checkup: one write for every login it looked up. */
+  recordLeaks(
+    entries: Iterable<{ id: string; fields: Partial<CredentialLeakFields> }>,
+    now: number = Date.now()
+  ): void {
+    this.requireKey()
+    const ids: string[] = []
+    for (const { id, fields } of entries) {
+      const credential = this.credentials.get(id)
+      if (!credential) continue
+      this.applyLeak(credential, fields, now)
+      ids.push(id)
+    }
+    if (ids.length > 0) this.changed(ids)
+  }
+
+  private applyLeak(
+    credential: Credential,
+    fields: Partial<CredentialLeakFields>,
+    now: number
+  ): void {
     if (fields.breached !== undefined) {
       credential.breached = fields.breached
       credential.checkedAt = fields.checkedAt === undefined ? now : fields.checkedAt
     } else if (fields.checkedAt !== undefined) credential.checkedAt = fields.checkedAt
     if (fields.leakWarnedAt !== undefined) credential.leakWarnedAt = fields.leakWarnedAt
     if (fields.leakIgnoredAt !== undefined) credential.leakIgnoredAt = fields.leakIgnoredAt
-    this.changed([id])
-    return credential
   }
 
   /** Logins known breached whose warning the user has not ignored (Safety Check's compromised count). */

@@ -153,7 +153,8 @@ function result(patch: Partial<SafetyCheckResult> = {}): SafetyCheckResult {
       compromised: 0,
       weak: 0,
       reused: 0,
-      known: true
+      known: true,
+      checkedAt: 1_700_000_000_000
     },
     permissions: { state: 'safe', summary: 'No sites need a review', grantedSites: 0, review: [] },
     notifications: { state: 'safe', summary: 'No sites send notifications', sites: [] },
@@ -180,7 +181,8 @@ describe('Safety check card', () => {
             compromised: 2,
             weak: 0,
             reused: 0,
-            known: true
+            known: true,
+            checkedAt: 1_700_000_000_000
           }
         })
       )

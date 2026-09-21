@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../../browser'
 import { sanitizePasswordSettings } from '../../../shared/defaults'
+import { emptyPasswordsDevice } from '../../../shared/types'
 import { PasswordService } from '../service'
 import { FakeKeyWrap, MemoryIO } from './fakes'
 
@@ -19,6 +20,8 @@ function setup(options: { io?: MemoryIO; keys?: FakeKeyWrap } = {}): {
     platform: { io },
     state: {
       settings: { passwords: sanitizePasswordSettings(undefined) },
+      passwordsDevice: emptyPasswordsDevice(),
+      commit: vi.fn(),
       commitVolatile: vi.fn()
     },
     history: { faviconsByDomain: () => new Map<string, string>() },
