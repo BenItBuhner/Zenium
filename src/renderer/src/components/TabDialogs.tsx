@@ -11,6 +11,7 @@ import { uiStore, type UiState } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { AutofillEditor } from './autofill/AutofillEditor'
 import { AutofillPrompts } from './autofill/AutofillPrompts'
+import { LeakWarnings } from './autofill/LeakWarning'
 import { PassphraseDialog } from './autofill/PassphraseDialog'
 import { ExtensionPromptDialog } from './extensions/ExtensionPromptDialog'
 import { ClearBrowsingDataDialog } from './siteControls/ClearBrowsingDataDialog'
@@ -63,7 +64,8 @@ const TAB_ICONS = [
  * (`alert`, `confirm`, `prompt`, "Leave site?"), the questions asked before a window closes or
  * Zenium quits, the new tab page's add / edit shortcut dialog, the extension install and
  * permission prompts, the site-information popover's "Clear site data?" confirmation, the Clear
- * browsing data dialog Settings opens on a mouse, the autofill prompts (save / update a login,
+ * browsing data dialog Settings opens on a mouse, the sign-in leak warning ("Change your
+ * password", `LeakWarnings`), the autofill prompts (save / update a login,
  * save an address or a card, choose a passkey account), the address and card editors of
  * Settings > Autofill, the vault passphrase asked for by a re-authenticated command run from
  * the chrome, the print preview (Chrome's constrained window at the frame's size) and, on
@@ -130,6 +132,7 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
       <InstallDialogLayer state={state} />
       <ScreenPickerLayer state={state} />
       <ShareLayer state={state} />
+      <LeakWarnings state={state} />
       <AutofillPrompts state={state} />
       <AutofillEditor state={state} />
       <PassphraseDialog />

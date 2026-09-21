@@ -132,6 +132,12 @@ export const PASSWORDS_COPY = {
     label: 'Ask again before showing or copying',
     description: 'How long one verification covers reveals, copies and exports.'
   },
+  /** Chrome's words for its leak detection (ID-31); the lookup sends a hash prefix, never the password. */
+  leakDetection: {
+    label: 'Warn you if passwords are exposed in a data breach',
+    description:
+      'After you sign in, Zenium checks the password against known breaches without sending it anywhere.'
+  },
   protection: { label: 'Vault protection' },
   lock: {
     label: 'Lock the vault',
