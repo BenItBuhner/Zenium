@@ -37,6 +37,7 @@ import {
   openAutofillPrompt,
   type AutofillPromptSurface
 } from '@renderer/lib/autofill'
+import { LEAK_HOLD_MS, savePromptHold } from '@renderer/lib/credentialLeak'
 import { uiStore } from '@renderer/lib/ui'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import {
@@ -74,6 +75,16 @@ const PROMPT_POP_MS = 180
  * with its 20 px glyph and the description, the body, the full-width footer actions of §9.11,
  * no 48 header); dragging it away is "not now". Answers go to the core (`autofill.respond`),
  * which saves and moves on to the next prompt.
+ *
+ * A sign-in that is also a known leak raises Chrome's "Change your password" warning beside
+ * the save prompt (`LeakWarning.tsx`, ID-31), and Chrome shows the warning first. On a mouse
+ * that falls out of the chassis: the warning is a frame dialog, and a dialog opening puts the
+ * popover away behind its chip (§9.20), where the chip brings it back once the warning is
+ * answered. On a phone both are sheets, so the order is kept here: a save sheet that has not
+ * risen yet waits while a warning is up for its tab, and while the tab's leak check is still
+ * running – for `LEAK_HOLD_MS` at most (`savePromptHeld`, lib/credentialLeak.ts) – and a warning
+ * finding the save sheet already up waits for it (`LeakWarnings`); two sheets never stack for
+ * this.
  */
 export function AutofillPrompts({ state }: { state: UIState }): JSX.Element | null {
   const prompt = currentAutofillPrompt(state)
@@ -94,6 +105,7 @@ export function AutofillPrompts({ state }: { state: UIState }): JSX.Element | nu
       surface={surface}
       loading={Boolean(tab?.loading)}
       favicon={tab?.favicon ?? null}
+      state={state}
     />
   )
 }
@@ -103,29 +115,44 @@ export function AutofillPrompts({ state }: { state: UIState }): JSX.Element | nu
  * in under the prompt: wait for the page to finish loading (not for long) before capturing it.
  * A checkout's card and address prompts come up on the submit itself, before the navigation it
  * starts: those get a moment for it to begin, so the picture is of the page that follows.
+ * A phone sheet that has not come up yet holds for a leak warning on its tab, or for the tab's
+ * check while it runs (`savePromptHeld`); one that is up stays up (its username may have been
+ * edited), and the warning waits for it instead.
  */
 function PromptHost({
   prompt,
   surface,
   loading,
-  favicon
+  favicon,
+  state
 }: {
   prompt: AutofillPrompt
   surface: AutofillPromptSurface
   loading: boolean
   favicon: string | null
+  state: UIState
 }): JSX.Element | null {
   const [settled, setSettled] = useState(prompt.kind === 'passkey-account')
   const sawLoad = useRef(false)
+  // The hold for a running check runs out on its own clock: a slow lookup never keeps the sheet.
+  const [holdOver, setHoldOver] = useState(false)
+  const hold = surface === 'sheet' ? savePromptHold(state, prompt.tabId) : null
+  useEffect(() => {
+    if (hold !== 'check' || holdOver || settled) return
+    const timer = window.setTimeout(() => setHoldOver(true), LEAK_HOLD_MS)
+    return () => window.clearTimeout(timer)
+  }, [hold, holdOver, settled])
+  const held = hold === 'warning' || (hold === 'check' && !holdOver)
   useEffect(() => {
     if (settled) return
     if (loading) sawLoad.current = true
+    if (held) return
     // Once the load ends the wait is over on the next tick; otherwise it runs out on its own.
     const followsSubmit = prompt.kind === 'save-card' || prompt.kind === 'save-address'
     const wait = loading ? PAGE_WAIT_MS : followsSubmit && !sawLoad.current ? SUBMIT_GRACE_MS : 0
     const timer = window.setTimeout(() => setSettled(true), wait)
     return () => window.clearTimeout(timer)
-  }, [loading, settled, prompt.kind])
+  }, [loading, settled, held, prompt.kind])
   if (!settled) return null
   return <Prompt prompt={prompt} surface={surface} favicon={favicon} />
 }
@@ -236,10 +263,11 @@ function titleGlyph(copy: PromptCopy, favicon: string | null): ReactNode {
 }
 
 /**
- * A static row showing what would be saved: glyph, title line, description line (§9.2) – the
- * shared row, no target, so `data-static` (§9.34).
+ * A static row showing what would be saved – or, in the leak warning, the account the sign-in
+ * was for: glyph, title line, description line (§9.2) – the shared row, no target, so
+ * `data-static` (§9.34).
  */
-function PreviewRow({
+export function PreviewRow({
   icon: Icon,
   title,
   subtitle

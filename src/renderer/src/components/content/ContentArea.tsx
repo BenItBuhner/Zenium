@@ -394,6 +394,7 @@ function overlayCoversContentBesidesStage(ui: UiState): boolean {
     ui.siteInfoOpen ||
     ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
+    ui.credentialLeakOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.windowPromptOpen ||

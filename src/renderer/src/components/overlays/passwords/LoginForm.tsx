@@ -1,10 +1,10 @@
 import type { JSX } from 'react'
 import { useState } from 'react'
 import { Dices, Eye, EyeOff } from 'lucide-react'
-import type { CredentialSummary } from '@shared/types'
+import { NOTE_MAX_LENGTH, type CredentialSummary } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { Generator } from './Generator'
-import { domainFromInput, usePhone } from './lib'
+import { domainFromInput, noteCounter, noteOverLimit, usePhone } from './lib'
 import { Btn, Field, FormActions, IconBtn, TextArea, TextField } from './shared'
 
 export interface LoginFormValues {
@@ -19,7 +19,9 @@ export interface LoginFormValues {
  * icon buttons beside it on both form factors, the generator unfolding under it – in a card on
  * the desktop (§6), as plain rows on a phone (§9.17: no new phone cards) – and the §9.11 actions
  * last. When editing, the password field starts empty and only a typed or generated value
- * replaces the stored one (the form never holds the current secret).
+ * replaces the stored one (the form never holds the current secret). The note (ID-34) clips at
+ * Chrome's `NOTE_MAX_LENGTH`: a counter comes up under the field as it nears the limit, and a
+ * longer note that arrived by sync shows §9.12's validation and holds Save until it fits.
  */
 export function LoginForm({
   existing,
@@ -38,7 +40,11 @@ export function LoginForm({
   const [show, setShow] = useState(false)
   const [generating, setGenerating] = useState(false)
   const domain = domainFromInput(url)
-  const ready = url.trim().length > 0 && (existing ? true : password.length > 0)
+  const noteError = noteOverLimit(notes.length)
+  // A live number: tabular figures keep the message's width still as the count moves (§4).
+  const counter = noteCounter(notes.length)
+  const ready =
+    url.trim().length > 0 && (existing ? true : password.length > 0) && noteError === null
   return (
     <form
       className="flex flex-col gap-4"
@@ -110,9 +116,20 @@ export function LoginForm({
           }}
         />
       )}
-      <Field id="login-notes" label="Notes">
+      <Field
+        id="login-notes"
+        label="Notes"
+        description={counter && <span className="tabular-nums">{counter}</span>}
+        error={noteError}
+      >
         {(aria) => (
-          <TextArea {...aria} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <TextArea
+            {...aria}
+            rows={2}
+            maxLength={NOTE_MAX_LENGTH}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
         )}
       </Field>
       <FormActions className="pt-2">

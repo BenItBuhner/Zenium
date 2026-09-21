@@ -1,6 +1,5 @@
 import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { Globe } from 'lucide-react'
 import { appIconVariant } from '@shared/appIcon'
 import type { DefaultBrowserRequestSource } from '@shared/types'
 import { usePopover } from '@renderer/hooks/usePopover'
@@ -43,9 +42,11 @@ const START_GRACE_MS = 400
 /**
  * The browser-role promo (DEF-01): shown when the core's `DefaultBrowserService` decides a
  * session is due one, as a prompt sheet on touch and a prompt dialog where a mouse drives the
- * chrome (DeX, a tablet with a trackpad) – the one §9.23 composition in the two chromes: the
- * chassis' title block (the bare 20 px glyph on the title's start, 16 on desktop, the paragraph
- * as its description) over a §9.11 footer, both in the frame's dialog host (lib/portals.tsx).
+ * chrome (DeX, a tablet with a trackpad) – the one §9.23 composition in the two chromes: a
+ * prompt about Zenium itself, so the 48 px app icon stands above the chassis' title block (no
+ * inline glyph: the identity is the title's own word, and an icon beside it would read as a
+ * row; the desktop's `AskDialog` is the same form), the paragraph as the block's description,
+ * over a §9.11 footer, both in the frame's dialog host (lib/portals.tsx).
  * "Set as default" hands over to the system's role dialog and the button is busy (§9.30) until
  * that dialog has come back; "Not now", the scrim, the back gesture and Escape all count as one
  * dismissal towards the campaign's limit. Hosts without the capability never get a prompt to
@@ -180,13 +181,15 @@ function dismiss(): void {
 
 /**
  * The phone's prompt sheet on the chassis (`PhoneSheet`: the frame's dialog host, the grip
- * strip, the §9.23 title block, the sheet's own scrim, back gesture, Escape and focus), with
+ * strip, the 48 px app icon above the §9.23 title block – a prompt about Zenium itself, the
+ * desktop `AskDialog`'s form – the sheet's own scrim, back gesture, Escape and focus), with
  * the §9.11 footer straight under the title block – its 16 below serves as the 16 to the
  * buttons (§9.20), so the footer adds none of its own.
  */
 function PromoSheet({ due, onGone }: PromoProps): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
   const { busy, request } = useRequest()
+  const appIcon = browserStore.use((s) => s.state?.settings.appIcon)
   // "Set as default" taken: the sheet leaving afterwards is not a "Not now".
   const chosen = useRef(false)
   // The role request is out: the core has cleared the prompt, the sheet holds until it is back.
@@ -204,11 +207,12 @@ function PromoSheet({ due, onGone }: PromoProps): JSX.Element {
   return (
     <PhoneSheet
       name="default-browser"
-      // A prompt: the title block (§9.23) – the paragraph is the title's description.
+      // A prompt about Zenium (§9.23): the app icon above the title block, the paragraph the
+      // title's description.
       title={{
         pose: 'block',
         text: TITLE,
-        icon: <Globe className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
+        appIcon: <AppIconImage variant={appIconVariant(appIcon)} />,
         description: BODY
       }}
       focus="first"
@@ -241,15 +245,16 @@ function PromoDialog(props: PromoProps): JSX.Element {
 }
 
 /**
- * A `--v2-dialog` at the form width (§9.20) over the host's §9.5 scrim: the title block with the
- * 16 px glyph, then the buttons hugging and right-aligned (§9.11), 16 from the block and 16 to
- * the edge. Escape, the scrim and "Not now" dismiss it, so there is no X; focus starts on the
- * primary and Tab wraps (§9.22). Under reduced motion the pop keeps only its fade (§11.3, the
- * shared `zen-animate-pop`).
+ * A `--v2-dialog` at the form width (§9.20) over the host's §9.5 scrim: the 48 px app icon
+ * above the title block (§9.23, as `AskDialog` draws it – the one composition), then the
+ * buttons hugging and right-aligned (§9.11), 16 from the block and 16 to the edge. Escape, the
+ * scrim and "Not now" dismiss it, so there is no X; focus starts on the primary and Tab wraps
+ * (§9.22). Under reduced motion the pop keeps only its fade (§11.3, the shared `zen-animate-pop`).
  */
 function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const { busy, request } = useRequest()
+  const appIcon = browserStore.use((s) => s.state?.settings.appIcon)
   const chosen = useRef(false)
   const requesting = useRef(false)
   // The dialog leaves once, whichever of Escape, the scrim, back or a button says so first.
@@ -287,12 +292,8 @@ function HostedDialog({ due, onGone }: PromoProps): JSX.Element {
       className="zen-v2 zen-v2-dialog zen-animate-pop flex max-w-[calc(100%-32px)] flex-col"
       style={{ width: POPOVER_WIDTH.form }}
     >
-      <V2TitleBlock
-        id="zen-default-browser-title"
-        title={TITLE}
-        description={BODY}
-        glyph={<Globe aria-hidden />}
-      />
+      <AppIconImage variant={appIconVariant(appIcon)} className="zen-default-browser-prompt-icon" />
+      <V2TitleBlock id="zen-default-browser-title" title={TITLE} description={BODY} />
       <div className="flex justify-end gap-2 px-4 pb-4">
         <V2Button disabled={busy} onClick={leave}>
           Not now

@@ -16,19 +16,16 @@ import {
 import type { MediaState, UIState } from '@shared/types'
 import { useMediaSeek } from '@renderer/hooks/useMediaSeek'
 import { run } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import { formatMediaTime, handlesAction, mediaDetail, mediaOf } from '@renderer/lib/media'
-import { useFrameDialog } from '@renderer/lib/portals'
 import { PRIVATE_TAB_PLACEHOLDER, useMediaMasked } from '@renderer/lib/privateLock'
 import { activeTab } from '@renderer/lib/selectors'
 import { closeMediaSheet, uiStore } from '@renderer/lib/ui'
-import { useEscapeTrap } from '../bookmarks/escape'
-import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
 import { ListRow } from '../siteControls/primitives'
 import { Slider } from '../ui/slider'
 import { V2_GLYPH } from '../v2/controls'
+import { PhoneSheet } from './PhoneSheet'
 
-const TITLE_ID = 'zen-media-title'
 /** The step of the seek buttons, Chrome's default for `seekbackward` / `seekforward`. */
 const SEEK_STEP_S = 10
 
@@ -39,9 +36,9 @@ export function MediaLayer({ state }: { state: UIState }): JSX.Element | null {
 }
 
 /**
- * The in-app player (MW-16), a phone sheet on the v2 sheet chassis (`BottomSheet`: grip, 48
- * header, body at the 16 gutter) placed through `FrameDialogHost` and drawing the stack's one
- * scrim itself. It shows the tab's media as the OS controls do – artwork, title, artist and site
+ * The in-app player (MW-16), the phone's shared `PhoneSheet` (grip, the 48 header, body at the
+ * 16 gutter; placed through `FrameDialogHost`, drawing the stack's one scrim itself, the system
+ * back and Escape). It shows the tab's media as the OS controls do – artwork, title, artist and site
  * – with the seek row of §10.4 (44 px step buttons at the row's ends, the track between them, the
  * times in `tabular-nums` above) and the transport row (previous track, play / pause, next
  * track; the track buttons at .4 when the page handles neither, §9.30), then the rows that lead
@@ -67,14 +64,6 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
   const tab = state.tabs[tabId]
   const masked = useMediaMasked(media)
   const dismiss = useCallback(() => sheet.current?.dismiss(), [])
-  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
-  useEscapeTrap(true, dismiss)
-  useBackSurface({
-    name: 'media',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
 
   // The media went (its tab closed, the element gone): the sheet has nothing to show and leaves.
   useEffect(() => {
@@ -86,19 +75,14 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
   const contentKey = `${tabId}:${pip ? 'pip' : ''}:${elsewhere ? 'switch' : ''}:${masked ? 'masked' : ''}`
 
   return (
-    <BottomSheet
-      ref={sheet}
-      hosted
+    <PhoneSheet
+      name="media"
+      title={{ pose: 'header', text: 'Now playing' }}
       fitContent
       className="zen-media-sheet"
-      labelledBy={TITLE_ID}
-      onDismissed={closeMediaSheet}
+      onClose={closeMediaSheet}
       contentKey={contentKey}
-      header={
-        <h2 id={TITLE_ID} className="zen-sheet-title">
-          Now playing
-        </h2>
-      }
+      sheetRef={sheet}
     >
       {media && (
         <div className="zen-media-body" data-testid="media-sheet">
@@ -131,7 +115,7 @@ function MediaSheet({ state, tabId }: { state: UIState; tabId: string }): JSX.El
           )}
         </div>
       )}
-    </BottomSheet>
+    </PhoneSheet>
   )
 }
 

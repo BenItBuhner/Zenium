@@ -68,6 +68,17 @@ describe('parsePreviewSpec', () => {
     })
   })
 
+  it('takes steps on an overlay once it is up: a row held for selection mode, a row tapped', () => {
+    expect(parsePreviewSpec('overlay=history&then=hold:Example Domain;tap:Wikipedia')).toEqual({
+      kind: 'overlay',
+      overlay: 'history',
+      then: [
+        { kind: 'hold', text: 'Example Domain' },
+        { kind: 'tap', text: 'Wikipedia' }
+      ]
+    })
+  })
+
   it('knows no Settings, Shortcuts or Sync overlay: on this host Settings is a tab (page=settings)', () => {
     expect(parsePreviewSpec('overlay=settings')).toEqual({ kind: 'idle' })
     expect(parsePreviewSpec('overlay=settings&section=accessibility')).toEqual({ kind: 'idle' })
@@ -184,6 +195,8 @@ describe('parsePreviewSpec', () => {
         { kind: 'tap', text: 'Remove from Zenium' }
       ]
     })
+    expect(parsePreviewSpec('sheet=customise')).toEqual({ kind: 'sheet', sheet: 'customise' })
+    expect(parsePreviewSpec('sheet=promo')).toEqual({ kind: 'sheet', sheet: 'promo' })
     expect(parsePreviewSpec('menu=app&sheet=extensions')).toEqual({ kind: 'menu', menu: 'app' })
     expect(parsePreviewSpec('sheet=extensions&prompt=camera')).toEqual({
       kind: 'sheet',

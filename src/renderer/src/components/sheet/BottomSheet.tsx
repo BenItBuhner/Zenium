@@ -71,6 +71,11 @@ interface Props {
   /** The id of the element that names the dialog (its title), for `aria-labelledby`. */
   labelledBy?: string
   /**
+   * The id of the element that describes the dialog (a title-and-notice sheet's sentence), for
+   * `aria-describedby`: read after the name when the dialog itself takes the focus (§9.22).
+   */
+  describedBy?: string
+  /**
    * The dialog's name where no element on it says it (a menu sheet with no title row): TalkBack
    * announces a dialog by its name as it opens, and an unnamed one is "dialog" and nothing more.
    */
@@ -185,6 +190,7 @@ export function BottomSheet({
   handleLabel = 'Resize sheet',
   fadeEdges = true,
   labelledBy,
+  describedBy,
   label,
   className,
   hosted = false,
@@ -836,6 +842,7 @@ export function BottomSheet({
         ref={sheetRef}
         role="dialog"
         aria-labelledby={labelledBy}
+        aria-describedby={describedBy}
         aria-label={labelledBy ? undefined : label}
         tabIndex={-1}
         className={cn(
