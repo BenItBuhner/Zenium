@@ -278,7 +278,9 @@ export function useMainEvents(): void {
         )
       }),
       onEvent('bookmark.edit', (edit) => {
-        // Inside the manager the request is handled in place; anywhere else it is a dialog.
+        // Over the phone's bookmarks panel the request is the panel's sheet, with the panel's
+        // own picture behind it; anywhere else it is a dialog over the page (the manager page
+        // renames a folder in view in place and lets the rest through to it).
         if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
         else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
       }),

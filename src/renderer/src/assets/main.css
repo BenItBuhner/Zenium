@@ -3566,11 +3566,6 @@
       var(--zen-shadow-2);
     scale: 1.02;
   }
-  /* The list's empty space is the append target of a drag. */
-  .zen-bm-list[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
   /*
    * The empty bar's hint (#226): a sentence in the window family's deemphasised ink – the
    * theme's foreground at 69%, which `data-surface="window"` resolves per theme (§9.29) – at
@@ -3922,23 +3917,6 @@
     box-shadow: var(--v2-shadow-sheet);
     color: var(--v2-text);
   }
-  .zen-bm-page {
-    border-radius: 8px;
-    background: var(--v2-page);
-    backdrop-filter: none;
-    border: 1px solid var(--v2-border);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  /* Page header (v2 §9.7): no hairline at rest; the list's toolbar is the sticky edge rows
-   * scroll under, so that is where the 1px line appears while scrolled. */
-  .zen-bm-toolbar {
-    border-bottom: 1px solid transparent;
-    transition: border-color 120ms var(--zen-ease);
-  }
-  .zen-bm-toolbar[data-scrolled='true'] {
-    border-color: var(--v2-border);
-  }
   /* Form fields (§9.12): the label above the field, 15/400, 4px to the field. */
   .zen-bm-label {
     display: flex;
@@ -3949,116 +3927,6 @@
     line-height: var(--v2-line-small);
     font-weight: 400;
   }
-  .zen-bm-dim {
-    color: var(--v2-text-deemphasized);
-  }
-
-  /*
-   * Manager rows (v2 §9.2): label 15/20 over a 13/20 description, 6px block padding, so a row is
-   * 52 and grows with its content; rows touch (§9.21). The icon sits on the first text line,
-   * (line − glyph) / 2 below its top.
-   */
-  .zen-bm-row {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    min-height: var(--v2-row-two-line);
-    padding: 6px 10px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    outline: none;
-    user-select: none;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease),
-      opacity 100ms var(--zen-ease);
-  }
-  .zen-bm-row:hover {
-    background: var(--v2-fill);
-  }
-  /* A selected row: the control accent at 16% (the draft names no token for list selection). */
-  .zen-bm-row[aria-selected='true'] {
-    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
-  }
-  .zen-bm-row[data-focused='true'] {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: -2px;
-  }
-  .zen-bm-row[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
-  .zen-bm-row[data-lifted='true'] {
-    opacity: 0.4;
-  }
-  .zen-bm-row-icon {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-  }
-  .zen-bm-row-title {
-    overflow: hidden;
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .zen-bm-row-desc {
-    overflow: hidden;
-    color: var(--v2-text-deemphasized);
-    font-size: 13px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .zen-bm-row-meta {
-    flex-shrink: 0;
-    width: 88px;
-    color: var(--v2-text-deemphasized);
-    font-size: 13px;
-    line-height: var(--v2-line-body);
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* The folder tree is the page's nav column: 34px items, the shown folder filled with a 3px bar. */
-  .zen-bm-tree-row {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 34px;
-    padding-right: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    color: var(--v2-text);
-    font-size: 15px;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease);
-  }
-  .zen-bm-tree-row:hover {
-    background: var(--v2-fill);
-  }
-  .zen-bm-tree-row[aria-selected='true'] {
-    background: var(--v2-nav-active);
-  }
-  .zen-bm-tree-row[aria-selected='true']::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 3px;
-    background: var(--v2-accent);
-  }
-  .zen-bm-tree-row[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-  }
-
   /*
    * The folder chooser (components/bookmarks/FolderChooser.tsx; §9.21, §9.6, §9.30): the tree in
    * the folder menulist's place in the star bubble and the dialogs, its rows the shared
@@ -4112,35 +3980,6 @@
   }
   .zen-bm-pick-rename {
     margin-block: -2px;
-  }
-
-  /* Breadcrumb segments: buttons and drop-into targets. */
-  .zen-bm-crumb {
-    max-width: 220px;
-    overflow: hidden;
-    padding: 2px 6px;
-    border-radius: 4px;
-    color: var(--v2-text-deemphasized);
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    transition:
-      background 100ms var(--zen-ease),
-      box-shadow 100ms var(--zen-ease);
-  }
-  .zen-bm-crumb:hover:not(:disabled) {
-    background: var(--v2-fill);
-    color: var(--v2-text);
-  }
-  .zen-bm-crumb[aria-current='location'] {
-    color: var(--v2-text);
-    font-weight: 600;
-  }
-  .zen-bm-crumb[data-target='true'] {
-    background: var(--v2-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
-    color: var(--v2-text);
   }
 
   /* In-place title editor: a 24px field on the row, focus ring only. */
@@ -4312,18 +4151,6 @@
   outline: none;
 }
 
-/*
- * The manager page's header (v2 §9.7): a 22/600 title and no hairline at rest. Unlayered on
- * purpose: OverlayShell's header carries utility classes (`border-b`, `text-[14px]`), and the
- * utilities layer would beat anything in `@layer components`.
- */
-.zen-bm-page > header {
-  border-color: transparent;
-}
-.zen-bm-page > header > h2 {
-  font-size: 22px;
-  letter-spacing: -0.014em;
-}
 /*
  * The tab search popover's section headings (components/tabsearch/TabSearchPopover.tsx) on the
  * shared `.zen-v2-heading`: a popover's list of two-line rows takes a tighter beat than the
@@ -8780,6 +8607,285 @@
   color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-body);
   line-height: var(--v2-line-body);
+}
+
+/* -------------------------------------------------------------------------
+ * The bookmarks manager (components/pages/bookmarks/*, §10.1, §10.5): the page frame above,
+ * split under its header into the Settings tab's two panes – the folder tree in the nav
+ * column's 234, the shown folder's rows in the content column – each scrolling on its own,
+ * the header staying put over both and drawing §9.7's hairline once either has scrolled under
+ * it. Narrower than `TWO_PANE_MIN_WIDTH` the tree column goes (`data-layout="one-pane"`) and
+ * the breadcrumb is the way up. Only what the two panes add: the primitives above draw the
+ * header, the rows and the headings.
+ * ------------------------------------------------------------------------- */
+.zen-bm-header {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.zen-bm-header[data-scrolled]::after {
+  opacity: 1;
+}
+.zen-bm-panes {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+/* The folder column (§10.5): the nav's 234, its first row 8 under the header (§10.3), no scrollbar. */
+.zen-bm-nav {
+  width: 234px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 0 24px;
+  scrollbar-width: none;
+}
+.zen-bm-nav::-webkit-scrollbar {
+  display: none;
+}
+/*
+ * The list column: the page body's geometry inside it, the drag's insertion caret positioned in
+ * it, and – while a drag hovers its empty space – the shown folder's append target (§9.4).
+ */
+.zen-bm-list {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.zen-bm-list[data-target] {
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+/*
+ * The tree (§10.5, §9.22): 34 px rows edge to edge in the column, each level 16 further in (the
+ * row's own inline padding) – the 20 twisty round a 16 chevron that turns down while the branch
+ * is open, the 16 folder glyph in the deemphasised ink 4 after it (the bar's chips' folder), the
+ * name 15/400 12 after that; the shown folder on `--v2-nav-active` with the 3 px accent bar down
+ * the column's edge, as the Settings nav's open category; a folder a drag hovers takes the
+ * drop-into ring. The ring of the one tab stop stands inside the column's clip.
+ */
+.zen-bm-tree,
+.zen-bm-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.zen-bm-tree-row {
+  position: relative;
+  display: flex;
+  height: var(--v2-nav-item);
+  align-items: center;
+  gap: 4px;
+  padding-right: 16px;
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  cursor: default;
+  user-select: none;
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  .zen-bm-tree-row:hover {
+    background: var(--v2-fill);
+  }
+}
+.zen-bm-tree-row:active {
+  background: var(--v2-fill);
+}
+.zen-bm-tree-row[aria-selected='true'],
+.zen-bm-tree-row[aria-selected='true']:hover {
+  background: var(--v2-nav-active);
+}
+.zen-bm-tree-row[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--v2-accent);
+}
+.zen-bm-tree-row[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+.zen-bm-tree-row:focus-visible {
+  outline-offset: -2px;
+}
+.zen-bm-tree-twisty {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--v2-text-deemphasized);
+}
+.zen-bm-tree-twisty > svg {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  transition: transform 120ms var(--zen-ease);
+}
+.zen-bm-tree-twisty > svg[data-open] {
+  transform: rotate(90deg);
+}
+.zen-bm-tree-twisty-none {
+  visibility: hidden;
+}
+.zen-bm-tree-glyph {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+.zen-bm-tree-label {
+  min-width: 0;
+  flex: 1;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The folder's path as the list's heading line (§9.27): every ancestor a 15/400 deemphasised
+ * button and a drop-into target, the 16 chevrons between them at 69 %, the shown folder the
+ * group's 15/600 `h2` at the end; the steps' 6 side padding is taken back at the line's start
+ * so the first name's text stands at the column's 32 with the other headings'.
+ */
+.zen-bm-crumbs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  margin-left: -6px;
+}
+.zen-bm-crumb-step {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 1;
+  align-items: center;
+}
+.zen-bm-crumb {
+  min-width: 0;
+  max-width: 220px;
+  margin: 0;
+  padding: 0 6px;
+  border-radius: var(--v2-radius-control);
+  overflow: hidden;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background 120ms var(--zen-ease),
+    box-shadow 120ms var(--zen-ease),
+    color 120ms var(--zen-ease);
+}
+@media (hover: hover) {
+  button.zen-bm-crumb:hover {
+    background: var(--v2-fill);
+    color: var(--v2-text);
+  }
+}
+.zen-bm-crumb[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+  color: var(--v2-text);
+}
+.zen-bm-crumb-current {
+  flex-shrink: 0;
+  max-width: none;
+  color: var(--v2-text);
+  font-weight: var(--v2-weight-heading);
+}
+.zen-bm-crumbs .zen-bm-crumb-current {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.zen-bm-crumb-chevron {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+/*
+ * The rows as a listbox's options (§9.6, §9.22): the keyboard's cursor is the row the list's
+ * `aria-activedescendant` names, ringed while the list has the focus (the list itself draws no
+ * ring); a folder a drag hovers takes the drop-into ring (§9.4); a row travelling under the
+ * pointer fades to its placeholder; a folder's and an unfaviconed bookmark's glyph are the
+ * deemphasised ink; the rename field (§9.12) stands on the label's line, its 24 centred on the 20.
+ */
+.zen-bm-rows:focus-visible {
+  outline: none;
+}
+.zen-bm-rows:focus-visible > .zen-bm-row[data-focused] {
+  outline: 2px solid var(--v2-ring);
+  outline-offset: -2px;
+}
+.zen-bm-row {
+  user-select: none;
+}
+.zen-bm-row[data-target] {
+  background: var(--v2-fill);
+  box-shadow: inset 0 0 0 2px var(--v2-accent);
+}
+.zen-bm-row[data-lifted] {
+  opacity: 0.4;
+}
+.zen-bm-row-glyph.zen-bm-glyph-folder,
+.zen-bm-row-glyph.zen-bm-glyph-globe {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+  opacity: 1;
+}
+.zen-bm-row-rename {
+  display: flex;
+  height: var(--v2-line-body-box);
+  align-items: center;
+}
+.zen-bm-row-rename > .zen-bm-rename {
+  margin-block: -2px;
+}
+/*
+ * What travels under the pointer (§9.4): a compact copy of the first picked row – its glyph and
+ * name on a 32 line, the count badge after them when more came along – lifted as the bar's
+ * chips are (`.zen-bm-lift`), beside the pointer so the row under it stays in view.
+ */
+.zen-bm-drag-ghost {
+  position: absolute;
+  display: flex;
+  height: var(--v2-control);
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--v2-radius-control);
+  color: var(--v2-text);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+  white-space: nowrap;
+}
+.zen-bm-drag-ghost-icon {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+}
+.zen-bm-drag-ghost-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zen-bm-drag-ghost-count {
+  flex-shrink: 0;
 }
 
 /*

@@ -54,8 +54,9 @@ const TAB_ICONS = [
 ]
 
 /**
- * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", a bookmark or
- * folder edit requested outside the manager (the manager hosts its own), the pinned-URL editor
+ * Small dialogs shown by every layout: the star bubble, "Bookmark all tabs", the bookmark or
+ * folder edit (the bookmarks manager page renames a folder in view in place and lets every
+ * other request through to this dialog), the pinned-URL editor
  * and the icon picker, the security prompts (HTTP sign-in, certificate choice) the page's
  * requests wait on, the permission prompts a page's requests wait on, the screen-capture picker
  * a page's `getDisplayMedia` waits on, the page's own dialogs
@@ -86,7 +87,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
   const edit = uiStore.use((s) => s.bookmarkEdit)
   const shortcut = uiStore.use((s) => s.newTabShortcutDialog)
   const siteData = uiStore.use((s) => s.siteDataConfirm)
-  const managerOpen = uiStore.use((s) => s.overlay === 'bookmarks')
   const phone = useViewport().formFactor === 'phone'
   const popups = uiStore.use((s) => s.blockedPopupsPanel)
   const pinnedTab = pinnedTabId ? state.tabs[pinnedTabId] : undefined
@@ -98,7 +98,6 @@ export function TabDialogs({ state }: { state: UIState }): JSX.Element {
         star={star}
         allTabs={allTabs}
         edit={edit}
-        managerOpen={managerOpen}
         phone={phone}
         pinnedTab={pinnedTab}
         iconTab={iconTab}
@@ -143,7 +142,6 @@ function BookmarkDialog({
   star,
   allTabs,
   edit,
-  managerOpen,
   phone,
   pinnedTab,
   iconTab
@@ -152,7 +150,6 @@ function BookmarkDialog({
   star: UiState['starDialog']
   allTabs: UiState['bookmarkAllTabs']
   edit: UiState['bookmarkEdit']
-  managerOpen: boolean
   phone: boolean
   pinnedTab: Tab | undefined
   iconTab: Tab | undefined
@@ -164,7 +161,7 @@ function BookmarkDialog({
   if (edit && phone) {
     return <BookmarkEditSheet key={`${edit.id ?? 'new'}:${edit.type}`} state={state} edit={edit} />
   }
-  if (edit && !managerOpen) {
+  if (edit) {
     // "Add page…" on the bar starts from the page on screen, like Chrome.
     const tab = edit.id === null && edit.type === 'url' ? activeTab(state) : null
     const prefill =

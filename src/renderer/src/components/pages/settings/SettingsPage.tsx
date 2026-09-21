@@ -22,6 +22,7 @@ import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
 import { useDictionaryWords } from '@renderer/lib/spellcheckWords'
 import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { openBarEditor, openOverlay } from '@renderer/lib/ui'
+import { TWO_PANE_MIN_WIDTH } from '../PageFrame'
 import { DesktopSettings } from './desktop'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
 import { searchRows, type SectionModel } from './model'
@@ -47,8 +48,8 @@ import { useSheetStack } from './useSheetStack'
  * than the window, so a split or a narrow window falls back to the landing and drill-ins.
  */
 
-/** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5). */
-export const TWO_PANE_MIN_WIDTH = 720
+/** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5; the pages' shared one). */
+export { TWO_PANE_MIN_WIDTH }
 
 interface Props {
   state: UIState

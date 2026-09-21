@@ -3,6 +3,12 @@ import { useCallback, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
 
+/**
+ * Width of the page from which a two-pane page shows both its panes (v2 §10.2, §10.5): the
+ * Settings tab's nav and content columns, the bookmarks manager's folder column and list.
+ */
+export const TWO_PANE_MIN_WIDTH = 720
+
 /*
  * The frame of a chrome page tab that is a list – History, the bookmarks manager, Downloads
  * (design language v2 §10.1, the page family of §9.29): the page fills the content frame on
@@ -156,10 +162,14 @@ export function PageSearchField({
 /**
  * A group on the page (§9.27, §10.3): the shared 15/600 heading with an optional aside (a count,
  * 13 at 69% tabular) and an optional trailing control (a §9.3 icon button whose 28 box does not
- * grow the heading's 20 line), then its rows. The section is named by its heading.
+ * grow the heading's 20 line), then its rows. The section is named by its heading: `heading` is
+ * its text, rendered as the `h2` carrying `headingId`; a group whose heading line is its own
+ * element (the bookmarks manager's breadcrumb, whose last segment is the `h2`) hands it in as
+ * `headingElement` instead.
  */
 export function PageGroup({
   heading,
+  headingElement,
   aside,
   control,
   headingId,
@@ -167,7 +177,8 @@ export function PageGroup({
   children,
   ...data
 }: {
-  heading: ReactNode
+  heading?: ReactNode
+  headingElement?: ReactNode
   aside?: ReactNode
   control?: ReactNode
   headingId?: string
@@ -177,9 +188,11 @@ export function PageGroup({
   return (
     <section className={cn('zen-page-group', className)} aria-labelledby={headingId} {...data}>
       <div className="zen-v2-heading zen-page-heading">
-        <h2 id={headingId} className="zen-page-heading-text">
-          {heading}
-        </h2>
+        {headingElement ?? (
+          <h2 id={headingId} className="zen-page-heading-text">
+            {heading}
+          </h2>
+        )}
         {aside !== undefined && aside !== null && (
           <span className="zen-page-heading-aside">{aside}</span>
         )}

@@ -11,10 +11,17 @@ import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { openClearBrowsingData } from '@renderer/lib/ui'
 import { PageColumn, PageEmpty, PageGroup, PageSearchField, PageTitleBlock } from '../PageFrame'
+import { usePageSearch } from '../usePageSearch'
 
 /** Visits fetched per page; "Show more" adds another page. */
 const PAGE_SIZE = 300
-const SEARCH_DEBOUNCE_MS = 150
+const EMPTY: ReadonlySet<string> = new Set()
+
+/** The picked rows and the search they were picked in. */
+interface Picked {
+  text: string
+  ids: ReadonlySet<string>
+}
 
 /**
  * The History page (`zen://history`, Ctrl+H; Chrome's `chrome://history`): a chrome page tab
@@ -38,53 +45,31 @@ const SEARCH_DEBOUNCE_MS = 150
  */
 export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
   const urlQuery = parseInternalPageUrl(tab.url)?.query?.q ?? ''
-  const [query, setQuery] = useState(urlQuery)
-  const [text, setText] = useState(urlQuery.trim())
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
-  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
 
-  // The URL and the field, kept as one. What the page pushes into the URL (`pushed`, in order –
-  // the core answers in order) comes back as the tab's URL and is not adopted again; any other
-  // URL – a deep link, the omnibox, "More from this site", back, forward – is a new search, and
-  // the selection was the old one's.
-  const pushed = useRef<string[]>([])
-  const lastUrl = useRef(urlQuery)
-  useEffect(() => {
-    if (urlQuery === lastUrl.current) return
-    lastUrl.current = urlQuery
-    const at = pushed.current.indexOf(urlQuery)
-    if (at >= 0) {
-      pushed.current.splice(0, at + 1)
-      return
-    }
-    pushed.current = []
-    setQuery(urlQuery)
-    setText(urlQuery.trim())
-    setSelected(new Set())
-  }, [urlQuery])
-  useEffect(() => {
-    const timer = setTimeout(() => setText(query.trim()), SEARCH_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
-  }, [query])
-  // A settled search moves the URL (the URL's own changes are adopted above) and starts over
-  // with nothing selected: what was picked belongs to the list that was. What the URL is about
-  // to say is the last push still in flight, else what it says now.
-  const pushedFor = useRef(text)
-  useEffect(() => {
-    if (pushedFor.current === text) return
-    pushedFor.current = text
-    setSelected((current) => (current.size ? new Set() : current))
-    if (text === (pushed.current.at(-1) ?? lastUrl.current)) return
-    pushed.current.push(text)
-    run('page.navigate', {
-      tabId: tab.id,
-      section: null,
-      replace: true,
-      query: text ? { q: text } : undefined
+  // The URL and the field, kept as one (`usePageSearch`): the tab's URL follows a settled search
+  // as `zen://history?q=<text>` without a history entry.
+  const { query, setQuery, text } = usePageSearch({
+    urlQuery,
+    push: (value) =>
+      run('page.navigate', {
+        tabId: tab.id,
+        section: null,
+        replace: true,
+        query: value ? { q: value } : undefined
+      })
+  })
+  // The selection belongs to the list it was made in: a new search – typed or brought by the
+  // URL – starts over with nothing selected.
+  const [picked, setPicked] = useState<Picked>({ text, ids: EMPTY })
+  const selected = picked.text === text ? picked.ids : EMPTY
+  const setSelected = (update: (current: ReadonlySet<string>) => ReadonlySet<string>): void =>
+    setPicked((current) => {
+      const ids = update(current.text === text ? current.ids : EMPTY)
+      return ids === current.ids && current.text === text ? current : { text, ids }
     })
-  }, [text, tab.id])
 
   useChromeShortcut('find.open', (request) => {
     if (request.tabId !== tab.id) return false
@@ -139,7 +124,7 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
     if (e.key === 'Escape' && selecting) {
       e.preventDefault()
       e.stopPropagation()
-      setSelected(new Set())
+      setSelected(() => EMPTY)
       return
     }
     if (e.key === 'Delete') {
@@ -180,7 +165,7 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
                   <button
                     type="button"
                     className="zen-v2-button"
-                    onClick={() => setSelected(new Set())}
+                    onClick={() => setSelected(() => EMPTY)}
                   >
                     Cancel
                   </button>

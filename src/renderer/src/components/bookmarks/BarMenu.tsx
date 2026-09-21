@@ -18,7 +18,7 @@ import {
   type DismissReason,
   type PopoverBox
 } from '@renderer/lib/portals'
-import { BookmarkIcon } from './BookmarkRow'
+import { BookmarkIcon } from './BookmarkIcon'
 import { besideOrigin, layoutRect, placeBeside, rowRect } from './panelGeometry'
 import { closedTo, focusAfterClose, focusAfterOpen, openedAt, type PathFocus } from './panelPath'
 import { nodeLabel } from './tree'
