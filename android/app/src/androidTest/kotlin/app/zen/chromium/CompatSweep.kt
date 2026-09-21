@@ -2587,7 +2587,7 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         val (_, view) = fixture("page-a.html?whatfont", factor, 2_000)
         val since = StepEvidence(row)
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val injected = pollExpr(view, injectedAny("whatfont|wf_|wfont|__wf"), scaled(20_000, factor))
+        val injected = pollExpr(view, injectedAny("what-?font|wf_|wfont|__wf"), scaled(20_000, factor))
         extra.put("injected", injected)
         var font = JSONObject()
         if (injected.optBoolean("pass")) {
@@ -3969,9 +3969,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val WHATFONT_HOVER =
             "(function(){var p=document.querySelector('p')||document.body;var r=p.getBoundingClientRect();var o={bubbles:true,cancelable:true,composed:true,clientX:r.left+Math.min(40,r.width/2),clientY:r.top+r.height/2,view:window};" +
                 "['pointerover','pointerenter','mouseover','mouseenter','pointermove','mousemove'].forEach(function(t){p.dispatchEvent(/^pointer/.test(t)?new PointerEvent(t,o):new MouseEvent(t,o))});return 'hovered '+p.tagName})()"
-        /** WhatFont's tip: its elements' text (a font family name), through shadow roots. */
+        /**
+         * WhatFont's tip: its elements' text (a font family name), through shadow roots. Its 3.2.0 mounts
+         * `<div id="what-font-ext-container">` on the body (React in a shadow root under it), a hyphen the
+         * first spelling of the pattern did not allow: the tool was up in the final run's still and read F.
+         */
         private const val WHATFONT_READ =
-            "(function(){var re=/whatfont|wf_|wfont|__wf|wf-/i;var texts=[];var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');if(re.test(key)){var t=(e.textContent||'').replace(/\\s+/g,' ').trim();if(t.length>1)texts.push(t.slice(0,80))}if(e.shadowRoot)walk(e.shadowRoot)}};walk(document.documentElement);" +
+            "(function(){var re=/what-?font|wf_|wfont|__wf|wf-/i;var texts=[];var walk=function(root){var all=root.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];var key=e.tagName+' '+(e.id||'')+' '+(typeof e.className==='string'?e.className:'');if(re.test(key)){var t=(e.textContent||'').replace(/\\s+/g,' ').trim();if(t.length>1)texts.push(t.slice(0,80))}if(e.shadowRoot)walk(e.shadowRoot)}};walk(document.documentElement);" +
                 "var joined=texts.join(' | ');var font=/roboto|system-ui|sans-serif|serif|arial|helvetica|noto|droid|inter|segoe|times|georgia|monospace|[a-z]+ ?(sans|serif|mono)/i.test(joined);return JSON.stringify({pass:font,n:texts.length,text:joined.slice(0,160)})})()"
         /** Wappalyzer's popup: the technologies it lists, the fixture's expected ones named. */
         private const val TECH_LIST =
