@@ -355,7 +355,8 @@ function DayGroup({
   )
 }
 
-const timeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' })
+// The locale's clock, as the phone list's `visitTime` ("9:41 AM", "09:41"), one formatter for the rows.
+const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 
 function VisitRow({
   visit,
