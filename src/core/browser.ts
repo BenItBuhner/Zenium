@@ -2982,6 +2982,8 @@ export class Browser {
       'sync.now': () => this.sync.syncNow(),
       'sync.confirmMerge': ({ merge }) => this.sync.confirmMerge(merge),
       'sync.disconnect': ({ wipeRemote }) => this.sync.disconnect(wipeRemote),
+      'sync.tabsFromDevices': () => this.sync.tabsFromDevices(),
+      'sync.sendTab': (opts, win) => this.sync.sendTab(opts, win),
 
       'agent.disconnect': ({ id }) => this.agents.disconnect(id),
       'agent.setMode': ({ id, mode }) => this.agents.setMode(id, mode),

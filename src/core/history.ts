@@ -8,7 +8,7 @@ import type {
 } from '../shared/types'
 import { JsonStore } from './store/JsonStore'
 import { getDomain, getHost, isInternalUrl } from '../shared/url'
-import { dayKeyOf } from '../shared/dayKey'
+import { dayKeyOf, dayStart } from '../shared/dayKey'
 import { newId } from '../shared/ids'
 import type { StoreIO } from './platform'
 
@@ -79,6 +79,48 @@ export interface ImportVisitsResult {
    */
   skipped: number
 }
+
+/**
+ * A page of the visit list for another device (sync's export, W4-3): `visitTime >= since` (and
+ * `< until` when given), oldest first, at most `limit` per page. `cursor` is the `next` of the
+ * previous page; null or absent starts at `since`.
+ */
+export interface ExportVisitsQuery {
+  since: number
+  until?: number
+  /** Default `EXPORT_PAGE_SIZE` (500); capped at that. */
+  limit?: number
+  cursor?: string | null
+}
+
+export interface ExportVisitsPage {
+  /** In the import's shape, so a device's export is another's import unchanged. */
+  visits: ImportedVisit[]
+  /** Where the next page starts; null when this was the last. */
+  next: string | null
+}
+
+/** The identity of a visit across devices: visit ids are per device, `(url, at)` is not. */
+export interface HistoryVisitKey {
+  url: string
+  at: number
+}
+
+/**
+ * What changed in the visit list, with its payload (the payload-less `onChange` stays for the
+ * page, the omnibox and the new tab page): visits written (one event per `visit()` and one per
+ * `importVisits` batch), visits removed by key, a time range removed (`deleteRange`, `deleteDay`:
+ * `[from, to)`), or everything (`clear`). What sync records as its tombstones.
+ */
+export type HistoryVisitsEvent =
+  | { type: 'added'; visits: ImportedVisit[] }
+  | { type: 'removed'; keys: HistoryVisitKey[] }
+  | { type: 'range-removed'; from: number; to: number }
+  | { type: 'cleared' }
+export type HistoryVisitsListener = (event: HistoryVisitsEvent) => void
+
+/** Visits per `exportVisits` page at most. */
+export const EXPORT_PAGE_SIZE = 500
 
 // ---------------------------------------------------------------------------
 // Pure helpers (importable by the renderer, the core and the hosts)
@@ -172,6 +214,49 @@ function mergeByTime(a: HistoryVisit[], b: HistoryVisit[]): HistoryVisit[] {
 /** The identity of a visit for import deduplication. */
 function visitKey(url: string, time: number): string {
   return `${time}\n${url}`
+}
+
+/**
+ * A stored visit in the wire shape (`ImportedVisit`): the title only when the page has one (the
+ * URL stands in for a missing title in the store), the favicon only when it is a fetchable
+ * address – an inline `data:` icon can be tens of kilobytes, too heavy for a visit record; the
+ * receiving device fetches its own.
+ */
+function exported(
+  url: string,
+  title: string,
+  at: number,
+  transition: HistoryTransition,
+  favicon: string | null | undefined
+): ImportedVisit {
+  const out: ImportedVisit = { url, at, transition }
+  if (title && title !== url) out.title = title
+  if (favicon && /^https?:/i.test(favicon)) out.favicon = favicon
+  return out
+}
+
+/** The `removed` event of a deletion: the keys of the visits that went. */
+function removedKeys(removed: HistoryVisit[]): HistoryVisitsEvent {
+  return { type: 'removed', keys: removed.map((v) => ({ url: v.url, at: v.visitTime })) }
+}
+
+/** Local midnight after a day key (the day's end, exclusive; DST days are 23 or 25 hours). */
+function dayEnd(dayKey: string): number {
+  const [y, m, d] = dayKey.split('-').map(Number)
+  return new Date(y, (m || 1) - 1, (d || 1) + 1).getTime()
+}
+
+function encodeExportCursor(at: number, url: string): string {
+  return `${at}\n${url}`
+}
+
+function decodeExportCursor(cursor: string | null | undefined): HistoryVisitKey | null {
+  if (!cursor) return null
+  const nl = cursor.indexOf('\n')
+  if (nl <= 0) return null
+  const at = Number(cursor.slice(0, nl))
+  const url = cursor.slice(nl + 1)
+  return Number.isFinite(at) && url ? { url, at } : null
 }
 
 /**
@@ -371,6 +456,7 @@ export class HistoryService {
   private visitList: HistoryVisit[] = []
   private readonly store: JsonStore<PersistedHistory>
   private readonly listeners = new Set<HistoryChangeListener>()
+  private readonly visitsListeners = new Set<HistoryVisitsListener>()
   private visitNotifyTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
@@ -436,6 +522,7 @@ export class HistoryService {
     this.enforceRetention(now)
     this.persist()
     this.notify('visit')
+    this.emitVisits({ type: 'added', visits: [exported(url, title, at, transition, favicon)] })
   }
 
   /** Add one visit to the chronological list: appended when newest, else at its place. */
@@ -515,11 +602,61 @@ export class HistoryService {
       this.enforceRetention(now)
       this.persist()
       this.notify('visit')
+      // One event for the batch, in the shape it came in (the aggregate's favicon, when any).
+      this.emitVisits({
+        type: 'added',
+        visits: fresh.map((v) =>
+          exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon)
+        )
+      })
     }
     console.info(
       `[zenium] history import from ${opts.source}: ${fresh.length} visit(s) written, ${skipped} skipped`
     )
     return { imported: fresh.length, skipped }
+  }
+
+  /**
+   * A page of the visits since `since` for another device (sync's export): a pure read of the
+   * chronological list – nothing is written, so the store's cadence is untouched – in the
+   * import's shape, oldest first, `limit` at most, with the cursor of the next page. A cursor
+   * names the last visit of the page it followed by `(at, url)`; the list may have changed in
+   * between (a deletion, an older visit inserted at its place), so the next page starts after
+   * that key when it is still there, else at the first visit of that time or later – a visit
+   * repeated across pages is harmless, the receiving import dedupes by the same key.
+   */
+  exportVisits(query: ExportVisitsQuery): ExportVisitsPage {
+    const limit = Math.max(
+      1,
+      Math.min(EXPORT_PAGE_SIZE, Math.floor(query.limit ?? EXPORT_PAGE_SIZE))
+    )
+    const until = query.until ?? Infinity
+    let start = insertionIndex(this.visitList, query.since - 1)
+    const cursor = decodeExportCursor(query.cursor)
+    if (cursor) {
+      start = Math.max(start, insertionIndex(this.visitList, cursor.at - 1))
+      let i = start
+      while (i < this.visitList.length && this.visitList[i].visitTime === cursor.at) {
+        if (this.visitList[i].url === cursor.url) {
+          start = i + 1
+          break
+        }
+        i += 1
+      }
+    }
+    const visits: ImportedVisit[] = []
+    let last: HistoryVisit | null = null
+    let i = start
+    for (; i < this.visitList.length && visits.length < limit; i += 1) {
+      const v = this.visitList[i]
+      if (v.visitTime >= until) break
+      visits.push(
+        exported(v.url, v.title, v.visitTime, v.transition, this.entries.get(v.url)?.favicon)
+      )
+      last = v
+    }
+    const more = last !== null && i < this.visitList.length && this.visitList[i].visitTime < until
+    return { visits, next: more ? encodeExportCursor(last!.visitTime, last!.url) : null }
   }
 
   /**
@@ -765,7 +902,7 @@ export class HistoryService {
 
   deleteVisits(ids: string[]): void {
     const gone = new Set(ids)
-    this.removeVisits((v) => gone.has(v.id))
+    this.removeVisits((v) => gone.has(v.id), removedKeys)
   }
 
   deleteUrls(urls: string[]): void {
@@ -773,19 +910,42 @@ export class HistoryService {
     let changed = false
     for (const url of gone) if (this.entries.delete(url)) changed = true
     // removeVisits() persists and notifies itself; an aggregate without visits needs it done here.
-    if (this.removeVisits((v) => gone.has(v.url)) === 0 && changed) {
+    if (this.removeVisits((v) => gone.has(v.url), removedKeys) === 0 && changed) {
       this.persist()
       this.notify('delete')
     }
   }
 
-  deleteDay(dayKey: string): void {
-    this.removeVisits((v) => dayKeyOf(v.visitTime) === dayKey)
+  /**
+   * Remove the visits stored under `keys` (`(url, at)`, the identity another device knows a
+   * visit by: sync applies its tombstones through this); returns how many went.
+   */
+  deleteByKeys(keys: HistoryVisitKey[]): number {
+    const gone = new Set(keys.map((k) => visitKey(k.url, k.at)))
+    return this.removeVisits((v) => gone.has(visitKey(v.url, v.visitTime)), removedKeys)
   }
 
-  /** Remove the visits in `[fromMs, toMs)`; returns how many went. */
+  /** Remove the visits of a local day: a range event for the day's `[midnight, next midnight)`. */
+  deleteDay(dayKey: string): void {
+    const from = dayStart(dayKey)
+    const to = dayEnd(dayKey)
+    this.removeVisits(
+      (v) => dayKeyOf(v.visitTime) === dayKey,
+      () => ({ type: 'range-removed', from, to }),
+      Number.isFinite(from) && Number.isFinite(to)
+    )
+  }
+
+  /**
+   * Remove the visits in `[fromMs, toMs)`; returns how many went. The range travels as one event
+   * even when nothing here was in it: the deletion is meant for every device.
+   */
   deleteRange(fromMs: number, toMs: number): number {
-    return this.removeVisits((v) => v.visitTime >= fromMs && v.visitTime < toMs)
+    return this.removeVisits(
+      (v) => v.visitTime >= fromMs && v.visitTime < toMs,
+      () => ({ type: 'range-removed', from: fromMs, to: toMs }),
+      true
+    )
   }
 
   /**
@@ -820,21 +980,34 @@ export class HistoryService {
     this.visitList = []
     this.persist()
     this.notify('clear')
+    this.emitVisits({ type: 'cleared' })
   }
 
   /**
    * Drop the visits matching `gone` and bring the aggregates of the affected pages in line
-   * (visit count and last visit recomputed; a page without visits left is forgotten).
+   * (visit count and last visit recomputed; a page without visits left is forgotten). `event`
+   * describes the removal to the `onVisits` listeners, built from what went; `always` sends it
+   * even when nothing here matched (a range is a deletion for every device).
    */
-  private removeVisits(gone: (v: HistoryVisit) => boolean): number {
+  private removeVisits(
+    gone: (v: HistoryVisit) => boolean,
+    event: (removed: HistoryVisit[]) => HistoryVisitsEvent,
+    always = false
+  ): number {
     const affected = new Set<string>()
     const kept: HistoryVisit[] = []
+    const dropped: HistoryVisit[] = []
     for (const v of this.visitList) {
-      if (gone(v)) affected.add(v.url)
-      else kept.push(v)
+      if (gone(v)) {
+        affected.add(v.url)
+        dropped.push(v)
+      } else kept.push(v)
     }
-    const removed = this.visitList.length - kept.length
-    if (removed === 0) return 0
+    const removed = dropped.length
+    if (removed === 0) {
+      if (always) this.emitVisits(event(dropped))
+      return 0
+    }
     this.visitList = kept
     for (const url of affected) {
       const entry = this.entries.get(url)
@@ -851,6 +1024,7 @@ export class HistoryService {
     }
     this.persist()
     this.notify('delete')
+    this.emitVisits(event(dropped))
     return removed
   }
 
@@ -859,6 +1033,21 @@ export class HistoryService {
   onChange(listener: HistoryChangeListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  /**
+   * The visit list's changes with their payload (`HistoryVisitsEvent`), delivered synchronously
+   * inside the call that made them – so a caller that writes through `importVisits` or the delete
+   * paths can tell its own effects apart from the user's. Beside `onChange`, not instead of it:
+   * `onChange('visit')` keeps its one throttled notification per batch.
+   */
+  onVisits(listener: HistoryVisitsListener): () => void {
+    this.visitsListeners.add(listener)
+    return () => this.visitsListeners.delete(listener)
+  }
+
+  private emitVisits(event: HistoryVisitsEvent): void {
+    for (const listener of [...this.visitsListeners]) listener(event)
   }
 
   private notify(kind: HistoryChangeKind): void {

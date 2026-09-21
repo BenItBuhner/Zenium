@@ -1,0 +1,135 @@
+name: Android new tab page morph demo
+
+# Records the new tab page's field becoming the omnibox (NTP-02 / MOT-08, design language v2
+# §11.8) on hardware-accelerated Android emulators and uploads the videos, the stills, the
+# findings and the per-frame rows. The chrome samples itself once per animation frame while a
+# scene runs and FakeboxMorphJudge (shared with the JVM tests) rules on the frames: one surface
+# (no frame draws the field twice), no pop (no frame moves the box further than the spring's step
+# in flight, or than the finger's share of the travel under a scrub), on the line between the
+# field's pose and the omnibox's, monotone under the spring and under a steady finger, the landing
+# within a frame of the omnibox's open, the words' handover at the half, the bar's hide-on-scroll
+# gated off. A verdict that fails fails the run; the findings files carry one line per check.
+#
+# Two acts, in parallel, each on its own emulator (android-ntp-morph-demo.sh runs two drivers on
+# each boot: the motion, then its reduced-motion form in a fresh process under
+# animator_duration_scale 0):
+#  - space:   the space page in portrait on the API 34 image and its own WebView, as the other
+#             phone demos run – real fingers on the field at rest at both docks with the keyboard
+#             rising and on the scrim to dismiss it, a second tap on the double mid-flight
+#             (nothing), the predictive back gesture committing mid-flight, a tap on the double on
+#             its way back, the gesture on the landed omnibox pulled / cancelled / committed, the
+#             morph's frame cost for the perf program's table (the opening and the closing spring
+#             at each dock, unsampled, through DemoHarness.measureFrames with the chrome WebView's
+#             trace: ntp-morph-open-<edge> / ntp-morph-close-<edge>), and the overflow question
+#             (eight tiles, the system font size at 1.3, landscape); then FakeboxMorphReducedDemo.
+#  - private: the private page turned to landscape, where the explainer makes the page overflow
+#             past the travel – a steady finger scrolling the field to the pill's slot and back at
+#             both docks, a tap on the docked pill, a tap part way through the scrub, the scrub's
+#             frame cost at each dock (ntp-scrub-<edge>, the same finger traced) – on an AOSP
+#             image with the Chromium snapshot SystemWebView.apk swapped in (private tabs need
+#             MULTI_PROFILE, which the API 34 image's WebView 113 lacks; the private demo's recipe,
+#             swiftshader_indirect included: the snapshot WebView under swangle draws one chrome
+#             frame every 1.3-3.5 s); then FakeboxMorphScrubReducedDemo.
+#
+# Dispatch-only, like the other demos: about half an hour, and it says nothing about a change
+# being correct. The build, the emulator and the Gradle cache live in android-emulator-demo.yml;
+# this file picks the drivers and the engines. One more boot per act when the emulator itself went
+# away under the driver, never when the driver failed. The measured scenes' frame statistics
+# (frames.jsonl under each driver's directory) are rendered into the job summary by the shared
+# workflow and kept as its jank-report artifact; the gate is the shared default, soft (reported,
+# never failed: the HWUI numbers are the software GPU's, the trace columns provisional).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ntp-morph-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  space:
+    name: the space page in portrait (API 34 image, its own WebView)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=space
+        MORPH_OUT=artifacts/android-ntp-morph-demo
+      artifact-name: android-ntp-morph-demo-space
+      artifact-path: artifacts/android-ntp-morph-demo/
+      timeout-minutes: 60
+
+  space-again:
+    name: the space page in portrait, second boot
+    needs: space
+    if: ${{ failure() && needs.space.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      script-env: |
+        MORPH_ACT=space
+        MORPH_OUT=artifacts/android-ntp-morph-demo
+      artifact-name: android-ntp-morph-demo-space-second-boot
+      artifact-path: artifacts/android-ntp-morph-demo/
+      timeout-minutes: 60
+
+  private:
+    name: the private page in landscape (Chromium snapshot WebView on an AOSP image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        MORPH_ACT=private
+        MORPH_OUT=artifacts/android-ntp-morph-demo
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      # The plain `Android` snapshot is armeabi-v7a only and its libwebviewchromium.so cannot be
+      # dlopen'ed on an x86_64 emulator; `AndroidDesktop_x64` ships the same com.android.webview
+      # (minSdk 29) with x86_64 and x86 native code (android-private-demo.yml).
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-ntp-morph-demo-private
+      artifact-path: artifacts/android-ntp-morph-demo/
+      timeout-minutes: 60
+
+  private-again:
+    name: the private page in landscape, second boot
+    needs: private
+    if: ${{ failure() && needs.private.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ntp-morph-demo.sh
+      target: default
+      emulator-gpu: swiftshader_indirect
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        MORPH_ACT=private
+        MORPH_OUT=artifacts/android-ntp-morph-demo
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      artifact-name: android-ntp-morph-demo-private-second-boot
+      artifact-path: artifacts/android-ntp-morph-demo/
+      timeout-minutes: 60

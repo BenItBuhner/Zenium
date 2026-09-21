@@ -382,6 +382,15 @@ export interface BackDismissalOptions {
   render(value: number): void
   /** The surface has been animated all the way out: close it (unmounting is fine). */
   dismissed(): void
+  /**
+   * The gesture committed (or a back was pressed) with the surface at `value` (0 when nothing
+   * was pulled: a back key): return true to take the dismissal over at once – another motion of
+   * the surface's own runs it out, and neither the spring to 1 nor `dismissed` follows. A
+   * surface whose departure is a motion of its own (the new tab page's field running back along
+   * its line, lib/fakeboxMorph.ts) answers here rather than at the end of a spring it never
+   * showed.
+   */
+  committed?(value: number): boolean
   /** How far (px) the surface travels between 0 and 1 – sets the spring's pace. */
   travel?: number
   spring?: SpringConfig
@@ -449,8 +458,13 @@ export class BackDismissal {
     this.spring.start(this.value * this.travel, Math.min(0, this.recentVelocity()), 0)
   }
 
-  /** Spring the rest of the way out, then report `dismissed`. */
+  /** Spring the rest of the way out, then report `dismissed` – unless `committed` took the dismissal over. */
   commit(): void {
+    if (this.options.committed?.(this.value)) {
+      this.spring.stop()
+      this.committing = false
+      return
+    }
     this.committing = true
     this.spring.start(
       this.value * this.travel,
@@ -508,7 +522,8 @@ export function useBackDismissal(name: string, options: BackDismissalOptions): v
       travel: latest.current.travel,
       spring: latest.current.spring,
       render: (value) => latest.current.render(value),
-      dismissed: () => latest.current.dismissed()
+      dismissed: () => latest.current.dismissed(),
+      committed: (value) => latest.current.committed?.(value) ?? false
     })
     dismissal.current = created
     return () => {

@@ -4137,6 +4137,7 @@ describe('ID-08’s Sync category on a phone', () => {
       syncing: false,
       devices: [],
       pendingMerge: false,
+      remoteTabsVersion: 0,
       ...patch
     }
   }
@@ -4237,12 +4238,13 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(invoke).toHaveBeenCalledWith('sync.setDeviceName', { name: 'Ben’s phone' })
   })
 
-  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, Open tabs, Passwords, Settings first, then Zenium’s own; each runs sync.setScope', () => {
+  it('What you sync: one switch per data type in Chrome’s order, Bookmarks, History, Open tabs, Passwords, Settings first, then Zenium’s own; each runs sync.setScope', () => {
     const model = section('sync', syncState(syncStatus()))
     const scope = model.groups.find((g) => g.id === 'sync-scope')
     expect(scope?.heading).toBe('What you sync')
-    expect(scope?.rows.map((r) => r.label).slice(0, 4)).toEqual([
+    expect(scope?.rows.map((r) => r.label).slice(0, 5)).toEqual([
       'Bookmarks',
+      'History',
       'Open tabs',
       'Passwords',
       'Settings'
@@ -4259,6 +4261,12 @@ describe('ID-08’s Sync category on a phone', () => {
     expect(passwords.checked).toBe(true)
     passwords.onChange(false)
     expect(invoke).toHaveBeenCalledWith('sync.setScope', { passwords: false })
+    // History is on by default, as Chrome's (ID-13).
+    const history = row(model, 'sync-scope:history')
+    if (history.kind !== 'switch') throw new Error('not a switch')
+    expect(history.checked).toBe(true)
+    history.onChange(false)
+    expect(invoke).toHaveBeenCalledWith('sync.setScope', { history: false })
     // The same group, same order, once connected.
     const on = section('sync', syncState(connected()))
     expect(on.groups.find((g) => g.id === 'sync-scope')?.rows.map((r) => r.id)).toEqual(

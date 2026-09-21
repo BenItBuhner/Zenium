@@ -779,4 +779,193 @@ describe('HistoryService', () => {
       expect(again.count(0, Infinity)).toBe(3)
     })
   })
+
+  describe('exportVisits (sync, W4-3)', () => {
+    it('pages the visits since a time, oldest first, in the import shape, without writing', () => {
+      const io = fakeIo()
+      const h = new HistoryService(io, now)
+      for (let i = 0; i < 7; i += 1)
+        h.visit(
+          `https://p${i}.test/`,
+          i === 3 ? '' : `P${i}`,
+          i === 1 ? 'https://p1.test/icon.png' : 'data:icon',
+          {
+            at: NOW - (7 - i) * DAY,
+            transition: i === 2 ? 'typed' : 'link'
+          }
+        )
+      h.flushSync()
+      const writes = vi.spyOn(JsonStore.prototype, 'write')
+      const first = h.exportVisits({ since: NOW - 6 * DAY, limit: 3 })
+      expect(first.visits).toEqual([
+        {
+          url: 'https://p1.test/',
+          title: 'P1',
+          at: NOW - 6 * DAY,
+          transition: 'link',
+          favicon: 'https://p1.test/icon.png'
+        },
+        { url: 'https://p2.test/', title: 'P2', at: NOW - 5 * DAY, transition: 'typed' },
+        // An untitled page carries no title (the store's URL stand-in is not one); a data: icon stays home.
+        { url: 'https://p3.test/', at: NOW - 4 * DAY, transition: 'link' }
+      ])
+      expect(first.next).not.toBeNull()
+      const second = h.exportVisits({ since: NOW - 6 * DAY, limit: 3, cursor: first.next })
+      expect(second.visits.map((v) => v.url)).toEqual([
+        'https://p4.test/',
+        'https://p5.test/',
+        'https://p6.test/'
+      ])
+      expect(second.next).toBeNull()
+      // `until` bounds the page and ends the export.
+      const bounded = h.exportVisits({ since: NOW - 6 * DAY, until: NOW - 4 * DAY, limit: 10 })
+      expect(bounded.visits.map((v) => v.url)).toEqual(['https://p1.test/', 'https://p2.test/'])
+      expect(bounded.next).toBeNull()
+      expect(h.exportVisits({ since: NOW + DAY })).toEqual({ visits: [], next: null })
+      expect(writes).not.toHaveBeenCalled()
+      // One device's export is another's import unchanged.
+      const other = new HistoryService(fakeIo(), now)
+      expect(other.importVisits([...first.visits, ...second.visits], { source: 'sync' })).toEqual({
+        imported: 6,
+        skipped: 0
+      })
+      expect(other.recent(10).find((e) => e.url === 'https://p2.test/')?.typedCount).toBe(1)
+    })
+
+    it('resumes after the cursor key among same-time visits and survives a deletion in between', () => {
+      const h = new HistoryService(fakeIo(), now)
+      const at = NOW - DAY
+      for (const u of ['a', 'b', 'c', 'd']) h.visit(`https://${u}.test/`, u, null, { at })
+      h.visit('https://e.test/', 'e', null, { at: at + 1 })
+      const page1 = h.exportVisits({ since: 0, limit: 2 })
+      expect(page1.visits.map((v) => v.url)).toEqual(['https://a.test/', 'https://b.test/'])
+      const page2 = h.exportVisits({ since: 0, limit: 2, cursor: page1.next })
+      expect(page2.visits.map((v) => v.url)).toEqual(['https://c.test/', 'https://d.test/'])
+      // The cursor's own visit is gone: the page starts at that time again (a repeat dedupes downstream).
+      h.deleteUrls(['https://d.test/'])
+      const page3 = h.exportVisits({ since: 0, limit: 5, cursor: page2.next })
+      expect(page3.visits.map((v) => v.url)).toEqual([
+        'https://a.test/',
+        'https://b.test/',
+        'https://c.test/',
+        'https://e.test/'
+      ])
+      expect(page3.next).toBeNull()
+      expect(h.exportVisits({ since: 0, cursor: 'garbage' }).visits).toHaveLength(4)
+    })
+  })
+
+  describe('onVisits (sync, W4-3)', () => {
+    it('reports additions with their payload, once per visit and once per import batch, beside onChange', () => {
+      const h = new HistoryService(fakeIo(), now)
+      const events: unknown[] = []
+      const kinds: string[] = []
+      h.onVisits((e) => events.push(e))
+      h.onChange((k) => kinds.push(k))
+      h.visit('https://a.test/', 'A', 'data:x', { transition: 'typed' })
+      expect(events).toEqual([
+        {
+          type: 'added',
+          visits: [{ url: 'https://a.test/', title: 'A', at: NOW, transition: 'typed' }]
+        }
+      ])
+      h.visit('zen://settings', 'Settings', null)
+      expect(events).toHaveLength(1)
+      vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      h.importVisits(
+        [
+          { url: 'https://b.test/', title: 'B', at: NOW - DAY },
+          { url: 'https://a.test/', at: NOW }, // duplicate by (url, at): not reported
+          { url: 'https://c.test/', at: NOW - 2 * DAY, favicon: 'https://c.test/i.png' }
+        ],
+        { source: 'sync' }
+      )
+      expect(events).toHaveLength(2)
+      expect(events[1]).toEqual({
+        type: 'added',
+        visits: [
+          {
+            url: 'https://c.test/',
+            at: NOW - 2 * DAY,
+            transition: 'link',
+            favicon: 'https://c.test/i.png'
+          },
+          { url: 'https://b.test/', title: 'B', at: NOW - DAY, transition: 'link' }
+        ]
+      })
+      // The payload-less channel is untouched: one throttled 'visit' for all of it.
+      expect(kinds).toEqual([])
+      vi.advanceTimersByTime(600)
+      expect(kinds).toEqual(['visit'])
+      vi.restoreAllMocks()
+    })
+
+    it('reports deletions as keys, ranges and clear; a range travels even when nothing matched here', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://a.test/', 'A', null, { at: NOW - 3 * DAY })
+      h.visit('https://b.test/', 'B', null, { at: NOW - 2 * DAY })
+      h.visit('https://b.test/', 'B', null, { at: NOW - DAY })
+      h.visit('https://c.test/', 'C', null, { at: NOW - 1000 })
+      const events: unknown[] = []
+      h.onVisits((e) => events.push(e))
+      const id = h.visits({ host: 'a.test', limit: 1 })[0].id
+      h.deleteVisits([id])
+      h.deleteUrls(['https://b.test/'])
+      expect(events).toEqual([
+        { type: 'removed', keys: [{ url: 'https://a.test/', at: NOW - 3 * DAY }] },
+        {
+          type: 'removed',
+          keys: [
+            { url: 'https://b.test/', at: NOW - 2 * DAY },
+            { url: 'https://b.test/', at: NOW - DAY }
+          ]
+        }
+      ])
+      expect(h.deleteRange(NOW - 10 * DAY, NOW - 9 * DAY)).toBe(0)
+      expect(events[2]).toEqual({ type: 'range-removed', from: NOW - 10 * DAY, to: NOW - 9 * DAY })
+      const day = dayKeyOf(NOW - 1000)
+      h.deleteDay(day)
+      const dayEvent = events[3] as { type: string; from: number; to: number }
+      expect(dayEvent.type).toBe('range-removed')
+      expect(dayEvent.from).toBeLessThanOrEqual(NOW - 1000)
+      expect(dayEvent.to).toBeGreaterThan(NOW - 1000)
+      expect(dayEvent.to - dayEvent.from).toBeGreaterThanOrEqual(23 * 3_600_000)
+      expect(h.count(0, Infinity)).toBe(0)
+      h.visit('https://d.test/', 'D', null)
+      h.clear()
+      expect(events.at(-1)).toEqual({ type: 'cleared' })
+      // Nothing to delete: no keys event (the deletion changed nothing anywhere).
+      h.deleteUrls(['https://never.test/'])
+      expect(events).toHaveLength(6)
+    })
+
+    it('deleteByKeys removes by (url, at), recomputes the aggregate and reports the keys that went', () => {
+      const h = new HistoryService(fakeIo(), now)
+      h.visit('https://a.test/', 'A', null, { at: NOW - 2 * DAY, transition: 'typed' })
+      h.visit('https://a.test/', 'A', null, { at: NOW - DAY })
+      h.visit('https://b.test/', 'B', null, { at: NOW - DAY })
+      const events: unknown[] = []
+      h.onVisits((e) => events.push(e))
+      expect(
+        h.deleteByKeys([
+          { url: 'https://a.test/', at: NOW - 2 * DAY },
+          { url: 'https://a.test/', at: NOW - 5 * DAY }, // unknown: ignored
+          { url: 'https://b.test/', at: NOW - DAY }
+        ])
+      ).toBe(2)
+      expect(events).toEqual([
+        {
+          type: 'removed',
+          keys: [
+            { url: 'https://a.test/', at: NOW - 2 * DAY },
+            { url: 'https://b.test/', at: NOW - DAY }
+          ]
+        }
+      ])
+      expect(h.recent(5)).toHaveLength(1)
+      expect(h.recent(5)[0]).toMatchObject({ url: 'https://a.test/', visitCount: 1, typedCount: 0 })
+      expect(h.deleteByKeys([{ url: 'https://a.test/', at: 0 }])).toBe(0)
+      expect(events).toHaveLength(1)
+    })
+  })
 })

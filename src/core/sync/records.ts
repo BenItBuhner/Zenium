@@ -299,7 +299,8 @@ export function defaultScope(): SyncScope {
     settings: true,
     shortcuts: true,
     boosts: true,
-    passwords: true
+    passwords: true,
+    history: true
   }
 }
 
@@ -316,7 +317,8 @@ export function fullScope(): SyncScope {
     settings: true,
     shortcuts: true,
     boosts: true,
-    passwords: true
+    passwords: true,
+    history: true
   }
 }
 
