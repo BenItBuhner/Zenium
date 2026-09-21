@@ -2083,12 +2083,15 @@ describe('what a row does', () => {
       label: 'Your bookmarks and settings are ready',
       description: 'From a bookmarks HTML file'
     })
+    // The kind's lines share the row on the one joiner the pane and the desktop use (` · `).
     const bookmarksRow = row(last, 'import-last-bookmarks')
     expect(bookmarksRow).toMatchObject({
       kind: 'info',
       label: 'Bookmarks',
-      description: '42 bookmarks imported. 3 already saved, 1 unusable'
+      description: '42 bookmarks imported · 3 already saved, 1 unusable'
     })
+    expect(headline).not.toHaveProperty('tone')
+    expect(headline).toMatchObject({ danger: false })
     // The outcome is a trailing 16 px glyph in the status ink (the Updates rows' "Verified"),
     // never a leading one: the group's action rows have no leading slot, and §10.4 keeps the
     // labels of one list on one left edge.
@@ -2109,7 +2112,10 @@ describe('what a row does', () => {
     dismiss.onPress?.()
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('import.dismiss', undefined))
 
-    // A failure is the headline in the danger tone, no folder to show.
+    // A run-level failure (the picker's bridge call rejected: `ImportService.run`'s outer catch)
+    // is the headline row with the failure as its LABEL – so the row's `danger` puts the ink on
+    // that sentence and the caption under it stays at 69% (§9.33, one ink per row); never `tone`,
+    // which would colour the neutral caption instead. No folder to show.
     const failed = state({
       import: {
         source: html,
@@ -2117,7 +2123,7 @@ describe('what a row does', () => {
         status: 'failed',
         current: null,
         results: {},
-        error: 'The file is not a bookmarks HTML file.',
+        error: 'The file picker could not be opened.',
         folderId: null,
         startedAt: 1,
         finishedAt: 2
@@ -2130,12 +2136,63 @@ describe('what a row does', () => {
     ])
     const failedHeadline = row(failedLast, 'import-last-headline')
     expect(failedHeadline).toMatchObject({
-      label: 'The file is not a bookmarks HTML file.',
-      tone: 'danger'
+      kind: 'info',
+      label: 'The file picker could not be opened.',
+      description: 'From a bookmarks HTML file',
+      danger: true
     })
+    expect(failedHeadline).not.toHaveProperty('tone')
     if (failedHeadline.kind !== 'info') throw new Error('not an info row')
     // The glyph takes the ink of the text beside it: a failure is danger, not the safety warn.
     expect(glyphClass(failedHeadline.trailing)).toContain('zen-settings-danger')
+
+    // A run whose every kind failed is a failure too (the #259 ruling): the headline names what
+    // could not be imported in the danger ink, and the kind's row carries the reason on its
+    // description – the status ink on the line that is the status, on each row.
+    const noBookmarks = state({
+      import: {
+        source: html,
+        kinds: ['bookmarks'],
+        status: 'done',
+        current: null,
+        results: {
+          bookmarks: {
+            imported: 0,
+            duplicates: 0,
+            unreadable: 0,
+            invalid: 0,
+            error: 'No bookmarks were found in that file.'
+          }
+        },
+        error: null,
+        folderId: null,
+        startedAt: 1,
+        finishedAt: 2
+      }
+    } as Partial<UIState>)
+    const noBookmarksLast = section('import', noBookmarks)
+    expect(noBookmarksLast.groups[1].rows.map((r) => r.id)).toEqual([
+      'import-last-headline',
+      'import-last-bookmarks',
+      'import-last-dismiss'
+    ])
+    const noBookmarksHeadline = row(noBookmarksLast, 'import-last-headline')
+    expect(noBookmarksHeadline).toMatchObject({
+      label: 'Bookmarks could not be imported.',
+      description: 'From a bookmarks HTML file',
+      danger: true
+    })
+    if (noBookmarksHeadline.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksHeadline.trailing)).toContain('zen-settings-danger')
+    const noBookmarksRow = row(noBookmarksLast, 'import-last-bookmarks')
+    expect(noBookmarksRow).toMatchObject({
+      label: 'Bookmarks',
+      description: 'No bookmarks were found in that file.',
+      tone: 'danger'
+    })
+    expect(noBookmarksRow).not.toHaveProperty('danger')
+    if (noBookmarksRow.kind !== 'info') throw new Error('not an info row')
+    expect(glyphClass(noBookmarksRow.trailing)).toContain('zen-settings-danger')
 
     // A file pick the user dismissed leaves a cancelled run with nothing reported: no group.
     const dismissedPick = state({

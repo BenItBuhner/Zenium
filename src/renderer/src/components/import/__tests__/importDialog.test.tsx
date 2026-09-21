@@ -256,11 +256,26 @@ describe('the import dialog', () => {
       ['history', true, false, 'Browsing history'],
       ['passwords', false, true, 'Saved passwords']
     ])
-    // The recorded limit is the inline note under the rows at full ink – not a second line inside
-    // the disabled row, where the check row's §9.30 .4 would leave it unreadable.
+    // The recorded limit is the note under the rows – not a second line inside the disabled row,
+    // where the check row's §9.30 .4 would leave it unreadable – in one ink: the disabled row
+    // above names the kind, so no run-in label at full ink on a 69% line (§4).
     const notes = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="import-limit"]'))
-    expect(notes.map((n) => n.textContent)).toEqual([`Saved passwords: ${FIREFOX_LIMIT}`])
+    expect(notes.map((n) => n.textContent)).toEqual([FIREFOX_LIMIT])
+    expect(notes[0]!.querySelector('.text-\\[var\\(--v2-text\\)\\]')).toBeNull()
     expect(submitButton().disabled).toBe(false)
+  })
+
+  it('the status line’s slot stands blank under the form, so the press of Import moves nothing (§9.30)', async () => {
+    await open()
+    // Present and empty in the form phase: the same 28 px box the busy line fills, a live region
+    // that is read when its words arrive.
+    const slot = document.querySelector<HTMLElement>('[data-testid="import-progress"]')!
+    expect(slot).not.toBeNull()
+    expect(slot.textContent).toBe('')
+    expect(slot.getAttribute('role')).toBe('status')
+    expect(slot.dataset.blank).toBe('')
+    expect(slot.className).toContain('min-h-7')
+    expect(slot.className).toContain('pt-2')
   })
 
   it('a running Firefox is the refusal line naming it, Import off; a running Chrome a notice with Import armed', async () => {
@@ -355,9 +370,9 @@ describe('the import dialog', () => {
     expect(document.querySelector('[data-testid="import-kinds"]')!.getAttribute('aria-busy')).toBe(
       'true'
     )
-    expect(document.querySelector('[data-testid="import-progress"]')!.textContent).toBe(
-      'Importing saved passwords…'
-    )
+    const status = document.querySelector<HTMLElement>('[data-testid="import-progress"]')!
+    expect(status.textContent).toBe('Importing saved passwords…')
+    expect(status.dataset.blank).toBeUndefined()
     // Escape does not leave a working import.
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -429,11 +444,20 @@ describe('the import dialog', () => {
     })
     const result = document.querySelector<HTMLElement>('[data-testid="import-result"]')!
     expect(result.dataset.failed).toBe('true')
-    expect(result.textContent).toContain('Firefox is open. Close Firefox and try again.')
+    const headline = document.querySelector<HTMLElement>('[data-testid="import-result-headline"]')!
+    expect(headline.textContent).toBe('Firefox is open. Close Firefox and try again.')
+    expect(headline.className).toContain('--v2-danger')
     expect(result.textContent).toContain('From Firefox')
-    // The kind the source cannot give is the inline note under the (empty) rows.
-    const note = document.querySelector<HTMLElement>('[data-testid="import-limit"]')!
-    expect(note.textContent).toBe(`Saved passwords: ${FIREFOX_LIMIT}`)
+    // The kind the source cannot give is a row of the list's own anatomy: the kind's 15 label,
+    // the limit as its 13 line, the aside glyph – not a smaller note under the rows.
+    const note = document.querySelector<HTMLElement>('li[data-testid="import-limit"]')!
+    expect(note.dataset.importKind).toBe('passwords')
+    const [label, line] = Array.from(note.querySelectorAll<HTMLElement>('div > div'))
+    expect(label!.textContent).toBe('Saved passwords')
+    expect(label!.className).toContain('text-[15px]')
+    expect(line!.textContent).toBe(FIREFOX_LIMIT)
+    expect(line!.className).toContain('text-[13px]')
+    expect(line!.className).toContain('--v2-text-deemphasized')
     // No bookmarks came in: no bar box, no Show bookmarks.
     expect(document.querySelector('[data-testid="import-show-bar"]')).toBeNull()
     expect(document.querySelector('[data-testid="import-show-bookmarks"]')).toBeNull()
@@ -447,6 +471,43 @@ describe('the import dialog', () => {
     })
     expect(panel().dataset.phase).toBe('form')
     expect(menulists()[0]!.textContent).toContain('Firefox')
+  })
+
+  it('a run whose every kind failed is a failure: the headline names it in the danger ink over the kind’s reason, Try again offered (#259 ruling)', async () => {
+    const noBookmarks = progress({
+      source: HTML,
+      kinds: ['bookmarks'],
+      status: 'done',
+      results: { bookmarks: outcome({ error: 'No bookmarks were found in that file.' }) }
+    })
+    vi.mocked(cmd).mockImplementation(async (name: string) => {
+      if (name === 'import.sources') return SOURCES as never
+      if (name === 'import.run') return noBookmarks as never
+      return null as never
+    })
+    uiStore.set({ importDialog: { source: HTML.id } })
+    render(dialog())
+    await act(async () => {
+      await Promise.resolve()
+    })
+    press(submitButton())
+    rerender(dialog(state({ import: noBookmarks })))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const result = document.querySelector<HTMLElement>('[data-testid="import-result"]')!
+    expect(result.dataset.failed).toBe('true')
+    const headline = document.querySelector<HTMLElement>('[data-testid="import-result-headline"]')!
+    expect(headline.textContent).toBe('Bookmarks could not be imported.')
+    expect(headline.className).toContain('--v2-danger')
+    // The row carries the reason in the same ink; the headline does not repeat it.
+    const row = result.querySelector<HTMLElement>('li[data-import-kind="bookmarks"]')!
+    const [label, line] = Array.from(row.querySelectorAll<HTMLElement>('div > div'))
+    expect(label!.textContent).toBe('Bookmarks')
+    expect(line!.textContent).toBe('No bookmarks were found in that file.')
+    expect(line!.className).toContain('--v2-danger')
+    expect(document.querySelector('[data-testid="import-again"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="import-show-bookmarks"]')).toBeNull()
   })
 
   it('a finished import left from before is dismissed as the dialog opens, and Cancel leaves the form', async () => {

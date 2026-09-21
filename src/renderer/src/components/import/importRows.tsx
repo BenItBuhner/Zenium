@@ -5,6 +5,7 @@ import { run } from '@renderer/lib/api'
 import {
   FILE_SOURCE,
   KIND_LABEL,
+  LINE_JOINER,
   finishedImport,
   kindOutcome,
   outcomeLines,
@@ -33,7 +34,9 @@ import type { RowGroup, SettingsRow } from '../pages/settings/model'
  * the labels of a list – a leading glyph on some rows only would indent those labels alone.
  * A row with nothing to tell (nothing came in, nothing failed) carries no glyph. The states are
  * the desktop's (`runOutcome`, `kindOutcome`; the dialog's and pane's `ResultGlyph`), so a
- * failure reads in one ink on both platforms.
+ * failure reads in one ink on both platforms – and on the line that is the failure: the
+ * headline row's label when the run failed (the row's `danger`, as the dialog's headline and
+ * the pane's `ListRow danger`), a kind row's description when that kind did (its `tone`).
  */
 function outcomeGlyph(state: OutcomeState): JSX.Element | undefined {
   if (state === 'ok')
@@ -98,26 +101,26 @@ export function importGroups(state: UIState, tabId: string | null): RowGroup[] {
   const last = finishedImport(progress)
   if (last) {
     const kinds = reportedKinds(last)
-    const failed = Boolean(last.error)
+    const outcome = runOutcome(last)
     const result: SettingsRow[] = [
       {
         kind: 'info',
         id: 'import-last-headline',
         label: resultHeadline(last),
         description: resultCaption(last),
-        tone: failed ? 'danger' : undefined,
-        trailing: outcomeGlyph(runOutcome(last)),
+        danger: outcome === 'error',
+        trailing: outcomeGlyph(outcome),
         clamp: true
       },
       ...kinds.map((kind): SettingsRow => {
-        const outcome = last.results[kind]!
+        const kindResult = last.results[kind]!
         return {
           kind: 'info',
           id: `import-last-${kind}`,
           label: KIND_LABEL[kind],
-          description: outcomeLines(kind, outcome).join('. '),
-          tone: outcome.error ? 'danger' : undefined,
-          trailing: outcomeGlyph(kindOutcome(outcome))
+          description: outcomeLines(kind, kindResult).join(LINE_JOINER),
+          tone: kindResult.error ? 'danger' : undefined,
+          trailing: outcomeGlyph(kindOutcome(kindResult))
         }
       })
     ]

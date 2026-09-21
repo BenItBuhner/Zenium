@@ -16,7 +16,8 @@ import {
   resultCaption,
   resultHeadline,
   runOutcome,
-  runningNotice
+  runningNotice,
+  type OutcomeState
 } from '@renderer/lib/importData'
 import { closeImportDialog, openOverlay, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -45,12 +46,14 @@ import { useImportForm, type ImportForm } from './useImportForm'
  * (Firefox's places database is refused while it runs, so Import is off for it; Chrome and Edge
  * read from a copy and keep it armed). The dialog form of footer: Cancel and the primary Import.
  * While it runs the form is busy (§9.30): the menulists and boxes read-only at full opacity,
- * Import busy, Cancel at .4, and a status line says which kind is being read. The result takes
- * the body: Chrome's "Your bookmarks and settings are ready" (or the run's failure – a lock
- * refusal names the browser), the source, one row per kind with what came in and what was
- * skipped, the limits as an inline note, Chrome's "Show bookmarks bar" box when bookmarks came
- * in and the bar is not always shown, and Done (Show bookmarks beside it when a folder was
- * made). Mounted by `TabDialogs` while `importDialog` is set; opened from Settings > Import
+ * Import busy, Cancel at .4, and the status line – whose slot stands blank under the rows from
+ * the start, so nothing moves on the press – says which kind is being read. The result takes
+ * the body: Chrome's "Your bookmarks and settings are ready" (or the failure in the danger ink –
+ * a lock refusal names the browser; every kind failing names the kinds), the source, one row
+ * per kind with what came in and what was skipped, the limits as rows of the same anatomy,
+ * Chrome's "Show bookmarks bar" box when bookmarks came in and the bar is not always shown, and
+ * Done (Show bookmarks beside it when a folder was made, Try again on a failure). Mounted by
+ * `TabDialogs` while `importDialog` is set; opened from Settings > Import
  * and from Bookmarks > Import Bookmarks and Settings…. The phone has no dialog: its Settings
  * category imports from files through the builder's rows (`pages/settings/sections.tsx`).
  *
@@ -99,6 +102,9 @@ function Dialog({ state, preselect }: { state: UIState; preselect: string | null
   const bookmarksCameIn =
     form.phase === 'result' && (form.progress?.results.bookmarks?.imported ?? 0) > 0
   const offerBar = bookmarksCameIn && state.settings.bookmarksBar !== 'always'
+  // A failed run – its own failure, or every kind it reported on failing – offers Try again.
+  const failedRun =
+    form.phase === 'result' && form.progress !== null && runOutcome(form.progress) === 'error'
   const done = (): void => {
     if (offerBar && showBar) run('settings.update', { bookmarksBar: 'always' })
     close()
@@ -145,8 +151,8 @@ function Dialog({ state, preselect }: { state: UIState; preselect: string | null
         )}
       </div>
       {form.phase === 'result' && form.progress ? (
-        <Footer count={form.progress.folderId ? 2 : 1} hairline={false}>
-          {form.progress.error && (
+        <Footer count={1 + (failedRun ? 1 : 0) + (form.progress.folderId ? 1 : 0)} hairline={false}>
+          {failedRun && (
             <V2Button onClick={form.again} data-testid="import-again">
               Try again
             </V2Button>
@@ -253,7 +259,7 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
         ))}
       </div>
       {limitNotes(source).map(({ kind, text }) => (
-        <LimitNote key={kind} kind={kind} text={text} />
+        <LimitNote key={kind} text={text} />
       ))}
       {notice && (
         <p
@@ -269,12 +275,25 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
           <span>{notice}</span>
         </p>
       )}
-      {busy && form.progress && (
-        <p className={cn(SPINNER_LINE, 'pt-2')} role="status" data-testid="import-progress">
-          <Spinner className={GLYPH_ON_LINE} />
-          <span>{progressLine(form.progress)}</span>
-        </p>
-      )}
+      {/* The status line's slot stands from the form's first frame, blank until the run: the
+          busy form keeps its fields as they are (§9.30), so the press of Import changes inks and
+          glyphs only – a line that appeared on the press would grow the dialog by its 28 and the
+          host would re-centre it, moving every control. Standing as a live region before it has
+          words, it is read when they arrive. */}
+      <p
+        // 28 = the 8 above it and the 20 line, the box it fills when the words are in it.
+        className={cn(SPINNER_LINE, 'min-h-7 pt-2')}
+        role="status"
+        data-testid="import-progress"
+        data-blank={busy && form.progress ? undefined : ''}
+      >
+        {busy && form.progress && (
+          <>
+            <Spinner className={GLYPH_ON_LINE} />
+            <span>{progressLine(form.progress)}</span>
+          </>
+        )}
+      </p>
     </>
   )
 }
@@ -282,8 +301,8 @@ function Body({ form }: { form: ImportForm }): JSX.Element {
 /**
  * One kind's row: a checkbox with the kind's label. A kind the source cannot give here is the
  * same row disabled (the check row puts the .4 on its content, §9.30) – its recorded limit and
- * the way round are the `LimitNote` under the rows, at full ink, since a line inside the
- * disabled row would read at .4 and the limit is the one thing the user needs to read.
+ * the way round are the `LimitNote` under the rows, since a line inside the disabled row would
+ * read at .4 and the limit is the one thing the user needs to read.
  */
 function KindRow({
   kind,
@@ -315,29 +334,71 @@ function KindRow({
 }
 
 /**
- * A recorded limit as an inline note (§9.12's description form, 13 at 69% after a 16 px aside
- * glyph): the kind's name in full ink, then what the source cannot give here and the way round.
- * The same line under the form's rows for a disabled kind and under the result's rows for a
- * kind that has no result.
+ * A recorded limit under the form's rows (§9.12's description form: 13 at 69% after a 16 px
+ * aside glyph, one ink): what the source cannot give here and the way round. The disabled row
+ * above names the kind, and the sentence names it again, so the note carries no run-in label –
+ * §4 has no 13 px full-ink text. In the result the same limit is a kind row (`ResultRow`).
  */
-function LimitNote({ kind, text }: { kind: ImportKind; text: string }): JSX.Element {
+function LimitNote({ text }: { text: string }): JSX.Element {
   return (
     <p className={cn(NOTE, 'pt-2 text-[var(--v2-text-deemphasized)]')} data-testid="import-limit">
       <Info className={cn(V2_GLYPH, GLYPH_ON_LINE)} aria-hidden />
-      <span>
-        <span className="text-[var(--v2-text)]">{KIND_LABEL[kind]}: </span>
-        {text}
-      </span>
+      <span>{text}</span>
     </p>
+  )
+}
+
+/**
+ * One kind in the result: its glyph in the status ink on the label's line, the kind's label at
+ * 15, its lines at 13 – the counts at 69%, a failure's reason in the danger ink (§9.33). A kind
+ * the source could not give here is the same row with the aside glyph and the recorded limit
+ * as its line: the list keeps one anatomy (§4's 15 / 13 rows), not a smaller fourth row.
+ */
+function ResultRow({
+  kind,
+  state,
+  lines,
+  danger = false,
+  limit = false
+}: {
+  kind: ImportKind
+  state: OutcomeState
+  lines: readonly string[]
+  danger?: boolean
+  limit?: boolean
+}): JSX.Element {
+  return (
+    <li
+      className={cn('flex items-start px-4 py-1.5', GLYPH_GAP)}
+      data-import-kind={kind}
+      data-testid={limit ? 'import-limit' : undefined}
+    >
+      <ResultGlyph state={state} className={GLYPH_ON_LINE} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[15px] leading-5 text-[var(--v2-text)]">{KIND_LABEL[kind]}</div>
+        {lines.map((line, i) => (
+          <div
+            key={i}
+            className={cn(
+              'text-[13px] leading-5 [font-variant-numeric:tabular-nums]',
+              danger ? 'text-[var(--v2-danger)]' : 'text-[var(--v2-text-deemphasized)]'
+            )}
+          >
+            {line}
+          </div>
+        ))}
+      </div>
+    </li>
   )
 }
 
 /**
  * The result: the headline as the sub-heading over the kind rows (§4, §9.27: 15/600, its
  * description – the source – 15 at 69% 4 under it, the first row's box 8 below; a failure's
- * headline in the danger ink, §9.33), its glyph on the heading's line in the status ink, one
- * row per kind with its lines, the limits as an inline note, and Chrome's "Show bookmarks bar"
- * box when bookmarks came in.
+ * headline in the danger ink, §9.33 – the run's own failure, or every kind it reported on
+ * failing), its glyph on the heading's line in the status ink, one row per kind with its lines,
+ * the limits as rows of the same anatomy, and Chrome's "Show bookmarks bar" box when bookmarks
+ * came in.
  */
 function Result({
   progress,
@@ -352,7 +413,7 @@ function Result({
 }): JSX.Element {
   const headingId = useId()
   const kinds = reportedKinds(progress)
-  const failed = Boolean(progress.error)
+  const failed = runOutcome(progress) === 'error'
   const notes = limitNotes(progress.source).filter(({ kind }) => !progress.results[kind])
   const heading = useRef<HTMLParagraphElement>(null)
   // The result arrives while the busy primary holds the focus; the headline takes it so the
@@ -383,44 +444,25 @@ function Result({
           </p>
         </div>
       </div>
-      {kinds.length > 0 && (
+      {(kinds.length > 0 || notes.length > 0) && (
         <ul className="flex flex-col" aria-labelledby={headingId}>
           {kinds.map((kind) => {
             const outcome = progress.results[kind]!
-            const lines = outcomeLines(kind, outcome)
             return (
-              <li
+              <ResultRow
                 key={kind}
-                className={cn('flex items-start px-4 py-1.5', GLYPH_GAP)}
-                data-import-kind={kind}
-              >
-                <ResultGlyph state={kindOutcome(outcome)} className={GLYPH_ON_LINE} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[15px] leading-5 text-[var(--v2-text)]">
-                    {KIND_LABEL[kind]}
-                  </div>
-                  {lines.map((line, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        'text-[13px] leading-5 [font-variant-numeric:tabular-nums]',
-                        outcome.error
-                          ? 'text-[var(--v2-danger)]'
-                          : 'text-[var(--v2-text-deemphasized)]'
-                      )}
-                    >
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              </li>
+                kind={kind}
+                state={kindOutcome(outcome)}
+                lines={outcomeLines(kind, outcome)}
+                danger={Boolean(outcome.error)}
+              />
             )
           })}
+          {notes.map(({ kind, text }) => (
+            <ResultRow key={kind} kind={kind} state="none" lines={[text]} limit />
+          ))}
         </ul>
       )}
-      {notes.map(({ kind, text }) => (
-        <LimitNote key={kind} kind={kind} text={text} />
-      ))}
       {offerBar && (
         <Checkbox
           className="mt-2 min-h-[var(--v2-row)] px-4 py-[calc((var(--v2-row)-20px)/2)]"

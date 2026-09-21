@@ -95,7 +95,7 @@ export function ImportSection({ state }: { state: UIState }): JSX.Element {
               label={resultHeadline(last)}
               description={lastImportLine(last)}
               leading={<ResultGlyph state={runOutcome(last)} />}
-              danger={Boolean(last.error)}
+              danger={runOutcome(last) === 'error'}
               control
               trailing={
                 <V2Button

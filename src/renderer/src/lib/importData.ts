@@ -172,6 +172,12 @@ export function importedAnything(progress: ImportProgress): boolean {
   return reportedKinds(progress).some((kind) => (progress.results[kind]?.imported ?? 0) > 0)
 }
 
+/** Whether the run reported on kinds and every one of them failed: nothing to count, only reasons. */
+export function everyKindFailed(progress: ImportProgress): boolean {
+  const kinds = reportedKinds(progress)
+  return kinds.length > 0 && kinds.every((kind) => Boolean(progress.results[kind]?.error))
+}
+
 /**
  * What a result has to tell, as its glyph and ink say it (§1 status ink, §9.33): `ok` when
  * something came in, `error` for a failure – the danger ink on glyph and text alike – and
@@ -180,9 +186,13 @@ export function importedAnything(progress: ImportProgress): boolean {
  */
 export type OutcomeState = 'ok' | 'error' | 'none'
 
-/** The whole run's state: its own failure, else whether anything came in. */
+/**
+ * The whole run's state: its own failure, or every kind it reported on failing (the #259 lead's
+ * ruling: a run that only failed is a failure, its headline in the danger ink), else whether
+ * anything came in.
+ */
 export function runOutcome(progress: ImportProgress): OutcomeState {
-  if (progress.error) return 'error'
+  if (progress.error || everyKindFailed(progress)) return 'error'
   return importedAnything(progress) ? 'ok' : 'none'
 }
 
@@ -213,10 +223,16 @@ export function progressLine(progress: ImportProgress): string {
 /**
  * The result's one headline: Chrome's "Your bookmarks and settings are ready" when the run
  * finished; the run's own failure when nothing could be read (the lock refusal names the
- * browser); "Nothing was imported" when every kind came back empty or failed.
+ * browser); when every kind it reported on failed, the sentence naming what failed – the
+ * kind rows under it carry each reason, so the headline does not repeat one of them – and
+ * "Nothing was imported" when every kind came back empty.
  */
 export function resultHeadline(progress: ImportProgress): string {
   if (progress.error) return progress.error
+  if (everyKindFailed(progress)) {
+    const names = listNames(reportedKinds(progress).map((kind) => KIND_LABEL[kind].toLowerCase()))
+    return `${names.charAt(0).toUpperCase()}${names.slice(1)} could not be imported.`
+  }
   if (progress.status === 'cancelled') return 'Import stopped'
   if (!importedAnything(progress)) return 'Nothing was imported'
   return IMPORT_READY
@@ -232,25 +248,32 @@ export function resultCaption(progress: ImportProgress): string {
 }
 
 /**
- * One line for a row or toast: each kind's count line, ` · ` apart (§10.3's aside form – one
- * separator on the line, not a sentence's full stops beside a middle dot), or the failure.
+ * The one separator between a result's lines when they share a row (§10.3's aside form): the
+ * pane's Last import line, a toast, the phone's kind rows – never a sentence's full stop beside
+ * a middle dot.
+ */
+export const LINE_JOINER = ' · '
+
+/**
+ * One line for a row or toast: each kind's count line, `LINE_JOINER` apart, or the failure.
  */
 export function summaryLine(progress: ImportProgress): string {
   if (progress.error) return progress.error
   const kinds = reportedKinds(progress)
   const parts = kinds.map((kind) => outcomeLines(kind, progress.results[kind]!)[0]!)
-  return parts.length ? parts.join(' · ') : resultHeadline(progress)
+  return parts.length ? parts.join(LINE_JOINER) : resultHeadline(progress)
 }
 
 /**
  * The pane's Last import description: the source, then the counts on the same line. The row's
  * label is the headline, so a failed run – whose headline is the failure – and a run with
- * nothing to count say the source alone rather than the headline twice.
+ * nothing to count say the source alone rather than the headline twice; a run whose kinds all
+ * failed keeps their reasons here, its headline naming only what failed.
  */
 export function lastImportLine(progress: ImportProgress): string {
   const caption = resultCaption(progress)
   if (progress.error || reportedKinds(progress).length === 0) return caption
-  return `${caption} · ${summaryLine(progress)}`
+  return `${caption}${LINE_JOINER}${summaryLine(progress)}`
 }
 
 /** "Google Chrome, Firefox and Safari": the browsers found, as a sentence names them. */

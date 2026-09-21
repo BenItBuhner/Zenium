@@ -145,6 +145,13 @@ export interface InfoRow extends RowBase {
   trailing?: ReactNode
   /** The label is a line of prose (an error message): two lines, then an ellipsis (§9.2). */
   clamp?: boolean
+  /**
+   * The label is the status – a failure's sentence stands as the row's first line, the way a
+   * result's headline does – so the label takes the danger ink and the description stays at
+   * 69% (§9.33: the status ink on the text that reports the status, one ink per row). `tone`
+   * is for a row whose second line is the status; a row sets one of the two.
+   */
+  danger?: boolean
 }
 
 /** One thing in a list (a container, a route, a Boost): opens a sheet of rows about it. */

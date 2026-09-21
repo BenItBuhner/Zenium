@@ -3,8 +3,10 @@ import type { ImportKindOutcome, ImportProgress, ImportSource } from '@shared/ty
 import {
   FILE_SOURCE,
   IMPORT_READY,
+  LINE_JOINER,
   browserSources,
   defaultGroup,
+  everyKindFailed,
   finishedImport,
   importedAnything,
   kindOutcome,
@@ -291,6 +293,54 @@ describe('the words for what an import did', () => {
     expect(resultHeadline(progress({ status: 'cancelled' }))).toBe('Import stopped')
   })
 
+  it('a run whose every kind failed is a failure: the headline names what failed, the rows keep the reasons (#259 ruling)', () => {
+    // One kind, one reason: the headline says which kind could not be imported – not the reason
+    // again, which is the kind row's line under it.
+    const one = progress({
+      source: HTML,
+      status: 'done',
+      results: { bookmarks: outcome({ error: 'No bookmarks were found in that file.' }) }
+    })
+    expect(everyKindFailed(one)).toBe(true)
+    expect(runOutcome(one)).toBe('error')
+    expect(resultHeadline(one)).toBe('Bookmarks could not be imported.')
+    expect(outcomeLines('bookmarks', one.results.bookmarks!)).toEqual([
+      'No bookmarks were found in that file.'
+    ])
+    // The pane's one row keeps the reason on its line.
+    expect(lastImportLine(one)).toBe(
+      'From a bookmarks HTML file · No bookmarks were found in that file.'
+    )
+    // Several kinds, each with its reason: the sentence names them all, lower-cased mid-sentence.
+    const all = progress({
+      source: CHROME_1,
+      results: {
+        bookmarks: outcome({ error: 'The Bookmarks file could not be read.' }),
+        history: outcome({ error: 'The History database could not be read.' }),
+        passwords: outcome({ error: 'The Login Data database could not be read.' })
+      }
+    })
+    expect(runOutcome(all)).toBe('error')
+    expect(resultHeadline(all)).toBe(
+      'Bookmarks, browsing history and saved passwords could not be imported.'
+    )
+    // A stopped run whose only reported kind failed says so rather than "Import stopped".
+    expect(resultHeadline({ ...one, status: 'cancelled' })).toBe('Bookmarks could not be imported.')
+    // One kind failing beside one that came in is not a failed run: Chrome's headline, the ok glyph.
+    const some = progress({
+      results: {
+        bookmarks: outcome({ imported: 3 }),
+        history: outcome({ error: 'The History database could not be read.' })
+      }
+    })
+    expect(everyKindFailed(some)).toBe(false)
+    expect(runOutcome(some)).toBe('ok')
+    expect(resultHeadline(some)).toBe(IMPORT_READY)
+    // Nothing reported is not "every kind failed".
+    expect(everyKindFailed(progress())).toBe(false)
+    expect(runOutcome(progress())).toBe('none')
+  })
+
   it('the caption names the source: the browser with its profile, or the file', () => {
     expect(resultCaption(progress({ source: CHROME_1 }))).toBe('From Google Chrome (Person 1)')
     expect(resultCaption(progress({ source: FIREFOX }))).toBe('From Firefox')
@@ -298,6 +348,8 @@ describe('the words for what an import did', () => {
   })
 
   it('the one-line summary is each kind’s count line a middle dot apart, or the failure', () => {
+    // The one joiner every surface that puts a result's lines on one row uses.
+    expect(LINE_JOINER).toBe(' · ')
     expect(
       summaryLine(
         progress({
