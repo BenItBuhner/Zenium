@@ -6,6 +6,7 @@ import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
 import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
+import { fakeboxHoldsChrome, fakeboxMorphStore } from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
@@ -19,6 +20,7 @@ import {
   captureActiveTab,
   closeFindBar,
   closeZoom,
+  menuAloneOverContent,
   panelAloneOverContent,
   uiStore,
   type UiState
@@ -51,13 +53,19 @@ import { ZoomSheet } from './ZoomSheet'
 interface Props {
   state: UIState
   ui: UiState
+  /**
+   * Whether the open URL bar is drawn in this frame (the desktop layouts: floating in the page's
+   * area, or attached across its top). The phone and the tablet shells draw it themselves – the
+   * phone in its bar band, the tablet as its toolbar pill's popup – and pass false.
+   */
+  hostsUrlbar?: boolean
 }
 
 /**
  * The area where tab views live. Everything rendered here is chrome that shows *around* or
  * *instead of* the web content (split gutters, glance frame, URL bar, panels, empty state).
  */
-export function ContentArea({ state, ui }: Props): JSX.Element {
+export function ContentArea({ state, ui, hostsUrlbar = true }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const sidePanelRef = useRef<HTMLDivElement>(null)
   // The frame recedes under a phone sheet (main.css reads `--zen-recede` on it, §11.1).
@@ -99,6 +107,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
   const { formFactor, coarse } = useViewport()
   const phone = formFactor === 'phone'
+  const tablet = formFactor === 'tablet'
   // The empty panes of the split on screen (split-04): the chrome draws each where its blank
   // tab's view would be – the field, the "Choose a tab" button – and the URL bar opened for one
   // floats in that pane's box rather than over the frame.
@@ -126,6 +135,10 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // The grow surface is a stage layer too, but the page it reveals must be painted under it: the
   // surface fades on its own progress and the page shows through (NewTabGrowLayer).
   const growing = newTabGrowStore.use((s) => s.phase !== 'idle')
+  // The page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts): the page
+  // stays painted under the arriving sheet, fading on the morph's value, until the field lands.
+  const morph = fakeboxMorphStore.use()
+  const morphHolds = tab !== null && morph.tabId === tab.id && fakeboxHoldsChrome(morph)
   // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
   // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
   const pageTab = isPageTab(tab)
@@ -231,7 +244,11 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {newTabPage && (
               // Kept mounted under the omnibox and the gesture stage (which draws its own cards),
               // just not painted, so the page is there the moment they leave.
-              <NewTabPage state={state} tab={tab} hidden={ui.urlbar.open || (staged && !growing)} />
+              <NewTabPage
+                state={state}
+                tab={tab}
+                hidden={(ui.urlbar.open && !morphHolds) || (staged && !growing)}
+              />
             )}
             {tab && foreign && !contentHidden && !glanceActive && (
               <ForeignTabPreview tabId={tab.id} />
@@ -260,16 +277,21 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                  * – a second, timed fade here was seen stacking with it. A tab drag dims the
                  * page only while the pointer is over it, with the split targets (split-12,
                  * BUG-011): a plain reorder in the strip leaves the page looking as it was.
+                 * The tablet's core menus are popovers too (v2 §9.36, `TabletMenu`): no dim
+                 * under them either.
                  */}
-                {!phone && !panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
-                  <div
-                    className={cn(
-                      'absolute inset-0 bg-black/35 transition-opacity',
-                      ui.drag && 'bg-black/20',
-                      ui.drag && !dropOverPage && 'opacity-0'
-                    )}
-                  />
-                )}
+                {!phone &&
+                  !panelAloneOverContent(ui) &&
+                  !extensionChromeAloneOverContent(ui) &&
+                  !(tablet && menuAloneOverContent(ui)) && (
+                    <div
+                      className={cn(
+                        'absolute inset-0 bg-black/35 transition-opacity',
+                        ui.drag && 'bg-black/20',
+                        ui.drag && !dropOverPage && 'opacity-0'
+                      )}
+                    />
+                  )}
               </div>
             )}
             {tab && !pageTab && (
@@ -312,7 +334,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 ready={ui.glanceReady}
               />
             )}
-            {ui.urlbar.open && local && !phone && (
+            {ui.urlbar.open && local && !phone && hostsUrlbar && (
               <Urlbar
                 key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
                 state={state}

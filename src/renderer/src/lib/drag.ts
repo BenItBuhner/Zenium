@@ -89,6 +89,12 @@ interface Session {
   tabId: string
   /** The drag started in another window; the core relays the pointer. */
   remote: boolean
+  /**
+   * A finger's drag from a long-press ([liftTabByTouch], TABLET-02): the row moves within the
+   * window only. The page and the window's edge never tear it off (a release there puts it
+   * back), and the core is not asked to follow it across windows.
+   */
+  touch: boolean
   /** The lifted row's own list (direct `[data-tab-id]` children of one parent), when rendered here. */
   list: HTMLElement | null
   scroller: HTMLElement | null
@@ -140,7 +146,9 @@ export function registerCaret(el: HTMLElement | null): void {
 export function startTabDrag(tab: Tab, e: React.PointerEvent): void {
   if (e.button !== 0) return
   // A finger dragging a tab row is a scroll (and a long-press is the context menu); only a mouse
-  // drags tabs. Touch users move tabs through the tab menu (pin, essentials, space, split).
+  // drags tabs from here. On the tablet a long-press lifts the row into the finger's own session
+  // (`liftTabByTouch`); elsewhere touch users move tabs through the tab menu (pin, essentials,
+  // space, split).
   if (e.pointerType !== 'mouse') return
   // Grabbing while a previous ghost is still settling takes over from it.
   if (session && !session.settling) return
@@ -241,6 +249,65 @@ export function remoteDragOver(over: TabDragOver | null): void {
   }
 }
 
+/**
+ * A tab row a finger holds, once its long-press has lifted it (TABLET-02; the hold itself is
+ * `components/tablet/useTabTouch.ts`). The drag is the mouse's session – the ghost under the
+ * finger, the neighbours sliding open on their springs, the caret, the autoscroll at the
+ * list's edges, the `data-drop` targets (a folder, a space, the Essentials, a split edge) – for
+ * the one window: the page and the window's edge are no target (the row goes home from them,
+ * where the mouse's tears the tab off into a new window) and the core is not asked to follow
+ * the drag across windows. Returns the drag's handle, or null when another drag has the rows.
+ */
+export function liftTabByTouch(
+  tab: Tab,
+  rowEl: HTMLElement,
+  x: number,
+  y: number,
+  timeStamp: number
+): TouchTabDrag | null {
+  if (session && !session.settling) return null
+  velocity.reset()
+  velocity.add(timeStamp, x, y)
+  begin(tab, rowEl, x, y)
+  const s = session
+  if (!s) return null
+  s.touch = true
+  let done = false
+  return {
+    move: (mx, my, at) => {
+      if (done || session !== s || s.settling) return
+      velocity.add(at, mx, my)
+      s.pointer = { x: mx, y: my }
+      placeGhost(mx, my)
+      offerZones(s, mx, my)
+      trackPage(s, mx, my)
+      apply(resolve(mx, my, s), s)
+    },
+    release: (rx, ry, at) => {
+      if (done) return
+      done = true
+      if (session !== s || s.settling) return
+      velocity.add(at, rx, ry)
+      drop(s, rx, ry)
+    },
+    cancel: () => {
+      if (done) return
+      done = true
+      if (session === s) cancel(s)
+    }
+  }
+}
+
+/** A finger's drag in progress ([liftTabByTouch]); each call after `release` or `cancel` is nothing. */
+export interface TouchTabDrag {
+  /** The finger moved to `x`, `y` (`timeStamp` the event's): the ghost and the rows follow. */
+  move: (x: number, y: number, timeStamp: number) => void
+  /** The finger lifted at `x`, `y`: the row lands there, or goes home. */
+  release: (x: number, y: number, timeStamp: number) => void
+  /** The touch was taken away (a `pointercancel`): the row goes home. */
+  cancel: () => void
+}
+
 // ---------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------
@@ -264,6 +331,7 @@ function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): vo
   session = {
     tabId: tab.id,
     remote: false,
+    touch: false,
     list,
     scroller,
     motion,
@@ -319,6 +387,7 @@ function beginRemote(over: TabDragOver): void {
   session = {
     tabId: over.tabId,
     remote: true,
+    touch: false,
     list: rowEl && motion ? listOf(rowEl) : null,
     scroller,
     motion,
@@ -528,8 +597,7 @@ function trackPage(s: Session, x: number, y: number): void {
  * the page, which tears the tab off.
  */
 function resolve(x: number, y: number, s: Session): DropTarget {
-  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight)
-    return { kind: 'tearoff' }
+  if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return tearOff(s)
   const under = document.elementFromPoint(x, y)
   const dropEl = under?.closest<HTMLElement>('[data-drop]')
   const key = dropEl?.dataset.drop ?? null
@@ -561,8 +629,13 @@ function resolve(x: number, y: number, s: Session): DropTarget {
     if (kind === 'tab') return { kind: 'key', key, caret: null, into: false }
     return { kind: 'key', key, caret: null, into: true }
   }
-  if (under?.closest('[data-tear-zone]')) return { kind: 'tearoff' }
+  if (under?.closest('[data-tear-zone]')) return tearOff(s)
   return { kind: 'none' }
+}
+
+/** The page, or past the window: the tab leaves the window – except from a finger (TABLET-02). */
+function tearOff(s: Session): DropTarget {
+  return s.touch ? { kind: 'none' } : { kind: 'tearoff' }
 }
 
 /**

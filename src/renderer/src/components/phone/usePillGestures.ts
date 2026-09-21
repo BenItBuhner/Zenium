@@ -260,8 +260,20 @@ export type OverviewHandleHandlers = Omit<PillGestureHandlers, 'onClick' | 'onCo
  * physics as the pill; a touch during its animation catches it just the same. A touch that does
  * not move stays a tap: the drag (and the pointer capture that goes with it) only begins once
  * the finger has crossed the slop, so the header's buttons still receive their clicks.
+ *
+ * `from` says where a touch may start the drag: in the gaps between the controls (the overview
+ * header's rule, the default: a touch on one of its buttons is that button's, even mid-flight),
+ * or `'anywhere'` but a text field – the tablet toolbar's rule (GN-27), whose whole row is the
+ * overview's handle: a pull that starts on a button and crosses the slop is a pull, and the
+ * button's own hold has let go of the touch by then (`useLongPress` gives up at its slop).
  */
-export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): OverviewHandleHandlers {
+export function useOverviewHandle({
+  edge,
+  from = 'gaps'
+}: {
+  edge: PhoneBarPosition
+  from?: 'gaps' | 'anywhere'
+}): OverviewHandleHandlers {
   const touch = useRef<{
     id: number
     x0: number
@@ -290,14 +302,17 @@ export function useOverviewHandle({ edge }: { edge: PhoneBarPosition }): Overvie
     onPointerDown: (e) => {
       if (e.button !== 0 || touch.current) return
       // A touch that begins on one of the header's controls is that control's, even mid-flight:
-      // catching it here would take the pointer and turn the tap into nothing.
-      if ((e.target as HTMLElement).closest('button, input')) return
+      // catching it here would take the pointer and turn the tap into nothing. A field's touch
+      // is the field's on either rule (its caret, its selection).
+      const control = (e.target as HTMLElement).closest('button, input')
+      if (control && (from === 'gaps' || control.matches('input'))) return
       const state = browserStore.get().state
       if (!state) return
       const tracker = new VelocityTracker()
       tracker.add(e.timeStamp, e.clientX, e.clientY)
-      // Mid-flight the rest of the header has nothing to tap, so a catch may take the touch at once.
-      const dragging = catchOverview()
+      // Mid-flight the rest of the header has nothing to tap, so a catch may take the touch at
+      // once; a button of the tablet toolbar has, and its touch becomes a pull at the slop.
+      const dragging = control ? false : catchOverview()
       touch.current = {
         id: e.pointerId,
         x0: e.clientX,

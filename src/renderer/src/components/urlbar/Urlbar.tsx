@@ -34,6 +34,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { cmd, run } from '@renderer/lib/api'
 import { useBackDismissal } from '@renderer/lib/back'
 import { dropStore } from '@renderer/lib/drag'
+import { fakeboxBackPulled, fakeboxTakesCommit } from '@renderer/lib/fakeboxMorph'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { urlbarFieldBox } from '@renderer/lib/layout'
 import { URLBAR_LEAVE_EVENT, toolbarControlBesideAddress } from '@renderer/lib/panes'
@@ -69,7 +70,20 @@ interface Props {
    * the suggestions fill the content frame, growing away from it towards the middle of the screen.
    */
   phoneEdge?: PhoneBarPosition
+  /**
+   * Tablet layout: the toolbar's address pill, in the coordinates of the layer the bar is drawn
+   * in. The bar is then the pill's popup (TB-21): attached, hung `POPUP_GAP` under it and as
+   * wide as it, growing down over the page as far as `area` (the shell's box) lets it.
+   */
+  anchor?: Rect | null
 }
+
+/**
+ * The gap between the tablet pill and its popup (v2 §9.36: Zen's floating bar under the pill,
+ * as the design gate's stills showed it): 4 px of the toolbar's own bottom padding, so the popup
+ * reads as hung from the pill rather than fused to it, while it still meets no other edge.
+ */
+const POPUP_GAP = 4
 
 /**
  * Zen remembers what you typed until you navigate away: the desktop bar's per-tab draft, kept
@@ -150,7 +164,7 @@ const removable = (row: Suggestion): boolean => Boolean(row.deletable)
 /** Rows that come from the user's own typing or pages, worth remembering as shortcuts. */
 const LEARNABLE_KINDS = new Set<Suggestion['kind']>(['url', 'history', 'search', 'entity'])
 
-export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
+export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.Element {
   const phone = Boolean(phoneEdge)
   const [text, setText] = useState(() => initialTextFor(state, urlbar, phone))
   const [results, setResults] = useState<Suggestion[]>([])
@@ -450,7 +464,8 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       } else drafts.delete(draftKey)
       // An extension's omnibox session, if one was on, ends without an entry.
       run('urlbar.cancel', undefined)
-      closeUrlbar({ keepKeyboard })
+      // A dismissal, not a submit: the new tab page's field morph runs back on it (lib/fakeboxMorph.ts).
+      closeUrlbar({ keepKeyboard, reason: 'dismiss' })
     },
     [draftKey, phone, tab, text]
   )
@@ -495,6 +510,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   useBackDismissal('urlbar', {
     travel: 320,
     render: (v) => {
+      // The bar the new tab page's field morphed into: the gesture pulls the field back toward
+      // the page instead, and the sheet fades on the morph's value (lib/fakeboxMorph.ts).
+      if (fakeboxBackPulled(v)) return
       const sheet = sheetRef.current
       if (sheet) {
         sheet.style.transform = `scale(${1 - 0.08 * v})`
@@ -508,6 +526,16 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       el.style.transformOrigin = '50% 0%'
       el.style.transform = `translateY(${-100 * v}%) scale(${1 - 0.06 * v})`
       el.style.opacity = String(1 - 0.7 * v)
+    },
+    // The bar the field morphed into: a commit the field has not followed – mid-flight, or a
+    // back key with nothing pulled – dismisses on the morph's own closing segment from where the
+    // field is (the close hook starts it), not at the end of the bar's spring, which the field
+    // would meet in a jump. After a pull the bar's spring finishes the way home: the field
+    // follows it (`fakeboxBackPulled`) and the close comes at once when it lands.
+    committed: (value) => {
+      if (!fakeboxTakesCommit(value)) return false
+      close(true)
+      return true
     },
     dismissed: () => close(true)
   })
@@ -920,9 +948,21 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
     }
   }
 
-  const floating = !urlbar.attached
+  // Hung from a toolbar pill (the tablet) the bar is always the pill's attached popup.
+  const floating = !urlbar.attached && !anchor
   const style = useMemo(() => {
     if (!area) return undefined
+    if (anchor) {
+      // Hung `POPUP_GAP` under the pill and as wide as it (TB-21), down to the bottom of the
+      // shell's box less a gutter – the keyboard's inset has already taken its share of the box.
+      const top = anchor.y + anchor.height + POPUP_GAP
+      return {
+        left: anchor.x,
+        top,
+        width: anchor.width,
+        maxHeight: Math.max(120, area.height - top - 8)
+      }
+    }
     const field = urlbarFieldBox(area, floating)
     return {
       left: field.x,
@@ -931,7 +971,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
       // Never grow past the content area – on phones the keyboard takes most of it.
       maxHeight: Math.max(120, area.y + area.height - field.y - 8)
     }
-  }, [floating, area])
+  }, [floating, area, anchor])
 
   const placeholder = inKeyword ? `Search with ${engine.name}` : 'Search or enter address'
   // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current

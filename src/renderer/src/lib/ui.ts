@@ -476,6 +476,15 @@ export const contentAreaStore = createStore<{ area: Rect | null }>({ area: null 
 /** Last pointer-down position – anchors renderer-hosted menus that come without coordinates. */
 export const lastPointer = { x: 0, y: 0 }
 
+/**
+ * The chrome control the menu about to open hangs from – the toolbar's ⋯ for `app.menu` – set
+ * by the opener (`openAppMenu`). The descriptor the core sends back carries a point alone (the
+ * button's bottom start corner), and the tablet's popover menu anchors to the control's box
+ * instead (v2 §9.20: flush under its bar, aligned by its half, the control lit while it is up,
+ * its own press closing it). Read by the menu that shows next and matched against its point.
+ */
+export const menuAnchor: { element: HTMLElement | null } = { element: null }
+
 export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
@@ -1249,14 +1258,40 @@ export function openNewTabPageUrlbar(
   })
 }
 
+export interface UrlbarCloseOptions {
+  keepKeyboard?: boolean
+  /**
+   * `dismiss`: the user put the bar away without submitting (Escape, the scrim, the back
+   * gesture). A close without a reason follows a submit, a navigation or another surface taking
+   * over. The phone new tab page's field morph runs the field back only on a dismissal.
+   */
+  reason?: 'dismiss'
+}
+
+let closeInterceptor: ((opts: UrlbarCloseOptions) => boolean) | null = null
+
+/**
+ * A surface that owns the bar's departure – the new tab page's field morph (lib/fakeboxMorph.ts),
+ * which runs the omnibox's field back into the page and closes the bar itself once it has landed
+ * – takes a close over: `fn` returns true to hold the close (and calls `closeUrlbar` again when
+ * it is done), false to let it happen now. One interceptor at a time; returns the release.
+ */
+export function interceptUrlbarClose(fn: (opts: UrlbarCloseOptions) => boolean): () => void {
+  closeInterceptor = fn
+  return () => {
+    if (closeInterceptor === fn) closeInterceptor = null
+  }
+}
+
 /**
  * Close the URL bar. The keyboard goes back to the page unless `keepKeyboard`: a pane shortcut
  * (F6 from the bar, lib/panes.ts) has already put it on another chrome control, and asking for
  * the page's focus as well would take it back off that control.
  */
-export function closeUrlbar(opts: { keepKeyboard?: boolean } = {}): void {
+export function closeUrlbar(opts: UrlbarCloseOptions = {}): void {
   typeahead = null
   if (!uiStore.get().urlbar.open) return
+  if (closeInterceptor?.(opts)) return
   uiStore.set((s) => ({ urlbar: { ...s.urlbar, open: false } }))
   invalidateSnapshot()
   if (!opts.keepKeyboard) returnFocusToPage()
@@ -1884,6 +1919,19 @@ export function panelAloneOverContent(ui: UiState): boolean {
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
+}
+
+/**
+ * Only a core menu is up over the page: the app menu or a context menu (`ui.menu`), alone or
+ * over floating chrome that draws no dim of its own either (the tablet's sidebar drawer a tab
+ * row's long-press menu opens over, whose scrim is the drawer's; a menulist's list), and
+ * nothing else covering the content. Where the menu is a popover – the tablet's (v2 §9.36,
+ * `TabletMenu`) – the page's capture under it stays undimmed as under every other popover (v2
+ * §9.5, §9.20: panels and popovers draw no scrim). The phone's menu sheet has its own scrim, and
+ * the mouse's popover on a desktop layout without native menus keeps the dim it has had.
+ */
+export function menuAloneOverContent(ui: UiState): boolean {
+  return ui.menu !== null && !overlayCoversContent({ ...ui, menu: null, floatingChrome: 0 })
 }
 
 // ---------------------------------------------------------------------------

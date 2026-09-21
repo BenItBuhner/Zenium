@@ -17,6 +17,7 @@ import {
   topBackSurface,
   type BackSurface
 } from '../back'
+import { closeAllPopovers, openPopover, openPopoverCount } from '../popoverStore'
 import { browserStore } from '../ui'
 
 function tab(id: string, patch: Partial<Tab> = {}): Tab {
@@ -268,6 +269,46 @@ describe('handleSystemBack at the root of a tab another app sent', () => {
   })
 })
 
+describe('handleSystemBack with a §9.20 popover up', () => {
+  afterEach(() => {
+    closeAllPopovers()
+    browserStore.set({ state: null })
+    vi.mocked(run).mockClear()
+  })
+
+  it('a popover counts as chrome the host hands the back to, and the back is its light dismiss', () => {
+    const page = tab('page', { canGoBack: true })
+    browserStore.set({ state: state(page) })
+    // No popover: the back goes to the page's history (the legacy chain).
+    expect(backStore.get().chrome).toBe(false)
+    const closed: string[] = []
+    // No DOM here: the registry only reads the element for a press's hit test.
+    const unregister = openPopover({ element: () => null, close: (reason) => closed.push(reason) })
+    expect(backStore.get().chrome).toBe(true)
+    expect(handleSystemBack()).toBe(true)
+    // The bubble went, the page under it did not move.
+    expect(closed).toEqual(['all'])
+    expect(openPopoverCount()).toBe(0)
+    expect(run).not.toHaveBeenCalled()
+    expect(backStore.get().chrome).toBe(false)
+    unregister()
+    // With the popover gone the next back is the page's again.
+    expect(handleSystemBack()).toBe(true)
+    expect(vi.mocked(run).mock.calls).toEqual([['tab.back', { tabId: 'page' }]])
+  })
+
+  it('a registered back surface (a sheet over the popover) still comes first', () => {
+    const closed: string[] = []
+    openPopover({ element: () => null, close: (reason) => closed.push(reason) })
+    const sheet = surface('sheet')
+    const pop = pushBackSurface(sheet)
+    expect(dispatchBackEvent('commit')).toBe(true)
+    expect(sheet.calls).toEqual(['commit'])
+    expect(closed).toEqual([])
+    pop()
+  })
+})
+
 describe('BackDismissal', () => {
   let frames: Array<(now: number) => void>
   let now: number
@@ -357,6 +398,35 @@ describe('BackDismissal', () => {
     const d = new BackDismissal({ render: () => undefined, dismissed: () => dismissed++ })
     d.commit()
     expect(dismissed).toBe(0)
+    settle()
+    expect(dismissed).toBe(1)
+    expect(d.progress).toBe(1)
+  })
+
+  it('a surface that takes the commit over gets the value and neither the spring nor dismissed', () => {
+    const painted: number[] = []
+    let dismissed = 0
+    const committedAt: number[] = []
+    const d = new BackDismissal({
+      render: (v) => painted.push(v),
+      dismissed: () => dismissed++,
+      committed: (value) => {
+        committedAt.push(value)
+        return value <= 0
+      }
+    })
+    // A back key: nothing pulled, the surface's own motion runs it out.
+    d.commit()
+    expect(committedAt).toEqual([0])
+    expect(frames).toEqual([])
+    settle()
+    expect(dismissed).toBe(0)
+    expect(painted).toEqual([])
+    // After a pull the surface declines and the spring finishes the way out.
+    d.start()
+    d.setProgress(0.4)
+    d.commit()
+    expect(committedAt).toEqual([0, 0.4])
     settle()
     expect(dismissed).toBe(1)
     expect(d.progress).toBe(1)

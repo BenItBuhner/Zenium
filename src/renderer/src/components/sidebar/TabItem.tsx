@@ -19,6 +19,7 @@ import { CONTAINER_COLORS } from '@shared/defaults'
 import { tabAlertTooltip, type TabAlert } from '@shared/captureState'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { activeTab, containerOf, tabTitle, tabTooltip } from '@renderer/lib/selectors'
@@ -31,6 +32,7 @@ import {
 } from '@renderer/lib/ui'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { cn } from '@renderer/lib/utils'
+import { useTabTouch } from '../tablet/useTabTouch'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
 
@@ -89,7 +91,13 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   // The indicator slot shows one state, Chrome's priority: recording > capturing > PiP > audio.
   const alert = !tab.discarded ? (tab.alert ?? null) : null
 
-  const onPointerDown = (e: React.PointerEvent): void => {
+  // On the tablet a finger's hold lifts the row (TABLET-02: the menu on release, the reorder on
+  // a move) and takes the browser's long-press menu; elsewhere the hook does nothing.
+  const tabletTouch = viewportStore.use((v) => v.formFactor === 'tablet')
+  const touch = useTabTouch(tab, tabletTouch)
+
+  const onPointerDown = (e: React.PointerEvent<HTMLElement>): void => {
+    if (touch.onPointerDown(e)) return
     if ((e.target as HTMLElement).closest('button')) return
     if (e.button === 1) {
       e.preventDefault()
@@ -103,6 +111,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
   // so a native `dblclick` never fires here. Detect the second click ourselves instead.
   const lastClick = useRef(0)
   const onClick = (e: React.MouseEvent): void => {
+    if (touch.swallowsClick()) return
     if ((e.target as HTMLElement).closest('button')) return
     if (dragging) return
     if (e.altKey) {
@@ -136,7 +145,8 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
     run('tab.activate', { tabId: tab.id })
   }
 
-  const onContextMenu = (e: React.MouseEvent): void => {
+  const onContextMenu = (e: React.MouseEvent<HTMLElement>): void => {
+    if (touch.onContextMenu(e)) return
     e.preventDefault()
     // At the pointer, or – Shift+F10, the Menu key on the focused row – at the row, in
     // keyboard mode (lib/menuKeys.ts).
@@ -217,6 +227,9 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
       data-testid="tab"
       style={agent ? { boxShadow: `inset 0 0 0 1.5px ${agent.color}80` } : undefined}
       onPointerDown={onPointerDown}
+      onPointerMove={touch.onPointerMove}
+      onPointerUp={touch.onPointerUp}
+      onPointerCancel={touch.onPointerCancel}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocus={onFocus}
