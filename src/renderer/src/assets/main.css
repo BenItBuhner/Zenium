@@ -5963,14 +5963,21 @@
   /*
    * The pill's slot while the field is the page's: the well, filling in with the pill's tint and
    * words as the scroll hands the field over (`--zen-ntp-pill`), so that at the landing the pill
-   * is whole and the double has nothing left to draw.
+   * is whole and the double has nothing left to draw. The handover is the words' one source of
+   * opacity, hence the `!important`: the pill's content arrives on a 160 ms entrance fade
+   * (`zen-animate-fade`), and the bar is mounted again as a closing or a pull begins (the shell
+   * takes it down while the omnibox is open), so that fade replays under the field coming home
+   * – and an animation's value outranks a plain declaration, so for its length the well's words
+   * would draw over an empty handover (run 3's `top-rest`, one frame at .15 on the emulator,
+   * where the fade started late; a faint ghost of the words for two frames on a phone). An
+   * important declaration outranks the animation; nothing restarts when the class comes off.
    */
   :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away {
     background: rgb(var(--zen-fg-rgb) / calc(0.04 + 0.03 * var(--zen-ntp-pill, 0)));
     box-shadow: inset 0 1px 2px rgb(0 0 0 / calc(0.06 * (1 - var(--zen-ntp-pill, 0))));
   }
   :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away > * {
-    opacity: var(--zen-ntp-pill, 0);
+    opacity: var(--zen-ntp-pill, 0) !important;
     pointer-events: none;
   }
   /*

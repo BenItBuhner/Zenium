@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Rect } from '@shared/types'
 import {
@@ -428,5 +430,29 @@ describe('interruptions resolve to one state', () => {
     expect(landed(open)).toBe(open)
     const rested: FakeboxState = FAKEBOX_REST
     expect(landed(rested)).toBe(rested)
+  })
+})
+
+/*
+ * The pill's slot while the field is the page's (main.css, not loaded here): its words draw by
+ * the handover alone. The shell takes the bar down while the omnibox is open and mounts it again
+ * as a closing or a pull begins, so the pill's content replays its entrance fade under the field
+ * coming home; an animation's value outranks a plain declaration, an important one outranks
+ * the animation (run 3's `top-rest`: the well's words at .15 over a handover of 0 for a frame).
+ */
+describe('the well (main.css): the words on the handover alone', () => {
+  const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(/\s+/g, ' ')
+  const rule = (selector: string): string => {
+    const at = css.indexOf(`${selector} {`)
+    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1)
+    return css.slice(at, css.indexOf('}', at))
+  }
+
+  it('the away pill’s children take their opacity from --zen-ntp-pill over any animation of their own', () => {
+    const words = rule(":root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away > *")
+    expect(words).toContain('opacity: var(--zen-ntp-pill, 0) !important')
+    expect(words).toContain('pointer-events: none')
+    // The entrance fade that made the rule important: the pill's content class is an animation.
+    expect(rule('.zen-animate-fade')).toMatch(/animation: zen-fade \d+ms/)
   })
 })
