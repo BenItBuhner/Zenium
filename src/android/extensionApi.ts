@@ -14,6 +14,10 @@ import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
+  SYSTEM_DISPLAY_NO_PERMISSION_ERROR,
+  SYSTEM_DISPLAY_PERMISSION
+} from '@core/extensions/api/systemDisplay'
+import {
   answerSystemStorage,
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
@@ -41,6 +45,7 @@ import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 import { answerProxySetting } from './extensionProxy'
+import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
 import { AndroidTts } from './extensionTts'
 
 /**
@@ -118,6 +123,10 @@ export interface ApiHost {
    * (`languages` by share of the text; `isReliable` when the guess is a confident one).
    */
   detectTextLanguage(text: string): Promise<DetectedLanguage>
+  /** `system.display.getInfo`: the phone's screen as the chrome page sees it (`extensionSystemDisplay.ts`). */
+  screen(): PhoneScreen
+  /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
+  onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
   /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
   readCookies(containerId: string, url: string): Promise<JarReading>
@@ -433,6 +442,20 @@ export class ExtensionApi {
       readAloudPlaying: () => host.browser.readAloud.uiState()?.status === 'playing',
       pauseReadAloud: () => host.browser.readAloud.pause()
     })
+    // The screen turning is Chrome's `onDisplayChanged`, to the extensions that may hear of it.
+    host.onScreenChange(() => {
+      for (const ext of host.allAttached())
+        if (this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
+          host.emit(ext.record.id, 'system.display', 'onDisplayChanged', [])
+    })
+  }
+
+  /** Whether the extension declared the permission, as required or as an optional one (granted without a prompt here). */
+  private holdsPermission(ext: AttachedExtension, permission: string): boolean {
+    return (
+      ext.manifest.permissions.includes(permission) ||
+      ext.manifest.optionalPermissions.includes(permission)
+    )
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -631,6 +654,12 @@ export class ExtensionApi {
         )
           throw new Error(SYSTEM_STORAGE_NO_PERMISSION_ERROR)
         return answerSystemStorage(method, args)
+      case 'system.display':
+        // The phone's one screen (`extensionSystemDisplay.ts`), for an extension that declared the
+        // permission; Chrome hides the namespace from the others.
+        if (!this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
+          throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
+        return answerSystemDisplay(method, this.host.screen())
       case 'proxy':
         // `proxy.settings`, a ChromeSetting: the system's value, not controllable on the WebView
         // (`extensionProxy.ts`); the calls come from extensions that declared the permission.

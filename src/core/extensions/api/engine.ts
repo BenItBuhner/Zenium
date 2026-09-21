@@ -622,6 +622,8 @@ export function createEmulatedEngine(
         }
       }
     }
+    // `system.display` and `system.storage` are the table's, for the extensions that declared
+    // them (`engineSpec.ts`); the host answers from the phone's screen and its no devices.
     chrome.system = {
       cpu: {
         getInfo: (...args: unknown[]) =>
@@ -630,10 +632,6 @@ export function createEmulatedEngine(
       memory: {
         getInfo: (...args: unknown[]) =>
           settle(notImplemented('system.memory.getInfo'), takeCallback(args))
-      },
-      display: {
-        getInfo: (...args: unknown[]) =>
-          settle(notImplemented('system.display.getInfo'), takeCallback(args))
       }
     }
   }

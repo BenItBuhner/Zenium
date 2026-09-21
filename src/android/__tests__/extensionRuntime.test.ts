@@ -1779,6 +1779,53 @@ describe('AndroidExtensionRuntime: chrome.system.storage', () => {
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.system.display', () => {
+  it('lists the phone\u2019s one screen in Chrome\u2019s shape, primary and internal, and follows it turning', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['system.display', 'storage'] })))
+    backgroundUp(h, 'bg1', ['system.display.onDisplayChanged'])
+    const info = (await call(h, 'bg1', 'system.display', 'getInfo', [])).result as Array<
+      Record<string, unknown>
+    >
+    expect(info).toHaveLength(1)
+    expect(info[0]).toMatchObject({
+      id: '1',
+      isPrimary: true,
+      isInternal: true,
+      isEnabled: true,
+      rotation: 0,
+      dpiX: 252,
+      bounds: { left: 0, top: 0, width: 412, height: 915 },
+      workArea: { left: 0, top: 0, width: 412, height: 915 },
+      hasTouchSupport: true,
+      modes: []
+    })
+    expect((await call(h, 'bg1', 'system.display', 'getDisplayLayout', [])).result).toEqual([])
+    expect(
+      await call(h, 'bg1', 'system.display', 'setMirrorMode', [{ mode: 'off' }])
+    ).toMatchObject({
+      ok: false,
+      error: 'Function available only on ChromeOS.'
+    })
+    h.turnScreen(90)
+    expect(events(h, 'bg1', 'system.display.onDisplayChanged')).toHaveLength(1)
+    const turned = (await call(h, 'bg1', 'system.display', 'getInfo', [])).result as Array<
+      Record<string, unknown>
+    >
+    expect(turned[0]).toMatchObject({ rotation: 90, bounds: { width: 915, height: 412 } })
+  })
+
+  it('refuses an extension that did not declare it with Chrome\u2019s no-permission error', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'system.display', 'getInfo', [])).toMatchObject({
+      ok: false,
+      error: "The extension does not have the 'system.display' permission."
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: chrome.proxy.settings', () => {
   it('reads as the system\u2019s settings that no extension controls, and takes only that value', async () => {
     const h = harness()

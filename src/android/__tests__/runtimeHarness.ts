@@ -418,6 +418,8 @@ export interface Harness {
    * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
    */
   pdfDocuments: Map<string, string>
+  /** Turn the phone's screen to `angle` degrees (0, 90, 180, 270): `system.display.onDisplayChanged`. */
+  turnScreen: (angle: number) => void
   /**
    * What the runtime told the search model (`state.setExtensionSearch`), every call in order:
    * the attached extensions' engines and the control of the default.
@@ -538,9 +540,23 @@ export function harness(
   } as unknown as Browser
   const clock = { now: 1_700_000_000_000 }
   const timers: Harness['timers'] = []
+  // A 412x915 CSS px phone at 2.625x (a Pixel's), upright; `turnScreen` rotates it.
+  const screen = {
+    width: 412,
+    height: 915,
+    availWidth: 412,
+    availHeight: 915,
+    scaleFactor: 2.625,
+    angle: 0
+  }
+  const screenListeners: Array<() => void> = []
   const runtime = new AndroidExtensionRuntime(kt, browser, () => win, {
     idleMs: 30_000,
     now: () => clock.now,
+    screen: () => ({ ...screen }),
+    onScreenChange: (listener) => {
+      screenListeners.push(listener)
+    },
     setTimeout: (fn, ms) => {
       timers.push({ fn, ms, at: clock.now + ms, cleared: false })
       return timers.length - 1
@@ -583,6 +599,13 @@ export function harness(
     infos,
     pdfDocuments,
     search,
+    turnScreen: (angle) => {
+      screen.angle = angle
+      const landscape = angle === 90 || angle === 270
+      screen.width = screen.availWidth = landscape ? 915 : 412
+      screen.height = screen.availHeight = landscape ? 412 : 915
+      for (const listener of screenListeners) listener()
+    },
     saved: (name) => {
       runtime.flushSync()
       return JSON.parse(files.get(name) ?? '{}') as Record<string, unknown>
