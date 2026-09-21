@@ -1,0 +1,88 @@
+name: Android status bar demo
+
+# The device proof that the phone chrome sits under the status bar and above the gesture bar
+# (Bennett's 0.3.79 report: the pill drawn over the clock). The driver (StatusBarDemo) seeds a
+# profile with a boot document over the inline limit – the condition under which the chrome used
+# to drop the host's first `insets` at boot – and asserts, against the window's own insets, the
+# bar's row and the page frame at both docks and in both schemes across cold chrome boots, a
+# fullscreen video's exit, the screen turned off and on and the system font at 1.3, plus the
+# status bar showing with icons that match the scheme. With `before`, an APK built from main
+# runs the same driver first, notes only, for the comparison stills. Dispatch-only, like the
+# other demos; the build, the emulator and the Gradle cache live in android-emulator-demo.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      assert:
+        description: Fail when a claim does not hold
+        type: boolean
+        default: true
+      before:
+        description: Also run an APK built from main first, for comparison
+        type: boolean
+        default: false
+      api-level:
+        description: System image (35 is Android 15, the edge-to-edge default most phones run)
+        type: choice
+        default: '35'
+        options:
+          - '34'
+          - '35'
+  # TEMPORARY (removed before the PR is marked ready): the PR's own run, gated below on the head
+  # commit saying [status-bar-run]; a push run asserts and records the before take.
+  push:
+    branches: [cursor/android-status-bar-inset-5775]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-status-bar-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Status bar demo
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[status-bar-run]')
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-status-bar-demo.sh
+      api-level: ${{ inputs.api-level || '35' }}
+      script-env: |
+        STATUS_BAR_ASSERT=${{ (github.event_name == 'push' || inputs.assert) && 'true' || 'false' }}
+        BEFORE_APK_DIR=${{ (github.event_name == 'push' || inputs.before) && 'before/android/app/build/outputs/apk/debug' || '' }}
+      # The "before" take needs main's APK: check main out beside the working tree and build it.
+      setup-script: |
+        if [ -z "$BEFORE_APK_DIR" ]; then exit 0; fi
+        git fetch --depth=1 origin main
+        git worktree add --detach before FETCH_HEAD
+        cd before
+        npm ci
+        npm run build:android:web
+        cd android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      timeout-minutes: 70
+      artifact-name: android-status-bar-demo
+      artifact-path: artifacts/android-status-bar-demo/
+
+  # One more boot when the emulator itself went away under the driver, never when the driver failed.
+  record-again:
+    name: Status bar demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-status-bar-demo.sh
+      api-level: ${{ inputs.api-level || '35' }}
+      script-env: |
+        STATUS_BAR_ASSERT=${{ (github.event_name == 'push' || inputs.assert) && 'true' || 'false' }}
+        BEFORE_APK_DIR=${{ (github.event_name == 'push' || inputs.before) && 'before/android/app/build/outputs/apk/debug' || '' }}
+      setup-script: |
+        if [ -z "$BEFORE_APK_DIR" ]; then exit 0; fi
+        git fetch --depth=1 origin main
+        git worktree add --detach before FETCH_HEAD
+        cd before
+        npm ci
+        npm run build:android:web
+        cd android && ./gradlew assembleDebug -PskipWeb --no-daemon --stacktrace
+      timeout-minutes: 70
+      artifact-name: android-status-bar-demo-second-boot
+      artifact-path: artifacts/android-status-bar-demo/

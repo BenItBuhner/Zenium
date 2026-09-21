@@ -350,6 +350,40 @@ export interface BootInfo {
   touchExploration?: boolean
 }
 
+/**
+ * The window's safe-area insets in CSS px (`MainActivity.applyInsets`), and whether the system
+ * bars are still on their way back from a page's fullscreen (`FullscreenLanding.kt`).
+ */
+export interface WindowInsets {
+  top: number
+  right: number
+  bottom: number
+  left: number
+  settling?: boolean
+}
+
+/**
+ * The insets as a host reports them, every side a finite number: a side the payload lacks or
+ * garbles (the boot payload of a host asked before its first inset dispatch) is 0, never
+ * `undefined`, which the chrome would write as `--zen-inset-top: undefinedpx` and lose the
+ * shell's `calc()` padding to.
+ */
+export function windowInsetsOf(payload: unknown): WindowInsets {
+  const raw = (payload ?? {}) as Partial<Record<keyof WindowInsets, unknown>>
+  const side = (value: unknown): number => {
+    const n = Number(value)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+  const insets: WindowInsets = {
+    top: side(raw.top),
+    right: side(raw.right),
+    bottom: side(raw.bottom),
+    left: side(raw.left)
+  }
+  if (typeof raw.settling === 'boolean') insets.settling = raw.settling
+  return insets
+}
+
 /** Events Kotlin raises for the whole app (`__zenHost.hostEvent(name, payload)`). */
 export interface HostEventPayloads {
   /**
@@ -357,7 +391,7 @@ export interface HostEventPayloads {
    * a page's fullscreen (`FullscreenLanding.kt`): the chrome's return fade waits while they are
    * (`lib/fullscreenLanding.ts`). Absent from a host without the word.
    */
-  insets: { top: number; right: number; bottom: number; left: number; settling?: boolean }
+  insets: WindowInsets
   /** A configuration change: screen class, keyboard / mouse or font scale differ now. */
   environment: PageEnvironment
   focus: { focused: boolean }
@@ -706,11 +740,25 @@ class AndroidAgentTransport implements AgentTransport {
 
 type Listener = (payload: unknown) => void
 
+/**
+ * The events that describe a state of the window rather than a moment: a subscriber that comes
+ * late gets the latest one on subscribing. The host's `insets` is one. It is sent at boot from
+ * the boot payload and again as Kotlin's queued `insets` events are flushed – both before React
+ * has rendered and `useMainEvents` has subscribed, whenever the boot yields to fetch a deferred
+ * document (`fetchDeferredDocuments`, any profile document over `BOOT_INLINE_LIMIT`). Android
+ * dispatches insets again only when they change (the keyboard, a turn), so without the replay
+ * the chrome laid itself out under the status bar until then (Bennett's 0.3.79 report).
+ */
+const STICKY_EVENTS: ReadonlySet<EventName> = new Set<EventName>(['insets'])
+
 /** In-process event fan-out: the chrome runs in the same document as the core. */
 export class InProcessEvents {
   private readonly listeners = new Map<string, Set<Listener>>()
+  /** The last payload of each sticky event ({@link STICKY_EVENTS}), replayed to a new subscriber. */
+  private readonly latest = new Map<string, unknown>()
 
   send<K extends EventName>(name: K, payload: Events[K]): void {
+    if (STICKY_EVENTS.has(name)) this.latest.set(name, payload)
     const set = this.listeners.get(name)
     if (!set) return
     for (const listener of [...set]) {
@@ -730,6 +778,13 @@ export class InProcessEvents {
     }
     const wrapped = listener as Listener
     set.add(wrapped)
+    if (this.latest.has(name)) {
+      try {
+        listener(this.latest.get(name) as Events[K])
+      } catch (error) {
+        console.error(`[zen] event listener for ${name} failed on the replay`, error)
+      }
+    }
     return () => {
       set?.delete(wrapped)
     }
@@ -1204,7 +1259,9 @@ export class AndroidPlatform implements Platform {
     this.privateSession = {
       setOpenTabs: (count) => bridge.send('private.setOpenTabs', { count })
     }
-    this.events.send('insets', boot.insets)
+    // The window as the host last measured it; the bus keeps it for the chrome, which
+    // subscribes once React has rendered (`InProcessEvents`, the sticky replay).
+    this.events.send('insets', windowInsetsOf(boot.insets))
   }
 
   bind(browser: Browser): void {
@@ -1287,7 +1344,7 @@ export class AndroidPlatform implements Platform {
     const { browser } = this
     switch (name) {
       case 'insets':
-        this.events.send('insets', payload as HostEventPayloads['insets'])
+        this.events.send('insets', windowInsetsOf(payload))
         return
       case 'view.drawn':
         this.events.send('view.drawn', payload as HostEventPayloads['view.drawn'])
