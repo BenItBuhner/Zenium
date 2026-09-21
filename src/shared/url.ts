@@ -330,12 +330,28 @@ export function displayHost(url: string): string {
  * shown whole, section and all (`zenium://settings/privacy`); one that does not is the internal
  * page's title ("Settings") where the tab is one of Zenium's own pages, as the phone pill names
  * them (v2 §10.1) – "ze…" says nothing, and the title is what the tab row says too. A site's
- * address truncates as before: its host comes first and is what matters. The URL bar's field
- * keeps the whole address while editing, whatever the pill shows.
+ * address truncates while the field keeps the address floor (§9.29: the address truncates first,
+ * to a floor of 56 px, and only then do chips hide – its host comes first and is what matters);
+ * `belowFloor`, where the never-hidden chips have taken the field under the floor and a few
+ * letters and an ellipsis say nothing, the site's page `title` stands in for the address, as the
+ * page's does (§9.29: "below the floor the pill shows the title instead of the address"),
+ * switching back the moment the address fits or has its floor again. A tab without a title of
+ * its own (none yet, or the address echoed as one) keeps the address. The URL bar's field keeps
+ * the whole address while editing, whatever the pill shows.
  */
-export function pillText(url: string, shown: string, fits: boolean): string {
+export function pillText(
+  url: string,
+  shown: string,
+  fits: boolean,
+  title = '',
+  belowFloor = false
+): string {
   if (fits || !shown) return shown
-  return internalPageTitle(url) ?? shown
+  const page = internalPageTitle(url)
+  if (page !== null) return page
+  if (!belowFloor) return shown
+  const name = title.trim()
+  return name && name !== url && name !== shown ? name : shown
 }
 
 const SECOND_LEVEL = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'or', 'ne', 'go'])

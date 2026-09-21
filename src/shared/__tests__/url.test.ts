@@ -231,14 +231,36 @@ describe('pillText (the desktop pill at rest)', () => {
     )
   })
 
-  it('leaves a site’s address to truncate: there is no title to stand in for it', () => {
+  it('leaves a site’s address to truncate while the field keeps the address floor (§9.29)', () => {
     const url = 'https://en.wikipedia.org/wiki/Zen_(browser)#History'
+    const title = 'Zen (browser) – Wikipedia'
     expect(pillText(url, displayUrl(url), false)).toBe(displayUrl(url))
     expect(pillText(url, fullUrl(url), false)).toBe(fullUrl(url))
+    expect(pillText(url, displayUrl(url), false, title)).toBe(displayUrl(url))
+    expect(pillText(url, displayUrl(url), false, title, false)).toBe(displayUrl(url))
     expect(pillText('file:///home/me/notes.html', 'file:///home/me/notes.html', false)).toBe(
       'file:///home/me/notes.html'
     )
     expect(pillText(NEW_TAB_URL, '', false)).toBe('')
+  })
+
+  it('names a site by its title once the field is under the floor, and the address again once it fits', () => {
+    const url = 'https://en.wikipedia.org/wiki/Zen_(browser)#History'
+    const title = 'Zen (browser) – Wikipedia'
+    expect(pillText(url, displayUrl(url), false, title, true)).toBe(title)
+    expect(pillText(url, fullUrl(url), false, title, true)).toBe(title)
+    // A whole address wins over the title at any width.
+    expect(pillText(url, displayUrl(url), true, title, true)).toBe(displayUrl(url))
+    // A tab with no title of its own – none yet, or the address echoed as one – keeps the address.
+    expect(pillText(url, displayUrl(url), false, '', true)).toBe(displayUrl(url))
+    expect(pillText(url, displayUrl(url), false, '   ', true)).toBe(displayUrl(url))
+    expect(pillText(url, displayUrl(url), false, url, true)).toBe(displayUrl(url))
+    expect(pillText(url, displayUrl(url), false, displayUrl(url), true)).toBe(displayUrl(url))
+    // The page's own title stands in above and below the floor alike (§10.1).
+    expect(pillText(SETTINGS_URL, displayUrl(SETTINGS_URL), false, 'Settings', true)).toBe(
+      'Settings'
+    )
+    expect(pillText(NEW_TAB_URL, '', false, 'New Tab', true)).toBe('')
   })
 })
 
