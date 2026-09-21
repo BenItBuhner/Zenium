@@ -58,7 +58,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // components layer, so it is cut out before the ring's span.
   ['/*\n * The bold-text setting (A11Y-05', '@layer components {'],
   // The chrome's focus ring (§1, a11y-10): the base-layer floor under every control of the chrome
-  // document, reading the ring token; it ends where the first components layer begins.
+  // document, reading the ring token, and the one text-selection rule after it (§9.6, reading
+  // `--v2-selection`); it ends where the first components layer begins.
   [" * The chrome's focus ring (v2 §1, a11y-10)", '@layer components {'],
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
@@ -981,6 +982,40 @@ describe('the v2 primitives (§9.34)', () => {
       // The leading slot is not toned through the row: a lead glyph is a list's structural
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
+    }
+  })
+})
+
+describe('text selection (§9.6)', () => {
+  const rendererRoot = fileURLToPath(new URL('../../', import.meta.url))
+  /** Every renderer source file that could carry a stylesheet rule, main.css first. */
+  const sources = readdirSync(rendererRoot, { recursive: true, encoding: 'utf8' })
+    .map((f) => f.split('\\').join('/'))
+    .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+
+  it('is one rule, once, on the chrome document’s root: no component sets ::selection of its own', () => {
+    // main.css states the rule exactly once, as one selector list naming the window root and
+    // the chrome layer the popovers portal into (lib/portals.tsx) – the same chrome document.
+    const rules = [...bare.matchAll(/[^\n]*::selection[^{]*\{/g)].map((m) => m[0].trim())
+    expect(rules).toEqual(['.zen-window ::selection,\n.zen-chrome-layer ::selection {'])
+    // Its two declarations: the selection token (the accent at 30 %) and the text's own ink.
+    const at = bare.indexOf('.zen-window ::selection,')
+    const body = bare.slice(bare.indexOf('{', at) + 1, bare.indexOf('}', at))
+    expect(body.match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  background: var(--v2-selection);',
+      '  color: inherit;'
+    ])
+    // Unlayered: a layered copy anywhere would lose to it, so none can be the selection colour.
+    expect(nesting(at)).toBe(0)
+    // And no other renderer stylesheet or component carries one – the omnibox field's went with
+    // this rule. (zen://newtab is its own document and cannot link main.css; shared/newTabPage.ts
+    // writes the same rule into it, outside this tree.)
+    for (const file of sources) {
+      if (file === 'assets/main.css') continue
+      expect(
+        readFileSync(join(rendererRoot, file), 'utf8'),
+        `${file} sets ::selection`
+      ).not.toMatch(/::selection/)
     }
   })
 })

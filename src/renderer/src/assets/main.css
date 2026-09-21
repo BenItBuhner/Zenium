@@ -821,6 +821,21 @@
 }
 
 /*
+ * Text selection (v2 §9.6): one rule, once, on the chrome document's root – the accent at 30 %
+ * (`--v2-selection`), the text keeping its own ink – and no component sets `::selection` of its
+ * own (the guard in lib/__tests__/v2Tokens.test.ts). The chrome layer is named beside the window
+ * because popovers and menus portal there, outside `.zen-window` (lib/portals.tsx), and a field
+ * in one is chrome text too. Unlayered, like the `zen-v2-` primitives, so no layered copy can
+ * beat it. Web content is its own document and keeps the site's selection colour; zen://newtab
+ * cannot link this sheet and writes the same rule into its own (shared/newTabPage.ts).
+ */
+.zen-window ::selection,
+.zen-chrome-layer ::selection {
+  background: var(--v2-selection);
+  color: inherit;
+}
+
+/*
  * The bold-text setting (A11Y-05, `lib/textScale.ts`): the weight tokens add the adjustment to
  * themselves, and the weights the chrome sets by utility class move up with them. Unlayered so
  * it wins over the utilities; `data-bold-text` is only ever set while the setting is on, so at
@@ -926,10 +941,6 @@
    */
   :root[data-form-factor='phone'] .zen-window {
     transition: none;
-  }
-  .zen-window ::selection {
-    background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
-    color: inherit;
   }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
   .zen-window[data-window-kind='private'] {
@@ -2052,16 +2063,6 @@
   .zen-omnibox-field > * {
     position: relative;
     animation: zen-fade 220ms var(--zen-ease);
-  }
-  /*
-   * Selected text in the chrome takes the space's accent at 30 %, never the browser's default
-   * blue; the accent-fill shade so it stays legible on dark, with the raw accent for WebViews
-   * that cannot mix colours.
-   */
-  .zen-omnibox-field input::selection {
-    background: rgb(var(--zen-accent-rgb) / 0.3);
-    background: color-mix(in srgb, var(--zen-accent-fill) 30%, transparent);
-    color: var(--zen-fg);
   }
   /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
   .zen-suggestion-sheet {
