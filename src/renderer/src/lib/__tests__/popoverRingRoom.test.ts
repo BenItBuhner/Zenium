@@ -10,7 +10,9 @@ import { describe, expect, it } from 'vitest'
  * rule: the list leaves the ring its room – a row in the shared popover body stands
  * `--v2-ring-room` in from each side and gives that much back from its gutter, so its text stays
  * at 16 – and a list whose first row touches the body's edge (the downloads bubble's) leaves the
- * same room above it. These tests pin the token, the rule's place and shape, and model the
+ * same room above it. The omnibox dropdown's list (`.zen-omnibox-results`, shell pass 7(b)) is
+ * the same clipped scroller under the field and is the rule's second body. These tests pin the
+ * token, the rule's place and shape, and model the
  * geometry the way a reviewer measures it (box to box, §5) as far as a DOM without layout goes;
  * the pixels are the Xvfb drive's (`harness/linux/chassis-primitives.js`).
  */
@@ -79,7 +81,7 @@ const ROOM = px(/--v2-ring-room:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
 const OFFSET = px(/--v2-ring-offset:\s*([^;]+);/.exec(lightBlock)?.[1] ?? '')
 /** How far the ring paints past the row's edge: its offset and its 2 px. */
 const REACH = OFFSET + 2
-const ROW = '.zen-bm-popover-body .zen-v2-row'
+const ROW = ':is(.zen-bm-popover-body, .zen-omnibox-results) .zen-v2-row'
 
 describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', () => {
   it('has one token for the room, in the light block only: the ring’s 2 px past the row at the shared offset of 2 outside, so 4', () => {
@@ -98,7 +100,11 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
   })
 
   it('is one unlayered rule beside the row primitive, tokens only: the row stands in by the room and gives it back from its gutter', () => {
-    expect(bare.match(/\.zen-bm-popover-body \.zen-v2-row \{/g) ?? []).toHaveLength(1)
+    // One rule for both bodies: no second copy of the declarations for the omnibox's list.
+    expect(
+      bare.match(/\.zen-bm-popover-body(, \.zen-omnibox-results\))? \.zen-v2-row \{/g) ?? []
+    ).toHaveLength(1)
+    expect(bare.match(/\.zen-omnibox-results\)? \.zen-v2-row \{/g) ?? []).toHaveLength(1)
     const at = ruleAt(ROW)
     expect(nesting(at)).toBe(0)
     expect(at).toBeGreaterThan(ruleAt('.zen-v2-row'))
@@ -171,13 +177,18 @@ describe('a row’s ring inside a clipped popover (§1, §9.20; chassis (b))', (
           <div class="zen-v2-control-row" id="control-row"></div>
         </div>
       </div>
+      <div class="zen-omnibox">
+        <ul class="zen-omnibox-results"><li class="zen-v2-row zen-omnibox-row" id="omnibox-row"></li></ul>
+        <div class="zen-omnibox-footer" id="omnibox-footer"></div>
+      </div>
       <div class="zen-page-host"><button class="zen-v2-row" id="page-row"></button></div>
       <div class="zen-bm-listbox"><button class="zen-bm-option" id="option"></button></div>`
-    for (const id of ['div-row', 'li-row', 'button-row'])
+    for (const id of ['div-row', 'li-row', 'button-row', 'omnibox-row'])
       expect(document.getElementById(id)!.matches(ROW), id).toBe(true)
     // A settings page's row keeps the primitive's edge-to-edge box; a control row (blocked
-    // pop-ups' entries, whose Open button carries the ring) and a listbox option are not rows.
-    for (const id of ['page-row', 'control-row', 'option'])
+    // pop-ups' entries, whose Open button carries the ring), a listbox option and the dropdown's
+    // hint strip are not rows.
+    for (const id of ['page-row', 'control-row', 'option', 'omnibox-footer'])
       expect(document.getElementById(id)!.matches(ROW), id).toBe(false)
     document.body.innerHTML = ''
   })

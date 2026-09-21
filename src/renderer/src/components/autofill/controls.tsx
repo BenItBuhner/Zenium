@@ -9,25 +9,15 @@ import type {
   TextareaHTMLAttributes
 } from 'react'
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react'
-import { Check, ChevronDown, CircleAlert, type LucideIcon } from 'lucide-react'
+import { ChevronDown, CircleAlert, type LucideIcon } from 'lucide-react'
+import { anchorOf, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
-import {
-  ChromePortal,
-  FrameDialogPortal,
-  placePopover,
-  popoverStyle,
-  toRect,
-  useFrameDialog,
-  useLightDismiss,
-  viewportSize,
-  type PopoverBox
-} from '@renderer/lib/portals'
+import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { cn } from '@renderer/lib/utils'
+import { MenulistPopover } from '../menus/MenulistPopover'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import '@renderer/assets/autofill.css'
-
-import { wrapTab } from '../bookmarks/popover'
 
 export { useScrolled, wrapTab } from '../bookmarks/popover'
 
@@ -357,15 +347,17 @@ export interface MenuOption<T extends string> {
 }
 
 /**
- * A rectangular menulist (§9.13) on the chassis' shared control (`.zen-v2-menulist`,
- * extensions.css: 32 / 40 tall, a hairline, the 16 chevron). On a mouse the popup is the
- * chassis' `.zen-v2-menulist-popup` – a `--v2-panel` hung under the trigger through the chrome
- * layer at radius 12, padding 6, 28 px `.zen-v2-menulist-option` rows, the current one checked
- * – placed by `placePopover` at the trigger's width and put away by the layer's light dismiss.
- * On a phone the trigger opens a sheet of 44 px radio rows (`MenuSheet`); picking one closes it.
- * Never a native `<select>` popup. A `value` no option carries (a required choice not made yet,
- * `''`) shows `placeholder` at 69% and checks nothing. `readOnly` is a busy form's (§9.30): the
- * control keeps its ink and its value and opens nothing.
+ * A rectangular menulist (§9.13) on the chassis' shared control (`.zen-v2-menulist`, main.css:
+ * 32 / 40 tall, a hairline, the 16 chevron). On a mouse the popup is the shared
+ * `MenulistPopover` (components/menus) – a `--v2-panel` hung under the trigger through the chrome
+ * layer at radius 12, padding 6, 28 px `.zen-v2-menulist-option` rows, the current one checked,
+ * as wide as the trigger at least and as its longest option at most, flipped above near the
+ * window's bottom – with the §9.22 keyboard (the current option focused, arrows, Home, End,
+ * type-ahead, Tab wrapping) and put away by the layer's light dismiss. On a phone the trigger
+ * opens a sheet of 44 px radio rows (`MenuSheet`); picking one closes it. Never a native
+ * `<select>` popup. A `value` no option carries (a required choice not made yet, `''`) shows
+ * `placeholder` at 69% and checks nothing. `readOnly` is a busy form's (§9.30): the control keeps
+ * its ink and its value and opens nothing.
  */
 export function Menulist<T extends string>({
   value,
@@ -444,10 +436,6 @@ function MenulistValue<T extends string>({
   )
 }
 
-/** The popup's height before it is on screen: 6 px padding around 28 px rows (§9.13). */
-const MENU_ROW = 28
-const MENU_PADDING = 6
-
 function PopoverMenulist<T extends string>({
   value,
   options,
@@ -459,25 +447,19 @@ function PopoverMenulist<T extends string>({
   placeholder,
   className
 }: MenulistProps<T>): JSX.Element {
-  const [box, setBox] = useState<PopoverBox | null>(null)
-  const open = box !== null
+  const [anchor, setAnchor] = useState<Anchor | null>(null)
+  const open = anchor !== null
   const trigger = useRef<HTMLButtonElement>(null)
-  const list = useRef<HTMLDivElement>(null)
   const listId = useId()
   const current = options.find((o) => o.value === value)
 
-  // Hung from the trigger at its width (§9.13: a panel under the trigger), as tall as its rows –
-  // `placePopover` holds every chassis popover to 60% of the window (§9.20), so a longer list
-  // scrolls – and flipped above when the window ends before they do.
   const openList = (): void => {
     const el = trigger.current
     if (!el || readOnly) return
-    const anchor = toRect(el.getBoundingClientRect())
-    const height = MENU_PADDING * 2 + options.length * MENU_ROW
-    setBox(placePopover(anchor, anchor, viewportSize(), { measured: anchor.width }, height))
+    setAnchor(anchorOf(el))
   }
   const close = (focusTrigger: boolean): void => {
-    setBox(null)
+    setAnchor(null)
     if (focusTrigger) trigger.current?.focus({ preventScroll: true })
   }
   const pick = (v: T): void => {
@@ -485,54 +467,9 @@ function PopoverMenulist<T extends string>({
     if (v !== value) onChange(v)
   }
 
-  // The current option takes the keyboard as the list opens (a long list opens scrolled to it):
-  // a desktop popover's own focus rule (§9.22).
-  useEffect(() => {
-    if (!open) return
-    const rows = list.current?.querySelectorAll<HTMLElement>('[role="option"]')
-    const chosen = list.current?.querySelector<HTMLElement>('[aria-selected="true"]')
-    const target = chosen ?? rows?.[0]
-    target?.focus({ preventScroll: true })
-    target?.scrollIntoView({ block: 'nearest' })
-  }, [open])
-
-  // The chrome layer's light dismiss puts the list away – a press anywhere else, a scroll, a
-  // resize – with the focus back on the menulist, unless what closed it was another popover or
-  // a dialog opening, which has the focus now.
-  useLightDismiss(list, (reason) => close(reason !== 'replaced' && reason !== 'all'), {
-    anchor: trigger,
-    disabled: !open
-  })
+  // Escape is answered on these surfaces' own stack (§9.24: the list over the editor takes the
+  // key, the editor stays), which hears it before the chassis' popover does.
   useEscape(() => close(true), open)
-  useBackSurface(open ? { name: `autofill-menu-${listId}`, onCommit: () => close(false) } : null)
-
-  const onListKeyDown = (e: ReactKeyboardEvent): void => {
-    const rows = [...(list.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])]
-    const at = rows.indexOf(document.activeElement as HTMLElement)
-    switch (e.key) {
-      case 'ArrowDown':
-        rows[(at + 1) % rows.length]?.focus()
-        break
-      case 'ArrowUp':
-        rows[(at - 1 + rows.length) % rows.length]?.focus()
-        break
-      case 'Home':
-        rows[0]?.focus()
-        break
-      case 'End':
-        rows[rows.length - 1]?.focus()
-        break
-      case 'Tab':
-        // Tab stays inside the open list and wraps at its ends (§9.22); Escape is the way out.
-        wrapTab(e, list.current)
-        e.stopPropagation()
-        return
-      default:
-        return
-    }
-    e.preventDefault()
-    e.stopPropagation()
-  }
 
   return (
     <>
@@ -560,33 +497,18 @@ function PopoverMenulist<T extends string>({
         <MenulistValue current={current} placeholder={placeholder} />
         <ChevronDown aria-hidden />
       </button>
-      {box && (
-        <ChromePortal>
-          <div
-            ref={list}
-            id={listId}
-            role="listbox"
-            aria-label={label}
-            className="zen-v2 zen-v2-panel zen-v2-menulist-popup zen-v2-af-menu-popup zen-animate-pop fixed z-[90] select-none"
-            data-surface="page"
-            style={popoverStyle(box)}
-            onKeyDown={onListKeyDown}
-          >
-            {options.map((o) => (
-              <button
-                key={o.value}
-                type="button"
-                role="option"
-                aria-selected={o.value === value}
-                className="zen-v2-menulist-option"
-                onClick={() => pick(o.value)}
-              >
-                <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                {o.value === value && <Check aria-hidden />}
-              </button>
-            ))}
-          </div>
-        </ChromePortal>
+      {anchor && (
+        <MenulistPopover
+          id={listId}
+          anchor={anchor}
+          label={label}
+          value={current ? value : null}
+          options={options}
+          surface={`autofill-menu-${listId}`}
+          dataSurface="page"
+          onPick={pick}
+          onClose={() => close(false)}
+        />
       )}
     </>
   )

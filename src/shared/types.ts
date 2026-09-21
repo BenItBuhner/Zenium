@@ -19,7 +19,7 @@ import type {
   ProtectionCheck,
   ThirdPartyCookiePrivateMode
 } from './privacy'
-import type { InternalPageId } from './internalPages'
+import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
@@ -271,6 +271,27 @@ export interface Container {
 export const DEFAULT_CONTAINER_ID = 'default'
 /** Pseudo container backing private windows: an in-memory session that is wiped when the last private window closes. */
 export const PRIVATE_CONTAINER_ID = 'private'
+
+/**
+ * Private browsing's device-local choices (`BrowserState.privateDevice`, the shape of
+ * `newTabDevice`: persisted with the profile, never synced). One so far: the phone host's
+ * "Lock private tabs when you leave Zenium" (INC-05 / SET-17), Chrome's "Lock Incognito tabs
+ * when you leave Chrome", which is per device there too – it names this device's screen lock.
+ */
+export interface PrivateDeviceState {
+  /** Private tabs are covered when the app returns from the background, until the device's screen lock is passed. */
+  lockOnLeave: boolean
+}
+
+export function emptyPrivateDevice(): PrivateDeviceState {
+  return { lockOnLeave: false }
+}
+
+/** `raw` as a `PrivateDeviceState`: whatever it lacks or misspells falls back to the defaults. */
+export function sanitizePrivateDevice(raw: unknown): PrivateDeviceState {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return { lockOnLeave: source.lockOnLeave === true }
+}
 
 // ---------------------------------------------------------------------------
 // Windows (Zen's window sync)
@@ -814,7 +835,16 @@ export interface PasswordSettings {
    * (only when it is still there); 0 leaves it.
    */
   clipboardClearSeconds: number
+  /**
+   * Chrome's "Warn you if passwords are exposed in a data breach": a password submitted in a
+   * sign-in form is looked up in the breach corpus (the k-anonymity range check of the checkup)
+   * and a warning is raised when it is known breached (ID-31). On by default, as in Chrome.
+   */
+  leakDetection: boolean
 }
+
+/** Chrome's limit for a saved password's note (ID-34): the field clips at this many characters. */
+export const NOTE_MAX_LENGTH = 1000
 
 /**
  * A saved login. The password only ever leaves the core through the re-authenticated commands
@@ -830,10 +860,128 @@ export interface Credential {
   password: string
   /** HTTP authentication realm (Basic / Digest prompts); `null` for form logins. */
   realm: string | null
+  /**
+   * The user's note on the login (ID-34), up to `NOTE_MAX_LENGTH` characters when written here;
+   * encrypted with the rest of the entry and synced with it. '' when there is none.
+   */
   notes: string
   createdAt: number
   updatedAt: number
   lastUsedAt: number | null
+  /**
+   * How often this password appears in the breach corpus, as of `checkedAt`: 0 for a clean one,
+   * null while it has never been looked up. Written by the sign-in leak check and by Password
+   * Checkup; reset whenever the password changes (the four fields below describe one value).
+   */
+  breached: number | null
+  /** When the breach lookup last ran for this password value; null when never. */
+  checkedAt: number | null
+  /** When a sign-in leak warning was last shown for this password value (shown once); null when never. */
+  leakWarnedAt: number | null
+  /**
+   * The user chose Ignore on a leak warning for this password value (Chrome's dismissed
+   * warning): no warning again until the password changes, and Safety Check leaves it out of the
+   * compromised count. Null otherwise.
+   */
+  leakIgnoredAt: number | null
+}
+
+/**
+ * The fields of a login that describe its breach state for one password value
+ * (`Credential.breached` and the three timestamps); they reset together when the value changes.
+ */
+export type CredentialLeakFields = Pick<
+  Credential,
+  'breached' | 'checkedAt' | 'leakWarnedAt' | 'leakIgnoredAt'
+>
+
+export function emptyLeakFields(): CredentialLeakFields {
+  return { breached: null, checkedAt: null, leakWarnedAt: null, leakIgnoredAt: null }
+}
+
+/**
+ * A sign-in leak warning waiting for the user (ID-31): the password just submitted in a tab is
+ * known breached. One per tab at most; the chrome shows its active tab's as Chrome's "Change
+ * your password" dialog (a sheet on the phone) and answers it with `passwords.leakRespond`.
+ */
+export interface CredentialLeakWarning {
+  id: string
+  tabId: string
+  /** The site's origin and its label ("example.com"). */
+  origin: string
+  site: string
+  /** The username the form submitted; '' when the form had none. */
+  username: string
+  /** How many times the password appears in known breaches (at least 1). */
+  breachCount: number
+  /**
+   * The saved login the warning is about, when the submitted credentials are saved and the tab
+   * is not private (Ignore is remembered on it); null for an unsaved sign-in or a private tab,
+   * where nothing is remembered.
+   */
+  credentialId: string | null
+  /** The tab is private: the check ran and warns, but no memory is kept (Chrome does the same). */
+  private: boolean
+}
+
+/**
+ * What the user chose on a leak warning: open the site's change-password page (its
+ * `/.well-known/change-password` when the site serves one, else the site itself) in the warning's
+ * tab; remember the warning as ignored for this password value; open the password manager; or
+ * just close it (nothing remembered beyond the warning having been shown once).
+ */
+export type CredentialLeakAction = 'changePassword' | 'ignore' | 'openManager' | 'dismiss'
+
+/**
+ * The last Password Checkup's counts and time, kept on this device (with the profile, outside
+ * the vault, so Safety Check reads it while the vault is locked). `compromised` is kept live
+ * from the logins' `breached` flags while the vault is open: a sign-in leak warning raises it,
+ * an Ignore or a changed password lowers it. `weak` and `reused` are the last checkup's.
+ */
+export interface CheckupSummary {
+  compromised: number
+  weak: number
+  reused: number
+  /** When the last full checkup finished; null when it never ran (Safety Check offers to run it). */
+  checkedAt: number | null
+}
+
+export function emptyCheckupSummary(): CheckupSummary {
+  return { compromised: 0, weak: 0, reused: 0, checkedAt: null }
+}
+
+/** `raw` as a `CheckupSummary`: whatever it lacks or misspells falls back to the empty summary. */
+export function sanitizeCheckupSummary(raw: unknown): CheckupSummary {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const count = (key: 'compromised' | 'weak' | 'reused'): number => {
+    const value = source[key]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  }
+  const at = source.checkedAt
+  return {
+    compromised: count('compromised'),
+    weak: count('weak'),
+    reused: count('reused'),
+    checkedAt: typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null
+  }
+}
+
+/**
+ * The password manager's device-local state (`BrowserState.passwordsDevice`, the shape of
+ * `newTabDevice`: persisted with the profile, never synced): the last checkup's summary, which
+ * Safety Check reads without opening the vault.
+ */
+export interface PasswordsDeviceState {
+  checkupSummary: CheckupSummary
+}
+
+export function emptyPasswordsDevice(): PasswordsDeviceState {
+  return { checkupSummary: emptyCheckupSummary() }
+}
+
+export function sanitizePasswordsDevice(raw: unknown): PasswordsDeviceState {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return { checkupSummary: sanitizeCheckupSummary(source.checkupSummary) }
 }
 
 /** What the chrome lists: a credential without its secret. */
@@ -876,6 +1024,10 @@ export interface PasswordsStatus {
   /** The vault file could not be read; the manager offers to start over. */
   error: string | null
   checkup: CheckupState
+  /** The last checkup's counts and time, kept on this device; what Safety Check's Passwords row reads. */
+  checkupSummary: CheckupSummary
+  /** Sign-in leak warnings waiting for the user, oldest first (one per tab at most). */
+  leaks: CredentialLeakWarning[]
 }
 
 /** Outcome of a command that needs the user to re-authenticate first. */
@@ -1343,8 +1495,21 @@ export interface ImportProgress {
   finishedAt: number | null
 }
 
-export type DownloadState = 'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted'
+/**
+ * `insecure-blocked` is Chrome's mixed-content rule (HB-44): a transfer whose URL – or any hop
+ * of its redirect chain – is plain `http:` while the page that started it is secure is refused
+ * before a byte is written; the row waits for "Keep anyway" (`download.acceptDanger`, offered
+ * unless the file type is `dangerous`) or Discard.
+ */
+export type DownloadState =
+  'progressing' | 'paused' | 'completed' | 'cancelled' | 'interrupted' | 'insecure-blocked'
 
+/**
+ * Chrome's two warning tiers over the file-type policy (`download_file_types.asciipb`) and the
+ * Safe Browsing verdicts: `dangerous` (executables, installers, scripts; any URL Safe Browsing
+ * lists as malware or phishing) and `suspicious` (disk images, macro-bearing documents, the rest
+ * of Chromium's list; a Safe Browsing verdict short of dangerous).
+ */
 export type DownloadDangerLevel = 'safe' | 'suspicious' | 'dangerous'
 
 /**
@@ -1451,6 +1616,18 @@ export interface DownloadItem {
   danger: DownloadDanger
   /** The user chose "Keep" for a flagged file: it left quarantine and may be opened. */
   dangerAccepted: boolean
+  /**
+   * The user chose "Keep anyway" on an `insecure-blocked` row: the transfer that follows runs
+   * over the plaintext hop without being blocked again (the file-type warning still applies).
+   */
+  insecureAccepted?: boolean
+  /**
+   * An automatic resume is scheduled for this moment (epoch ms): the row is `interrupted` by a
+   * transient network failure, the server can resume, and the engine retries with backoff
+   * (2 / 4 / 8 s, three times, once the host says the network is back). Absent otherwise;
+   * never persisted.
+   */
+  autoResumeAt?: number
   /** Open the file as soon as the download completes (Chrome's "Open when done"). */
   openWhenDone: boolean
   /** Recent transfer rate; 0 while paused or unknown. */
@@ -2711,8 +2888,10 @@ export interface SafetyCheckResult {
     compromised: number
     weak: number
     reused: number
-    /** The vault is locked or the checkup never ran: counts are unknown. */
+    /** The counts are known: the checkup ran on this device, or a sign-in leak check flagged a login. */
     known: boolean
+    /** When the last full checkup finished on this device; null when it never ran. */
+    checkedAt: number | null
   }
   /** Sites holding several granted permissions, or granted ones not visited for weeks. */
   permissions: SafetyCheckRow & {
@@ -2884,6 +3063,12 @@ export interface UIState {
   newTabShortcuts: NewTabShortcut[]
   /** Hosts removed from the new tab page's most-visited tiles on this device (the phone filters). */
   newTabHiddenHosts: string[]
+  /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium, this device's
+   * (`BrowserState.privateDevice`; the phone host's row). The lock itself is the host's, in
+   * memory (`lib/privateLock.ts`); the core only keeps the switch.
+   */
+  privateLockOnLeave: boolean
   /**
    * The new tab page's custom background: whether one is set, whether the host can open a file
    * picker for one (the phone's page reads the file itself and stores it through `set`).
@@ -3126,6 +3311,12 @@ export interface MenuDescriptor {
   /** Anchor in chrome CSS pixels, when known. */
   x: number | null
   y: number | null
+  /**
+   * Opened by the keyboard (a shortcut, Shift+F10, the Menu key): a popover menu starts with its
+   * first item focused so the arrow keys take over at once (v2 draft §9.22). Absent, the
+   * renderer reads it off the focused control (`openedFromKeyboard`).
+   */
+  keyboard?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -3246,6 +3437,12 @@ export interface Commands {
   'tab.newPrivate': { args: { url?: string }; result: string | null }
   /** Close every private tab (and so end the private session). */
   'tab.closePrivate': { args: void; result: void }
+  /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium (INC-05 / SET-17):
+   * this device's choice (`UIState.privateLockOnLeave`, `BrowserState.privateDevice`). The lock
+   * itself is the phone host's, in memory.
+   */
+  'private.setLockOnLeave': { args: { enabled: boolean }; result: void }
   'tab.closeOthers': { args: { tabId: string }; result: void }
   'tab.closeBelow': { args: { tabId: string }; result: void }
   'tab.closeAbove': { args: { tabId: string }; result: void }
@@ -3408,9 +3605,15 @@ export interface Commands {
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
-   * opened by a shortcut, whose first item starts selected.
+   * opened by a shortcut, whose first item starts selected. `mediaHubFolded` says the media
+   * hub's toolbar button is not on screen (design language v2 §9.29: the sidebar's width tier
+   * folds it at 240): the menu then heads with the "Now Playing…" row in its stead. The chrome
+   * reads the fold from the button's box; the core builds the menu without the toolbar's width.
    */
-  'app.menu': { args: { anchor?: Rect; keyboard?: boolean }; result: void }
+  'app.menu': {
+    args: { anchor?: Rect; keyboard?: boolean; mediaHubFolded?: boolean }
+    result: void
+  }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
   'menu.click': { args: { menuId: string; itemId: string }; result: void }
   'menu.close': { args: { menuId: string }; result: void }
@@ -3800,6 +4003,12 @@ export interface Commands {
   'download.exists': { args: { id: string }; result: boolean }
   /** Let the user pick the default downloads folder; resolves with it (or null when dismissed). */
   'download.chooseDirectory': { args: void; result: string | null }
+  /**
+   * The folder new downloads go to right now: `Settings.downloads.directory` when set, else the
+   * platform's Downloads folder (Settings › Downloads › Location shows it; empty when the host
+   * cannot name one).
+   */
+  'download.directory': { args: void; result: string }
   /** Show the downloads panel (Ctrl/Cmd+J, the app menu, a completion notification). */
   'download.openPanel': { args: void; result: void }
   /** Desktop UI plumbing: begin an OS drag of a finished file out of the downloads page. */
@@ -3867,21 +4076,28 @@ export interface Commands {
    * closes it back to that tab. `section: null` is the landing page; leaving it out keeps the
    * section a reused tab is on. A chrome page's section history is the tab's history: `tab.back`
    * / `tab.forward` step through it and `Tab.canGoBack` reads it. A chrome page on a host
-   * without `capabilities.pageTabs` opens as its overlay instead. Resolves with the tab id, or
-   * null when an overlay was opened.
+   * without `capabilities.pageTabs`, or on a layout the page is not a tab in (`layouts`), opens
+   * as its overlay instead. `query` is the page's own parameters (`InternalPageQuery`: History's
+   * `q`, the manager's `folder`), which a reused tab moves to as it would to a section. Resolves
+   * with the tab id, or null when an overlay was opened.
    */
   'page.open': {
-    args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
+    args: {
+      id: InternalPageId
+      section?: string | null
+      openerTabId?: string | null
+      query?: InternalPageQuery
+    }
     result: string | null
   }
   /**
-   * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
-   * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
-   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`). A document page
-   * loads the section's address in its view.
+   * Move a page tab to a section of its page (`null` is the landing page), with the page's
+   * `query` when it has one: a new history entry, or with `replace` the current one rewritten –
+   * the two-pane layout's nav switches categories without stacking them (v2 §10.5, Firefox's
+   * `about:preferences#category`). A document page loads the section's address in its view.
    */
   'page.navigate': {
-    args: { tabId: string; section: string | null; replace?: boolean }
+    args: { tabId: string; section: string | null; replace?: boolean; query?: InternalPageQuery }
     result: void
   }
   /**
@@ -4198,6 +4414,12 @@ export interface Commands {
   }
   'passwords.checkupRun': { args: void; result: void }
   'passwords.checkupCancel': { args: void; result: void }
+  /**
+   * Answer a sign-in leak warning (`PasswordsStatus.leaks`): `changePassword` opens the site's
+   * change-password page in the warning's tab, `ignore` remembers the warning as dismissed for
+   * this password value, `openManager` opens Settings › Passwords, `dismiss` only closes it.
+   */
+  'passwords.leakRespond': { args: { id: string; action: CredentialLeakAction }; result: void }
   /** Pick a CSV export (Chrome, Edge, Firefox, Bitwarden, Safari, LastPass) and import it. */
   'passwords.import': { args: { conflict: ImportConflict }; result: ImportResult | null }
   /**
@@ -4454,6 +4676,12 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
+   * The app menu's "Now Playing…" row asked for the media hub (design language v2 §9.29: the
+   * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
+   * popover from the "⋯" menu button the row's menu hung from (the toolbar button, were it up).
+   */
+  'mediahub.open': void
+  /**
    * A shortcut asked the keyboard to move panes (F6, Shift+F6, Shift+Alt+T, Shift+Alt+B). The
    * renderer works out the pane the keyboard is in and the one it goes to among those on screen,
    * and asks the core for the chrome's or the page's focus accordingly (`focus.chrome`,
@@ -4550,6 +4778,11 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** History changed: visits are throttled to twice a second, deletions arrive at once. */
   'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  /**
+   * "Select" in a History page row's menu: the page picks the visit, entering its selection mode
+   * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
+   */
+  'history.select': { visitId: string }
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

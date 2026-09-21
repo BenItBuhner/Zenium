@@ -387,6 +387,18 @@ const MAX_PREVIEW_GROUP = 24
 export interface PreviewSeed {
   /** Remembered site permissions for Settings → Security (0 forgets them all). */
   rules: number | null
+  /**
+   * The private tabs' lock is on once the state is up (`lock=on`): the lock cover over a private
+   * tab in front or over the Private pane (INC-05), the way the host puts it on as the app is
+   * left and come back to.
+   */
+  lock: boolean
+  /**
+   * Whether the device has a screen lock (`screenlock=off` says none: Settings' "Lock private
+   * tabs when you leave Zenium" is disabled with its description, SET-17); `null` leaves the
+   * stand-in host's word (`vault=none` is a device without one).
+   */
+  screenLock: boolean | null
 }
 
 /** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
@@ -754,14 +766,21 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
   }
 }
 
-/** The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions. */
+/**
+ * The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions,
+ * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock.
+ */
 export function parsePreviewSeed(spec: string): PreviewSeed {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const rules = params.get('rules')
+  const onOff = (value: string | null): boolean | null =>
+    value === null ? null : ['on', '1', 'true', ''].includes(value)
   return {
     rules:
       rules !== null && rules !== '' && Number.isFinite(Number(rules))
         ? Math.max(0, Math.floor(Number(rules)))
-        : null
+        : null,
+    lock: onOff(params.get('lock')) === true,
+    screenLock: onOff(params.get('screenlock'))
   }
 }

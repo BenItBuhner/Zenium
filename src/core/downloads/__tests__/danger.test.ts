@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   DangerVerdictRegistry,
+  INSECURE_BLOCKED_MESSAGE,
   SAFE,
   classifyDownload,
   dangerMessage,
   dangerReasonFor,
   fileTypePolicy,
+  insecureDownload,
   isInsecureDownload,
+  isPotentiallyTrustworthy,
   makeDanger,
   mayAutoOpen,
   worstDanger,
@@ -135,20 +138,37 @@ describe('classifyDownload', () => {
     ).toMatchObject({ level: 'dangerous', reason: 'executable' })
   })
 
-  it('flags an http download from an https page (mixed content)', () => {
-    expect(isInsecureDownload('http://cdn.example.com/a.pdf', 'https://example.com/')).toBe(true)
-    expect(isInsecureDownload('https://cdn.example.com/a.pdf', 'https://example.com/')).toBe(false)
-    expect(isInsecureDownload('http://cdn.example.com/a.pdf', 'http://example.com/')).toBe(false)
-    expect(isInsecureDownload('http://cdn.example.com/a.pdf', '')).toBe(false)
+  it('judges the file type alone: the mixed-content rule is a state now, not a verdict', () => {
     expect(
       classifyDownload(
         context({ url: 'http://cdn.example.com/report.pdf', referrer: 'https://example.com/x' })
       )
-    ).toEqual({
-      level: 'suspicious',
-      reason: 'insecure-download',
-      message: 'This file was downloaded over an insecure connection.'
-    })
+    ).toEqual(SAFE)
+    expect(
+      classifyDownload(
+        context({
+          url: 'http://cdn.example.com/setup.exe',
+          filename: 'setup.exe',
+          referrer: 'https://example.com/x',
+          os: 'win32'
+        })
+      ).level
+    ).toBe('dangerous')
+  })
+
+  it('tiers: .iso and .img are suspicious disk images, archives stay safe as in Chromium', () => {
+    expect(classifyDownload(context({ filename: 'ubuntu.iso', os: 'win32' })).level).toBe(
+      'suspicious'
+    )
+    expect(classifyDownload(context({ filename: 'ubuntu.iso', os: 'darwin' })).level).toBe(
+      'suspicious'
+    )
+    expect(classifyDownload(context({ filename: 'disk.img', os: 'win32' })).level).toBe(
+      'suspicious'
+    )
+    expect(classifyDownload(context({ filename: 'ubuntu.iso', os: 'linux' })).level).toBe('safe')
+    for (const name of ['photos.zip', 'src.tar.gz', 'a.rar', 'a.7z'])
+      expect(classifyDownload(context({ filename: name, os: 'win32' })).level).toBe('safe')
   })
 
   it('takes the worse of two verdicts', () => {
@@ -161,6 +181,77 @@ describe('classifyDownload', () => {
     expect(worstDanger(makeDanger('dangerous', 'executable'), SAFE)).toEqual(
       makeDanger('dangerous', 'executable')
     )
+  })
+})
+
+describe('the insecure-download rule (Chrome, HB-44)', () => {
+  it('blocks a plain http download a secure page started, and only that', () => {
+    expect(isInsecureDownload('http://cdn.example.com/a.pdf', 'https://example.com/')).toBe(true)
+    expect(isInsecureDownload('https://cdn.example.com/a.pdf', 'https://example.com/')).toBe(false)
+    // An insecure page has nothing to protect: Chrome blocks nothing there.
+    expect(isInsecureDownload('http://cdn.example.com/a.pdf', 'http://example.com/')).toBe(false)
+    // No initiator (typed address, an extension, a resume after a restart of an old row).
+    expect(isInsecureDownload('http://cdn.example.com/a.pdf', '')).toBe(false)
+    expect(insecureDownload(['http://cdn.example.com/a.pdf'], 'https://example.com/')).toBe(true)
+  })
+
+  it('judges every hop of the redirect chain, not just the final URL', () => {
+    const referrer = 'https://example.com/'
+    // https → http → https: the bytes could have been swapped on the plaintext hop.
+    expect(
+      insecureDownload(
+        ['https://a.example/dl', 'http://b.example/dl', 'https://c.example/file.zip'],
+        referrer
+      )
+    ).toBe(true)
+    // https → https → http: the final hop is plain.
+    expect(
+      insecureDownload(
+        ['https://a.example/dl', 'https://b.example/dl', 'http://c.example/f'],
+        referrer
+      )
+    ).toBe(true)
+    expect(
+      insecureDownload(
+        ['https://a.example/dl', 'https://b.example/dl', 'https://c.example/f'],
+        referrer
+      )
+    ).toBe(false)
+    // An empty chain is a host's mistake (the core always passes at least the URL): the rule
+    // fails closed rather than let an unjudged transfer through.
+    expect(insecureDownload([], referrer)).toBe(true)
+  })
+
+  it('counts the machine itself, data:, blob: and file: as secure (potentially trustworthy)', () => {
+    expect(isPotentiallyTrustworthy('http://localhost:8080/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('http://dev.localhost/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('http://127.0.0.1/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('http://127.9.9.9/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('http://[::1]/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('http://10.0.0.1/f')).toBe(false)
+    expect(isPotentiallyTrustworthy('http://example.com/f')).toBe(false)
+    expect(isPotentiallyTrustworthy('ftp://example.com/f')).toBe(false)
+    expect(isPotentiallyTrustworthy('ws://example.com/f')).toBe(false)
+    expect(isPotentiallyTrustworthy('wss://example.com/f')).toBe(true)
+    expect(isPotentiallyTrustworthy('data:text/plain,hi')).toBe(true)
+    expect(isPotentiallyTrustworthy('blob:https://example.com/uuid')).toBe(true)
+    expect(isPotentiallyTrustworthy('file:///tmp/a')).toBe(true)
+    expect(isPotentiallyTrustworthy('not a url')).toBe(false)
+    expect(insecureDownload(['http://localhost:3000/a.zip'], 'https://example.com/')).toBe(false)
+    expect(insecureDownload(['data:text/plain,hi'], 'https://example.com/')).toBe(false)
+    expect(insecureDownload(['ftp://files.example/a.zip'], 'https://example.com/')).toBe(true)
+  })
+
+  it('the initiator is secure by the same measure: a page on the machine itself or a local file counts', () => {
+    expect(insecureDownload(['http://cdn.example/a'], 'http://localhost/')).toBe(true)
+    expect(insecureDownload(['http://cdn.example/a'], 'file:///page.html')).toBe(true)
+    expect(insecureDownload(['http://cdn.example/a'], 'http://10.0.0.5/page')).toBe(false)
+    expect(insecureDownload(['http://cdn.example/a'], 'about:blank')).toBe(false)
+    expect(insecureDownload(['http://cdn.example/a'], 'garbage')).toBe(false)
+  })
+
+  it('offers Chrome\u2019s sentence for the row', () => {
+    expect(INSECURE_BLOCKED_MESSAGE).toBe('This file can’t be downloaded securely.')
   })
 })
 

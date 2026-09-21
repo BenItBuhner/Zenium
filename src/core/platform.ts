@@ -107,6 +107,13 @@ export interface StoreWriteOptions {
 export interface StoreIO {
   /** Synchronous read at startup; `null` when the document does not exist. */
   readSync(name: string): string | null
+  /**
+   * Asynchronous read of a document the core does not need at start (a Safe Browsing feed
+   * document, megabytes once the feeds were refreshed): a host may bring it in off its main
+   * thread (Android fetches it from the document handler). `null` when it does not exist. Hosts
+   * without it are read through `readSync`.
+   */
+  read?(name: string): Promise<string | null>
   /** Atomic write; the promise settles once the document is durable. */
   write(name: string, text: string, options?: StoreWriteOptions): Promise<void>
   /** Synchronous write used when the process is about to go away. */
@@ -1187,6 +1194,22 @@ export interface PrivacyHost {
    * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
    */
   bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+  /**
+   * Who holds the Safe Browsing tables. `'core'` (the default): the service loads them from the
+   * feed documents at start and answers `lookup` itself; Electron's request handler asks it for
+   * every request. `'host'`: the host reads the documents the service writes and checks
+   * requests against tables of its own (Android's Kotlin engine, `privacy/SafeBrowsing.kt`,
+   * which reports a refused navigation as the `unsafe` view event); the service then builds no
+   * table, reads the documents after start – off the boot path – for their metadata alone (the
+   * refresh schedule, the status card) and asks {@link lookupSafeBrowsing} where it needs a
+   * table's word (a download's verdict).
+   */
+  readonly safeBrowsingTables?: 'core' | 'host'
+  /**
+   * With `safeBrowsingTables: 'host'`: the host's tables' word on `url` under its own switch and
+   * bypasses – the hit, or null for nothing listed (or tables not loaded yet).
+   */
+  lookupSafeBrowsing?(url: string): Promise<SafeBrowsingHit | null>
 }
 
 export interface NetHost {
@@ -1228,6 +1251,20 @@ export interface NetHost {
  * is how flagged files stay quarantined until the user keeps them.
  */
 export interface DownloadHost {
+  /**
+   * Who retries a transient network interruption: the core (default) schedules `resume` with
+   * backoff once the host reports the network back, or the host's own downloader does before
+   * the interruption ever reaches the core (Android's `Downloads.kt`), in which case the core
+   * schedules nothing so no interruption is retried twice.
+   */
+  readonly autoResume?: 'core' | 'host'
+  /**
+   * Whether the machine has a network right now (Electron `net.isOnline()`); the core holds an
+   * automatic resume until it does. Hosts without an answer leave it out: the core assumes online.
+   */
+  isOnline?(): boolean
+  /** Call `listener` once the network is back (or is up already); returns the unsubscribe. */
+  onOnline?(listener: () => void): () => void
   pause(id: string): void
   /** Continue a paused or resumable interrupted transfer; after a restart only the record is known. */
   resume(item: DownloadItem): void
@@ -1271,6 +1308,12 @@ export interface DownloadHost {
   showInFolder(item: DownloadItem): void
   /** Folder picker for Settings › Downloads; resolves with the chosen directory or null. */
   chooseDirectory?(win?: ZenWindow): Promise<string | null>
+  /**
+   * The folder new downloads go to right now (the setting when it names one, else the
+   * platform's Downloads folder), for Settings › Downloads › Location; hosts that cannot name
+   * one leave it out.
+   */
+  currentDirectory?(): string
   /**
    * The app is quitting and the host's engine is about to tear the in-flight transfer down
    * (Chromium cancels it and deletes its file): keep the partial file and return where it now
@@ -1950,6 +1993,12 @@ export interface SpeechUtteranceOptions {
   lang: string
   /** 0.5–4 (`READ_ALOUD_RATES`). */
   rate: number
+  /**
+   * `chrome.tts`'s prosody, when an extension speaks through the host (Chrome's 0–2, 1 the
+   * voice's own; 0–1, 1 full): read aloud leaves both out, and a host without the knobs ignores them.
+   */
+  pitch?: number
+  volume?: number
 }
 
 /** What a speech host reports about an utterance it was given. */
@@ -1959,9 +2008,17 @@ export interface SpeechHostEvent {
   charIndex?: number
   /** `word`: how many characters the word spans (hosts that cannot tell leave it out). */
   length?: number
-  /** `error`: the host's message. */
+  /**
+   * `error`: the host's message. `interrupted` (`SPEECH_INTERRUPTED`) when another speaker's
+   * utterance replaced this one, or a `stop` dropped it, before it ended: the host says so about
+   * the one it dropped, so no listener waits on an `end` that never comes (each listener knows
+   * its own stops and speaks, and drops the reports about those).
+   */
   message?: string
 }
+
+/** `SpeechHostEvent.message` of an utterance another speaker (or a `stop`) cut short. */
+export const SPEECH_INTERRUPTED = 'interrupted'
 
 /**
  * The speech engine behind read aloud (`capabilities.readAloud`): the voices on the device, one

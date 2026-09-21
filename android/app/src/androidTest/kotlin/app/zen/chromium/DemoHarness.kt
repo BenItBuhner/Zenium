@@ -1101,7 +1101,16 @@ abstract class DemoHarness(
         block()
         val toUs = System.nanoTime() / 1_000
         val durationMs = SystemClock.uptimeMillis() - t0
-        val text = shellCommand("dumpsys gfxinfo $pkg framestats")
+        var text = shellCommand("dumpsys gfxinfo $pkg framestats")
+        // The dump is served on the app's main thread with a deadline; a main thread still busy
+        // with the scene's last frames misses it ("Failure while dumping the app", no frames),
+        // and the statistics since the reset are still there for a second ask.
+        for (attempt in 1..3) {
+            if (!text.contains("Failure while dumping")) break
+            Log.w(tag, "scene $scene: gfxinfo dump attempt $attempt failed (the app did not answer in time); asking again")
+            SystemClock.sleep(1_000)
+            text = shellCommand("dumpsys gfxinfo $pkg framestats")
+        }
         var reading: BlinkTrace.Reading? = null
         if (trace && tracing == null) {
             val file = File(out, "trace-$scene.json.gz")
@@ -1149,6 +1158,22 @@ abstract class DemoHarness(
         baseline: String? = null,
         block: () -> Unit
     ): FrameStats.Scene = measureFrames(scene, kind, baseline, trace = true, block)
+
+    /**
+     * A measured scene out of the record: the driver found the measurement spoiled by something
+     * that was not the scene (a tab an extension opened over the page mid-scroll, a dialog, a
+     * dump that came back empty) and measures the scene again under its name. `frames.jsonl`
+     * and `frames.txt` are rewritten without it; `why` goes to the log. The raw dump stays in
+     * `framestats-<scene>.txt` until the second measurement overwrites it.
+     */
+    protected fun discardScene(scene: FrameStats.Scene, why: String) {
+        val at = measuredScenes.indexOfFirst { it === scene }
+        if (at < 0) return
+        measuredScenes.removeAt(at)
+        Log.w(tag, "scene ${scene.name} discarded (${scene.summary?.frames ?: 0} frames): $why")
+        File(out, FRAMES_RECORD).writeText(measuredScenes.joinToString("") { it.toJson() + "\n" })
+        File(out, FRAMES_TABLES).writeText(measuredScenes.joinToString("") { it.table() + "\n\n" })
+    }
 
     private val traceWriter = Executors.newSingleThreadExecutor()
 

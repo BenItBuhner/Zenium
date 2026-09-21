@@ -15,7 +15,9 @@ import {
   type ChromeTab,
   type TabChangeInfo,
   type TabQueryInfo,
+  FILE_URL_WITHOUT_ACCESS_ERROR,
   detectTabMoves,
+  isFileNavigation,
   tabChangeInfo,
   tabMatchesQuery
 } from '../../../core/extensions/api/tabs'
@@ -137,6 +139,9 @@ export class TabsApi {
     }
     const full = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : extensionUrl(ctx.extensionId, url)
     if (!isNavigableUrl(full)) throw new ApiError(`Invalid url: "${url}".`)
+    // Chrome's `PrepareURLForNavigation`: a file URL needs the extension's file-access switch.
+    if (isFileNavigation(full) && !this.allowsFileAccess(ctx))
+      throw new ApiError(FILE_URL_WITHOUT_ACCESS_ERROR)
     return full
   }
 

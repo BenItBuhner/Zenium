@@ -16,8 +16,10 @@ import { READER_URL_PREFIX } from '@core/reader'
 import { isCertificateError } from '@shared/siteInfo'
 import { cmd, run } from '@renderer/lib/api'
 import { dispatchBackEvent, topBackSurface } from '@renderer/lib/back'
-import { dismissOverview, openOverview } from '@renderer/lib/gestures/stage'
+import { dismissOverview, openOverview, overviewIsOpen } from '@renderer/lib/gestures/stage'
 import { isPrivateTab, pickOverviewPane } from '@renderer/lib/privateTabs'
+import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/privateLock'
+import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
 import { Download, Smartphone, Star } from 'lucide-react'
@@ -61,6 +63,7 @@ import {
   type FilterListStatus,
   type TrackingLevel
 } from '@shared/blocking'
+import { syncSetupStore } from '@renderer/lib/syncSetup'
 import { cancelVoiceSearch, startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { cancelQrScan, startQrScan } from '@renderer/lib/qrScan'
 import type { HostGlobal } from './boot'
@@ -171,13 +174,18 @@ const QR_EVENT_MARGIN_MS = 250
  * presses its controls: `tap:Show`, `tap:Edit`, `tap:Refine`). `rules=<n>` on any spec seeds n
  * remembered site permissions for Settings › Security; `blocking=<variant>` may accompany any
  * spec too (see `seedBlocking`; `&blocked=<n>` sets the count blocked on the page), as may
- * `translate=<status>` (the active page `offered` for translation, `translated`, `translating`
- * or `error`, or `idle` for none; the bar stays down unless `&bar`; see `seedTranslate`),
+ * `sync=<variant>` for Settings › Sync (see `seedSync`), `translate=<status>` (the active page
+ * `offered` for translation, `translated`, `translating` or `error`, or `idle` for none; the bar
+ * stays down unless `&bar`; see `seedTranslate`),
  * `favicon=<url>` (the active tab's icon, which this host cannot read off a cross-origin page),
  * `siteinfo` (the site-information sheet up on the active tab once the state is reached: the
  * shield row with its count and the translate row are in it, OMN-02) and `import=failed` (a
  * last import that failed before any kind ran, for Settings › Import's Last import group; see
- * `seedImport`).
+ * `seedImport`). `lock=on` puts the private tabs' lock on once the state is up (the lock cover
+ * over a private tab in front or over the Private pane, INC-05: `private=page&lock=on`,
+ * `private=overview&lock=on`, `private=newtab&lock=on`), and `screenlock=off` says the device
+ * has no screen lock (Settings' "Lock private tabs when you leave Zenium" disabled with its
+ * description, SET-17).
  * It comes in as the URL hash, `http://localhost:41734/#overlay=history`, or as
  * `window.postMessage({ zenPreview: 'find=coffee' }, '*')`, which also re-applies an unchanged
  * state. Once applied it is echoed in `<html data-preview-state>` so a driver can wait for it;
@@ -208,6 +216,7 @@ function apply(browser: Browser, spec: string): void {
     // are answered as a dismissal, the way a press outside would.
     unseedBlocking()
     unseedExtensions()
+    unseedSync()
     unseedImport()
     unseedTranslate()
     unseedFavicon()
@@ -243,6 +252,18 @@ function apply(browser: Browser, spec: string): void {
     const securityAtRest = tab ? resetSecurity(browser, tab) : Promise.resolve()
     const seed = parsePreviewSeed(spec)
     if (seed.rules !== null) seedRules(browser, seed.rules)
+    // The private tabs' lock a previous spec put on comes off at once (no lift: the cover goes
+    // with the private tab, below), and the device's screen lock is as the spec says or as the
+    // stand-in host reported it at boot.
+    liftLanded()
+    hostScreenLock ??= privateLockStore.get().screenLock
+    privateLockStore.set({
+      locked: false,
+      lifting: false,
+      prompting: false,
+      confirming: false,
+      screenLock: seed.screenLock ?? hostScreenLock
+    })
     // The autofill surfaces are the core's: cleared before the sheets close, so a staged prompt
     // or picker of the previous state is gone with them – and before the group goes, since
     // they hang from the tab that was active in it. A private tab a previous state opened goes
@@ -606,6 +627,7 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   const blocking = params.get('blocking')
   const blocked = Number(params.get('blocked'))
   const extensions = params.get('extensions')
+  const sync = params.get('sync')
   const lastImport = params.get('import')
   const translate = params.get('translate')
   const favicon = params.get('favicon')
@@ -613,13 +635,19 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
     if (blocking)
       seedBlocking(blocking, Number.isFinite(blocked) && blocked > 0 ? blocked : undefined)
     if (extensions) seedExtensions(extensions)
+    if (sync) seedSync(sync)
     if (lastImport) seedImport(lastImport)
     if (translate) seedTranslate(translate, params.has('bar'))
     if (favicon) seedFavicon(favicon)
   }
+  const lock = parsePreviewSeed(spec).lock
   const finish = (): void => {
     seed()
-    done(spec)
+    if (!lock) {
+      done(spec)
+      return
+    }
+    lockPrivateTabs(() => afterFrames(2, () => done(spec)))
   }
 
   if (target.kind === 'autofill') {
@@ -1167,6 +1195,131 @@ function seedExtensions(variant: string): void {
 function unseedExtensions(): void {
   extensionsSeed?.()
   extensionsSeed = null
+}
+
+// ---------------------------------------------------------------------------
+// Sync, seeded
+// ---------------------------------------------------------------------------
+
+/** Lets go of the sync state the current spec holds over the core's pushes. */
+let syncSeed: (() => void) | null = null
+
+/** The tree the `chosen` variant has picked: a Drive folder, as the system picker names one. */
+const SYNC_FIXTURE_TREE =
+  'content://com.android.externalstorage.documents/tree/primary%3ADrive%2FZenium'
+
+/**
+ * Settings › Sync in states this stand-in host cannot reach (it has no folder to pick and no
+ * other device): the chrome's copy of the browser state is patched with the engine's status,
+ * and patched again over every state the core pushes while the spec stands. Variants: `off`
+ * (nothing set up, no folder chosen), `chosen` (the setup draft holds a picked tree, so Turn on
+ * sync is live and its sheet has a folder to set up), `busy` (`chosen`, with the engine's
+ * `sync.setup` held open so the passphrase sheet stays on its §9.30 busy form once sent), `on`
+ * (connected: two other devices, last synced five minutes ago), `empty` (connected, no other
+ * device yet), `syncing` (a sync running), `error` (the last sync failed), `lost` (the folder's
+ * permission is gone) and `merge` (the first sync waits on the merge question). The scope stays
+ * the core's, so a tapped toggle shows its new state.
+ */
+function seedSync(variant: string): void {
+  unseedSync()
+  const chosen = variant === 'chosen' || variant === 'busy'
+  syncSetupStore.set({ folder: chosen ? SYNC_FIXTURE_TREE : null })
+  let seeded: UIState | null = null
+  const patch = (): void => {
+    const state = browserStore.get().state
+    if (!state || state === seeded) return
+    seeded = syncFixture(state, variant, Date.now())
+    browserStore.set({ state: seeded })
+  }
+  patch()
+  const unpatch = browserStore.subscribe(patch)
+  const release = holdSetup(variant)
+  syncSeed = () => {
+    unpatch()
+    release()
+  }
+}
+
+/** Stop holding a seeded sync state over the core's pushes; the setup draft goes with it. */
+function unseedSync(): void {
+  syncSeed?.()
+  syncSeed = null
+  syncSetupStore.set({ folder: null })
+}
+
+/**
+ * While the `busy` fixture stands the chrome's bridge takes `sync.setup` and never answers it,
+ * the way a slow key derivation over a slow tree would look: the passphrase form stays busy
+ * (fields read-only, the primary's spinner, Cancel at .4) for as long as the sheet is up. The
+ * call is left pending on release – the sheet closes with the state, and the form goes with it.
+ * Every other command goes through. Returns the undo.
+ */
+function holdSetup(variant: string): () => void {
+  if (variant !== 'busy') return () => undefined
+  const zen = window.zen
+  const invoke = zen.invoke
+  zen.invoke = <K extends CommandName>(
+    name: K,
+    args: CommandArgs<K>
+  ): Promise<CommandResult<K>> => {
+    if (name === 'sync.setup') return new Promise<CommandResult<K>>(() => undefined)
+    return invoke(name, args)
+  }
+  return () => {
+    if (zen.invoke !== invoke) zen.invoke = invoke
+  }
+}
+
+export function syncFixture(state: UIState, variant: string, now: number): UIState {
+  const base = state.sync
+  const deviceName = 'Pixel 8'
+  if (variant === 'off' || variant === 'chosen' || variant === 'busy') {
+    return {
+      ...state,
+      sync: {
+        ...base,
+        enabled: false,
+        folder: null,
+        folderName: null,
+        folderLost: false,
+        deviceName,
+        lastSyncAt: null,
+        lastError: null,
+        syncing: false,
+        devices: [],
+        pendingMerge: false
+      }
+    }
+  }
+  const lost = variant === 'lost'
+  const merge = variant === 'merge'
+  const devices =
+    variant === 'empty' || merge
+      ? []
+      : [
+          { id: 'device-laptop', name: 'Work laptop', lastSeen: now - 2 * HOUR_MS },
+          { id: 'device-desktop', name: 'Home desktop', lastSeen: now - 3 * 60_000 }
+        ]
+  return {
+    ...state,
+    sync: {
+      ...base,
+      enabled: true,
+      folder: SYNC_FIXTURE_TREE,
+      folderName: 'Zenium',
+      folderLost: lost,
+      deviceName,
+      lastSyncAt: merge ? null : now - 5 * 60_000,
+      lastError: lost
+        ? 'The sync folder is no longer accessible. Choose it again to keep syncing.'
+        : variant === 'error'
+          ? 'Could not read the folder: the drive is not mounted'
+          : null,
+      syncing: variant === 'syncing',
+      devices,
+      pendingMerge: merge
+    }
+  }
 }
 
 /**
@@ -1822,6 +1975,52 @@ function whenState(test: (state: UIState) => boolean, fn: () => void): void {
 
 /** The page a private tab is put on when the state names none. */
 const PRIVATE_PAGE = 'https://example.com/'
+
+/** The device's screen lock as the stand-in host reported it at boot, put back after a `screenlock=` spec. */
+let hostScreenLock: boolean | null = null
+
+/** How long the stand-in host gets to picture the private page before the lock goes on without one. */
+const LOCK_PICTURE_TIMEOUT_MS = 2500
+
+/**
+ * `lock=on`: the private tabs' lock as the host puts it on when the app is left with the switch
+ * on and private tabs open (`PrivateLock.kt`). The device takes the pictures of the pages on
+ * screen as it leaves (`Host.onPause`, `TabWebView.captureThumbnail`, of a painted document), so
+ * a private tab in front has its last picture for the cover to blur: the stand-in host is asked
+ * for the same copy once the page has loaded and painted (`overlay.snapshot`, the cover's
+ * capture; a site's frame cannot be read and answers nothing, `PREVIEW_SAMPLE_ORIGIN`'s page
+ * can), then the lock comes on through the store as `private.lock` would set it. Under the
+ * overview no picture is asked for: the pane's cards lie under the veil themselves. `then` runs
+ * once the cover is asked for.
+ */
+function lockPrivateTabs(then: () => void): void {
+  const state = browserStore.get().state
+  const tab = state ? activeTab(state) : null
+  const lock = (): void => {
+    applyPrivateLock({ locked: true })
+    then()
+  }
+  if (!tab || !isPrivateTab(tab) || isEmptyTabUrl(tab.url) || overviewIsOpen()) {
+    lock()
+    return
+  }
+  const loaded = (s: UIState): boolean => {
+    const now = activeTab(s)
+    return now !== null && now.id === tab.id && !now.loading
+  }
+  untilState(loaded, () =>
+    afterFrames(2, () => {
+      const picture = cmd('overlay.snapshot', { tabId: tab.id }).catch(() => null)
+      const late = new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), LOCK_PICTURE_TIMEOUT_MS)
+      )
+      void Promise.race([picture, late]).then((data) => {
+        if (typeof data === 'string' && data) rememberThumbnail(tab.id, data)
+        lock()
+      })
+    })
+  )
+}
 
 /**
  * A private tab and the overview's panes, the way the app reaches them: the tab through

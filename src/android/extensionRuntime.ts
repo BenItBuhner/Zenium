@@ -96,6 +96,7 @@ import { AndroidIdentity, authSheetEvent } from './extensionIdentity'
 import type { ExtensionRuntimeHooks } from './extensionRuntimeHooks'
 import type { ClientInfo } from './extensionServiceWorker'
 import type { AndroidExtensionStoreIo } from './extensionStoreIo'
+import { readPhoneScreen, type PhoneScreen } from './extensionSystemDisplay'
 import type { ViewEventPayloads } from './views'
 
 /**
@@ -306,6 +307,16 @@ export function packageRelativePath(path: string): string | null {
   return segments.join('/')
 }
 
+/** The chrome page's `screen.orientation` change is the phone's screen turning; a page without one never turns. */
+function observeScreenOrientation(listener: () => void): void {
+  const orientation = (globalThis as { screen?: { orientation?: unknown } }).screen?.orientation
+  if (
+    orientation &&
+    typeof (orientation as { addEventListener?: unknown }).addEventListener === 'function'
+  )
+    (orientation as EventTarget).addEventListener('change', () => listener())
+}
+
 export interface AndroidExtensionRuntimeOptions {
   /** Debug bootstraps expose `__zenExtStats` and Kotlin keeps its bridge trace (measurements). */
   debug?: boolean
@@ -314,6 +325,10 @@ export interface AndroidExtensionRuntimeOptions {
   now?: () => number
   setTimeout?: (fn: () => void, ms: number) => unknown
   clearTimeout?: (handle: unknown) => void
+  /** The phone's screen for `system.display` (tests give one; the chrome page's `screen` otherwise). */
+  screen?: () => PhoneScreen
+  /** Hear of the screen turning; the chrome page's `screen.orientation` otherwise. */
+  onScreenChange?: (listener: () => void) => void
 }
 
 const RUNTIME_STORE = 'extensions-runtime.json'
@@ -468,6 +483,8 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
     setTimeout: (fn: () => void, ms: number) => unknown
     clearTimeout: (handle: unknown) => void
   }
+  readonly screen: () => PhoneScreen
+  readonly onScreenChange: (listener: () => void) => void
 
   constructor(
     private readonly bridge: RuntimeBridge,
@@ -482,6 +499,10 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       clearTimeout:
         options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
     }
+    this.screen =
+      options.screen ?? (() => readPhoneScreen(globalThis as Parameters<typeof readPhoneScreen>[0]))
+    this.onScreenChange =
+      options.onScreenChange ?? ((listener) => observeScreenOrientation(listener))
     this.dataStore = new JsonStore<RuntimeData>(browser.platform.io, RUNTIME_STORE, 300)
     this.data = readData(this.dataStore.readSync())
     this.router = new MessageRouter({
@@ -985,10 +1006,21 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
       }
     }
     sendTo((endpoint) => endpoint.context !== 'background')
-    if (this.background.has(extensionId))
-      this.background.deliver(extensionId, key, () =>
+    if (this.background.has(extensionId)) {
+      const outcome = this.background.deliver(extensionId, key, () =>
         sendTo((endpoint) => endpoint.context === 'background')
       )
+      // A user's action click the background never hears of (WhatFont on the compat sweep: no
+      // bridge line of its worker's for the step) is the one drop worth a line in the console.
+      if (ns === 'action' || ns === 'browserAction') {
+        const bg = this.router.of(extensionId).filter((e) => e.context === 'background')
+        const heard = bg.some((e) => this.deliveryFor(e.id, key, url) !== null)
+        if (outcome === 'dropped' || (outcome === 'sent' && !heard))
+          this.warn(
+            `${key} of ${extensionId.slice(0, 8)} ${outcome}, ${heard ? 'heard' : 'unheard'}: background endpoints ${bg.length} (${bg.map((e) => `${e.id} listens ${this.listens(e.id, key)}`).join('; ') || 'none'}), lifecycle ${JSON.stringify(this.background.stats(extensionId))}`
+          )
+      }
+    }
   }
 
   /**

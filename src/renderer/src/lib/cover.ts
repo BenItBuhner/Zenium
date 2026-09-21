@@ -40,6 +40,23 @@ export function chromeUnderPages(platform: Platform): boolean {
 }
 
 /**
+ * Whether the active tab's capture is to be mounted ahead of anything covering the page: where
+ * the chrome lies under the page views, the moment a capture of `tabId` exists. Under the live
+ * page nothing of it shows, and it is decoded and painted – `trackCover` has counted it – by the
+ * time a sheet asks for the page to go, so `decideHidden` hides at once instead of after the
+ * decode and the two frames that carry it. The capture `prepareMenu` takes as the finger lands
+ * on the menu button is the case (PERF-2, #269: on the emulator's profile the sheet mounted
+ * ~590 ms after the tap and moved ~990 ms after it; the decode and its frames were in between).
+ */
+export function coverPrimed(
+  platform: Platform,
+  snapshotTabId: string | null,
+  tabId: string | null | undefined
+): boolean {
+  return chromeUnderPages(platform) && snapshotTabId !== null && snapshotTabId === tabId
+}
+
+/**
  * How long a hide waits for a cover that is on its way. A decode that never finishes must not
  * keep a sheet under the live page; on any device that paints at all the wait ends far sooner.
  */

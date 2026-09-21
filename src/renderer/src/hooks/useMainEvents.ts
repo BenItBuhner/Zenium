@@ -15,7 +15,8 @@ import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
-import { openImportSurface, openSettings } from '@renderer/lib/pages'
+import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
+import { openImportSurface } from '@renderer/lib/pages'
 import {
   configureThumbnails,
   rememberCard,
@@ -123,12 +124,17 @@ export function useMainEvents(): void {
           void openPrintPreview(target)
           return
         }
-        // Settings is a tab where the host has page tabs; the Shortcuts and Sync overlays are
-        // its sections. The core routes its own callers through `page.open`; a stray request
-        // for the overlay goes the same way (`openOverlay` refuses the kind on such a host).
+        // Settings (with Shortcuts and Sync, its sections) is a tab where the host has page
+        // tabs, and History, Bookmarks and Downloads are tabs on the desktop and tablet layouts.
+        // The core routes its own callers through `page.open`; a request for the overlay that
+        // still arrives goes the same way (`openOverlay` refuses the kind where the page is a
+        // tab). The core's `PageService` sends the overlay only where its own reading of the
+        // window's layout (`window.formFactor`, what this chrome reported) says the page is no
+        // tab, so the two sides can only disagree for the hop until a fresh report lands – sent
+        // ahead of any `page.open` on the same ordered channel – and never bounce for good.
         if (!overlayAvailable(kind)) {
           closeUrlbar()
-          openSettings(kind === 'settings' ? (section ?? null) : kind)
+          void openOverlay(kind, currentActiveTabId(), null, folderId ?? null, section ?? null)
           return
         }
         if (ui.overlay === kind && !folderId) {
@@ -175,12 +181,21 @@ export function useMainEvents(): void {
         if (isPhone()) return
         toggleTabSearch()
       }),
+      onEvent('mediahub.open', () => {
+        // The app menu's "Now Playing…" row (§9.29): the hub's popover from the "⋯" button the
+        // row's menu hung from (`mediaHubAnchor`: the toolbar button, were it up – but the row
+        // is the fold's). A menu command, not a press on the surface: the core focused the
+        // chrome for it, so the page has no focus to get back and the popover takes the keyboard
+        // as it does when opened from the keyboard.
+        if (isPhone()) return
+        openMediaHub({ fromKeyboard: true })
+      }),
       onEvent('menu.app', () => {
         // The menu button claims the request when it is on screen (it takes the focus and opens
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
-        if (!claimed) run('app.menu', { keyboard: true })
+        if (!claimed) run('app.menu', { keyboard: true, mediaHubFolded: mediaHubFolded() })
       }),
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).
@@ -263,7 +278,9 @@ export function useMainEvents(): void {
         )
       }),
       onEvent('bookmark.edit', (edit) => {
-        // Inside the manager the request is handled in place; anywhere else it is a dialog.
+        // Over the phone's bookmarks panel the request is the panel's sheet, with the panel's
+        // own picture behind it; anywhere else it is a dialog over the page (the manager page
+        // renames a folder in view in place and lets the rest through to it).
         if (uiStore.get().overlay === 'bookmarks') uiStore.set({ bookmarkEdit: edit })
         else void openBookmarkChrome({ bookmarkEdit: edit }, currentActiveTabId())
       }),

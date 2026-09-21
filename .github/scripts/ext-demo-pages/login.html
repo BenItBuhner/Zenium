@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Probe login form</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 40px;
+        background: #ffffff;
+        color: #111827;
+        font:
+          17px/1.5 system-ui,
+          sans-serif;
+      }
+      form {
+        max-width: 360px;
+        display: grid;
+        gap: 12px;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+        font-weight: 600;
+      }
+      input {
+        padding: 10px 12px;
+        font: inherit;
+        border: 1px solid #9ca3af;
+        border-radius: 8px;
+      }
+      button {
+        padding: 12px;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: #2563eb;
+        border: 0;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Sign in</h1>
+    <p>A plain username and password form: password managers attach their fill controls to it.</p>
+    <form id="login" action="#" method="post" onsubmit="event.preventDefault()">
+      <label>Email <input id="email" name="email" type="email" autocomplete="username" /></label>
+      <label
+        >Password
+        <input id="password" name="password" type="password" autocomplete="current-password"
+      /></label>
+      <button type="submit">Sign in</button>
+    </form>
+  </body>
+</html>

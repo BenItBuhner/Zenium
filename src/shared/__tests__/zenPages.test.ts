@@ -16,7 +16,6 @@ import {
   errorPageHtml,
   errorPageStyle,
   inPlaceErrorPageScript,
-  overlayForUrl,
   parseZenUrl,
   zenPageHtml
 } from '../zenPages'
@@ -66,24 +65,6 @@ describe('parseZenUrl', () => {
     expect(parseZenUrl('zen:error')).toBeNull()
     expect(parseZenUrl('zen://')).toBeNull()
     expect(parseZenUrl('')).toBeNull()
-  })
-})
-
-describe('overlayForUrl', () => {
-  it('names the overlay a zen:// address stands for, without URL.hostname', () => {
-    expect(overlayForUrl('zen://history')).toBe('history')
-    expect(overlayForUrl('zen://History/?q=x')).toBe('history')
-    expect(overlayForUrl('zen://downloads')).toBe('downloads')
-    expect(overlayForUrl('zen://bookmarks')).toBe('bookmarks')
-    // Settings is an internal page in a tab of its own (shared/internalPages.ts), not an overlay.
-    expect(overlayForUrl('zen://settings#privacy')).toBeNull()
-  })
-
-  it('is null for documents and for other schemes', () => {
-    expect(overlayForUrl(DNS)).toBeNull()
-    expect(overlayForUrl('zen://blank')).toBeNull()
-    expect(overlayForUrl('https://history/')).toBeNull()
-    expect(overlayForUrl('')).toBeNull()
   })
 })
 

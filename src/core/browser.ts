@@ -112,7 +112,6 @@ import {
 } from '../shared/url'
 import type { VoiceStartOutcome } from '../shared/voice'
 import type { QrStartOutcome } from '../shared/qrScan'
-import { overlayForUrl } from '../shared/zenPages'
 import { openAllPrompt, sortedByNameOrder, toggledBookmarksBarMode } from '../shared/bookmarkViews'
 import { PageService } from './pages'
 import {
@@ -125,7 +124,7 @@ import { SearchEngineService } from './searchEngines'
 import { routeSharedIntent, type SharedIntent } from '../shared/shareTarget'
 import { copyConfirmation } from '../shared/clipboard'
 import { IMAGE_URL_PREFIX } from '../shared/zenPages'
-import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID, sanitizePrivateDevice } from '../shared/types'
 import {
   DEFAULT_SETTINGS,
   ONBOARDING_ESSENTIALS,
@@ -172,6 +171,7 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
   'overlay.open',
   'find.open',
   'zoom.open',
+  'mediahub.open',
   'siteInfo.open',
   'extensions.open',
   'reader.preferences',
@@ -931,11 +931,13 @@ export class Browser {
     if (sourceTabId && this.pdf.expects(sourceTabId)) return
     // Firefox shows the downloads panel whenever a download begins; the desktop chrome decides
     // from `download.changed` instead (Chrome-style button, or the bubble when
-    // `Settings.downloads.openPanelOnStart` asks for it). Single-window hosts (Android) keep the
-    // panel; their downloads UI is not the desktop's. Let any tab switch paint first so the
-    // panel can dim a snapshot of the page behind it.
-    if (!this.state.capabilities.windows) {
-      setTimeout(() => this.emit('overlay.open', { kind: 'downloads' }, win), 200)
+    // `Settings.downloads.openPanelOnStart` asks for it). A single-window host (Android) keeps
+    // the sheet where Downloads is a sheet – the phone layout; a tablet, whose Downloads is a
+    // page tab as the desktop's, gets nothing over the page (Chrome opens no tab for a
+    // download). Let any tab switch paint first so the sheet can dim a snapshot of the page
+    // behind it.
+    if (!this.state.capabilities.windows && !this.pages.opensPageAsTab('downloads', win)) {
+      setTimeout(() => this.pages.open('downloads', undefined, win), 200)
     }
     const tab = this.tabs.tab(sourceTabId)
     const view = sourceTabId ? this.tabs.view(sourceTabId) : undefined
@@ -1061,6 +1063,18 @@ export class Browser {
   }
 
   /**
+   * Settings › Privacy and Security › Lock private tabs when you leave Zenium (INC-05 / SET-17):
+   * the switch, device-local (`state.privateDevice`, never synced, the `newTabDevice` write
+   * shape: replaced whole, sanitised). The lock itself is the phone host's and stays in memory;
+   * the host reads the switch off the state it is sent.
+   */
+  private setPrivateLockOnLeave(enabled: boolean): void {
+    const { state } = this
+    state.privateDevice = sanitizePrivateDevice({ ...state.privateDevice, lockOnLeave: enabled })
+    state.commit()
+  }
+
+  /**
    * Host-side listeners for the engine's `download.changed` (the desktop shell's taskbar
    * progress and completion notifications); windows get the same event over IPC.
    */
@@ -1096,7 +1110,10 @@ export class Browser {
       tab.readerable = false
       this.webApps.onNavigated(tabId, tab.url, inPage)
     }
-    this.extensions.closePopup()
+    // An action popup goes when the page under it navigates; a tab no window shows navigating
+    // behind it leaves it open, as Chrome's does (Read Aloud's popup opens its player in a
+    // background tab and reads the page through it; the popup closing dropped the reading).
+    if (!inPage && this.tabs.windowsShowing(tabId).length > 0) this.extensions.closePopup()
     this.translate.onNavigated(tabId)
     this.autofill.onNavigated(tabId)
     this.fullscreen.onNavigated(tabId)
@@ -1860,7 +1877,8 @@ export class Browser {
     if (!win.isPrivate && this.extensions.omniboxSubmit(input, newTab, background, win)) return
     const keyword = matchKeyword(text, this.state.searchEngines)
     if (keyword?.kind === 'scope') {
-      // `@bookmarks foo` / `@history foo` open the manager; `@tabs foo` switches to the tab.
+      // `@bookmarks foo` / `@history foo` open the page searching for `foo` (Chrome's scoped
+      // `chrome://history/?q=`); `@tabs foo` switches to the tab.
       if (keyword.scope === 'tabs') {
         const q = keyword.query.trim().toLowerCase()
         const hit = Object.values(this.state.model.tabs).find(
@@ -1871,7 +1889,8 @@ export class Browser {
         if (hit) this.tabs.activateTab(hit.id, win)
         return
       }
-      this.emit('overlay.open', { kind: keyword.scope }, win)
+      const q = keyword.query.trim()
+      this.pages.open(keyword.scope, null, win, tabId ?? null, { query: q ? { q } : undefined })
       return
     }
     const typed = this.typedToUrl(text)
@@ -1884,25 +1903,19 @@ export class Browser {
       this.openUrlInWindow(url, win.isPrivate ? 'private' : win.kind, win)
       return
     }
-    // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
-    // the current tab as opener, whatever tab the text was typed into; a document page loads
-    // like any document, in this tab or a new one, unless the window already shows the one it
-    // keeps (`routeNavigation`).
+    // `zenium://settings/…`, `zenium://history` typed into the bar: a chrome page opens (or
+    // reuses) its own tab – or its overlay, where the layout keeps one – with the current tab as
+    // opener, whatever tab the text was typed into, and no tab is spent on it otherwise; a
+    // document page loads like any document, in this tab or a new one, unless the window
+    // already shows the one it keeps (`routeNavigation`).
     const pageRef = this.pages.parse(url)
     if (pageRef) {
       const page = this.pages.pages[pageRef.id]
       if (page.render === 'chrome') {
-        this.pages.open(pageRef.id, pageRef.section, win, tabId ?? null)
+        this.pages.open(pageRef.id, pageRef.section, win, tabId ?? null, { query: pageRef.query })
         return
       }
       if (tabId && !newTab && this.pages.routeNavigation(tabId, url)) return
-    }
-    // `zen://history` opens its chrome surface; no tab is spent on it. A registered document
-    // page is the registry's, never the overlay table's, and loads as a document below.
-    const overlay = pageRef ? null : overlayForUrl(url)
-    if (overlay) {
-      this.emit('overlay.open', { kind: overlay }, win)
-      return
     }
     const routed = win.localSpace ? null : this.routeSpaceFor(url)
     const target = tabId ? this.tabs.tab(tabId) : undefined
@@ -2128,7 +2141,7 @@ export class Browser {
       const typed = this.typedToUrl(text)
       if (!typed) continue
       const { url, upgradedFrom } = typed
-      if (this.pages.parse(url) || overlayForUrl(url)) {
+      if (this.pages.parse(url)) {
         // Zenium's own pages open their tab (or surface) the way the URL bar opens them.
         this.submitUrlbar(url, true, null, !(first && inActiveSpace), win)
         first = false
@@ -2375,6 +2388,7 @@ export class Browser {
         void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
       'tab.closePrivate': (_a, win) => tabs.closePrivateTabs(win),
+      'private.setLockOnLeave': ({ enabled }) => this.setPrivateLockOnLeave(enabled),
       'tab.closeOthers': ({ tabId }, win) => tabs.closeOthers(tabId, win),
       'tab.closeBelow': ({ tabId }, win) => tabs.closeBelow(tabId, win),
       'tab.closeAbove': ({ tabId }, win) => tabs.closeAbove(tabId, win),
@@ -2496,8 +2510,12 @@ export class Browser {
       'newtab.contextMenu': (anchor, win) => this.menus.showNewTabContextMenu(win, anchor ?? {}),
       'newtab.tileContextMenu': ({ url, title }, win) =>
         this.menus.showTopSiteContextMenu(url, title, win),
-      'app.menu': ({ anchor, keyboard }, win) =>
-        this.menus.showAppMenu(win, { anchor, keyboard: Boolean(keyboard) }),
+      'app.menu': ({ anchor, keyboard, mediaHubFolded }, win) =>
+        this.menus.showAppMenu(win, {
+          anchor,
+          keyboard: Boolean(keyboard),
+          mediaHubFolded: Boolean(mediaHubFolded)
+        }),
       'focus.content': (_a, win) => win.focusContent(),
       'focus.chrome': (_a, win) => win.focusChrome(),
       haptic: ({ kind }, win) => win.haptic(kind),
@@ -2641,12 +2659,14 @@ export class Browser {
       'history.deleteUrls': ({ urls }) => this.history.deleteUrls(urls),
       'history.deleteDay': ({ dayKey }) => this.history.deleteDay(dayKey),
       'history.deleteRange': ({ fromMs, toMs }) => this.history.deleteRange(fromMs, toMs),
-      'history.open': (_a, win) => this.emit('overlay.open', { kind: 'history' }, win),
+      'history.open': (_a, win) => {
+        this.pages.open('history', undefined, win)
+      },
 
-      'page.open': ({ id, section, openerTabId }, win) =>
-        this.pages.open(id, section, win, openerTabId),
-      'page.navigate': ({ tabId, section, replace }) =>
-        this.pages.navigate(tabId, section, replace ?? false),
+      'page.open': ({ id, section, openerTabId, query }, win) =>
+        this.pages.open(id, section, win, openerTabId, { query }),
+      'page.navigate': ({ tabId, section, replace, query }) =>
+        this.pages.navigate(tabId, section, replace ?? false, query),
 
       'history.contextMenu': ({ visitId, url, ...anchor }, win) =>
         this.menus.showHistoryContextMenu(visitId, url, win, anchor),
@@ -2730,7 +2750,10 @@ export class Browser {
       'download.deleteFile': ({ id }) => this.downloads.deleteFile(id),
       'download.exists': ({ id }) => this.downloads.exists(id),
       'download.chooseDirectory': (_args, win) => this.downloads.chooseDirectory(win),
-      'download.openPanel': (_args, win) => this.emit('overlay.open', { kind: 'downloads' }, win),
+      'download.directory': () => this.downloads.currentDirectory(),
+      'download.openPanel': (_args, win) => {
+        this.pages.open('downloads', undefined, win)
+      },
       'download.dragOut': ({ id }, win) => {
         // Only a released file has a final path to hand to the OS; a quarantined one still waits.
         const item = this.downloads.item(id)
@@ -2986,6 +3009,7 @@ export class Browser {
       'passwords.generate': ({ options, domain }) => this.passwords.generate(options, domain),
       'passwords.checkupRun': () => this.passwords.runCheckup(),
       'passwords.checkupCancel': () => this.passwords.cancelCheckup(),
+      'passwords.leakRespond': ({ id, action }, win) => this.passwords.leakRespond(id, action, win),
       'passwords.import': ({ conflict }, win) => this.passwords.import(conflict, win),
       'passwords.export': ({ passphrase }, win) => this.passwords.export(passphrase, win),
       'blocking.updateLists': ({ id }) => this.blocking.updateLists(id),

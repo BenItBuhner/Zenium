@@ -8,6 +8,14 @@ import { popOrigin } from '@renderer/lib/anchor'
 import { pathForFile } from '@renderer/lib/dnd'
 import { droppedBookmark, payloadKind } from '@renderer/lib/dropIntent'
 import { contextMenuAnchor, handleMenuKey } from '@renderer/lib/menuKeys'
+import {
+  HOVER_TO_OPEN_MS,
+  closedTo,
+  focusAfterClose,
+  focusAfterOpen,
+  openedAt,
+  type PathFocus
+} from '@renderer/lib/menuPath'
 import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
   ChromePortal,
@@ -18,9 +26,8 @@ import {
   type DismissReason,
   type PopoverBox
 } from '@renderer/lib/portals'
-import { BookmarkIcon } from './BookmarkRow'
+import { BookmarkIcon } from './BookmarkIcon'
 import { besideOrigin, layoutRect, placeBeside, rowRect } from './panelGeometry'
-import { closedTo, focusAfterClose, focusAfterOpen, openedAt, type PathFocus } from './panelPath'
 import { nodeLabel } from './tree'
 import { HOLD_TO_OPEN_MS, type BarDropTarget } from './useBarDrag'
 
@@ -45,9 +52,6 @@ interface Props {
   /** `focusAnchor`: the keyboard closed the panel, so the chip it hung from takes focus back. */
   onClose: (opts?: { focusAnchor: boolean }) => void
 }
-
-/** How long the pointer rests on a folder row before its panel opens beside it (Chrome, Firefox). */
-export const HOVER_TO_OPEN_MS = 300
 
 /** One open panel of the cascade: the folder whose contents it lists, and them. */
 interface Level {
@@ -153,7 +157,7 @@ export function BarMenu({
   }))
   const onFocused = useCallback((): void => setFocusWanted(null), [])
 
-  // The moves through the cascade are `panelPath`'s (pure, tested there); `focus` says the
+  // The moves through the cascade are `lib/menuPath`'s (pure, tested there); `focus` says the
   // keyboard made the move, so the row it calls for takes the focus once its level stands.
   const openLevel = useCallback(
     (depth: number, folderId: string, focus: boolean): void => {
@@ -554,7 +558,7 @@ function MenuLevel({
         >
           <BookmarkIcon node={node} className="zen-bm-panel-icon" />
           <span className="min-w-0 flex-1 truncate">{nodeLabel(node)}</span>
-          {node.type === 'folder' && <ChevronRight className="zen-bm-panel-chevron" />}
+          {node.type === 'folder' && <ChevronRight className="zen-v2-menu-chevron" />}
         </button>
       ))}
       {target?.kind === 'row' && target.parentId === folderId && <RowInsertLine target={target} />}
@@ -592,7 +596,8 @@ function panelTargetFor(tree: BookmarkTree, el: HTMLElement, y: number): PanelTa
 
 /**
  * The insertion line between two rows of a panel (§9.4): a 2px accent line as long as the rows'
- * text run (the rows stand 4 in from the panel's edges and hold 8 of padding, so 12 in).
+ * text run (the rows stand 6 in from the panel's edges, `.zen-v2-menu`'s padding, and hold 8
+ * of padding, so 14 in).
  */
 function RowInsertLine({
   target
@@ -614,7 +619,7 @@ function RowInsertLine({
       aria-hidden
       className="zen-bm-insert"
       data-axis="y"
-      style={{ top: 0, left: 12, right: 12 }}
+      style={{ top: 0, left: 14, right: 14 }}
     />
   )
 }

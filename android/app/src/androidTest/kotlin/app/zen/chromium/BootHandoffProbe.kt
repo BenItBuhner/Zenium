@@ -29,10 +29,14 @@ import java.util.Random
  *  - `measure`: the Safe Browsing documents are rewritten fresh (`bundled: false`, dated now, so
  *    no feed is refreshed over the network during the boot), the phishing-domains feed's
  *    document among them, generated at its real size (`FEED_PREFIXES` sorted 8-byte prefixes);
- *    then the app is launched and timed to `window.zen`, the host's storage writes during the
- *    boot are recorded, the request engine's rebuild count and the Safe Browsing load are read,
- *    and `boot-probe.js` replays each transport in the chrome (see there). A loopback server
- *    answers a hosts list the size of the phishing-domains download for the `net.fetch` replay.
+ *    then the app is launched and timed to `window.zen`, to the chrome document's `load` and to
+ *    its first (contentful) paint – on the chrome's own clock and as wall time since
+ *    `startActivity` – the host's storage writes during the boot are recorded, the request
+ *    engine's rebuild count and the Safe Browsing load are read, the documents the chrome
+ *    fetched from the document handler are listed with their times (the resource timing: the
+ *    boot's deferred documents, and the feed documents the core reads once it is up), and
+ *    `boot-probe.js` replays each transport in the chrome (see there). A loopback server answers
+ *    a hosts list the size of the phishing-domains download for the `net.fetch` replay.
  *
  * Results: `files/boot-probe/results.json` (the workflow pulls it and tabulates before / after).
  */
@@ -99,6 +103,9 @@ class BootHandoffProbe : DemoHarness(null, "boot-probe", "boot-probe") {
             // rebuild (300 ms after a write of the index), the Safe Browsing load.
             SystemClock.sleep(10_000)
             result.put("boot", boot)
+            // Every document the chrome fetched from the handler so far: the boot's deferred ones,
+            // and the feed documents the core reads once it is up (`AndroidStoreIO.read`).
+            result.put("documentsFetched", chromeDocumentsFetched())
             result.put("kotlin", kotlinDiagnostics())
             val bootWrites = JSONArray()
             synchronized(writes) {
@@ -133,9 +140,45 @@ class BootHandoffProbe : DemoHarness(null, "boot-probe", "boot-probe") {
             }
             SystemClock.sleep(50)
         }
-        return JSONObject()
+        val boot = JSONObject()
             .put("launchToReadyMs", if (readyAt < 0) -1 else readyAt - launchedAt)
             .put("chromeReadyMs", chromeReadyMs)
+        if (readyAt >= 0) {
+            // Wall milliseconds after `startActivity` at the chrome's navigation start, so that a
+            // time on the chrome's clock reads as wall time since the launch when it is added.
+            boot.put("chromeClockOffsetMs", (readyAt - launchedAt) - chromeReadyMs)
+            // The chrome document's `load` and its first (contentful) paint may still be ahead
+            // when `window.zen` appears (React renders once the core has started): wait, bounded.
+            val marks = chromeMarks(readyAt + 20_000)
+            boot.put("chromeLoadMs", marks.optInt("loadMs", -1))
+            boot.put("chromeFirstPaintMs", marks.optInt("firstPaintMs", -1))
+            boot.put("chromeFirstContentfulPaintMs", marks.optInt("firstContentfulPaintMs", -1))
+        }
+        return boot
+    }
+
+    /** The chrome's own milestones (`MARKS_JS`), polled until `load` and the first contentful paint are both in. */
+    private fun chromeMarks(deadline: Long): JSONObject {
+        var marks = JSONObject()
+        while (SystemClock.uptimeMillis() < deadline) {
+            marks = jsonAnswer(chromeJs(MARKS_JS))
+            if (marks.optInt("loadMs", -1) >= 0 && marks.optInt("firstContentfulPaintMs", -1) >= 0) break
+            SystemClock.sleep(100)
+        }
+        return marks
+    }
+
+    /** The documents fetched from the handler so far (`DOCUMENTS_JS`), each with its times on the chrome's clock. */
+    private fun chromeDocumentsFetched(): JSONArray {
+        val raw = chromeJs(DOCUMENTS_JS)
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String).orEmpty()
+        return runCatching { JSONArray(text) }.getOrDefault(JSONArray())
+    }
+
+    /** `evaluateJavascript`'s result – a JSON-quoted string holding JSON – as an object; empty when it is not one. */
+    private fun jsonAnswer(raw: String): JSONObject {
+        val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String).orEmpty()
+        return runCatching { JSONObject(text) }.getOrDefault(JSONObject())
     }
 
     private fun kotlinDiagnostics(): JSONObject {
@@ -228,6 +271,39 @@ class BootHandoffProbe : DemoHarness(null, "boot-probe", "boot-probe") {
     companion object {
         private const val PORT = 8779
         private val BUNDLED_FEEDS = listOf("urlhaus", "urlhaus-filter", "phishing-filter")
+
+        /**
+         * The chrome document's milestones on its own clock (navigation start = 0), as JSON text:
+         * `loadEventEnd` (-1 until the `load` event has run) and the paint timing entries.
+         */
+        private val MARKS_JS = """
+            (() => {
+              const nav = performance.getEntriesByType('navigation')[0];
+              const paint = {};
+              for (const e of performance.getEntriesByType('paint')) paint[e.name] = Math.round(e.startTime);
+              return JSON.stringify({
+                loadMs: nav && nav.loadEventEnd > 0 ? Math.round(nav.loadEventEnd) : -1,
+                firstPaintMs: 'first-paint' in paint ? paint['first-paint'] : -1,
+                firstContentfulPaintMs: 'first-contentful-paint' in paint ? paint['first-contentful-paint'] : -1
+              });
+            })()
+        """.trimIndent()
+
+        /**
+         * Every fetch of the document handler (`/zen-docs/<name>`) in the chrome's resource
+         * timing, as JSON text: the name, when it started and when its body was in (the chrome's
+         * clock), and its size where the entry has one.
+         */
+        private val DOCUMENTS_JS = """
+            (() => JSON.stringify(performance.getEntriesByType('resource')
+              .filter((e) => e.name.includes('/zen-docs/'))
+              .map((e) => ({
+                name: decodeURIComponent(e.name.split('/zen-docs/')[1]),
+                startMs: Math.round(e.startTime),
+                endMs: Math.round(e.responseEnd),
+                bytes: e.decodedBodySize || e.encodedBodySize || 0
+              }))))()
+        """.trimIndent()
         /** 690 000 prefixes of 8 bytes: 5.5 MB, 7.4 MB as base64 – the phishing-domains document. */
         private const val FEED_PREFIXES = 690_000
         /** 650 000 lines of 17 bytes: 11 MB, the phishing-domains download. */

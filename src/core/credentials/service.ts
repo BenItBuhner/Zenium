@@ -1,6 +1,8 @@
 import type {
   CheckupState,
+  CheckupSummary,
   Credential,
+  CredentialLeakAction,
   CredentialSummary,
   GeneratorOptions,
   ImportConflict,
@@ -9,6 +11,7 @@ import type {
   PasswordsStatus,
   ReauthOutcome
 } from '../../shared/types'
+import { emptyCheckupSummary, sanitizePasswordsDevice } from '../../shared/types'
 import { emptyCheckupState } from '../../shared/defaults'
 import type { Browser } from '../browser'
 import { KeyWrapError } from '../platform'
@@ -26,6 +29,7 @@ import { parseImport, toChromeCsv } from './csv'
 import { clearsInLabel } from './fill'
 import { generatePassphrase, generatePassword } from './generator'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from './kdf'
+import { LeakDetector, withLiveCompromised } from './leak'
 import { domainOf, siteLabel } from './origins'
 import { describeRules, parsePasswordRules, rulesForHost } from './rules'
 import { CredentialStore } from './store'
@@ -78,6 +82,8 @@ export class PasswordService {
   readonly store: CredentialStore
   /** Copies of passwords and card numbers go through here (sensitive flag, timed clearing). */
   readonly clipboard: SensitiveClipboard
+  /** The sign-in leak check and its warnings (ID-31). */
+  readonly leaks: LeakDetector
   private readonly host: PasswordsHost
   private checkup: CheckupState = emptyCheckupState()
   private checkupAbort: AbortController | null = null
@@ -100,6 +106,10 @@ export class PasswordService {
     this.clipboard = new SensitiveClipboard(browser.platform.clipboard)
     this.store = new CredentialStore(browser.platform.io, this.host.keys)
     this.store.onChange = () => this.bump()
+    this.leaks = new LeakDetector(browser, this.store, (prefix, signal) =>
+      this.fetchRange(prefix, signal)
+    )
+    this.leaks.onChange = () => this.bump()
     this.store.loadSync()
     const error = this.store.error()
     if (error) this.unlockError = error.message
@@ -143,8 +153,41 @@ export class PasswordService {
       neverSave: this.store.neverSaveList(),
       revision: this.revision,
       error: this.unlockError,
-      checkup: this.checkup
+      checkup: this.checkup,
+      checkupSummary: this.checkupSummary(),
+      leaks: this.leaks.active()
     }
+  }
+
+  /**
+   * The last Password Checkup's counts and time, this device's (`state.passwordsDevice`, kept
+   * outside the vault so Safety Check reads it locked). While the vault is open `compromised`
+   * is the live count of logins known breached and not ignored, which the sign-in leak check
+   * raises without a checkup; the summary is written back when that count moved.
+   */
+  checkupSummary(): CheckupSummary {
+    return withLiveCompromised(this.browser.state.passwordsDevice.checkupSummary, this.store)
+  }
+
+  /** Write the summary back when the live compromised count moved (a store change, a warning). */
+  private refreshSummary(): void {
+    const stored = this.browser.state.passwordsDevice.checkupSummary
+    const live = withLiveCompromised(stored, this.store)
+    if (live !== stored) this.writeSummary(live)
+  }
+
+  private writeSummary(summary: CheckupSummary): void {
+    const { state } = this.browser
+    state.passwordsDevice = sanitizePasswordsDevice({
+      ...state.passwordsDevice,
+      checkupSummary: summary
+    })
+    state.commit()
+  }
+
+  /** The chrome answered a sign-in leak warning. */
+  leakRespond(id: string, action: CredentialLeakAction, win?: ZenWindow): Promise<void> {
+    return this.leaks.respond(id, action, win)
   }
 
   /** Persist now (also when a mobile host is backgrounded: a copied secret stays for pasting). */
@@ -201,6 +244,7 @@ export class PasswordService {
   lock(): void {
     this.cancelCheckup()
     this.lastReauthAt = 0
+    this.leaks.onLocked()
     this.store.lock()
   }
 
@@ -208,7 +252,10 @@ export class PasswordService {
     this.cancelCheckup()
     this.checkup = emptyCheckupState()
     this.unlockError = null
+    this.leaks.onLocked()
     await this.store.reset()
+    // The summary described the vault that is gone.
+    this.writeSummary(emptyCheckupSummary())
     this.bump()
   }
 
@@ -316,6 +363,10 @@ export class PasswordService {
       createdAt: c.createdAt,
       updatedAt: c.updatedAt,
       lastUsedAt: c.lastUsedAt,
+      breached: c.breached,
+      checkedAt: c.checkedAt,
+      leakWarnedAt: c.leakWarnedAt,
+      leakIgnoredAt: c.leakIgnoredAt,
       domain: domain || siteLabel(c.origin),
       favicon: icons.get(domain) ?? null
     }
@@ -514,11 +565,12 @@ export class PasswordService {
           abort.signal
         )
         if (this.checkupAbort !== abort) return
+        const finishedAt = Date.now()
         this.checkup = {
           running: false,
           checked: this.checkup.checked,
           total: credentials.length,
-          finishedAt: Date.now(),
+          finishedAt,
           error: abort.signal.aborted
             ? 'Checkup cancelled'
             : result.offline
@@ -528,6 +580,22 @@ export class PasswordService {
           weak: result.weak,
           reused: result.reused,
           unchecked: result.unchecked
+        }
+        // Each looked-up login keeps its verdict (the manager and Safety Check read it without
+        // another request), and the device keeps the run's counts for Safety Check. A cancelled
+        // run recorded what it reached but is not "the last checkup".
+        if (this.store.unlocked()) {
+          this.store.recordLeaks(
+            [...result.breachCounts].map(([id, breached]) => ({ id, fields: { breached } })),
+            finishedAt
+          )
+          if (!abort.signal.aborted)
+            this.writeSummary({
+              compromised: this.store.compromisedCount(),
+              weak: result.weak.length,
+              reused: result.reused.reduce((n, group) => n + group.length, 0),
+              checkedAt: finishedAt
+            })
         }
       } catch (error) {
         if (this.checkupAbort !== abort) return
@@ -640,6 +708,7 @@ export class PasswordService {
 
   private bump(): void {
     this.revision++
+    this.refreshSummary()
     this.browser.state.commitVolatile()
   }
 }

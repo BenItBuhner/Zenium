@@ -40,6 +40,9 @@ export function downloadStatus(item: DownloadItem, now = Date.now()): string {
       return 'Cancelled'
     case 'interrupted':
       return item.errorMessage ? `Failed · ${item.errorMessage}` : describeDownloadError(item.error)
+    // Refused before a byte was written (HB-44): the same status the desktop row reads.
+    case 'insecure-blocked':
+      return 'Blocked · Insecure download'
   }
 }
 

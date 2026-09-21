@@ -31,11 +31,13 @@ export const INTERNAL_SCHEME = 'zen'
 export const INTERNAL_ALIAS_SCHEME = 'zenium'
 
 /**
- * The pages registered today: Settings, the print preview (`zen://print`, a chrome page that is
- * the desktop's print dialog) and the PDF viewer (`zen://pdf?id=…`, a document page on hosts
- * whose engine cannot draw a PDF). Widened as pages move onto the mechanism.
+ * The pages registered today: Settings, History, Bookmarks and Downloads (chrome pages the
+ * desktop and tablet layouts hold in a tab, the phone in its panels and sheets), the print
+ * preview (`zen://print`, a chrome page that is the desktop's print dialog) and the PDF viewer
+ * (`zen://pdf?id=…`, a document page on hosts whose engine cannot draw a PDF). Widened as pages
+ * move onto the mechanism.
  */
-export type InternalPageId = 'settings' | 'print' | 'pdf'
+export type InternalPageId = 'settings' | 'history' | 'bookmarks' | 'downloads' | 'print' | 'pdf'
 
 /**
  * How a page's tab holds its page.
@@ -120,9 +122,18 @@ export interface InternalPageDefinition {
   splittable: boolean
   /**
    * A chrome page on a host without `capabilities.pageTabs` (the desktop, whose content frame the
-   * chrome cannot draw into) opens as this overlay instead; a document page never needs one.
+   * chrome cannot draw into) opens as this overlay instead, as it does on a layout its `layouts`
+   * leave out; a document page never needs one.
    */
   overlay?: OverlayKind
+  /**
+   * Layouts in which a chrome page is a tab; absent means every one. On a layout left out the
+   * page opens as its `overlay` although the host has page tabs: History, Bookmarks and
+   * Downloads are the desktop's and the tablet's tabs (v2 §10.1), while the phone keeps its
+   * panels and sheets for them – lists a finger reads and swipes differently. Read through
+   * {@link pageOpensAsTab}.
+   */
+  layouts?: readonly FormFactor[]
   /**
    * Host capability the page needs (the print preview needs `printPreview`): the `PageService`
    * refuses to open the page on a host without it, and a typed address loads as a plain
@@ -303,11 +314,8 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   {
     id: 'sync',
     label: 'Sync',
-    keywords: ['devices', 'folder', 'passphrase'],
-    requires: 'sync',
-    // The engine runs on the phone (ID-08) but its Settings builder is the UI PR's: until it
-    // lands the category stays off the phone landing rather than opening on an empty page.
-    layouts: ['desktop', 'tablet']
+    keywords: ['devices', 'folder', 'passphrase', 'sync now', 'encrypted'],
+    requires: 'sync'
   },
   {
     // Chrome's "Import bookmarks and settings" (ID-23): another browser's profile on a desktop,
@@ -371,15 +379,16 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
   }
 ]
 
+/** The layouts whose chrome holds History, Bookmarks and Downloads in a tab (the phone keeps its panels). */
+const TAB_LAYOUTS: readonly FormFactor[] = ['desktop', 'tablet']
+
 /**
  * The pages this build routes. Pages the desktop program registers as it moves them onto this
  * route (design entries, not implementations – `internal-page-tabs.md` §1): the new tab page is
  * `{ render: 'document', singleton: false, pill: { showStar: false }, splittable: true }` with no
- * glyph (its document is `zen://blank` today, `zen://newtab` an alias in `shared/url.ts`);
- * History, Bookmarks and Downloads are `singleton: true` with the `history`, `star` and
- * `download` glyphs, the star chip shown, and the render the desktop chooses for each (`chrome`
- * with an `overlay` where the chrome already draws them, or `document`). A page in the registry
- * is a page the parser routes, so nothing is registered ahead of its implementation.
+ * glyph (its document is `zen://blank` today, `zen://newtab` an alias in `shared/url.ts`). A page
+ * in the registry is a page the parser routes, so nothing is registered ahead of its
+ * implementation.
  */
 export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinition>> = {
   settings: {
@@ -392,6 +401,54 @@ export const INTERNAL_PAGES: Readonly<Record<InternalPageId, InternalPageDefinit
     splittable: false,
     overlay: 'settings',
     sections: SETTINGS_SECTIONS
+  },
+  /**
+   * History (`zen://history`, Chrome's one chrome://history): the day groups are one scroll,
+   * not sections; `?q=<text>` pre-fills its search (`chrome://history/?q=`, what "More from This
+   * Site" and `@history <text>` open it with). A page on the desktop and the tablet; the phone's
+   * panel stays its overlay. No star chip: a page of the browser's own is nothing to bookmark.
+   */
+  history: {
+    id: 'history',
+    title: 'History',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'history',
+    pill: { showStar: false },
+    splittable: false,
+    overlay: 'history',
+    layouts: TAB_LAYOUTS,
+    sections: []
+  },
+  /**
+   * The bookmarks manager (`zen://bookmarks`, chrome://bookmarks): the folder tree is in the
+   * page, not sections; `?folder=<id>` opens on a folder (the bar's "Bookmark Manager", the
+   * import dialog's "Show in Bookmarks"), `?q=<text>` pre-fills its search (`@bookmarks <text>`).
+   */
+  bookmarks: {
+    id: 'bookmarks',
+    title: 'Bookmarks',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'star',
+    pill: { showStar: false },
+    splittable: false,
+    overlay: 'bookmarks',
+    layouts: TAB_LAYOUTS,
+    sections: []
+  },
+  /** Downloads (`zen://downloads`, chrome://downloads): the day groups as one scroll, no sections. */
+  downloads: {
+    id: 'downloads',
+    title: 'Downloads',
+    render: 'chrome',
+    singleton: true,
+    glyph: 'download',
+    pill: { showStar: false },
+    splittable: false,
+    overlay: 'downloads',
+    layouts: TAB_LAYOUTS,
+    sections: []
   },
   /**
    * The print preview (`shared/print.ts`, `core/print.ts`): Chrome's `chrome://print`, a
@@ -433,20 +490,31 @@ export const INTERNAL_PAGE_IDS: readonly InternalPageId[] = Object.keys(
   INTERNAL_PAGES
 ) as InternalPageId[]
 
-/** A page and the section in it (`null` = the landing page). */
+/**
+ * A page's own parameters, carried as the address's query (`zen://history?q=example.com`,
+ * `zen://bookmarks?folder=<id>`): what the page opens on besides its section – a filter, a
+ * folder – as Chrome's `chrome://history/?q=` and `chrome://bookmarks/?id=` carry theirs. Never
+ * a section, and never in the alias the pill shows ({@link internalPageAliasUrl}).
+ */
+export type InternalPageQuery = Readonly<Record<string, string>>
+
+/** A page and the section in it (`null` = the landing page), with the page's query when it has one. */
 export interface InternalPageRef {
   id: string
   section: string | null
+  query?: InternalPageQuery
 }
 
-const PAGE_URL_RE = /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?\/?(?:[?#].*)?$/i
+const PAGE_URL_RE =
+  /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?\/?(?:\?([^#]*))?(?:#.*)?$/i
 
 /**
  * Parse `zen://settings`, `zen://settings/privacy` or their `zenium://` aliases into a page
  * reference; `null` for anything that is not a registered page (documents such as `zen://error`
  * included). Unknown sections resolve to the landing page rather than failing, so a stale deep
  * link still opens Settings. Sections a host lacks are the renderer's call
- * ({@link availableSections}); the parser is host neutral.
+ * ({@link availableSections}); the parser is host neutral. A query comes back as the page's
+ * parameters ({@link InternalPageQuery}); an address without one has none.
  */
 export function parseInternalPageUrl(
   url: string,
@@ -459,7 +527,55 @@ export function parseInternalPageUrl(
   if (!page) return null
   const section = m[3]?.toLowerCase() ?? null
   const known = section !== null && page.sections.some((s) => s.id === section)
-  return { id, section: known ? section : null }
+  const query = m[4] ? Object.fromEntries(new URLSearchParams(m[4])) : {}
+  const ref: InternalPageRef = { id, section: known ? section : null }
+  if (Object.keys(query).length > 0) ref.query = query
+  return ref
+}
+
+/**
+ * Whether a page is a tab on this host and layout: a document page always; a chrome page where
+ * the chrome can draw into the content area (`capabilities.pageTabs`) and the layout is one of
+ * the page's `layouts` (every layout when it names none). Anywhere else a chrome page opens as
+ * its `overlay`. The core's `PageService` and the chrome's `overlayAvailable` read this one rule,
+ * so both halves agree on which presentation an ask gets.
+ */
+export function pageOpensAsTab(
+  page: InternalPageDefinition,
+  caps: Pick<HostCapabilities, 'pageTabs'>,
+  formFactor: FormFactor
+): boolean {
+  if (page.render !== 'chrome') return true
+  if (!caps.pageTabs) return false
+  return !page.layouts || page.layouts.includes(formFactor)
+}
+
+/**
+ * The overlay kinds that were Settings sections before Settings was a tab (`shortcuts`, `sync`),
+ * and open that section of the page. Not every kind that shares a section's id: `boosts` and
+ * `passwords` are panels of their own beside their Settings categories.
+ */
+const SETTINGS_SECTION_OVERLAYS: readonly OverlayKind[] = ['shortcuts', 'sync']
+
+/**
+ * The page an overlay kind stands for, when it is a page's overlay: the page whose `overlay` it
+ * is (`history` → History), or the Settings section the kind used to retarget
+ * ({@link SETTINGS_SECTION_OVERLAYS}). `null` for a kind that is an overlay in its own right
+ * (the theme picker, the space editor, the Boosts panel). What a request for the overlay opens
+ * instead where the page is a tab.
+ */
+export function pageForOverlayKind(
+  kind: OverlayKind,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): InternalPageRef | null {
+  const page = Object.values(pages).find((p) => p.overlay === kind)
+  if (page) return { id: page.id, section: null }
+  const settings = Object.prototype.hasOwnProperty.call(pages, 'settings')
+    ? pages.settings
+    : undefined
+  if (settings && SETTINGS_SECTION_OVERLAYS.includes(kind))
+    return { id: settings.id, section: kind }
+  return null
 }
 
 /** The page a `zen://` / `zenium://` address names, if it is a registered one. */
@@ -471,12 +587,19 @@ export function internalPageOf(
   return ref ? pages[ref.id] : null
 }
 
-/** The canonical `zen://` address of a page reference (what `tab.url` carries). */
+/** The canonical `zen://` address of a page reference (what `tab.url` carries), query included. */
 export function internalPageUrl(ref: InternalPageRef): string {
-  return `${INTERNAL_SCHEME}://${ref.id}${ref.section ? `/${ref.section}` : ''}`
+  const query = ref.query && Object.keys(ref.query).length > 0 ? ref.query : null
+  return `${INTERNAL_SCHEME}://${ref.id}${ref.section ? `/${ref.section}` : ''}${
+    query ? `?${new URLSearchParams(query).toString()}` : ''
+  }`
 }
 
-/** The user-facing `zenium://` form of a page address; other URLs come back unchanged. */
+/**
+ * The user-facing `zenium://` form of a page address – the page and its section, never its
+ * query (the pill says `zenium://history`, as `zenium://pdf` says nothing of the file's id);
+ * other URLs come back unchanged.
+ */
 export function internalPageAliasUrl(
   url: string,
   pages: InternalPageRegistry = INTERNAL_PAGES

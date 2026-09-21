@@ -55,6 +55,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { useFrameDialog } from '@renderer/lib/portals'
+import { privateLockStore } from '@renderer/lib/privateLock'
 import { activeTab } from '@renderer/lib/selectors'
 import {
   dismissSiteInfo,
@@ -497,6 +498,10 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
   // names, states and actions the chips had, and a live state chip waits here as a row while a
   // newer state has the pill's slot (`components/phone/pillChips.tsx`).
   const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
+  // The private lock's word (INC-05): the media row masks a locked private tab's title, and the
+  // lock can arm while this sheet stands (the app left and came back), so the rows are built
+  // again on it.
+  const lockMasking = privateLockStore.use((s) => s.locked || s.lifting)
   const pillChips = extension
     ? []
     : pillChipRows(state, tab, {
@@ -506,7 +511,7 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
       })
   // The chassis measures its detents again when this changes: a level, the reading arriving,
   // or the pill's rows changing under it.
-  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}`
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}:${lockMasking ? 'masked' : ''}`
 
   return (
     <>
@@ -834,7 +839,7 @@ function SheetRow({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{label}</span>
         {description && (
-          <span className="zen-sheet-item-secondary block text-[13px] leading-5 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+          <span className="zen-sheet-item-secondary block text-[13px] leading-[var(--v2-line-small)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
             {description}
           </span>
         )}

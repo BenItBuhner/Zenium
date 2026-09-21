@@ -674,7 +674,12 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   topSites: 'topSites',
   tts: 'tts',
   contentSettings: 'contentSettings',
-  printerProvider: 'printerProvider'
+  printerProvider: 'printerProvider',
+  // Under `chrome.system` (the engine makes the holder with `cpu` and `memory` rejecting): the
+  // phone's one screen and its no storage devices, for extensions declaring the permission (LINE
+  // sizes its sign-in window from `system.display.getInfo` before it opens it).
+  'system.display': 'system.display',
+  'system.storage': 'system.storage'
 }
 
 /** Permissions that grant a namespace registered under another name. */
@@ -704,7 +709,6 @@ export const CONTENT_SCRIPT_NAMESPACES: ReadonlySet<string> = new Set([
  */
 export const ENGINE_NOOPS: ReadonlySet<string> = new Set([
   'runtime.setUninstallURL',
-  'tabs.highlight',
   'tabs.setZoomSettings',
   'fontSettings.setFont',
   'fontSettings.clearFont',

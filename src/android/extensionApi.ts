@@ -14,13 +14,21 @@ import { NATIVE_HOST_NOT_FOUND, type EngineContextKind } from '@core/extensions/
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
+  SYSTEM_DISPLAY_NO_PERMISSION_ERROR,
+  SYSTEM_DISPLAY_PERMISSION
+} from '@core/extensions/api/systemDisplay'
+import {
   answerSystemStorage,
   SYSTEM_STORAGE_NO_PERMISSION_ERROR,
   SYSTEM_STORAGE_PERMISSION
 } from '@core/extensions/api/systemStorage'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
-import { presentExtensionUrl, toServedUrl } from '@core/extensions/runtime/extensionUrls'
+import {
+  chromeExtensionOrigin,
+  presentExtensionUrl,
+  toServedUrl
+} from '@core/extensions/runtime/extensionUrls'
 import type { RunAt, RuntimeManifest, ScriptWorld } from '@core/extensions/runtime/manifest'
 import {
   extensionOrigin,
@@ -36,6 +44,8 @@ import type { RequestUpdateCheckAnswer } from './extensionHost'
 import type { AndroidIdentity } from './extensionIdentity'
 import { AndroidNotifications, type ShownNotification } from './extensionNotifications'
 import { answerProxySetting } from './extensionProxy'
+import { answerSystemDisplay, type PhoneScreen } from './extensionSystemDisplay'
+import { AndroidTts } from './extensionTts'
 
 /**
  * The `chrome.*` calls the Android runtime answers itself, over the browser core: everything the
@@ -48,7 +58,7 @@ import { answerProxySetting } from './extensionProxy'
  * management, commands, idle, offscreen, downloads. W2-2 maps tabs, windows, action, popups,
  * webNavigation, contextMenus, cookies and notifications onto the shared core properly; W2-3
  * routes declarativeNetRequest to `extensionDnr.ts` (the shared translator over the Kotlin
- * blocking engine).
+ * blocking engine); compat round 6 adds tts over the device's speech engine (`extensionTts.ts`).
  */
 
 /** An extension the runtime is running: its record, parsed manifest and the locale it uses. */
@@ -94,8 +104,14 @@ export interface ApiHost {
   /** `userScripts.configureWorld`: whether the user-script world gets `runtime.sendMessage`. */
   userScriptMessaging(id: string): boolean
   setUserScriptMessaging(id: string, messaging: boolean): Promise<void>
-  /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it. */
-  emit(extensionId: string, ns: string, name: string, args: unknown[]): void
+  /** Raise `chrome.<ns>.<name>` in every endpoint of one extension that listens for it (`only`: in those of them it names). */
+  emit(
+    extensionId: string,
+    ns: string,
+    name: string,
+    args: unknown[],
+    only?: (endpoint: Endpoint) => boolean
+  ): void
   /** Deliver `chrome.<ns>.<name>` to one endpoint, listener or not (a `contextMenus` `onclick` holder). */
   emitTo(endpointId: string, ns: string, name: string, args: unknown[]): void
   /** The extension's toolbar icon as a `data:` URL, when the store has read it. */
@@ -106,6 +122,10 @@ export interface ApiHost {
    * (`languages` by share of the text; `isReliable` when the guess is a confident one).
    */
   detectTextLanguage(text: string): Promise<DetectedLanguage>
+  /** `system.display.getInfo`: the phone's screen as the chrome page sees it (`extensionSystemDisplay.ts`). */
+  screen(): PhoneScreen
+  /** Hear of the screen turning (its orientation changing); `system.display.onDisplayChanged` follows. */
+  onScreenChange(listener: () => void): void
   exec(request: ExecRequest): Promise<unknown>
   /** The cookies a request to `url` from the container's jar would carry (`chrome.cookies`). */
   readCookies(containerId: string, url: string): Promise<JarReading>
@@ -366,6 +386,8 @@ export class ExtensionApi {
   readonly activeTab: ActiveTabGrants
   readonly cookies: AndroidCookies
   readonly notifications: AndroidNotifications
+  /** `chrome.tts` over the device's speech engine, read aloud's (`extensionTts.ts`). */
+  readonly tts: AndroidTts
   private readonly actions = new Map<string, ActionRecord>()
   /** Optional host permissions granted this session, per extension (Chrome persists them; W2-3 may). */
   private readonly grantedHosts = new Map<string, Set<string>>()
@@ -405,6 +427,42 @@ export class ExtensionApi {
       allowed: () => host.notificationsAllowed(),
       emit: (id, ns, name, args) => host.emit(id, ns, name, args)
     })
+    this.tts = new AndroidTts({
+      speech: () => host.browser.platform.speech,
+      hasPermission: (id) => host.attached(id)?.manifest.permissions.includes('tts') === true,
+      endpointAlive: (endpointId) => host.router.endpoint(endpointId) !== undefined,
+      emit: (id, endpointId, args, web) =>
+        host.emit(
+          id,
+          web ? 'speechSynthesis' : 'tts',
+          'onEvent',
+          args,
+          (endpoint) => endpoint.id === endpointId
+        ),
+      voicesChanged: () => {
+        for (const ext of host.allAttached()) {
+          if (ext.manifest.permissions.includes('tts'))
+            host.emit(ext.record.id, 'tts', 'onVoicesChanged', [])
+          host.emit(ext.record.id, 'speechSynthesis', 'onVoicesChanged', [])
+        }
+      },
+      readAloudPlaying: () => host.browser.readAloud.uiState()?.status === 'playing',
+      pauseReadAloud: () => host.browser.readAloud.pause()
+    })
+    // The screen turning is Chrome's `onDisplayChanged`, to the extensions that may hear of it.
+    host.onScreenChange(() => {
+      for (const ext of host.allAttached())
+        if (this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
+          host.emit(ext.record.id, 'system.display', 'onDisplayChanged', [])
+    })
+  }
+
+  /** Whether the extension declared the permission, as required or as an optional one (granted without a prompt here). */
+  private holdsPermission(ext: AttachedExtension, permission: string): boolean {
+    return (
+      ext.manifest.permissions.includes(permission) ||
+      ext.manifest.optionalPermissions.includes(permission)
+    )
   }
 
   /** The extension is going away: drop what this layer remembers about it. */
@@ -415,6 +473,7 @@ export class ExtensionApi {
     this.grantedHosts.delete(id)
     this.captureQuota.forget(id)
     this.notifications.forget(id)
+    this.tts.forget(id)
   }
 
   /** The host patterns the extension may fetch across origins: its `host_permissions` plus what it was granted. */
@@ -559,6 +618,11 @@ export class ExtensionApi {
         return this.host.dnr.call(ext, method, args)
       case 'notifications':
         return this.notifications.call(ext, method, args)
+      case 'tts':
+        return this.tts.call(id, endpoint.id, method, args)
+      case 'speechSynthesis':
+        // A page's Web Speech API (extensionSpeechSynthesis.ts): no permission, the same engine.
+        return this.tts.call(id, endpoint.id, method, args, true)
       case 'contextMenus':
         return this.contextMenus.call(ext, endpoint.id, method, args)
       case 'webNavigation':
@@ -600,6 +664,12 @@ export class ExtensionApi {
         )
           throw new Error(SYSTEM_STORAGE_NO_PERMISSION_ERROR)
         return answerSystemStorage(method, args)
+      case 'system.display':
+        // The phone's one screen (`extensionSystemDisplay.ts`), for an extension that declared the
+        // permission; Chrome hides the namespace from the others.
+        if (!this.holdsPermission(ext, SYSTEM_DISPLAY_PERMISSION))
+          throw new Error(SYSTEM_DISPLAY_NO_PERMISSION_ERROR)
+        return answerSystemDisplay(method, this.host.screen())
       case 'proxy':
         // `proxy.settings`, a ChromeSetting: the system's value, not controllable on the WebView
         // (`extensionProxy.ts`); the calls come from extensions that declared the permission.
@@ -693,7 +763,10 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const tab = tabs.createTab(
           {
-            url: typeof props.url === 'string' ? props.url : undefined,
+            url:
+              typeof props.url === 'string'
+                ? tabUrlFrom(ext.record.id, props.url)
+                : undefined,
             active: props.active === undefined ? true : Boolean(props.active),
             pinned: Boolean(props.pinned)
           },
@@ -706,7 +779,8 @@ export class ExtensionApi {
         const props = asRecord(second ?? first)
         const target = targetOrActive(first)
         if (!target) throw new Error('No active tab.')
-        if (typeof props.url === 'string') tabs.navigate(target.id, props.url)
+        if (typeof props.url === 'string')
+          tabs.navigate(target.id, tabUrlFrom(ext.record.id, props.url))
         if (props.active === true) tabs.activateTab(target.id, win)
         if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
           tabs.toggleMute(target.id)
@@ -718,6 +792,21 @@ export class ExtensionApi {
         const list = Array.isArray(args[0]) ? args[0] : [args[0]]
         for (const id of list) tabs.closeTab(ids.tabFor(ext, id).id, true, win)
         return undefined
+      }
+      case 'highlight': {
+        // Chrome selects the tabs at these indices and makes the first of them active; the phone
+        // has one selection, the active tab, so the first index names it (FireShot goes back to
+        // the captured tab this way; Chrome's index is the position among the window's tabs).
+        const info = asRecord(args[0])
+        const indices = (Array.isArray(info.tabs) ? info.tabs : [info.tabs])
+          .map((value) => asNumber(value))
+          .filter((value): value is number => value !== null && Number.isInteger(value))
+        if (indices.length === 0) throw new Error('No highlighted tab')
+        const visible = ids.visibleTabs(ext)
+        const first = visible[indices[0]]
+        if (!first) throw new Error(`No tab at index: ${indices[0]}.`)
+        tabs.activateTab(first.id, win)
+        return ids.chromeWindow(ext)
       }
       case 'reload': {
         const target = targetOrActive(args[0])
@@ -986,7 +1075,10 @@ export class ExtensionApi {
         const props = asRecord(args[0])
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
-          this.host.browser.tabs.createTab({ url, active: true }, this.host.window())
+          this.host.browser.tabs.createTab(
+            { url: tabUrlFrom(ext.record.id, url), active: true },
+            this.host.window()
+          )
         return this.tabs.chromeWindow(ext)
       }
       case 'update':
@@ -1686,6 +1778,29 @@ function safeOrigin(url: string): string {
     return new URL(url).origin
   } catch {
     return ''
+  }
+}
+
+/**
+ * The URL `tabs.create`, `tabs.update` or `windows.create` names, as Chrome reads it: a
+ * fully-qualified URL as it is (Chrome's rule: it "must include a scheme"), anything else a
+ * path of the extension's, resolved against its ROOT (`Extension::GetResourceURL`: the
+ * extension's origin plus the string, a leading `/` dropped), never against the calling page,
+ * wherever the caller sits – Chrome's `ExtensionTabUtil::PrepareURLForNavigation` knows the
+ * extension, not the frame – in Chrome's spelling of the extension's origin, which the tab
+ * model keeps and the WebView loads as the served one (`ExtensionUrls.toServed`). Awesome
+ * Screenshot's worker opens its editor as `tabs.create({ url: 'edit-react.html' })`, which the
+ * runtime had loaded as a web URL (`https://edit-react.html`, "Secure connection not
+ * available"); FireShot's worker at `scripts/fsServiceWorker.js` opens `fsCaptured.html?id=1`,
+ * which resolved against the worker's own directory drew "Webpage not available" for
+ * `scripts/fsCaptured.html`. A value no URL parser takes goes through as it was.
+ */
+export function tabUrlFrom(extensionId: string, url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url
+  try {
+    return new URL(url.replace(/^\/+/, ''), `${chromeExtensionOrigin(extensionId)}/`).href
+  } catch {
+    return url
   }
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FormsCommand, FormsEvent } from '../../shared/forms'
 import type { Rect, Tab } from '../../shared/types'
+import { emptyPasswordsDevice } from '../../shared/types'
 import { sanitizeAutofillSettings, sanitizePasswordSettings } from '../../shared/defaults'
 import { AutofillService } from '../autofill'
 import type { Browser } from '../browser'
@@ -56,6 +57,17 @@ class FakeAutofillHost implements AutofillHost {
 
 const VIEW_RECT: Rect = { x: 0, y: 84, width: 1200, height: 700 }
 
+/**
+ * The host's network as the leak check and the change-password probe see it: a range request
+ * answers with the fixture for its prefix ('' when none: clean), null fails it; a well-known
+ * probe answers whether its URL is in `probes`.
+ */
+interface FakeNet {
+  ranges: Record<string, string | null>
+  probes: Record<string, boolean>
+  requests: string[]
+}
+
 interface World {
   browser: Browser
   autofill: AutofillService
@@ -66,6 +78,11 @@ interface World {
   clipboard: { writeText: ReturnType<typeof vi.fn>; clearText: ReturnType<typeof vi.fn> }
   confirm: ReturnType<typeof vi.fn>
   toast: ReturnType<typeof vi.fn>
+  net: FakeNet
+  /** `state.commit` (the device-local checkup summary is written through it). */
+  commit: ReturnType<typeof vi.fn>
+  navigate: ReturnType<typeof vi.fn>
+  openPage: ReturnType<typeof vi.fn>
   tabs: Map<string, Tab>
   views: Map<string, FakeView>
   /** The window's popup surface (a host with one): where the picker was placed, focus calls. */
@@ -99,6 +116,22 @@ function setup(
   }
   const confirm = vi.fn(async () => true)
   const toast = vi.fn()
+  const net: FakeNet = { ranges: {}, probes: {}, requests: [] }
+  const fetchText = async (url: string): Promise<{ ok: boolean; status: number; text: string }> => {
+    net.requests.push(url)
+    const range = url.match(/\/range\/([0-9A-F]{5})$/i)
+    if (range) {
+      const text = net.ranges[range[1].toUpperCase()]
+      if (text === null) return { ok: false, status: 503, text: '' }
+      return { ok: true, status: 200, text: text ?? '' }
+    }
+    return net.probes[url]
+      ? { ok: true, status: 200, text: '' }
+      : { ok: false, status: 404, text: '' }
+  }
+  const commit = vi.fn()
+  const navigate = vi.fn()
+  const openPage = vi.fn()
   const win = {
     viewRect: () => VIEW_RECT,
     hasPopupSurface: options.popupSurface === true,
@@ -112,23 +145,28 @@ function setup(
       clipboard,
       dialogs: { confirm },
       autofill: options.autofillHost,
-      translate: { locales: options.locales ?? ['en-US'] }
+      translate: { locales: options.locales ?? ['en-US'] },
+      net: { fetchText }
     },
     state: {
       settings: {
         passwords: sanitizePasswordSettings(undefined),
         autofill: sanitizeAutofillSettings(undefined)
       },
+      passwordsDevice: emptyPasswordsDevice(),
+      commit,
       commitVolatile: vi.fn()
     },
     history: { faviconsByDomain: () => new Map<string, string>() },
+    pages: { open: openPage },
     toast,
     tabs: {
       tab: (id: string) => tabs.get(id),
       view: (id: string) => views.get(id),
       windowFor: () => win,
       isPrivate: (tab: Tab) => tab.containerId === 'private',
-      allViews: () => views.entries()
+      allViews: () => views.entries(),
+      navigate
     }
   } as unknown as Browser & { passwords: PasswordService; autofill: AutofillService }
   const passwords = new PasswordService(browser, { keys, reauth })
@@ -148,6 +186,7 @@ function setup(
   const settle = async (): Promise<void> => {
     await passwords.whenSettled()
     await autofill.whenSettled()
+    await passwords.leaks.whenSettled()
   }
   return {
     browser,
@@ -159,6 +198,10 @@ function setup(
     clipboard,
     confirm,
     toast,
+    net,
+    commit,
+    navigate,
+    openPage,
     tabs,
     views,
     win,
@@ -1136,5 +1179,312 @@ describe('AutofillService: the popup surface (desktop)', () => {
     w.autofill.onNavigated('t1')
     await w.settle()
     expect(w.autofill.uiState().prompts).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ID-31: the sign-in leak warning
+// ---------------------------------------------------------------------------
+
+/** SHA-1 prefix of "password" and the padded range its prefix returns (see checkup.test.ts). */
+const BREACHED_PREFIX = '5BAA6'
+const RANGE_5BAA6 = [
+  '003D68EB55068C33ACE09247EE4C639306B:3',
+  '1E4C9B93F3F0682250B6CF8331B7EE68FD8:10434004',
+  '1F2B668E8AABEF1C59E9EC6F82E3F3CD786:0',
+  ''
+].join('\r\n')
+
+describe('AutofillService: the sign-in leak warning (ID-31)', () => {
+  /** A world whose breach corpus knows "password" and nothing else. */
+  function breachedWorld(): World {
+    const w = setup()
+    w.net.ranges[BREACHED_PREFIX] = RANGE_5BAA6
+    return w
+  }
+
+  /** Submit a login in `tabId` and let the page move on, as a sign-in does. */
+  async function signIn(
+    w: World,
+    tabId: string,
+    password: string,
+    username = 'ada'
+  ): Promise<void> {
+    w.event(tabId, loginSubmit({ username, password }))
+    w.autofill.onNavigated(tabId)
+    await w.settle()
+  }
+
+  const rangeRequests = (w: World): string[] => w.net.requests.filter((u) => u.includes('/range/'))
+
+  it('warns once a saved login signs in with a breached password, and records the verdict on the login', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
+    w.addTab('t1', 'https://example.com/login')
+    expect(w.passwords.status().leaks).toEqual([])
+
+    await signIn(w, 't1', 'password')
+    // One padded range request for the five-character prefix, never the password or its hash.
+    expect(rangeRequests(w)).toEqual([`https://api.pwnedpasswords.com/range/${BREACHED_PREFIX}`])
+    const [warning] = w.passwords.status().leaks
+    expect(warning).toMatchObject({
+      tabId: 't1',
+      origin: 'https://example.com',
+      site: 'example.com',
+      username: 'ada',
+      breachCount: 10_434_004,
+      credentialId: saved.id,
+      private: false
+    })
+    const login = w.passwords.store.get(saved.id)!
+    expect(login.breached).toBe(10_434_004)
+    expect(login.checkedAt).not.toBeNull()
+    expect(login.leakWarnedAt).not.toBeNull()
+    expect(login.leakIgnoredAt).toBeNull()
+    // The manager's summary carries it, and the device's checkup summary counts it without a checkup.
+    expect(w.passwords.list()[0]).toMatchObject({ breached: 10_434_004, leakIgnoredAt: null })
+    expect(w.passwords.status().checkupSummary).toEqual({
+      compromised: 1,
+      weak: 0,
+      reused: 0,
+      checkedAt: null
+    })
+    expect(w.commit).toHaveBeenCalled()
+    // No prompt to save: the login was saved already, and its use is recorded.
+    expect(w.autofill.uiState().prompts).toEqual([])
+    expect(login.lastUsedAt).not.toBeNull()
+  })
+
+  it('warns once per login per password value: not again after the warning, never after Ignore, again after a change', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
+    w.addTab('t1', 'https://example.com/login')
+
+    await signIn(w, 't1', 'password')
+    const [first] = w.passwords.status().leaks
+    await w.passwords.leakRespond(first.id, 'dismiss')
+    expect(w.passwords.status().leaks).toEqual([])
+    await signIn(w, 't1', 'password')
+    // Warned for this value already: no request, no second warning.
+    expect(rangeRequests(w)).toHaveLength(1)
+    expect(w.passwords.status().leaks).toEqual([])
+
+    // A second device (or a manual edit) may clear the memory; here the store is told directly.
+    w.passwords.store.recordLeak(saved.id, { leakWarnedAt: null })
+    await signIn(w, 't1', 'password')
+    const [second] = w.passwords.status().leaks
+    expect(second).toBeDefined()
+    await w.passwords.leakRespond(second.id, 'ignore')
+    expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).not.toBeNull()
+    // Ignored: out of Safety Check's count, and quiet from now on.
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+    await signIn(w, 't1', 'password')
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(rangeRequests(w)).toHaveLength(2)
+
+    // The password changes: the memory is that of one value, so the next sign-in checks again.
+    w.passwords.update(saved.id, { password: 'password' })
+    expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).not.toBeNull()
+    w.passwords.update(saved.id, { password: 'a-brand-new-value' })
+    expect(w.passwords.store.get(saved.id)).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null,
+      leakIgnoredAt: null
+    })
+    await signIn(w, 't1', 'a-brand-new-value')
+    expect(rangeRequests(w)).toHaveLength(3)
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.get(saved.id)).toMatchObject({ breached: 0, leakWarnedAt: null })
+    expect(w.passwords.store.get(saved.id)!.checkedAt).not.toBeNull()
+  })
+
+  it('warns nothing and records nothing when the range service cannot be reached, and tries again next time', async () => {
+    const w = breachedWorld()
+    w.net.ranges[BREACHED_PREFIX] = null
+    await w.passwords.unlock()
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
+    w.addTab('t1', 'https://example.com/login')
+
+    await signIn(w, 't1', 'password')
+    // The request and its two retries, then silence.
+    expect(rangeRequests(w)).toHaveLength(3)
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.get(saved.id)).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null
+    })
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+
+    w.net.ranges[BREACHED_PREFIX] = RANGE_5BAA6
+    await signIn(w, 't1', 'password')
+    expect(rangeRequests(w)).toHaveLength(4)
+    expect(w.passwords.status().leaks).toHaveLength(1)
+  })
+
+  it('runs no check with the setting off, and a clean password only records the check', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
+    w.addTab('t1', 'https://example.com/login')
+    w.browser.state.settings.passwords.leakDetection = false
+    await signIn(w, 't1', 'password')
+    expect(rangeRequests(w)).toEqual([])
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.get(saved.id)!.checkedAt).toBeNull()
+
+    w.browser.state.settings.passwords.leakDetection = true
+    const clean = w.passwords.add({
+      url: 'https://shop.example/login',
+      username: 'bob',
+      password: 'unique-and-clean-9f'
+    })
+    w.addTab('t2', 'https://shop.example/login')
+    await signIn(w, 't2', 'unique-and-clean-9f', 'bob')
+    expect(rangeRequests(w)).toHaveLength(1)
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.get(clean.id)).toMatchObject({ breached: 0, leakWarnedAt: null })
+    expect(w.passwords.store.get(clean.id)!.checkedAt).not.toBeNull()
+  })
+
+  it('checks and warns in a private tab but keeps no memory there', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
+    w.addTab('p1', 'https://example.com/login', 'private')
+    await signIn(w, 'p1', 'password')
+    const [warning] = w.passwords.status().leaks
+    expect(warning).toMatchObject({
+      tabId: 'p1',
+      private: true,
+      credentialId: null,
+      breachCount: 10_434_004
+    })
+    expect(w.passwords.store.get(saved.id)).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null
+    })
+    await w.passwords.leakRespond(warning.id, 'ignore')
+    expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).toBeNull()
+    // Nothing remembered: the next private sign-in asks and warns again.
+    await signIn(w, 'p1', 'password')
+    expect(rangeRequests(w)).toHaveLength(2)
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    expect(w.autofill.uiState().prompts).toEqual([])
+  })
+
+  it('warns for an unsaved sign-in too, and remembers the verdict on the login once the save prompt is accepted', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    await signIn(w, 't1', 'password')
+    const [warning] = w.passwords.status().leaks
+    expect(warning).toMatchObject({ credentialId: null, private: false, username: 'ada' })
+    const [prompt] = w.autofill.uiState().prompts
+    expect(prompt.kind).toBe('save-login')
+    w.autofill.respond(prompt.id, { action: 'save' })
+    await w.settle()
+    const [saved] = w.passwords.store.list()
+    expect(saved).toMatchObject({ password: 'password', breached: 10_434_004 })
+    expect(saved.leakWarnedAt).not.toBeNull()
+    // The warning now knows its login, so Ignore sticks.
+    expect(w.passwords.status().leaks[0]).toMatchObject({ id: warning.id, credentialId: saved.id })
+    await w.passwords.leakRespond(warning.id, 'ignore')
+    expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).not.toBeNull()
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+  })
+
+  it('takes Change password to the well-known page when the site serves one, else to the site, and opens the manager', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    w.net.probes['https://example.com/.well-known/change-password'] = true
+    await signIn(w, 't1', 'password')
+    const [first] = w.passwords.status().leaks
+    await w.passwords.leakRespond(first.id, 'changePassword')
+    expect(w.navigate).toHaveBeenCalledWith(
+      't1',
+      'https://example.com/.well-known/change-password',
+      { transition: 'link' }
+    )
+    expect(w.passwords.status().leaks).toEqual([])
+
+    // A site that answers 200 to anything proves nothing: the site itself opens.
+    w.net.probes[
+      'https://example.com/.well-known/resource-that-should-not-exist-whose-status-code-should-not-be-200'
+    ] = true
+    await signIn(w, 't1', 'password')
+    const [second] = w.passwords.status().leaks
+    await w.passwords.leakRespond(second.id, 'changePassword')
+    expect(w.navigate).toHaveBeenLastCalledWith('t1', 'https://example.com/', {
+      transition: 'link'
+    })
+
+    await signIn(w, 't1', 'password')
+    const [third] = w.passwords.status().leaks
+    await w.passwords.leakRespond(third.id, 'openManager')
+    expect(w.openPage).toHaveBeenCalledWith('settings', 'autofill', w.win)
+    expect(w.passwords.status().leaks).toEqual([])
+    // An answer to a warning that is gone is nothing.
+    await w.passwords.leakRespond(third.id, 'ignore')
+  })
+
+  it('keeps a warning while the tab stays on the site and drops it when the tab leaves or closes', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://accounts.example.com/login')
+    await signIn(w, 't1', 'password')
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    w.tabs.get('t1')!.url = 'https://www.example.com/home'
+    w.autofill.onNavigated('t1')
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    w.tabs.get('t1')!.url = 'https://elsewhere.test/'
+    w.autofill.onNavigated('t1')
+    expect(w.passwords.status().leaks).toEqual([])
+
+    w.addTab('t2', 'https://example.com/login')
+    await signIn(w, 't2', 'password')
+    expect(w.passwords.status().leaks).toHaveLength(1)
+    w.autofill.onTabGone('t2')
+    expect(w.passwords.status().leaks).toEqual([])
+  })
+
+  it('checks a sign-in while the vault is locked, remembering nothing, and never blocks on the vault', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    await w.passwords.store.flush()
+    w.passwords.lock()
+    w.keys.available = false
+    w.addTab('t1', 'https://example.com/login')
+    await signIn(w, 't1', 'password')
+    expect(w.passwords.status().locked).toBe(true)
+    expect(w.passwords.status().leaks[0]).toMatchObject({ credentialId: null, private: false })
+    // The device summary cannot read a locked vault: it stays what it was.
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
   })
 })

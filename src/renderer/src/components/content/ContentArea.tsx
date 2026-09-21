@@ -4,14 +4,16 @@ import { MonitorSmartphone, Plus, X } from 'lucide-react'
 import type { Rect, SidePanelInfo, SplitGroup, UIState } from '@shared/types'
 import { BLANK_URL } from '@shared/url'
 import { cmd, run } from '@renderer/lib/api'
-import { chromeUnderPages } from '@renderer/lib/cover'
+import { chromeUnderPages, coverPrimed } from '@renderer/lib/cover'
 import { wantsDefaultBrowserBanner } from '@renderer/lib/defaultBrowser'
 import { useViewport } from '@renderer/lib/formFactor'
 import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout'
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
+import { usePrivateCoverUp } from '@renderer/lib/privateLock'
 import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
+import { useRecedeSurface } from '@renderer/hooks/useRecedeSurface'
 import { barStateOf } from '@renderer/lib/translate'
 import {
   captureActiveTab,
@@ -31,6 +33,7 @@ import { NewTabPage } from '../newtab/NewTabPage'
 import { OverlayHost } from '../overlays/OverlayHost'
 import { InternalPageHost } from '../pages/InternalPageHost'
 import { PdfViewerBar } from '../pdf/PdfViewerBar'
+import { PrivateLockCover } from '../phone/PrivateLockCover'
 import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
@@ -57,6 +60,9 @@ interface Props {
 export function ContentArea({ state, ui }: Props): JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null)
   const sidePanelRef = useRef<HTMLDivElement>(null)
+  // The frame recedes under a phone sheet (main.css reads `--zen-recede` on it, §11.1).
+  const frameRef = useRef<HTMLDivElement>(null)
+  useRecedeSurface(frameRef)
   const tab = activeTab(state)
   const group = tab?.splitGroupId ? (state.splitGroups[tab.splitGroupId] ?? null) : null
   const glanceActive = ui.glanceActive
@@ -123,13 +129,24 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   // An internal page (Settings) is chrome like the new tab page: neither has a view to snapshot,
   // and both stay drawn under a sheet's own scrim, so nothing dims them from here.
   const pageTab = isPageTab(tab)
+  // The lock cover over a locked private tab (INC-05): it paints the tab's own picture, blurred,
+  // under its veil, so the plain snapshot stands aside; the gesture stage and the phone's
+  // omnibox cover the frame whole and take it over as they take the snapshot over.
+  const lockCover =
+    usePrivateCoverUp(state) && tab !== null && !staged && !(phone && ui.urlbar.open)
+  // Where the chrome lies under the page views, a capture of the active page is mounted the
+  // moment it exists, whether or not anything covers the page yet: under the live page nothing
+  // of it shows, and it is painted by the time a sheet asks for the page to go (`coverPrimed`,
+  // lib/cover.ts) – the capture `prepareMenu` takes as the finger lands on the menu button.
+  const primed = ui.snapshot !== null && coverPrimed(state.platform, ui.snapshotTabId, tab?.id)
   const showSnapshot =
-    (contentHidden || glanceActive) &&
+    (contentHidden || glanceActive || primed) &&
     Boolean(tab) &&
     !pageTab &&
     !staged &&
     !(phone && ui.urlbar.open) &&
-    !newTabPage
+    !newTabPage &&
+    !lockCover
   const dropKey = dropStore.use((s) => s.key)
   const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
@@ -184,6 +201,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <div
+        ref={frameRef}
         className="zen-content-frame relative flex h-full min-h-0 flex-col overflow-hidden"
         data-staged={staged || undefined}
         // A phone panel takes the whole frame (OverlayShell): what it covers – a chrome page's
@@ -253,6 +271,12 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                   />
                 )}
               </div>
+            )}
+            {tab && !pageTab && (
+              // Always mounted so a cover the lock released under lifts before it goes; it draws
+              // nothing while not asked for. Over the phone's new tab page (chrome, no view to
+              // picture) the veil's backdrop blur does the covering.
+              <PrivateLockCover shown={lockCover} tab={newTabPage ? null : tab} />
             )}
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />

@@ -177,12 +177,16 @@ export class AndroidCookies {
     const container = this.containerFor(ext, caller, details.storeId)
     const storeId = storeIdForContainer(container)
     const line = setCookieLine(details)
-    const before = (await this.readUrl(container, details.url)).filter(
+    // The jar hands a URL the cookies that match its path, so a cookie set with a `path` other
+    // than the URL's own is read back through a URL under that path (Keepa sets its
+    // `/extension` cookies through `https://keepa.com`; Chrome answers the stored cookie).
+    const readBackUrl = urlUnderPath(details.url, details.path)
+    const before = (await this.readUrl(container, readBackUrl)).filter(
       (c) => c.name === details.name
     )
     const ok = await this.host.write(container, details.url, line)
     if (!ok) throw new Error(formatCookieError(ERROR_SET_FAILED, details.name))
-    const after = await this.readUrl(container, details.url)
+    const after = await this.readUrl(container, readBackUrl)
     const written = pickSetCookie(
       after.filter((c) => c.name === details.name),
       details.path,
@@ -288,6 +292,20 @@ function pickSetCookie(
       return true
     }) ?? sortCookies(cookies)[0]
   )
+}
+
+/** `url` with `path` as its path (the request URL a cookie of that path is sent to); `url` itself without one. */
+export function urlUnderPath(url: string, path: string | undefined): string {
+  if (path === undefined || path === '' || !path.startsWith('/')) return url
+  try {
+    const u = new URL(url)
+    u.pathname = path
+    u.search = ''
+    u.hash = ''
+    return u.toString()
+  } catch {
+    return url
+  }
 }
 
 /** The URLs a `domain` filter is read through: the domain itself, over both schemes. */

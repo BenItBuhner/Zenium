@@ -12,7 +12,7 @@ import type {
   ResourceSnapshot,
   Settings
 } from './types'
-import { DEFAULT_CONTAINER_ID } from './types'
+import { DEFAULT_CONTAINER_ID, emptyCheckupSummary } from './types'
 import { APP_ICON_DEFAULT } from './appIcon'
 import { defaultPhoneBar } from './phoneBar'
 import { DEFAULT_NEW_TAB_SETTINGS } from './newTab'
@@ -47,15 +47,17 @@ export function emptyAgentServerStatus(): AgentServerStatus {
 
 /**
  * Offer to save logins, ask again a minute after the last re-authentication like Chrome, never
- * sign in without the picker, leave Android's autofill service in charge where one is set, and
- * clear a copied secret from the clipboard after a minute (Bitwarden's default; Chrome never does).
+ * sign in without the picker, leave Android's autofill service in charge where one is set, clear
+ * a copied secret from the clipboard after a minute (Bitwarden's default; Chrome never does),
+ * and warn about a breached password at sign-in (Chrome's default too).
  */
 export const DEFAULT_PASSWORD_SETTINGS: PasswordSettings = {
   offerToSave: true,
   reauthGraceSeconds: 60,
   autoSignIn: false,
   androidProvider: 'system',
-  clipboardClearSeconds: 60
+  clipboardClearSeconds: 60,
+  leakDetection: true
 }
 
 export const MAX_REAUTH_GRACE_SECONDS = 60 * 60
@@ -80,7 +82,8 @@ export function sanitizePasswordSettings(
         : d.androidProvider,
     clipboardClearSeconds: Number.isFinite(clear)
       ? Math.max(0, Math.min(MAX_CLIPBOARD_CLEAR_SECONDS, Math.round(clear)))
-      : d.clipboardClearSeconds
+      : d.clipboardClearSeconds,
+    leakDetection: typeof r.leakDetection === 'boolean' ? r.leakDetection : d.leakDetection
   }
 }
 
@@ -133,7 +136,9 @@ export function emptyPasswordsStatus(): PasswordsStatus {
     neverSave: [],
     revision: 0,
     error: null,
-    checkup: emptyCheckupState()
+    checkup: emptyCheckupState(),
+    checkupSummary: emptyCheckupSummary(),
+    leaks: []
   }
 }
 

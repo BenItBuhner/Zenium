@@ -126,68 +126,15 @@ class ExtensionDemo {
         val records = JSONArray()
         val installed = JSONObject()
         for (dir in root.listFiles().orEmpty().filter { it.isDirectory && ExtensionFiles.isExtensionId(it.name) }.sortedBy { it.name }) {
-            val versionDir = layOutInstall(dir) ?: continue
+            val versionDir = ExtensionSeed.layOutInstall(dir) ?: continue
             val manifest = runCatching { JSONObject(File(versionDir, "manifest.json").readText()) }.getOrNull() ?: continue
-            records.put(record(dir.name, versionDir, manifest))
+            records.put(ExtensionSeed.record(dir.name, versionDir, manifest))
             installed.put(dir.name, versionDir.name)
         }
         results.put("seededInstalls", installed)
-        val registry = JSONObject().put("version", 2).put("extensions", records).put("lastUpdateCheck", JSONObject.NULL)
-        File(zen, "extensions.json").writeText(registry.toString())
+        File(zen, "extensions.json").writeText(ExtensionSeed.registry(records).toString())
         out.deleteRecursively()
         out.mkdirs()
-    }
-
-    /**
-     * `<root>/<id>/manifest.json` (an unpacked folder) becomes `<root>/<id>/<version>/`, which is
-     * returned; a folder already laid out as an install returns its version directory.
-     */
-    private fun layOutInstall(idDir: File): File? {
-        val flat = File(idDir, "manifest.json")
-        if (!flat.isFile) return idDir.listFiles()?.firstOrNull { it.isDirectory && File(it, "manifest.json").isFile }
-        val version = runCatching { JSONObject(flat.readText()).optString("version", "") }.getOrDefault("")
-        val moving = File(idDir.parentFile, "${idDir.name}.moving")
-        moving.deleteRecursively()
-        if (!idDir.renameTo(moving)) return null
-        if (!idDir.mkdirs()) return null
-        val target = File(idDir, ExtensionFiles.versionDirName(version))
-        return if (moving.renameTo(target)) target else null
-    }
-
-    /** A registry record (the desktop's schema, version 2) for an install, from its manifest. */
-    private fun record(id: String, dir: File, manifest: JSONObject): JSONObject {
-        val now = System.currentTimeMillis()
-        val action = manifest.optJSONObject("action") ?: manifest.optJSONObject("browser_action")
-        val options = manifest.optJSONObject("options_ui")?.optString("page", "")?.ifEmpty { null } ?: manifest.optString("options_page", "").ifEmpty { null }
-        val permissions = JSONArray()
-        val hostPermissions = JSONArray()
-        manifest.optJSONArray("permissions")?.let { a ->
-            for (i in 0 until a.length()) {
-                val p = a.optString(i, "")
-                if (p.contains("://") || p == "<all_urls>") hostPermissions.put(p) else if (p.isNotEmpty()) permissions.put(p)
-            }
-        }
-        manifest.optJSONArray("host_permissions")?.let { a -> for (i in 0 until a.length()) hostPermissions.put(a.optString(i, "")) }
-        return JSONObject()
-            .put("id", id)
-            .put("source", "unpacked")
-            .put("path", dir.absolutePath)
-            .put("version", manifest.optString("version", ""))
-            .put("publisher", JSONObject.NULL)
-            .put("updateUrl", JSONObject.NULL)
-            .put("installedAt", now)
-            .put("updatedAt", now)
-            .put("enabled", true)
-            .put("pinned", false)
-            .put("allowFileAccess", false)
-            .put("manifestVersion", manifest.optInt("manifest_version", 2))
-            .put("name", manifest.optString("name", "").takeUnless { it.startsWith("__MSG_") } ?: "")
-            .put("description", manifest.optString("description", "").takeUnless { it.startsWith("__MSG_") } ?: "")
-            .put("permissions", permissions)
-            .put("hostPermissions", hostPermissions)
-            .put("optionsPage", options ?: JSONObject.NULL)
-            .put("popup", action?.optString("default_popup", "")?.ifEmpty { null } ?: JSONObject.NULL)
-            .put("pendingWarnings", JSONObject.NULL)
     }
 
     private fun copyAssets(path: String, target: File) {

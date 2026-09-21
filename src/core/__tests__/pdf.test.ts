@@ -289,8 +289,11 @@ describe('a PDF the tab navigates to', () => {
 
   it('keeps the tab it is bound for and brings no Downloads sheet over it while it transfers', async () => {
     // A single-window host (Android) whose tab was opened for the PDF alone: no document, no
-    // history. For any other download the host closes such a tab and shows its panel.
+    // history. For any other download the host closes such a tab and shows its panel – the
+    // phone's Downloads sheet (the chrome reports its layout on boot; a tablet's Downloads is a
+    // page tab and gets no surface over the page).
     const f = fixture({ windows: false, document: false })
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
     const tab = openSite(f, 'https://example.test/report.pdf')
     const item = f.browser.downloads.begin(PDF_INIT(tab.id))
     f.browser.onDownloadStarted(tab.id)

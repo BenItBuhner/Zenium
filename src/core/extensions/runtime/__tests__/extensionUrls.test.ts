@@ -64,6 +64,19 @@ describe('extension URL spellings', () => {
     expect(chromeExtensionOrigin(ID)).toBe(`chrome-extension://${ID}`)
     expect(chromeExtensionUrl(ID, '//popup.html')).toBe(`chrome-extension://${ID}/popup.html`)
   })
+
+  it("resolves a manifest path's dot segments as the WebView's request spells them", () => {
+    // WhatFont's `"service_worker": "./background/background.js"`: the host compares the request
+    // it intercepts (already `/background/background.js`) with the URL it built, by the string.
+    expect(extensionUrl(ID, './background/background.js')).toBe(`${SERVED}/background/background.js`)
+    expect(extensionUrl(ID, 'a/./b/../c.html?x=./y#./z')).toBe(`${SERVED}/a/c.html?x=./y#./z`)
+    expect(extensionUrl(ID, '../../popup.html')).toBe(`${SERVED}/popup.html`)
+    expect(extensionUrl(ID, 'dir/.')).toBe(`${SERVED}/dir/`)
+    // Anything else is the concatenation `runtime.getURL` answers in Chrome.
+    expect(extensionUrl(ID, 'a b/c.d.html')).toBe(`${SERVED}/a b/c.d.html`)
+    expect(extensionUrl(ID, '.hidden/x.js')).toBe(`${SERVED}/.hidden/x.js`)
+    expect(extensionUrl(ID, '')).toBe(`${SERVED}/`)
+  })
 })
 
 describe('sender presentation', () => {

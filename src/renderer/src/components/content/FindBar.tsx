@@ -11,8 +11,9 @@ import { closeFindBar, uiStore, type UiState } from '@renderer/lib/ui'
 import { cn, findCounter } from '@renderer/lib/utils'
 
 /**
- * The find bar, docked under the page: a panel row (v2 §9.21) with a 32px field that carries
- * the match count, and 28px previous / next / close buttons. On a phone it becomes one row of
+ * The find bar, docked under the page (v2 §9.32): a `--v2-control` + 8 row on `--v2-panel` with
+ * a hairline top edge – the shared 320 field (§9.12), then the match count 13/20 deemphasised,
+ * then previous / next / close as the shared §9.3 icon buttons. On a phone it becomes one row of
  * 44px targets around a field that takes the remaining width. `docked="fullscreen"` is the bar
  * under a page in HTML fullscreen; it tells the main process how much of the window to leave it.
  *
@@ -121,12 +122,40 @@ export function FindBar({
   const count = findCounter(text, result)
   // A tally still growing (the viewer reading its pages) is not "nothing found" yet.
   const noMatch = result !== null && result.matches === 0 && !result.searching
-  // The phone's buttons are 44 boxes (§9.3) beside the 40 field (§9.12) in the bar's 56 (§9.21);
-  // the keyboard hints stay with the desktop's tooltips (§9.31).
-  const buttonClass = phone
-    ? 'zen-toolbar-button h-11 w-11 rounded-[12px]'
-    : 'zen-toolbar-button zen-find-button'
-  const glyphClass = phone ? 'h-5 w-5' : 'h-4 w-4'
+  // The desktop's buttons are the shared §9.3 icon button (28, the 16 glyph at stroke 1.5); the
+  // phone's are 44 boxes beside the 40 field (§9.12) in the bar's 56 (§9.21); the keyboard hints
+  // stay with the desktop's tooltips (§9.31).
+  const buttonClass = phone ? 'zen-toolbar-button h-11 w-11 rounded-[12px]' : 'zen-v2-icon-button'
+  const glyphClass = phone ? 'h-5 w-5' : undefined
+  const input = (
+    <input
+      ref={inputRef}
+      value={text}
+      placeholder="Find in page"
+      // On the phone the placeholder names the field (A11Y-01): the WebView reads a text
+      // field's label and its placeholder both, so the same words were heard twice.
+      aria-label={phone ? undefined : 'Find in page'}
+      data-testid="find-input"
+      inputMode="search"
+      enterKeyHint="search"
+      autoCapitalize="none"
+      autoComplete="off"
+      spellCheck={false}
+      className={
+        phone
+          ? 'h-full min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--zen-muted)]'
+          : 'zen-v2-field zen-find-field'
+      }
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          if (text) search(text, !e.shiftKey)
+        }
+        if (e.key === 'Escape') closeFindBar('afterKey')
+      }}
+    />
+  )
 
   return (
     <div
@@ -140,51 +169,30 @@ export function FindBar({
       data-surface={phone ? undefined : 'page'}
       data-testid="find-bar"
     >
-      <div
-        className={
-          phone
-            ? 'zen-squircle flex h-10 min-w-0 flex-1 items-center rounded-[10px] bg-[var(--zen-element-bg)] pl-3 pr-2.5'
-            : 'zen-find-field'
-        }
-        data-no-match={noMatch ? 'true' : undefined}
-      >
-        <input
-          ref={inputRef}
-          value={text}
-          placeholder="Find in page"
-          // On the phone the placeholder names the field (A11Y-01): the WebView reads a text
-          // field's label and its placeholder both, so the same words were heard twice.
-          aria-label={phone ? undefined : 'Find in page'}
-          data-testid="find-input"
-          inputMode="search"
-          enterKeyHint="search"
-          autoCapitalize="none"
-          autoComplete="off"
-          spellCheck={false}
-          className={
-            phone
-              ? 'h-full min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[var(--zen-muted)]'
-              : undefined
-          }
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              if (text) search(text, !e.shiftKey)
-            }
-            if (e.key === 'Escape') closeFindBar('afterKey')
-          }}
-        />
-        <span
-          className={
-            phone
-              ? 'shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]'
-              : 'zen-find-count'
-          }
+      {phone ? (
+        // The phone keeps Chrome's count inside its field.
+        <div
+          className="zen-squircle flex h-10 min-w-0 flex-1 items-center rounded-[10px] bg-[var(--zen-element-bg)] pl-3 pr-2.5"
+          data-no-match={noMatch ? 'true' : undefined}
         >
-          {count}
-        </span>
-      </div>
+          {input}
+          <span className="shrink-0 pl-2 text-[13px] tabular-nums text-[var(--zen-muted)]">
+            {count}
+          </span>
+        </div>
+      ) : (
+        // The desktop's row (§9.32): the 320 field, then the count – the miss shows there alone.
+        <>
+          {input}
+          <span
+            className="zen-find-count"
+            data-testid="find-count"
+            data-no-match={noMatch ? 'true' : undefined}
+          >
+            {count}
+          </span>
+        </>
+      )}
       <button
         type="button"
         className={buttonClass}

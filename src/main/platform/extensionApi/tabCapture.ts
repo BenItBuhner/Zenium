@@ -117,11 +117,11 @@ export class TabCaptureApi {
     const chromeTabId = this.host.model.chromeTabId(target)
     this.requireGrant(ctx.extensionId, chromeTabId, target)
     if (options.consumerTabId !== undefined) {
-      const consumer = this.tabById(options.consumerTabId)
+      const consumer = this.consumerById(options.consumerTabId)
       const origin = originOf(consumer.url)
       if (!origin || !isPotentiallyTrustworthyUrl(consumer.url))
         throw new ApiError(TAB_CAPTURE_TAB_URL_NOT_SECURE_ERROR)
-      const consumerWc = this.host.model.webContentsOf(consumer)
+      const consumerWc = consumer.wc
       if (!consumerWc) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
       const targetWc = this.host.model.webContentsOf(target)
       if (!targetWc) throw new ApiError(TAB_CAPTURE_FINDING_TAB_ERROR)
@@ -316,6 +316,22 @@ export class TabCaptureApi {
     return tab
   }
 
+  /**
+   * The consumer named by `consumerTabId`. Chrome's `GetTabById` finds any tab of the profile:
+   * the browser's, and the one tab of an extension popup window (`windows.create({type:
+   * "popup"})`), which an extension's recorder window passes as itself (`tabs.getCurrent()`).
+   * The page may be unloaded (no `wc`); the caller reports that after the URL checks, as Chrome
+   * orders them.
+   */
+  private consumerById(tabId: number): { url: string; wc: WebContents | undefined } {
+    const tab = this.host.model.zenTab(tabId)
+    if (tab) return { url: tab.url, wc: this.host.model.webContentsOf(tab) }
+    const popup = this.host.model.popupForTabId(tabId)
+    if (!popup) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
+    const wc = popup.bw.webContents
+    return { url: wc.getURL(), wc }
+  }
+
   /** Chrome's `FindAnyBrowser` + active tab: the caller's window, else the last focused one. */
   private activeTabOf(ctx: ApiContext): Tab {
     const win = ctx.window ?? this.host.model.lastFocusedWindow()
@@ -367,16 +383,39 @@ export class TabCaptureApi {
     return `zen-tab-capture-${this.prefix}-${this.minted}`
   }
 
-  /** The consuming document going away ends the capture (Chrome sees the media request close). */
+  /**
+   * The consuming document going away ends the capture: Chrome sees its media request close. The
+   * document goes with its `WebContents`, with its renderer, and with a cross-document navigation
+   * of its frame (a reload of a recorder window): the stream it held is over, and the tab is free
+   * for the next document's capture. A request nothing has redeemed yet (Chrome's
+   * `TAB_CAPTURE_STATE_NONE`) outlives a navigation, as its registry entry does.
+   */
   private watchConsumer(consumer: WebContents, streamId: string): void {
-    const onGone = (): void => {
-      const request = this.requests.find((r) => r.streamId === streamId)
-      if (!request) return
+    const find = (): LiveRequest | undefined => this.requests.find((r) => r.streamId === streamId)
+    const detach = (): void => {
+      consumer.removeListener('did-navigate', onNavigated)
+      consumer.removeListener('render-process-gone', onGone)
+      consumer.removeListener('destroyed', onGone)
+    }
+    const end = (request: LiveRequest): void => {
+      detach()
       if (request.state === 'pending' || request.state === 'active')
         this.setState(request, 'stopped')
       this.remove(request)
     }
+    const onGone = (): void => {
+      const request = find()
+      if (request) end(request)
+      else detach()
+    }
+    const onNavigated = (): void => {
+      const request = find()
+      if (!request) detach()
+      else if (request.state === 'pending' || request.state === 'active') end(request)
+    }
     try {
+      consumer.on('did-navigate', onNavigated)
+      consumer.on('render-process-gone', onGone)
       consumer.once('destroyed', onGone)
     } catch {
       /* already gone */

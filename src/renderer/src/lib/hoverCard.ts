@@ -1,3 +1,4 @@
+import { internalPageAliasUrl, isInternalPageUrl } from '@shared/internalPages'
 import type { Rect } from '@shared/types'
 import {
   BLANK_URL,
@@ -312,9 +313,11 @@ export function placeHoverCard(
 /**
  * The card's second line, what Chrome shows under the title: the page's site for web pages as
  * the URL pill shows it (`displayHost`: a leading `www.` trimmed, a non-default port kept, an
- * error or Reader page standing in for its site), the address itself for Zenium's own pages and
- * for an extension's (`chrome-extension://<id>/<path>`, whichever form the tab carries), a
- * plain word for a local file, nothing for a blank tab.
+ * error or Reader page standing in for its site), the address itself for Zenium's own pages –
+ * a page tab's as the user knows it, `zenium://history`, never the `zen://` the tab carries
+ * (v2 §10.1), page and section without the query as the pill says it – and for an extension's
+ * (`chrome-extension://<id>/<path>`, whichever form the tab carries), a plain word for a local
+ * file, nothing for a blank tab.
  */
 export function hoverCardHost(url: string): string {
   if (!url || url === 'about:blank' || url === BLANK_URL) return ''
@@ -326,6 +329,7 @@ export function hoverCardHost(url: string): string {
     url.startsWith(READER_URL_PREFIX)
   )
     return displayHost(url).toLowerCase()
+  if (isInternalPageUrl(url)) return internalPageAliasUrl(url)
   if (/^zen:\/\//i.test(url)) return url.replace(/[?#].*$/, '').replace(/\/$/, '')
   if (/^file:\/\//i.test(url)) return 'File on this computer'
   return getHost(url).toLowerCase() || url.replace(/[?#].*$/, '')

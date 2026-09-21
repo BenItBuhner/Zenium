@@ -24,8 +24,9 @@ import kotlin.math.roundToInt
  * Records the phone bar hiding on scroll (Chrome / Edge parity, `lib/barHide.ts` and
  * `BarHideGesture.kt`) on a device and judges it as it goes: a long page served from this
  * process is scrolled with INJECTED touch drags (real pointer events through UiAutomation, the
- * path a finger takes), and after each the chrome's own value – `--zen-bar-hide` on its root, 0
- * shown … 1 hidden, what the bar and the host paint from – is read and held against the claim:
+ * path a finger takes), and after each the chrome's own value – `--zen-bar-hide` on its bar
+ * element, 0 shown … 1 hidden, what the bar and the host paint from – is read and held against
+ * the claim:
  *
  *  1. a long drag down the page takes the bar off, and once it rests off the page has grown by
  *     the bar's band (the page's `innerHeight` and the WebView's frame, both read directly);
@@ -518,12 +519,15 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         SystemClock.sleep(600)
         // The bar position's picker (a hosted sheet): a finger on the row opens it (a Settings-page
         // row, so the tree's click stands in when it is off screen), a finger on its Top option is
-        // the flow's injected touch, and the picker must close with the row reading Top.
+        // the flow's injected touch, and the picker must close with the row reading Top (the
+        // document's word first, the tree's second, as [openLookAndFeel] reads).
         revealRow(BAR_ROW) ?: error("no $BAR_ROW row in Look and Feel")
-        if (!touchTapLabel(BAR_ROW, prefix = true)) clickRow(BAR_ROW)
-        if (waitFor("Top", 8_000) == null) error("no Top option for the bar position")
-        if (!touchTapLabelExpecting("Top", "the picker closed with the row reading Top") { rowReads(BAR_ROW, "Top") } &&
-            !rowReads(BAR_ROW, "Top") && !clickByLabel("Top")
+        if (!touchRow(BAR_ROW)) clickRow(BAR_ROW)
+        val option = { documentRow("Top") != null || findByLabel("Top") != null }
+        if (!awaitChrome(8_000, option)) error("no Top option for the bar position")
+        val readsTop = { documentRowReads(BAR_ROW, "Top") || rowReads(BAR_ROW, "Top") }
+        if (!touchRowExpecting("Top", "the picker closed with the row reading Top", took = readsTop) &&
+            !readsTop() && !clickByLabel("Top")
         ) error("no Top option for the bar position")
         SystemClock.sleep(1_200)
         shot("settings-04-position-top")
@@ -847,6 +851,12 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
      * Settings from the menu sheet, then Look and Feel over the tab's landing (since #134 the
      * Settings tab opens on its categories; the rows are in the section). The bar must be shown
      * for the Menu button to be in reach; a bar off its edge is brought back first.
+     *
+     * What the Settings page shows is read off the chrome document first and the accessibility
+     * tree second ([settingsSection], [documentRow]): on the emulator's software GPU the WebView's
+     * tree trails the screen by seconds (the harness's toast record and #269's leave driver met
+     * the same), and run 35584964166 had the section on screen, its heading in the recording,
+     * while the tree kept the landing for the five seconds the touch was given.
      */
     private fun openLookAndFeel() {
         settleBar(0.0, "before Settings")
@@ -855,13 +865,13 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         Finger().tap(menu.exactCenterX(), menu.exactCenterY())
         SystemClock.sleep(2_500)
         reveal("Settings")
-        val landing = { findNode { it.startsWith(LOOK_AND_FEEL) } != null }
+        val landing = { settingsSection() == LANDING || findNode { it.startsWith(LOOK_AND_FEEL) } != null }
         if (!touchTapLabelExpecting("Settings", "the Settings tab is up on its landing", took = landing) &&
             !landing() && !clickByLabel("Settings")
         ) error("no Settings row in the menu")
         SystemClock.sleep(1_500)
-        val section = { findByLabel(APPEARANCE) != null }
-        if (!section() && !touchTapLabelExpecting(LOOK_AND_FEEL, "the Look and Feel section is up", prefix = true, took = section) &&
+        val section = { settingsSection() == LOOK_SECTION || findByLabel(APPEARANCE) != null }
+        if (!section() && !touchRowExpecting(LOOK_AND_FEEL, "the Look and Feel section is up", took = section) &&
             !section() && !clickRow(LOOK_AND_FEEL)
         ) error("no $LOOK_AND_FEEL row on the Settings landing")
         SystemClock.sleep(3_000)
@@ -870,19 +880,112 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     /** Leave the Settings tab for the page: back pops the section, and a back at the landing closes the tab to its opener. */
     private fun leaveSettings() {
         back()
-        SystemClock.sleep(2_000)
-        if (findNode { it.startsWith(LOOK_AND_FEEL) } != null && findByLabel(APPEARANCE) == null) {
+        awaitChrome(4_000) { settingsSection() != LOOK_SECTION }
+        SystemClock.sleep(1_500)
+        val shown = settingsSection()
+        val atLanding = if (shown != null) shown == LANDING
+        else findNode { it.startsWith(LOOK_AND_FEEL) } != null && findByLabel(APPEARANCE) == null
+        if (atLanding) {
             back()
-            SystemClock.sleep(2_500)
+            awaitChrome(4_000) { settingsSection() == "" }
+            SystemClock.sleep(1_500)
         }
     }
 
-    /** Scroll the Settings row whose text starts with `label` into view and return where it is; null when there is none. */
+    /**
+     * Scroll the Settings row whose text starts with `label` into view and return where it is
+     * (the document's word first, the tree's when the document has no such row); null when
+     * neither has one.
+     */
     private fun revealRow(label: String): Rect? {
+        documentRow(label)?.let { return it }
         val node = findNode { it.startsWith(label) } ?: return null
         node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         SystemClock.sleep(1_500)
         return findNode { it.startsWith(label) }?.let { row -> Rect().also { row.getBoundsInScreen(it) } }
+    }
+
+    // --- the Settings page by the chrome document -------------------------------------------------
+
+    /**
+     * The phone Settings page's `data-section` in the chrome document: [LANDING], a section's id
+     * ([LOOK_SECTION]), "" with no Settings page up; null when the chrome did not answer.
+     */
+    private fun settingsSection(): String? {
+        val raw = chromeJs("(function(){var p=document.querySelector('.zen-settings-phone');return p?String(p.dataset.section||''):''})()")
+        return runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String
+    }
+
+    /**
+     * Where the Settings control whose label reads `label` is on screen, by the chrome document:
+     * a section's row (a picker's option is one), else a landing category; a label reading
+     * exactly `label` before one starting with it; nothing under an `inert` landing (the landing
+     * stays mounted under a section). Scrolled into view first, read again once the scroll has
+     * landed; the document's CSS px scaled into the chrome view's place on screen. Null when the
+     * document has no such control.
+     */
+    private fun documentRow(label: String): Rect? {
+        val find = "(function(l){var sel='.zen-settings-row .zen-settings-label,.zen-settings-category-label';" +
+            "var all=Array.prototype.filter.call(document.querySelectorAll(sel),function(e){return !e.closest('[inert]')});" +
+            "var text=function(e){return (e.textContent||'').trim()};" +
+            "var e=all.find(function(e){return text(e)===l})||all.find(function(e){return text(e).indexOf(l)===0});if(!e)return null;" +
+            "var row=e.closest('.zen-settings-row,.zen-settings-category')||e;row.scrollIntoView({block:'center',behavior:'instant'});" +
+            "var r=row.getBoundingClientRect();return [r.left,r.top,r.right,r.bottom].join(',')})(${JSONObject.quote(label)})"
+        fun read(): Rect? {
+            val text = runCatching { JSONTokener(chromeJs(find)).nextValue() }.getOrNull() as? String ?: return null
+            val edges = text.split(',').mapNotNull { it.toDoubleOrNull() }
+            if (edges.size != 4) return null
+            var origin = IntArray(2)
+            instrumentation.runOnMainSync { origin = IntArray(2).also(host.chrome::getLocationOnScreen) }
+            return Rect(
+                (origin[0] + edges[0] * density).roundToInt(),
+                (origin[1] + edges[1] * density).roundToInt(),
+                (origin[0] + edges[2] * density).roundToInt(),
+                (origin[1] + edges[3] * density).roundToInt()
+            )
+        }
+        read() ?: return null
+        SystemClock.sleep(600)
+        return read()
+    }
+
+    /** Whether the Settings row labelled `label` reads `value` in the chrome document (a value row's description is its option's label). */
+    private fun documentRowReads(label: String, value: String): Boolean =
+        chromeJs(
+            "(function(l,v){var rows=document.querySelectorAll('.zen-settings-row');for(var i=0;i<rows.length;i++){var r=rows[i];" +
+                "if(r.closest('[inert]'))continue;var t=r.querySelector('.zen-settings-label');if(!t||(t.textContent||'').trim()!==l)continue;" +
+                "var d=r.querySelector('.zen-settings-description');return !!d&&(d.textContent||'').trim()===v}return false})" +
+                "(${JSONObject.quote(label)},${JSONObject.quote(value)})"
+        ) == "true"
+
+    /**
+     * A real touch on the Settings control reading `label`: where the document has it
+     * ([documentRow]), else on the tree's node ([touchTapLabel]). True when a finger went in.
+     */
+    private fun touchRow(label: String): Boolean {
+        val rect = documentRow(label) ?: return touchTapLabel(label, prefix = true)
+        val point = touchPoint(rect) ?: run {
+            Log.w(tag, "no part of '$label' at $rect is inside the touchable window $touchable")
+            return false
+        }
+        Log.i(tag, "touch at ${point.x},${point.y} on '$label' (document rect $rect, touchable $touchable)")
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /**
+     * [touchRow], then up to `timeoutMs` for `took` to hold – the step's claim, named by `effect`
+     * ([touchTapLabelExpecting]'s shape). False and no touch when nothing reads `label`; a
+     * [touchFault] and false when the touch went in and `took` never held.
+     */
+    private fun touchRowExpecting(label: String, effect: String, timeoutMs: Long = 5_000, took: () -> Boolean): Boolean {
+        if (!touchRow(label)) return false
+        if (awaitChrome(timeoutMs, took)) {
+            Log.i(tag, "the touch on '$label' took: $effect")
+            return true
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
     }
 
     /** Click the Settings row whose text starts with `label` through the tree (the nearest clickable ancestor). */
@@ -913,9 +1016,13 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
 
     // --- reads -------------------------------------------------------------------------------------
 
-    /** The chrome's `--zen-bar-hide` as computed on its root: 0 with the bar shown, 1 with it off. */
+    /**
+     * The chrome's `--zen-bar-hide` as computed on the bar element (where `lib/barHide.ts` writes it
+     * since #270; a property of that element alone, so the root computes 0 at all times): 0 with
+     * the bar shown, 1 with it off. The store's progress stands in when there is no bar element.
+     */
     private fun hideValue(): String {
-        val raw = chromeJs("getComputedStyle(document.documentElement).getPropertyValue('--zen-bar-hide').trim()")
+        val raw = chromeJs(BAR_HIDE_READ)
         return (JSONTokener(raw).nextValue() as? String)?.ifEmpty { "(unset)" } ?: "(unset)"
     }
 
@@ -1117,6 +1224,17 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
     }
 
     companion object {
+        /**
+         * `--zen-bar-hide` as computed on the bar element (a registered property of that element
+         * alone since #270, so it computes to a number there, `0` at rest); without a bar element
+         * the store's `progress`. Shared with [BarHidePerfDemo].
+         */
+        const val BAR_HIDE_READ =
+            "(function(){var b=document.querySelector('.zen-phone-bar:not([aria-hidden])');" +
+                "var v=b?getComputedStyle(b).getPropertyValue('--zen-bar-hide').trim():'';" +
+                "if(v)return v;var s=(window.__zenStores||{})['bar-hide'];var p=s&&s.get?s.get().progress:undefined;" +
+                "return typeof p==='number'?String(p):''})()"
+
         private const val PORT = 18142
         private const val ORIGIN = "http://127.0.0.1:$PORT"
         /** The short pages (`bar-hide-demo-short.html`): the body is the viewport plus the `over` query, CSS px. */
@@ -1133,6 +1251,9 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         private const val BAR_ROW = "Position on phones"
         private const val LOOK_AND_FEEL = "Look and Feel"
         private const val APPEARANCE = "Appearance"
+        /** `.zen-settings-phone[data-section]` on the landing, and in the Look and Feel section (`internalPages.ts`). */
+        private const val LANDING = "landing"
+        private const val LOOK_SECTION = "look"
         /** A spring on the emulator's software GPU takes a while; the value lands well within this. */
         private const val SETTLE_MS = 5_000L
         /**

@@ -283,6 +283,8 @@ export class AutofillService {
     const origin = normalizeOrigin(this.browser.tabs.tab(tabId)?.url ?? '')
     for (const p of this.pending.filter((p) => p.prompt.tabId === tabId))
       if ('origin' in p.prompt && p.prompt.origin !== origin) this.respond(p.prompt.id, null)
+    // A leak warning about a site the tab has left goes with it.
+    this.browser.passwords.leaks.onNavigated(tabId)
   }
 
   onTabGone(tabId: string): void {
@@ -291,6 +293,7 @@ export class AutofillService {
     if (this.picker?.tabId === tabId) this.closePicker()
     for (const p of this.pending.filter((p) => p.prompt.tabId === tabId))
       this.respond(p.prompt.id, null)
+    this.browser.passwords.leaks.onTabGone(tabId)
   }
 
   // ---------------------------------------------------------------------------
@@ -730,6 +733,9 @@ export class AutofillService {
     const tab = this.browser.tabs.tab(tabId)
     if (!tab || tab.errorCode !== null) return
     void this.track(this.offerLogin(candidate))
+    // The sign-in leak check (ID-31) runs beside the save prompt, off the submit path: the page
+    // has moved on already, and nothing here waits on the vault or the network.
+    void this.track(this.browser.passwords.leaks.check(candidate))
   }
 
   private async ensureUnlocked(): Promise<boolean> {
@@ -773,13 +779,16 @@ export class AutofillService {
     }
     if (response.action !== 'save') return
     const username = response.username ?? candidate.username
+    let saved: Credential | null
     if (decision.kind === 'update') {
-      store.update(decision.existing.id, { username, password: candidate.password })
+      saved = store.update(decision.existing.id, { username, password: candidate.password })
       this.browser.toast('Password updated', 'info', win)
     } else {
-      store.add({ url: candidate.url, username, password: candidate.password })
+      saved = store.add({ url: candidate.url, username, password: candidate.password })
       this.browser.toast('Password saved', 'info', win)
     }
+    // What the leak check found for this sign-in is remembered on the login it now lives in.
+    if (saved) this.browser.passwords.leaks.onSaved(saved, candidate)
   }
 
   // ---------------------------------------------------------------------------

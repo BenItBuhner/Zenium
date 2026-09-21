@@ -1,13 +1,14 @@
 import {
-  Bookmark,
   Calculator,
   Clipboard,
   Clock,
   Globe,
   Info,
   Layers,
+  PanelTop,
   Puzzle,
   Search,
+  Star,
   Terminal,
   type LucideIcon
 } from 'lucide-react'
@@ -15,13 +16,18 @@ import type { Suggestion, SuggestionKind } from '@shared/types'
 import { internalPageOf } from '@shared/internalPages'
 import { PAGE_GLYPHS } from '@renderer/lib/pageGlyphs'
 
-/** The glyph a suggestion row of each kind falls back to when it has no favicon to show. */
+/**
+ * The glyph a suggestion row of each kind falls back to when it has no favicon to show (v2
+ * draft, shell pass 7(b): the globe for an address, the magnifier for a search or an engine
+ * without a site icon, the clock for a page from history, the star for a bookmark – the same
+ * star as the bookmarks page's registry glyph and the pill's – and a tab for an open tab).
+ */
 const ROW_ICONS: Record<SuggestionKind, LucideIcon> = {
   url: Globe,
   search: Search,
   history: Clock,
-  bookmark: Bookmark,
-  tab: Globe,
+  bookmark: Star,
+  tab: PanelTop,
   space: Layers,
   command: Terminal,
   engine: Search,

@@ -312,7 +312,12 @@ export function BottomSheet({
   /** Native scrolling only while the sheet rests fully expanded; otherwise every pan is a sheet drag. */
   const syncLock = (): void => {
     const locked = !motion().restingExpanded || touch.current?.mode === 'sheet'
-    sheetRef.current?.setAttribute('data-locked', String(locked))
+    const sheet = sheetRef.current
+    // Written per frame (`paint`): only a change, since setting an attribute to its own value
+    // is still an attribute change to the style invalidator and the accessibility tree.
+    if (sheet && sheet.getAttribute('data-locked') !== String(locked)) {
+      sheet.setAttribute('data-locked', String(locked))
+    }
   }
 
   /**

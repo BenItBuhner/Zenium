@@ -1,5 +1,6 @@
 import { BrowserWindow, type Rectangle } from 'electron'
 import { PRIVATE_CONTAINER_ID } from '../../../shared/types'
+import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '../../../core/extensions/api/tabs'
 import {
   type ChromeWindow,
   type WindowQueryOptions,
@@ -103,8 +104,19 @@ export class WindowsApi {
       const full = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : extensionUrl(ctx.extensionId, url)
       if (/^\s*(javascript|chrome|devtools):/i.test(full))
         throw new ApiError(`Invalid url: "${url}".`)
+      // Chrome's `PrepareURLForNavigation`, as for `tabs.create`: a file URL needs the switch.
+      if (isFileNavigation(full) && !this.allowsFileAccess(ctx))
+        throw new ApiError(FILE_URL_WITHOUT_ACCESS_ERROR)
       return full
     })
+  }
+
+  /** Chrome's "Allow access to file URLs" toggle of the extension, kept in the registry. */
+  private allowsFileAccess(ctx: ApiContext): boolean {
+    const info = this.host.browser.extensions
+      .list()
+      .find((entry) => entry.id === ctx.extensionId || entry.path === ctx.extension.path)
+    return info?.allowFileAccess ?? false
   }
 
   private create(ctx: ApiContext, data: unknown): ChromeWindow {

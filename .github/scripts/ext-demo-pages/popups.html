@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Probe pop-up page</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 40px;
+        background: #f8fafc;
+        color: #111;
+        font: 18px system-ui;
+      }
+      #log {
+        margin-top: 24px;
+        font:
+          14px ui-monospace,
+          monospace;
+        color: #4b5563;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Pop-up page</h1>
+    <p>
+      A click anywhere on this page calls <code>window.open</code> on a third-party address, the way
+      a click-hijacking page does. A pop-up blocker extension is expected to refuse it and say so;
+      without one the browser opens it.
+    </p>
+    <div id="log"></div>
+    <script>
+      const log = (line) => {
+        document.getElementById('log').textContent += line + '\n'
+        ;(window.__popupLog = window.__popupLog || []).push(line)
+      }
+      document.addEventListener('click', () => {
+        // A capturing element (the document) as the click target: the pattern pop-up blockers
+        // refuse. A third-party address so a same-domain allowance does not apply.
+        const w = window.open('https://example.com/?probe-popup', '_blank')
+        window.__popupResult =
+          w === null
+            ? 'null'
+            : typeof w === 'object' && typeof w.close === 'function' && !(w instanceof Window)
+              ? 'fake'
+              : 'window'
+        log('window.open on click -> ' + window.__popupResult)
+      })
+      log('ready')
+    </script>
+  </body>
+</html>

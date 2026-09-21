@@ -1,11 +1,12 @@
 import { X } from 'lucide-react'
 import type { ReactNode, JSX } from 'react'
-import { useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { useBackDismissal } from '@renderer/lib/back'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { useViewport } from '@renderer/lib/formFactor'
 import { closeOverlay } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { useScrolled } from '../bookmarks/popover'
 
 interface Props {
   title: string
@@ -50,7 +51,18 @@ export function OverlayShell({
     },
     dismissed: () => closeOverlay()
   })
-  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y' })
+  // The header marks content scrolled under it with the §9.7 hairline (`data-scrolled`), so the
+  // body fades its end edge only; the ref is shared between the fade and the scroll watcher.
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const fade = useFadeEdges<HTMLDivElement>({ axis: 'y', edges: 'end' })
+  const scrolled = useScrolled(bodyRef)
+  const attachBody = useCallback(
+    (el: HTMLDivElement | null) => {
+      bodyRef.current = el
+      return fade(el)
+    },
+    [fade]
+  )
   return (
     <div className="absolute inset-0 z-30 flex" onMouseDown={() => closeOverlay()}>
       {/* A panel is a page surface (design language v2 §9.29): its controls draw in the page family. */}
@@ -73,29 +85,32 @@ export function OverlayShell({
         onMouseDown={(e) => e.stopPropagation()}
       >
         {header ?? (
-          // On a phone the close is the 44 icon button (§9.3) in the phone panels' 56 header
-          // (§9.21), named for TalkBack without the keyboard hint a tooltip carries (§9.31).
+          // The overlay header (§9.7): the title 22/600 on a page (`full`) or 17/600 on a panel,
+          // no line at rest, 16 from the title's line box to the first content box; the hairline
+          // at its bottom edge only while the body is scrolled under it. On a phone it is the
+          // §9.16 bar header, 56 tall with the 44 close at a 6 margin. The close is the §9.3
+          // icon button, named for the screen reader without the keyboard hint a tooltip carries
+          // on a phone (§9.31).
           <header
-            className={cn(
-              'flex shrink-0 items-center gap-2 border-b border-[var(--zen-border)]',
-              phone ? 'h-14 pl-4 pr-1.5' : 'h-12 px-4'
-            )}
+            className="zen-overlay-header"
+            data-size={variant === 'full' ? 'page' : 'panel'}
+            data-scrolled={scrolled || undefined}
           >
-            <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
+            <h2 className="zen-overlay-title">{title}</h2>
             {actions}
             <button
               type="button"
-              className={cn('zen-toolbar-button', phone ? 'h-11 w-11' : 'h-7 w-7')}
+              className="zen-v2-icon-button"
               title={phone ? undefined : 'Close (Esc)'}
               aria-label="Close"
               onClick={() => closeOverlay()}
             >
-              <X className="h-4 w-4" aria-hidden />
+              <X aria-hidden />
             </button>
           </header>
         )}
         {scroll ? (
-          <div ref={fade} className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={attachBody} className="min-h-0 flex-1 overflow-y-auto">
             {children}
           </div>
         ) : (

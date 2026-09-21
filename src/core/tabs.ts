@@ -60,8 +60,7 @@ import {
   CRASH_ERROR_CODE,
   crashCodeName,
   describeNetError,
-  HTTP_FALLBACK_CODES,
-  overlayForUrl
+  HTTP_FALLBACK_CODES
 } from '../shared/zenPages'
 import { isCertificateError } from '../shared/siteInfo'
 import type { InterstitialAction } from '../shared/interstitial'
@@ -555,8 +554,9 @@ export class TabManager {
         const v = view()
         if (code === -3 || !v) return
         // A link to a download the server refused: the downloads host made the failed row Chrome
-        // shows for it ("Failed · No file"), and the tab stays as it was, as with the
-        // `ERR_ABORTED` of a download that did start.
+        // shows for it ("Failed · No file") and stopped the navigation, which then ends with the
+        // `ERR_ABORTED` above like a download that did start; a host whose stop came too late
+        // reports the refusal itself, and the tab stays as it was either way.
         if (this.browser.downloads.takeDeadLink(tabId, url)) return
         this.browser.governor.onLoadFinished(tabId)
         const failed = (certificateError: CertificateError | null = null): void =>
@@ -1827,18 +1827,11 @@ export class TabManager {
   ): void {
     const tab = this.tab(tabId)
     if (!tab || !isNavigableUrl(url)) return
-    // An internal page: a chrome page (Settings) lives in a tab of its own, or in its overlay on
-    // hosts without page tabs, and the document in this tab stays where it is; a document page
-    // the window already shows is focused instead. Otherwise the URL loads here like any other.
+    // An internal page: a chrome page (Settings, History, Bookmarks, Downloads) lives in a tab
+    // of its own, or in its overlay where the host or the layout keeps one, and the document in
+    // this tab stays where it is; a document page the window already shows is focused instead.
+    // Otherwise the URL loads here like any other.
     if (this.browser.pages.routeNavigation(tabId, url)) return
-    // `zen://history` and friends are chrome surfaces: open them over the page instead. The
-    // registry is the one route for internal pages, so an address it holds as a document page
-    // (Downloads, once the desktop registers it) loads here and is not an overlay's any more.
-    const overlay = this.browser.pages.parse(url) ? null : overlayForUrl(url)
-    if (overlay) {
-      this.browser.emit('overlay.open', { kind: overlay }, this.windowFor(tabId))
-      return
-    }
     tab.url = url
     tab.title = this.titleFor(url)
     tab.errorCode = null
