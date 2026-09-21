@@ -6934,8 +6934,9 @@
  * with 8 above and below; 44 on a phone) at radius 4, edge to edge inside the padding, with a
  * 16 glyph slot before the label when any row of the menu has one (an icon, a check), the
  * accelerator (`-hint`) in the deemphasised ink at the trailing edge, a folder's or submenu's
- * 16 chevron (`-chevron`) there instead; the separators are the hairline with 6 above and 6
- * below. The keyboard cursor (a focused row) and the pointer's hover take `--v2-fill` – a
+ * 16 chevron (`-chevron`) there instead; the separators are the hairline with §6's 4 above and
+ * 4 below (Zen's `menuseparator`, the margins #271's panels shipped with). The keyboard cursor
+ * (a focused row) and the pointer's hover take `--v2-fill` – a
  * cursor, never `--v2-selected` (§9.6) – with no ring of their own, as Firefox's menus
  * highlight; a row whose panel stands beside it keeps the fill (`aria-expanded`); a disabled
  * row is §9.30's .4 on the whole row. The panel itself takes the keys (opened by the pointer
@@ -7008,7 +7009,7 @@
 .zen-v2-menu-separator {
   flex-shrink: 0;
   height: 1px;
-  margin: 6px 0;
+  margin: 4px 0;
   background: var(--v2-border);
 }
 .zen-v2-menu-hint {

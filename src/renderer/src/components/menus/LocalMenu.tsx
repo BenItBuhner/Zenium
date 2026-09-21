@@ -51,7 +51,7 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
  * it hangs, through the chrome layer, at its own width and height – §5's 232–332, as tall as
  * its rows) with 6 of padding, 31 rows at the 14 px chrome menu size (§4), a 16 glyph slot when
  * any row has an icon, the accelerator at the trailing edge in the deemphasised ink, hairline
- * separators 6 above and below and danger rows in the danger ink; on a finger the same rows at
+ * separators 4 above and below and danger rows in the danger ink; on a finger the same rows at
  * 44 in a bottom sheet. Escape closes it, and on the desktop the chrome layer's light dismiss
  * (§9.20 amended: a press outside it, consumed; its control's own press; a scroll, a resize,
  * another popover) – there is no scrim there (§9.5); the sheet's own scrim takes the tap on a
