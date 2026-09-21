@@ -624,3 +624,76 @@ describe('zero-suggest groups (omnibox-20)', () => {
     expect(items[1].classList.contains('zen-omnibox-row')).toBe(true)
   })
 })
+
+describe('the rows and the field at §6 (the lead\u2019s ruling on #289)', () => {
+  it('a row is one line – the title, then " — " and the host or the engine trailing it; the engine is named on the first search row only; the answer reads "= 4 — 2+2"', async () => {
+    suggestions = (q) =>
+      q
+        ? [
+            row('url', 'example.com', 'example.com/', 'https://example.com/', { subtitle: '' }),
+            row('search', '2+2', '2+2', 'https://g/?q=2%2B2', { subtitle: 'Search with Google' }),
+            row('answer', '= 4', '2+2', 'https://g/?q=2%2B2', { subtitle: '2+2' }),
+            row('search', '2+2=4', '2+2=4', 'https://g/?q=2%2B2%3D4', {
+              subtitle: 'Search with Google'
+            }),
+            history(1)
+          ]
+        : []
+    const el = await render(desktop())
+    await typeAndList(el, '2+2', 5)
+    // No second line anywhere: the row's text is one body, no description slot under a label.
+    expect(el.querySelector('ul[role="listbox"] .zen-v2-description')).toBeNull()
+    expect(el.querySelector('ul[role="listbox"] .zen-v2-row-text')).toBeNull()
+    const r = rows(el)
+    const option = (i: number): string => r[i].querySelector('[role="option"]')!.textContent!
+    const trailing = (i: number): string | null =>
+      r[i].querySelector('.zen-omnibox-row-host')?.textContent ?? null
+    for (const li of r) expect(li.classList.contains('zen-v2-row')).toBe(true)
+    // The verbatim URL row: its title alone.
+    expect(trailing(0)).toBeNull()
+    expect(option(0)).toBe('example.com')
+    // The first search row – Zen's heuristic row – names the engine after the dash…
+    expect(trailing(1)).toBe(' — Search with Google')
+    // …the answer row is the answer, then the expression…
+    expect(option(2)).toBe('= 4 — 2+2')
+    // …a search suggestion under the heuristic row is bare (its completion still emphasised)…
+    expect(trailing(3)).toBeNull()
+    expect(option(3)).toBe('2+2=4')
+    expect(r[3].querySelector('mark')?.textContent).toBe('=4')
+    // …and a page keeps its host.
+    expect(trailing(4)).toBe(' — example.com')
+  })
+
+  it('names the engine on the first search row wherever it stands – after a URL row, or first in zero-suggest under its heading', async () => {
+    suggestions = (q) =>
+      q
+        ? []
+        : [
+            row('search', 'cats', 'cats', 'https://g/1', {
+              subtitle: 'Search with Google',
+              group: 'Recent searches',
+              deletable: true
+            }),
+            row('search', 'dogs', 'dogs', 'https://g/2', {
+              subtitle: 'Search with Google',
+              group: 'Recent searches',
+              deletable: true
+            }),
+            history(1)
+          ]
+    const el = await render(desktop(tab('zen://newtab'), 'new-tab'))
+    await act(async () => {
+      await vi.waitFor(() => expect(rows(el)).toHaveLength(3))
+    })
+    const hosts = rows(el).map((li) => li.querySelector('.zen-omnibox-row-host')?.textContent)
+    expect(hosts).toEqual([' — Search with Google', undefined, ' — example.com'])
+  })
+
+  it('the field row carries no "Current tab" badge – nothing trails the input (pr-123\u2019s deferred badge verdict, closed on #289)', async () => {
+    const el = await render(desktop())
+    const inputRow = input(el).closest('.zen-omnibox-input-row')!
+    expect(inputRow.textContent).not.toContain('Current tab')
+    expect(inputRow.querySelector('.zen-omnibox-badge')).toBeNull()
+    expect(input(el).nextElementSibling).toBeNull()
+  })
+})

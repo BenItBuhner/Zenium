@@ -9589,20 +9589,24 @@
 /*
  * The desktop URL bar on design language v2 (§6 "Floating URL bar", §9.20, §9.22, §9.29): a
  * neutral opaque surface – radius 12 and the URL bar shadow when it floats; anchored under the
- * pill it is a popover at radius 8 with a hairline and the panel shadow – a 62 px field with a
- * hairline under it, then the dropdown at §4 / §5 sizes (shell pass 7(b)). Its rows are the
+ * pill it is a popover at radius 8 with a hairline and the panel shadow – the field as the
+ * palette's first row, 62 with a hairline under it and nothing at its end (no go button, no
+ * badge – §6), then the dropdown (shell pass 7(b), the lead's ruling on #289). Its rows are the
  * shared `.zen-v2-row` (§9.34; the modifiers are unlayered after this block, beside the
- * primitive): 32 for a title alone, 52 for the title 15/20 over its host or engine line 13/20
- * in the deemphasised ink (§9.2), a 16 px glyph in the lead slot on the first line (the kind's
- * at stroke 1.5, or the site's favicon), the typed match in the heading weight (omnibox-21),
- * the remove X the 28 px icon button trailing the text, and the list leaving §9.20's ring room
- * – the rows 2 in from the list's sides, their text at 16, 4 above the first and below the last.
- * The keyboard's highlight and the pointer's hover are two things – hovering never moves the
- * highlight – and both are the row's `--v2-fill` (§9.6: a cursor, not a selection). Badges (the
- * keyword chip, "Current tab") are v2 pills: 20 tall, 13/600, padding 0 8, fill on deemphasised
- * ink; the hint strip at the foot is 13 on the small line in the deemphasised ink with its key
- * chips 20 tall. When the list overflows it scrolls under the chassis' overlay scrollbar
- * (§9.20). Page tokens only; no blur.
+ * primitive) on ONE line at 50 whatever the row's kind – §4: a suggestion row stays one line at
+ * every scale, as Zen's, Firefox's, Chrome's and the phone's 48 rows; a second line here doubles
+ * the list's height to repeat the engine's name – the 16 px glyph in the lead slot (the kind's
+ * at stroke 1.5, or the site's favicon), the title with the typed match in the heading weight
+ * (omnibox-21), then ` — ` and the host or the engine in the deemphasised ink, the line
+ * truncating from its end; "Search with <Engine>" on the first search row only (Zen's heuristic
+ * row, `Urlbar.tsx`); the remove X the 28 px icon button trailing the text; the list leaving
+ * §9.20's ring room – the rows 2 in from the list's sides, their text at 16, 4 above the first
+ * and below the last. The keyboard's highlight and the pointer's hover are two things –
+ * hovering never moves the highlight – and both are the row's `--v2-fill` (§9.6: a cursor, not
+ * a selection). The keyword chip is a v2 pill: 20 tall, 13/600, padding 0 8, fill on
+ * deemphasised ink; the hint strip at the foot is 13 on the small line in the deemphasised ink
+ * with its key chips 20 tall. When the list overflows it scrolls under the chassis' overlay
+ * scrollbar (§9.20). Page tokens only; no blur.
  */
 @layer components {
   .zen-omnibox {
@@ -9662,6 +9666,35 @@
   .zen-omnibox-results {
     padding: 4px 0;
     border-top: 1px solid var(--v2-border);
+  }
+  /*
+   * The row's one line (§6): the glyph's 12 to the text as the primitive's lead; the title
+   * takes its own width and the host what is left, each ellipsing, so a long line loses its
+   * end first – the host, then the title's tail – and never grows a second line. The row's
+   * 50 is the unlayered modifier after this block, beside the primitive it overrides.
+   */
+  .zen-omnibox-row-body {
+    gap: 12px;
+  }
+  .zen-omnibox-row-icon {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-omnibox-row-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .zen-omnibox-row-host {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v2-text-deemphasized);
   }
   /*
    * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
@@ -9746,12 +9779,18 @@
  * The dropdown's modifiers on the shared unlayered primitives (§9.34), unlayered by specificity
  * as the Refine arrow's above – a layered rule cannot recolour an unlayered primitive.
  *
- * The row (`.zen-v2-row.zen-omnibox-row`): the keyboard's highlight is the row's `--v2-fill`
- * (§9.6: a cursor takes the hover fill and leaves `--v2-selected` for what is picked), held
- * under the pointer and while its X has the keyboard; the primitive's own hover is the same
- * fill, so a hovered row and the highlighted one read alike, as Chrome's do. The ring room is
- * the shared popover-body rule above (§9.20), which lists this body.
+ * The row (`.zen-v2-row.zen-omnibox-row`): §6's 50 – the body line plus 30 at the default
+ * size, growing from the line box as `--v2-row` does, so a larger text size lifts the row and
+ * never wraps it – over the primitive's 32 floor (an unlayered floor, since a layered rule
+ * cannot raise it); the keyboard's highlight is the row's `--v2-fill` (§9.6: a cursor takes
+ * the hover fill and leaves `--v2-selected` for what is picked), held under the pointer and
+ * while its X has the keyboard; the primitive's own hover is the same fill, so a hovered row
+ * and the highlighted one read alike, as Chrome's do. The ring room is the shared popover-body
+ * rule above (§9.20), which lists this body.
  */
+.zen-v2-row.zen-omnibox-row {
+  min-height: calc(var(--v2-line-body-box) + 30px);
+}
 .zen-v2-row.zen-omnibox-row[data-selected='true'],
 .zen-v2-row.zen-omnibox-row[data-selected='true']:hover {
   background: var(--v2-fill);

@@ -943,6 +943,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   // for it, but it was not typed: Chrome bolds nothing there either) or in zero-suggest.
   const typedQuery =
     tab && typedText === restTextFor(tab, phone) ? '' : (textKeyword?.query ?? typedText)
+  // §6: "Search with <Engine>" names the engine once, on the list's first search row – Zen's
+  // heuristic row – and the search suggestions under it read bare; every other kind keeps its
+  // trailing text (a page's host, an answer's expression, an engine row's "Search <engine>").
+  const firstSearch = results.findIndex((r) => r.kind === 'search')
 
   const rows = (sheet: boolean): JSX.Element[] =>
     results.flatMap((item, i) => {
@@ -954,6 +958,7 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
           selected={i === selected}
           sheet={sheet}
           typed={sheet ? undefined : typedQuery}
+          bare={!sheet && item.kind === 'search' && i !== firstSearch}
           onPick={(e) => {
             if (item.kind === 'clipboard') void pickClip()
             else
@@ -1127,11 +1132,14 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
   /*
     The desktop bar on design language v2 §6 "Floating URL bar": a neutral opaque surface at radius
     12 with the URL bar shadow (anchored under the pill it is a popover, §9.20: radius 8, hairline,
-    panel shadow), a 62 px field with a hairline under it, then the dropdown at §4 / §5 sizes
-    (shell pass 7(b)): `.zen-v2-row`s of 32 (a title alone) or 52 (the title 15/20 over the host
-    or the engine line 13/20 deemphasised) with a 16 px glyph in the lead slot, the keyboard's
-    row on `--v2-fill` (§9.6), the typed match in the heading weight, the remove X trailing
-    (§9.34), and the hint strip at 13/20. Page tokens only (§9.29).
+    panel shadow); the field is the palette's first row – 62 with a hairline under it, the
+    engine's glyph at its start, the typed text's inline completion selected, and nothing at its
+    end (no go button, no badge) – then the dropdown (shell pass 7(b), the lead's ruling on
+    #289): `.zen-v2-row`s one line at 50 whatever the row's kind, the 16 kind glyph at stroke
+    1.5, the title with the typed part in the heading weight, then ` — ` and the host or the
+    engine at 69% truncating from the end, "Search with <Engine>" on the first search row only,
+    the keyboard's row on `--v2-fill` (§9.6), the remove X trailing (§9.34), and the hint strip
+    at 13/20. Page tokens only (§9.29).
   */
   return (
     // The empty pane's bar (`urlbar.pane`) lets presses through to the chrome around it – the
@@ -1211,7 +1219,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge }: Props): JSX.Element {
             data-zen-menu-tab={menuTabId}
             className="zen-omnibox-input h-full min-w-0 flex-1 bg-transparent outline-none"
           />
-          {tab && urlbar.mode === 'edit' && <span className="zen-omnibox-badge">Current tab</span>}
+          {/* Nothing trails the input (§6): Zen hides the go button, and a "Current tab" badge
+              that is on in the bar's usual mode says nothing – the hint strip's "↵ Open ·
+              Alt↵ New tab" is where the destination is told (pr-123's deferred badge verdict,
+              closed by the lead's check on #289). */}
         </div>
         {results.length > 0 && !popupClosed && (
           <ul
@@ -1537,13 +1548,14 @@ function SuggestionRow({
   onRefine,
   clip,
   onReveal,
-  typed = ''
+  typed = '',
+  bare = false
 }: {
   id: string
   item: Suggestion
   /** The keyboard's highlight; hovering a row never moves it (Chrome), only a click picks. */
   selected: boolean
-  /** A row of the phone sheet: touch height (44); the desktop list's rows are §9.2's 32 / 52. */
+  /** A row of the phone sheet: touch height (44); the desktop list's rows are §6's one line at 50. */
   sheet: boolean
   onPick: (e: React.MouseEvent) => void
   /**
@@ -1552,6 +1564,11 @@ function SuggestionRow({
    * is emphasised.
    */
   typed?: string
+  /**
+   * A desktop search suggestion under the list's first search row (§6, Zen's heuristic row):
+   * its text alone, the engine having been named once above it.
+   */
+  bare?: boolean
   /**
    * The desktop row's remove X (omnibox-22): shown on hover, on the highlighted row and while
    * it has the keyboard; `removeId` is its element id, the target Tab moves the keyboard to.
@@ -1657,11 +1674,14 @@ function SuggestionRow({
       </li>
     )
   }
-  // The desktop row (v2 draft §9.2, §9.34, shell pass 7(b)): the shared `.zen-v2-row` – 32 for a
-  // title alone, 52 with its host or engine line under it – whose body is the option (its
-  // remove X is a sibling in the row: a button inside an option would be presentational to
-  // assistive technology). The row takes the press, so the whole row is the target, the X's
+  // The desktop row (v2 draft §6, §9.34, shell pass 7(b)): the shared `.zen-v2-row` on one line
+  // at 50 whatever its kind – the 16 kind glyph, the title, then ` — ` and the host or the
+  // engine in the deemphasised ink, the line truncating from its end (§4: a suggestion row
+  // stays one line at every scale, as Zen's, Firefox's and Chrome's) – whose body is the option
+  // (its remove X is a sibling in the row: a button inside an option would be presentational
+  // to assistive technology). The row takes the press, so the whole row is the target, the X's
   // press excepted; hovering is the row's own fill and never moves the keyboard's highlight.
+  const trailing = bare ? '' : item.subtitle
   const rowPointerProps = {
     onPointerDown: (e: React.PointerEvent) => {
       if ((e.target as Element).closest('button')) return
@@ -1681,21 +1701,27 @@ function SuggestionRow({
       data-action-focused={actionFocused || undefined}
       {...rowPointerProps}
     >
-      <div id={id} role="option" aria-selected={selected} className="zen-v2-row-body">
-        <span className="zen-v2-row-lead">{icon}</span>
-        <span className="zen-v2-row-text">
-          <span className="zen-v2-label truncate">
-            <Highlighted text={item.title} ranges={matchRanges(item.kind, item.title, typed)} />
-          </span>
-          {item.subtitle && (
-            <span className="zen-v2-description truncate">
-              <Highlighted
-                text={item.subtitle}
-                ranges={matchRanges(item.kind, item.subtitle, typed, 'description')}
-              />
-            </span>
-          )}
+      <div
+        id={id}
+        role="option"
+        aria-selected={selected}
+        className="zen-omnibox-row-body flex min-w-0 flex-1 items-center"
+      >
+        <span className="zen-omnibox-row-icon flex shrink-0 items-center justify-center">
+          {icon}
         </span>
+        <span className="zen-omnibox-row-title">
+          <Highlighted text={item.title} ranges={matchRanges(item.kind, item.title, typed)} />
+        </span>
+        {trailing && (
+          <span className="zen-omnibox-row-host">
+            <span aria-hidden="true"> — </span>
+            <Highlighted
+              text={trailing}
+              ranges={matchRanges(item.kind, trailing, typed, 'description')}
+            />
+          </span>
+        )}
         {item.kind === 'tab' && (
           <span className="zen-omnibox-row-hint">
             Switch to tab
