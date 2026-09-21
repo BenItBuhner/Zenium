@@ -47,7 +47,9 @@ import kotlin.math.roundToInt
  *  8. the address pill opens the URL bar with its suggestions in a popup as wide as the pill;
  *     typing brings rows; the shared close takes it down by the chrome's state;
  *  9. the ⋯ opens the app menu as a 332 px popover under it (the `tablet-app-menu-open` scene);
- *     back closes it;
+ *     a finger scrolls its rows (more than the 60% cap holds) so the video shows which scrollbar
+ *     the device draws on the popover – read off the layout too, here and on the tab menu, as a
+ *     `scrollbar on …` line in the findings; back closes it;
  * 10. a pull down the toolbar opens the tab overview (the `tablet-overview-pull` scene, traced);
  *     its More button opens a sheet that docks centred at 480; back closes the sheet, back the
  *     overview;
@@ -207,6 +209,7 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         )
         SystemClock.sleep(1_200)
         shot("03-tab-menu")
+        popoverScrollbar("the tab menu")
         back()
         check("the system back closes the tab menu", awaitJs(MENU_OPEN, false), "menu ${jsText(MENU_OPEN)}")
         check("the tab stayed where it was after the hold", tabOrder() == SEEDED_ORDER, "order ${tabOrder()}")
@@ -386,9 +389,49 @@ class TabletLayoutDemo : DemoHarness("tablet-demo-state.json", "tablet-$THEME", 
         check("no sheet came with it", domRect(".zen-sheet") == null, "")
         SystemClock.sleep(1_200)
         shot("12-app-menu")
+        popoverScrollbar("the app menu")
+        // A finger's scroll inside the popover (more rows than the 60% cap holds), so the video
+        // shows whichever bar the device draws on the scrolling chrome while it moves.
+        if (menu != null) {
+            val inside = screen(RectF(menu.left, menu.top + 60f, menu.right - 24f, menu.bottom - 20f))
+            if (inside != null) {
+                Finger().apply {
+                    down(inside.centerX(), inside.bottom - 40f)
+                    moveBy(0f, -(inside.height() * 0.5f), 450)
+                    hold(120)
+                    up()
+                }
+                SystemClock.sleep(600)
+                val scrolled = jsNumber("(document.querySelector('$TABLET_MENU')||{scrollTop:0}).scrollTop")
+                check("the app menu scrolls under the finger and stays open", scrolled > 20 && jsBoolean(MENU_OPEN), "scrollTop $scrolled, menu ${jsText(MENU_OPEN)}")
+                shot("12b-app-menu-scrolled")
+            }
+        }
         back()
         check("the system back closes the app menu", awaitJs(MENU_OPEN, false), "menu ${jsText(MENU_OPEN)}")
         SystemClock.sleep(1_000)
+    }
+
+    /**
+     * Which scrollbar the device draws on a popover's scrolling body (§9.20 asks for the thin
+     * overlay bar; Chromium's classic buttoned bar inside a panel is a chassis defect, not this
+     * layout's): a classic bar takes layout – the panel's box minus its borders is wider than its
+     * `clientWidth` by the bar – where an overlay bar (Android's own) takes none. Written down as a
+     * reading, not a claim.
+     */
+    private fun popoverScrollbar(what: String) {
+        val reading = jsText(
+            "(function(){var m=document.querySelector('$TABLET_MENU');if(!m)return 'no popover';" +
+                "var cs=getComputedStyle(m);var border=parseFloat(cs.borderLeftWidth)+parseFloat(cs.borderRightWidth);" +
+                "var gutter=Math.round(m.offsetWidth-m.clientWidth-border);var overflow=Math.round(m.scrollHeight-m.clientHeight);" +
+                "return 'gutter '+gutter+' px, overflow '+overflow+' px, scrollbar-width '+cs.scrollbarWidth+', rows '+m.querySelectorAll('$TABLET_MENU_ITEM').length+', panel '+Math.round(m.getBoundingClientRect().height)+' tall'})()"
+        )
+        val kind = when {
+            reading.startsWith("gutter 0 ") -> "an overlay bar (no layout gutter: Android's own, or the thin overlay rule)"
+            reading.startsWith("gutter ") -> "a classic bar taking layout (the chassis's §9.20 item)"
+            else -> "unknown"
+        }
+        finding("scrollbar on $what: $kind – $reading")
     }
 
     // --- 10. the overview and a centred sheet -----------------------------------------------------
