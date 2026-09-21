@@ -132,6 +132,20 @@ afterEach(() => {
   rmSync(h.root, { recursive: true, force: true })
 })
 
+/**
+ * A launcher path is gone once `unpin()` has run: `rm` retries the transient errors a recursive
+ * removal can hit (ENOTEMPTY / EBUSY / EPERM while a file is still being written or listed), so
+ * the assertion polls for the removal for a moment instead of reading the disk once – the
+ * v0.3.81 release run failed on a bundle that a single `existsSync` still saw.
+ */
+async function expectGone(path: string): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (existsSync(path) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  expect(existsSync(path)).toBe(false)
+}
+
 describe('ElectronShortcuts on Linux', () => {
   it('writes the icon, a menu entry and a Desktop copy, then confirms with the icon URL', async () => {
     const { mkdirSync } = await import('node:fs')
@@ -188,8 +202,8 @@ describe('ElectronShortcuts on Linux', () => {
     await host.pin(REQUEST)
     const slug = appSlug(REQUEST.id)
     await host.unpin(REQUEST.id)
-    expect(existsSync(join(h.profile, slug))).toBe(false)
-    expect(existsSync(join(h.paths.applications, `zenium-webapp-${slug}.desktop`))).toBe(false)
+    await expectGone(join(h.profile, slug))
+    await expectGone(join(h.paths.applications, `zenium-webapp-${slug}.desktop`))
     expect(existsSync(other)).toBe(true)
     await expect(host.unpin(REQUEST.id)).resolves.toBeUndefined()
     await expect(host.unpin('never-installed')).resolves.toBeUndefined()
@@ -256,6 +270,6 @@ describe('ElectronShortcuts on macOS', () => {
     )
     expect(manifest.directories).toEqual([bundle])
     await host.unpin(REQUEST.id)
-    expect(existsSync(bundle)).toBe(false)
+    await expectGone(bundle)
   })
 })
