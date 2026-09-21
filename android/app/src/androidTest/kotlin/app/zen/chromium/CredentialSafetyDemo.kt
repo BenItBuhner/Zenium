@@ -138,7 +138,7 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
             SystemClock.sleep(MOTION_MS)
         }
         assertTrue("welcome page after the clean sign-in", awaitPath("/welcome", 10_000))
-        assertNotNull("the save prompt for the clean sign-in", findByLabelPrefix("Save password for"))
+        assertNotNull("the save prompt for the clean sign-in", findStarting("Save password for"))
         assertTrue("no warning for a clean password", leaks().length() == 0)
         SystemClock.sleep(600)
         snap("save-sheet-clean")
@@ -178,9 +178,9 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
         assertNotNull("Change password", buttonNode("Change password"))
         // The rest of the composition, as the tree lists it (the WebView may run a paragraph's
         // text together with its link's): on record, not asserted.
-        step("sentence in the tree: ${findByLabelPrefix("The password you just used") != null}; account row: ${findByLabel(BREACHED_EMAIL) != null}; manager link: ${findByLabel("password manager") != null}")
+        step("sentence in the tree: ${findStarting("The password you just used") != null}; account row: ${findByLabel(BREACHED_EMAIL) != null}; manager link: ${findByLabel("password manager") != null}")
         // The save prompt waits behind the warning (the chrome sequences the two on the phone).
-        assertTrue("the save prompt waits behind the warning", findByLabelPrefix("Save password for") == null)
+        assertTrue("the save prompt waits behind the warning", findStarting("Save password for") == null)
         SystemClock.sleep(600)
         snap("leak-sheet")
 
@@ -222,7 +222,7 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
         step("breached login saved: breached=${breached.opt("breached")} leakWarnedAt=${breached.opt("leakWarnedAt")} leakIgnoredAt=${breached.opt("leakIgnoredAt")}")
         assertTrue("the saved login carries the breach count", breached.optInt("breached", 0) > 0)
         assertTrue("the saved login remembers the Ignore", !breached.isNull("leakIgnoredAt"))
-        assertTrue("the save sheet leaves", waitForGone("Save password for", 8_000))
+        assertTrue("the save sheet leaves", waitForPrefixGone("Save password for", 8_000))
         SystemClock.sleep(900)
         snap("welcome-after-save")
 
@@ -329,14 +329,26 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
         return found.maxByOrNull { Rect().also(it::getBoundsInScreen).centerY() }
     }
 
+    /**
+     * The first node whose label or text starts with `prefix` – a sheet title with the site in it
+     * ("Save password for 127.0.0.1?"), a row named after its username. The harness's
+     * `findByLabelPrefix` is for labels whose suffix follows a comma; these do not.
+     */
+    private fun findStarting(prefix: String): Rect? =
+        findNode { it.startsWith(prefix) }?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
     private fun waitForLabelPrefix(prefix: String, timeoutMs: Long): Rect? {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            findByLabelPrefix(prefix)?.let { return it }
+            findStarting(prefix)?.let { return it }
             SystemClock.sleep(200)
         }
-        return findByLabelPrefix(prefix)
+        return findStarting(prefix)
     }
+
+    /** Poll until nothing on screen starts with `prefix`; false when something still does. */
+    private fun waitForPrefixGone(prefix: String, timeoutMs: Long): Boolean =
+        awaitCondition(timeoutMs) { findStarting(prefix) == null }
 
     /** Fling the menu sheet's handle up so the whole menu is on screen. */
     private fun expandSheet(f: Finger) {
@@ -377,11 +389,34 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
 
     // --- the page --------------------------------------------------------------------------------
 
-    private fun shownTab(): TabWebView? =
-        (activity as MainActivity).host.tabs.all().firstOrNull { it.isShown }
+    /** The active tab's id in the core's state (the space's active tab). */
+    private fun activeTabId(): String? {
+        val state = zen("app.getState")
+        val spaceId = state.optString("activeSpaceId")
+        val spaces = state.optJSONArray("spaces") ?: return null
+        for (i in 0 until spaces.length()) {
+            val space = spaces.getJSONObject(i)
+            if (space.optString("id") == spaceId) return space.optString("activeTabId").takeIf { it.isNotEmpty() }
+        }
+        return null
+    }
 
-    /** Evaluate in the page of the shown tab (main thread); the answer is the JSON text of the value. */
+    /**
+     * The sign-in's tab: the active one by the core's id, whether it is on screen or standing
+     * behind its picture under a sheet (`isShown` is false then – the save sheet and the warning
+     * both hide the live page under the chrome), else whichever tab is shown. Main thread.
+     */
+    private fun shownTab(): TabWebView? {
+        val tabs = (activity as MainActivity).host.tabs
+        return activeId?.let { tabs.get(it) } ?: tabs.all().firstOrNull { it.isShown }
+    }
+
+    /** Read off the main thread before each look at the tab (`coreInvoke` is not for the main thread). */
+    private var activeId: String? = null
+
+    /** Evaluate in the page of the active tab (main thread); the answer is the JSON text of the value. */
     private fun page(script: String): String? {
+        activeId = activeTabId()
         val latch = CountDownLatch(1)
         var result: String? = null
         instrumentation.runOnMainSync {
@@ -406,6 +441,7 @@ class CredentialSafetyDemo : DemoHarness("credential-safety-demo-state.json", "s
     }
 
     private fun currentPath(): String {
+        activeId = activeTabId()
         var url = ""
         var progress = 0
         instrumentation.runOnMainSync {
