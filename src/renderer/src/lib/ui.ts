@@ -1834,14 +1834,14 @@ export function closePrintPreview(): void {
 /**
  * Only anchored panels or a security prompt are up: a bar panel, the star bubble, the zoom
  * bubble, the tab hover card, the downloads bubble, site information, a permission prompt, the
- * blocked pop-ups popover, an autofill prompt in its popover form, or a sign-in or certificate
- * dialog. The page behind them is captured all the same (they overlap the live view), but panels
- * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
- * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
- * sheet and the prompt sheet on a phone, and the security prompt's dim is the frame dialog host's
- * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
- * translate selection popover, a menulist's list) count in `floatingChrome` and are the
- * extensions' counterpart's case
+ * blocked pop-ups popover, an autofill prompt in its popover form, a menu the renderer draws,
+ * or a sign-in or certificate dialog. The page behind them is captured all the same (they
+ * overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
+ * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
+ * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
+ * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer).
+ * The chrome layer's popovers and menus (the translate selection popover, a menulist's list)
+ * count in `floatingChrome` and are the extensions' counterpart's case
  * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
  * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
  * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
@@ -1862,6 +1862,10 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.permissionPromptOpen ||
       ui.blockedPopupsPanel !== null ||
       ui.securityPromptOpen ||
+      // A menu the renderer draws – the desktop's app menu under ⋯ (§6 "Menus": the page under
+      // it undimmed), a host's context menu – is the `.zen-v2-menu` popover on a mouse and a
+      // bottom sheet with its own scrim on touch: no dim of the frame's either way.
+      ui.menu !== null ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -1875,6 +1879,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
       securityPromptOpen: false,
+      menu: null,
       floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })

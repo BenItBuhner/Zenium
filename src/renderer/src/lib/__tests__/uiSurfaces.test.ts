@@ -113,6 +113,21 @@ describe('chrome surfaces over the content', () => {
     expect(panelAloneOverContent(idle())).toBe(false)
   })
 
+  it('a menu the renderer draws – the desktop app menu under ⋯ – leaves the page under it undimmed (§6 "Menus", §9.20)', () => {
+    const menu = { id: 'm1', source: 'app' as const, items: [], x: null, y: null }
+    uiStore.set({ menu })
+    try {
+      expect(overlayCoversContent(idle())).toBe(true)
+      expect(chromeNeedsKeyboard()).toBe(true)
+      expect(panelAloneOverContent(idle())).toBe(true)
+      // Over a dialog it is not alone: the dialog's dim stays.
+      uiStore.set({ clearBrowsingDataOpen: true })
+      expect(panelAloneOverContent(idle())).toBe(false)
+    } finally {
+      uiStore.set({ menu: null, clearBrowsingDataOpen: false })
+    }
+  })
+
   it('opens Clear browsing data once, taking the keyboard, and gives it back on close', async () => {
     await openClearBrowsingData(null)
     expect(idle().clearBrowsingDataOpen).toBe(true)
