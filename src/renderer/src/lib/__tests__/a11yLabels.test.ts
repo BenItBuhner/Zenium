@@ -42,6 +42,20 @@ describe('the phone pill address label', () => {
       phoneAddressLabel('example.com', securityIndicator('https://example.com/', null), 'Work')
     ).toBe('Address, example.com, Connection is secure, in Work')
   })
+
+  it('speaks the sheet chips’ states after the connection and before the space (v2 §9.29, OMN-02)', () => {
+    const secure = securityIndicator('https://github.com/', null)
+    expect(
+      phoneAddressLabel('github.com', secure, null, ['5 requests blocked', 'Translation offered'])
+    ).toBe('Address, github.com, Connection is secure, 5 requests blocked, Translation offered')
+    expect(phoneAddressLabel('github.com', secure, 'Work', ['5 requests blocked'])).toBe(
+      'Address, github.com, Connection is secure, 5 requests blocked, in Work'
+    )
+    // A chip with nothing to report adds nothing: a quiet page keeps #237's label alone.
+    expect(phoneAddressLabel('github.com', secure, null, ['', ''])).toBe(
+      'Address, github.com, Connection is secure'
+    )
+  })
 })
 
 describe('the overview labels', () => {
