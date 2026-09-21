@@ -1060,10 +1060,8 @@ describe('the overlay scrollbar (§9.20)', () => {
       'background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);',
       'background-clip: padding-box;'
     ])
-    // Under the pointer, the deemphasised ink – a token, not a shade of its own.
-    expect(part('-thumb:hover')).toEqual([
-      'background-color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));'
-    ])
+    // §9.20 names one rendering and no pointer state: nothing under `:hover` or `:active`.
+    expect(bare).not.toMatch(/::-webkit-scrollbar-thumb:(hover|active)/)
   })
 
   it('leaves the standard properties to a finger’s chrome alone: Chromium paints the parts only where both are auto', () => {

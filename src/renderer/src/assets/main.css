@@ -792,9 +792,10 @@
    * defect inside a `--v2-panel`: every scrolling chrome surface draws the thin overlay bar
    * instead – an 8 gutter, no buttons, no track, the thumb a 6 pill in the surface family's ink
    * at the spec's 30 % (`--v2-control-text`: the page ink on a page, the theme's on the window,
-   * §9.29; the page ink where no family is set), the deemphasised ink under the pointer. One
-   * rule, here at the chassis, on every element of the chrome document: popover bodies, menus
-   * and menulists, the Settings tab's panes, the tab strip, the overlays' bodies, the pages.
+   * §9.29; the page ink where no family is set) and nothing else: §9.20 names one rendering and
+   * no pointer state, as Firefox's panel bars have none. One rule, here at the chassis, on every
+   * element of the chrome document: popover bodies, menus and menulists, the Settings tab's
+   * panes, the tab strip, the overlays' bodies, the pages.
    * Chromium 121+ paints the `::-webkit-scrollbar` parts only where `scrollbar-width` and
    * `scrollbar-color` are both `auto` – the spec's `scrollbar-width: thin` alone brings the
    * buttoned bar back – so the desktop leaves the standard properties at their initial value
@@ -823,9 +824,6 @@
     border-radius: 4px;
     background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);
     background-clip: padding-box;
-  }
-  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb:hover {
-    background-color: var(--v2-control-text-deemphasized, var(--v2-text-deemphasized));
   }
 }
 
@@ -8598,12 +8596,23 @@
    * §9.3 icon buttons (`.zen-v2-icon-button`), 8 apart. Plain: the miss shows in the count alone.
    */
   .zen-find-bar {
+    position: relative;
     height: calc(var(--v2-control) + 8px);
     gap: 8px;
     padding: 0 8px 0 12px;
-    border-top: 1px solid var(--v2-border);
     background: var(--v2-panel);
     color: var(--v2-text);
+  }
+  /*
+   * The top edge is the row's top pixel, as the frame strips draw theirs at the bottom (§9.7): a
+   * border would take that pixel out of the 40 and leave the 32 field half a pixel off centre.
+   */
+  .zen-find-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: var(--v2-border);
   }
   .zen-find-count {
     flex-shrink: 0;
