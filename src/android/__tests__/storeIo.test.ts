@@ -1,6 +1,7 @@
 import { JsonStore } from '@core/store/JsonStore'
 import { describe, expect, it, vi } from 'vitest'
 import type { Bridge } from '../bridge'
+import type { HandoffFetch } from '../handoff'
 import { AndroidStoreIO, CHUNK_CHARS, readDocument } from '../storeIo'
 
 interface Call {
@@ -282,6 +283,79 @@ describe('AndroidStoreIO', () => {
       io.adopt({ 'state.json': BIG_STATE })
       expect(store.readSync()?.tabs).toHaveLength(400)
       expect(calls).toHaveLength(1)
+    })
+  })
+
+  describe('a document read after boot (a Safe Browsing feed document, not in the payload)', () => {
+    /** The document handler: `/zen-docs/<name>` from `served`, 404 for the rest; records the URLs. */
+    function handler(served: Record<string, string>): {
+      fetch: HandoffFetch
+      urls: string[]
+    } {
+      const urls: string[] = []
+      const fetch: HandoffFetch = async (url, init) => {
+        urls.push(url)
+        expect(init).toEqual({ cache: 'no-store' })
+        const name = decodeURIComponent(url.replace(/^.*\/zen-docs\//, ''))
+        const text = served[name]
+        if (text === undefined)
+          return { ok: false, status: 404, headers: { get: () => null }, text: async () => '' }
+        return { ok: true, status: 200, headers: { get: () => '"1a0-1"' }, text: async () => text }
+      }
+      return { fetch, urls }
+    }
+
+    it('is fetched from the document handler, off the bridge, and handed over without being mirrored', async () => {
+      const { bridge, calls } = fakeBridge({ 'safebrowsing/phishing-database.json': FEED })
+      const { fetch, urls } = handler({ 'safebrowsing/phishing-database.json': FEED })
+      const io = new AndroidStoreIO(bridge, { 'state.json': '{}' }, [], fetch)
+      expect(await io.read('safebrowsing/phishing-database.json')).toBe(FEED)
+      expect(urls).toEqual([
+        'https://appassets.androidplatform.net/zen-docs/safebrowsing/phishing-database.json'
+      ])
+      expect(calls).toEqual([])
+      // Not kept: the service has the text now; a second read fetches again.
+      expect(await io.read('safebrowsing/phishing-database.json')).toBe(FEED)
+      expect(urls).toHaveLength(2)
+      expect(calls).toEqual([])
+    })
+
+    it('is absent only when the bridge has no such file either (the handler answers 404 for both)', async () => {
+      const { bridge, calls } = fakeBridge({ 'safebrowsing/urlhaus.json': FEED })
+      const { fetch, urls } = handler({})
+      const io = new AndroidStoreIO(bridge, {}, [], fetch)
+      // A chrome the handler cannot serve (another origin): the bridge has the document.
+      expect(await io.read('safebrowsing/urlhaus.json')).toBe(FEED)
+      expect(await io.read('safebrowsing/phishing-database.json')).toBeNull()
+      expect(urls).toHaveLength(2)
+      expect(calls).toEqual([
+        { method: 'storage.read', args: { name: 'safebrowsing/urlhaus.json' } },
+        { method: 'storage.read', args: { name: 'safebrowsing/phishing-database.json' } }
+      ])
+    })
+
+    it('goes through the bridge where there is no handler to fetch from', async () => {
+      const { bridge, calls } = fakeBridge({ 'safebrowsing/urlhaus.json': FEED })
+      const io = new AndroidStoreIO(bridge, {})
+      expect(await io.read('safebrowsing/urlhaus.json')).toBe(FEED)
+      expect(calls).toEqual([
+        { method: 'storage.read', args: { name: 'safebrowsing/urlhaus.json' } }
+      ])
+    })
+
+    it('serves the mirror and a handed-over copy first, and remembers a mirrored name it fetched', async () => {
+      const { bridge, calls } = fakeBridge()
+      const { fetch, urls } = handler({ 'history.json': '[1]' })
+      const io = new AndroidStoreIO(bridge, { 'state.json': '{}' }, [], fetch)
+      io.adopt({ 'safebrowsing/urlhaus.json': FEED })
+      expect(await io.read('state.json')).toBe('{}')
+      expect(await io.read('safebrowsing/urlhaus.json')).toBe(FEED)
+      expect(urls).toEqual([])
+      // A root document (mirrored) read this way is kept like one read through the bridge.
+      expect(await io.read('history.json')).toBe('[1]')
+      expect(io.readSync('history.json')).toBe('[1]')
+      expect(urls).toHaveLength(1)
+      expect(calls).toEqual([])
     })
   })
 

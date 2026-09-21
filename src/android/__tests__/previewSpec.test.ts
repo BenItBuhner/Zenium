@@ -5,9 +5,31 @@ import {
   PREVIEW_PRIVATE_SURFACES,
   PREVIEW_PULL_MAX,
   PREVIEW_WEBAPP_SURFACES,
+  parsePreviewSeed,
   parsePreviewSpec,
   parsePreviewSteps
 } from '../previewSpec'
+
+describe('parsePreviewSeed', () => {
+  it('seeds the private tabs’ lock and the device’s screen lock on any spec, leaving the rest alone', () => {
+    expect(parsePreviewSeed('private=page')).toEqual({ rules: null, lock: false, screenLock: null })
+    // The lock on (INC-05): the cover over a private tab in front, or over the Private pane.
+    expect(parsePreviewSeed('private=page&lock=on')).toMatchObject({ lock: true })
+    expect(parsePreviewSeed('#private=overview&lock=1')).toMatchObject({ lock: true })
+    expect(parsePreviewSeed('private=page&lock=off')).toMatchObject({ lock: false })
+    // No screen lock on the device (SET-17): the switch disabled; `on` says one is set.
+    expect(parsePreviewSeed('page=settings&section=privacy&screenlock=off')).toMatchObject({
+      screenLock: false
+    })
+    expect(parsePreviewSeed('page=settings&screenlock=on')).toMatchObject({ screenLock: true })
+    // `rules=` rides along as before.
+    expect(parsePreviewSeed('page=settings&rules=3&lock=on&screenlock=off')).toEqual({
+      rules: 3,
+      lock: true,
+      screenLock: false
+    })
+  })
+})
 
 describe('parsePreviewSpec', () => {
   it('opens a known overlay by name', () => {

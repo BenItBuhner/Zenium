@@ -3,9 +3,22 @@
  *
  * A phone sheet coming up pushes the page back: the content frame scales to .97 and its corner
  * grows by 6 px, the bottom bar fades, all from the sheet's own progress – the same 0…1 that
- * moves the sheet and fades its scrim – written once per frame into `--zen-recede` on the root
- * (main.css reads it). Interruptible and reversible: the value is whatever the sheet's spring or
- * the finger says, and the frame comes back along the path it went.
+ * moves the sheet and fades its scrim – written once per frame into `--zen-recede` (main.css
+ * reads it). Interruptible and reversible: the value is whatever the sheet's spring or the
+ * finger says, and the frame comes back along the path it went.
+ *
+ * Where the value goes. The root carries it as the one number anything may read
+ * (`getComputedStyle(document.documentElement)`, the drivers, the tests), registered
+ * non-inheriting in main.css (`@property --zen-recede`) so the write costs the root's own style
+ * and nothing under it: as an inherited custom property changing on the root every frame it had
+ * the whole chrome document recalculated every frame – 5 ms of `Document::recalcStyle` per frame
+ * of the menu's open and 9 to 11 ms of its close on the emulator, 1 ms with that write muted
+ * (PERF-2's profile, PR #269). The surfaces that move on it – the content frame, the load bar
+ * and message layers on its edges, the bottom bar, a passwords page – take the same value on
+ * their own inline style instead: a component registers its element (`registerRecedeSurface`,
+ * `useRecedeSurface`), and anything carrying `data-recede-surface` (a driver's swatch) is found
+ * when a sheet registers. Reading `var(--zen-recede)` anywhere else yields the property's
+ * initial 0.
  *
  * Every sheet registers a layer here for as long as it is mounted and reports its presence per
  * frame; the registry composes the stack:
@@ -168,22 +181,51 @@ function sameFrame(a: RecedeLayerFrame | null, b: RecedeLayerFrame): boolean {
   return a !== null && a.recede === b.recede && a.scrim === b.scrim && a.inert === b.inert
 }
 
+/** The surfaces registered by their components (`registerRecedeSurface`). */
+const surfaces = new Set<HTMLElement>()
+/** The `[data-recede-surface]` elements found when a sheet last registered. */
+let tagged: HTMLElement[] = []
+
+/** The page's recede as the root carries it, or null with no sheet on the stack. */
+function pageValue(): string | null {
+  return stack.length > 0 ? recedeFrame(stack.map((e) => e.presence)).page.toFixed(4) : null
+}
+
+function writeSurface(el: HTMLElement, value: string | null): void {
+  if (value === null) el.style.removeProperty('--zen-recede')
+  else el.style.setProperty('--zen-recede', value)
+}
+
+/** Look for the tagged surfaces: once per sheet registering, never per frame (a tree walk). */
+function findTagged(): void {
+  tagged =
+    typeof document === 'undefined'
+      ? []
+      : Array.from(document.querySelectorAll<HTMLElement>('[data-recede-surface]'))
+}
+
 function publish(): void {
   const entries = stack.slice()
   const frame = recedeFrame(
     entries.map((e) => e.presence),
     scrimAlpha
   )
+  const value = stack.length > 0 ? frame.page.toFixed(4) : null
   const el = root()
   if (el) {
-    if (stack.length > 0) {
-      el.dataset.receding = 'true'
-      el.style.setProperty('--zen-recede', frame.page.toFixed(4))
+    // The attribute only when it changes: setting it to what it is already is still an attribute
+    // change to the style invalidator and the accessibility tree, every frame.
+    if (value !== null) {
+      if (el.getAttribute('data-receding') !== 'true') el.setAttribute('data-receding', 'true')
+      el.style.setProperty('--zen-recede', value)
     } else {
-      delete el.dataset.receding
+      if (el.hasAttribute('data-receding')) el.removeAttribute('data-receding')
       el.style.removeProperty('--zen-recede')
     }
   }
+  for (const surface of surfaces) writeSurface(surface, value)
+  for (const surface of tagged) if (!surfaces.has(surface)) writeSurface(surface, value)
+  if (value === null) tagged = []
   // Told in stack order, each only of a change to its own frame: a sheet's presence moves its
   // own scrim share and the recede of the sheets under it, never a sheet above it.
   entries.forEach((entry, i) => {
@@ -203,6 +245,7 @@ export function registerRecedeLayer(onFrame?: (frame: RecedeLayerFrame) => void)
   const entry: Entry = { presence: 0, onFrame, last: null }
   scrimAlpha = readScrimAlpha()
   stack.push(entry)
+  findTagged()
   publish()
   let released = false
   return {
@@ -223,6 +266,20 @@ export function registerRecedeLayer(onFrame?: (frame: RecedeLayerFrame) => void)
       if (index >= 0) stack.splice(index, 1)
       publish()
     }
+  }
+}
+
+/**
+ * A surface that moves on the page's recede – main.css reads `--zen-recede` on it – takes the
+ * value on its own inline style from now until the returned release runs (its unmount): the
+ * current value at once, then every frame a sheet moves. Nothing is written to an element that
+ * is not registered (see the header: the root's value does not inherit).
+ */
+export function registerRecedeSurface(el: HTMLElement): () => void {
+  surfaces.add(el)
+  writeSurface(el, pageValue())
+  return () => {
+    if (surfaces.delete(el)) writeSurface(el, null)
   }
 }
 

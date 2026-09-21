@@ -16,14 +16,18 @@ import { usePrivateSurface } from '@renderer/lib/privateSurface'
 import { activeSpace, isDarkScheme } from '@renderer/lib/selectors'
 
 /**
- * The theme blend's length (design language v2 §11.5). When the phone's window family changes
+ * The theme blend's length (design language v2 §11.6). When the phone's window family changes
  * colour as a whole – a private tab coming into view or going (MOT-14), a Space switch, the
  * colour scheme changing – the root's tokens run from the theme as painted to the new one in one
  * blend over 240 ms on one value, linear, so that the midpoint of the colours is the midpoint of
  * the time: there the colour scheme flips (`blendResolvedThemes`) and the status bar follows
  * (`zen-theme-painted`). Every window surface reads the tokens, so nothing tweens per element
  * (the phone window's own background transition is off, `main.css`). Under reduced motion the
- * blend is a cut. The desktop paints its theme at once, as it always has.
+ * blend is a cut, and so is one the document cannot show: a blend has no frames while the
+ * document is hidden (the app in the background), so it settles at its end as the document
+ * hides, and one still pending on return settles as the document shows again – the colours it
+ * froze on are never the first thing seen back. The desktop paints its theme at once, as it
+ * always has.
  */
 export const THEME_BLEND_MS = 240
 
@@ -87,7 +91,7 @@ export function chromeGutter(formFactor: FormFactor, borderless: boolean): numbe
 /**
  * Applies the active space's gradient theme to the document root. On the phone every change of
  * the window family's colour – the private theme while a private tab is in view (MOT-14), a
- * Space switch, the scheme – is the one 240 ms blend of §11.5, painted straight to the root's
+ * Space switch, the scheme – is the one 240 ms blend of §11.6, painted straight to the root's
  * variables per frame; React only hears about the polarity flipping at the midpoint, through
  * the returned `isDark`.
  */
@@ -177,11 +181,13 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
 
   // The theme to paint changed. The first paint is at once (a chrome mounting on a private tab
   // is private from its first frame), and so is the desktop's; under reduced motion the phone
-  // cuts as well (§11.5). Otherwise the phone blends – unless the root already shows the theme,
-  // or a blend is already heading there.
+  // cuts as well (§11.6), and so does a hidden document (nothing would show the blend, and its
+  // rAF would not run: the app in the background as the private session ends from services'
+  // notification). Otherwise the phone blends – unless the root already shows the theme, or a
+  // blend is already heading there.
   useEffect(() => {
     const before = painted.current
-    if (before === null || !blends || reducedMotion()) {
+    if (before === null || !blends || reducedMotion() || document.visibilityState === 'hidden') {
       cancel()
       paint(target, true)
       return
@@ -189,6 +195,22 @@ export function useTheme(state: UIState, formFactor: FormFactor = 'desktop'): Re
     if (run.current ? run.current.to === target : sameResolvedTheme(before, target)) return
     blendTo(target)
   }, [target, blends, blendTo, cancel, paint])
+
+  // A blend has no frames while the document is hidden (rAF pauses with it), and the colours it
+  // froze on would be the first thing seen on return – up to the blend's whole length of the
+  // private theme after a private tab was left for a regular one just before Home. So a blend
+  // in flight settles at its end as the document hides, and one still pending as it shows again
+  // (started while hidden, or hidden between its frames) settles then.
+  useEffect(() => {
+    const settle = (): void => {
+      const pending = run.current
+      if (!pending) return
+      cancel()
+      paint(pending.to, true)
+    }
+    document.addEventListener('visibilitychange', settle)
+    return () => document.removeEventListener('visibilitychange', settle)
+  }, [cancel, paint])
 
   // A blend in flight stops with the chrome.
   useEffect(() => cancel, [cancel])

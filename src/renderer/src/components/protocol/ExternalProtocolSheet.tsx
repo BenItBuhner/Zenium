@@ -142,7 +142,7 @@ function Header({
         <div className="truncate text-[17px] font-semibold leading-tight tracking-[-0.012em]">
           {titleOf(request)}
         </div>
-        <div className="truncate text-[13px] leading-snug text-[var(--zen-muted)]">
+        <div className="truncate text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]">
           {subtitleOf(request)}
         </div>
       </div>
@@ -170,7 +170,7 @@ function Body({
         className={
           phone
             ? 'truncate px-4 pb-2 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]'
-            : 'truncate px-3 text-[13px] leading-snug text-[var(--zen-muted)]'
+            : 'truncate px-3 text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]'
         }
         title={request.url}
       >

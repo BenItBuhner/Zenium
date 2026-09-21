@@ -570,7 +570,10 @@ const INVENTORY: Record<string, readonly string[]> = {
   security: ['meet.example', 'Forget sign-ins and certificates'],
   sync: [
     'Sync now',
-    'Name',
+    // The pane's label for the device's field (`overlays/SyncSection.tsx` at e59cb52e: "This
+    // device"), which #261's builder keeps on both hosts; #193's own port had renamed it "Name"
+    // under a "This device" heading.
+    'This device',
     'Phone',
     'Spaces',
     'Folders',
@@ -583,8 +586,14 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Settings',
     'Keyboard shortcuts',
     'Boosts',
-    'Turn off sync',
-    'Turn off and remove this device’s data'
+    // The pane's second button, "Turn off and remove this device's data", is not a row of the
+    // tab: the design lead's ruling on #261's desktop page (the stills of its two rows) – removing
+    // the data only means something together with turning off, so it is a checkbox row inside
+    // the prompt (§9.23: a choice that means something only with the footer's action), not a
+    // second action. The tab carries it as the "Also remove this device's data from the folder"
+    // checkbox in Turn off sync's dialog (`SyncDisconnectForm`), the phone sheet's composition,
+    // so nothing the pane offered is lost.
+    'Turn off sync'
   ],
   shortcuts: ['Shortcut set', 'Your changes', 'New tab'],
   'default-browser': ['Zenium is not your default browser'],
@@ -640,7 +649,12 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Secure DNS',
     'Privacy signals'
   ],
-  sync: ['Sync across devices', 'This device', 'Devices', 'What to sync'],
+  // #261 put Sync on the shared builder and the pane's rows kept their labels under the builder's
+  // headings: Sync now under Status (#193's port said "Sync across devices"), the device's field
+  // beside the folder row under Folder and device (the port's "This device" group), the device
+  // list under Other devices (the pane's "Devices"), the switches under What you sync (the
+  // pane's "What to sync").
+  sync: ['Status', 'Folder and device', 'Other devices', 'What you sync'],
   import: ['Import from another browser', 'Import from a file'],
   security: ['Site permissions', 'This session'],
   passwords: ['Password manager', 'Saving', 'Security']
@@ -661,6 +675,7 @@ describe('the desktop Settings tab carries every row of the overlay panes it rep
     openBarEditor: () => undefined,
     boost: () => undefined,
     autofill: idleAutofillSettings(),
+    screenLock: false,
     readAloudVoices: null,
     dictionary: { ...idleDictionaryWords(), words: ['Zenium'] }
   }

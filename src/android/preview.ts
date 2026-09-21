@@ -566,6 +566,9 @@ export function createPreviewBridge(): NativeBridge {
       downloadsDir: DOWNLOADS_DIR,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
       fullscreen: false,
+      // A screen lock as the vault has one: `vault=none` is a device without (the lock switch
+      // disabled, SET-17); a spec's `screenlock=` overrides it (previewStates.ts).
+      screenLock: vaultMode !== 'none',
       environment: {
         largeScreen: false,
         pointerAndKeyboard: false,
@@ -689,6 +692,9 @@ export function createPreviewBridge(): NativeBridge {
           title: ''
         }
         void showDocument(frame, extensionPageDocument(page), entry)
+      } else if (String(url).startsWith(PREVIEW_SAMPLE_ORIGIN)) {
+        // A page this host can picture (same-origin): the frame reports it loaded like any other.
+        void showDocument(frame, samplePageDocument(), entry)
       } else {
         frame.src = String(url)
         entry.src = String(url)
@@ -936,6 +942,13 @@ export function createPreviewBridge(): NativeBridge {
     'notification.forgetOrigin': () => undefined,
     'notification.ensureAllowed': () => true,
     'private.setOpenTabs': () => undefined,
+    // The private tabs' lock (PrivateLock.kt) is the host's; the preview keeps none of its own –
+    // a spec's `lock=on` puts the cover up through the chrome's store (previewStates.ts) – so the
+    // switch's word is taken, and the cover's Unlock passes after the time the system's sheet
+    // takes to notice, as `reauth.verify` does.
+    'private.setLockOnLeave': () => undefined,
+    'private.unlock': () =>
+      new Promise((resolve) => setTimeout(() => resolve({ locked: false }), 400)),
     // Passwords: the Android Keystore and BiometricPrompt stand-ins (see `vaultMode`). Refusals
     // answer `{ failure, message }` the way VaultKeystore.kt does.
     'vault.available': () => vaultMode !== 'none',
@@ -1321,6 +1334,49 @@ export function extensionPageDocument(page: PreviewExtensionPage): string {
     `</div><h2>Advanced</h2><div class="card">` +
     row('Developer tools', 'Extra options for debugging', false) +
     `</div></body></html>`
+  )
+}
+
+/**
+ * The origin of a page this host serves itself (`samplePageDocument`), so the page is same-origin
+ * and a picture of it can be taken (`view.snapshot`), where a site's frame cannot be read: for
+ * stills of the chrome over a page's picture – the lock cover's blurred page (`private=page&
+ * url=https://sample.example/&lock=on`). Any path under it is the same page.
+ */
+export const PREVIEW_SAMPLE_ORIGIN = 'https://sample.example'
+
+/**
+ * The stand-in page under `PREVIEW_SAMPLE_ORIGIN`: an article of a few paragraphs with a heading,
+ * a picture block and a list, following the system colour scheme, enough for a blurred picture
+ * of it to read as a page.
+ */
+export function samplePageDocument(): string {
+  return (
+    `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>Tide tables for the outer harbour</title>` +
+    `<style>` +
+    `:root{color-scheme:light dark;--fg:#1f1f24;--muted:#6b6b76;--bg:#fff;--card:#eef1f6;--accent:#2b6cb0}` +
+    `@media(prefers-color-scheme:dark){:root{--fg:#ececf1;--muted:#9a9aa6;--bg:#141418;--card:#1e222c;--accent:#7fb2ff}}` +
+    `body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.55 Georgia,'Times New Roman',serif}` +
+    `header{padding:24px 20px 8px;font:13px system-ui,Roboto,sans-serif;color:var(--accent);letter-spacing:.06em;text-transform:uppercase}` +
+    `h1{margin:0 20px 8px;font-size:30px;line-height:1.15;font-weight:600}` +
+    `.by{margin:0 20px 20px;color:var(--muted);font:14px system-ui,Roboto,sans-serif}` +
+    `figure{margin:0 0 20px;background:linear-gradient(160deg,#2b6cb0,#6fb1e6 55%,#f0c674);height:220px}` +
+    `p{margin:0 20px 16px}ul{margin:0 20px 16px;padding-left:22px}li{margin:4px 0}` +
+    `.note{margin:0 16px 16px;padding:14px 16px;background:var(--card);border-radius:12px;font:15px/1.5 system-ui,Roboto,sans-serif}` +
+    `</style></head><body>` +
+    `<header>Harbour notices</header>` +
+    `<h1>Tide tables for the outer harbour</h1>` +
+    `<p class="by">Published by the harbour office · 4 min read</p>` +
+    `<figure></figure>` +
+    `<p>High water reaches the outer wall twice a day, and the second of the two runs higher through the spring months. Skippers leaving before dawn should plan on the ebb, which sets north along the breakwater until an hour after low water.</p>` +
+    `<div class="note">The east light is unlit until further notice. Keep to the marked channel after dark.</div>` +
+    `<p>Berths on the north quay are let by the week. The office keeps a waiting list for the summer; visiting boats may lie alongside for two nights without notice.</p>` +
+    `<ul><li>Fuel: weekdays 8 to 5, Saturdays to noon</li><li>Water on every pontoon</li><li>Showers by the slip, tokens at the office</li></ul>` +
+    `<p>The tables below are corrected for the harbour datum. Heights are in metres above the sill of the inner basin, whose gate opens two hours either side of high water.</p>` +
+    `<p>Charts are held at the office and may be consulted during opening hours. Corrections issued since the last edition are pinned beside the door.</p>` +
+    `</body></html>`
   )
 }
 

@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import org.junit.Assert.assertTrue
@@ -235,16 +236,21 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         settleUp()
         var pickerUp = false
         // The frame-dialog host's slot as the picker rises and leaves: the whole of its height
-        // slides in across the frame's bottom edge (the 22:49 ruling), sampled with every frame.
+        // slides in across the frame's bottom edge (the 22:49 ruling), recorded every frame in
+        // the chrome (`startSlideRecorder`) and sampled with every screenshot besides.
         val slide = ArrayList<String>()
+        var recorded: List<String> = emptyList()
         if (findNode { it == CHANGE_ICON } != null) {
             // Kept on the tree's click (the rule in DemoHarness names the exception): the row sits
             // below the menu's peek, where no finger reaches it, and the menu must stay at the
             // peek for the band that is measured; this driver's injected touch on a sheet is the
             // editor's field below.
+            startSlideRecorder()
             probe("picker-open", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) {
                 if (!clickByLabel(CHANGE_ICON)) Log.w(tag, "'$CHANGE_ICON' took no click through the tree")
             }
+            recorded = stopSlideRecorder()
+            finding("picker-open: ${recorded.size} poses recorded frame by frame in the chrome, ${slide.size} sampled with the screenshots")
             settleUp()
             pickerUp = waitFor(PICKER_TITLE, 2_000) != null
             finding(
@@ -255,8 +261,9 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             finding("no '$CHANGE_ICON' row in the context menu")
         }
         if (pickerUp) {
-            judgeSlide("picker-open", slide, arriving = true)
+            judgeSlide("picker-open", recorded.ifEmpty { slide }, arriving = true)
             slide.clear()
+            startSlideRecorder()
             // System back when the chrome holds a surface for it (the chassis registers one for
             // the picker); a press on the scrim when it does not, as a back would leave the app.
             if (awaitSurface(up = true, timeoutMs = 1_000)) {
@@ -266,7 +273,9 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
                 finding("picker: no back surface for it; closed by a press on the scrim")
                 probe("picker-close", Kind.TRANSITION, sample = { slotPose().also { slide += it } }) { f.tap(scrimPoint()) }
             }
-            judgeSlide("picker-close", slide, arriving = false)
+            recorded = stopSlideRecorder()
+            finding("picker-close: ${recorded.size} poses recorded frame by frame in the chrome, ${slide.size} sampled with the screenshots")
+            judgeSlide("picker-close", recorded.ifEmpty { slide }, arriving = false)
         } else if (awaitSurface(up = true, timeoutMs = 500)) {
             finding("closing the context menu instead")
             probe("context-close", Kind.TRANSITION) { back() }
@@ -451,15 +460,34 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
      * height and the panel's top, its opacity, `will-change`, and whether the host is up.
      */
     private fun slotPose(): String {
-        val raw = chromeJs(
-            "(function(){var s=document.querySelector('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot');" +
-                "if(!s)return 'no slot';var m=/translate3d\\(0(?:px)?, ?(-?[\\d.]+)px/.exec(s.style.transform||'');" +
-                "var top=Infinity;for(var i=0;i<s.children.length;i++){var c=s.children[i];if(c.hasAttribute('data-sheet-layer'))continue;top=Math.min(top,c.offsetTop);}" +
-                "var cs=getComputedStyle(s);return JSON.stringify({p:+getComputedStyle(document.documentElement).getPropertyValue('--zen-recede')||0," +
-                "ty:m?+m[1]:null,travel:top===Infinity?null:s.clientHeight-top,slot:s.clientHeight,top:top===Infinity?null:top," +
-                "opacity:+cs.opacity,willChange:cs.willChange,up:s.parentElement.hasAttribute('data-sheet-up')});})()"
+        val raw = chromeJs("($SLOT_POSE_FN)()||'no slot'")
+        return (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String) ?: raw
+    }
+
+    /**
+     * The slot's pose every frame the chrome paints, recorded in the chrome itself. The probe's
+     * own sampling is one `chromeJs` round trip per screenshot, four or five in its window on
+     * the emulator, and the picker's whole rise fell between two of them on the merged harness
+     * (runs 35546087409 / 35546087401, "4 samples, 1 up"; 35412773360 before that), so the slide
+     * could not be judged. A `requestAnimationFrame` loop in the chrome document keeps the pose
+     * of every frame whose pose differs from the last (the reads are `slotPose`'s, spread over
+     * the frames instead of the round trips) until [stopSlideRecorder] reads them back; the
+     * sampler still runs, and its poses stand in if the recording is empty.
+     */
+    private fun startSlideRecorder() {
+        chromeJs(
+            "(function(){var R=window.__zenSlide={poses:[],on:true,last:null};var pose=$SLOT_POSE_FN;" +
+                "function tick(){if(!R.on)return;var s=pose();if(s!==null&&s!==R.last&&R.poses.length<2000){R.poses.push(s);R.last=s;}" +
+                "requestAnimationFrame(tick);}requestAnimationFrame(tick);})()"
         )
-        return (JSONTokener(raw).nextValue() as? String) ?: raw
+    }
+
+    /** The poses recorded since [startSlideRecorder], as `slotPose` strings in frame order; the recorder is gone. */
+    private fun stopSlideRecorder(): List<String> {
+        val raw = chromeJs("(function(){var R=window.__zenSlide;if(!R)return '[]';R.on=false;delete window.__zenSlide;return JSON.stringify(R.poses);})()")
+        val text = runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String ?: return emptyList()
+        val array = runCatching { JSONArray(text) }.getOrNull() ?: return emptyList()
+        return List(array.length()) { array.getString(it) }
     }
 
     /**
@@ -477,7 +505,11 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         val all = poses.mapNotNull { runCatching { JSONObject(it) }.getOrNull() }.filter { !it.isNull("ty") }
         val samples = all.filter { !it.isNull("travel") }
         findings.append("$name slide: ${all.size} poses of ${poses.size} samples, ${samples.size} with a panel in the slot\n")
-        for (s in all) {
+        // Every pose is judged below; a frame-by-frame recording is described by every n-th.
+        val stride = (all.size + 29) / 30
+        val shown = if (stride <= 1) all else all.filterIndexed { i, _ -> i % stride == 0 || i == all.lastIndex }
+        if (shown.size < all.size) findings.append("  (every ${stride}th pose of the ${all.size} shown)\n")
+        for (s in shown) {
             findings.append(
                 "  p %.3f ty %7.2f of travel %s (slot %.0f, panel top %s) opacity %.2f will-change %s%s\n".format(
                     s.getDouble("p"), s.getDouble("ty"),
@@ -724,10 +756,12 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
     /**
      * Put the progress swatch into the chrome: a fixed bar in the status-bar area, below the
      * clock and the icons, from about a fifth of the way across to about three quarters, whose
-     * width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen. It reads the root's
-     * variable through `var()`, so it moves in the very style pass that moves the page and the
-     * sheet: a frame shows all three as they were together. Black on the light scheme, white on
-     * the dark, above everything and taking no input. Test-only; the product has no such thing.
+     * width is `--zen-recede` times [SWATCH_LENGTH_SHARE] of the screen. It carries
+     * `data-recede-surface`, so the chassis writes the value on it each frame as it does on the
+     * frame and the bar (`lib/motion/recede.ts`: the root's value does not inherit), and it reads
+     * it through `var()`: it moves in the very style pass that moves the page and the sheet, and
+     * a frame shows all three as they were together. Black on the light scheme, white on the
+     * dark, above everything and taking no input. Test-only; the product has no such thing.
      */
     private fun placeSwatch() {
         val insets = windowInsets()
@@ -742,7 +776,7 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
             "z-index:2147483647;pointer-events:none;margin:0;padding:0;border:0;border-radius:0"
         val result = chromeJs(
             "(function(){var el=document.getElementById('zen-demo-recede');" +
-                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';document.body.appendChild(el);}" +
+                "if(!el){el=document.createElement('div');el.id='zen-demo-recede';el.setAttribute('data-recede-surface','');document.body.appendChild(el);}" +
                 "el.style.cssText=${jsString(css)};return el.getBoundingClientRect().height;})()"
         )
         finding("swatch placed at $swatch (${swatchColour()}); the chrome says its height is $result")
@@ -1067,6 +1101,18 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         private const val SETTLE_MS = 8_000L
         /** Brightness (0…255) two frames of the same picture differ by, JPEG and dithering included. */
         private const val NOISE = 2.0
+        /**
+         * A JavaScript function of no arguments giving the frame-dialog host's slot's pose as a
+         * JSON string ([slotPose]'s fields), or `null` with no slot in the document. One text for
+         * the sampler and the per-frame recorder, so both read the same pose.
+         */
+        private const val SLOT_POSE_FN =
+            "function(){var s=document.querySelector('.zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot');" +
+                "if(!s)return null;var m=/translate3d\\(0(?:px)?, ?(-?[\\d.]+)px/.exec(s.style.transform||'');" +
+                "var top=Infinity;for(var i=0;i<s.children.length;i++){var c=s.children[i];if(c.hasAttribute('data-sheet-layer'))continue;top=Math.min(top,c.offsetTop);}" +
+                "var cs=getComputedStyle(s);return JSON.stringify({p:+getComputedStyle(document.documentElement).getPropertyValue('--zen-recede')||0," +
+                "ty:m?+m[1]:null,travel:top===Infinity?null:s.clientHeight-top,slot:s.clientHeight,top:top===Infinity?null:top," +
+                "opacity:+cs.opacity,willChange:cs.willChange,up:s.parentElement.hasAttribute('data-sheet-up')});}"
         /**
          * How far apart, as a share of the whole way, the page's darkness and the sheet's progress
          * may be in one frame: the picture's brightness differs from the live page's by under a

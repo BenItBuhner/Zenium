@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Runs on the workflow runner once the emulator has booted (android-boot-probe.yml): the boot
-# handoff's before / after measurement. The same instrumentation driver (BootHandoffProbe) runs
+# path's before / after measurement. The same instrumentation driver (BootHandoffProbe) runs
 # against two APKs – the one built from main (BEFORE_APK, prepared by the workflow's setup script)
 # and the one built from the branch – warming a profile up first (a first run installs the bundled
-# lists and snapshots), then booting twice and measuring: the time to the chrome's `window.zen`,
-# the host's storage writes during the boot, the request engine's rebuilds, and each transport
-# replayed in the chrome (boot-probe.js). The two results are tabulated into summary.md and the
-# step summary.
+# lists and snapshots), then seeding the feed documents at production size and booting twice,
+# measuring: the time to the chrome's `window.zen`, its first paint and its document's `load`,
+# the host's storage writes during the boot, the request engine's rebuilds, the documents fetched
+# from the handler (during and after the boot), and each transport replayed in the chrome
+# (boot-probe.js). The two results are tabulated into summary.md and the step summary.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -78,12 +79,14 @@ if [ ! -f "$before_apk" ]; then
   exit 1
 fi
 
-# One probe pass: install the APK, warm a profile up, then boot and measure twice.
+# One probe pass: install the APK, warm a profile up, then boot and measure twice. `-d` lets the
+# branch's APK follow main's when main's release bump is ahead of the branch (a debuggable package
+# may go down in version code; the profile is cleared right after either way).
 probe() {
   local label=$1 apk=$2 run
   echo "=== $label: $apk"
-  adb install -r -g "$apk"
-  adb install -r -g "$test_apk"
+  adb install -r -d -g "$apk"
+  adb install -r -d -g "$test_apk"
   adb shell am force-stop "$app_id" || true
   adb shell pm clear "$app_id" > /dev/null || true
   adb logcat -c || true
