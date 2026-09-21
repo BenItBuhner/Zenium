@@ -285,19 +285,43 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
     }
 
     /**
-     * A finger on the landing's Import category: true once the host has the page over the landing
-     * (a chrome page's section is a back of the chrome's, `chromeHandlesBack`) and its first row
-     * is in the tree.
+     * A finger on the landing's Import category: true once the host reports the section's
+     * surface and the page's first row is on screen – in the tree, or in the chrome's DOM
+     * ([importPageShown]). The DOM counts because the tree trails a transition by seconds on the
+     * emulator's software GPU: the fourth recording's push took 6 s to slide in (the whole
+     * emulator ran at half the third's pace) and the tree still held no row 4 s after that, past
+     * the 10 s the step then allowed – while the page stood on screen in its video. The
+     * allowance is [PUSH_WAIT_MS]; the scene's frames are the push's own either way (its
+     * counters are read after the motion settles, not at the claim).
      */
     private fun pushImportPage(): Boolean =
-        touchTapLabelExpecting(IMPORT_CATEGORY, "the Import page is up over the landing", timeoutMs = 10_000) {
-            chromeSurfaceUp() && findNode { it.startsWith(BOOKMARKS_ROW) } != null
+        touchTapLabelExpecting(IMPORT_CATEGORY, "the Import page is up over the landing", timeoutMs = PUSH_WAIT_MS) {
+            chromeSurfaceUp() && importPageShown()
         }
 
-    /** A back at the Import page: true once the host has no surface and the page's rows have left the tree. */
+    /**
+     * The Import page's first row on screen – the tree's word, or the chrome's DOM's ([domHasRow])
+     * – and its pane's entrance over ([drillInSettled]): the scene's block then holds the whole
+     * slide, not its first frames.
+     */
+    private fun importPageShown(): Boolean =
+        (findRowNode(BOOKMARKS_ROW) != null || domHasRow(BOOKMARKS_ROW_ID)) && drillInSettled()
+
+    /**
+     * Whether the phone Settings drill-in pane (`.zen-settings-drill-in`, its 240 ms
+     * `zen-settings-enter-right`) has no animation still running, by `Element.getAnimations`;
+     * false while no pane is mounted.
+     */
+    private fun drillInSettled(): Boolean =
+        chromeJs("(function(){var p=document.querySelector('.zen-settings-drill-in');if(!p)return false;return p.getAnimations().every(function(a){return a.playState!=='running'})})()").trim() == "true"
+
+    /**
+     * A back at the Import page: true once the host has no surface and the page's rows have left
+     * the chrome's DOM (the tree may hold them a while longer; the DOM is what the user sees).
+     */
     private fun popImportPage(): Boolean {
         back()
-        return awaitHeld(8_000) { !chromeSurfaceUp() && findNode { it.startsWith(BOOKMARKS_ROW) } == null }
+        return awaitHeld(PUSH_WAIT_MS) { !chromeSurfaceUp() && !domHasRow(BOOKMARKS_ROW_ID) }
     }
 
     // --- 2. passwords from a CSV file -------------------------------------------------------------
@@ -770,6 +794,12 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         const val SHOW_ROW_ID = "import-last-show"
         const val DISMISS_ROW = "Dismiss"
         const val DISMISS_ROW_ID = "import-last-dismiss"
+        /**
+         * How long the Import page's push and pop are given ([pushImportPage], [popImportPage]):
+         * the transition ran 6 s on the fourth recording's emulator and the tree trailed it by
+         * seconds more; the scene's frames are read after the motion either way.
+         */
+        const val PUSH_WAIT_MS = 20_000L
         /** How long a result row is waited for, tree then DOM ([awaitRow]). */
         const val ROW_WAIT_MS = 8_000L
         /** How long the tree alone is given before the chrome's DOM is read for a row ([awaitRow]). */
