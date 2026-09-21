@@ -2486,6 +2486,36 @@ describe('the download row menu', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The History page's row menu (v2 §10.1: selection is a mode the menu can enter)
+// ---------------------------------------------------------------------------
+
+describe('the history row menu', () => {
+  it('offers Select between the copy and the removals, and Select asks the page to pick the row', () => {
+    const h = harness(DESKTOP)
+    h.browser.handleCommand(h.win, 'history.contextMenu', {
+      visitId: 'v1',
+      url: 'https://example.com/docs'
+    })
+    expect(labels(h.shown())).toEqual([
+      'Open in New Tab',
+      'Open in New Window',
+      'Open in New Private Window',
+      '-',
+      'Copy Link',
+      '-',
+      'Select',
+      'Remove from History',
+      'Forget About This Page',
+      '-',
+      'More from This Site'
+    ])
+    h.sent.length = 0
+    h.shown().find((item) => item.label === 'Select')!.click!()
+    expect(h.sent).toEqual(['history.select'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Where a menu opens for the keyboard (Shift+F10, the Menu key; a11y-08)
 // ---------------------------------------------------------------------------
 

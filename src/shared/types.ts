@@ -4741,6 +4741,11 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** History changed: visits are throttled to twice a second, deletions arrive at once. */
   'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  /**
+   * "Select" in a History page row's menu: the page picks the visit, entering its selection mode
+   * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
+   */
+  'history.select': { visitId: string }
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –

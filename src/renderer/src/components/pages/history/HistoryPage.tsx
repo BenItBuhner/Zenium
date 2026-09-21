@@ -40,10 +40,15 @@ interface Picked {
  * follows it as `zen://history?q=<text>` without a history entry, so the address says what the
  * page shows and a restored tab comes back searching, and a query the URL brings – Chrome's
  * "More from this site", the omnibox's `@history <text>`, back and forward – fills the field.
- * Rows select per §9.6: the checkbox on the first line, the row on `--v2-selected` while it is
- * picked; while anything is selected the title block's slot holds the count, Delete and Cancel.
+ * Selection is a mode (§9.6, §10.1 – as the phone list's long-press mode): at rest a row leads
+ * with its favicon at the row's 16, no slot held for a checkbox. Ctrl- or Shift-click on a row,
+ * "Select" in its ⋮ menu or Ctrl+A enters the mode: the checkbox column shows on every row while
+ * it lasts (the favicons move once, at its start), a picked row sits on `--v2-selected`, a plain
+ * click picks or drops a row, Shift-click picks the run from the last picked one, and the title
+ * block's slot holds the count, Delete and Cancel. Cancel, Escape, dropping the last picked row
+ * or deleting the selection leaves the mode and the column goes.
  * Keyboard (§9.22): the arrows walk the rows, Space picks, Enter opens, Delete removes the
- * focused row or the selection, Escape clears the selection; Ctrl+F on the tab focuses the field.
+ * focused row or the selection, Escape leaves the mode; Ctrl+F on the tab focuses the field.
  * "Clear browsing data…" is the services dialog through the frame dialog host (§9.23).
  */
 export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
@@ -51,6 +56,8 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
   const [closed, setClosed] = useState<ClosedEntrySummary[]>([])
   const field = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
+  /** The last row picked or dropped: where a Shift-click's run starts. */
+  const anchor = useRef<string | null>(null)
 
   // The URL and the field, kept as one (`usePageSearch`): the tab's URL follows a settled search
   // as `zen://history?q=<text>` without a history entry.
@@ -98,10 +105,30 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
     }
   }, [])
 
+  // The row's menu asked for the row (the core's "Select"): picked into the list shown now.
+  useEffect(
+    () =>
+      onEvent('history.select', ({ visitId }) => {
+        anchor.current = visitId
+        setPicked((current) => {
+          const ids = new Set(current.text === text ? current.ids : EMPTY)
+          ids.add(visitId)
+          return { text, ids }
+        })
+      }),
+    [text]
+  )
+
   const open = (url: string, newTab: boolean): void => {
     run('urlbar.submit', { input: url, newTab, tabId: tab.id })
   }
+  /** The visits' ids in the order the page shows them. */
+  const shownIds = (): string[] =>
+    [...(list.current?.querySelectorAll('[data-visit-id]') ?? [])].map(
+      (row) => row.getAttribute('data-visit-id') ?? ''
+    )
   const toggle = (id: string, checked: boolean): void => {
+    anchor.current = id
     setSelected((current) => {
       if (current.has(id) === checked) return current
       const next = new Set(current)
@@ -109,6 +136,24 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
       else next.delete(id)
       return next
     })
+  }
+  /** Shift-click: the run from the last picked row to this one joins the selection. */
+  const extend = (id: string): void => {
+    const ids = shownIds()
+    const from = anchor.current ? ids.indexOf(anchor.current) : -1
+    const to = ids.indexOf(id)
+    if (from === -1 || to === -1) {
+      toggle(id, true)
+      return
+    }
+    const span = ids.slice(Math.min(from, to), Math.max(from, to) + 1)
+    setSelected((current) => new Set([...current, ...span]))
+  }
+  const selectAll = (): void => {
+    const ids = shownIds()
+    if (ids.length === 0) return
+    anchor.current = null
+    setSelected(() => new Set(ids))
   }
   const remove = (ids: readonly string[]): void => {
     if (ids.length === 0) return
@@ -121,6 +166,7 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
     run('history.deleteVisits', { ids: [...ids] })
   }
 
+  // The mode lasts while anything is picked: dropping or deleting the last row leaves it.
   const selecting = selected.size > 0
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (inTextField(e.target)) return
@@ -128,6 +174,12 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
       e.preventDefault()
       e.stopPropagation()
       setSelected(() => EMPTY)
+      return
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
+      // Ctrl+A picks every visit shown, entering the mode (the field keeps its own select-all).
+      e.preventDefault()
+      selectAll()
       return
     }
     if (e.key === 'Delete') {
@@ -197,13 +249,15 @@ export function HistoryPage({ tab }: { tab: Tab }): JSX.Element {
       }
     >
       <div ref={list} data-selecting={selecting || undefined} onKeyDown={(e) => walkRows(e, list)}>
-        {closed.length > 0 && !text && <RecentlyClosed entries={closed} />}
+        {closed.length > 0 && !text && <RecentlyClosed entries={closed} selecting={selecting} />}
         <VisitList
           // A new search starts over at the first page.
           key={text}
           text={text}
           selected={selected}
+          selecting={selecting}
           onToggle={toggle}
+          onExtend={extend}
           onOpen={open}
         />
       </div>
@@ -221,15 +275,23 @@ interface Loaded {
   now: number
 }
 
+/** What a row needs of the selection: whether the mode is on and how a row joins or leaves it. */
+interface Selection {
+  selected: ReadonlySet<string>
+  selecting: boolean
+  onToggle: (id: string, checked: boolean) => void
+  onExtend: (id: string) => void
+}
+
 function VisitList({
   text,
   selected,
+  selecting,
   onToggle,
+  onExtend,
   onOpen
-}: {
+}: Selection & {
   text: string
-  selected: ReadonlySet<string>
-  onToggle: (id: string, checked: boolean) => void
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element | null {
   const [limit, setLimit] = useState(PAGE_SIZE)
@@ -277,7 +339,9 @@ function VisitList({
           now={loaded.now}
           terms={terms}
           selected={selected}
+          selecting={selecting}
           onToggle={onToggle}
+          onExtend={onExtend}
           onOpen={onOpen}
         />
       ))}
@@ -305,14 +369,14 @@ function DayGroup({
   now,
   terms,
   selected,
+  selecting,
   onToggle,
+  onExtend,
   onOpen
-}: {
+}: Selection & {
   group: HistoryDayGroup
   now: number
   terms: string[]
-  selected: ReadonlySet<string>
-  onToggle: (id: string, checked: boolean) => void
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element {
   // "Today", "Yesterday", the weekday for the rest of the week, then the date: the phone
@@ -325,9 +389,11 @@ function DayGroup({
       aside={group.visits.length}
       data-day={group.dayKey}
       control={
+        // The day's ⋮ follows the rows' rule (§10.1): on approach, so at rest the heading is its
+        // text and count, ending where the rows' times do (Chrome's date headers are text alone).
         <button
           type="button"
-          className="zen-v2-icon-button"
+          className="zen-v2-icon-button zen-page-heading-reveal"
           title="Options for this day"
           aria-label={`Options for ${label}`}
           aria-haspopup="menu"
@@ -346,7 +412,9 @@ function DayGroup({
             visit={visit}
             terms={terms}
             selected={selected.has(visit.id)}
+            selecting={selecting}
             onToggle={onToggle}
+            onExtend={onExtend}
             onOpen={onOpen}
           />
         ))}
@@ -362,13 +430,14 @@ function VisitRow({
   visit,
   terms,
   selected,
+  selecting,
   onToggle,
+  onExtend,
   onOpen
-}: {
+}: Omit<Selection, 'selected'> & {
   visit: HistoryVisit
   terms: string[]
   selected: boolean
-  onToggle: (id: string, checked: boolean) => void
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element {
   const extensions = useExtensionList()
@@ -386,13 +455,16 @@ function VisitRow({
       data-visit-id={visit.id}
       onContextMenu={menu}
     >
-      <input
-        type="checkbox"
-        className="zen-v2-checkbox zen-page-row-check zen-page-row-reveal"
-        checked={selected}
-        aria-label={`Select ${title}`}
-        onChange={(e) => onToggle(visit.id, e.target.checked)}
-      />
+      {/* The checkbox column is the mode's: on every row while it lasts, none at rest. */}
+      {selecting && (
+        <input
+          type="checkbox"
+          className="zen-v2-checkbox zen-page-row-check"
+          checked={selected}
+          aria-label={`Select ${title}`}
+          onChange={(e) => onToggle(visit.id, e.target.checked)}
+        />
+      )}
       <span className="zen-page-row-lead" aria-hidden>
         <FaviconImage src={visit.favicon} />
       </span>
@@ -402,8 +474,12 @@ function VisitRow({
         data-row-focus=""
         title={presentedUrl(visit.url)}
         onClick={(e) => {
-          if (e.shiftKey) onToggle(visit.id, !selected)
-          else onOpen(visit.url, e.ctrlKey || e.metaKey)
+          // Shift-click picks the run from the last picked row; Ctrl-click picks this one and
+          // so enters the mode; inside the mode a plain click picks or drops the row (the
+          // middle button and Enter still open it).
+          if (e.shiftKey) onExtend(visit.id)
+          else if (e.ctrlKey || e.metaKey || selecting) onToggle(visit.id, !selected)
+          else onOpen(visit.url, false)
         }}
         onAuxClick={(e) => e.button === 1 && onOpen(visit.url, true)}
         onKeyDown={(e) => {
@@ -495,9 +571,17 @@ function escapeRegExp(s: string): string {
 /**
  * The window's recently closed tabs and windows (Chrome's "Recently closed" on its history
  * page) as the page's first group: a row restores its entry; the heading's control clears the
- * list. A closed page tab (Settings, this page's siblings) carries its glyph as its favicon.
+ * list (on approach, as the day headings' ⋮). A closed page tab (Settings, this page's siblings)
+ * carries its glyph as its favicon. Its rows are not picked, but hold the checkbox column's
+ * width while the mode lasts so every favicon on the page moves as one.
  */
-function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Element {
+function RecentlyClosed({
+  entries,
+  selecting
+}: {
+  entries: ClosedEntrySummary[]
+  selecting: boolean
+}): JSX.Element {
   const extensions = useExtensionList()
   return (
     <PageGroup
@@ -508,7 +592,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
       control={
         <button
           type="button"
-          className="zen-v2-icon-button"
+          className="zen-v2-icon-button zen-page-heading-reveal"
           title="Clear the recently closed list"
           aria-label="Clear the recently closed list"
           onClick={() => run('session.clearRecentlyClosed', undefined)}
@@ -535,8 +619,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
                 : host
           return (
             <li key={entry.id} className="zen-v2-row zen-page-row" data-closed-id={entry.id}>
-              {/* Keeps the favicons in line with the visit rows, which lead with a checkbox. */}
-              <span className="zen-page-row-check" aria-hidden />
+              {selecting && <span className="zen-page-row-check" aria-hidden />}
               <span className="zen-page-row-lead" aria-hidden>
                 {entry.kind === 'window' ? (
                   <AppWindow className="zen-page-row-favicon zen-page-row-favicon-fallback" />

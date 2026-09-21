@@ -2110,7 +2110,11 @@ export class Menus {
   // History page
   // ---------------------------------------------------------------------------
 
-  /** Context menu of one visit on the history page. */
+  /**
+   * Context menu of one visit on the history page. "Select" picks the row on the page (the page's
+   * selection is a mode entered from here, by Ctrl/Shift-click or Ctrl+A; the checkboxes show
+   * while it lasts) so several can be removed at once.
+   */
   showHistoryContextMenu(visitId: string, url: string, win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, history, state } = this.browser
     const caps = state.capabilities
@@ -2136,6 +2140,7 @@ export class Menus {
         { type: 'separator' },
         { label: 'Copy Link', click: () => this.browser.platform.clipboard.writeText(url) },
         { type: 'separator' },
+        { label: 'Select', click: () => this.browser.emit('history.select', { visitId }, win) },
         { label: 'Remove from History', click: () => history.deleteVisits([visitId]) },
         {
           label: 'Forget About This Page',

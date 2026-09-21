@@ -9,8 +9,10 @@ import { dayKeyOf } from '@shared/dayKey'
  * The History page tab (design language v2 §10.1; Chrome's chrome://history): the title block
  * with "Clear browsing data…", the search field that filters through `history.grouped` and
  * moves the tab's URL to `zen://history?q=` without a history entry, the day groups as §9.27
- * headings over §9.21 two-line rows, §9.6 selection with the count, Delete and Cancel in the
- * title block's slot, Recently closed as the page's first group, and the §9.17 empty state.
+ * headings (their ⋮ on approach) over §9.21 two-line rows with no slot held at rest, selection
+ * as a mode (§9.6, §10.1: entered by Ctrl/Shift-click, the row menu's Select or Ctrl+A, the
+ * checkbox column on every row while it lasts, the count, Delete and Cancel in the title block's
+ * slot), Recently closed as the page's first group, and the §9.17 empty state.
  */
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -114,7 +116,22 @@ const invoke = vi.fn<(name: string, args?: unknown) => Promise<unknown>>(async (
   if (name === 'session.recentlyClosed') return closed
   return null
 })
-Object.assign(window, { zen: { invoke, on: () => () => undefined } })
+/** The core's events the page listens for, fired by name. */
+const listeners = new Map<string, Set<(payload: unknown) => void>>()
+Object.assign(window, {
+  zen: {
+    invoke,
+    on: (name: string, fn: (payload: unknown) => void) => {
+      const set = listeners.get(name) ?? new Set()
+      set.add(fn)
+      listeners.set(name, set)
+      return () => set.delete(fn)
+    }
+  }
+})
+function emit(name: string, payload: unknown): void {
+  for (const fn of listeners.get(name) ?? []) fn(payload)
+}
 
 const { HistoryPage } = await import('../HistoryPage')
 
@@ -188,6 +205,13 @@ function text(el: Element | null | undefined): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
+/** A click on a visit row's target (its text), with the modifiers a pointer would carry. */
+function rowClick(el: HTMLElement, id: string, init: MouseEventInit = {}): void {
+  el.querySelector<HTMLButtonElement>(
+    `[data-visit-id="${id}"] button[data-row-focus]`
+  )!.dispatchEvent(new MouseEvent('click', { bubbles: true, ...init }))
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   invoke.mockClear()
@@ -245,18 +269,30 @@ describe('the History page tab (§10.1)', () => {
     ])
     const today = el.querySelector(`[data-day="${TODAY}"]`)!
     expect(text(today.querySelector('.zen-page-heading-aside'))).toBe('2')
+    // The day's ⋮ follows the rows' rule – on approach – so at rest the heading is its text and
+    // count; Recently closed's clear the same. Both stay buttons in the tab order.
+    const dayMenu = today.querySelector('.zen-page-heading > button[aria-haspopup="menu"]')!
+    expect(dayMenu.classList.contains('zen-page-heading-reveal')).toBe(true)
+    expect(dayMenu.getAttribute('aria-label')).toBe('Options for Today')
+    expect(
+      el
+        .querySelector('[data-testid="history-recently-closed"] .zen-page-heading > button')!
+        .classList.contains('zen-page-heading-reveal')
+    ).toBe(true)
     const rows = [...today.querySelectorAll('li.zen-v2-row.zen-page-row')]
     expect(rows).toHaveLength(2)
     const first = rows[0]!
     expect(first.getAttribute('data-visit-id')).toBe('v1')
+    // The favicon leads the row: no checkbox and no slot held for one at rest, on any row.
+    expect(first.firstElementChild!.classList.contains('zen-page-row-lead')).toBe(true)
+    expect(el.querySelectorAll('.zen-page-row-check, input.zen-v2-checkbox')).toHaveLength(0)
     expect(text(first.querySelector('.zen-page-row-label'))).toBe('Example docs')
     expect(text(first.querySelector('.zen-page-row-desc'))).toBe('example.com')
-    expect(first.querySelector('input.zen-v2-checkbox')).not.toBeNull()
     expect(first.querySelector('time.zen-page-row-time')).not.toBeNull()
     expect(first.querySelector('button[aria-haspopup="menu"]')).not.toBeNull()
   })
 
-  it('opens a row in the tab, in a new tab on ctrl-click, and anchors the ⋮ on the row menu', async () => {
+  it('opens a row in the tab, in a new tab on a middle click (Ctrl-click picks), and anchors the ⋮ on the row menu', async () => {
     const el = await mountPage()
     const row = el.querySelector('[data-visit-id="v1"]')!
     const target = row.querySelector<HTMLButtonElement>('button[data-row-focus]')!
@@ -267,9 +303,10 @@ describe('the History page tab (§10.1)', () => {
       tabId: 'history'
     })
     await act(async () =>
-      target.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+      target.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, button: 1 }))
     )
     expect(calls('urlbar.submit').at(-1)).toMatchObject({ newTab: true })
+    expect(calls('urlbar.submit')).toHaveLength(2)
     const more = row.querySelector<HTMLButtonElement>(
       'button[aria-label="Actions for Example docs"]'
     )!
@@ -280,40 +317,100 @@ describe('the History page tab (§10.1)', () => {
     })
   })
 
-  it('selects rows per §9.6: the checkbox marks the row, the slot shows the count, Delete removes them', async () => {
+  it('selection is a mode (§9.6, §10.1): Ctrl-click enters it, the checkbox column shows on every row, the slot shows the count, Delete removes the picked and leaves it', async () => {
     const el = await mountPage()
     const row = el.querySelector('[data-visit-id="v1"]')!
-    const box = row.querySelector<HTMLInputElement>('input.zen-v2-checkbox')!
-    await act(async () => box.click())
+    await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
+    // Picked, not opened.
+    expect(calls('urlbar.submit')).toEqual([])
     expect(row.hasAttribute('data-selected')).toBe(true)
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('1 selected')
     expect(el.querySelector('[data-testid="history-clear-browsing-data"]')).toBeNull()
-    // Every row reveals its checkbox while anything is picked.
     expect(el.querySelector('[data-selecting]')).not.toBeNull()
-    const second = el.querySelector(
-      '[data-visit-id="v2"] input.zen-v2-checkbox'
-    ) as HTMLInputElement
+    // The column: a checkbox on each of the five visit rows, the two closed rows holding its
+    // width so every favicon on the page moved as one.
+    expect(
+      el.querySelectorAll('[data-visit-id] input.zen-v2-checkbox.zen-page-row-check')
+    ).toHaveLength(5)
+    expect(el.querySelectorAll('[data-closed-id] .zen-page-row-check')).toHaveLength(2)
+    expect(row.firstElementChild!.classList.contains('zen-page-row-check')).toBe(true)
+    // In the mode a row's checkbox and a plain click on the row both pick or drop it.
+    const second = el.querySelector<HTMLInputElement>('[data-visit-id="v2"] input.zen-v2-checkbox')!
     await act(async () => second.click())
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
+    await act(async () => rowClick(el, 'v3'))
+    expect(calls('urlbar.submit')).toEqual([])
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('3 selected')
+    await act(async () => rowClick(el, 'v3'))
     expect(text(el.querySelector('.zen-page-title-count'))).toBe('2 selected')
     await act(async () =>
       el.querySelector<HTMLButtonElement>('[data-testid="history-delete-selected"]')!.click()
     )
     expect(calls('history.deleteVisits')).toEqual([{ ids: ['v1', 'v2'] }])
-    // The selection is spent; the block's slot is Clear browsing data… again.
+    // Deleting the selection leaves the mode: the column goes, the slot is Clear browsing
+    // data… again, a plain click opens.
     expect(el.querySelector('.zen-page-title-count')).toBeNull()
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+    expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
     expect(el.querySelector('[data-testid="history-clear-browsing-data"]')).not.toBeNull()
+    await act(async () => rowClick(el, 'v3'))
+    expect(calls('urlbar.submit')).toEqual([
+      { input: 'https://zen-browser.app/', newTab: false, tabId: 'history' }
+    ])
   })
 
-  it('Cancel and Escape clear the selection; Delete on a focused row removes just that visit', async () => {
+  it('Shift-click picks the run from the last picked row; Ctrl+A picks every visit shown; Escape leaves the mode', async () => {
     const el = await mountPage()
-    const box = el.querySelector<HTMLInputElement>('[data-visit-id="v1"] input')!
-    await act(async () => box.click())
+    await act(async () => rowClick(el, 'v2', { ctrlKey: true }))
+    await act(async () => rowClick(el, 'v4', { shiftKey: true }))
+    expect(
+      [...el.querySelectorAll('[data-selected]')].map((r) => r.getAttribute('data-visit-id'))
+    ).toEqual(['v2', 'v3', 'v4'])
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('3 selected')
+    const target = el.querySelector<HTMLButtonElement>(
+      '[data-visit-id="v1"] button[data-row-focus]'
+    )!
+    target.focus()
+    await act(async () =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
+    )
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('5 selected')
+    await act(async () =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(el.querySelector('[data-selected]')).toBeNull()
+    expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
+    // Ctrl+A with nothing picked enters the mode by itself.
+    await act(async () =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }))
+    )
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('5 selected')
+    expect(el.querySelectorAll('[data-visit-id] input.zen-v2-checkbox')).toHaveLength(5)
+  })
+
+  it('"Select" in the row’s ⋮ menu (the core’s history.select) picks the row and enters the mode; dropping the last picked leaves it', async () => {
+    const el = await mountPage()
+    await act(async () => emit('history.select', { visitId: 'v3' }))
+    expect(el.querySelector('[data-visit-id="v3"]')!.hasAttribute('data-selected')).toBe(true)
+    expect(text(el.querySelector('.zen-page-title-count'))).toBe('1 selected')
+    expect(el.querySelectorAll('[data-visit-id] input.zen-v2-checkbox')).toHaveLength(5)
+    await act(async () =>
+      el.querySelector<HTMLInputElement>('[data-visit-id="v3"] input.zen-v2-checkbox')!.click()
+    )
+    expect(el.querySelector('[data-selecting]')).toBeNull()
+    expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
+  })
+
+  it('Cancel leaves the mode; Delete on a focused row removes just that visit', async () => {
+    const el = await mountPage()
+    await act(async () => rowClick(el, 'v1', { ctrlKey: true }))
     await act(async () =>
       [...el.querySelectorAll<HTMLButtonElement>('.zen-page-title-actions button')]
         .find((b) => text(b) === 'Cancel')!
         .click()
     )
     expect(el.querySelector('[data-selected]')).toBeNull()
+    expect(el.querySelectorAll('.zen-page-row-check')).toHaveLength(0)
     const target = el.querySelector<HTMLButtonElement>(
       '[data-visit-id="v3"] button[data-row-focus]'
     )!

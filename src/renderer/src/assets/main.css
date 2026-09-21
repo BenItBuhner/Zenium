@@ -8414,6 +8414,22 @@
 .zen-page-heading > .zen-v2-icon-button {
   margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
 }
+/*
+ * A heading's control that follows the rows' rule (§10.1, the History page's day ⋮ and Recently
+ * closed's clear): there for the keyboard (opacity, never visibility), painted while the pointer
+ * is over the heading's line or the focus is in it. Its 28 box stands over the rows' own ⋮
+ * slot, 12 from the count as the rows' slot is from their times (the heading's other gaps stay
+ * 8), so at rest the count and the times end on one edge – Chrome's date headers are text alone.
+ */
+.zen-page-heading > .zen-page-heading-reveal {
+  margin-inline-start: 4px;
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-heading:hover > .zen-page-heading-reveal,
+.zen-page-heading:focus-within > .zen-page-heading-reveal {
+  opacity: 1;
+}
 .zen-page-rows {
   display: flex;
   flex-direction: column;
@@ -8422,11 +8438,13 @@
   list-style: none;
 }
 /*
- * A two-line row (§9.2, §9.21) on the shared primitive: the leading checkbox and the 16 favicon
- * on the first text line (the (line − box) / 2 offset, §9.2), the label 15/20 over the host
- * 13/20 deemphasised, the time 13 at 69 % and the ⋮ centred on the row's height (§9.18). The
+ * A two-line row (§9.2, §9.21) on the shared primitive: the 16 favicon at the row's 16 on the
+ * first text line (the (line − box) / 2 offset, §9.2), the label 15/20 over the host 13/20
+ * deemphasised at 44, the time 13 at 69 % and the ⋮ centred on the row's height (§9.18). The
  * row's text is a button – the target that opens the entry – and the row's fill follows the
- * pointer over any of it. A picked row (`data-selected`, §9.6) sits on `--v2-selected`, under
+ * pointer over any of it. Selection is a mode (§9.6, §10.1): no slot is held for a checkbox at
+ * rest; while anything is picked every row leads with the checkbox column (`.zen-page-row-check`,
+ * the favicons moving once), and a picked row (`data-selected`) sits on `--v2-selected`, under
  * the pointer too, its checkbox filled in the accent by the primitive.
  */
 .zen-page-row {
@@ -8498,10 +8516,9 @@
   white-space: nowrap;
 }
 /*
- * What a row shows on approach – its checkbox and its ⋮ – is there at rest for the keyboard
- * (opacity, never visibility: a hidden control is not in the tab order) and paints under the
- * pointer, while the row has the focus, while it is picked, and on every row while anything on
- * the page is picked.
+ * What a row shows on approach – its ⋮ – is there at rest for the keyboard (opacity, never
+ * visibility: a hidden control is not in the tab order) and paints under the pointer, while the
+ * row has the focus, while it is picked, and on every row while anything on the page is picked.
  */
 .zen-page-row .zen-page-row-reveal {
   opacity: 0;
