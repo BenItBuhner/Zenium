@@ -4785,7 +4785,14 @@
     flex-shrink: 0;
     white-space: pre;
   }
-  /* The status is the row's second 13/20 line (`Blocked · Dangerous` names a waiting row's tier); the wrap is kept for a long failure reason. */
+  /*
+   * The status is the row's second 13/20 line – its description in §9.2's terms (`Blocked ·
+   * Dangerous` names a waiting row's tier; `Failed · <reason>` is the engine's sentence). Every
+   * line the verbs table names fits one line at scale 1, so the two-line clamp is reached only
+   * at the larger text scales, where the longest reason ("File name or location is too long")
+   * takes a second line rather than losing its words: A11Y-05's ruling, descriptions keep their
+   * two lines. A verdict's sentence is the detail line's, clamped the same below.
+   */
   .zen-downloads-status {
     display: -webkit-box;
     -webkit-box-orient: vertical;
