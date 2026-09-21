@@ -532,7 +532,7 @@ export function NavRow({
               >
                 <AppWindow className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
                 {blocked.length > 1 && (
-                  <span className="rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-5 font-semibold text-[var(--v2-control-text-deemphasized)] tabular-nums">
+                  <span className="rounded-full bg-[var(--v2-control-fill)] px-2 text-[13px] leading-[var(--v2-line-small)] font-semibold text-[var(--v2-control-text-deemphasized)] tabular-nums">
                     {blocked.length}
                   </span>
                 )}

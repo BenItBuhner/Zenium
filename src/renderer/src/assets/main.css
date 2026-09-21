@@ -3673,9 +3673,9 @@
    * below, the first 4 under the title block, since the rows are two lines tall and the Settings
    * groups' 20 would read as a gap – is the unlayered modifier after the bookmark chrome's
    * block, beside the primitive), the selected row (the keyboard's, the pointer's) in the row's
-   * own press fill, the query's matches in the heading weight with no highlight fill, the
-   * trailing glyphs in the deemphasised ink, and the close button shown for the selected row and
-   * when it has the focus alone, as Chrome shows its X.
+   * own press fill, the trailing glyphs in the deemphasised ink, and the close button shown for
+   * the selected row and when it has the focus alone, as Chrome shows its X. The query's
+   * matches in the heading weight are the shared `.zen-v2-row mark` rule beside the primitive.
    */
   .zen-tab-search-heading {
     flex-shrink: 0;
@@ -3687,11 +3687,6 @@
   }
   .zen-tab-search-row[aria-selected='true'] {
     background: var(--v2-fill);
-  }
-  .zen-tab-search-row mark {
-    background: none;
-    color: inherit;
-    font-weight: var(--v2-weight-heading);
   }
   .zen-tab-search-glyph {
     flex-shrink: 0;
@@ -3752,26 +3747,17 @@
   /*
    * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
    * §5, §6, §9.20): the shared `.zen-v2-panel` chrome and `.zen-v2-menu` rows (intrinsic 232–332,
-   * `--v2-menu-row` rows at 4 in from the edges – the ring's room – with a 16 glyph). Only what
-   * those do not say lives here: the panel is a fixed element of the chrome layer that the
-   * placement helpers position, its rows scroll under a thin bar past the height cap, and it
-   * takes the keys without drawing a ring of its own. A folder row keeps the fill while its
-   * panel stands beside it (`aria-expanded`); the submenu chevron trails in the deemphasised
-   * ink; a drop's target row (§9.4) is the fill with the accent inset, the panel whose end takes
-   * it the accent inset, the chip in the hand thinned to 40% in its own row.
+   * `--v2-menu-row` rows inside the panel's 6 padding with a 16 glyph, a folder's row keeping
+   * the fill while its panel stands beside it and trailing the shared chevron – all the
+   * primitive's). Only what it does not say lives here: the panel is a fixed element of the
+   * chrome layer that the placement helpers position; a drop's target row (§9.4) is the fill
+   * with the accent inset, the panel whose end takes it the accent inset, the chip in the hand
+   * thinned to 40% in its own row.
    */
   .zen-bm-panel {
     position: fixed;
     z-index: 80;
-    outline: none;
     will-change: transform;
-  }
-  /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
-  .zen-bm-panel .zen-v2-menu-item {
-    flex-shrink: 0;
-  }
-  .zen-bm-panel .zen-v2-menu-item[aria-expanded='true'] {
-    background: var(--v2-fill);
   }
   .zen-bm-panel .zen-v2-menu-item[data-target='true'] {
     background: var(--v2-fill);
@@ -3789,10 +3775,6 @@
     width: 16px;
     height: 16px;
     flex-shrink: 0;
-  }
-  .zen-bm-panel-chevron {
-    margin-left: auto;
-    color: var(--v2-text-deemphasized);
   }
 
   /*
@@ -6556,13 +6538,25 @@
  * the body – headings, forms, the empty line – shifts; a list whose first or last row touches
  * the body's edge leaves the same room there itself (the downloads bubble's list). Clipping
  * stays on the panel. One rule for every desktop popover on the shared body: the downloads
- * bubble, tab search, the folder editor, blocked pop-ups, share, the bookmark bubbles. A
- * modifier on the primitive by context, unlayered as the primitive is (§9.34).
+ * bubble, tab search, the folder editor, blocked pop-ups, share, the bookmark bubbles – and the
+ * omnibox dropdown's list (`.zen-omnibox-results`, the same clipped scroller under the field;
+ * shell pass 7(b)). A modifier on the primitive by context, unlayered as the primitive is (§9.34).
  */
-.zen-bm-popover-body .zen-v2-row {
+:is(.zen-bm-popover-body, .zen-omnibox-results) .zen-v2-row {
   width: calc(100% - 2 * var(--v2-ring-room));
   margin-inline: var(--v2-ring-room);
   padding-inline: calc(16px - var(--v2-ring-room));
+}
+/*
+ * A query's matches in a row's text (the tab search popover's titles and hosts, the omnibox
+ * dropdown's titles and completions – omnibox-21; `components/v2/Highlighted.tsx`): the
+ * `<mark>` is weight alone, §4's 600 beside the row's 400, with no highlight fill and the row's
+ * own ink – the way Chrome and Firefox bold the match in a result row.
+ */
+.zen-v2-row mark {
+  background: none;
+  color: inherit;
+  font-weight: var(--v2-weight-heading);
 }
 
 /* The shared v2 field (§9.12): the control height, a hairline, the page behind it. */
@@ -6931,6 +6925,108 @@
 }
 
 /*
+ * The shared menu (§4, §5, §6, §9.6, §9.20, §9.22, §9.30, §9.34; shell pass 7(b)): the one
+ * vocabulary of every menu the renderer draws – a `···`'s `LocalMenu`, the bookmarks bar's
+ * folder panels, the descriptor menus of a host without native popups (`MenuSheet`'s mouse
+ * pose) – on the `.zen-v2-panel` chrome (`--v2-panel`, radius 8, the hairline, the panel
+ * shadow; a right-click's context menu radius 6, §2). The panel holds 6 of padding on every
+ * side; its rows are `--v2-menu-row` (31 on a mouse: §4's 14 px chrome menu size on a 15 line
+ * with 8 above and below; 44 on a phone) at radius 4, edge to edge inside the padding, with a
+ * 16 glyph slot before the label when any row of the menu has one (an icon, a check), the
+ * accelerator (`-hint`) in the deemphasised ink at the trailing edge, a folder's or submenu's
+ * 16 chevron (`-chevron`) there instead; the separators are the hairline with §6's 4 above and
+ * 4 below (Zen's `menuseparator`, the margins #271's panels shipped with). The keyboard cursor
+ * (a focused row) and the pointer's hover take `--v2-fill` – a
+ * cursor, never `--v2-selected` (§9.6) – with no ring of their own, as Firefox's menus
+ * highlight; a row whose panel stands beside it keeps the fill (`aria-expanded`); a disabled
+ * row is §9.30's .4 on the whole row. The panel itself takes the keys (opened by the pointer
+ * it holds the focus, §9.22) without a ring of its own. Width is intrinsic within §5's 232–332
+ * (`placePopover`'s measured mode, §9.20) and past the height cap the rows scroll under the
+ * thin bar. Unlayered like the primitives below, so a surface's modifier wins by specificity
+ * alone.
+ */
+.zen-v2-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 232px;
+  max-width: 332px;
+  padding: 6px;
+  font-size: 14px;
+  line-height: 15px;
+  outline: none;
+  overflow-y: auto;
+}
+.zen-v2-menu[data-context] {
+  border-radius: var(--v2-radius-inner);
+}
+.zen-v2-menu-item {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: var(--v2-menu-row);
+  padding: 0 8px;
+  border-radius: var(--v2-radius-control);
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 120ms var(--zen-ease);
+}
+.zen-v2-menu-item .lucide {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  stroke-width: var(--v2-icon-stroke);
+}
+/* The glyph slot: 16 wide whether or not this row has a glyph, so the labels share one edge. */
+.zen-v2-menu-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  align-items: center;
+  justify-content: center;
+}
+.zen-v2-menu-item:focus-visible,
+.zen-v2-menu-item[aria-expanded='true'] {
+  background: var(--v2-fill);
+  outline: none;
+}
+@media (hover: hover) {
+  .zen-v2-menu-item:hover:not(:disabled) {
+    background: var(--v2-fill);
+  }
+}
+.zen-v2-menu-item:active:not(:disabled) {
+  background: var(--v2-fill-hover);
+}
+.zen-v2-menu-item:disabled {
+  opacity: 0.4;
+}
+.zen-v2-menu-item[data-danger] {
+  color: var(--v2-danger);
+}
+.zen-v2-menu-separator {
+  flex-shrink: 0;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--v2-border);
+}
+.zen-v2-menu-hint {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--v2-text-deemphasized);
+  font-variant-numeric: tabular-nums;
+}
+.zen-v2-menu-chevron {
+  margin-left: auto;
+  color: var(--v2-text-deemphasized);
+}
+.zen-v2-menu-hint + .zen-v2-menu-chevron {
+  margin-left: 0;
+}
+
+/*
  * The shared menulist (§9.34, §6, §9.13; #106 owns the rule, the look the one its review
  * measured): the rectangular trigger, 32 tall on a mouse and 40 on a phone, the secondary
  * button's fill (the text at 10%) and weight (500, §6) inside the hairline, the picked option as
@@ -7001,19 +7097,23 @@
   opacity: 0.4;
 }
 /*
- * Its popover on a mouse (§9.13, §9.20): a `--v2-panel` at radius 12 with 6 padding, the panel
+ * Its popover on a mouse (§9.13, §9.20; components/menus/MenulistPopover.tsx, the one
+ * implementation every menulist opens): a `--v2-panel` at radius 12 with 6 padding, the panel
  * shadow and the hairline, 28 rows at radius 6 with a trailing 16 check on the current option.
- * A menulist's list is one of the native-like menus §9.20 exempts from the fixed widths: it
- * sizes to its longest row within §5's 232–332 and no less than its trigger (`--zen-anchor-width`,
- * the trigger's width set inline by the renderer), and the chrome layer's placement caps its
- * height. An option's description (a model's size) is a second line under the label, clamped to
- * one line (§9.13: the anchor's space is borrowed), the row growing to 48 around the two. The
- * keyboard walks the options as focus, so the focused option carries the hover fill.
+ * A menulist's list is one of the native-like menus §9.20 exempts from the fixed widths: it is
+ * at least as wide as its trigger (`--zen-anchor-width`, the trigger's width set inline by the
+ * renderer) and grows to its longest row up to §5's 332 – §5's 232 floor is for menus, not for
+ * it (§9.13) – and the chrome layer's placement caps its height. An option's description (a
+ * model's size) is a second line under the label, clamped to one line (§9.13: the anchor's space
+ * is borrowed), the row growing to 48 around the two. The keyboard walks the options as focus
+ * and the focused option is the list's cursor (§9.6): it carries the fill whether the focus is
+ * visible or not – the current option lit as the list opens under a pointer, as a `<select>`'s
+ * is – and no ring besides.
  */
 .zen-v2-menulist-popup {
   display: flex;
-  min-width: max(232px, var(--zen-anchor-width, 0px));
-  max-width: 332px;
+  min-width: var(--zen-anchor-width, 0px);
+  max-width: max(332px, var(--zen-anchor-width, 0px));
   flex-direction: column;
   padding: 6px;
   overflow-y: auto;
@@ -7041,9 +7141,11 @@
   white-space: nowrap;
   transition: background 120ms var(--zen-ease);
 }
-.zen-v2-menulist-option:focus-visible,
+.zen-v2-menulist-option:focus,
 .zen-v2-menulist-option:active {
   background: var(--v2-fill);
+}
+.zen-v2-menulist-option:focus-visible {
   outline: none;
 }
 @media (hover: hover) {
@@ -9487,12 +9589,24 @@
 /*
  * The desktop URL bar on design language v2 (§6 "Floating URL bar", §9.20, §9.22, §9.29): a
  * neutral opaque surface – radius 12 and the URL bar shadow when it floats; anchored under the
- * pill it is a popover at radius 8 with a hairline and the panel shadow – a 62 px field with a
- * hairline under it, 50 px rows with a 16 px favicon, the title then ` — ` then the host at 69%,
- * the chrome menu size at 400. The keyboard's highlight and the pointer's hover are two things:
- * hovering never moves the selection, so the hover fill is the lighter of the two. Badges (the
- * keyword chip, "Current tab") are v2 pills: 20 tall, 13/600, padding 0 8, fill on deemphasised
- * ink. Page tokens only; no blur.
+ * pill it is a popover at radius 8 with a hairline and the panel shadow – the field as the
+ * palette's first row, 62 with a hairline under it and nothing at its end (no go button, no
+ * badge – §6), then the dropdown (shell pass 7(b), the lead's ruling on #289). Its rows are the
+ * shared `.zen-v2-row` (§9.34; the modifiers are unlayered after this block, beside the
+ * primitive) on ONE line at 50 whatever the row's kind – §4: a suggestion row stays one line at
+ * every scale, as Zen's, Firefox's, Chrome's and the phone's 48 rows; a second line here doubles
+ * the list's height to repeat the engine's name – the 16 px glyph in the lead slot (the kind's
+ * at stroke 1.5, or the site's favicon), the title with the typed match in the heading weight
+ * (omnibox-21), then ` — ` and the host or the engine in the deemphasised ink, the line
+ * truncating from its end; "Search with <Engine>" on the first search row only (Zen's heuristic
+ * row, `Urlbar.tsx`); the remove X the 28 px icon button trailing the text; the list leaving
+ * §9.20's ring room – the rows 2 in from the list's sides, their text at 16, 4 above the first
+ * and below the last. The keyboard's highlight and the pointer's hover are two things –
+ * hovering never moves the highlight – and both are the row's `--v2-fill` (§9.6: a cursor, not
+ * a selection). The keyword chip is a v2 pill: 20 tall, 13/600, padding 0 8, fill on
+ * deemphasised ink; the hint strip at the foot is 13 on the small line in the deemphasised ink
+ * with its key chips 20 tall. When the list overflows it scrolls under the chassis' overlay
+ * scrollbar (§9.20). Page tokens only; no blur.
  */
 @layer components {
   .zen-omnibox {
@@ -9548,36 +9662,19 @@
     line-height: var(--v2-line-small);
     white-space: nowrap;
   }
+  /* The list: 4 above the first row and below the last (§9.20's list inset), the hairline above. */
   .zen-omnibox-results {
-    padding: 6px;
+    padding: 4px 0;
     border-top: 1px solid var(--v2-border);
   }
-  .zen-omnibox-row {
-    height: 50px;
-    gap: 8px;
-    padding: 0 10px;
-    border-radius: var(--v2-radius-card);
-  }
+  /*
+   * The row's one line (§6): the glyph's 12 to the text as the primitive's lead; the title
+   * takes its own width and the host what is left, each ellipsing, so a long line loses its
+   * end first – the host, then the title's tail – and never grows a second line. The row's
+   * 50 is the unlayered modifier after this block, beside the primitive it overrides.
+   */
   .zen-omnibox-row-body {
     gap: 12px;
-  }
-  .zen-omnibox-row:hover {
-    background: color-mix(in srgb, var(--v2-fill) 50%, transparent);
-  }
-  .zen-omnibox-row[data-selected='true'],
-  .zen-omnibox-row[data-selected='true']:hover {
-    background: var(--v2-fill);
-  }
-  /*
-   * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
-   * the global reduced-motion rule cuts it to a frame. It is a pill chip (a button) in the
-   * badge look, so a click can leave keyword mode.
-   */
-  .zen-omnibox-keyword-chip {
-    animation: zen-omnibox-chip-in 150ms var(--zen-ease);
-  }
-  button.zen-omnibox-keyword-chip:hover {
-    color: var(--v2-text);
   }
   .zen-omnibox-row-icon {
     width: var(--v2-icon);
@@ -9599,33 +9696,60 @@
     white-space: nowrap;
     color: var(--v2-text-deemphasized);
   }
+  /*
+   * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
+   * the global reduced-motion rule cuts it to a frame. It is a pill chip (a button) in the
+   * badge look, so a click can leave keyword mode.
+   */
+  .zen-omnibox-keyword-chip {
+    animation: zen-omnibox-chip-in 150ms var(--zen-ease);
+  }
+  button.zen-omnibox-keyword-chip:hover {
+    color: var(--v2-text);
+  }
+  /*
+   * An open tab's "Switch to tab" (Chrome's switch hint): a trailing indicator inside the
+   * option – it is part of what the row says – centred on the row (§9.18) at 13 on the small
+   * line in the deemphasised ink, its 16 glyph at the row stroke.
+   */
   .zen-omnibox-row-hint {
     display: inline-flex;
     align-items: center;
+    align-self: center;
     flex-shrink: 0;
     gap: 4px;
     margin-left: auto;
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
   }
+  .zen-omnibox-row-hint > svg {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    stroke-width: var(--v2-icon-stroke);
+  }
+  /* The hint strip (§4): a 32 row – the small line at `--v2-row-pad` – under a hairline. */
   .zen-omnibox-footer {
-    height: 32px;
+    min-height: var(--v2-row);
     gap: 12px;
-    padding: 0 16px;
+    padding: var(--v2-row-pad) 16px;
     border-top: 1px solid var(--v2-border);
     color: var(--v2-text-deemphasized);
     font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     white-space: nowrap;
   }
+  /* A key chip in the strip: the small line's 20 box at the control radius on the fill. */
   .zen-omnibox-kbd {
     display: inline-flex;
     align-items: center;
-    height: 20px;
+    height: var(--v2-line-small-box);
     padding: 0 6px;
     border-radius: var(--v2-radius-control);
     background: var(--v2-fill);
     font-family: var(--font-sans);
-    font-size: 12px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
   }
   /*
    * The empty split pane's resting field (split-04, `EmptyPane`): the bar's surface above on
@@ -9655,6 +9779,23 @@
  * The dropdown's modifiers on the shared unlayered primitives (§9.34), unlayered by specificity
  * as the Refine arrow's above – a layered rule cannot recolour an unlayered primitive.
  *
+ * The row (`.zen-v2-row.zen-omnibox-row`): §6's 50 – the body line plus 30 at the default
+ * size, growing from the line box as `--v2-row` does, so a larger text size lifts the row and
+ * never wraps it – over the primitive's 32 floor (an unlayered floor, since a layered rule
+ * cannot raise it); the keyboard's highlight is the row's `--v2-fill` (§9.6: a cursor takes
+ * the hover fill and leaves `--v2-selected` for what is picked), held under the pointer and
+ * while its X has the keyboard; the primitive's own hover is the same fill, so a hovered row
+ * and the highlighted one read alike, as Chrome's do. The ring room is the shared popover-body
+ * rule above (§9.20), which lists this body.
+ */
+.zen-v2-row.zen-omnibox-row {
+  min-height: calc(var(--v2-line-body-box) + 30px);
+}
+.zen-v2-row.zen-omnibox-row[data-selected='true'],
+.zen-v2-row.zen-omnibox-row[data-selected='true']:hover {
+  background: var(--v2-fill);
+}
+/*
  * The row's remove X (omnibox-22): the shared 28 px icon button at the row's trailing edge, kept
  * in the layout so the title and host never jump, shown on hover, on the highlighted row and
  * while the keyboard is on it (Tab, omnibox-50); Chrome's hover-only X on removable rows.
@@ -9676,18 +9817,17 @@
 }
 /*
  * A group's heading in the list (zero-suggest's "Recent searches", omnibox-20): the shared
- * `.zen-v2-heading` at a popover list's beat – 12 above, 4 below, 4 under the field's hairline
- * when it comes first – as the tab search popover's; in the dropdown's deemphasised label ink at
- * the rows' 10 gutter, so it lines up with their glyphs.
+ * `.zen-v2-heading` – §9.27's 15/600 at the primitive's 16 gutter, on the rows' text edge – at
+ * a popover list's beat, as the tab search popover's: 12 above, 4 below, and 4 under the
+ * field's hairline when it comes first (the list's own 4 inset, so no margin of its own); in
+ * the deemphasised ink, as that popover's headings are.
  */
 .zen-v2-heading.zen-omnibox-heading {
   margin: 12px 0 4px;
-  padding: 0 10px;
   color: var(--v2-text-deemphasized);
-  font-size: var(--v2-font-small);
 }
 .zen-v2-heading.zen-omnibox-heading:first-child {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 /*

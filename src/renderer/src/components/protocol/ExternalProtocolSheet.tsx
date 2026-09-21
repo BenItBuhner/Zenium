@@ -169,7 +169,7 @@ function Body({
       <div
         className={
           phone
-            ? 'truncate px-4 pb-2 text-[13px] leading-5 text-[var(--v2-text-deemphasized)]'
+            ? 'truncate px-4 pb-2 text-[13px] leading-[var(--v2-line-small)] text-[var(--v2-text-deemphasized)]'
             : 'truncate px-3 text-[13px] leading-[var(--v2-line-small)] text-[var(--zen-muted)]'
         }
         title={request.url}
@@ -180,7 +180,7 @@ function Body({
         <label className="zen-sheet-item zen-sheet-item-two-line cursor-pointer">
           <span className="min-w-0 flex-1">
             <span className="block truncate">Always open {words.plural}</span>
-            <span className="zen-sheet-item-secondary block truncate text-[13px] leading-5">
+            <span className="zen-sheet-item-secondary block truncate text-[13px] leading-[var(--v2-line-small)]">
               {request.appName ? `In ${request.appName}, without asking` : 'Without asking again'}
             </span>
           </span>
