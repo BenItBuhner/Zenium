@@ -310,15 +310,16 @@
 }
 /*
  * Tablets too (TABLET-01): a finger on a 600 dp+ window. The rows, controls and checkboxes of its
- * sheets, menus and panels take the phone's touch numbers – the menu sheet on the tablet is the
- * phone's chassis – and the icon button §9.3's tablet box: 40 × 40 with the 20 glyph.
+ * sheets, menus and panels take the phone's touch numbers, rows growing with the system font size
+ * as the phone's do (A11Y-05) – the menu sheet on the tablet is the phone's chassis – and the
+ * icon button §9.3's tablet box: 40 × 40 with the 20 glyph.
  */
 :root[data-form-factor='tablet'] {
-  --v2-row: 44px;
-  --v2-row-two-line: 64px;
+  --v2-row: calc(var(--v2-line-body-box) + 24px);
+  --v2-row-two-line: calc(var(--v2-line-body-box) + var(--v2-line-small-box) + 24px);
   --v2-control: 40px;
   --v2-checkbox: 20px;
-  --v2-menu-row: 44px;
+  --v2-menu-row: calc(var(--v2-line-body-box) + 24px);
   --v2-icon-button: 40px;
   --v2-icon: 20px;
   --v2-icon-stroke: 1.75;
