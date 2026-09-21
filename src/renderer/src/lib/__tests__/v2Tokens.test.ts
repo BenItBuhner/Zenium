@@ -126,7 +126,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-omnibox-header {', ' * Settings as a tab (design language v2 draft'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
-  ['.zen-page-host {', ' * History page (design language v2 draft'],
+  ['.zen-page-host {', ' * List pages as chrome page tabs'],
+  // The list pages as chrome page tabs – History, the bookmarks manager, Downloads (components/
+  // pages/PageFrame.tsx and pages/history, pages/bookmarks, pages/downloads; §10.1): the sticky
+  // header with the title block and search field, the text column, the group headings, the
+  // two-line rows' slots and reveal, the empty state.
+  ['.zen-page {', '/*\n * Find in page, zoom and fullscreen'],
   // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
   // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
   // field and screenshot strip above it, whose span would enclose it, so it is cut out first.

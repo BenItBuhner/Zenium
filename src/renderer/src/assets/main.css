@@ -8479,198 +8479,307 @@
 }
 
 /* ---------------------------------------------------------------------------
- * History page (design language v2 draft: plain page surface, 32 px rows, 15/600 day headings).
+ * List pages as chrome page tabs – History, the bookmarks manager, Downloads (design language
+ * v2 §10.1, `pages/PageFrame.tsx`): the page fills the content frame on `--v2-page`; its column
+ * scrolls under a sticky header – the 22/600 title block (§9.26) with the page's actions in its
+ * trailing slot (§9.23), the §9.12 search field under it – that draws §9.7's hairline along its
+ * bottom edge once the column has scrolled under it. The body is the Settings content column's
+ * geometry (§10.5, §5): the text column at most 664 inside 32 side margins (the page's 16 plus
+ * the rows' 16 gutter), left-aligned as Zen's; groups are §9.27 sub-headings over §9.21 rows.
+ * Nothing here states a row's or a control's size – those are the primitives' tokens – only
+ * what the pages add: the header's beat, the column, the two-line row's slots and the reveal.
+ * Unlayered like the Settings tab's rules, after them.
  * ------------------------------------------------------------------------- */
-.zen-history {
-  --zen-page-bg: #fbfbfe;
-  --zen-page-fg: #15141a;
-  --zen-page-fg-soft: rgb(21 20 26 / 0.69);
-  --zen-page-hover: rgb(21 20 26 / 0.06);
-  --zen-page-active: rgb(21 20 26 / 0.1);
-  --zen-page-line: rgb(0 0 0 / 0.15);
-  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #000);
-  --zen-page-menu-bg: #f4f4f4;
-  --zen-page-menu-line: rgb(0 0 0 / 0.15);
-  --zen-page-mark: rgb(255 214 0 / 0.45);
-  background: var(--zen-page-bg);
-  color: var(--zen-page-fg);
-  font-size: 15px;
-  line-height: 1.3;
+.zen-page {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
-:root[data-theme='dark'] .zen-history {
-  --zen-page-bg: #1c1b22;
-  --zen-page-fg: #fbfbfe;
-  --zen-page-fg-soft: rgb(251 251 254 / 0.69);
-  --zen-page-hover: rgb(251 251 254 / 0.08);
-  --zen-page-active: rgb(251 251 254 / 0.12);
-  --zen-page-line: rgb(255 255 255 / 0.12);
-  --zen-page-control: color-mix(in srgb, var(--zen-accent) 40%, #fff);
-  --zen-page-menu-bg: #1f1f1f;
-  --zen-page-menu-line: rgb(255 255 255 / 0.12);
-  --zen-page-mark: rgb(255 214 0 / 0.3);
+/* The column scrolls on its own, with the page family's thin overlay scrollbar (§9.20). */
+.zen-page-scroll {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
-.zen-history mark {
-  background: var(--zen-page-mark);
-  color: inherit;
-  border-radius: 2px;
+.zen-page-host,
+.zen-page-host * {
+  scrollbar-color: color-mix(in srgb, var(--v2-text) 30%, transparent) transparent;
 }
-.zen-history-soft {
-  color: var(--zen-page-fg-soft);
-}
-.zen-history-title {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 28px;
-}
-.zen-history-heading {
+/*
+ * The header: sticky at the column's top on the page tone; the hairline is its own `::after`,
+ * off at rest (§9.7: no hairline at rest) and on while the column is scrolled.
+ */
+.zen-page-header {
   position: sticky;
   top: 0;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  height: 40px;
-  background: var(--zen-page-bg);
-  font-size: 15px;
-  font-weight: 600;
+  background: var(--v2-page);
 }
-.zen-history-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 4px;
-}
-.zen-history-row:hover,
-.zen-history-row:focus-within {
-  background: var(--zen-page-hover);
-}
-.zen-history-row[data-selected='true'] {
-  background: color-mix(in srgb, var(--zen-page-control) 14%, transparent);
-}
-.zen-history-row .zen-history-hover {
-  visibility: hidden;
-}
-.zen-history-row:hover .zen-history-hover,
-.zen-history-row:focus-within .zen-history-hover,
-.zen-history [data-selecting='true'] .zen-history-hover {
-  visibility: visible;
-}
-.zen-history-time {
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-}
-/* 16 px checkbox, radius 2, accent when checked. */
-.zen-history-check {
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  flex-shrink: 0;
-  border: 1px solid var(--zen-page-fg-soft);
-  border-radius: 2px;
-  background: transparent;
-  display: inline-grid;
-  place-content: center;
-  cursor: pointer;
-}
-.zen-history-check:checked {
-  border-color: var(--zen-page-control);
-  background: var(--zen-page-control);
-}
-.zen-history-check:checked::after {
+.zen-page-header::after {
   content: '';
-  width: 4px;
-  height: 8px;
-  margin-top: -2px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--v2-border);
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
 }
-:root[data-theme='dark'] .zen-history-check:checked::after {
-  border-color: #1c1b22;
+.zen-page-scroll[data-scrolled] > .zen-page-header::after {
+  opacity: 1;
 }
-/* Icon buttons 28 px with 16 px glyphs; text buttons 32 px, radius 4, weight 500. */
-.zen-history-icon-btn {
-  display: inline-flex;
+/*
+ * The title block (§9.26, §10.2): "History" 22/600 on its 28 line, padding 16 16 12, the title's
+ * text at the column's 32 (the block's 16 plus a 16 inset that is the rows' gutter); its
+ * actions – 32 px `zen-v2-button` secondaries – on the title's line at the column's trailing
+ * edge, their 2 px over the line taken from their own margins so the line stays 28.
+ */
+.zen-page-title-block {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 16px 16px 12px;
+}
+.zen-page-title-row {
+  display: flex;
+  min-height: var(--v2-line-title-box);
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  color: var(--zen-page-fg);
+  gap: 12px;
+  padding: 0 16px;
+}
+.zen-page-title {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-title);
+  font-weight: var(--v2-weight-heading);
+  line-height: var(--v2-line-title);
+  letter-spacing: -0.01em;
+}
+.zen-page-title-actions {
+  display: flex;
   flex-shrink: 0;
-}
-.zen-history-icon-btn:hover {
-  background: var(--zen-page-hover);
-}
-.zen-history-icon-btn:active {
-  background: var(--zen-page-active);
-}
-.zen-history-btn {
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 4px;
-  border: 1px solid var(--zen-page-line);
-  background: transparent;
-  color: var(--zen-page-fg);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 8px;
+  margin-block: calc((var(--v2-line-title-box) - var(--v2-control)) / 2);
+}
+/* A live count beside the actions ("3 selected"): 13 at 69 %, tabular (§4). */
+.zen-page-title-count {
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
   white-space: nowrap;
 }
-.zen-history-btn:hover {
-  background: var(--zen-page-hover);
+.zen-page-title-desc {
+  margin: 4px 0 0;
+  padding: 0 16px;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
 }
-.zen-history-btn:active {
-  background: var(--zen-page-active);
+/*
+ * The search field (§9.12, as Find in Settings draws it): the shared 32 px field at the text
+ * column's width, its 16 px glyph 12 in from its start (the text after the glyph's 16 and a 8),
+ * the clear icon button inside its trailing end; 12 under it to the header's edge, so the first
+ * heading's 8 above makes §9.27's 20 from the field's box.
+ */
+.zen-page-search {
+  position: relative;
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 0 32px 12px;
 }
-.zen-history-btn[data-primary='true'] {
-  border-color: transparent;
-  background: var(--zen-page-control);
-  color: #fff;
+.zen-page-search-glyph {
+  position: absolute;
+  top: calc((var(--v2-control) - var(--v2-icon)) / 2);
+  left: calc(32px + 12px);
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+  pointer-events: none;
 }
-:root[data-theme='dark'] .zen-history-btn[data-primary='true'] {
-  color: #1c1b22;
+.zen-v2-field.zen-page-search-field {
+  padding-left: calc(12px + var(--v2-icon) + 8px);
+  padding-right: calc(4px + var(--v2-icon-button));
 }
-.zen-history-btn[data-primary='true']:hover {
-  filter: brightness(1.08);
+.zen-page-search-clear {
+  position: absolute;
+  top: calc((var(--v2-control) - var(--v2-icon-button)) / 2);
+  right: calc(32px + 2px);
 }
-.zen-history-input {
-  height: 32px;
-  width: 100%;
-  border-radius: 4px;
-  border: 1px solid var(--zen-page-line);
-  background: transparent;
-  padding: 0 10px 0 32px;
-  color: var(--zen-page-fg);
-  font-size: 15px;
-  outline: none;
+/* The body: the text column, its rows edge to edge inside it (their text at 32). */
+.zen-page-body {
+  max-width: calc(var(--v2-content-max) + 2 * 16px);
+  padding: 0 16px 40px;
 }
-.zen-history-input:focus {
-  border-color: var(--zen-page-control);
-  box-shadow: 0 0 0 1px var(--zen-page-control);
+.zen-page-group {
+  display: flex;
+  flex-direction: column;
 }
-.zen-history-input::placeholder {
-  color: var(--zen-page-fg-soft);
-}
-/* Floating action row for the multi-selection (a small panel per v2: radius 8, hairline, soft shadow). */
-.zen-history-actions {
-  position: sticky;
-  bottom: 12px;
-  z-index: 2;
+/*
+ * A group's heading (§9.27, §10.3): the shared 15/600 primitive laid out as a row – the name,
+ * its aside (a count, 13 at 69 % tabular) and a trailing §9.3 icon button whose 28 box takes
+ * its 4 over the line from its own margins, so the heading's box stays the 20 line. On the
+ * desktop the first row's box is 8 under the heading (§9.27: 14 to its text through the row's
+ * 6), and the first heading under the pinned header is 8 under it (§10.3).
+ */
+.zen-v2-heading.zen-page-heading {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: max-content;
-  margin: 0 auto;
-  padding: 8px 8px 8px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--zen-page-menu-line);
-  background: var(--zen-page-menu-bg);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.2);
+  margin-bottom: 8px;
+}
+.zen-page-body > .zen-page-group:first-child > .zen-page-heading {
+  margin-top: 8px;
+}
+.zen-page-heading-text {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+.zen-page-heading-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
+}
+.zen-page-heading > .zen-v2-icon-button {
+  margin-block: calc((var(--v2-line-body-box) - var(--v2-icon-button)) / 2);
+}
+.zen-page-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/*
+ * A two-line row (§9.2, §9.21) on the shared primitive: the leading checkbox and the 16 favicon
+ * on the first text line (the (line − box) / 2 offset, §9.2), the label 15/20 over the host
+ * 13/20 deemphasised, the time 13 at 69 % and the ⋮ centred on the row's height (§9.18). The
+ * row's text is a button – the target that opens the entry – and the row's fill follows the
+ * pointer over any of it. A picked row (`data-selected`, §9.6) sits on `--v2-selected`, under
+ * the pointer too, its checkbox filled in the accent by the primitive.
+ */
+.zen-page-row {
+  gap: 12px;
+}
+.zen-page-row[data-selected],
+.zen-page-row[data-selected]:hover {
+  background: var(--v2-selected);
+}
+.zen-page-row-check {
+  width: var(--v2-checkbox);
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+.zen-page-row-lead {
+  display: flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
+}
+.zen-page-row-favicon {
+  width: var(--v2-icon);
+  height: var(--v2-icon);
+  flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: contain;
+}
+.zen-page-row-favicon-fallback {
+  border-radius: 0;
+  stroke-width: var(--v2-icon-stroke);
+  color: var(--v2-text-deemphasized);
+}
+.zen-page-row-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  color: inherit;
+}
+.zen-page-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
+}
+.zen-page-row-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  line-height: var(--v2-line-small);
+}
+.zen-page-row-time {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--v2-line-small);
+  white-space: nowrap;
+}
+/*
+ * What a row shows on approach – its checkbox and its ⋮ – is there at rest for the keyboard
+ * (opacity, never visibility: a hidden control is not in the tab order) and paints under the
+ * pointer, while the row has the focus, while it is picked, and on every row while anything on
+ * the page is picked.
+ */
+.zen-page-row .zen-page-row-reveal {
+  opacity: 0;
+  transition: opacity 120ms var(--zen-ease);
+}
+.zen-page-row:hover .zen-page-row-reveal,
+.zen-page-row:focus-within .zen-page-row-reveal,
+.zen-page-row[data-selected] .zen-page-row-reveal,
+[data-selecting] .zen-page-row .zen-page-row-reveal {
+  opacity: 1;
+}
+/* A search's matches in a row: the text's own ink on a light accent tint, no colour of its own. */
+.zen-page mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--v2-accent) 22%, transparent);
+  color: inherit;
+}
+/* "Show more" under the last group: one secondary, hugging, centred on the column (§9.11). */
+.zen-page-more {
+  display: flex;
+  justify-content: center;
+  padding: 16px 16px 0;
+}
+/*
+ * The page's empty state (§9.17): one sentence 15/400 at 69 %, centred inside a 32 gutter, its
+ * line 32 under the header; the one optional follow-up 16 beneath it, a hugging secondary.
+ */
+.zen-page-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 32px 0;
+  text-align: center;
+}
+.zen-page-empty > p {
+  margin: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-body);
+  line-height: var(--v2-line-body);
 }
 
 /*

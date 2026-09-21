@@ -4,7 +4,7 @@ import type { Tab, UIState } from '@shared/types'
 import { cn } from '@renderer/lib/utils'
 import { BookmarkManager } from '../bookmarks/BookmarkManager'
 import { DownloadsPanel } from '../overlays/DownloadsPanel'
-import { HistoryPage } from '../overlays/HistoryPage'
+import { HistoryPage } from './history/HistoryPage'
 import { SettingsPage } from './settings/SettingsPage'
 
 /**
@@ -50,7 +50,7 @@ function pageFor(id: string, state: UIState, tab: Tab): JSX.Element | null {
     case 'settings':
       return <SettingsPage state={state} tab={tab} />
     case 'history':
-      return <HistoryPage state={state} />
+      return <HistoryPage tab={tab} />
     case 'bookmarks':
       return <BookmarkManager state={state} />
     case 'downloads':
