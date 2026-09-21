@@ -37,17 +37,17 @@ const OWN_SCRIM_CONSUMERS = [
   // prompts, the menulist's picker sheet, the passphrase sheet.
   'components/autofill/AutofillEditor.tsx',
   'components/autofill/AutofillPrompts.tsx',
+  // The sign-in leak warning's phone sheet (ID-31): the hosted `BottomSheet` at its content's height.
+  'components/autofill/LeakWarning.tsx',
   'components/autofill/PassphraseDialog.tsx',
   'components/autofill/controls.tsx',
   'components/downloads/DownloadsSheet.tsx',
-  'components/newtab/CustomizeSheet.tsx',
   // The password manager's phone passphrase prompt, and its prompt and picker sheets (#92).
   'components/overlays/passwords/PassphrasePrompt.tsx',
   'components/overlays/passwords/shared.tsx',
-  'components/pages/settings/sheets.tsx',
-  'components/phone/InstallSheet.tsx',
-  // The media sheet the pill's Now playing chip opens (MW-16).
-  'components/phone/MediaSheet.tsx',
+  // The phone's shared sheet: what the panels' sheets, the Settings tab's sheets
+  // (`pages/settings/sheets.tsx`), the install and Now playing sheets and the new tab page's
+  // customise sheet all are – one registration, theirs.
   'components/phone/PhoneSheet.tsx',
   // Reader View's text preferences sheet (CT-20): the hosted `BottomSheet` with the size stepper,
   // the font, the colour theme and the column width.

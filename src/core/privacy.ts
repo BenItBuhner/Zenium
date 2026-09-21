@@ -385,7 +385,9 @@ function passwordsRow(status: PasswordsStatus | null): SafetyCheckResult['passwo
     return {
       ...row(
         'warning',
-        `${plural(summary.compromised, 'compromised password')} found; change them now`
+        `${plural(summary.compromised, 'compromised password')} found; change ${
+          summary.compromised === 1 ? 'it' : 'them'
+        } now`
       ),
       ...counts
     }

@@ -13,6 +13,7 @@ import {
   searchTermsFromUrl
 } from '../search'
 import { searchCommands } from '../commands'
+import type { FormFactor, HostCapabilities } from '../types'
 
 const google = DEFAULT_SEARCH_ENGINES.find((e) => e.id === 'google')!
 
@@ -158,5 +159,21 @@ describe('command bar', () => {
     expect(searchCommands('compact').map((c) => c.action)).toContain('compact.toggle')
     expect(searchCommands('split grid').map((c) => c.action)).toContain('split.grid')
     expect(searchCommands('')).toEqual([])
+  })
+
+  it('offers each layout the commands that act on its chrome', () => {
+    const caps = new Proxy({} as HostCapabilities, { get: () => true })
+    const actions = (formFactor: FormFactor, query: string): string[] =>
+      searchCommands(query, { capabilities: caps, formFactor }).map((c) => c.action)
+    // Compact mode is the desktop's hover-revealed sidebar: not the tablet's (its rail is the
+    // toolbar's toggle) nor the phone's (no sidebar).
+    expect(actions('desktop', 'compact')).toContain('compact.toggle')
+    expect(actions('tablet', 'compact')).not.toContain('compact.toggle')
+    expect(actions('tablet', 'floating sidebar')).not.toContain('compact.toggleSidebar')
+    expect(actions('phone', 'compact')).not.toContain('compact.toggle')
+    // The sidebar layouts share the sidebar width toggle and Split View.
+    expect(actions('tablet', 'sidebar width')).toContain('sidebar.toggle')
+    expect(actions('tablet', 'split grid')).toContain('split.grid')
+    expect(actions('phone', 'split grid')).not.toContain('split.grid')
   })
 })

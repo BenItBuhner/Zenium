@@ -256,6 +256,11 @@ export interface UiState {
   blockedPopupsPanel: { tabId: string; anchor: Rect | null } | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
+  /**
+   * Chrome's "Change your password" leak warning (ID-31, `autofill/LeakWarning.tsx`) is up over
+   * the page's picture: a frame dialog on a mouse, a sheet on a phone.
+   */
+  credentialLeakOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
   /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
@@ -471,6 +476,15 @@ export const contentAreaStore = createStore<{ area: Rect | null }>({ area: null 
 /** Last pointer-down position – anchors renderer-hosted menus that come without coordinates. */
 export const lastPointer = { x: 0, y: 0 }
 
+/**
+ * The chrome control the menu about to open hangs from – the toolbar's ⋯ for `app.menu` – set
+ * by the opener (`openAppMenu`). The descriptor the core sends back carries a point alone (the
+ * button's bottom start corner), and the tablet's popover menu anchors to the control's box
+ * instead (v2 §9.20: flush under its bar, aligned by its half, the control lit while it is up,
+ * its own press closing it). Read by the menu that shows next and matched against its point.
+ */
+export const menuAnchor: { element: HTMLElement | null } = { element: null }
+
 export const uiStore = createStore<UiState>(
   {
     overlay: 'none',
@@ -497,6 +511,7 @@ export const uiStore = createStore<UiState>(
     iconPickerTabId: null,
     blockedPopupsPanel: null,
     securityPromptOpen: false,
+    credentialLeakOpen: false,
     pageDialogOpen: false,
     screenPickerOpen: false,
     windowPromptOpen: false,
@@ -879,6 +894,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
+    !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
@@ -938,6 +954,7 @@ export function invalidateSnapshot(): void {
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
+    !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
@@ -1594,6 +1611,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.tabsMenu !== null ||
     ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
+    ui.credentialLeakOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.screenPickerOpen ||
@@ -1839,9 +1857,10 @@ export function closePrintPreview(): void {
  * overlap the live view), but panels and popovers draw no scrim (v2 §9.5, §9.20), so the
  * capture shows undimmed; dialogs dim it. A chassis sheet's scrim is its own one dim (§11.5),
  * so the same holds under the site-information sheet and the prompt sheet on a phone, and the
- * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer).
- * The chrome layer's popovers and menus (the translate selection popover, a menulist's list)
- * count in `floatingChrome` and are the extensions' counterpart's case
+ * security prompt's dim is the frame dialog host's scrim alone (v2 §9.5, §11.5: one dim layer),
+ * as is the leak warning's – a frame dialog on a mouse, a chassis sheet on a phone. The chrome
+ * layer's popovers and menus (the translate selection popover, a menulist's list) count in
+ * `floatingChrome` and are the extensions' counterpart's case
  * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
  * (the reader popover's font or theme menu, site information's) is floating chrome over a panel,
  * still no dialog, so `floatingChrome` is left out of the reduced check too and the page under
@@ -1862,6 +1881,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.permissionPromptOpen ||
       ui.blockedPopupsPanel !== null ||
       ui.securityPromptOpen ||
+      ui.credentialLeakOpen ||
       // A menu the renderer draws – the desktop's app menu under ⋯ (§6 "Menus": the page under
       // it undimmed), a host's context menu – is the `.zen-v2-menu` popover on a mouse and a
       // bottom sheet with its own scrim on touch: no dim of the frame's either way.
@@ -1879,11 +1899,26 @@ export function panelAloneOverContent(ui: UiState): boolean {
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
       securityPromptOpen: false,
+      credentialLeakOpen: false,
       menu: null,
       floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })
   )
+}
+
+/**
+ * Only a core menu is up over the page: the app menu or a context menu (`ui.menu`), alone or
+ * over floating chrome that draws no dim of its own either (the tablet's sidebar drawer a tab
+ * row's long-press menu opens over, whose scrim is the drawer's; a menulist's list), and
+ * nothing else covering the content. Where the menu is a popover – the tablet's (v2 §9.36,
+ * `TabletMenu`) – the page's capture under it stays undimmed as under every other popover (v2
+ * §9.5, §9.20: panels and popovers draw no scrim). The phone's menu sheet has its own scrim, and
+ * the desktop's `.zen-v2-menu` popover under ⋯ is undimmed the same way (§6 "Menus"), by way of
+ * `panelAloneOverContent`, which counts a renderer-drawn menu among the anchored panels.
+ */
+export function menuAloneOverContent(ui: UiState): boolean {
+  return ui.menu !== null && !overlayCoversContent({ ...ui, menu: null, floatingChrome: 0 })
 }
 
 // ---------------------------------------------------------------------------

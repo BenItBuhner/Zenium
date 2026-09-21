@@ -541,8 +541,44 @@ describe('the app menu', () => {
     expect(deepItem(h.shown(), 'closed.example').action).toBe('tab.reopenClosed')
   })
 
-  it('gives a tablet the desktop menu', () => {
-    expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(DESKTOP_APP_MENU)
+  it('gives a tablet the sidebar layouts\u2019 menu, less what acts on chrome it does not draw (TABLET-01)', () => {
+    // Compact Mode is the desktop's hover-revealed sidebar (the tablet's rail is the toolbar's
+    // toggle) and the tablet has no bookmarks bar; everything else of the desktop's list is the
+    // tablet's too, its host permitting. Both rows live in submenus now (§6 "Menus").
+    const tabletChrome = DESKTOP_APP_MENU.filter(
+      (label) => label !== 'More Tools > Compact Mode' && label !== 'Bookmarks > Show Bookmarks Bar'
+    )
+    expect(appMenu(harness(DESKTOP, 'tablet'))).toEqual(tabletChrome)
+  })
+
+  it('on an Android tablet follows the capabilities as on the phone: no windows, no Quit', () => {
+    const h = harness(ANDROID, 'tablet')
+    const menu = appMenu(h)
+    const everywhere = allItems(h.shown()).map((i) => i.label)
+    for (const label of ['New Window', 'New Private Window', 'Quit', 'Compact Mode'])
+      expect(everywhere).not.toContain(label)
+    // The sidebar layouts' items the phone drops stay: the tablet has the sidebar and a toolbar
+    // whose popovers they open – in the submenus Firefox's groups put them (§6).
+    for (const label of [
+      'Search Tabs…',
+      'History > Recently Closed',
+      'Help > Keyboard Shortcuts',
+      'Save Page As…'
+    ])
+      expect(menu).toContain(label)
+    // No icon row (the toolbar has Forward, the star and Reload) and no Extensions sheet (the
+    // toolbar has the actions).
+    expect(menu[0]).toBe('New Tab')
+    expect(everywhere).not.toContain('Extensions')
+  })
+
+  it('offers Listen to This Page on a tablet with a speech engine, as on the phone', () => {
+    expect(appMenu(pageHarness(ANDROID, { formFactor: 'tablet' }))).not.toContain(
+      'Listen to This Page'
+    )
+    const h = pageHarness({ ...ANDROID, readAloud: true }, { formFactor: 'tablet', speech: true })
+    const menu = appMenu(h)
+    expect(menu.indexOf('Listen to This Page')).toBe(menu.indexOf('Reader View') + 1)
   })
 
   it("on a tablet with page controls keeps Fullscreen with the window's toggles under More Tools, the zoom being the sheet", () => {
@@ -866,7 +902,11 @@ describe('the app menu', () => {
     const menu = appMenu(harness(DESKTOP, 'phone'))
     expect(menu).not.toContain('Share…')
     expect(menu).toContain('Add-ons and Themes')
-    for (const label of DESKTOP_ONLY) expect(menu).not.toContain(label)
+    for (const label of DESKTOP_ONLY) if (label !== 'Quit') expect(menu).not.toContain(label)
+    // Quit is the host's, not the layout's: an Electron window narrowed to the phone layout still
+    // quits the app; an Android app (no windows) is left to the system at every layout.
+    expect(menu).toContain('Quit')
+    expect(appMenu(harness(ANDROID, 'phone'))).not.toContain('Quit')
     // A phone without a printer path hides Print rather than greying it.
     expect(appMenu(harness({ ...ANDROID, print: false }, 'phone'))).not.toContain('Print…')
     // A device build has the extension store: the actions sheet and the management page are
@@ -1973,6 +2013,28 @@ describe('the selection toolbar', () => {
     })
     expect(
       desktop.viewCalls.some(
+        (call) =>
+          call.startsWith('postToPage(') &&
+          call.includes('"action":"extract"') &&
+          call.includes('"from":"selection"') &&
+          call.includes('"then":"document"')
+      )
+    ).toBe(true)
+    // A tablet is a touch layout: its menu and bar list Listen too, and its item reads on from
+    // the selection as every layout's does (#266).
+    const tablet = pageHarness(
+      { ...ANDROID, readAloud: true },
+      { formFactor: 'tablet', speech: true }
+    )
+    expect(tablet.menu(pageParams({ selectionText: 'quantum foam' }))).toContain('Listen')
+    expect(
+      tablet.browser.menus.selectionToolbar(tablet.tabId, 'quantum foam').map((a) => a.id)
+    ).toContain('readAloud')
+    tablet.viewCalls.length = 0
+    tablet.click('Listen')
+    await settle()
+    expect(
+      tablet.viewCalls.some(
         (call) =>
           call.startsWith('postToPage(') &&
           call.includes('"action":"extract"') &&

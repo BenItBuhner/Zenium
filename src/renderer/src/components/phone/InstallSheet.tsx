@@ -4,16 +4,13 @@ import { Loader2 } from 'lucide-react'
 import type { UIState, WebAppInstallPrompt } from '@shared/types'
 import { installSheetCopy, tileInk, tileLetter, type WebAppScreenshot } from '@shared/webApp'
 import { cmd, run } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
 import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
-import { useFrameDialog } from '@renderer/lib/portals'
 import { closeInstallSheet, uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
-import { useEscapeTrap } from '../bookmarks/escape'
-import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import type { BottomSheetHandle } from '../sheet/BottomSheet'
+import { PhoneSheet } from './PhoneSheet'
 
-const TITLE_ID = 'zen-install-title'
 const NAME_FIELD_ID = 'zen-install-name'
 
 /**
@@ -31,14 +28,15 @@ export function InstallLayer({ state }: { state: UIState }): JSX.Element | null 
 }
 
 /**
- * The install sheet on the v2 sheet chassis (`BottomSheet`: surface, grip, 48 header, footer),
- * placed through `FrameDialogHost` and drawing the stack's one scrim itself. With a manifest it
- * presents the app – tile, name, origin, description and a screenshot strip – and one primary
- * "Add"; without one it is the lighter name-edit sheet: the page's tile beside a labelled name
- * field (§9.12) with the origin as its description. "Add" goes busy (§9.30) while the core has
- * the host fetch the icon and hand the request to the launcher, then the sheet slides away under
- * the system's own pin dialog; every other way out (Cancel, scrim, drag, back, Escape) reports a
- * cancelled install so a site's deferred `prompt()` learns of it.
+ * The install sheet: the phone's shared `PhoneSheet` (surface, grip, the 48 header, the §9.11
+ * footer; placed through `FrameDialogHost`, drawing the stack's one scrim itself, the system
+ * back and Escape). With a manifest it presents the app – tile, name, origin, description and a
+ * screenshot strip – and one primary "Add"; without one it is the lighter name-edit sheet: the
+ * page's tile beside a labelled name field (§9.12) with the origin as its description. "Add"
+ * goes busy (§9.30) while the core has the host fetch the icon and hand the request to the
+ * launcher, then the sheet slides away under the system's own pin dialog; every other way out
+ * (Cancel, scrim, drag, back, Escape) reports a cancelled install so a site's deferred
+ * `prompt()` learns of it.
  */
 function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
@@ -48,14 +46,6 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   const info = prompt.info
 
   const dismiss = useCallback(() => sheet.current?.dismiss(), [])
-  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
-  useEscapeTrap(true, dismiss)
-  useBackSurface({
-    name: 'install',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
 
   const name = title.trim() || prompt.title
   const copy = installSheetCopy(prompt.surface, info)
@@ -74,18 +64,13 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      hosted
+    <PhoneSheet
+      name="install"
+      title={{ pose: 'header', text: copy.title }}
       className="zen-install-sheet"
-      labelledBy={TITLE_ID}
-      onDismissed={onDismissed}
+      onClose={onDismissed}
       contentKey={`${prompt.tabId}:${info ? 'app' : 'page'}`}
-      header={
-        <h2 id={TITLE_ID} className="zen-sheet-title">
-          {copy.title}
-        </h2>
-      }
+      sheetRef={sheet}
       footer={
         <>
           <button type="button" className="zen-v2-button" onClick={dismiss}>
@@ -142,7 +127,7 @@ function InstallSheet({ prompt }: { prompt: WebAppInstallPrompt }): JSX.Element 
         {info?.description && <p className="zen-install-description">{info.description}</p>}
         {info && info.screenshots.length > 0 && <ScreenshotStrip shots={info.screenshots} />}
       </div>
-    </BottomSheet>
+    </PhoneSheet>
   )
 }
 

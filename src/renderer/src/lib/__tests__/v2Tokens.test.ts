@@ -33,6 +33,17 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-sheet {', '/*\n   * Bookmarks, built to the v2 draft'],
   // The pull-to-refresh disc (components/content/PullIndicator.tsx).
   ['.zen-ptr-disc {', '.zen-space-strip {'],
+  // The phone's resting pill (components/phone/PhoneShell.tsx, pillChips.tsx; §9.29, the shell
+  // pass): its fill and pressed fill on the window family's control roles, its quiet chips (the
+  // lock, a paused state) in the deemphasised window ink.
+  ['.zen-phone-pill-docked {', '.zen-pill-well {'],
+  // The tablet layout (components/tablet/*, TABLET-01 / 02 / 06): the toolbar row's icon buttons
+  // and pill, the sidebar's rows and close buttons and the drawer at §9.3's tablet sizes, read
+  // from the scale tokens the tablet root sets. Unlayered, right before the phone bar's layer.
+  [
+    ' * The tablet layout (TABLET-01 / 02 / 06',
+    "@layer components {\n  /*\n   * The phone bar's controls"
+  ],
   // The v2 badge (§9.19): site information's Private badge (components/siteinfo/SiteInfoSheet.tsx).
   ['.zen-v2-badge {', '/* Safe-area insets pushed by mobile hosts'],
   // The v2 button, shared by every v2 surface (the Settings tab's row buttons and dialogs,
@@ -256,6 +267,7 @@ const lightBlockStart = css.lastIndexOf(':root {', lightStart)
 const light = declared(':root', lightBlockStart)
 const dark = declared(":root[data-theme='dark']", lightStart)
 const phone = declared(":root[data-form-factor='phone']", lightStart)
+const tablet = declared(":root[data-form-factor='tablet']", lightStart)
 
 const SURFACE = [
   'page',
@@ -316,6 +328,7 @@ const SCALE = [
   'card-padding',
   'content-max',
   'ring',
+  'ring-offset',
   'ring-room',
   'selection',
   'ok',
@@ -368,6 +381,16 @@ describe('design language v2 tokens', () => {
       expect(SURFACE, `${name} must not change per form factor`).not.toContain(name)
   })
 
+  // TABLET-01: the tablet root scales the same names, and only those – the touch rows and
+  // controls with §9.3's 40 / 20 icon button – so a tablet never forks the vocabulary either.
+  it('scales the tablet the same way, at the tablet icon button', () => {
+    expect([...tablet].sort()).toEqual([...phone].sort())
+    const tabletBlock = block(":root[data-form-factor='tablet']", lightStart)
+    expect(tabletBlock).toMatch(/--v2-icon-button: 40px;/)
+    expect(tabletBlock).toMatch(/--v2-icon: 20px;/)
+    expect(tabletBlock).toMatch(/--v2-row: calc\(var\(--v2-line-body-box\) \+ 24px\);/)
+  })
+
   // §9.3, one stroke per toolbar row: the constant the toolbar row's and the app title bar's
   // glyphs pass as Lucide's `strokeWidth` is the desktop value of the glyph-stroke token, so
   // the row and the v2 glyphs drawn from the token cannot drift apart (#245 chassis (d)).
@@ -393,19 +416,20 @@ describe('design language v2 tokens', () => {
     expect(outside.match(/var\(--v2-/g) ?? []).toHaveLength(0)
     const inside = css.slice(lightBlockStart, blockEnd)
     // Inside: the ring, selection and the selected-row fill (light and dark) derive from the
-    // accent, the shared focus-ring rule reads the ring, the chassis scrim alias `--zen-scrim`
-    // reads the v2 scrim (§9.28), the row padding `--v2-row-pad` derives from the row and the
-    // body line box (§9.34, two reads), the four `-box` line tokens read the four line tokens
-    // (A11Y-05: what a line box measures at the text zoom, four reads), the rows derive from the
-    // line boxes so they grow with the system font size (§9.2, A11Y-05: `--v2-row`,
-    // `--v2-row-two-line` and `--v2-menu-row` in the base block and again in the phone block,
-    // four reads each), the tab card's title row `--zen-overview-card-header` derives from the
-    // small line box (§9.21, A11Y-05: once at rest, once as the two-line row from scale 1.5), the
-    // group card's title row `--zen-overview-group-header` from the same line box (one line at
-    // every size), and the two §9.29 family blocks map the tokens onto the control roles.
+    // accent, the shared focus-ring rule reads the ring and its offset (§1, two reads), the
+    // chassis scrim alias `--zen-scrim` reads the v2 scrim (§9.28), the row padding
+    // `--v2-row-pad` derives from the row and the body line box (§9.34, two reads), the four
+    // `-box` line tokens read the four line tokens (A11Y-05: what a line box measures at the
+    // text zoom, four reads), the rows derive from the line boxes so they grow with the system
+    // font size (§9.2, A11Y-05: `--v2-row`, `--v2-row-two-line` and `--v2-menu-row` in the base
+    // block and again in the phone block and the tablet block, four reads each), the tab card's
+    // title row `--zen-overview-card-header` derives from the small line box (§9.21, A11Y-05:
+    // once at rest, once as the two-line row from scale 1.5), the group card's title row
+    // `--zen-overview-group-header` from the same line box (one line at every size), and the two
+    // §9.29 family blocks map the tokens onto the control roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      8 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
+      9 + 4 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
     )
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
     expect(inside).toMatch(
@@ -665,7 +689,10 @@ describe('the v2 primitives (§9.34)', () => {
     // The group heading (§9.27, §10.3) with its 20 / 4 beat: the customise sheet's layered copy
     // and the Settings tab's and phone panels' local beats went with it; what each surface adds
     // (the first heading's 8 under a header, a popover's tighter 12) is an unlayered modifier.
-    '.zen-v2-heading'
+    '.zen-v2-heading',
+    // The inline link (§9.10, the #294 ruling): the extensions UI's layered copy in the accent
+    // and the passwords detail's `.zen-v2-pw-link` went with it; the test below pins its values.
+    '.zen-v2-link'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -941,6 +968,45 @@ describe('the v2 primitives (§9.34)', () => {
     expect(rest).not.toMatch(/zen-toolbar-button|width: var\(--v2-icon-button\)/)
   })
 
+  it('draw a prompt about Zenium with the 48 app icon above the sheet title block, the desktop form (§9.23, #264)', () => {
+    // The chassis slot (`PhoneSheet`'s `appIcon`, `.zen-sheet-app-icon`): 48 at the block's 16
+    // from the sheet's edges, 16 to the title through the block's own padding, beside the block
+    // rule – the same numbers as the desktop prompt's `.zen-default-browser-prompt-icon`. Both
+    // rules are nested one level (the chassis layer, the components layer): cut at their own `}`.
+    const nested = (selector: string): string => {
+      const start = css.indexOf(`${selector} {`)
+      expect(start, `block "${selector}"`).toBeGreaterThanOrEqual(0)
+      return css.slice(start, css.indexOf('\n  }', start))
+    }
+    expect(nested('.zen-sheet-app-icon').match(/^ {4}[a-z-]+:[^;]+;/gm)).toEqual([
+      '    display: flex;',
+      '    flex-shrink: 0;',
+      '    width: 48px;',
+      '    height: 48px;',
+      '    margin: 16px 16px 0;'
+    ])
+    expect(nested('.zen-default-browser-prompt-icon')).toMatch(
+      /width: 48px;\s*height: 48px;\s*margin: var\(--v2-card-padding\) var\(--v2-card-padding\) 0;/
+    )
+    expect(css.indexOf('.zen-sheet-app-icon {')).toBeGreaterThan(
+      css.indexOf('.zen-sheet-title-block {')
+    )
+    // The promo's phone sheet takes the slot and no inline glyph; its mouse dialog draws the
+    // same icon over its block, as the desktop's `AskDialog` does (the one composition).
+    const prompt = readFileSync(
+      fileURLToPath(
+        new URL('../../components/defaultbrowser/DefaultBrowserPrompt.tsx', import.meta.url)
+      ),
+      'utf8'
+    )
+    expect(prompt).toMatch(/appIcon: <AppIconImage variant=\{appIconVariant\(appIcon\)\} \/>/)
+    expect(prompt).not.toMatch(/lucide-react/)
+    expect(prompt.match(/className="zen-default-browser-prompt-icon"/g)).toHaveLength(2)
+    // The site-info sheet's `data-control` rule went with the primitives pass 3: no row on that
+    // surface sets the mark, and the mark's geometry is `.zen-v2-row[data-control]`'s alone.
+    expect(css).not.toMatch(/\.zen-siteinfo-row\[data-control\]/)
+  })
+
   it('paint a message row’s status glyph and description in the status ink through the row’s one data-tone (§9.33 in §1’s ink; pr-261)', () => {
     // The tone is the row's attribute: the two rules sit beside the row rule in main.css,
     // unlayered, and reach the status glyph – leading where every row of a list carries one,
@@ -1007,6 +1073,299 @@ describe('the v2 primitives (§9.34)', () => {
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
+  })
+
+  it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
+    // The #294 ruling: a `.zen-v2-link` in the accent with no underline at rest was the
+    // primitive's fault, and the 18 px site link in the passwords detail the other failure case.
+    // The one rule sits after the token block, unlayered, and states §9.10's declarations and
+    // nothing else: the surrounding ink and font (never larger), the underline at 40 % of the
+    // ink with a 2 px offset, the pointer a link has.
+    const declarations = (at: number): string[] =>
+      (bare.slice(at, bare.indexOf('}', at)).match(/^ +[a-z-]+:[^;]+;/gm) ?? []).map((d) =>
+        d.trim()
+      )
+    const base = ruleAt('.zen-v2-link')
+    expect(base).toBeGreaterThan(bare.indexOf('--v2-page:'))
+    expect(nesting(base)).toBe(0)
+    expect(bare.match(/\n\.zen-v2-link \{/g)).toHaveLength(1)
+    expect(declarations(base)).toEqual([
+      'color: inherit;',
+      'font: inherit;',
+      'text-decoration: underline;',
+      'text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);',
+      'text-underline-offset: 2px;',
+      'cursor: pointer;'
+    ])
+    // Hover – a mouse's, under the hover media query – and focus-visible: the surface family's
+    // accent through the §9.29 control role, the underline in the same. Beside the rule,
+    // unlayered like it.
+    const media = '\n@media (hover: hover) {'
+    const hover = bare.indexOf('\n  .zen-v2-link:hover {')
+    expect(hover).toBeGreaterThan(base)
+    expect(bare.slice(hover - media.length, hover)).toBe(media)
+    expect(layered(hover + 1)).toBe(false)
+    const focus = ruleAt('.zen-v2-link:focus-visible')
+    expect(nesting(focus)).toBe(0)
+    for (const at of [hover + 1, focus])
+      expect(declarations(at)).toEqual([
+        'color: var(--v2-control-accent, var(--v2-accent));',
+        'text-decoration-color: currentColor;'
+      ])
+    // The trailing glyph (§9.10: a link that leaves the app): the icon token's 16 / 20 at the
+    // size's stroke, 4 after the last word; a link that carries one lays out as an inline-flex
+    // so the glyph is centred on the line and never orphaned, and a link without one sets no
+    // `display` – it is inline in a sentence and wraps as text does.
+    expect(declarations(ruleAt('.zen-v2-link > svg'))).toEqual([
+      'flex-shrink: 0;',
+      'width: var(--v2-icon);',
+      'height: var(--v2-icon);',
+      'stroke-width: var(--v2-icon-stroke);'
+    ])
+    expect(declarations(ruleAt('.zen-v2-link:has(> svg)'))).toEqual([
+      'display: inline-flex;',
+      'align-items: center;',
+      'gap: 4px;'
+    ])
+    // A link standing alone on its line takes `data-touch`, and on a phone its hit area grows
+    // to the row height around the unchanged text (the passwords detail's extender, folded in).
+    expect(declarations(ruleAt('.zen-v2-link[data-touch]'))).toEqual(['position: relative;'])
+    const touch = ruleAt(":root[data-form-factor='phone'] .zen-v2-link[data-touch]::before")
+    expect(nesting(touch)).toBe(0)
+    expect(declarations(touch)).toEqual([
+      "content: '';",
+      'position: absolute;',
+      'inset: calc((var(--v2-row) - 100%) / -2) 0;'
+    ])
+    // No stylesheet keeps the old forms: no `.zen-v2-link` rule outside main.css (the extensions
+    // UI's accent-and-no-underline copy went), no second link under another name (the passwords
+    // detail's `.zen-v2-pw-link` and its phone extender went), and at rest no rule anywhere inks
+    // a link in the accent or takes its underline off.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+    for (const file of sources) {
+      const text = readFileSync(join(root, file), 'utf8')
+      expect(text, `${file} names the passwords link`).not.toMatch(/zen-v2-pw-link/)
+      if (!file.endsWith('.css')) continue
+      const rules = text.replace(/\/\*[\s\S]*?\*\//g, '')
+      if (file !== 'assets/main.css') {
+        expect(rules, `${file} restates the link`).not.toMatch(/\.zen-v2-link[^{]*\{/)
+        expect(rules, `${file} restates the phone extender`).not.toMatch(
+          /inset: calc\(\(var\(--v2-row\) - 100%\) \/ -2\) 0/
+        )
+        continue
+      }
+      for (const rule of rules.matchAll(/[^\n{}]*\.zen-v2-link(?![\w-])[^{]*\{/g)) {
+        const selector = rule[0].trim()
+        if (/:hover|:focus-visible/.test(selector)) continue
+        const body = rules.slice(rule.index + rule[0].length, rules.indexOf('}', rule.index))
+        expect(body, `"${selector}" inks the link in the accent at rest`).not.toMatch(
+          /color: var\(--v2-(control-)?accent/
+        )
+        expect(body, `"${selector}" takes the underline off`).not.toMatch(/text-decoration: none/)
+      }
+    }
+    // Its three consumers on main take the class and add nothing of their own: the extension
+    // details' store link with its glyph, the login detail's site link (a button, as the site
+    // opens through a command) with `data-touch` – no size utility on the glyph, no link class
+    // of the surface's – and the leak warning's manager link in a sentence, which navigates
+    // inside the app and so carries no glyph and no `data-touch` (never in running prose).
+    const details = readFileSync(join(root, 'components/extensions/ExtensionDetails.tsx'), 'utf8')
+    expect(details).toMatch(/className="zen-v2-link"/)
+    const login = readFileSync(join(root, 'components/overlays/passwords/LoginDetail.tsx'), 'utf8')
+    expect(login).toMatch(/className="zen-v2-link min-w-0 max-w-full"\n\s+data-touch=""/)
+    expect(login).toMatch(/<ExternalLink \/>/)
+    const leak = readFileSync(join(root, 'components/autofill/LeakWarning.tsx'), 'utf8')
+    const manager = /<a\n\s+className="zen-v2-link"\n[\s\S]*?>\s*password manager\s*<\/a>/.exec(
+      leak
+    )
+    expect(manager, 'the leak warning links the manager as plain text').not.toBeNull()
+    expect(manager?.[0]).not.toMatch(/data-touch|<svg|Lucide|Icon/)
+  })
+})
+
+/** The shared `zen-v2-` ring rule's selector, as main.css writes it. */
+const RING_RULE =
+  "[class^='zen-v2-']:focus-visible,\n[class*=' zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class^='zen-v2-']:focus-visible,\n:root[data-pointer='coarse'] [class*=' zen-v2-']:focus-visible"
+
+describe('the focus ring (§1, §4)', () => {
+  const panels = readFileSync(
+    fileURLToPath(new URL('../../components/phone/phonePanels.css', import.meta.url)),
+    'utf8'
+  ).replace(/\/\*[\s\S]*?\*\//g, '')
+  /** The declarations of the first `selector {` rule of a stylesheet's comment-free text. */
+  const rule = (source: string, selector: string): string => {
+    const at = source.indexOf(`${selector} {`)
+    expect(at, selector).toBeGreaterThanOrEqual(0)
+    return source.slice(at + selector.length + 2, source.indexOf('}', at))
+  }
+
+  it('sits at --v2-ring-offset from the control, the token read by the one shared rule at every pointer', () => {
+    // The offset is a token beside the ring's colour: 2 outside, declared once for the chrome in
+    // the light block and not per theme (the "nothing that is not a colour" test above holds
+    // dark to colours), so a control moves its ring through the token at its own rule's weight.
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-ring-offset: 2px;$/m)
+    // Declared five times in all: the chrome's default, the field's −2, the picked card radio's
+    // −2, the picked swatch's 2 back and the Settings row's −2 (each pinned below).
+    expect(css.match(/--v2-ring-offset:/g)).toHaveLength(5)
+    const ring = block(RING_RULE)
+    expect(ring.match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  outline: 2px solid var(--v2-ring);',
+      '  outline-offset: var(--v2-ring-offset);'
+    ])
+    expect(nesting(ruleAt(RING_RULE))).toBe(0)
+  })
+
+  it('is the same in both themes, by control: no theme-conditioned offset and no theme form of the shared rule remain (the #247 chassis note)', () => {
+    // 0 light / −2 dark had no rule behind it and put a dark button's ring inside its edge; §1
+    // stands, so nothing under `data-theme` sets an offset on a v2 control or on the URL field.
+    expect(bare).not.toMatch(/:root\[data-theme='dark'\] \[class\^='zen-v2-'\]/)
+    expect(bare).not.toMatch(/:root\[data-theme='dark'\][^{]*zen-v2-[^{]*\{[^}]*outline-offset/)
+    expect(bare).not.toMatch(/:root\[data-theme='dark'\] \.zen-pill/)
+    expect(panels).not.toMatch(/:root\[data-theme='dark'\][^{]*\{[^}]*outline-offset/)
+    // And no v2 control's focus rule writes `outline-offset` past the token: a control that
+    // needs another offset sets `--v2-ring-offset` on itself (the field, the picked card radio,
+    // the picked swatch), which the coarse-pointer form of the ring reads as the mouse's does.
+    for (const m of bare.matchAll(/[^\n{}]*zen-v2-[^{}]*:focus-visible[^{]*\{([^}]*)\}/g)) {
+      const selector = m[0].split('{')[0].trim()
+      // A standing outline drawn while the control is NOT focused (the forced-colours picked
+      // card) is not the ring and sets its own offset, as every standing outline does.
+      if (selector.includes(':not(:focus-visible)')) continue
+      const offsets = m[1].match(/outline-offset:[^;]+;/g) ?? []
+      for (const offset of offsets)
+        expect(offset, selector).toBe('outline-offset: var(--v2-ring-offset);')
+    }
+  })
+
+  it('goes 2 inside on text fields and the URL field, where an outside ring would clip (§1)', () => {
+    // The shared field sets the token on itself, the leaf input; the invalid field's `--v2-ring`
+    // re-ink beside it is the same seam (§9.12, #247).
+    expect(block('.zen-v2-field')).toMatch(/^ {2}--v2-ring-offset: -2px;$/m)
+    // The URL field – the pill the address button fills – in both themes.
+    expect(block('.zen-pill:has(> button:focus-visible)').match(/^ {2}[a-z-]+:[^;]+;/gm)).toEqual([
+      '  outline: 2px solid var(--v2-ring);',
+      '  outline-offset: -2px;'
+    ])
+    // The phone field (phonePanels.css) is a text field wrapping its input: the same −2, stated
+    // as `outline-offset` on the wrapper – the token would reach its clear button, a 2-outside one.
+    expect(rule(panels, '.zen-phone-field:focus-within')).toMatch(/outline-offset: -2px;/)
+    expect(panels).not.toMatch(/\.zen-phone-field[^{]*\{[^}]*--v2-ring-offset/)
+    // A row that runs edge to edge inside a clipping scroll body takes the inset ring for the
+    // field's reason – the Settings tab's rows that are themselves the target (the pressable
+    // row, an option sheet's radio row) through the token, the phone list's rows
+    // (phonePanels.css) as the −2 they state on the row.
+    const INSET_ROWS = ['.zen-settings-row-pressable', '.zen-settings-radio-row']
+    expect(block(INSET_ROWS.join(',\n')).match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+      '  --v2-ring-offset: -2px;'
+    ])
+    expect(rule(panels, '.zen-phone-row:has(> .zen-list-main:focus-visible)')).toMatch(
+      /outline-offset: -2px;/
+    )
+    // The token inherits (the #272 review), so it is set only where nothing inside can take
+    // it: never on `.zen-settings-row` itself – the desktop's static rows (§10.5) hold a
+    // menulist, a button, a field or a checkbox in their slot, each ringing at its own offset –
+    // and every element that carries an inset row's class, in any surface, is a `button`, which
+    // holds no interactive content. Every declaration of the token, by its rule's selector: the
+    // light block's default, the field, the picked card radio and its swatch, the two rows.
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const declaring = [...bare.matchAll(/--v2-ring-offset:/g)].map((m) => {
+      const open = bare.lastIndexOf('{', m.index)
+      const from = Math.max(
+        bare.lastIndexOf('}', open),
+        bare.lastIndexOf('{', open - 1),
+        bare.lastIndexOf(';', open)
+      )
+      return bare
+        .slice(from + 1, open)
+        .trim()
+        .replace(/\s*\n\s*/g, ' ')
+    })
+    expect(declaring).toEqual([
+      ':root',
+      '.zen-v2-field',
+      ".zen-v2-card-radio[aria-checked='true']",
+      ".zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']",
+      INSET_ROWS.join(', ')
+    ])
+    const components = fileURLToPath(new URL('../../components/', import.meta.url))
+    const carriers: string[] = []
+    for (const entry of readdirSync(components, { recursive: true, encoding: 'utf8' })) {
+      const file = entry.split('\\').join('/')
+      if (!file.endsWith('.tsx') || file.includes('__tests__')) continue
+      const source = readFileSync(join(components, entry), 'utf8')
+      const marks = source.match(/\bzen-settings-(?:row-pressable|radio-row)\b/g) ?? []
+      if (marks.length === 0) continue
+      // The nearest tag opener before each mark, with no other `<` between them.
+      const openers = [
+        ...source.matchAll(/<([a-zA-Z][\w.]*)\b[^<]*?\bzen-settings-(?:row-pressable|radio-row)\b/g)
+      ]
+      expect(openers, `${file}: every inset row's class sits in a tag opener`).toHaveLength(
+        marks.length
+      )
+      for (const [, tag] of openers) {
+        expect(tag, `${file}: an inset row is a <${tag}>`).toBe('button')
+        carriers.push(file)
+      }
+    }
+    // The three rows that take the inset today; a fourth carrier is a `button` or fails above.
+    expect(new Set(carriers)).toEqual(
+      new Set(['pages/settings/rows.tsx', 'pages/settings/blocks.tsx', 'translate/pickers.tsx'])
+    )
+    // Their trailing marks are presentational: the switch and the radio circle are `aria-hidden`
+    // spans, the row button being the switch / radio itself.
+    const rows = readFileSync(join(components, 'pages/settings/rows.tsx'), 'utf8')
+    expect(rows).toMatch(/<span className="zen-v2-switch" aria-hidden="true" \/>/)
+    const blocks = readFileSync(join(components, 'pages/settings/blocks.tsx'), 'utf8')
+    expect(blocks).toMatch(/<span className="zen-v2-radio" aria-hidden="true" \/>/)
+  })
+
+  it('leaves a popover row the room its ring now takes: --v2-ring-room is 4 (§9.20, the #251 chassis (b))', () => {
+    // The ring's 2 px at the row's 2 outside: the rows in a clipped popover body stand 4 in from
+    // its sides and give the 4 back from their gutter, the text staying at 16. One rule for the
+    // two clipped bodies – the bookmark popovers' and the omnibox dropdown's list (shell pass
+    // 7(b)); popoverRingRoom.test.ts models the geometry.
+    expect(block(':root', lightBlockStart)).toMatch(/^ {2}--v2-ring-room: 4px;$/m)
+    expect(block(':is(.zen-bm-popover-body, .zen-omnibox-results) .zen-v2-row')).toMatch(
+      /padding-inline: calc\(16px - var\(--v2-ring-room\)\)/
+    )
+  })
+
+  it('rings an accent-filled control outside its fill like every other (§4, the #251 ruling): no exception moves or re-inks it', () => {
+    // The primary button, a checked checkbox, switch or radio: at 2 outside the ring stands off
+    // the accent fill by the 2 px of surface between them and reads against it (Firefox's
+    // primary buttons ring outside their fill the same way), so the dark-theme exception that
+    // pulled their ring back to 0 is gone and no rule singles them out for the ring.
+    for (const control of [
+      '.zen-v2-button[data-primary]',
+      '.zen-v2-checkbox:checked',
+      ".zen-v2-checkbox[aria-checked='true']",
+      ".zen-v2-switch[aria-checked='true']",
+      ".zen-v2-radio[aria-checked='true']"
+    ]) {
+      const escaped = control.replace(/[.[\]()*+?^$|\\]/g, '\\$&')
+      expect(bare, `${control} has a ring rule of its own`).not.toMatch(
+        new RegExp(`${escaped}[^,{\\n]*:focus-visible`)
+      )
+    }
+    // The picked card radio (its accent outline 2 outside) and the picked swatch are the two
+    // controls that move the ring, through the token, and they are not accent fills.
+    expect(
+      block(".zen-v2-card-radio[aria-checked='true']", css.indexOf('.zen-v2-card-radio {'))
+    ).toMatch(/box-shadow: 0 0 0 2px var\(--v2-accent\)/)
+    expect(
+      block(
+        ".zen-v2-card-radio[aria-checked='true']",
+        css.indexOf('box-shadow: 0 0 0 2px var(--v2-accent)')
+      )
+    ).toMatch(/^ {2}--v2-ring-offset: -2px;$/m)
+    expect(
+      block(
+        ".zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']",
+        css.indexOf('.zen-group-editor-swatch-disc')
+      )
+    ).toMatch(/^ {2}--v2-ring-offset: 2px;$/m)
   })
 })
 

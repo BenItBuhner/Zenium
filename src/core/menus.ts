@@ -2434,6 +2434,14 @@ export class Menus {
     const phone = win.formFactor === 'phone'
     /** Items the host must be able to act on; left out rather than greyed where it cannot. */
     const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+    /** Items of the sidebar layouts (desktop and tablet) only. */
+    const sidebar = (...items: Template): Template => (phone ? [] : items)
+    /**
+     * Items of the desktop layout alone: what acts on chrome the tablet does not draw. The
+     * tablet's sidebar collapses to its icon rail from the toolbar (Zen's compact mode is the
+     * desktop's hover-revealed sidebar, which a finger cannot reveal) and it has no bookmarks bar.
+     */
+    const desktop = (...items: Template): Template => (win.formFactor === 'desktop' ? items : [])
     const separator: MenuItemTemplate = { type: 'separator' }
     // From its button the menu hangs off the button's bottom edge (Chrome, Firefox); from a
     // shortcut it also starts with its first item selected (design language v2 §9.22).
@@ -2498,7 +2506,7 @@ export class Menus {
       submenu: [
         // The phone's bookmark entry is the icon row's star (TB-16), with Chrome's star flow;
         // the sidebar layouts keep the toggle here, whose star bubble names and files it.
-        ...when(!phone, {
+        ...sidebar({
           label: active?.bookmarked ? 'Remove Bookmark' : 'Bookmark This Page',
           action: 'bookmark.add',
           enabled: Boolean(active && !active.url.startsWith('zen://')),
@@ -2515,7 +2523,8 @@ export class Menus {
           action: 'bookmark.sidebar',
           click: () => this.browser.pages.open('bookmarks', undefined, win)
         },
-        ...when(!phone, { label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
+        // The desktop's alone: the tablet has no bookmarks bar.
+        ...desktop({ label: 'Show Bookmarks Bar', submenu: this.bookmarksBarSubmenu(win) }),
         separator,
         // Chrome's entry opens Settings > Import with the dialog up; a phone has no other
         // browser's profile to read and keeps the bookmarks-file pick (Edge Android's).
@@ -2561,13 +2570,15 @@ export class Menus {
       action: 'addons.open',
       click: () => this.browser.emit('overlay.open', { kind: 'addons' }, win)
     })
-    const compactMode: MenuItemTemplate = {
+    // The desktop's alone: Zen's compact mode is the hover-revealed sidebar, which a finger
+    // cannot reveal; the tablet's sidebar collapses to its rail from the toolbar.
+    const compactMode = desktop({
       label: 'Compact Mode',
       type: 'checkbox',
       action: 'compact.toggle',
       checked: win.compactEnabled,
       click: () => this.browser.toggleCompactMode(win)
-    }
+    })
     const changeTheme = when(!local, {
       label: 'Change Theme…',
       click: () => this.browser.emit('theme.open', { spaceId: win.activeSpaceId }, win)
@@ -2590,8 +2601,9 @@ export class Menus {
       !caps.pageControls,
       this.zoomSubmenu(active, phone ? [] : [separator, fullscreen])
     )
-    // Where Edge's users look for "Split screen" (split-01): the sidebar layouts' menu; a
-    // phone has no split view. The tab row's "Split with Current Tab" stays as it is.
+    // Where Edge's users look for "Split screen" (split-01): the sidebar layouts' menu (the
+    // tablet splits its content card as the desktop does); a phone has no split view. The
+    // tab row's "Split with Current Tab" stays as it is.
     const splitView = splitViewSubmenu(
       active,
       active?.splitGroupId ? state.model.splitGroups[active.splitGroupId] : undefined
@@ -2707,12 +2719,13 @@ export class Menus {
       click: () => active && tabs.toggleDevtools(active.id)
     })
     const about: MenuItemTemplate = { label: `About Zenium ${state.version}`, enabled: false }
-    // An Android app is left, not quit: the system owns its lifetime.
-    const quit: MenuItemTemplate = {
+    // An Android app is left, not quit: the system owns its lifetime – on a tablet as on a
+    // phone. Hosts with windows of their own (the desktop, at any layout) quit.
+    const quit = when(caps.windows, {
       label: 'Quit',
       action: 'app.quit',
       click: () => this.browser.actions.run('app.quit', { sourceTabId: null, win })
-    }
+    })
 
     // --- The phone: Chrome's phone menu, one flat list behind the icon row (TB-08). ------------
     if (phone) {
@@ -2758,7 +2771,8 @@ export class Menus {
           settings,
           ...devtools,
           separator,
-          about
+          about,
+          ...quit
         ],
         win,
         'app',
@@ -2820,7 +2834,7 @@ export class Menus {
             ...newSpace,
             ...newBlankWindow,
             separator,
-            compactMode,
+            ...compactMode,
             splitView,
             ...changeTheme,
             ...when(caps.pageControls, fullscreen),
@@ -2853,7 +2867,7 @@ export class Menus {
             about
           ]
         },
-        quit
+        ...quit
       ],
       win,
       'app',

@@ -1,7 +1,6 @@
 import type { ChangeEvent, JSX, ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { SlidersHorizontal } from 'lucide-react'
-import { useEscape } from '@renderer/hooks/useEscape'
 import type {
   NewTabBackgroundKind,
   NewTabMode,
@@ -20,7 +19,6 @@ import {
   type NewTabSections
 } from '@shared/newTab'
 import { run } from '@renderer/lib/api'
-import { useBackSurface } from '@renderer/lib/back'
 import {
   closeCustomize,
   customizeStore,
@@ -29,10 +27,9 @@ import {
   setWallpaperImage,
   wallpaperImageStore
 } from '@renderer/lib/newtab'
-import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
 import { browserStore, pushToast } from '@renderer/lib/ui'
 import { RowView, type RowContext } from '../pages/settings/rows'
-import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
+import { PhoneSheet } from '../phone/PhoneSheet'
 
 const PRESET_LABELS: Record<NewTabPreset, string> = {
   focused: 'Focused',
@@ -58,18 +55,14 @@ const SHORTCUT_STYLES: Array<{ style: NewTabMode; label: string; description: st
 
 /**
  * Mounted once, above whichever shell is up; while the store says open, the sheet renders in the
- * frame's dialog host (`FrameDialogPortal`, lib/portals.tsx) – a modal dialog over the content
- * frame, which recedes under a sheet and would shrink a sheet mounted inside it.
+ * frame's dialog host (`PhoneSheet`, which places itself there) – a modal dialog over the
+ * content frame, which recedes under a sheet and would shrink a sheet mounted inside it.
  */
 export function NewTabCustomizeLayer(): JSX.Element | null {
   const open = customizeStore.use((s) => s.open)
   const state = browserStore.use((s) => s.state)
   if (!open || !state) return null
-  return (
-    <FrameDialogPortal>
-      <CustomizeSheet state={state} />
-    </FrameDialogPortal>
-  )
+  return <CustomizeSheet state={state} />
 }
 
 /**
@@ -78,17 +71,16 @@ export function NewTabCustomizeLayer(): JSX.Element | null {
  * style and the wallpaper source as radio rows. Every change is written to the settings at once,
  * so the page behind the sheet shows it as the sheet is used.
  *
- * The chassis (`BottomSheet`) is the page surface (§9.29) with the v2 header and grabber; the
- * sheet registers with the host as a dialog that draws its own scrim, fading with its motion
- * (§9.28). The scrim's press, the system back and Escape dismiss it. Focus is the chassis's:
- * it moves into the sheet as it opens, the chrome beneath is inert meanwhile, and it returns to
- * the gear that opened the sheet once the sheet is gone (§9.22, §9.24).
+ * The phone's shared `PhoneSheet`: the page surface (§9.29) with the 48 header and grabber,
+ * registered with the host as a dialog that draws its own scrim, fading with its motion (§9.28).
+ * The scrim's press, the system back and Escape dismiss it. Focus is the chassis's: it moves
+ * into the sheet as it opens, the chrome beneath is inert meanwhile, and it returns to the gear
+ * that opened the sheet once the sheet is gone (§9.22, §9.24).
  */
 function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   const settings = state.settings.newTab
   const sections = newTabSections(settings)
   const image = wallpaperImageStore.use()
-  const sheet = useRef<BottomSheetHandle>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   /** The picked picture is being read and scaled: the button shows a spinner meanwhile (§9.30). */
   const [reading, setReading] = useState(false)
@@ -96,16 +88,6 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   useEffect(() => {
     void loadWallpaperImage()
   }, [])
-
-  const dismiss = (): void => sheet.current?.dismiss()
-  useFrameDialog({ onScrimPress: dismiss, ownScrim: true })
-  useBackSurface({
-    name: 'newtab-customize',
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
-  useEscape(dismiss)
 
   const update = (next: NewTabSettings): void => run('settings.update', { newTab: next })
   const chooseLabel = image.dataUrl ? 'Choose another image' : 'Choose an image'
@@ -133,17 +115,10 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
   }
 
   return (
-    <BottomSheet
-      ref={sheet}
-      hosted
-      onDismissed={closeCustomize}
-      handleLabel="Resize sheet"
-      labelledBy="zen-ntp-customize-title"
-      header={
-        <h2 id="zen-ntp-customize-title" className="zen-sheet-title">
-          New tab page
-        </h2>
-      }
+    <PhoneSheet
+      name="newtab-customize"
+      title={{ pose: 'header', text: 'New tab page' }}
+      onClose={closeCustomize}
     >
       <div className="zen-ntp-customize flex flex-col pb-4">
         <Section title="Layout">
@@ -260,7 +235,7 @@ function CustomizeSheet({ state }: { state: UIState }): JSX.Element {
           />
         </Section>
       </div>
-    </BottomSheet>
+    </PhoneSheet>
   )
 }
 

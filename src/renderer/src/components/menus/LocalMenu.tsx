@@ -58,10 +58,12 @@ function isSeparator(entry: LocalMenuEntry): entry is LocalMenuSeparator {
  * its rows) with 6 of padding, 31 rows at the 14 px chrome menu size (§4), a 16 glyph slot when
  * any row has an icon, the accelerator at the trailing edge in the deemphasised ink, hairline
  * separators 4 above and below and danger rows in the danger ink; on a finger the same rows at
- * 44 in a bottom sheet. Escape closes it, and on the desktop the chrome layer's light dismiss
- * (§9.20 amended: a press outside it, consumed; its control's own press; a scroll, a resize,
- * another popover) – there is no scrim there (§9.5); the sheet's own scrim takes the tap on a
- * phone.
+ * 44 in a bottom sheet. A tablet takes the popover too (v2 §9.36: its menus anchor to their
+ * control, a sheet at the foot of the window being a reach away from it), in the vocabulary's
+ * tablet pose – 332 wide, the rows at the tablet root's 44 with the 20 glyph slot. Escape closes
+ * it, and on the desktop and the tablet the chrome layer's light dismiss (§9.20 amended: a press
+ * outside it, consumed; its control's own press; a scroll, a resize, another popover) – there is
+ * no scrim there (§9.5); the sheet's own scrim takes the tap on a phone.
  *
  * The page's view composites above the chrome, so while the menu is up the content frame shows
  * the page's capture instead (`useFloatingChrome`), as it does for the main-process menus.
@@ -75,7 +77,7 @@ export function LocalMenu(props: Props): JSX.Element | null {
   if (!ready) return null
   // A sheet is the phone's dialog, not a popover: it stays on the body with the other sheets,
   // whose §9.24 stack is their mount order there.
-  if (viewport.coarse) return createPortal(<SheetMenu {...props} />, document.body)
+  if (viewport.formFactor === 'phone') return createPortal(<SheetMenu {...props} />, document.body)
   return (
     <ChromePortal>
       <PopoverMenu {...props} fromKeyboard={fromKeyboard} />
