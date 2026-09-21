@@ -402,4 +402,31 @@ describe('the app menu under ⋯', () => {
     expect(menu.style.top).toBe('50px')
     expect(menu.style.left).toBe('300px')
   })
+
+  it('is exempt from the 60% cap: on an 800 px window it stands whole at its rows’ height, taking the room to the 8 px bottom margin (§6 Menus)', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    // Eighteen rows and three separators come to about 600; 60% of 800 is 480, which would
+    // have scrolled it.
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 640
+    })
+    show(appMenu())
+    const [menu] = menus()
+    expect(menu.style.top).toBe('44px')
+    expect(menu.style.maxHeight).toBe('640px')
+  })
+
+  it('scrolls only past the window’s bottom margin: taller than the room under the bar it shrinks to that room, never to 60%', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 900
+    })
+    show(appMenu())
+    const [menu] = menus()
+    // Below the bar (top 44) to the margin: 800 − 44 − 8. Above there is no room, so it stays.
+    expect(menu.style.top).toBe('44px')
+    expect(menu.style.maxHeight).toBe(`${800 - 44 - 8}px`)
+  })
 })

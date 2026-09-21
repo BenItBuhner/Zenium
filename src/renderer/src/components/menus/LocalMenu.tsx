@@ -91,8 +91,14 @@ function PopoverMenu({
     if (!el) return
     // A menu keeps its intrinsic width and is as tall as its rows (§5, §9.20's exemption):
     // measured as layout size, not the client rect – the pop animation's first frame is scaled
-    // to .94, and an end-aligned menu measured through it would land 6% of its width off.
-    setBox(placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight))
+    // to .94, and an end-aligned menu measured through it would land 6% of its width off. It is
+    // exempt from the 60% cap too (§6 "Menus"): it takes the room down to the window's 8 px
+    // bottom margin and scrolls only past that.
+    setBox(
+      placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight, undefined, undefined, {
+        capHeight: false
+      })
+    )
   }, [anchor, items.length])
   // Opened by pointer the menu itself takes focus, and the arrow keys start at the first item; a
   // letter goes to (or runs) the item it names, as in Chrome's menus (a11y-08).

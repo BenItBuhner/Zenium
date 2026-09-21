@@ -1123,9 +1123,11 @@ export type PopoverAlignment = 'start' | 'end'
 
 export interface PlacePopoverOptions {
   /**
-   * Whether the 60%-of-window height cap applies (default true). `false` only for the surface
-   * §9.20 exempts by name: an extension's manifest popup at its requested size, capped by the
-   * window minus 16 alone.
+   * Whether the 60%-of-window height cap applies (default true). `false` only for the surfaces
+   * the spec exempts by name: an extension's manifest popup at its requested size (§9.20) and
+   * a menu, which takes the room to the window's bottom margin and scrolls only past it (§6
+   * "Menus": the app menu stands whole on an 800 px window) – both held by the window minus 16
+   * alone.
    */
   capHeight?: boolean
   /**
@@ -1206,10 +1208,10 @@ export function placePopover(
   // the window's edge gets the nearest box there is.
   else left = Math.min(Math.max(minLeft, at[preferred]), maxLeft)
 
-  // The 60% cap holds for every chassis popover, an explicit height included: a long menu or a
-  // known-height panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface
-  // §9.20 exempts by name – an extension's manifest popup, its own document – opts out with
-  // `capHeight: false` and is held by the window minus 16 alone.
+  // The 60% cap holds for every chassis popover, an explicit height included: a known-height
+  // panel shrinks to it and scrolls under its sticky title (§9.20). Only a surface the spec
+  // exempts by name – an extension's manifest popup (§9.20), a menu (§6 "Menus") – opts out
+  // with `capHeight: false` and is held by the window minus 16 alone.
   const edge = Math.max(0, viewport.height - 2 * POPOVER_MARGIN)
   const cap = options.capHeight === false ? edge : Math.min(viewport.height * 0.6, edge)
   const wanted = Math.max(0, Math.min(height ?? cap, cap))

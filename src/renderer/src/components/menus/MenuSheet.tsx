@@ -537,13 +537,17 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   }
 
   // Placement: the root under its anchor (flush under the bar the button sits in, else under
-  // the point), every other level beside the row that opened it.
+  // the point), every other level beside the row that opened it. A menu is exempt from §9.20's
+  // 60% cap (§6 "Menus"): it takes the room down to the window's 8 px bottom margin and scrolls
+  // only past that, so the app menu stands whole on an 800 px window.
   const place = useCallback(
     (depth: number, parentId: string | null, el: HTMLElement): Placement | null => {
       const viewport = viewportSize()
       const size = { width: el.offsetWidth, height: el.offsetHeight }
       if (depth === 0 || parentId === null) {
-        const box = placeUnder(anchor, { measured: size.width }, size.height, viewport)
+        const box = placeUnder(anchor, { measured: size.width }, size.height, viewport, undefined, {
+          capHeight: false
+        })
         return { box, origin: popOrigin(anchor, box) }
       }
       const parent = panelEls.current[depth - 1]
