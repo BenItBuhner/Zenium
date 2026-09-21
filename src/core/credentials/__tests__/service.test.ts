@@ -70,8 +70,17 @@ describe('PasswordService.runCheckup and the device\u2019s checkup summary (ID-1
     await service.unlock()
     const bad = service.add({ url: 'https://a.example', username: 'ada', password: 'password' })
     const twin = service.add({ url: 'https://b.example', username: 'bob', password: 'password' })
-    const ok = service.add({ url: 'https://c.example', username: 'cat', password: 'a-long-unique-passphrase-9f' })
-    expect(service.status().checkupSummary).toEqual({ compromised: 0, weak: 0, reused: 0, checkedAt: null })
+    const ok = service.add({
+      url: 'https://c.example',
+      username: 'cat',
+      password: 'a-long-unique-passphrase-9f'
+    })
+    expect(service.status().checkupSummary).toEqual({
+      compromised: 0,
+      weak: 0,
+      reused: 0,
+      checkedAt: null
+    })
 
     service.runCheckup()
     await finished(service)
@@ -121,7 +130,12 @@ describe('PasswordService.runCheckup and the device\u2019s checkup summary (ID-1
     expect(service.status().checkupSummary).toMatchObject({ compromised: 0, weak: 1 })
     expect(service.status().checkupSummary.checkedAt).not.toBeNull()
     await service.reset()
-    expect(state.passwordsDevice.checkupSummary).toEqual({ compromised: 0, weak: 0, reused: 0, checkedAt: null })
+    expect(state.passwordsDevice.checkupSummary).toEqual({
+      compromised: 0,
+      weak: 0,
+      reused: 0,
+      checkedAt: null
+    })
   })
 
   it('a cancelled or offline run leaves the last summary in place', async () => {
@@ -133,7 +147,11 @@ describe('PasswordService.runCheckup and the device\u2019s checkup summary (ID-1
     await finished(service)
     expect(service.status().checkup.error).toMatch(/could not reach/)
     // Offline still is a finished run: nothing was looked up, and the summary says weak / reused.
-    expect(state.passwordsDevice.checkupSummary).toMatchObject({ compromised: 0, weak: 1, reused: 0 })
+    expect(state.passwordsDevice.checkupSummary).toMatchObject({
+      compromised: 0,
+      weak: 1,
+      reused: 0
+    })
     const before = state.passwordsDevice.checkupSummary
     service.runCheckup()
     service.cancelCheckup()

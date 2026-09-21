@@ -28,7 +28,11 @@ describe('the sign-in leak check: which saved login carries the memory', () => {
   const candidate = { origin: 'https://example.com', username: 'Ada', password: 'pw' }
 
   it('is the login with the same password and username, the exact origin first', () => {
-    const sibling = credential({ origin: 'https://accounts.example.com', username: 'ada', password: 'pw' })
+    const sibling = credential({
+      origin: 'https://accounts.example.com',
+      username: 'ada',
+      password: 'pw'
+    })
     const exact = credential({ origin: 'https://example.com', username: 'ada', password: 'pw' })
     const other = credential({ origin: 'https://example.com', username: 'ada', password: 'other' })
     expect(savedLoginFor(candidate, [other, sibling, exact])).toBe(exact)
@@ -37,8 +41,18 @@ describe('the sign-in leak check: which saved login carries the memory', () => {
   })
 
   it('takes the most recently used sibling when none is exact, and any user for a form without a username', () => {
-    const older = credential({ origin: 'https://a.example.com', username: 'ada', password: 'pw', lastUsedAt: 10 })
-    const newer = credential({ origin: 'https://b.example.com', username: 'ada', password: 'pw', lastUsedAt: 20 })
+    const older = credential({
+      origin: 'https://a.example.com',
+      username: 'ada',
+      password: 'pw',
+      lastUsedAt: 10
+    })
+    const newer = credential({
+      origin: 'https://b.example.com',
+      username: 'ada',
+      password: 'pw',
+      lastUsedAt: 20
+    })
     expect(savedLoginFor(candidate, [older, newer])).toBe(newer)
     const bob = credential({ origin: 'https://example.com', username: 'bob', password: 'pw' })
     expect(savedLoginFor({ ...candidate, username: '' }, [bob])).toBe(bob)
@@ -69,7 +83,13 @@ describe('the sign-in leak check: when it runs', () => {
       kind: 'skip',
       reason: 'warned'
     })
-    const ignored = credential({ id: 'c3', breached: 5, checkedAt: 1, leakWarnedAt: 1, leakIgnoredAt: 2 })
+    const ignored = credential({
+      id: 'c3',
+      breached: 5,
+      checkedAt: 1,
+      leakWarnedAt: 1,
+      leakIgnoredAt: 2
+    })
     expect(decideLeakCheck({ password: 'pw' }, { ...base, saved: ignored })).toEqual({
       kind: 'skip',
       reason: 'ignored'
@@ -84,12 +104,16 @@ describe('the sign-in leak check: when it runs', () => {
 
   it('checks in a private tab but remembers nothing there, still honouring an earlier Ignore', () => {
     const fresh = credential({ id: 'c1' })
-    expect(decideLeakCheck({ password: 'pw' }, { ...base, isPrivate: true, saved: fresh })).toEqual({
-      kind: 'check',
-      credentialId: null
-    })
+    expect(decideLeakCheck({ password: 'pw' }, { ...base, isPrivate: true, saved: fresh })).toEqual(
+      {
+        kind: 'check',
+        credentialId: null
+      }
+    )
     const ignored = credential({ id: 'c3', breached: 5, leakIgnoredAt: 2 })
-    expect(decideLeakCheck({ password: 'pw' }, { ...base, isPrivate: true, saved: ignored })).toEqual({
+    expect(
+      decideLeakCheck({ password: 'pw' }, { ...base, isPrivate: true, saved: ignored })
+    ).toEqual({
       kind: 'skip',
       reason: 'ignored'
     })
@@ -117,7 +141,11 @@ describe('the sign-in leak check: the range lookup', () => {
   it('reports a clean password as 0 and a network failure as null after the retries', async () => {
     const clean = await lookupBreachCount(
       'a-password-nobody-has-used-before-7a9f',
-      { async fetchRange() { return RANGE_5BAA6 } },
+      {
+        async fetchRange() {
+          return RANGE_5BAA6
+        }
+      },
       new AbortController().signal
     )
     expect(clean).toBe(0)
@@ -134,7 +162,17 @@ describe('the sign-in leak check: the range lookup', () => {
     )
     expect(failed).toBeNull()
     expect(attempts).toBe(3)
-    expect(await lookupBreachCount('', { async fetchRange() { return '' } }, new AbortController().signal)).toBeNull()
+    expect(
+      await lookupBreachCount(
+        '',
+        {
+          async fetchRange() {
+            return ''
+          }
+        },
+        new AbortController().signal
+      )
+    ).toBeNull()
   })
 
   it('the checkup hands back every looked-up login\u2019s count, clean ones as 0', async () => {
@@ -174,7 +212,10 @@ describe('the sign-in leak check: where Change password goes', () => {
   it('opens the well-known change-password page when the site serves one and answers the probe with an error', async () => {
     const url = await changePasswordUrl(
       origin,
-      probe({ [`${origin}${WELL_KNOWN_CHANGE_PASSWORD}`]: true, [`${origin}${WELL_KNOWN_NOT_EXIST}`]: false })
+      probe({
+        [`${origin}${WELL_KNOWN_CHANGE_PASSWORD}`]: true,
+        [`${origin}${WELL_KNOWN_NOT_EXIST}`]: false
+      })
     )
     expect(url).toBe('https://accounts.example.com/.well-known/change-password')
   })
@@ -184,7 +225,10 @@ describe('the sign-in leak check: where Change password goes', () => {
     expect(
       await changePasswordUrl(
         origin,
-        probe({ [`${origin}${WELL_KNOWN_CHANGE_PASSWORD}`]: true, [`${origin}${WELL_KNOWN_NOT_EXIST}`]: true })
+        probe({
+          [`${origin}${WELL_KNOWN_CHANGE_PASSWORD}`]: true,
+          [`${origin}${WELL_KNOWN_NOT_EXIST}`]: true
+        })
       )
     ).toBe('https://accounts.example.com/')
     expect(
@@ -200,9 +244,15 @@ describe('the checkup summary', () => {
   const summary: CheckupSummary = { compromised: 2, weak: 1, reused: 4, checkedAt: 1_000 }
 
   it('takes the live compromised count off an open vault and leaves a locked one alone', () => {
-    expect(withLiveCompromised(summary, { unlocked: () => false, compromisedCount: () => 0 })).toBe(summary)
-    expect(withLiveCompromised(summary, { unlocked: () => true, compromisedCount: () => 2 })).toBe(summary)
-    expect(withLiveCompromised(summary, { unlocked: () => true, compromisedCount: () => 3 })).toEqual({
+    expect(withLiveCompromised(summary, { unlocked: () => false, compromisedCount: () => 0 })).toBe(
+      summary
+    )
+    expect(withLiveCompromised(summary, { unlocked: () => true, compromisedCount: () => 2 })).toBe(
+      summary
+    )
+    expect(
+      withLiveCompromised(summary, { unlocked: () => true, compromisedCount: () => 3 })
+    ).toEqual({
       ...summary,
       compromised: 3
     })
@@ -213,7 +263,10 @@ describe('the checkup summary', () => {
       now: 2_000,
       updates: null,
       safeBrowsing: { configured: false, enabled: null },
-      passwords: passwords === null ? null : { ...emptyPasswordsStatus(), locked: false, count: 3, ...passwords },
+      passwords:
+        passwords === null
+          ? null
+          : { ...emptyPasswordsStatus(), locked: false, count: 3, ...passwords },
       rules: [],
       lastVisitByOrigin: new Map(),
       notificationsShown: [],
@@ -226,14 +279,24 @@ describe('the checkup summary', () => {
     expect(never).toMatchObject({ state: 'info', known: false, checkedAt: null })
     expect(never.summary).toMatch(/Run Password Checkup/)
 
-    const clean = composeSafetyCheck(input({ checkupSummary: { ...emptyCheckupSummary(), checkedAt: 1_000 } })).passwords
+    const clean = composeSafetyCheck(
+      input({ checkupSummary: { ...emptyCheckupSummary(), checkedAt: 1_000 } })
+    ).passwords
     expect(clean).toMatchObject({ state: 'safe', known: true, checkedAt: 1_000, compromised: 0 })
 
     const bad = composeSafetyCheck(input({ checkupSummary: summary })).passwords
-    expect(bad).toMatchObject({ state: 'warning', compromised: 2, weak: 1, reused: 4, checkedAt: 1_000 })
+    expect(bad).toMatchObject({
+      state: 'warning',
+      compromised: 2,
+      weak: 1,
+      reused: 4,
+      checkedAt: 1_000
+    })
     expect(bad.summary).toBe('2 compromised passwords found; change them now')
 
-    const soft = composeSafetyCheck(input({ checkupSummary: { ...summary, compromised: 0 } })).passwords
+    const soft = composeSafetyCheck(
+      input({ checkupSummary: { ...summary, compromised: 0 } })
+    ).passwords
     expect(soft).toMatchObject({ state: 'info', summary: '1 weak password, 4 reused passwords' })
   })
 
@@ -244,10 +307,18 @@ describe('the checkup summary', () => {
     expect(leak).toMatchObject({ state: 'warning', compromised: 1, known: true, checkedAt: null })
 
     const locked = composeSafetyCheck(input({ locked: true, checkupSummary: summary })).passwords
-    expect(locked).toMatchObject({ state: 'warning', compromised: 2, known: true, checkedAt: 1_000 })
+    expect(locked).toMatchObject({
+      state: 'warning',
+      compromised: 2,
+      known: true,
+      checkedAt: 1_000
+    })
     const lockedNever = composeSafetyCheck(input({ locked: true })).passwords
     expect(lockedNever).toMatchObject({ state: 'info', known: false })
     expect(lockedNever.summary).toMatch(/Unlock the password vault/)
-    expect(composeSafetyCheck(input({ count: 0 })).passwords).toMatchObject({ state: 'safe', known: true })
+    expect(composeSafetyCheck(input({ count: 0 })).passwords).toMatchObject({
+      state: 'safe',
+      known: true
+    })
   })
 })

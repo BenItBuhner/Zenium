@@ -124,7 +124,10 @@ export async function changePasswordUrl(
 }
 
 /** A submitted login the detector checks: the candidate and the tab it was submitted in. */
-export interface LeakCandidate extends Pick<LoginCandidate, 'origin' | 'url' | 'username' | 'password'> {
+export interface LeakCandidate extends Pick<
+  LoginCandidate,
+  'origin' | 'url' | 'username' | 'password'
+> {
   tabId: string
 }
 
@@ -194,7 +197,11 @@ export class LeakDetector {
     this.results.delete(candidate.tabId)
     let count: number | null
     try {
-      count = await lookupBreachCount(candidate.password, { fetchRange: this.fetchRange }, abort.signal)
+      count = await lookupBreachCount(
+        candidate.password,
+        { fetchRange: this.fetchRange },
+        abort.signal
+      )
     } finally {
       if (this.aborts.get(candidate.tabId) === abort) this.aborts.delete(candidate.tabId)
     }

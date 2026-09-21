@@ -540,7 +540,12 @@ describe('credential records (ID-09)', () => {
     const plain = readCredentialData(out.get('cred_login1')!.data)!
     expect('breached' in plain).toBe(false)
     expect(
-      readCredentialData({ kind: 'login', origin: 'https://a.example', password: 'x', breached: 'many' })
+      readCredentialData({
+        kind: 'login',
+        origin: 'https://a.example',
+        password: 'x',
+        breached: 'many'
+      })
     ).not.toHaveProperty('breached')
   })
 

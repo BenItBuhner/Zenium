@@ -258,7 +258,11 @@ describe('two engines on one folder', () => {
     // A's sign-in check flagged the login and the user ignored the warning, and A wrote a note:
     // both travel (additive fields), so B neither warns again nor loses the note.
     a.browser.passwords.update(login.id, { notes: 'shared with the team' })
-    a.browser.passwords.store.recordLeak(login.id, { breached: 5, leakWarnedAt: 1_000, leakIgnoredAt: 1_500 }, 1_000)
+    a.browser.passwords.store.recordLeak(
+      login.id,
+      { breached: 5, leakWarnedAt: 1_000, leakIgnoredAt: 1_500 },
+      1_000
+    )
     await a.engine.syncNow()
     await b.engine.syncNow()
     expect(b.browser.passwords.store.get(login.id)).toMatchObject({

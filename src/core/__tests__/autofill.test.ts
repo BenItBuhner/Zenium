@@ -117,9 +117,7 @@ function setup(
   const confirm = vi.fn(async () => true)
   const toast = vi.fn()
   const net: FakeNet = { ranges: {}, probes: {}, requests: [] }
-  const fetchText = async (
-    url: string
-  ): Promise<{ ok: boolean; status: number; text: string }> => {
+  const fetchText = async (url: string): Promise<{ ok: boolean; status: number; text: string }> => {
     net.requests.push(url)
     const range = url.match(/\/range\/([0-9A-F]{5})$/i)
     if (range) {
@@ -127,7 +125,9 @@ function setup(
       if (text === null) return { ok: false, status: 503, text: '' }
       return { ok: true, status: 200, text: text ?? '' }
     }
-    return net.probes[url] ? { ok: true, status: 200, text: '' } : { ok: false, status: 404, text: '' }
+    return net.probes[url]
+      ? { ok: true, status: 200, text: '' }
+      : { ok: false, status: 404, text: '' }
   }
   const commit = vi.fn()
   const navigate = vi.fn()
@@ -1204,7 +1204,12 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
   }
 
   /** Submit a login in `tabId` and let the page move on, as a sign-in does. */
-  async function signIn(w: World, tabId: string, password: string, username = 'ada'): Promise<void> {
+  async function signIn(
+    w: World,
+    tabId: string,
+    password: string,
+    username = 'ada'
+  ): Promise<void> {
     w.event(tabId, loginSubmit({ username, password }))
     w.autofill.onNavigated(tabId)
     await w.settle()
@@ -1215,7 +1220,11 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
   it('warns once a saved login signs in with a breached password, and records the verdict on the login', async () => {
     const w = breachedWorld()
     await w.passwords.unlock()
-    const saved = w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
     w.addTab('t1', 'https://example.com/login')
     expect(w.passwords.status().leaks).toEqual([])
 
@@ -1239,7 +1248,12 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     expect(login.leakIgnoredAt).toBeNull()
     // The manager's summary carries it, and the device's checkup summary counts it without a checkup.
     expect(w.passwords.list()[0]).toMatchObject({ breached: 10_434_004, leakIgnoredAt: null })
-    expect(w.passwords.status().checkupSummary).toEqual({ compromised: 1, weak: 0, reused: 0, checkedAt: null })
+    expect(w.passwords.status().checkupSummary).toEqual({
+      compromised: 1,
+      weak: 0,
+      reused: 0,
+      checkedAt: null
+    })
     expect(w.commit).toHaveBeenCalled()
     // No prompt to save: the login was saved already, and its use is recorded.
     expect(w.autofill.uiState().prompts).toEqual([])
@@ -1249,7 +1263,11 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
   it('warns once per login per password value: not again after the warning, never after Ignore, again after a change', async () => {
     const w = breachedWorld()
     await w.passwords.unlock()
-    const saved = w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
     w.addTab('t1', 'https://example.com/login')
 
     await signIn(w, 't1', 'password')
@@ -1295,14 +1313,22 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     const w = breachedWorld()
     w.net.ranges[BREACHED_PREFIX] = null
     await w.passwords.unlock()
-    const saved = w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
     w.addTab('t1', 'https://example.com/login')
 
     await signIn(w, 't1', 'password')
     // The request and its two retries, then silence.
     expect(rangeRequests(w)).toHaveLength(3)
     expect(w.passwords.status().leaks).toEqual([])
-    expect(w.passwords.store.get(saved.id)).toMatchObject({ breached: null, checkedAt: null, leakWarnedAt: null })
+    expect(w.passwords.store.get(saved.id)).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null
+    })
     expect(w.passwords.status().checkupSummary.compromised).toBe(0)
 
     w.net.ranges[BREACHED_PREFIX] = RANGE_5BAA6
@@ -1314,7 +1340,11 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
   it('runs no check with the setting off, and a clean password only records the check', async () => {
     const w = breachedWorld()
     await w.passwords.unlock()
-    const saved = w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
     w.addTab('t1', 'https://example.com/login')
     w.browser.state.settings.passwords.leakDetection = false
     await signIn(w, 't1', 'password')
@@ -1323,7 +1353,11 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     expect(w.passwords.store.get(saved.id)!.checkedAt).toBeNull()
 
     w.browser.state.settings.passwords.leakDetection = true
-    const clean = w.passwords.add({ url: 'https://shop.example/login', username: 'bob', password: 'unique-and-clean-9f' })
+    const clean = w.passwords.add({
+      url: 'https://shop.example/login',
+      username: 'bob',
+      password: 'unique-and-clean-9f'
+    })
     w.addTab('t2', 'https://shop.example/login')
     await signIn(w, 't2', 'unique-and-clean-9f', 'bob')
     expect(rangeRequests(w)).toHaveLength(1)
@@ -1335,12 +1369,25 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
   it('checks and warns in a private tab but keeps no memory there', async () => {
     const w = breachedWorld()
     await w.passwords.unlock()
-    const saved = w.passwords.add({ url: 'https://example.com/login', username: 'ada', password: 'password' })
+    const saved = w.passwords.add({
+      url: 'https://example.com/login',
+      username: 'ada',
+      password: 'password'
+    })
     w.addTab('p1', 'https://example.com/login', 'private')
     await signIn(w, 'p1', 'password')
     const [warning] = w.passwords.status().leaks
-    expect(warning).toMatchObject({ tabId: 'p1', private: true, credentialId: null, breachCount: 10_434_004 })
-    expect(w.passwords.store.get(saved.id)).toMatchObject({ breached: null, checkedAt: null, leakWarnedAt: null })
+    expect(warning).toMatchObject({
+      tabId: 'p1',
+      private: true,
+      credentialId: null,
+      breachCount: 10_434_004
+    })
+    expect(w.passwords.store.get(saved.id)).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null
+    })
     await w.passwords.leakRespond(warning.id, 'ignore')
     expect(w.passwords.store.get(saved.id)!.leakIgnoredAt).toBeNull()
     // Nothing remembered: the next private sign-in asks and warns again.
@@ -1387,11 +1434,15 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     expect(w.passwords.status().leaks).toEqual([])
 
     // A site that answers 200 to anything proves nothing: the site itself opens.
-    w.net.probes['https://example.com/.well-known/resource-that-should-not-exist-whose-status-code-should-not-be-200'] = true
+    w.net.probes[
+      'https://example.com/.well-known/resource-that-should-not-exist-whose-status-code-should-not-be-200'
+    ] = true
     await signIn(w, 't1', 'password')
     const [second] = w.passwords.status().leaks
     await w.passwords.leakRespond(second.id, 'changePassword')
-    expect(w.navigate).toHaveBeenLastCalledWith('t1', 'https://example.com/', { transition: 'link' })
+    expect(w.navigate).toHaveBeenLastCalledWith('t1', 'https://example.com/', {
+      transition: 'link'
+    })
 
     await signIn(w, 't1', 'password')
     const [third] = w.passwords.status().leaks

@@ -364,14 +364,25 @@ describe('CredentialStore: the breach memory of a login (ID-31) and its note (ID
     await store.unlock()
     const a = store.add({ url: 'https://a.example', username: 'ada', password: 'pw-a' })
     const b = store.add({ url: 'https://b.example', username: 'bob', password: 'pw-b' })
-    expect(a).toMatchObject({ breached: null, checkedAt: null, leakWarnedAt: null, leakIgnoredAt: null })
+    expect(a).toMatchObject({
+      breached: null,
+      checkedAt: null,
+      leakWarnedAt: null,
+      leakIgnoredAt: null
+    })
     expect(store.compromisedCount()).toBe(0)
 
     store.recordLeak(a.id, { breached: 12, leakWarnedAt: 1_000 }, 1_000)
     expect(store.get(a.id)).toMatchObject({ breached: 12, checkedAt: 1_000, leakWarnedAt: 1_000 })
     // The login itself did not change: its `updatedAt` stays (sync sees a memory, not an edit).
     expect(store.get(a.id)!.updatedAt).toBe(a.updatedAt)
-    store.recordLeaks([{ id: b.id, fields: { breached: 0 } }, { id: 'missing', fields: { breached: 1 } }], 2_000)
+    store.recordLeaks(
+      [
+        { id: b.id, fields: { breached: 0 } },
+        { id: 'missing', fields: { breached: 1 } }
+      ],
+      2_000
+    )
     expect(store.get(b.id)).toMatchObject({ breached: 0, checkedAt: 2_000, leakWarnedAt: null })
     expect(store.compromisedCount()).toBe(1)
 
@@ -410,7 +421,12 @@ describe('CredentialStore: the breach memory of a login (ID-31) and its note (ID
 
     const second = reopen(first)
     await second.store.unlock()
-    expect(second.store.get(a.id)).toMatchObject({ breached: 3, checkedAt: 10, leakWarnedAt: 10, leakIgnoredAt: 20 })
+    expect(second.store.get(a.id)).toMatchObject({
+      breached: 3,
+      checkedAt: 10,
+      leakWarnedAt: 10,
+      leakIgnoredAt: 20
+    })
     expect(second.store.compromisedCount()).toBe(1)
     second.store.importRows(
       [
@@ -423,13 +439,22 @@ describe('CredentialStore: the breach memory of a login (ID-31) and its note (ID
     )
     // The same value again is nothing new; another value is a login to check afresh.
     expect(second.store.get(a.id)).toMatchObject({ breached: 3, leakIgnoredAt: 20 })
-    expect(second.store.get(b.id)).toMatchObject({ password: 'imported', breached: null, leakWarnedAt: null })
+    expect(second.store.get(b.id)).toMatchObject({
+      password: 'imported',
+      breached: null,
+      leakWarnedAt: null
+    })
   })
 
   it('clips a note written here at Chrome\u2019s limit but keeps a longer one that arrives from another device', async () => {
     const { store } = setup()
     await store.unlock()
-    const a = store.add({ url: 'https://a.example', username: 'ada', password: 'pw', notes: 'n'.repeat(1_500) })
+    const a = store.add({
+      url: 'https://a.example',
+      username: 'ada',
+      password: 'pw',
+      notes: 'n'.repeat(1_500)
+    })
     expect(a.notes).toHaveLength(NOTE_MAX_LENGTH)
     store.update(a.id, { notes: 'm'.repeat(1_200) })
     expect(store.get(a.id)!.notes).toHaveLength(NOTE_MAX_LENGTH)
@@ -441,7 +466,12 @@ describe('CredentialStore: the breach memory of a login (ID-31) and its note (ID
       leakWarnedAt: 40,
       leakIgnoredAt: null
     })
-    expect(store.get(a.id)).toMatchObject({ breached: 7, checkedAt: 40, leakWarnedAt: 40, leakIgnoredAt: null })
+    expect(store.get(a.id)).toMatchObject({
+      breached: 7,
+      checkedAt: 40,
+      leakWarnedAt: 40,
+      leakIgnoredAt: null
+    })
     expect(store.get(a.id)!.notes).toHaveLength(5_000)
   })
 })

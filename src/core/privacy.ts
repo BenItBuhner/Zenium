@@ -379,7 +379,8 @@ function passwordsRow(status: PasswordsStatus | null): SafetyCheckResult['passwo
   if (status.locked) {
     if (summary.checkedAt === null && summary.compromised === 0)
       return { ...row('info', 'Unlock the password vault to check your passwords'), ...none }
-  } else if (status.count === 0) return { ...row('safe', 'No saved passwords'), ...none, known: true }
+  } else if (status.count === 0)
+    return { ...row('safe', 'No saved passwords'), ...none, known: true }
   if (summary.compromised > 0)
     return {
       ...row(
