@@ -430,6 +430,36 @@ describe('the worker lifecycle events', () => {
     expect(worker.confirm).toBeUndefined()
     expect(worker.prompt).toBeUndefined()
   })
+
+  it("the global is a WorkerGlobalScope and a ServiceWorkerGlobalScope, through self too, and neither constructs (Google Dictionary's importScripts guard)", () => {
+    const { worker } = pair()
+    const scope = worker.WorkerGlobalScope as (new () => never) & { prototype: object }
+    const serviceScope = worker.ServiceWorkerGlobalScope as (new () => never) & {
+      prototype: object
+    }
+    expect(worker instanceof scope).toBe(true)
+    expect(worker instanceof serviceScope).toBe(true)
+    // What the script reaches as `self` is the worker page's proxy over the global.
+    const self = workerSelf(worker)
+    Object.defineProperty(worker, 'self', { value: self, configurable: true, writable: true })
+    Object.defineProperty(worker, 'globalThis', { value: self, configurable: true, writable: true })
+    expect(self instanceof scope).toBe(true)
+    expect(self instanceof serviceScope).toBe(true)
+    expect((self as Any).WorkerGlobalScope).toBe(scope)
+    expect({} instanceof scope).toBe(false)
+    expect(new EventTarget() instanceof serviceScope).toBe(false)
+    expect(() => new scope()).toThrow(TypeError)
+    expect(() => new serviceScope()).toThrow(TypeError)
+    expect(Object.getPrototypeOf(serviceScope.prototype)).toBe(scope.prototype)
+    expect(Object.getPrototypeOf(scope.prototype)).toBe(EventTarget.prototype)
+    // The guard as the Closure library spells it, run as the worker's script would.
+    const guard = new Function(
+      'self',
+      'WorkerGlobalScope',
+      "return typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope"
+    ) as (self: unknown, scope: unknown) => boolean
+    expect(guard(self, scope)).toBe(true)
+  })
 })
 
 describe('importScripts on the worker page', () => {

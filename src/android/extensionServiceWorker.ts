@@ -707,6 +707,41 @@ interface WorkerOptions {
 }
 
 /**
+ * The interfaces a worker's global is an instance of, on the worker page: `WorkerGlobalScope`
+ * and `ServiceWorkerGlobalScope` (Chrome's chain: `ServiceWorkerGlobalScope` → `WorkerGlobalScope`
+ * → `EventTarget`), neither constructible (`Illegal constructor`, as the real ones). The page's
+ * `self` is a proxy over a Window whose prototype chain holds neither, so each constructor
+ * answers `instanceof` itself: true for the worker's global – the page's `self` / `globalThis`
+ * (the proxy) or the page window – false for anything else. Google Dictionary's worker guards
+ * its `importScripts('mustache.js')` with `typeof WorkerGlobalScope !== 'undefined' && self
+ * instanceof WorkerGlobalScope`, a Closure library's test for a worker; without the interfaces
+ * the guard read false, the template renderer never loaded and every lookup ended in
+ * `ReferenceError: Mustache is not defined`. Distinct from `typeof window`, which stays the
+ * page's (round 4, settled): only what a script reaches through `self` / `globalThis` is a worker's.
+ */
+export function installWorkerScopeInterfaces(target: Any): void {
+  const isWorkerGlobal = (value: unknown): boolean =>
+    value === target ||
+    value === Reflect.get(target, 'self') ||
+    value === Reflect.get(target, 'globalThis')
+  const scope = function WorkerGlobalScope(): never {
+    throw new TypeError('Illegal constructor')
+  }
+  Object.setPrototypeOf(scope.prototype, EventTarget.prototype)
+  Object.defineProperty(scope, Symbol.hasInstance, { value: isWorkerGlobal, configurable: true })
+  const serviceScope = function ServiceWorkerGlobalScope(): never {
+    throw new TypeError('Illegal constructor')
+  }
+  Object.setPrototypeOf(serviceScope.prototype, scope.prototype)
+  Object.setPrototypeOf(serviceScope, scope)
+  Object.defineProperty(serviceScope, Symbol.hasInstance, {
+    value: isWorkerGlobal,
+    configurable: true
+  })
+  define(target, { WorkerGlobalScope: scope, ServiceWorkerGlobalScope: serviceScope })
+}
+
+/**
  * The worker page's side: `self.clients`, `self.registration`, `self.serviceWorker`,
  * `skipWaiting`, and the `message` events clients raise (`self.onmessage` in a classic script's
  * global scope). Returns the receiver for `{ t: 'sw' }` messages and the lifecycle runner.
@@ -788,6 +823,7 @@ export function installServiceWorkerGlobals(
     confirm: undefined,
     prompt: undefined
   })
+  installWorkerScopeInterfaces(target)
 
   const receive = (message: Record<string, unknown>): void => {
     switch (message.op) {
