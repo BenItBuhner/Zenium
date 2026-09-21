@@ -560,6 +560,24 @@ class FakeboxMorphJudgeTest {
     }
 
     @Test
+    fun `a segment that fell whole between two frames wider apart than the fade is not judged`() {
+        // Run 2's reduced-bottom closing: `open` on one frame, `rest` 416 ms later on the next, the 120 ms hold between them.
+        val openFrame = frame(1674, "open", "open", 1f, top, omniTop, omniField = OmniField(omniTop, 1f, 1f), pageField = PageField(top.rest, 0f))
+        val restFrame = frame(2090, "rest", "", 0f, top, omniTop, pageField = PageField(top.rest, 1f), pill = well, urlbarOpen = false)
+        val between = FakeboxMorph.reducedFade(listOf(openFrame, restFrame))
+        assertTrue(between.detail, between.ok)
+        assertFalse(between.judged)
+        assertTrue(between.detail, between.detail.contains("the closing fell between two frames 416 ms apart"))
+        // The same jump inside a gap narrower than the hold is a hold cut short: failed.
+        val narrow = FakeboxMorph.reducedFade(listOf(openFrame, restFrame.copy(t = 1674 + 80)))
+        assertFalse(narrow.ok)
+        assertTrue(narrow.judged)
+        assertTrue(narrow.detail, narrow.detail.contains("less than the 120 ms hold"))
+        // No change of rest at all is still 'no segment was sampled'.
+        assertFalse(FakeboxMorph.reducedFade(listOf(openFrame, openFrame.copy(t = 2090))).ok)
+    }
+
+    @Test
     fun `a single segment frame in a gap wider than the fade is not judged, in a narrower one it is a failure`() {
         val sparse = reducedOpening(listOf(0f))
         // Rest at 0, the one opening frame at 40, open at 80: an 80 ms gap, the fade would have shown.

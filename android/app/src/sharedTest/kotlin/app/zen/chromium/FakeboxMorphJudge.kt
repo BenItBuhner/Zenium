@@ -190,6 +190,9 @@ object FakeboxMorph {
     const val REDUCED_FADE_MS = 120
     const val REDUCED_FADE_MAX_MS = 600
 
+    /** The machine's two rests: a segment runs from one to the other. */
+    private val RESTS = setOf("rest", "open")
+
     /** How far off the line a box may be drawn (CSS px): rounding of the interpolation and of the rect. */
     const val LINE_TOLERANCE = 2.5f
 
@@ -866,11 +869,28 @@ object FakeboxMorph {
      * the emulator's software GPU had not started it by the time the controller's 120 ms hold
      * was over, so the sampler saw the content whole, then gone – or where the sampler had a
      * single frame in a gap wider than the fade, the fade is NOT JUDGED rather than failed; the
-     * box and the value, which the chrome writes itself, are judged either way.
+     * box and the value, which the chrome writes itself, are judged either way. A segment the
+     * sampler never saw at all – the phase at one rest on a frame and at the other on the next,
+     * the controller's 120 ms hold whole inside a gap at least that wide – is the sampler's
+     * frame rate too (run 2's reduced-bottom closing: `open` at 1674 ms, `rest` at 2090 ms, the
+     * hold inside 416 ms), NOT JUDGED with the gap named; inside a narrower gap the hold was cut
+     * short, and that is failed.
      */
     fun reducedFade(frames: List<Frame>): Verdict {
         val segments = segmentsOf(frames).filter { run -> run.any { it.phase == "opening" || it.phase == "closing" } }
-        if (segments.isEmpty()) return Verdict("reduced motion", false, "no segment was sampled")
+        if (segments.isEmpty()) {
+            val across = frames.zipWithNext().firstOrNull { (a, b) -> a.phase != b.phase && a.phase in RESTS && b.phase in RESTS }
+                ?: return Verdict("reduced motion", false, "no segment was sampled")
+            val (a, b) = across
+            val gap = b.t - a.t
+            val phase = if (b.phase == "rest") "closing" else "opening"
+            return if (gap >= REDUCED_FADE_MS) Verdict(
+                "reduced motion",
+                true,
+                "the $phase fell between two frames $gap ms apart (${a.phase} at ${a.t} ms, ${b.phase} at ${b.t} ms), wider than the fade: the value jumped ${a.morph.p()} -> ${b.morph.p()}; the fade the emulator never sampled",
+                judged = false
+            ) else Verdict("reduced motion", false, "no segment was sampled: the phase went ${a.phase} -> ${b.phase} across $gap ms, less than the ${REDUCED_FADE_MS} ms hold")
+        }
         val problems = ArrayList<String>()
         val unjudged = ArrayList<String>()
         for (segment in segments) {
