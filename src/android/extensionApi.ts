@@ -26,7 +26,6 @@ import { normalizeInjection, type UserScriptInjection } from '@core/extensions/a
 import type { ExtensionRecord } from '@core/extensions/registry'
 import {
   chromeExtensionOrigin,
-  extensionIdOfUrl,
   presentExtensionUrl,
   toServedUrl
 } from '@core/extensions/runtime/extensionUrls'
@@ -766,7 +765,7 @@ export class ExtensionApi {
           {
             url:
               typeof props.url === 'string'
-                ? tabUrlFrom(ext.record.id, endpoint.url, props.url)
+                ? tabUrlFrom(ext.record.id, props.url)
                 : undefined,
             active: props.active === undefined ? true : Boolean(props.active),
             pinned: Boolean(props.pinned)
@@ -781,7 +780,7 @@ export class ExtensionApi {
         const target = targetOrActive(first)
         if (!target) throw new Error('No active tab.')
         if (typeof props.url === 'string')
-          tabs.navigate(target.id, tabUrlFrom(ext.record.id, endpoint.url, props.url))
+          tabs.navigate(target.id, tabUrlFrom(ext.record.id, props.url))
         if (props.active === true) tabs.activateTab(target.id, win)
         if (props.muted !== undefined && Boolean(props.muted) !== target.muted)
           tabs.toggleMute(target.id)
@@ -1082,7 +1081,7 @@ export class ExtensionApi {
         const url = Array.isArray(props.url) ? props.url[0] : props.url
         if (typeof url === 'string')
           this.host.browser.tabs.createTab(
-            { url: tabUrlFrom(ext.record.id, endpoint.url, url), active: true },
+            { url: tabUrlFrom(ext.record.id, url), active: true },
             this.host.window()
           )
         return this.tabs.chromeWindow(ext)
@@ -1789,23 +1788,22 @@ function safeOrigin(url: string): string {
 
 /**
  * The URL `tabs.create`, `tabs.update` or `windows.create` names, as Chrome reads it: a
- * fully-qualified URL as it is (Chrome's rule: it "must include a scheme"), anything else
- * relative to the calling page within the extension – `callerUrl`, the endpoint's own page in
- * either spelling, or the extension's root for a caller that has no page of the extension's
- * (a content script) – in Chrome's spelling of the extension's origin, which the tab model
- * keeps and the WebView loads as the served one (`ExtensionUrls.toServed`). Awesome
- * Screenshot's worker opens its editor as `tabs.create({ url: 'edit-react.html' })`, which
- * the runtime had loaded as a web URL (`https://edit-react.html`, "Secure connection not
- * available"). A value no URL parser takes goes through as it was.
+ * fully-qualified URL as it is (Chrome's rule: it "must include a scheme"), anything else a
+ * path of the extension's, resolved against its ROOT (`Extension::GetResourceURL`: the
+ * extension's origin plus the string, a leading `/` dropped), never against the calling page,
+ * wherever the caller sits – Chrome's `ExtensionTabUtil::PrepareURLForNavigation` knows the
+ * extension, not the frame – in Chrome's spelling of the extension's origin, which the tab
+ * model keeps and the WebView loads as the served one (`ExtensionUrls.toServed`). Awesome
+ * Screenshot's worker opens its editor as `tabs.create({ url: 'edit-react.html' })`, which the
+ * runtime had loaded as a web URL (`https://edit-react.html`, "Secure connection not
+ * available"); FireShot's worker at `scripts/fsServiceWorker.js` opens `fsCaptured.html?id=1`,
+ * which resolved against the worker's own directory drew "Webpage not available" for
+ * `scripts/fsCaptured.html`. A value no URL parser takes goes through as it was.
  */
-export function tabUrlFrom(extensionId: string, callerUrl: string | null, url: string): string {
+export function tabUrlFrom(extensionId: string, url: string): string {
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url
-  const base =
-    callerUrl && extensionIdOfUrl(callerUrl) === extensionId
-      ? presentExtensionUrl(callerUrl)
-      : `${chromeExtensionOrigin(extensionId)}/`
   try {
-    return new URL(url, base).href
+    return new URL(url.replace(/^\/+/, ''), `${chromeExtensionOrigin(extensionId)}/`).href
   } catch {
     return url
   }
