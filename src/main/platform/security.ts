@@ -148,6 +148,12 @@ export function describeServerCertificate(cert: Certificate): CertificateDetails
  * What an HTTP authentication challenge becomes for the user's dialog and for the extensions,
  * and what the request gets back: an extension's credentials, an extension's cancel (the
  * response is shown as it came, as Chrome does), or the user's answer to the dialog.
+ *
+ * The dialog is a tab's: Chrome's LoginHandler cancels the challenge of a request whose renderer
+ * is not hosted by a tab (an extension's worker, background page or popup, a site's service
+ * worker, the browser's own fetches) and the 401 or 407 comes back as the server sent it, so an
+ * extension polling a signed-out feed shows its own "sign in" and no sheet opens over the window.
+ * The extensions' `onAuthRequired` still sees every challenge.
  */
 export async function answerAuthChallenge(
   browser: Pick<Browser, 'security'>,
@@ -169,6 +175,7 @@ export async function answerAuthChallenge(
     if (answer && 'cancel' in answer) return null
     if (answer) return answer.credentials
   }
+  if (tabId === null) return null
   return await browser.security.httpAuth(
     {
       host: authInfo.host,
