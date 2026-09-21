@@ -15,7 +15,7 @@ name: Android menu perf
 # about twenty minutes. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
-  # TEMPORARY (PERF-2 profiling dispatch 3 of 4: the baseline, with the driver fixes from dispatch 2); off in the next commit.
+  # TEMPORARY (PERF-2 profiling dispatch 4 of 4: the same scenes after the fixes); off in the next commit.
   push:
     branches:
       - cursor/android-perf-menu-sheet-2306
