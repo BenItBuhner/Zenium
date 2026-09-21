@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { Session, DownloadItem as ElectronDownloadItem } from 'electron'
+import type { Session, DownloadItem as ElectronDownloadItem, WebContents } from 'electron'
 import { PRIVATE_CONTAINER_ID, type DownloadItem } from '../../../shared/types'
 import type { StoreIO } from '../../../core/platform'
 import { DEFAULT_DOWNLOAD_SETTINGS } from '../../../shared/downloads'
@@ -58,8 +58,8 @@ vi.mock('electron', () => ({
   net: { request: (options: Record<string, unknown>) => fakeNet.request(options) }
 }))
 
-const { ElectronDownloads } = await import('../downloads')
-const { DownloadService } = await import('../../../core/downloads')
+const { ElectronDownloads, ONLINE_POLL_MS } = await import('../downloads')
+const { DownloadService, AUTO_RESUME_DELAYS_MS } = await import('../../../core/downloads')
 const { DangerVerdictRegistry } = await import('../../../core/downloads/danger')
 
 class MemoryIO implements StoreIO {
@@ -144,8 +144,12 @@ class FakeItem extends EventEmitter {
   pause(): void {
     this.paused = true
   }
+  /** Times `resume()` was asked of the item (an interrupted item only starts once it is). */
+  resumed = 0
   resume(): void {
     this.paused = false
+    this.resumed++
+    if (this.state === 'interrupted') this.state = 'progressing'
   }
   cancel(): void {
     this.state = 'cancelled'
@@ -198,10 +202,41 @@ class FakeObserver implements RequestObserver {
   }
 }
 
+/** What `session.createInterruptedDownload` is asked for (Electron's `CreateInterruptedDownloadOptions`). */
+interface InterruptedDownloadOptions {
+  path: string
+  urlChain: string[]
+  mimeType?: string
+  offset: number
+  length: number
+  lastModified?: string
+  eTag?: string
+  startTime?: number
+}
+
 class FakeSession extends EventEmitter {
   started: Array<{ url: string; options: unknown }> = []
+  /** Every `createInterruptedDownload` call, with the item Electron would have made for it. */
+  recreated: Array<{ options: InterruptedDownloadOptions; item: FakeItem }> = []
   downloadURL(url: string, options?: unknown): void {
     this.started.push({ url, options })
+  }
+  /**
+   * Electron's: an interrupted, resumable item over the kept file, announced through
+   * `will-download` like any other (with no source contents), which starts once `resume()` is
+   * asked of it.
+   */
+  createInterruptedDownload(options: InterruptedDownloadOptions): void {
+    const url = options.urlChain[options.urlChain.length - 1] ?? ''
+    const item = new FakeItem(url, options.path.split('/').pop() ?? 'download', options.urlChain)
+    item.savePath = options.path
+    item.state = 'interrupted'
+    item.resumable = true
+    item.received = options.offset
+    item.etag = options.eTag ?? ''
+    item.lastModified = options.lastModified ?? ''
+    this.recreated.push({ options, item })
+    this.emit('will-download', { preventDefault: vi.fn() }, item, undefined)
   }
 }
 
@@ -221,34 +256,68 @@ afterEach(() => {
   fakeNet.requests.length = 0
 })
 
-function harness(): {
+/** A page's WebContents as far as the host reads it: the initiator of a download. */
+function pageAt(url: string): WebContents {
+  return { isDestroyed: () => false, getURL: () => url } as unknown as WebContents
+}
+
+function harness(
+  options: {
+    /** A store shared with an earlier harness: the profile of a restarted app. */
+    io?: MemoryIO
+    /** Its folder too (the kept partial file lives there). */
+    dir?: string
+    /** What `net.isOnline()` answers. */
+    online?: () => boolean
+    now?: () => number
+  } = {}
+): {
   dir: string
+  io: MemoryIO
   host: InstanceType<typeof ElectronDownloads>
   service: InstanceType<typeof DownloadService>
   session: FakeSession
   observer: FakeObserver
-  announce: (item: FakeItem) => void
+  announce: (item: FakeItem, source?: WebContents) => { preventDefault: ReturnType<typeof vi.fn> }
   started: Array<string | null>
+  /** Tabs whose pending navigation the host stopped (`bind`'s `stopNavigation`). */
+  stopped: string[]
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'zen-ext-dl-'))
-  dirs.push(dir)
-  const host = new ElectronDownloads(() => ({ askWhereToSave: false, directory: dir }))
-  const service = new DownloadService(new MemoryIO(), host, () => undefined, {
+  const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'zen-ext-dl-'))
+  if (!options.dir) dirs.push(dir)
+  const io = options.io ?? new MemoryIO()
+  const host = new ElectronDownloads(
+    () => ({ askWhereToSave: false, directory: dir }),
+    undefined,
+    options.online ?? (() => true)
+  )
+  const service = new DownloadService(io, host, () => undefined, {
     os: 'linux',
     settings: () => ({ ...DEFAULT_DOWNLOAD_SETTINGS, directory: dir }),
     referrerFamiliar: () => false,
-    verdicts: new DangerVerdictRegistry()
+    verdicts: new DangerVerdictRegistry(),
+    now: options.now
   })
-  host.bind(service, { tabIdFor: () => null, parentWindow: () => undefined })
+  const stopped: string[] = []
+  host.bind(service, {
+    tabIdFor: () => null,
+    parentWindow: () => undefined,
+    stopNavigation: (tabId) => stopped.push(tabId)
+  })
   const observer = new FakeObserver()
   host.observeRequests(observer)
   const session = new FakeSession()
   const started: Array<string | null> = []
   host.attach(session as unknown as Session, 'default', (tabId) => started.push(tabId))
-  const announce = (item: FakeItem): void => {
-    session.emit('will-download', {}, item as unknown as ElectronDownloadItem, undefined)
+  const announce = (
+    item: FakeItem,
+    source?: WebContents
+  ): { preventDefault: ReturnType<typeof vi.fn> } => {
+    const event = { preventDefault: vi.fn() }
+    session.emit('will-download', event, item as unknown as ElectronDownloadItem, source)
+    return event
   }
-  return { dir, host, service, session, observer, announce, started }
+  return { dir, io, host, service, session, observer, announce, started, stopped }
 }
 
 describe('ElectronDownloads interrupt reasons', () => {
@@ -622,6 +691,9 @@ describe('ElectronDownloads dead download links', () => {
     // Announced like a download that started, from its tab; the tab's failure is this row's.
     expect(h.started).toEqual(['t1'])
     expect(h.service.takeDeadLink('t1', 'https://example.com/dl/42')).toBe(true)
+    // The tab's navigation was stopped while the response was still held, so no error document
+    // of Chromium's commits over the page (the page stays, as Chrome's does).
+    expect(h.stopped).toEqual(['t1'])
     // The navigation's own error follows and parks nothing: a later transfer of the URL that
     // ends non-resumably reads by Chromium's verdict, not by a stale note.
     h.observer.fire('onErrorOccurred', {
@@ -677,6 +749,9 @@ describe('ElectronDownloads dead download links', () => {
       ['résumé.pdf', 'server-failed', ''],
       ['résumé.pdf', 'server-forbidden', '']
     ])
+    // A frame's dead link keeps to its frame (Chromium's error document there, as in Chrome);
+    // only the tab's own navigations are stopped.
+    expect(h.stopped).toEqual(['t1', 't1'])
   })
 
   it('is for frames only, for attachments only, and keeps private rows private', () => {
@@ -912,5 +987,291 @@ describe('ElectronDownloads filename determiner', () => {
     await settled(() => record.savePath === join(h.dir, 'late.txt'))
     expect(record.state).toBe('completed')
     expect(record.savePath).toBe(join(h.dir, 'late.txt'))
+  })
+})
+
+describe('ElectronDownloads insecure downloads (HB-44)', () => {
+  it('refuses a secure page’s download over a plain hop before it writes; Keep anyway requests it again into the same row', async () => {
+    const h = harness()
+    const item = new FakeItem('http://cdn.example.com/notes.zip', 'notes.zip', [
+      'https://example.com/dl',
+      'http://cdn.example.com/notes.zip'
+    ])
+    const event = h.announce(item, pageAt('https://example.com/page'))
+    // Electron's way of cancelling the item before it opens its file.
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(h.service.items).toHaveLength(1)
+    const record = h.service.items[0]!
+    expect(record).toMatchObject({
+      state: 'insecure-blocked',
+      savePath: '',
+      receivedBytes: 0,
+      canResume: false,
+      referrer: 'https://example.com/page',
+      danger: { level: 'safe' }
+    })
+    expect(record.error).toBeUndefined()
+    // The reserved name is given back: a later download may take `notes.zip`.
+    expect(h.host.targetPath(record.id)).toBeNull()
+    // The panel still opens on the row, as on any new download.
+    expect(h.started).toEqual([null])
+    // Nothing the refused item says later reaches the row.
+    item.emit('updated', {}, 'progressing')
+    item.fail()
+    await flush()
+    expect(record.state).toBe('insecure-blocked')
+
+    // Keep anyway: the same URL is requested again with the page as referrer …
+    await h.service.acceptDanger(record.id)
+    expect(record.insecureAccepted).toBe(true)
+    expect(h.session.started).toEqual([
+      {
+        url: 'http://cdn.example.com/notes.zip',
+        options: { headers: { Referer: 'https://example.com/page' } }
+      }
+    ])
+    // … and the item that answers continues the row, unblocked this time.
+    const again = new FakeItem('http://cdn.example.com/notes.zip', 'notes.zip')
+    const second = h.announce(again)
+    expect(second.preventDefault).not.toHaveBeenCalled()
+    expect(h.service.items).toHaveLength(1)
+    expect(record.state).toBe('progressing')
+    expect(record.savePath).toBe(join(h.dir, 'notes.zip.zeniumdownload'))
+    again.complete()
+    await settled(() => record.state === 'completed')
+    expect(record.savePath).toBe(join(h.dir, 'notes.zip'))
+    expect(readFileSync(record.savePath, 'utf8')).toBe('abc')
+  })
+
+  it('offers no Keep anyway for a dangerous type, and lets every secure chain through', async () => {
+    const h = harness()
+    // The harness runs the Linux table: a `.deb` is the installer flagged there (an `.exe` is
+    // Windows's, per Chromium's platform bits).
+    const installer = new FakeItem('http://example.com/setup.deb', 'setup.deb')
+    h.announce(installer, pageAt('https://example.com/downloads'))
+    const blocked = h.service.items[0]!
+    expect(blocked).toMatchObject({
+      state: 'insecure-blocked',
+      danger: { level: 'dangerous', reason: 'executable' }
+    })
+    await h.service.acceptDanger(blocked.id)
+    expect(blocked.insecureAccepted).toBeUndefined()
+    expect(h.session.started).toEqual([])
+    // Discard drops the row; nothing was on disk.
+    await h.service.discard(blocked.id)
+    expect(h.service.items).toHaveLength(0)
+
+    // Secure all the way, a loopback hop, or a plain page: not this rule's business.
+    const fine = [
+      new FakeItem('https://cdn.example.com/a.txt', 'a.txt', [
+        'https://example.com/dl',
+        'https://cdn.example.com/a.txt'
+      ]),
+      new FakeItem('http://localhost:3000/b.txt', 'b.txt')
+    ]
+    for (const item of fine) {
+      const event = h.announce(item, pageAt('https://example.com/page'))
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    }
+    const plainPage = new FakeItem('http://example.com/c.txt', 'c.txt')
+    expect(
+      h.announce(plainPage, pageAt('http://example.com/page')).preventDefault
+    ).not.toHaveBeenCalled()
+    expect(h.service.items.map((i) => i.state)).toEqual([
+      'progressing',
+      'progressing',
+      'progressing'
+    ])
+  })
+})
+
+describe('ElectronDownloads resume after a restart (HB-42)', () => {
+  it('re-creates the kept partial file with createInterruptedDownload and continues the same row', async () => {
+    const first = harness()
+    const item = new FakeItem('https://example.com/big.bin', 'big.bin')
+    item.etag = '"v1"'
+    item.lastModified = 'Mon, 21 Sep 2026 10:00:00 GMT'
+    first.announce(item)
+    const record = first.service.items[0]!
+    expect(record).toMatchObject({ canResume: true, etag: '"v1"' })
+    // Two of three bytes are in the partial file when the app quits.
+    writeFileSync(record.savePath, 'ab')
+    item.received = 2
+    item.emit('updated', {}, 'progressing')
+    expect(record.receivedBytes).toBe(2)
+    first.service.shutdown()
+    first.service.flushSync()
+    expect(record).toMatchObject({ state: 'interrupted', error: 'user-shutdown', canResume: true })
+    // The partial was parked under another name so Chromium's own cancel misses it.
+    expect(record.savePath).not.toBe(join(first.dir, 'big.bin.zeniumdownload'))
+    expect(record.savePath.endsWith('.zeniumdownload')).toBe(true)
+    expect(existsSync(record.savePath)).toBe(true)
+
+    // The next launch: the row is offered as interrupted, nothing runs on its own …
+    const next = harness({ io: first.io, dir: first.dir })
+    expect(next.service.items).toHaveLength(1)
+    const row = next.service.items[0]!
+    expect(row).toMatchObject({ id: record.id, state: 'interrupted', canResume: true })
+    expect(row.autoResumeAt).toBeUndefined()
+    expect(next.session.recreated).toHaveLength(0)
+    // … until Resume: Electron gets the kept file, its size as the offset and the validators.
+    next.service.resume(row.id)
+    expect(next.session.recreated).toHaveLength(1)
+    const { options, item: recreated } = next.session.recreated[0]!
+    expect(options).toEqual({
+      path: record.savePath,
+      urlChain: ['https://example.com/big.bin'],
+      mimeType: 'text/plain',
+      offset: 2,
+      length: 3,
+      lastModified: 'Mon, 21 Sep 2026 10:00:00 GMT',
+      eTag: '"v1"',
+      startTime: Math.floor(record.startedAt / 1000)
+    })
+    // The item Electron made for it continued the row (no second row) and was started.
+    expect(next.service.items).toHaveLength(1)
+    expect(row.state).toBe('progressing')
+    expect(row.receivedBytes).toBe(2)
+    await flush()
+    expect(recreated.resumed).toBe(1)
+    expect(next.started).toEqual([])
+    // The rest arrives; the file lands under its own name.
+    recreated.complete()
+    await settled(() => row.state === 'completed')
+    expect(row.savePath).toBe(join(first.dir, 'big.bin'))
+    expect(existsSync(record.savePath)).toBe(false)
+  })
+
+  it('starts over through downloadURL when the kept file is gone', () => {
+    const first = harness()
+    const item = new FakeItem('https://example.com/gone.bin', 'gone.bin')
+    item.etag = '"v1"'
+    first.announce(item)
+    const record = first.service.items[0]!
+    writeFileSync(record.savePath, 'a')
+    first.service.shutdown()
+    first.service.flushSync()
+    rmSync(record.savePath)
+    const next = harness({ io: first.io, dir: first.dir })
+    const row = next.service.items[0]!
+    next.service.resume(row.id)
+    expect(next.session.recreated).toHaveLength(0)
+    expect(next.session.started).toEqual([
+      { url: 'https://example.com/gone.bin', options: undefined }
+    ])
+  })
+})
+
+describe('ElectronDownloads automatic resume (HB-43)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('resumes a transient network interruption after 2, 4 and 8 s, then leaves the row to the user', () => {
+    vi.useFakeTimers()
+    const clock = { now: 1_000_000 }
+    vi.setSystemTime(clock.now)
+    const h = harness({ now: () => Date.now() })
+    const item = new FakeItem('https://example.com/flaky.bin', 'flaky.bin')
+    item.etag = '"v1"'
+    h.announce(item)
+    const record = h.service.items[0]!
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/flaky.bin',
+      error: 'net::ERR_CONNECTION_RESET'
+    })
+    item.interrupt()
+    expect(record).toMatchObject({ state: 'interrupted', error: 'network-failed', canResume: true })
+    expect(record.autoResumeAt).toBe(Date.now() + AUTO_RESUME_DELAYS_MS[0]!)
+    for (const [attempt, delay] of AUTO_RESUME_DELAYS_MS.entries()) {
+      expect(item.resumed).toBe(attempt)
+      vi.advanceTimersByTime(delay - 1)
+      expect(item.resumed).toBe(attempt)
+      vi.advanceTimersByTime(1)
+      // The core's resume is the user's path: the engine's item is asked to resume.
+      expect(item.resumed).toBe(attempt + 1)
+      expect(record.autoResumeAt).toBeUndefined()
+      // It fails the same way again.
+      item.interrupt()
+      const next = AUTO_RESUME_DELAYS_MS[attempt + 1]
+      if (next === undefined) expect(record.autoResumeAt).toBeUndefined()
+      else expect(record.autoResumeAt).toBe(Date.now() + next)
+    }
+    // The fourth failure in a row: interrupted for good, Resume still offered.
+    vi.advanceTimersByTime(60_000)
+    expect(item.resumed).toBe(AUTO_RESUME_DELAYS_MS.length)
+    expect(record).toMatchObject({ state: 'interrupted', canResume: true })
+  })
+
+  it('holds the attempt until net.isOnline says yes, polling while it waits', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_000_000)
+    let online = false
+    const h = harness({ online: () => online, now: () => Date.now() })
+    const item = new FakeItem('https://example.com/offline.bin', 'offline.bin')
+    item.etag = '"v1"'
+    h.announce(item)
+    const record = h.service.items[0]!
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/offline.bin',
+      error: 'net::ERR_INTERNET_DISCONNECTED'
+    })
+    item.interrupt()
+    expect(record.error).toBe('network-disconnected')
+    vi.advanceTimersByTime(AUTO_RESUME_DELAYS_MS[0]!)
+    // The step is over but the network is not back: the attempt waits, polled every 2 s.
+    expect(item.resumed).toBe(0)
+    vi.advanceTimersByTime(ONLINE_POLL_MS * 3)
+    expect(item.resumed).toBe(0)
+    online = true
+    vi.advanceTimersByTime(ONLINE_POLL_MS)
+    expect(item.resumed).toBe(1)
+    expect(record.autoResumeAt).toBeUndefined()
+    // Bytes arriving start the count over: the next interruption waits 2 s again.
+    item.received = 1
+    item.emit('updated', {}, 'progressing')
+    item.interrupt()
+    expect(record.autoResumeAt).toBe(Date.now() + AUTO_RESUME_DELAYS_MS[0]!)
+  })
+
+  it('never retries a server’s refusal, a user’s stop, or a row without a resumable file', () => {
+    vi.useFakeTimers()
+    const h = harness({ now: () => Date.now() })
+    const refused = new FakeItem('https://example.com/missing.bin', 'missing.bin')
+    refused.etag = '"v1"'
+    h.announce(refused)
+    const row = h.service.items[0]!
+    h.observer.fire('onHeadersReceived', {
+      url: 'https://example.com/missing.bin',
+      statusCode: 404
+    })
+    refused.fail()
+    expect(row).toMatchObject({ state: 'interrupted', error: 'server-bad-content' })
+    expect(row.autoResumeAt).toBeUndefined()
+
+    const paused = new FakeItem('https://example.com/user.bin', 'user.bin')
+    paused.etag = '"v1"'
+    h.announce(paused)
+    const userRow = h.service.items[0]!
+    h.observer.fire('onErrorOccurred', {
+      url: 'https://example.com/user.bin',
+      error: 'net::ERR_TIMED_OUT'
+    })
+    paused.interrupt()
+    expect(userRow.autoResumeAt).toBeDefined()
+    // The user's own Resume drops the schedule; their Cancel drops it too.
+    h.service.resume(userRow.id)
+    expect(paused.resumed).toBe(1)
+    expect(userRow.autoResumeAt).toBeUndefined()
+    // Chromium reports the resumed item in progress before it can fail again.
+    paused.emit('updated', {}, 'progressing')
+    paused.interrupt()
+    expect(userRow.autoResumeAt).toBeDefined()
+    h.service.cancel(userRow.id)
+    expect(userRow.state).toBe('cancelled')
+    expect(userRow.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(paused.resumed).toBe(1)
+    expect(refused.resumed).toBe(0)
   })
 })

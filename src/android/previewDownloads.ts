@@ -196,6 +196,14 @@ export function createPreviewDownloads(
       p.id = String(id)
       if (p.timer === null) play(p)
     },
+    // The core refused the transfer (`insecure-blocked`: `download=<file>&url=http://…` under
+    // the stand-in's https referrer); nothing plays and nothing more is said of it.
+    'download.refuse': ({ token }) => {
+      const p = playing.get(String(token))
+      if (!p) return
+      stop(p)
+      playing.delete(p.token)
+    },
     'download.pause': ({ id }) => {
       const p = byId(id)
       if (!p) return

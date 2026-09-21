@@ -44,6 +44,15 @@ import java.util.concurrent.TimeUnit
  * system Downloads app (`addCompletedDownload`, in `DownloadSink`) and opening that app
  * (`ACTION_VIEW_DOWNLOADS`). It cannot pause or resume on request, so the transfers left it.
  *
+ * Two of Chrome's download-safety rules run here (the rest – the file-type tiers, the Safe
+ * Browsing verdict, Keep / Discard – are the core's over the record): the redirects are followed
+ * by hand so the whole chain is known, and a chain a secure page started that touches a plain
+ * `http:` hop is refused before the body is read (`insecure-blocked`; the core refuses the plain
+ * case at `begin` through `download.refuse` before the request is even made); and a network
+ * failure of a resumable transfer is retried on its own after 2, 4 and 8 seconds once the device
+ * is online again, the row hearing of each attempt (`autoResumeAt`), before it is left interrupted
+ * with Retry (HB-44, HB-43).
+ *
  * Transfers run in the app process (no service is declared in the manifest); a
  * `DownloadForegroundService` wrapping this class is the path to keep long transfers alive in
  * the background once the manifest gains the entry.
@@ -101,6 +110,15 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         var lastReport = 0L
         /** Network failures retried on our own since the last byte arrived. */
         @Volatile var autoResumes = 0
+        /** Epoch ms of the retry waiting in the back-off, reported with the interruption; 0 when none waits. */
+        @Volatile var autoResumeAt = 0L
+        /**
+         * The user chose Keep anyway on this row (`insecure-blocked`): Chrome's mixed-content
+         * rule stands down for this transfer and every later retry of the record.
+         */
+        var insecureAccepted = false
+        /** Every URL the last request went through, the final one last (the redirects are followed here). */
+        @Volatile var chain: List<String> = listOf(url)
     }
 
     private class Cancelled : Exception()
@@ -195,12 +213,14 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     /**
      * The core made a record for the announced transfer and says where the file goes. `private`
      * is the core's verdict on the record (it follows from the container); the notification for a
-     * private transfer names neither the file nor the site.
+     * private transfer names neither the file nor the site. `insecureAccepted` is the record's
+     * Keep anyway: the chain rule (`transferHttp`) stands down for this transfer.
      */
-    fun bind(token: String, coreId: String, destination: JSONObject, private: Boolean) {
+    fun bind(token: String, coreId: String, destination: JSONObject, private: Boolean, insecureAccepted: Boolean = false) {
         val l = live[token] ?: return
         l.coreId = coreId
         l.isPrivate = l.isPrivate || private
+        l.insecureAccepted = l.insecureAccepted || insecureAccepted
         byCoreId[coreId] = l
         if (l.bound) return
         l.bound = true
@@ -227,12 +247,30 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
     }
 
+    /**
+     * The core refused the announced transfer before a byte moved (`insecure-blocked` at
+     * `begin`: an `http:` URL under an `https:` page): the row waits for Keep anyway or Discard
+     * on the core's side, nothing is written and nothing more is reported for the token. A
+     * transfer that was continuing a partial file (a resume after a restart of a row an older
+     * build let through) loses the partial: the core's row has no file any more.
+     */
+    fun refuse(token: String) {
+        val l = live.remove(token) ?: return
+        l.control = Control.CANCEL
+        l.coreId?.let { if (byCoreId[it] === l) byCoreId.remove(it); notifications.dismiss(it) }
+        val sink = l.sink ?: return
+        io.execute { runCatching { sink.delete() } }
+    }
+
     fun pause(coreId: String) {
         val l = byCoreId[coreId] ?: return
         if (l.kind != Kind.HTTP) return
         l.control = Control.PAUSE
         // Not running: waiting out the back-off before an automatic retry; hold there.
-        if (!l.running && l.sink != null) paused(l)
+        if (!l.running && l.sink != null) {
+            l.autoResumeAt = 0
+            paused(l)
+        }
     }
 
     /**
@@ -244,6 +282,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         val id = args.str("id")
         val known = byCoreId[id]
         if (known != null) {
+            // The user's Resume during a back-off: the waiting retry is moot, the count carries on.
+            known.autoResumeAt = 0
             if (known.running) known.control = Control.RUN
             else launch(known)
             return
@@ -515,10 +555,12 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     }
 
     /**
-     * A transfer stopped short. Network failures on a resumable transfer are retried on our own
-     * a few times with a growing pause (Chromium's `kMaxAutoResumeAttempts`), so a flaky
-     * connection never reaches the user; anything else, or the sixth failure in a row, is reported
-     * as interrupted.
+     * A transfer stopped short. A network failure of a resumable transfer is retried on our own
+     * after 2, 4, then 8 seconds (the core's steps for the desktop; Chromium's automatic resume),
+     * each attempt held until the device has a network again; the row hears of the interruption
+     * with the time of the attempt (`autoResumeAt`), so the sheet shows the retry and still
+     * offers Resume and Cancel meanwhile. Anything else, or the fourth failure in a row, is
+     * reported as interrupted for good (HB-43).
      */
     private fun fail(l: Live, reason: DownloadLogic.InterruptReason, resumable: Boolean) {
         val canRetry = resumable && l.kind == Kind.HTTP && l.canResume && l.sink != null
@@ -527,9 +569,31 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
             return
         }
         l.autoResumes++
-        main.postDelayed({
-            if (live[l.token] === l && l.control == Control.RUN && !l.running) launch(l)
-        }, DownloadLogic.autoResumeDelayMs(l.autoResumes))
+        val delay = DownloadLogic.autoResumeDelayMs(l.autoResumes)
+        val at = System.currentTimeMillis() + delay
+        l.autoResumeAt = at
+        main.post {
+            if (live[l.token] !== l) return@post
+            l.lastReport = 0
+            report(l, "interrupted", force = true, error = reason.wire)
+            main.postDelayed({ whenOnline(l, at) { launch(l) } }, delay)
+        }
+    }
+
+    /**
+     * Run `then` for the retry scheduled at `at` once the device has a network (or right away
+     * when it has one): the transfer would only fail the same way without one, and the attempt
+     * count is for the server's failures, not the cable's. Stands down when the transfer was
+     * paused, cancelled or resumed by hand meanwhile (the schedule it waited for is gone).
+     */
+    private fun whenOnline(l: Live, at: Long, then: () -> Unit) {
+        if (live[l.token] !== l || l.control != Control.RUN || l.running || l.autoResumeAt != at) return
+        if (NetErrors.offline(activity)) {
+            main.postDelayed({ whenOnline(l, at, then) }, ONLINE_POLL_MS)
+            return
+        }
+        l.autoResumeAt = 0
+        then()
     }
 
     /** Returns true when the transfer stopped because it was paused. */
@@ -537,6 +601,13 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         var offset = l.sink?.size()?.coerceAtLeast(0L) ?: 0L
         val connection = connect(l, offset)
         try {
+            if (!l.insecureAccepted && DownloadLogic.insecureDownload(l.chain, l.referrer)) {
+                // Chrome's mixed-content rule over the whole chain (HB-44): a secure page's
+                // download went through a plain hop; nothing of the body is read. The row waits
+                // for Keep anyway (a retry with `insecureAccepted`) or Discard.
+                main.post { blocked(l) }
+                return false
+            }
             val status = connection.responseCode
             val decision = DownloadLogic.continuation(status, connection.getHeaderField("Content-Range"), offset, l.total)
             var append = false
@@ -583,24 +654,48 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
         }
     }
 
+    /**
+     * The request for the bytes from `offset` on, its redirects followed here rather than by
+     * `HttpURLConnection` (which stops at a change of scheme and tells nothing of the hops): the
+     * chain ends up in `l.chain` for Chrome's mixed-content rule, each hop carries the same
+     * Range / If-Range and the cookies of its own URL, and a chain longer than
+     * `MAX_REDIRECTS` is the server refusing.
+     */
     private fun connect(l: Live, offset: Long): HttpURLConnection {
-        val connection = (URL(l.url).openConnection() as HttpURLConnection).apply {
+        var url = l.url
+        val chain = arrayListOf(url)
+        while (true) {
+            val connection = open(l, url, offset)
+            val status = runCatching { connection.responseCode }.getOrElse { e -> connection.disconnect(); throw e }
+            val target = if (DownloadLogic.isRedirect(status)) DownloadLogic.resolveRedirect(url, connection.getHeaderField("Location")) else null
+            if (target == null) {
+                l.chain = chain
+                return connection
+            }
+            connection.disconnect()
+            if (chain.size > DownloadLogic.MAX_REDIRECTS) throw DownloadLogic.TooManyRedirects()
+            url = target
+            chain += url
+            if (l.control == Control.CANCEL) throw Cancelled()
+        }
+    }
+
+    private fun open(l: Live, url: String, offset: Long): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 30_000
-            instanceFollowRedirects = true
+            instanceFollowRedirects = false
             setRequestProperty("User-Agent", l.userAgent)
             setRequestProperty("Accept", "*/*")
             // Byte counts must line up with Range offsets: no transparent gzip.
             setRequestProperty("Accept-Encoding", "identity")
             if (l.referrer.isNotEmpty()) setRequestProperty("Referer", l.referrer)
-            CookieManager.getInstance().getCookie(l.url)?.let { setRequestProperty("Cookie", it) }
+            CookieManager.getInstance().getCookie(url)?.let { setRequestProperty("Cookie", it) }
             if (offset > 0) {
                 setRequestProperty("Range", "bytes=$offset-")
                 DownloadLogic.strongValidator(l.etag, l.lastModified)?.let { setRequestProperty("If-Range", it) }
             }
         }
-        return connection
-    }
 
     /** A fresh (non-range) response decides the name, type, size and whether it can resume. */
     private fun readHeaders(l: Live, connection: HttpURLConnection, status: Int) {
@@ -749,21 +844,29 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     // Reporting (main thread → core and notification)
     // ---------------------------------------------------------------------------------------------
 
-    private fun report(l: Live, state: String, force: Boolean = false) {
+    /**
+     * The transfer's state for the core's row: `progressing`, `paused`, or `interrupted` with the
+     * reason and the time of the retry waiting in the back-off (`autoResumeAt`, the interruption
+     * a network failure produced that will be tried again on its own).
+     */
+    private fun report(l: Live, state: String, force: Boolean = false, error: String? = null) {
         val now = SystemClock.elapsedRealtime()
         if (!force && now - l.lastReport < 250) return
         l.lastReport = now
         main.post {
             if (live[l.token] !== l) return@post
-            emit(
-                "download.progress",
-                json(
-                    "token" to l.token, "receivedBytes" to l.received, "totalBytes" to l.total.coerceAtLeast(0),
-                    "state" to state, "canResume" to l.canResume, "etag" to l.etag, "lastModified" to l.lastModified,
-                    "savePath" to (l.sink?.savePath ?: ""), "filename" to l.filename, "finalName" to l.finalName,
-                    "mimeType" to l.mimeType
-                )
+            val payload = json(
+                "token" to l.token, "receivedBytes" to l.received, "totalBytes" to l.total.coerceAtLeast(0),
+                "state" to state, "canResume" to l.canResume, "etag" to l.etag, "lastModified" to l.lastModified,
+                "savePath" to (l.sink?.savePath ?: ""), "filename" to l.filename, "finalName" to l.finalName,
+                "mimeType" to l.mimeType
             )
+            if (state == "interrupted") {
+                payload.put("error", error ?: DownloadLogic.InterruptReason.NETWORK_FAILED.wire)
+                if (l.autoResumeAt > 0) payload.put("autoResumeAt", l.autoResumeAt)
+            }
+            emit("download.progress", payload)
+            // A retry waiting in the back-off keeps the running notification (Pause / Cancel still apply).
             l.coreId?.let { notifications.progress(it, displayName(l), l.received, l.total, paused = state == "paused", private = l.isPrivate) }
         }
     }
@@ -774,10 +877,25 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     }
 
     private fun interrupted(l: Live, reason: DownloadLogic.InterruptReason, resumable: Boolean) {
+        l.autoResumeAt = 0
         l.canResume = resumable && l.sink != null
         if (!l.canResume) l.sink?.delete()
         done(l, "interrupted", error = reason.wire)
         l.coreId?.let { notifications.failed(it, displayName(l), reason.wire, private = l.isPrivate) }
+    }
+
+    /**
+     * Chrome's mixed-content rule refused the chain (`transferHttp`): whatever partial file the
+     * transfer was continuing goes, nothing else was written, and the core's row waits for Keep
+     * anyway or Discard (`insecure-blocked`).
+     */
+    private fun blocked(l: Live) {
+        l.autoResumeAt = 0
+        l.canResume = false
+        val sink = l.sink
+        l.sink = null
+        if (sink != null) io.execute { runCatching { sink.delete() } }
+        done(l, "insecure-blocked")
     }
 
     private fun completed(l: Live) {
@@ -868,6 +986,8 @@ class Downloads(private val activity: BrowserActivity, private val host: PageHos
     companion object {
         /** Raw bytes per blob slice; base64 grows it by a third, comfortably inside the bridge's limits. */
         private const val BLOB_CHUNK = 512 * 1024
+        /** How often a retry held for the network asks whether it is back (the desktop host's `ONLINE_POLL_MS`). */
+        private const val ONLINE_POLL_MS = 2000L
         const val PRIVATE_CONTAINER = Profiles.PRIVATE_CONTAINER
     }
 }

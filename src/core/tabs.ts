@@ -554,8 +554,9 @@ export class TabManager {
         const v = view()
         if (code === -3 || !v) return
         // A link to a download the server refused: the downloads host made the failed row Chrome
-        // shows for it ("Failed · No file"), and the tab stays as it was, as with the
-        // `ERR_ABORTED` of a download that did start.
+        // shows for it ("Failed · No file") and stopped the navigation, which then ends with the
+        // `ERR_ABORTED` above like a download that did start; a host whose stop came too late
+        // reports the refusal itself, and the tab stays as it was either way.
         if (this.browser.downloads.takeDeadLink(tabId, url)) return
         this.browser.governor.onLoadFinished(tabId)
         const failed = (certificateError: CertificateError | null = null): void =>

@@ -196,6 +196,12 @@ class CustomTabHost(
                 record.put("finalName", args.str("finalName"))
                 record.put("totalBytes", args.num("totalBytes"))
             }
+            // Chrome's mixed-content rule refused the chain; without the core's row there is no
+            // Keep anyway here, only the word (the browser window offers it).
+            args.str("state") == "insecure-blocked" -> {
+                downloadRecords.remove(id)
+                Toast.makeText(activity, activity.getString(R.string.cct_download_insecure, args.str("filename")), Toast.LENGTH_LONG).show()
+            }
             else -> downloadRecords.remove(id)
         }
     }

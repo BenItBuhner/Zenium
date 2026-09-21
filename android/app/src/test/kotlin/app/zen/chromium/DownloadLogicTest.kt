@@ -126,30 +126,139 @@ class DownloadLogicTest {
     // --- automatic retries -----------------------------------------------------------------------
 
     @Test
-    fun flakyConnectionsRetryQuietlyABoundedNumberOfTimes() {
+    fun flakyConnectionsRetryOnTheirOwnThreeTimes() {
+        assertEquals(3, DownloadLogic.MAX_AUTO_RESUMES)
         for (attempt in 0 until DownloadLogic.MAX_AUTO_RESUMES) {
-            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, attempt, false))
-            assertTrue("attempt $attempt", DownloadLogic.shouldAutoResume(R.NETWORK_TIMEOUT, true, attempt, false))
+            for (reason in listOf(R.NETWORK_FAILED, R.NETWORK_TIMEOUT, R.NETWORK_DISCONNECTED, R.NETWORK_SERVER_DOWN)) {
+                assertTrue("$reason attempt $attempt", DownloadLogic.shouldAutoResume(reason, true, attempt, false))
+            }
         }
-        // The sixth failure in a row reaches the user.
+        // The fourth failure in a row reaches the user.
         assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, DownloadLogic.MAX_AUTO_RESUMES, false))
-        // Server answers and local problems are never retried on their own.
+        // Server answers (a 4xx, no ranges) and local problems are never retried on their own.
         assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_BAD_CONTENT, true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_FORBIDDEN, true, 0, false))
         assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_NO_RANGE, true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.SERVER_FAILED, true, 0, false))
         assertFalse(DownloadLogic.shouldAutoResume(R.FILE_FAILED, true, 0, false))
+        assertFalse(DownloadLogic.shouldAutoResume(R.FILE_NO_SPACE, true, 0, false))
         // Nor a transfer that cannot append, or one the user paused or cancelled meanwhile.
         assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, false, 0, false))
         assertFalse(DownloadLogic.shouldAutoResume(R.NETWORK_FAILED, true, 0, true))
     }
 
     @Test
-    fun retryBackoffGrowsThenPlateaus() {
-        assertEquals(1000L, DownloadLogic.autoResumeDelayMs(1))
-        assertEquals(2000L, DownloadLogic.autoResumeDelayMs(2))
-        assertEquals(4000L, DownloadLogic.autoResumeDelayMs(3))
+    fun retryBackoffIsTwoFourEightSeconds() {
+        // The core's `AUTO_RESUME_DELAYS_MS` for the desktop, so both platforms wait the same.
+        assertEquals(2000L, DownloadLogic.autoResumeDelayMs(1))
+        assertEquals(4000L, DownloadLogic.autoResumeDelayMs(2))
+        assertEquals(8000L, DownloadLogic.autoResumeDelayMs(3))
+        // Out-of-range attempts clamp to the ends rather than overflow.
         assertEquals(8000L, DownloadLogic.autoResumeDelayMs(4))
-        assertEquals(8000L, DownloadLogic.autoResumeDelayMs(5))
-        assertEquals(1000L, DownloadLogic.autoResumeDelayMs(0))
+        assertEquals(2000L, DownloadLogic.autoResumeDelayMs(0))
+    }
+
+    // --- redirects -------------------------------------------------------------------------------
+
+    @Test
+    fun theRedirectStatusesAreTheFive() {
+        for (status in listOf(301, 302, 303, 307, 308)) assertTrue("status $status", DownloadLogic.isRedirect(status))
+        for (status in listOf(200, 206, 300, 304, 305, 400, 404, 500)) assertFalse("status $status", DownloadLogic.isRedirect(status))
+    }
+
+    @Test
+    fun redirectTargetsResolveAgainstTheAnsweringUrl() {
+        assertEquals("https://cdn.example.com/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl?x=1", "https://cdn.example.com/f.zip"))
+        assertEquals("https://example.com/files/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl/go", "/files/f.zip"))
+        assertEquals("https://example.com/dl/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl/go", "f.zip"))
+        // A downgrade to plain http is followed (the platform client would stop there); the chain rule judges it.
+        assertEquals("http://mirror.example.com/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl", "http://mirror.example.com/f.zip"))
+        // A scheme-relative Location keeps the answering scheme.
+        assertEquals("https://mirror.example.com/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl", "//mirror.example.com/f.zip"))
+        // Surrounding whitespace is the server's, not the URL's.
+        assertEquals("https://example.com/f.zip", DownloadLogic.resolveRedirect("https://example.com/dl", "  https://example.com/f.zip \r\n"))
+    }
+
+    @Test
+    fun redirectsOutsideHttpAreNotFollowed() {
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", null))
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", ""))
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", "ftp://example.com/f.zip"))
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", "javascript:alert(1)"))
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", "data:text/plain,hi"))
+        assertNull(DownloadLogic.resolveRedirect("https://example.com/dl", "http://exa mple.com/x"))
+    }
+
+    @Test
+    fun aRedirectLoopIsTheServersFailureNotTheNetworks() {
+        assertEquals(20, DownloadLogic.MAX_REDIRECTS)
+        val reason = DownloadLogic.failureReason(DownloadLogic.TooManyRedirects())
+        assertEquals(R.SERVER_FAILED, reason)
+        assertFalse(DownloadLogic.shouldAutoResume(reason, true, 0, false))
+    }
+
+    // --- insecure downloads (HB-44) --------------------------------------------------------------
+
+    @Test
+    fun potentiallyTrustworthyIsChromiumsSet() {
+        for (url in listOf(
+            "https://example.com/f.zip", "HTTPS://EXAMPLE.COM/F.ZIP", "wss://example.com/s",
+            "file:///sdcard/Download/f.zip", "data:text/plain,hello world", "blob:https://example.com/9f0e",
+            "http://localhost/f.zip", "http://localhost:8080/f.zip", "http://dev.localhost/f.zip", "http://LOCALHOST./f.zip",
+            "http://127.0.0.1/f.zip", "http://127.1.2.3:9000/f.zip", "http://[::1]:8080/f.zip", "ws://localhost/s"
+        )) assertTrue(url, DownloadLogic.isPotentiallyTrustworthy(url))
+        for (url in listOf(
+            "http://example.com/f.zip", "http://192.168.1.10/f.zip", "http://128.0.0.1/f.zip", "http://localhost.evil.com/f.zip",
+            "http://notlocalhost/f.zip", "ftp://example.com/f.zip", "ws://example.com/s", "about:blank", "", "not a url"
+        )) assertFalse(url, DownloadLogic.isPotentiallyTrustworthy(url))
+    }
+
+    @Test
+    fun loopbackHostsAreLocalhostAndTheLoopbackRanges() {
+        assertTrue(DownloadLogic.isLoopbackHost("localhost"))
+        assertTrue(DownloadLogic.isLoopbackHost("LocalHost"))
+        assertTrue(DownloadLogic.isLoopbackHost("localhost."))
+        assertTrue(DownloadLogic.isLoopbackHost("app.localhost"))
+        assertTrue(DownloadLogic.isLoopbackHost("127.0.0.1"))
+        assertTrue(DownloadLogic.isLoopbackHost("127.255.255.254"))
+        assertTrue(DownloadLogic.isLoopbackHost("[::1]"))
+        assertTrue(DownloadLogic.isLoopbackHost("::1"))
+        assertFalse(DownloadLogic.isLoopbackHost("localhost.example.com"))
+        assertFalse(DownloadLogic.isLoopbackHost("126.0.0.1"))
+        assertFalse(DownloadLogic.isLoopbackHost("10.0.0.1"))
+        assertFalse(DownloadLogic.isLoopbackHost(""))
+    }
+
+    @Test
+    fun aSecurePagesDownloadOverAPlainHopIsInsecure() {
+        val page = "https://example.com/page"
+        // The plain case the core refuses before the request; the same answer here.
+        assertTrue(DownloadLogic.insecureDownload(listOf("http://example.com/f.zip"), page))
+        // A secure start that redirects through, or ends on, plain http.
+        assertTrue(DownloadLogic.insecureDownload(listOf("https://example.com/dl", "http://cdn.example.com/f.zip"), page))
+        assertTrue(DownloadLogic.insecureDownload(listOf("https://example.com/dl", "http://cdn.example.com/f.zip", "https://cdn.example.com/f.zip"), page))
+        // Every hop secure (or loopback): fine.
+        assertFalse(DownloadLogic.insecureDownload(listOf("https://example.com/dl", "https://cdn.example.com/f.zip"), page))
+        assertFalse(DownloadLogic.insecureDownload(listOf("http://localhost:3000/f.zip"), page))
+        assertFalse(DownloadLogic.insecureDownload(listOf("data:text/plain,hi"), page))
+        // A chain the downloader has not filled in yet counts as one unknown hop: judged insecure
+        // only because it cannot be judged secure (the callers always pass at least the URL).
+        assertTrue(DownloadLogic.insecureDownload(emptyList(), page))
+    }
+
+    @Test
+    fun onlyASecureInitiatorMakesADownloadInsecure() {
+        val plain = "http://example.com/f.zip"
+        // No referrer (a typed address, a retry without one) blocks nothing.
+        assertFalse(DownloadLogic.insecureDownload(listOf(plain), ""))
+        // A plain http page may download plain http.
+        assertFalse(DownloadLogic.insecureDownload(listOf(plain), "http://example.com/page"))
+        // A local page or a file is a secure initiator too.
+        assertTrue(DownloadLogic.insecureDownload(listOf(plain), "http://localhost:3000/page"))
+        assertTrue(DownloadLogic.insecureDownload(listOf(plain), "file:///sdcard/page.html"))
+        // An initiator the rule does not know is not trusted, so it blocks nothing.
+        assertFalse(DownloadLogic.insecureDownload(listOf(plain), "about:blank"))
+        assertFalse(DownloadLogic.insecureDownload(listOf(plain), "chrome://downloads"))
     }
 
     // --- naming ----------------------------------------------------------------------------------
