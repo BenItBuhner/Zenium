@@ -3254,12 +3254,20 @@
    * the dialogs dim only the content frame and the manager is a page. Chips and the star sit on
    * the window and take the window fills; everything on a panel takes the text fills.
    */
+  /*
+   * The bar (§9.29 window family, §9.3): a 32 row of 28 chips – the toolbar buttons' height –
+   * with 4 under them to the content frame, the chips 4 apart and 4 in from the bar's ends. The
+   * chips draw in the theme's ink at the sidebar's text size (§4: chrome text at 400) with 16
+   * glyphs at the toolbar stroke and 8 of padding either side, hover in the window fill over
+   * 120 ms, and the one whose panel is open keeps the pressed fill through `aria-expanded`
+   * (§9.20). Every distance is box to box (§5).
+   */
   .zen-bm-bar {
     display: flex;
     align-items: center;
-    height: 30px;
+    height: 32px;
     gap: 4px;
-    padding: 0 2px 4px;
+    padding: 0 4px 4px;
   }
   .zen-bm-strip {
     position: relative;
@@ -3267,8 +3275,8 @@
     min-width: 0;
     flex: 1;
     align-items: center;
-    gap: 6px;
-    height: 26px;
+    gap: 4px;
+    height: 28px;
     overflow: hidden;
   }
   .zen-bm-chip {
@@ -3277,24 +3285,30 @@
     flex-shrink: 0;
     align-items: center;
     gap: 6px;
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 8px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
     color: var(--zen-fg);
-    font-size: 12.5px;
+    font-size: var(--zen-sidebar-font);
     font-weight: 400;
+    line-height: 20px;
     white-space: nowrap;
     outline: none;
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
+  .zen-bm-chip-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
   .zen-bm-chip:hover {
     background: var(--v2-window-fill);
   }
-  /* The chip whose popover is open keeps its pressed fill (§9.20). */
+  /* The chip whose panel is open keeps its pressed fill (§9.20), said by `aria-expanded`. */
   .zen-bm-chip:active,
-  .zen-bm-chip[data-open='true'] {
+  .zen-bm-chip[aria-expanded='true'] {
     background: var(--v2-window-fill-hover);
   }
   /*
@@ -3306,10 +3320,10 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
-  /* Drop-into target: keeps its size, gains the hover fill and a 2px inset accent outline. */
+  /* Drop-into target (§9.4, #215): keeps its size, gains the hover fill and a 2px inset accent outline. */
   .zen-bm-chip[data-target='true'] {
     background: var(--v2-window-fill);
-    box-shadow: inset 0 0 0 2px var(--v2-accent);
+    box-shadow: inset 0 0 0 2px var(--zen-accent);
   }
   .zen-bm-chip[data-lifted='true'] {
     visibility: hidden;
@@ -3322,12 +3336,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* The overflow chevron, and a bookmark without a name: the icon alone (Chrome). */
+  /* A bookmark without a name: the icon alone (Chrome), 28 square. */
   .zen-bm-chip[data-icon-only='true'] {
     padding: 0 6px;
   }
   .zen-bm-chip[data-icon-only='true'] .zen-bm-chip-label {
     display: none;
+  }
+  /*
+   * The overflow » (§9.3): the toolbar button, at the chips' radius rather than the toolbar's 9
+   * and in the window fills the chips take; lit with the pressed fill while its panel is open.
+   */
+  .zen-bm-overflow {
+    border-radius: 6px;
+  }
+  .zen-bm-overflow:hover:not(:disabled) {
+    background: var(--v2-window-fill);
+  }
+  .zen-bm-overflow:active:not(:disabled),
+  .zen-bm-overflow[aria-expanded='true'] {
+    background: var(--v2-window-fill-hover);
+    opacity: 1;
+    transform: none;
   }
   /*
    * What travels under the pointer: lifted to level 2, scale(1.02) at 90%. The drag hooks place
@@ -3360,18 +3390,27 @@
     background: var(--v2-fill);
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
+  /*
+   * The empty bar's hint (#226): a sentence in the window family's deemphasised ink – the
+   * theme's foreground at 69%, which `data-surface="window"` resolves per theme (§9.29) – at
+   * the chips' size, standing where the first chip's text would.
+   */
   .zen-bm-empty {
     padding: 0 8px;
-    color: var(--v2-text-deemphasized);
-    font-size: 12.5px;
+    color: var(--v2-control-text-deemphasized);
+    font-size: var(--zen-sidebar-font);
+    line-height: 20px;
     white-space: nowrap;
   }
 
-  /* Insertion caret: a 2px accent line, radius 1, 8px short of either end. */
+  /*
+   * Insertion caret (§9.4): a 2px line in the surface's accent – the theme's on the bar, the
+   * page's in a panel – radius 1, 8px short of either end.
+   */
   .zen-bm-insert {
     position: absolute;
     pointer-events: none;
-    background: var(--v2-accent);
+    background: var(--v2-control-accent);
     border-radius: 1px;
     transition: opacity 100ms var(--zen-ease);
   }
@@ -3386,10 +3425,12 @@
   }
 
   /*
-   * Desktop popovers (§9.20): a folder's panel, the overflow panel and the star bubble. One of
-   * three fixed widths (set in script), the top border flush with the bar or pill the anchor
-   * sits in, radius 8 on the panel surface with the panel shadow, no scrim. The body scrolls
-   * under a sticky header once the content passes 60% of the window.
+   * Desktop popovers (§9.20): the star bubble (at the form width) and the other bubbles on this
+   * chassis – downloads, tab search, the folder editor, blocked pop-ups, share. One of the fixed
+   * widths (set in script), the top border flush with the bar or pill the anchor sits in, radius
+   * 8 on the panel surface with the panel shadow, no arrow, no scrim. The body scrolls under a
+   * sticky title block once the content passes 60% of the window. The bar's folder panels are
+   * menus (`.zen-bm-panel` below), not this.
    */
   .zen-bm-popover {
     border-radius: 8px;
@@ -3532,72 +3573,51 @@
   .zen-tab[data-editing]:not([data-active='true']) {
     background: var(--zen-element-bg);
   }
-  /* A list popover's body: 16 around 32px rows (§9.20); the empty line 32 below the top (§9.17). */
-  .zen-bm-popover-list {
-    padding: 16px;
-  }
-  .zen-bm-popover-row {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 8px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: left;
+  /*
+   * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
+   * §5, §6, §9.20): the shared `.zen-v2-panel` chrome and `.zen-v2-menu` rows (intrinsic 232–332,
+   * `--v2-menu-row` rows at 4 in from the edges – the ring's room – with a 16 glyph). Only what
+   * those do not say lives here: the panel is a fixed element of the chrome layer that the
+   * placement helpers position, its rows scroll under a thin bar past the height cap, and it
+   * takes the keys without drawing a ring of its own. A folder row keeps the fill while its
+   * panel stands beside it (`aria-expanded`); the submenu chevron trails in the deemphasised
+   * ink; a drop's target row (§9.4) is the fill with the accent inset, the panel whose end takes
+   * it the accent inset, the chip in the hand thinned to 40% in its own row.
+   */
+  .zen-bm-panel {
+    position: fixed;
+    z-index: 80;
     outline: none;
+    scrollbar-width: thin;
+    will-change: transform;
   }
-  /* One highlight, native-menu style: the active row follows the pointer and the keyboard. */
-  .zen-bm-popover-row[data-active='true'] {
+  /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
+  .zen-bm-panel .zen-v2-menu-item {
+    flex-shrink: 0;
+  }
+  .zen-bm-panel .zen-v2-menu-item[aria-expanded='true'] {
     background: var(--v2-fill);
   }
-  .zen-bm-popover-row[data-target='true'] {
+  .zen-bm-panel .zen-v2-menu-item[data-target='true'] {
     background: var(--v2-fill);
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
-  .zen-bm-popover-row[data-lifted='true'] {
+  .zen-bm-panel .zen-v2-menu-item[data-lifted='true'] {
     opacity: 0.4;
   }
-  .zen-bm-empty-row {
-    padding: 16px 16px 0;
-    color: var(--v2-text-deemphasized);
-    font-size: 15px;
-    line-height: var(--v2-line-body);
-    text-align: center;
+  .zen-bm-panel[data-append-target='true'] {
+    box-shadow:
+      var(--v2-shadow-panel),
+      inset 0 0 0 2px var(--v2-accent);
   }
-  /*
-   * A pushed-in level's bar header (§9.16): its 28px back button at 6px margins makes 40, the
-   * folder's name at the panel title size (§9.7); the §9.7 hairline only while the rows below
-   * have scrolled under it.
-   */
-  .zen-bm-popover-header {
-    display: flex;
+  .zen-bm-panel-icon {
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
-    align-items: center;
-    gap: 4px;
-    height: 40px;
-    padding: 0 6px;
-    border-bottom: 1px solid transparent;
-    font-size: 17px;
-    font-weight: 600;
-    letter-spacing: -0.012em;
-    line-height: 22px;
-    transition: border-color 120ms var(--zen-ease);
   }
-  .zen-bm-popover-header[data-scrolled='true'] {
-    border-color: var(--v2-border);
-  }
-  .zen-bm-popover-header .zen-toolbar-button {
-    border-radius: 6px;
-  }
-  .zen-bm-popover-header .zen-toolbar-button:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
-  .zen-bm-menu-level {
-    will-change: transform;
+  .zen-bm-panel-chevron {
+    margin-left: auto;
+    color: var(--v2-text-deemphasized);
   }
 
   /*
@@ -3684,39 +3704,6 @@
     padding: 6px 8px 2px;
     color: var(--v2-text-deemphasized);
     font-size: 13px;
-  }
-
-  /*
-   * The folder field's popup (§9.13 menulist popup): a panel under the trigger, radius 12,
-   * padding 6, 28px rows at radius 6, the current option marked with a trailing 16px check.
-   */
-  .zen-bm-listbox {
-    padding: 6px;
-    border-radius: 12px;
-    corner-shape: var(--zen-corner);
-    overflow: hidden;
-    background: var(--v2-panel);
-    border: 1px solid var(--v2-border);
-    box-shadow: var(--v2-shadow-panel);
-    color: var(--v2-text);
-  }
-  .zen-bm-option {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: 6px;
-    color: var(--v2-text);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: left;
-    outline: none;
-  }
-  .zen-bm-option:hover,
-  .zen-bm-option:focus-visible {
-    background: var(--v2-fill);
   }
 
   /* The star in the address pill: the outline fills in 120 ms (the pop follows in script). */
@@ -3892,32 +3879,60 @@
     box-shadow: inset 0 0 0 2px var(--v2-accent);
   }
 
-  /* The folder chooser's rows inside a dialog: single line, 32 tall; the keyboard's row is ringed. */
-  .zen-bm-pick-row {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 32px;
-    padding-right: 8px;
-    border-radius: 4px;
-    color: var(--v2-text);
-    font-size: 13px;
-  }
-  .zen-bm-pick-row:hover {
-    background: var(--v2-fill);
+  /*
+   * The folder chooser (components/bookmarks/FolderChooser.tsx; §9.21, §9.6, §9.30): the tree in
+   * the folder menulist's place in the star bubble and the dialogs, its rows the shared
+   * `.zen-v2-row` – here only what the primitive does not say. The tree steps out of the form's
+   * 16 gutter to the body's edge, so its rows stand where a popover's rows stand (the ring-room
+   * modifier on the shared body puts them `--v2-ring-room` in, their content at 16), leaves the
+   * ring the same room above and below its own clip, and scrolls past eight rows. A row leads
+   * with its twisty – 20 around a 16 chevron that turns down while the folder is open – and the
+   * 16 folder glyph, 4 apart, each level 16 further in; the chosen row is on `--v2-selected`, a
+   * row that cannot be chosen at 40%; a new folder's name is typed in place, the 24 editor
+   * centred on the row's 20 line. The ring is the shared one, on the row itself.
+   */
+  .zen-bm-pick-tree {
+    min-height: 0;
+    max-height: calc(8 * var(--v2-row) + 2 * var(--v2-ring-room));
+    margin-inline: -16px;
+    padding-block: var(--v2-ring-room);
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
   .zen-bm-pick-row[aria-selected='true'] {
-    background: color-mix(in srgb, var(--v2-accent) 16%, transparent);
+    background: var(--v2-selected);
   }
-  .zen-bm-pick-row[data-off='true'] {
+  .zen-bm-pick-row[aria-disabled='true'] {
     opacity: 0.4;
   }
-  .zen-bm-pick-row:has(:focus-visible) {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: -2px;
+  .zen-bm-pick-lead {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
   }
-  .zen-bm-pick-row :focus-visible {
-    outline: none;
+  .zen-bm-pick-lead .lucide {
+    width: var(--v2-icon);
+    height: var(--v2-icon);
+    flex-shrink: 0;
+  }
+  .zen-bm-pick-twisty {
+    display: flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--v2-radius-control);
+    color: var(--v2-text-deemphasized);
+  }
+  .zen-bm-pick-twisty .lucide {
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-bm-pick-twisty .lucide[data-open] {
+    transform: rotate(90deg);
+  }
+  .zen-bm-pick-rename {
+    margin-block: -2px;
   }
 
   /* Breadcrumb segments: buttons and drop-into targets. */
