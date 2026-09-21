@@ -100,8 +100,49 @@ describe('downloadStatus', () => {
         NOW
       )
     ).toBe('Blocked · Uncommon file')
+    // The lesser tier by type is named as such (HB-19 / PS-34), not folded into Dangerous.
+    expect(
+      downloadStatus(
+        item({
+          state: 'completed',
+          danger: { level: 'suspicious', reason: 'archive', message: '' }
+        }),
+        NOW
+      )
+    ).toBe('Blocked · Suspicious')
     expect(downloadStatus({ ...flagged, dangerAccepted: true, completedAt: NOW }, NOW)).toBe(
       '3.0 MB · Just now'
+    )
+  })
+
+  it('reads a transfer refused as insecure as blocked, whatever its type (HB-44)', () => {
+    const blocked = item({ state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
+    expect(downloadStatus(blocked, NOW)).toBe('Blocked · Insecure download')
+    expect(
+      downloadStatus(
+        {
+          ...blocked,
+          danger: { level: 'dangerous', reason: 'executable', message: 'This file can harm.' }
+        },
+        NOW
+      )
+    ).toBe('Blocked · Insecure download')
+  })
+
+  it('counts an interrupted row down to the downloader’s own next attempt (HB-43), else reads Failed', () => {
+    const scheduled = item({
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-disconnected',
+      errorMessage: 'Check internet connection',
+      autoResumeAt: NOW + 2_500
+    })
+    expect(downloadStatus(scheduled, NOW)).toBe('Resuming in 3 s…')
+    expect(downloadStatus(scheduled, NOW + 2_000)).toBe('Resuming in 1 s…')
+    expect(downloadStatus(scheduled, NOW + 2_500)).toBe('Resuming…')
+    expect(downloadStatus(scheduled, NOW + 9_000)).toBe('Resuming…')
+    expect(downloadStatus({ ...scheduled, autoResumeAt: undefined }, NOW)).toBe(
+      'Failed · Check internet connection'
     )
   })
 

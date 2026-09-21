@@ -5,11 +5,13 @@ import { canRetryDownload } from '@shared/downloadsShell'
 import { downloadItem } from '@shared/__tests__/downloadFixtures'
 import {
   INTERRUPT_WORDING,
+  autoResumeStatus,
   blockedStatus,
   bubbleDescription,
   dangerActionLabels,
   dangerSummary,
   dayLabel,
+  decisionLabels,
   describeDownloadError,
   downloadStatus,
   extensionOf,
@@ -156,6 +158,25 @@ describe('downloadStatus', () => {
     expect(
       downloadStatus(item({ id: 'a', state: 'interrupted', error: 'network-failed' })).text
     ).toBe('Failed · Check internet connection')
+    // While the engine will try again on its own (HB-43) the line counts down in the plain ink,
+    // the failure's sentence still the tooltip; Resume and Cancel stay the row's verbs.
+    const scheduled = item({
+      id: 'a',
+      state: 'interrupted',
+      error: 'network-disconnected',
+      errorMessage: 'Check internet connection',
+      canResume: true,
+      autoResumeAt: 10_000
+    })
+    expect(downloadStatus(scheduled, 7_500)).toEqual({
+      text: 'Resuming in 3 s…',
+      tone: 'muted',
+      hint: 'Check internet connection'
+    })
+    expect(downloadStatus(scheduled, 10_000).text).toBe('Resuming…')
+    expect(downloadStatus({ ...scheduled, autoResumeAt: undefined }).text).toBe(
+      'Failed · Check internet connection'
+    )
     // A finished file the engine found gone from disk.
     expect(downloadStatus(item({ id: 'a', state: 'completed', fileMissing: true }))).toEqual({
       text: 'Deleted',
@@ -197,14 +218,47 @@ describe('danger copy (Chrome 112 download bubble)', () => {
     message = ''
   ): DownloadItem['danger'] => ({ level, reason, message })
 
-  it('names the block by verdict', () => {
+  it('names the block by verdict, the tier in the line (HB-19 / PS-34)', () => {
     expect(blockedStatus(verdict('dangerous', 'executable'))).toBe('Blocked · Dangerous')
-    expect(blockedStatus(verdict('suspicious', 'archive'))).toBe('Blocked · Dangerous')
+    expect(blockedStatus(verdict('dangerous', 'script'))).toBe('Blocked · Dangerous')
+    // A disk image or a macro-bearing document is the lesser tier: Chrome's "Suspicious", not
+    // "Dangerous" – the line names the tier the engine gave, as the interface's verbs table says.
+    expect(blockedStatus(verdict('suspicious', 'archive'))).toBe('Blocked · Suspicious')
+    expect(blockedStatus(verdict('suspicious', 'office-macro'))).toBe('Blocked · Suspicious')
+    expect(blockedStatus(verdict('suspicious', 'file-type'))).toBe('Blocked · Suspicious')
     expect(blockedStatus(verdict('dangerous', 'url-verdict'))).toBe('Blocked · Dangerous')
     expect(blockedStatus(verdict('suspicious', 'url-verdict'))).toBe('Blocked · Uncommon file')
     expect(blockedStatus(verdict('suspicious', 'insecure-download'))).toBe(
       'Blocked · Insecure download'
     )
+  })
+
+  it('words the waiting pair per state: Keep / Delete for a flagged file, Keep anyway / Discard for an insecure block', () => {
+    const flagged = item({ id: 'f', state: 'completed', danger: verdict('dangerous', 'executable') })
+    expect(decisionLabels(flagged)).toEqual({ keep: 'Keep', discard: 'Delete', prominent: 'discard' })
+    const lesser = item({ id: 'l', state: 'completed', danger: verdict('suspicious', 'archive') })
+    expect(decisionLabels(lesser)).toEqual({ keep: 'Keep', discard: 'Delete', prominent: null })
+    // Nothing is on disk for an insecure-blocked row, so its second verb is Discard, not Delete;
+    // both plain. Keep anyway only while the engine would honour it (`canKeepInsecure`).
+    const blocked = item({ id: 'b', state: 'insecure-blocked', savePath: '', receivedBytes: 0 })
+    expect(decisionLabels(blocked)).toEqual({ keep: 'Keep anyway', discard: 'Discard', prominent: null })
+    const blockedDangerous = item({
+      id: 'bd',
+      state: 'insecure-blocked',
+      savePath: '',
+      receivedBytes: 0,
+      danger: verdict('dangerous', 'executable')
+    })
+    expect(decisionLabels(blockedDangerous)).toEqual({ keep: null, discard: 'Discard', prominent: null })
+  })
+
+  it('counts an automatic resume down in whole seconds, then reads Resuming… (HB-43)', () => {
+    expect(autoResumeStatus(10_000, 8_000)).toBe('Resuming in 2 s…')
+    expect(autoResumeStatus(10_000, 8_001)).toBe('Resuming in 2 s…')
+    expect(autoResumeStatus(10_000, 9_000)).toBe('Resuming in 1 s…')
+    expect(autoResumeStatus(10_000, 9_999)).toBe('Resuming in 1 s…')
+    expect(autoResumeStatus(10_000, 10_000)).toBe('Resuming…')
+    expect(autoResumeStatus(10_000, 12_000)).toBe('Resuming…')
   })
 
   it('explains with the engine’s sentence, else Chrome’s per reason', () => {

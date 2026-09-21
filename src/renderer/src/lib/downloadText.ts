@@ -1,6 +1,11 @@
 import type { DownloadItem } from '@shared/types'
-import { needsDangerDecision } from '@shared/downloadsShell'
-import { blockedStatus, describeDownloadError, isDeletedRow } from './downloadsView'
+import { awaitsAutoResume, needsDangerDecision } from '@shared/downloadsShell'
+import {
+  autoResumeStatus,
+  blockedStatus,
+  describeDownloadError,
+  isDeletedRow
+} from './downloadsView'
 import { formatBytes, relativeTime } from './utils'
 
 /**
@@ -16,7 +21,9 @@ import { formatBytes, relativeTime } from './utils'
  * A row's one description line, Chrome's phrasing: size and time left while running. The rate
  * only stands in while there is no estimate (unknown size), so the line fits a phone row. An
  * interrupted row reads the engine's sentence for its reason (`errorMessage`) after `Failed ·`,
- * whether or not Resume can pick it up, as the desktop row does.
+ * whether or not Resume can pick it up, as the desktop row does – unless the engine (the phone's
+ * downloader) will try it again on its own, when the line counts down to that attempt
+ * (`Resuming in 3 s…`, HB-43; the interface's verbs table) and `now` moves it.
  */
 export function downloadStatus(item: DownloadItem, now = Date.now()): string {
   const size = item.totalBytes > 0 ? formatBytes(item.totalBytes) : ''
@@ -39,6 +46,7 @@ export function downloadStatus(item: DownloadItem, now = Date.now()): string {
     case 'cancelled':
       return 'Cancelled'
     case 'interrupted':
+      if (awaitsAutoResume(item)) return autoResumeStatus(item.autoResumeAt, now)
       return item.errorMessage ? `Failed · ${item.errorMessage}` : describeDownloadError(item.error)
     // Refused before a byte was written (HB-44): the same status the desktop row reads.
     case 'insecure-blocked':

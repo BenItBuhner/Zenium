@@ -4768,7 +4768,7 @@
     flex-shrink: 0;
     white-space: pre;
   }
-  /* The status is the row's second 13/20 line; a verdict's sentence wraps to two, then an ellipsis (§9.2). */
+  /* The status is the row's second 13/20 line (`Blocked · Dangerous` names a waiting row's tier); the wrap is kept for a long failure reason. */
   .zen-downloads-status {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -4785,7 +4785,21 @@
   .zen-downloads-status[data-tone='danger'] {
     color: var(--v2-danger);
   }
-  /* A record without a file (cancelled, failed, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
+  /*
+   * A waiting row's sentence under its `Blocked · <tier>` line (the desktop row's `.zen-dl-detail`
+   * twin): the deemphasised ink – the tier's ink is the status line's – at most two lines, then
+   * an ellipsis (§9.2).
+   */
+  .zen-downloads-detail {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  /* A record without a file (cancelled, failed, blocked before a byte, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
   .zen-downloads-main[data-gone] .zen-downloads-glyph {
     opacity: 0.4;
   }
@@ -4806,8 +4820,10 @@
     margin-right: -12px;
   }
   /*
-   * Keep / Delete for a flagged file: the row's own footer, under its text and spanning the
-   * row, two peers splitting the width at an 8 gap, each 40 tall (§9.11); 8 below the text.
+   * Keep / Delete for a flagged file, Keep anyway / Discard for an insecure block (the verbs
+   * table's pairs): the row's own footer, under its text and spanning the row, two peers
+   * splitting the width at an 8 gap, each 40 tall (§9.11); 8 below the text. Discard alone – a
+   * dangerous type Chrome offers no Keep anyway for – takes the whole width.
    */
   .zen-downloads-decision {
     display: flex;
