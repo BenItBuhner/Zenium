@@ -395,7 +395,7 @@ const INVENTORY: Record<string, readonly string[]> = {
   downloads: [
     'Location',
     'Open the downloads folder',
-    'Ask where to save each file before downloading',
+    'Ask where to save each file',
     'Show the downloads when a download finishes',
     'Show the downloads when a download starts',
     'Always show the downloads button',

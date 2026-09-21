@@ -1586,8 +1586,11 @@ function sleepingTabsGroups(s: Settings, set: (patch: Partial<Settings>) => void
  * Chrome's `chrome://settings/downloads` rows in Chrome's words): **Location** – the folder new
  * downloads go to, by its path (`download.directory`, HB-20), with Change… through the host's
  * own picker (`download.chooseDirectory`, then `settings.update`) and Use default beside it –
- * **Ask where to save each file before downloading**, the file types that open by themselves
- * once they are on disk, and the completion notification (Android's downloader posts it, the
+ * **Ask where to save each file** (the interface's label: Chrome's desktop string runs on
+ * "before downloading", which wraps the phone's 320 px label column to a second line against
+ * §9.2's one-line rule; Chrome's own phone label is the short "Ask where to save files", and the
+ * long form stays a search keyword), the file types that open by themselves once they are on
+ * disk, and the completion notification (Android's downloader posts it, the
  * desktop shell its own). No switch for the danger warnings: Chrome has none (Safe Browsing
  * governs them), so neither does this page. The downloads bubble and the toolbar button are
  * the desktop chrome's – a single-window host shows its downloads panel as a transfer starts
@@ -1626,8 +1629,8 @@ function downloadsSection({ state, set, downloadDirectory }: SectionContext): Ro
     {
       kind: 'switch',
       id: 'ask-where-to-save',
-      label: 'Ask where to save each file before downloading',
-      keywords: ['always ask', 'prompt', 'save as', 'choose'],
+      label: 'Ask where to save each file',
+      keywords: ['before downloading', 'always ask', 'prompt', 'save as', 'choose'],
       checked: d.askWhereToSave,
       onChange: (v) => set({ askWhereToSave: v })
     }

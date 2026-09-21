@@ -759,10 +759,12 @@ describe('the section model', () => {
     )
     expect(row(picked, 'download-directory').description).toBe('Download/Zenium')
     expect(row(picked, 'download-directory-default').disabled).toBe(false)
-    // Chrome's `IDS_SETTINGS_PROMPT_FOR_DOWNLOAD`; no switch for the danger warnings, as Chrome
-    // has none (Safe Browsing governs them).
+    // The interface's label (Chrome's `IDS_SETTINGS_PROMPT_FOR_DOWNLOAD` runs on "before
+    // downloading", a second line on a phone; it stays a search keyword); no switch for the
+    // danger warnings, as Chrome has none (Safe Browsing governs them).
     const ask = row(downloads, 'ask-where-to-save')
-    expect(ask.label).toBe('Ask where to save each file before downloading')
+    expect(ask.label).toBe('Ask where to save each file')
+    expect(ask.keywords).toContain('before downloading')
     expect(
       downloads.groups.flatMap((g) => g.rows).filter((r) => /danger|warn/i.test(r.label))
     ).toEqual([])
