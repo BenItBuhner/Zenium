@@ -271,24 +271,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* In-content links are the accent (Firefox's link colour), underlined on hover only. */
-  .zen-v2-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--v2-accent);
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    .zen-v2-link:hover {
-      text-decoration: underline;
-      text-underline-offset: 3px;
-    }
-  }
-  .zen-v2-link .lucide {
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-  }
+  /* In-content links (the Source row's store link) are main.css's `.zen-v2-link` (§9.10, §9.34). */
 
   /* --- Controls (§6) ---------------------------------------------------------------------- */
 

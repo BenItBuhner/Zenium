@@ -39,8 +39,13 @@ export type PreviewStep =
   | { kind: 'overview' }
   | { kind: 'urlbar' }
 
-/** The chrome's own sheets a preview state may open by name (`sheet=<name>`). */
-export const PREVIEW_SHEETS = ['extensions'] as const
+/**
+ * The chrome's own sheets a preview state may open by name (`sheet=<name>`): the Extensions
+ * sheet, the new tab page's customise sheet (`customise`), which mounts above whichever page
+ * is up, and the default-browser promo (`promo`: the core's campaign made due over the active
+ * page, as the third session raises it).
+ */
+export const PREVIEW_SHEETS = ['extensions', 'customise', 'promo'] as const
 export type PreviewSheet = (typeof PREVIEW_SHEETS)[number]
 
 /** An extension id as Chrome forms them: 32 letters a–p. */
@@ -122,7 +127,15 @@ export const PREVIEW_POPUPS_MAX = 12
  * Settings > Autofill with saved entries (`manager`), with none (`manager-empty`) and behind the
  * vault gate (`manager-locked`), its two editors (`edit-address` adds one, `edit-card` edits a
  * saved card) and the vault passphrase dialog a re-authenticated command puts up (`passphrase`,
- * the real one behind a passphrase vault).
+ * the real one behind a passphrase vault). Three more from the credential-safety package: the
+ * sign-in leak warning over the active tab (`leak-warning`: the detector checks a sample sign-in
+ * against a stand-in range answer, so the sheet or dialog is the engine's own, ID-31), the
+ * password manager open on a login that carries a note (`login-note`: the vault seeded with it,
+ * the manager over the page; `then=tap:<row>;tap:Edit` walks to the detail and its edit view,
+ * ID-34) and Safety check after a Password Checkup (`safety-check`: the vault seeded with logins
+ * the checkup finds breached, weak and reused against the stand-in, the checkup run, Safety
+ * check run, the Settings tab on its Privacy section – a manager-like surface, so it takes
+ * `show` and `then`; ID-19).
  */
 export const PREVIEW_AUTOFILL = [
   'save-login',
@@ -138,7 +151,10 @@ export const PREVIEW_AUTOFILL = [
   'manager-locked',
   'edit-address',
   'edit-card',
-  'passphrase'
+  'passphrase',
+  'leak-warning',
+  'login-note',
+  'safety-check'
 ] as const
 
 export type PreviewAutofillSurface = (typeof PREVIEW_AUTOFILL)[number]
@@ -160,7 +176,10 @@ export type PreviewState =
       surface: PreviewAutofillSurface
       /** For a manager surface (the Settings tab): text of a row to scroll into view once it is open. */
       show?: string
-      /** For a manager surface: steps taken on the page once it is open and scrolled. */
+      /**
+       * For a manager surface: steps taken on the page once it is open and scrolled; for
+       * `login-note`, steps taken in the manager once it is open (`tap:<row>`, `tap:Edit`).
+       */
       then?: PreviewStep[]
     }
   | {
@@ -205,6 +224,8 @@ export type PreviewState =
       show?: string
       /** A sheet that opens at its peek detent: tap its handle so it rests expanded. */
       expand?: boolean
+      /** Steps taken once the overlay is open (a row held for selection mode, a row tapped). */
+      then?: PreviewStep[]
     }
   | {
       kind: 'menu'
@@ -439,7 +460,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * #135 spelt them),
  * `autofill=<surface>` for one of PREVIEW_AUTOFILL staged with sample data (a manager surface is
  * the Settings tab on its Autofill section and takes `show=<text>` and `then=<steps>` like
- * `page`), `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
+ * `page`; `login-note` opens the password manager and takes `then=<steps>` on it; `safety-check`
+ * is the Settings tab on its Privacy section after a Password Checkup over a seeded vault),
+ * `pdf=<variant>` for the active tab navigated to a sample PDF the viewer page opens
  * (`sample`, `locked`, `broken`, `slow`; see `previewPdf.ts`; with `find=<text>` for the find
  * bar over it and `then=<steps>` for the bar's controls: `tap:Contents`, `tap:Unlock;type:pdf-password=zenium`),
  * `find=<text>` for the find bar with that text typed (`find=` opens it empty),
@@ -522,6 +545,8 @@ export function parsePreviewSpec(spec: string): PreviewState {
     const show = params.get('show')
     if (show) state.show = show
     if (params.has('expand')) state.expand = true
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
     return state
   }
   const menu = params.get('menu')

@@ -960,7 +960,8 @@ describe('phone pill (PillContent)', () => {
       )
       expectChip(chip, 'Media paused')
       expect(chip.getAttribute('data-state')).toBe('paused')
-      expect(chip.className).toContain('opacity-50')
+      // Quiet in the deemphasised window ink (§9.29), never a status colour.
+      expect(chip.className).toContain('zen-pill-quiet')
       expect(chip.className).not.toContain('text-[var(--zen-accent)]')
 
       // The sheet up: the chip reads expanded.

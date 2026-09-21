@@ -132,6 +132,16 @@ export const PASSWORDS_COPY = {
     label: 'Ask again before showing or copying',
     description: 'How long one verification covers reveals, copies and exports.'
   },
+  /**
+   * The leak detection switch (ID-31, Chrome's "Warn you if passwords are exposed in a data
+   * breach"): Chrome's label wraps to two lines on a 412 phone with the switch trailing, so the
+   * row here takes a one-line label (§9.2) over a one-sentence description in Chrome's sense –
+   * 84 on the phone, §10.3's ceiling (the lookup sends a hash prefix, never the password).
+   */
+  leakDetection: {
+    label: 'Warn about exposed passwords',
+    description: 'Zenium checks passwords you sign in with against known data breaches.'
+  },
   protection: { label: 'Vault protection' },
   lock: {
     label: 'Lock the vault',

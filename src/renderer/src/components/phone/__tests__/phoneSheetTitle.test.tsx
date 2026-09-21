@@ -161,4 +161,51 @@ describe('the title block pose (§9.23)', () => {
     expect(block.querySelector('h2')?.textContent).toBe('Make Zenium your default browser?')
     expect(block.querySelector('p')?.textContent).toBe('Links open here.')
   })
+
+  it('a prompt about Zenium itself carries the 48 px app icon above the block, no glyph on the title (§9.23)', () => {
+    render(
+      sheet({
+        pose: 'block',
+        text: 'Make Zenium your default browser',
+        appIcon: <svg data-app-icon aria-hidden="true" />,
+        description: 'Links from other apps open in Zenium.'
+      })
+    )
+    expect(thrown).toBeNull()
+    const block = q<HTMLElement>('.zen-sheet-title-block')!
+    // The icon's box is the body's first content, the block straight after it: the desktop
+    // prompt's order (the icon, then the title block), nothing between them.
+    const icon = q<HTMLElement>('.zen-sheet-app-icon')!
+    expect(icon).not.toBeNull()
+    expect(icon.parentElement?.firstElementChild).toBe(icon)
+    expect(icon.nextElementSibling).toBe(block)
+    expect(icon.firstElementChild?.hasAttribute('data-app-icon')).toBe(true)
+    expect(icon.firstElementChild?.getAttribute('aria-hidden')).toBe('true')
+    // The block itself is the plain one: the title with no inline glyph.
+    expect(block.querySelector('h2 svg')).toBeNull()
+    expect(block.querySelector('h2')?.textContent).toBe('Make Zenium your default browser')
+    expect(dialog().getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+  })
+
+  it('refuses an app icon beside a glyph: the icon stands in for it', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let error: unknown = null
+    try {
+      render(
+        sheet({
+          pose: 'block',
+          text: 'Make Zenium your default browser',
+          icon: <svg data-glyph aria-hidden />,
+          appIcon: <svg data-app-icon aria-hidden="true" />,
+          description: 'Links from other apps open in Zenium.'
+        })
+      )
+    } catch (e) {
+      error = e
+    }
+    error ??= thrown
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toMatch(/app icon/)
+    expect(q('.zen-sheet-title-block')).toBeNull()
+  })
 })

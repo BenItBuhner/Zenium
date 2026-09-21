@@ -64,7 +64,7 @@ export function savedLoginFor(
 }
 
 export interface LeakCheckContext {
-  /** Settings › Passwords › Warn you if passwords are exposed in a data breach. */
+  /** Settings › Passwords › Warn about exposed passwords (Chrome's leak detection switch). */
   enabled: boolean
   /** The tab is private: the check runs and warns, but nothing is remembered. */
   isPrivate: boolean
@@ -137,6 +137,11 @@ interface LeakResult {
   password: string
   count: number
   at: number
+  /**
+   * When the user ignored the warning before the login was saved (Chrome's order on a phone:
+   * the warning first, the save sheet after it), so `onSaved` writes the Ignore with the count.
+   */
+  ignoredAt: number | null
 }
 
 /**
@@ -163,6 +168,11 @@ export class LeakDetector {
   /** Warnings waiting for the user, oldest first. */
   active(): CredentialLeakWarning[] {
     return [...this.warnings.values()]
+  }
+
+  /** Tabs whose check is still running (`UIState.passwords.leakChecks`). */
+  checking(): string[] {
+    return [...this.aborts.keys()]
   }
 
   /** Resolves once every check started so far has finished (tests, demo drivers). */
@@ -195,16 +205,27 @@ export class LeakDetector {
     const abort = new AbortController()
     this.aborts.set(candidate.tabId, abort)
     this.results.delete(candidate.tabId)
-    let count: number | null
+    // The check is on record while it runs (`checking`): a phone save sheet holds for its verdict.
+    this.onChange()
     try {
-      count = await lookupBreachCount(
-        candidate.password,
-        { fetchRange: this.fetchRange },
-        abort.signal
-      )
+      await this.lookup(candidate, abort, isPrivate)
     } finally {
       if (this.aborts.get(candidate.tabId) === abort) this.aborts.delete(candidate.tabId)
+      // Over, with a warning or without one: the chrome hears either way.
+      this.onChange()
     }
+  }
+
+  private async lookup(
+    candidate: LeakCandidate,
+    abort: AbortController,
+    isPrivate: boolean
+  ): Promise<void> {
+    const count = await lookupBreachCount(
+      candidate.password,
+      { fetchRange: this.fetchRange },
+      abort.signal
+    )
     // Aborted (the tab is gone or another sign-in followed) or the network failed: not checked.
     if (count === null || abort.signal.aborted) return
     if (!this.browser.tabs.tab(candidate.tabId)) return
@@ -229,7 +250,8 @@ export class LeakDetector {
         username: candidate.username,
         password: candidate.password,
         count,
-        at: now
+        at: now,
+        ignoredAt: null
       })
     }
     if (count > 0) {
@@ -244,7 +266,6 @@ export class LeakDetector {
         private: isPrivate
       })
     }
-    this.onChange()
   }
 
   private saved(candidate: LeakCandidate): Credential | null {
@@ -254,8 +275,10 @@ export class LeakDetector {
 
   /**
    * The autofill service saved or updated a login from a judged sign-in: a result the check
-   * reached for the same credentials before the prompt was answered is recorded on it now, and
-   * the tab's warning is remembered on it (Ignore then sticks).
+   * reached for the same credentials before the prompt was answered is recorded on it now –
+   * the count, the warning's time, and the Ignore when the user gave it before saving (the
+   * phone's order) – and a warning still up is remembered on it (an Ignore after saving sticks
+   * through `respond`).
    */
   onSaved(credential: Credential, candidate: LeakCandidate): void {
     const result = this.results.get(candidate.tabId)
@@ -270,7 +293,11 @@ export class LeakDetector {
     if (!this.store.unlocked()) return
     this.store.recordLeak(
       credential.id,
-      { breached: result.count, ...(result.count > 0 ? { leakWarnedAt: result.at } : {}) },
+      {
+        breached: result.count,
+        ...(result.count > 0 ? { leakWarnedAt: result.at } : {}),
+        ...(result.ignoredAt !== null ? { leakIgnoredAt: result.ignoredAt } : {})
+      },
       result.at
     )
     const warning = this.warnings.get(candidate.tabId)
@@ -287,10 +314,20 @@ export class LeakDetector {
     this.warnings.delete(warning.tabId)
     this.onChange()
     switch (action) {
-      case 'ignore':
-        if (warning.credentialId && this.store.unlocked())
-          this.store.recordLeak(warning.credentialId, { leakIgnoredAt: Date.now() })
+      case 'ignore': {
+        const now = Date.now()
+        if (warning.credentialId) {
+          if (this.store.unlocked())
+            this.store.recordLeak(warning.credentialId, { leakIgnoredAt: now })
+          return
+        }
+        // Not saved yet: the Ignore waits with the result for the save prompt's answer
+        // (`onSaved`), so the login the user then saves carries it as a saved one would.
+        const result = this.results.get(warning.tabId)
+        if (result && result.origin === warning.origin && result.username === warning.username)
+          result.ignoredAt = now
         return
+      }
       case 'openManager':
         this.browser.pages.open('settings', 'autofill', win ?? this.windowOf(warning.tabId))
         return

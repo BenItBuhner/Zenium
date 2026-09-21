@@ -1,10 +1,8 @@
 import type { JSX, ReactNode, RefObject } from 'react'
-import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
-import { useEscape } from '@renderer/hooks/useEscape'
-import { useBackSurface } from '@renderer/lib/back'
-import { FrameDialogPortal, useFrameDialog } from '@renderer/lib/portals'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '@renderer/lib/utils'
-import { BottomSheet, type BottomSheetHandle } from '../../sheet/BottomSheet'
+import { PhoneSheet, type SheetTitle } from '../../phone/PhoneSheet'
+import type { BottomSheetHandle } from '../../sheet/BottomSheet'
 import { Field, RadioOption, SheetActions, ValidationMessage } from './blocks'
 import type {
   ActionRow,
@@ -27,17 +25,20 @@ import { SheetDismissContext, SheetRelayoutContext, useSheetDismiss } from './sh
  * again on every render, so a sheet always shows the row's current value and closes by itself
  * when its row is gone.
  *
- * Sheets are modal dialogs, so they mount through the frame's `FrameDialogHost` (lib/portals.tsx,
- * reached with `FrameDialogPortal`): over the content frame, which recedes under a sheet and
- * would shrink a sheet inside it. Each sheet draws its scrim itself (`ownScrim`), fading with
- * its motion. The stack and the keyboard are the chassis's (`BottomSheet`, §9.22, §9.24, §11.2):
- * focus moves into a sheet as it opens (the checked option of a picker, else the first row or
- * button – a form's Cancel, since a text field would bring the keyboard up with the sheet), Tab
- * wraps inside it, the chrome behind the scrim is inert; a sheet that opens over a sheet recedes
- * the one beneath and makes it `inert`, the lower scrim fades out as the upper comes in – one
- * scrim, the top sheet's, above the page and the lower sheet alike – and when the upper leaves,
- * focus returns to the row of the lower sheet that opened it. Nothing here does any of that
- * itself; what is the surface's is Escape (a sheet under another leaves it to the one on top).
+ * Every sheet is the phone's shared `PhoneSheet` (components/phone/PhoneSheet.tsx): a modal
+ * dialog in the frame's dialog host, over the content frame, which recedes under a sheet and
+ * would shrink a sheet inside it, drawing its scrim itself, its title in the chassis's two poses
+ * – the 48 header for a picker, a form or a sheet of rows, the §9.23 title block when the sheet
+ * carries a description – and answering the system back and Escape (a sheet under another
+ * leaves the key to the one on top). The stack and the keyboard are the chassis's
+ * (`BottomSheet`, §9.22, §9.24, §11.2): focus moves into a sheet as it opens (the checked option
+ * of a picker, else the first row or button – a form's Cancel, since a text field would bring
+ * the keyboard up with the sheet), Tab wraps inside it, the chrome behind the scrim is inert; a
+ * sheet that opens over a sheet recedes the one beneath and makes it `inert`, the lower scrim
+ * fades out as the upper comes in – one scrim, the top sheet's, above the page and the lower
+ * sheet alike – and when the upper leaves, focus returns to the row of the lower sheet that
+ * opened it. Nothing here does any of that itself; what is the Settings tab's is the body: its
+ * rows, its forms and the two contexts they reach the sheet through.
  */
 
 /** Every open sheet, lowest first; each resolves its row in `groups`. */
@@ -134,12 +135,13 @@ interface SheetProps {
   /** For the back registry's logs. */
   name: string
   title: string
-  /** With a description the sheet opens on a §9.23 title block instead of the 48 px header. */
+  /**
+   * With a description the sheet opens on the §9.23 title block instead of the 48 px header
+   * (`PhoneSheet`'s two poses): a prompt's paragraph, a form's or an item sheet's introduction.
+   */
   description?: string
   /** A description that reports a status (an extension's load error): the §1 status ink. */
   descriptionTone?: 'warn' | 'danger'
-  /** A prompt (title, at most one paragraph, actions) opens on a title block either way (§9.23). */
-  prompt?: boolean
   /** Another sheet is open over this one: Escape is that sheet's until it leaves. */
   under: boolean
   onClose(): void
@@ -150,97 +152,49 @@ interface SheetProps {
 }
 
 /**
- * One v2 sheet on the shared `BottomSheet`, placed in the frame's dialog host: the chassis's
- * neutral panel at radius 12 with a hairline edge, no side padding of its own (§9.25: rows run
- * edge to edge, text inset 16), the system back and Escape dismiss it, the header takes §9.7's
- * hairline once the body has scrolled under it, and the chassis moves the focus into it as it
- * opens (§9.22) and back to the row that opened it when it leaves (§9.24).
+ * One Settings sheet: the shared `PhoneSheet` with the Settings tab's class on the panel
+ * (`.zen-settings-sheet`, main.css: the page's type, §9.25's edge that takes no layout so a
+ * row's 16 gutter is 16 from the outer edge) and its body, which gives the rows and forms
+ * inside it the sheet's dismiss and a way to ask for the detents again.
  */
-export function SettingsSheet(props: SheetProps): JSX.Element {
-  return (
-    <FrameDialogPortal>
-      <HostedSheet {...props} />
-    </FrameDialogPortal>
-  )
-}
-
-/** The sheet inside the host: registered with it as a dialog that draws its own scrim. */
-function HostedSheet({
+export function SettingsSheet({
   name,
   title,
   description,
   descriptionTone,
-  prompt = false,
   under,
   onClose,
   children,
   contentKey,
   sheetRef
 }: SheetProps): JSX.Element {
-  const titled = prompt || description !== undefined
   const own = useRef<BottomSheetHandle>(null)
   const sheet = sheetRef ?? own
-  const titleId = useId()
   const dismiss = (after?: () => void): void => sheet.current?.dismiss(after)
-  useFrameDialog({ onScrimPress: () => dismiss(), ownScrim: true })
-  useBackSurface({
-    name,
-    onProgress: (progress) => sheet.current?.backProgress(progress),
-    onCommit: () => sheet.current?.commitBack(),
-    onCancel: () => sheet.current?.cancelBack()
-  })
-  // Escape is the top popup's (`useEscape`, §9.24): a sheet under another – of this stack, or a
-  // menulist's picker a form inside it opened – leaves the key to the one on top.
-  useEscape(() => {
-    if (!under) sheet.current?.dismiss()
-  })
   // A body that changes height once the sheet is up (a form shows more rows, a field appears)
   // asks for its detents again through `useSheetRelayout`: the chassis measures on a new key.
   const [relayouts, setRelayouts] = useState(0)
   const relayout = useCallback((): void => setRelayouts((n) => n + 1), [])
+  const pose: SheetTitle =
+    description === undefined
+      ? { pose: 'header', text: title }
+      : { pose: 'block', text: title, description, tone: descriptionTone }
   return (
-    // The slot's child is a layer on the sheet chassis already (`data-sheet-layer`, as the
-    // `BottomSheet` inside it): the host's chassis stays down for an `ownScrim` sheet and never
-    // raises `data-sheet-up`, and main.css cuts the pointer from every other slot child
-    // meanwhile – inherited by the whole sheet, so a tap would fall through to the host's scrim.
-    <div
-      className="zen-settings-sheet-layer absolute inset-0"
-      data-surface="page"
-      data-sheet-layer="true"
+    <PhoneSheet
+      name={name}
+      title={pose}
+      under={under}
+      onClose={onClose}
+      contentKey={`${contentKey ?? ''}|${relayouts}`}
+      className="zen-settings-sheet"
+      sheetRef={sheet}
     >
-      <BottomSheet
-        ref={sheet}
-        hosted
-        onDismissed={onClose}
-        contentKey={`${contentKey ?? ''}|${relayouts}`}
-        handleLabel="Resize sheet"
-        labelledBy={titleId}
-        className={cn('zen-settings-sheet', titled && 'zen-settings-sheet-titled')}
-        header={
-          titled ? undefined : (
-            <h2 id={titleId} className="zen-sheet-title">
-              {title}
-            </h2>
-          )
-        }
-      >
-        <div className="zen-settings-sheet-body">
-          {titled && (
-            // The chassis's §9.23 title block (#140): padding 16, 17/600 at 22, the description
-            // 15 at 69 % on the body line 4 under, 16 to what follows.
-            <div className="zen-sheet-title-block">
-              <h2 id={titleId}>{title}</h2>
-              {description && <p data-tone={descriptionTone}>{description}</p>}
-            </div>
-          )}
-          <SheetDismissContext.Provider value={dismiss}>
-            <SheetRelayoutContext.Provider value={relayout}>
-              {children}
-            </SheetRelayoutContext.Provider>
-          </SheetDismissContext.Provider>
-        </div>
-      </BottomSheet>
-    </div>
+      <div className="zen-settings-sheet-body">
+        <SheetDismissContext.Provider value={dismiss}>
+          <SheetRelayoutContext.Provider value={relayout}>{children}</SheetRelayoutContext.Provider>
+        </SheetDismissContext.Provider>
+      </div>
+    </PhoneSheet>
   )
 }
 
@@ -396,8 +350,11 @@ function FieldSheet({
 }
 
 /**
- * A prompt (§9.23): the question as a title block, the destructive action trailing (§9.11);
- * Cancel, the first button, is where the chassis puts the focus as the sheet opens.
+ * A prompt (§9.23): the question as a title block over its one paragraph (the confirmation's
+ * own, else the row's description), the destructive action trailing (§9.11); Cancel, the first
+ * button, is where the chassis puts the focus as the sheet opens. A confirmation with no
+ * paragraph anywhere would open on the 48 header (§9.23: the block is for a sheet that carries a
+ * description), so every one in the model brings its own.
  */
 function ConfirmSheet({
   row,
@@ -415,7 +372,6 @@ function ConfirmSheet({
       name={`settings-confirm:${row.id}`}
       title={confirm.title}
       description={confirm.description ?? row.description}
-      prompt
       under={under}
       onClose={close}
       sheetRef={sheet}

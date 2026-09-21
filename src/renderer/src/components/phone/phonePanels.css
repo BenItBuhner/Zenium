@@ -117,9 +117,10 @@
     outline-offset: -2px;
   }
   /*
-   * The leading box: a glyph or favicon, or the row's checkbox while rows are being picked. It
-   * sits on the first text line (9.2): its top (line − box) / 2 below the line's top, an
-   * expression rather than a number – 0 for a 20 box on the 20 line here, 2 for a 16 box.
+   * The leading box: a glyph or favicon (the shared checkbox takes its place while rows are
+   * being picked, below). It sits on the first text line (9.2): its top (line − box) / 2 below
+   * the line's top, an expression rather than a number – 0 for a 20 box on the 20 line here, 2
+   * for a 16 box.
    */
   .zen-list-lead {
     display: flex;
@@ -131,35 +132,21 @@
     justify-content: center;
     margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
   }
-  .zen-list-lead[data-checkbox='true'] {
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
-    margin-top: calc((var(--v2-line-body-box) - var(--v2-checkbox)) / 2);
+  /*
+   * While rows are being picked the leading box is the shared checkbox in its span form
+   * (`.zen-v2-checkbox`, main.css, 9.34): a presentational span that is a direct child of the
+   * accessible row carrying `aria-checked`, which is what draws it on. The primitive brings the
+   * box (20 at radius 2, the accent fill and on-accent check) and the (line − box) / 2 top margin
+   * that seats it on the first text line (9.2); this row centres its children, so the box is put
+   * back at the row's start for that margin to count – the one thing the row adds to it.
+   */
+  .zen-list-main > .zen-v2-checkbox {
+    align-self: flex-start;
   }
   .zen-list-favicon {
     width: 100%;
     height: 100%;
     border-radius: var(--v2-radius-checkbox);
-  }
-  /* A 20 square checkbox at radius 2: bordered when off, the accent with a white check when on. */
-  .zen-list-checkbox {
-    width: var(--v2-checkbox);
-    height: var(--v2-checkbox);
-    border: 1px solid color-mix(in srgb, var(--v2-text) 41%, transparent);
-    border-radius: var(--v2-radius-checkbox);
-    background: var(--v2-page);
-    color: transparent;
-    transition:
-      background 120ms var(--zen-ease),
-      border-color 120ms var(--zen-ease);
-  }
-  .zen-list-checkbox[data-checked='true'] {
-    border-color: var(--v2-accent);
-    background: var(--v2-accent);
-    color: var(--v2-on-accent);
-  }
-  .zen-list-checkbox[data-checked='true'] > svg {
-    animation: zen-pop 180ms var(--zen-ease);
   }
   .zen-list-text {
     display: flex;
@@ -257,22 +244,23 @@
     color: var(--v2-text);
     transition: opacity 120ms var(--zen-ease);
   }
+  /*
+   * The text field's ring (section 1): 2 px inside its edge in both themes, as the shared
+   * `.zen-v2-field` draws it (main.css) – the wrapper sets the offset itself rather than the
+   * `--v2-ring-offset` token, which its clear button (`zen-v2-field-clear`, a button ringed 2
+   * outside) would inherit.
+   */
   .zen-phone-field:focus-within {
     outline: 2px solid var(--v2-ring);
-    outline-offset: 0;
-  }
-  /* Like the shared `zen-v2-*` ring (main.css): the offset turns inward in dark. */
-  :root[data-theme='dark'] .zen-phone-field:focus-within {
     outline-offset: -2px;
   }
   /*
    * Invalid (9.12): the danger border `.zen-v2-field[aria-invalid='true']` draws (main.css), the
    * state on the input the wrapper holds, where assistive technology reads it; and, focused, the
-   * ring in the danger ink as the shared field's, so dark's inset ring never covers the border.
+   * ring in the danger ink as the shared field's, so the inset ring never covers the border.
    * `outline-color` here, not the shared field's `--v2-ring` override: the wrapper's children
    * would inherit the token, and its clear button (`zen-v2-field-clear`) draws the shared ring.
-   * Its `:focus-within` at (0,3,1) outweighs the ring above at (0,2,0); the dark form sets the
-   * offset only.
+   * Its `:focus-within` at (0,3,1) outweighs the ring above at (0,2,0).
    */
   .zen-phone-field:has(> input[aria-invalid='true']) {
     border-color: var(--v2-danger);

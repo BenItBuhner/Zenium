@@ -256,6 +256,11 @@ export interface UiState {
   blockedPopupsPanel: { tabId: string; anchor: Rect | null } | null
   /** An HTTP sign-in or certificate dialog is up over the page (the page waits for it). */
   securityPromptOpen: boolean
+  /**
+   * Chrome's "Change your password" leak warning (ID-31, `autofill/LeakWarning.tsx`) is up over
+   * the page's picture: a frame dialog on a mouse, a sheet on a phone.
+   */
+  credentialLeakOpen: boolean
   /** A page's `alert` / `confirm` / `prompt` or "Leave site?" dialog is up (the page waits for it). */
   pageDialogOpen: boolean
   /** A page's `getDisplayMedia` picker ("Choose what to share") is up (the page waits for it). */
@@ -497,6 +502,7 @@ export const uiStore = createStore<UiState>(
     iconPickerTabId: null,
     blockedPopupsPanel: null,
     securityPromptOpen: false,
+    credentialLeakOpen: false,
     pageDialogOpen: false,
     screenPickerOpen: false,
     windowPromptOpen: false,
@@ -879,6 +885,7 @@ export function chromeNeedsKeyboard(): boolean {
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
+    !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
@@ -938,6 +945,7 @@ export function invalidateSnapshot(): void {
     !ui.tabsMenu &&
     !ui.blockedPopupsPanel &&
     !ui.securityPromptOpen &&
+    !ui.credentialLeakOpen &&
     !ui.permissionPromptOpen &&
     !ui.pageDialogOpen &&
     !ui.screenPickerOpen &&
@@ -1587,6 +1595,7 @@ export function overlayCoversContent(ui: UiState): boolean {
     ui.tabsMenu !== null ||
     ui.blockedPopupsPanel !== null ||
     ui.securityPromptOpen ||
+    ui.credentialLeakOpen ||
     ui.permissionPromptOpen ||
     ui.pageDialogOpen ||
     ui.screenPickerOpen ||
@@ -1832,7 +1841,8 @@ export function closePrintPreview(): void {
  * and popovers draw no scrim (v2 §9.5, §9.20), so the capture shows undimmed; dialogs dim it. A
  * chassis sheet's scrim is its own one dim (§11.5), so the same holds under the site-information
  * sheet and the prompt sheet on a phone, and the security prompt's dim is the frame dialog host's
- * scrim alone (v2 §9.5, §11.5: one dim layer). The chrome layer's popovers and menus (the
+ * scrim alone (v2 §9.5, §11.5: one dim layer), as is the leak warning's – a frame dialog on a
+ * mouse, a chassis sheet on a phone. The chrome layer's popovers and menus (the
  * translate selection popover, a menulist's list) count in `floatingChrome` and are the
  * extensions' counterpart's case
  * (`extensionChromeAloneOverContent`); a menulist's list opened from inside one of these panels
@@ -1855,6 +1865,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       ui.permissionPromptOpen ||
       ui.blockedPopupsPanel !== null ||
       ui.securityPromptOpen ||
+      ui.credentialLeakOpen ||
       popover) &&
     !overlayCoversContent({
       ...ui,
@@ -1868,6 +1879,7 @@ export function panelAloneOverContent(ui: UiState): boolean {
       permissionPromptOpen: false,
       blockedPopupsPanel: null,
       securityPromptOpen: false,
+      credentialLeakOpen: false,
       floatingChrome: 0,
       autofillPrompt: popover ? null : ui.autofillPrompt
     })

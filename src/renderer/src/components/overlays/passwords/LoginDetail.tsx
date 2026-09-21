@@ -99,12 +99,13 @@ export function LoginDetail({
               <Title>{credential.domain}</Title>
               <button
                 type="button"
-                className="zen-v2-pw-link flex min-w-0 max-w-full items-center gap-1 text-left"
+                className="zen-v2-link min-w-0 max-w-full"
+                data-touch=""
                 onClick={() => openSite(state, credential)}
                 title="Open the site"
               >
                 <span className="truncate">{credential.url || credential.origin}</span>
-                <ExternalLink className="size-4 shrink-0" />
+                <ExternalLink />
               </button>
             </span>
           </span>
