@@ -299,6 +299,26 @@ function sameSample(x, y) {
   return x.p === y.p && x.tr === y.tr && (x.h ?? '') === (y.h ?? '') && x.s === y.s
 }
 
+// The first probe sample that is real motion for a half-cycle kind (see the caller).
+function firstMoved(kind, inRange) {
+  if (kind === 'open') {
+    const mountAt = inRange.findIndex((m) => m.s === 1)
+    if (mountAt < 0) return null
+    const mount = inRange[mountAt]
+    return (
+      inRange
+        .slice(mountAt + 1)
+        .find((m) => m.s === 1 && ((m.p > 0 && m.p !== mount.p) || m.tr !== mount.tr)) ?? null
+    )
+  }
+  const base = inRange[0]
+  return (
+    inRange.find(
+      (m) => m.tr !== base.tr || (m.h ?? '') !== (base.h ?? '') || m.p !== base.p || m.s !== base.s
+    ) ?? null
+  )
+}
+
 function analyseScene(scene, loaded, probe, clocks) {
   const { events, malformed, truncated } = loaded
   const { procNames, threadNames, perThread, marks } = buildThreads(events)
@@ -386,15 +406,22 @@ function analyseScene(scene, loaded, probe, clocks) {
       const next = starts[i + 1]?.t ?? Infinity
       const endMarkT = pmarks.find((m) => m.n === s.n.replace(':start', ':end'))?.t ?? next
       const drag = kind.startsWith('drag')
-      const tap = taps.find((t) => t.t >= s.t && t.t < endMarkT && t.k === (drag ? 'down' : 'up'))
+      // The finger event the half-cycle acts on: the click (the up) opens the menu; the scrim
+      // dismisses on the pointerdown (§9.20); a drag follows the finger from its down.
+      const onDown = drag || kind === 'close'
+      const tap = taps.find((t) => t.t >= s.t && t.t < endMarkT && t.k === (onDown ? 'down' : 'up'))
       if (!tap) continue
-      const release = drag ? taps.find((t) => t.t >= tap.t && t.k === 'up') : tap
+      const release = onDown ? taps.find((t) => t.t >= tap.t && t.k === 'up') : tap
       const inRange = samples.filter((m) => m.t >= tap.t && m.t < Math.min(next, endMarkT + 3000))
       if (inRange.length < 3) continue
-      // First frame that moved: the recede, the transform or the height differs from the sample at the tap.
-      const base = inRange[0]
-      const moved = inRange.find((m) => !sameSample(m, base))
-      // At rest: six samples in a row alike after the finger left.
+      // First frame that moved: true motion only. On the open the sheet first MOUNTS at rest
+      // (p 0, translated fully below the screen); the motion is the first frame after that whose
+      // recede or transform differs from the mount pose. On the close and the drags the pose at
+      // the finger is the base and the first frame whose transform, height or recede differs is
+      // the motion; the sheet vanishing counts as moved too (a close that never animated).
+      const moved = firstMoved(kind, inRange)
+      // At rest: six samples in a row alike after the finger left (a drag settles after the up).
+      const from = onDown ? tap.t : (release?.t ?? tap.t)
       let rest = null
       for (let k = 0; k + 6 <= inRange.length; k++) {
         if (inRange[k].t < (release?.t ?? tap.t)) continue
@@ -415,7 +442,6 @@ function analyseScene(scene, loaded, probe, clocks) {
       const frames = inRange.filter((m) => m.t >= moved.t && m.t <= rest.t)
       const intervals = []
       for (let k = 1; k < frames.length; k++) intervals.push(frames[k].t - frames[k - 1].t)
-      const from = release?.t ?? tap.t
       const markAfter = (name) => {
         const m = pmarks.find(
           (x) => x.n === name && x.t >= tap.t - 5 && x.t < Math.min(next, endMarkT + 3000)
@@ -641,7 +667,7 @@ let md = ''
 md +=
   "Per motion (medians over the cycles; the chrome renderer's main thread): the frames are the probe's animation frames from the first that moved to rest; \"main ms / frame\" is the main thread's busy time over the motion per frame; BeginMainFrame is the main thread's part of a compositor frame.\n\n"
 md +=
-  '| scene | motion | n | tap → first frame that moved (median / max) | motion | frames | frame interval p50 / max (emulator) | main ms / frame | BeginMainFrame p50 / max, > 16.7 ms per motion | layouts / frame | recalcs / frame | paints / frame | ms per frame: style · layout · prepaint · paint · commit · a11y · script · gc · other |\n'
+  '| scene | motion | n | finger → first frame that moved (median / max; the click for the open, the down for the close and the drags) | motion | frames | frame interval p50 / max (emulator) | main ms / frame | BeginMainFrame p50 / max, > 16.7 ms per motion | layouts / frame | recalcs / frame | paints / frame | ms per frame: style · layout · prepaint · paint · commit · a11y · script · gc · other |\n'
 md += '|---|---|---|---|---|---|---|---|---|---|---|---|---|\n'
 for (const [scene, r] of Object.entries(results)) {
   if (r.error) {
