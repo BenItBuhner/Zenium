@@ -1,14 +1,19 @@
 import type { ExtensionInfo } from '@shared/types'
 
-/** Desktop toolbar icon button and the gap between neighbours (design-language.md §5, §8.3). */
+/**
+ * Desktop toolbar icon button (design language v2 §9.3's 28 box) and the gap between neighbours
+ * (§5: 4 – Firefox's 32 pitch, the 28 box with its 2 px outer padding each side; the row's
+ * `gap-1`).
+ */
 export const TOOLBAR_BUTTON = 28
-export const TOOLBAR_GAP = 2
+export const TOOLBAR_GAP = 4
 
 /**
  * Narrowest address pill worth keeping before actions start folding into the puzzle menu: the
  * site icon and about eight characters of host, close to where Firefox lets its toolbar overflow.
- * The default 240 sidebar leaves the pill under this with no actions at all, so there every
- * pinned action lives in the puzzle panel until the sidebar is widened past about 290.
+ * The default 240 sidebar leaves the pill (96 there, §9.29's tier pill) under this with no
+ * actions at all, so there every pinned action lives in the puzzle panel until the sidebar is
+ * widened past about 300.
  */
 export const MIN_PILL_WIDTH = 100
 

@@ -14,6 +14,7 @@ import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@rende
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { TOOLBAR_STROKE } from '../v2/controls'
 import { Favicon } from './Favicon'
 
 interface Props {
@@ -119,7 +120,8 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
             title="Change theme"
             onClick={() => void openOverlay('theme', current?.id ?? null, state.activeSpaceId)}
           >
-            <Palette className="h-4 w-4" />
+            {/* A 16 toolbar glyph at §9.3's stroke, as the row above draws its own. */}
+            <Palette className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
           </button>
         </div>
       )}

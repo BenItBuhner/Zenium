@@ -489,11 +489,11 @@ describe('desktop pill (NavRow)', () => {
 
   /*
    * The pill yields its chips to the address as it narrows, in tiers of a container query on
-   * `.zen-pill` (main.css; content-box widths, 20 px inside the pill): the hover-only chips under
-   * 170, the "Not secure" label under 220, and under 110 – a 130 px pill – every tool after the
-   * address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at the default sidebar width
-   * (100 px) is the address, or one of Zenium's pages' name, and the site icon (v2 §10.1's
-   * favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
+   * `.zen-pill` (main.css; content-box widths, 16 px inside the pill): the hover-only chips under
+   * 170, the "Not secure" label under 220, and under 110 – the 270 sidebar's 126 px pill – every
+   * tool after the address (the star, zoom, Reader View, Translate, Boost, Copy), so a pill at
+   * the default sidebar width (96 px, content 80) is the address, or one of Zenium's pages' name,
+   * and the site icon (v2 §10.1's favicon slot). The blocked pop-ups chip is the one chip after the address that stays: a
    * notice, not a tool, and the only word of a pop-up the page tried to open (#62). happy-dom
    * evaluates no container query, so the markers and the rule are pinned here; the widths are
    * measured on the packaged build.
@@ -525,7 +525,7 @@ describe('desktop pill (NavRow)', () => {
     // The address itself is never a chip.
     expect(focusable(pill)[0].classList.contains('zen-pill-chip')).toBe(false)
 
-    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 20 px
+    // The tier is one container rule below the hover-only chips' 170 (content-box widths: 16 px
     // inside the pill) – unlayered, as its siblings are, to beat the `flex` and `group-hover`
     // utilities that draw the chips.
     const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8').replace(

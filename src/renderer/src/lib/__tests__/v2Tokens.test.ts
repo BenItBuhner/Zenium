@@ -153,7 +153,13 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // A web app's standalone window's title bar (components/app/AppTitleBar.tsx, MW-23): a window
   // surface (§9.29) in the chassis' first components layer – the theme's ink, the title's weight
   // and line from the scale.
-  ['.zen-app-titlebar {', '.zen-tab {']
+  ['.zen-app-titlebar {', '.zen-tab {'],
+  // The toolbar icon button (§9.3, shell pass 7(a)): the 28 box's hover and pressed fills in the
+  // window family's `--v2-window-fill-hover` (§9.29), the resting opacity on the glyph.
+  [
+    '  /*\n   * The toolbar icon button (design language v2 §9.3)',
+    " * A web app's standalone window"
+  ]
 ]
 
 /**
@@ -195,9 +201,11 @@ const V2_FILES: ReadonlyArray<string> = [
   'components/security/SecurityPromptDialog.tsx',
   'components/security/glyph.ts',
   // The address pill's blocked pop-ups chip and its count (#62) and the sidebar's tab count
-  // badge, drawn in their surface's family through the §9.29 control roles.
+  // badge, drawn in their surface's family through the §9.29 control roles; the pill's own fill
+  // and its chips' hover fills the same way (shell pass 7(a)), the zoom chip's among them.
   'components/sidebar/SidebarTop.tsx',
   'components/sidebar/SpacePanel.tsx',
+  'components/zoom/ZoomChip.tsx',
   // Site information (#39): the connection state's ok / warn / danger ink on its glyphs and values.
   'components/siteinfo/SiteInfoSheet.tsx',
   // Site controls (#135), a v2 surface: the shared glyph size and stroke (`V2_GLYPH`); the
@@ -279,6 +287,7 @@ const SURFACE = [
   'nav-active',
   'window-fill',
   'window-fill-hover',
+  'window-border',
   'selected'
 ].map((n) => `--v2-${n}`)
 
@@ -390,11 +399,14 @@ describe('design language v2 tokens', () => {
     // four reads each), the tab card's title row `--zen-overview-card-header` derives from the
     // small line box (§9.21, A11Y-05: once at rest, once as the two-line row from scale 1.5), the
     // group card's title row `--zen-overview-group-header` from the same line box (one line at
-    // every size), and the two §9.29 family blocks map the tokens onto the control roles.
+    // every size), the window chrome's hairline alias `--zen-border` reads the v2 window border
+    // (§9.29, the shell pass), and the two §9.29 family blocks map the tokens onto the control
+    // roles.
     const familyReads = FAMILIES.map((f) => block(f).match(/var\(--v2-/g)?.length ?? 0)
     expect((inside.match(/var\(--v2-/g) ?? []).length).toBe(
-      8 + 4 + 8 + 3 + familyReads.reduce((a, b) => a + b, 0)
+      8 + 4 + 8 + 3 + 1 + familyReads.reduce((a, b) => a + b, 0)
     )
+    expect(inside).toMatch(/--zen-border: var\(--v2-window-border\)/)
     expect(inside).toMatch(/--zen-overview-card-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/)
     expect(inside).toMatch(
       /--zen-overview-group-header: calc\(var\(--v2-line-small-box\) \+ 24px\)/

@@ -32,16 +32,21 @@ const NEVER_HIDDEN: ReadonlySet<ChipTier> = new Set<ChipTier>(['site', 'state'])
 
 /**
  * What the address keeps before a chip is let in: a host's first letters and the ellipsis.
- * With the site icon and the star alone this puts the star's return at a 130 px pill (a 270 px
- * sidebar), §9.29's threshold.
+ * With the site icon and the star alone this puts the star's return at a 110 px content box –
+ * §9.29's "130 px pill", the 270 px sidebar's (126 wide at `PILL_PADDING` 16).
  */
 export const MIN_ADDRESS_WIDTH = 56
 
 /** The pill's gap between its items (`gap-1.5`). */
 export const CHIP_GAP = 6
 
-/** The pill's horizontal padding, both sides together (`px-2.5`). */
-export const PILL_PADDING = 20
+/**
+ * The pill's horizontal padding, both sides together (`px-2`). With the row's buttons 4 apart
+ * (§5, `TOOLBAR_GAP`) the 240 sidebar's pill is 96 wide and its content box 80 – the box the
+ * tier and the stylesheet's container queries read, unchanged from the 100 px pill of §9.29's
+ * arithmetic – and the 270 sidebar's is 126 / 110, where the star returns.
+ */
+export const PILL_PADDING = 16
 
 /**
  * Nominal boxes, the chips' negative margins folded in (§9.3): the site icon's 24 less its 4 px

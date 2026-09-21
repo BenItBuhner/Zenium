@@ -253,9 +253,11 @@ export function NavRow({
   }
   const fits = fittingChips(pillInner, chipsPresent)
   return (
+    // The row's buttons sit 4 apart (Firefox's 32 pitch: the 28 box plus its 2 px outer
+    // padding each side, `TOOLBAR_GAP`); the pill takes the rest between them.
     <div
       ref={row}
-      className={cn('zen-no-drag flex items-center gap-0.5', compact && 'flex-col', className)}
+      className={cn('zen-no-drag flex items-center gap-1', compact && 'flex-col', className)}
       // The bar the extension popovers and the downloads bubble hang from (v2 §9.20): flush
       // under it, aligned by half. (Its token family is the window's, from the `data-surface`
       // on SidebarTop's root.)
@@ -312,9 +314,13 @@ export function NavRow({
           ref={pill}
           role="group"
           aria-label="Address"
+          // A window surface's fill (§9.29: `--v2-window-fill`, its hover through the control
+          // roles the row's `data-surface` resolves), 32 tall at Zen's medium radius, 8 of
+          // padding each side (`PILL_PADDING`: the content box the chip tier and the container
+          // queries read).
           className={cn(
-            'zen-squircle zen-pill group/pill relative mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
-            !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
+            'zen-squircle zen-pill group/pill relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--v2-control-fill)] px-2 text-left',
+            !readOnly && 'hover:bg-[var(--v2-control-fill-hover)]'
           )}
           // The tooltip carries the whole address – the user-facing `zenium://` form for an
           // internal page (§10.1: `zen://` never shows), the address behind a title, and for an
@@ -418,7 +424,7 @@ export function NavRow({
                 expanded={siteInfoOpen}
                 data-indicator={indicator.state}
                 className={cn(
-                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] hover:opacity-100',
+                  'order-first -ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] hover:opacity-100',
                   indicator.state === 'certificate-error' && 'text-[var(--zen-danger)] opacity-100',
                   extension && 'opacity-100'
                 )}
@@ -459,7 +465,7 @@ export function NavRow({
                 )}
                 pressed={isReader}
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   // The lit exit on the reader tab is never hidden (§9.29; the tier comment
                   // above); unlit it is a tool and goes with the rest under a 130 px pill.
                   isReader ? 'text-[var(--zen-accent)] opacity-100' : 'zen-pill-chip'
@@ -486,9 +492,9 @@ export function NavRow({
                 expanded={readerPrefsOpen}
                 data-reader-prefs-chip=""
                 className={cn(
-                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   // The anchor keeps its pressed fill while its popover is up (§9.20).
-                  readerPrefsOpen && 'bg-[var(--zen-element-bg-hover)] opacity-100'
+                  readerPrefsOpen && 'bg-[var(--v2-control-fill-hover)] opacity-100'
                 )}
                 onActivate={(e) => {
                   // The chip that put the popover away keeps the keyboard, as the anchor does
@@ -546,7 +552,7 @@ export function NavRow({
                   label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
                   className={cn(
-                    'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                    'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                     translation &&
                       isTranslating(translation) &&
                       'text-[var(--zen-accent)] opacity-100',
@@ -569,7 +575,7 @@ export function NavRow({
                 popup="dialog"
                 expanded={boostsOpen}
                 className={cn(
-                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                  'zen-pill-chip h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)]',
                   boosted
                     ? 'flex text-[var(--zen-accent)] opacity-100'
                     : 'zen-pill-extra hidden group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex'
@@ -583,7 +589,7 @@ export function NavRow({
               <PillChip
                 label="Copy URL"
                 title={hint('Copy URL', state, 'tab.copyUrl')}
-                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
+                className="zen-pill-chip zen-pill-extra hidden h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--v2-control-fill-hover)] group-hover/pill:flex group-focus-within/chips:flex group-has-[[aria-expanded=true]]/chips:flex"
                 onActivate={() => tab && run('tab.copyUrl', { tabId: tab.id })}
               >
                 <Copy className="h-3 w-3" />

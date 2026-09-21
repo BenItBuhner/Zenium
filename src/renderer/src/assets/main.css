@@ -33,7 +33,7 @@
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
-  --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
+  /* `--zen-border`, the window's hairline, is `--v2-window-border`'s alias in the v2 token block. */
   /*
    * Secondary text is the ink at 69 %, the same role as `--v2-text-deemphasized` (design
    * language v2 §1, §9.29): at 60 % it reached 4.5:1 only on near-white surfaces (a11y-30).
@@ -160,6 +160,15 @@
   /* A tile or chip sitting on the window itself (an Essentials tile): an alpha of the window's ink. */
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.08);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.14);
+  /*
+   * The window's hairline (design language v2 §9.29): the theme's ink at .12 light / .2 dark –
+   * Zen's split-group separators. `--zen-border`, the name the window chrome has drawn its
+   * hairlines in, is its alias (as `--zen-scrim` is the v2 scrim's): a hairline on a window
+   * surface draws `--zen-border`, never `--v2-border`, the page's neutral alpha. Dark
+   * redefines `--v2-window-border`; the alias follows.
+   */
+  --v2-window-border: rgb(var(--zen-fg-rgb) / 0.12);
+  --zen-border: var(--v2-window-border);
 
   /* Sidebar without a theme, its active tab and URL pill (§1). */
   --v2-sidebar-neutral: #e9e9e9;
@@ -271,6 +280,7 @@
   --v2-shadow-urlbar: 0 30px 140px -15px rgb(0 0 0 / 0.8);
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.1);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.16);
+  --v2-window-border: rgb(var(--zen-fg-rgb) / 0.2);
 
   --v2-sidebar-neutral: #131313;
   --v2-tab-active: #3b3c3d;
@@ -1017,34 +1027,62 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
+  /*
+   * The toolbar icon button (design language v2 §9.3): a 28 box around a 16 glyph at stroke 1.5
+   * (`TOOLBAR_STROKE`), the hover fill at radius 6 – Zen's `--toolbarbutton-border-radius` – in
+   * the window family (§9.29): `--v2-window-fill-hover` on hover, held as the pressed fill while
+   * the button's popover or menu is up (`aria-expanded`, §9.20). The resting 85 % is the GLYPH's,
+   * not the button's: a badge on the button – the ⋯ button's media dot, an extension's count –
+   * is full ink and never dimmed with it (the lead's #287 verdict; the dot reads 4.3:1 light and
+   * 5.3:1 dark at full ink, 3.4 / 4.2 dimmed). Disabled is §9.30's one number, .4 on the whole
+   * control, with no fill and the glyph undimmed inside it so nothing compounds.
+   */
   .zen-toolbar-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 9px;
+    border-radius: 6px;
     color: var(--zen-fg);
-    opacity: 0.85;
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
+  /*
+   * The glyph: the svg itself, or the slot that wraps one – the phone's two-glyph slot
+   * (`.zen-glyph-swap`), the downloads button's pulsing body (`.zen-dl-glyph-body`). Not the
+   * downloads progress ring (`.zen-dl-ring`), which is a state indicator like a badge; not an
+   * extension's icon (`img`), which is content and keeps its colours (§9.29).
+   */
+  .zen-toolbar-button > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
+    opacity: 0.85;
+    transition: opacity 120ms var(--zen-ease);
+  }
   .zen-toolbar-button:hover:not(:disabled) {
-    background: var(--zen-element-bg);
-    opacity: 1;
+    background: var(--v2-window-fill-hover);
   }
   /* The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10). */
-  .zen-toolbar-button:focus-visible {
+  .zen-toolbar-button:is(
+      :hover:not(:disabled),
+      :focus-visible,
+      [aria-expanded='true'],
+      :disabled,
+      [data-disabled]
+    )
+    > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
     opacity: 1;
   }
+  .zen-toolbar-button:active:not(:disabled),
+  .zen-toolbar-button[aria-expanded='true'] {
+    background: var(--v2-window-fill-hover);
+  }
   .zen-toolbar-button:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
     transform: scale(0.96);
   }
   .zen-toolbar-button:disabled {
-    opacity: 0.3;
+    opacity: 0.4;
   }
 
   /*
@@ -4106,11 +4144,13 @@
  * well: a pill this narrow is the address, or the name of one of Zenium's pages, and nothing
  * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
  * pop-ups chip stays, a notice rather than a tool (#62). The queries read
- * the pill's content box, 20 px inside its border box (`px-2.5`): 110 here is a 130 px pill. At
- * the default sidebar width the pill is 100 px, and the star's 26 px are what "Settings" (48 px)
- * is short of. 130: with the star the field would keep under 58 px, which no host fits, and the
- * shortest internal address (`zenium://settings`, 102 px) still needs a 149 px pill without the
- * star, so a sidebar dragged wider never trades the address for the title and back.
+ * the pill's content box, 16 px inside its border box (`px-2`, `PILL_PADDING`): 110 here is the
+ * 270 px sidebar's pill – §9.29's "130 px pill", 126 wide now that the row's buttons sit 4
+ * apart (§5). At the default sidebar width the pill's content box is 80 (the 100 px pill of
+ * §9.29's arithmetic), and the star's 26 px are what "Settings" (48 px) is short of. 110: with
+ * the star the field would keep under 58 px, which no host fits, and the shortest internal
+ * address (`zenium://settings`, 102 px) still needs a 129 px content box without the star, so a
+ * sidebar dragged wider never trades the address for the title and back.
  */
 @container (width < 110px) {
   .zen-pill-chip {
@@ -6158,16 +6198,17 @@
 @layer components {
   /*
    * The phone bar's controls (`BarButton`). One with nothing to do right now is drawn dimmed
-   * rather than disabled: it still takes the hold that opens the bar's editor.
+   * rather than disabled: it still takes the hold that opens the bar's editor. The dimming is
+   * §9.30's one number, .4 on the whole control (the glyph inside it undimmed, see above).
    */
   .zen-toolbar-button[data-disabled] {
-    opacity: 0.3;
+    opacity: 0.4;
   }
   .zen-toolbar-button[data-disabled]:hover,
   .zen-toolbar-button[data-disabled]:active {
     background: transparent;
     transform: none;
-    opacity: 0.3;
+    opacity: 0.4;
   }
   /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
   .zen-glyph-swap > * {

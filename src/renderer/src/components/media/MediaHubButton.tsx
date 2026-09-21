@@ -9,7 +9,6 @@ import {
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { cn } from '@renderer/lib/utils'
 import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
@@ -40,7 +39,8 @@ export function MediaHubButton({ state }: { state: UIState }): JSX.Element | nul
     <button
       type="button"
       data-zen-media-hub-button
-      className={cn('zen-toolbar-button relative', open && 'bg-[var(--zen-element-bg)]')}
+      // The pressed fill while the popover is up is the toolbar button's own, off `aria-expanded`.
+      className="zen-toolbar-button relative"
       title="Control your music, videos and more"
       aria-label={label}
       aria-expanded={open}
