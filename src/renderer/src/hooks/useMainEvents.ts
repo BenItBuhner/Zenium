@@ -15,7 +15,7 @@ import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
-import { openSettings } from '@renderer/lib/pages'
+import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   configureThumbnails,
   rememberCard,
@@ -32,7 +32,6 @@ import {
   openNewTabPageUrlbar,
   openNewTabShortcutDialog,
   openInstallSheet,
-  openImportSurface,
   openOverlay,
   openPrintPreview,
   openReaderPreferences,

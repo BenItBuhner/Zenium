@@ -408,6 +408,7 @@ function installGroup(): RowGroup {
         id: 'install-from-store',
         label: 'From the Chrome Web Store',
         description: 'Paste an extension id, or a Chrome Web Store or Edge Add-ons link.',
+        button: 'Install…',
         form: {
           title: 'Install from the Chrome Web Store',
           render: (close) => (
@@ -427,6 +428,7 @@ function installGroup(): RowGroup {
         id: 'install-from-file',
         label: 'From a file',
         description: 'A packed .crx or .zip.',
+        button: 'Install…',
         onPress: () => run('extension.installFromFile', undefined)
       },
       {
@@ -434,6 +436,7 @@ function installGroup(): RowGroup {
         id: 'load-unpacked',
         label: 'Load unpacked',
         description: 'A folder with a manifest.json.',
+        button: 'Load…',
         onPress: () => run('extension.add', undefined)
       }
     ]
@@ -465,6 +468,7 @@ function updatesGroup(state: UIState): RowGroup {
             : 'Not checked yet',
         busy: check.checking,
         disabled: state.extensions.length === 0,
+        button: 'Check now',
         onPress: () => run('extension.checkForUpdates', undefined)
       }
     ]

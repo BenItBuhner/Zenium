@@ -8,7 +8,7 @@ import { formatBinding } from '@shared/shortcuts'
 import { cmd, run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { browserSources, listNames, sourceGroups } from '@renderer/lib/importData'
-import { openSettings } from '@renderer/lib/pages'
+import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   isTouchOnly,
   tourFeatures,
@@ -16,7 +16,6 @@ import {
   type TourFeature,
   type TourStep
 } from '@renderer/lib/onboarding'
-import { openImportSurface } from '@renderer/lib/ui'
 import { activeTab } from '@renderer/lib/selectors'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '../ui/button'

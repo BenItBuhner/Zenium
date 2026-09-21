@@ -1730,9 +1730,11 @@ export function closeClearBrowsingData(): void {
 
 /**
  * Chrome's "Import bookmarks and settings" (`import/ImportDialog`, ID-23): a dialog through the
- * frame dialog host, over Settings > Import where its row lives – or over the page when a menu
- * asks for it before Settings is up, whose snapshot then has to exist first for the scrim to dim.
- * `source` preselects a browser profile (the first-run offer's pick).
+ * frame dialog host, over the Settings tab on its Import category where its rows live – or over
+ * the page when a menu asks for it before Settings is up, whose snapshot then has to exist
+ * first for the scrim to dim (a chrome page has none to take, and stays drawn under the dialog).
+ * `source` preselects a browser profile (the first-run offer's pick). `lib/pages.ts`'s
+ * `openImportSurface` brings Settings up first.
  */
 export async function openImportDialog(
   activeTabId: string | null,
@@ -1749,26 +1751,6 @@ export function closeImportDialog(): void {
   uiStore.set({ importDialog: null })
   invalidateSnapshot()
   returnFocusToPage()
-}
-
-/**
- * Bookmarks > Import Bookmarks and Settings…, the first-run offer (Chrome's
- * `chrome://settings/importData`): Settings on its Import category with the dialog up over it
- * on a mouse; on a host with page tabs (the phone) the category alone – its rows import from
- * files, there being no other browser's profile to read. `section` lets the first run land on
- * another category first (Sync, when both were asked for) with the dialog over it.
- */
-export async function openImportSurface(
-  activeTabId: string | null,
-  source: string | null = null,
-  section = 'import'
-): Promise<void> {
-  if (!overlayAvailable('settings')) {
-    run('page.open', { id: 'settings', section: 'import' })
-    return
-  }
-  await openOverlay('settings', activeTabId, null, null, section)
-  await openImportDialog(activeTabId, source)
 }
 
 /**

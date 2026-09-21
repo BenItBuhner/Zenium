@@ -16,7 +16,6 @@ import {
   closeMediaSheet,
   openClearBrowsingData,
   openImportDialog,
-  openImportSurface,
   openInstallSheet,
   openMediaSheet,
   overlayCoversContent,
@@ -24,6 +23,8 @@ import {
   uiStore,
   type UiState
 } from '../ui'
+import { viewportStore } from '../formFactor'
+import { openImportSurface } from '../pages'
 
 const idle = (): UiState => uiStore.get()
 
@@ -145,7 +146,8 @@ describe('chrome surfaces over the content', () => {
     expect(run).toHaveBeenCalledWith('focus.content', undefined)
   })
 
-  it('the import surface is Settings on Import with the dialog over it on a mouse; the category alone where Settings is a page', async () => {
+  it('the import surface is Settings on Import with the dialog over it on a mouse – the tab where the host has page tabs, the overlay where not – and the category alone on a phone', async () => {
+    // A host without page tabs: the overlay on the section asked for, the dialog over it.
     browserStore.set({
       state: { capabilities: { pageTabs: false } } as unknown as UIState
     })
@@ -153,16 +155,29 @@ describe('chrome surfaces over the content', () => {
     expect(idle().overlay).toBe('settings')
     expect(idle().overlaySection).toBe('sync')
     expect(idle().importDialog).toEqual({ source: 'firefox:abcd' })
+    expect(run).not.toHaveBeenCalledWith('page.open', expect.anything())
     uiStore.set({ overlay: 'none', overlaySection: null, importDialog: null })
     vi.mocked(run).mockClear()
 
+    // The desktop, Settings a tab (#193): the tab on the section, the dialog over it.
     browserStore.set({
       state: { capabilities: { pageTabs: true } } as unknown as UIState
     })
-    await openImportSurface('t1')
+    await openImportSurface('t1', 'chrome:Default')
     expect(idle().overlay).toBe('none')
-    expect(idle().importDialog).toBeNull()
     expect(run).toHaveBeenCalledWith('page.open', { id: 'settings', section: 'import' })
+    expect(idle().importDialog).toEqual({ source: 'chrome:Default' })
+    uiStore.set({ importDialog: null })
+    vi.mocked(run).mockClear()
+
+    // A phone: the category alone, and on Import whatever section was asked for – its rows
+    // import from files, there being no other browser's profile to read.
+    viewportStore.set({ formFactor: 'phone' })
+    await openImportSurface('t1', 'chrome:Default', 'sync')
+    expect(run).toHaveBeenCalledWith('page.open', { id: 'settings', section: 'import' })
+    expect(idle().importDialog).toBeNull()
+    expect(idle().overlay).toBe('none')
+    viewportStore.set({ formFactor: 'desktop' })
     browserStore.set({ state: null })
   })
 })

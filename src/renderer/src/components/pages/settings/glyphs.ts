@@ -7,6 +7,7 @@ import {
   Download,
   Eye,
   Gauge,
+  Globe,
   Import,
   Info,
   KeyRound,
@@ -54,6 +55,7 @@ export const SECTION_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   sync: RefreshCw,
   import: Import,
   shortcuts: Keyboard,
+  'default-browser': Globe,
   updates: CircleFadingArrowUp,
   about: Info
 }

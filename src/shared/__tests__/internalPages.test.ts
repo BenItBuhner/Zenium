@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { HostCapabilities } from '../types'
+import type { HostCapabilities, Platform } from '../types'
 import {
   INTERNAL_PAGES,
   SETTINGS_SECTIONS,
@@ -29,8 +29,8 @@ describe('the page registry', () => {
     // Zen's features, Autofill, Languages and then Privacy after Search; Agents, Passwords and
     // Security (the remembered per-site answers and the session's sign-ins) last among them; then
     // the browser-wide group past the first hairline: Sync, then Import beside it as Chrome keeps
-    // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Updates;
-    // About past the second.
+    // its "Import bookmarks and settings" (ID-23), Accessibility, Keyboard Shortcuts, Default
+    // Browser (the desktop platforms alone), Updates; About past the second.
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       'look',
       'compact',
@@ -54,6 +54,7 @@ describe('the page registry', () => {
       'import',
       'accessibility',
       'shortcuts',
+      'default-browser',
       'updates',
       'about'
     ])
@@ -205,11 +206,31 @@ describe('the section model', () => {
       'import',
       'about'
     ])
-    const desktop = availableSections(INTERNAL_PAGES.settings, ALL, 'desktop').map((s) => s.id)
+    const desktop = availableSections(INTERNAL_PAGES.settings, ALL, 'desktop', 'linux').map(
+      (s) => s.id
+    )
     expect(desktop).toEqual(SETTINGS_SECTIONS.map((s) => s.id))
-    const tablet = availableSections(INTERNAL_PAGES.settings, ALL, 'tablet').map((s) => s.id)
+    const tablet = availableSections(INTERNAL_PAGES.settings, ALL, 'tablet', 'android').map(
+      (s) => s.id
+    )
     expect(tablet).toContain('compact')
     expect(tablet).toContain('shortcuts')
+  })
+
+  it('keeps Default Browser to the desktop OSes: Android has the row under About (v2 §10.5)', () => {
+    const ids = (platform?: Platform): string[] =>
+      availableSections(INTERNAL_PAGES.settings, ALL, 'desktop', platform).map((s) => s.id)
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      const list = ids(platform)
+      expect(list).toContain('default-browser')
+      // Zen's desktop panel order: after Keyboard Shortcuts, before Updates.
+      expect(list.indexOf('default-browser')).toBe(list.indexOf('shortcuts') + 1)
+      expect(list.indexOf('updates')).toBe(list.indexOf('default-browser') + 1)
+    }
+    expect(ids('android')).not.toContain('default-browser')
+    expect(ids()).not.toContain('default-browser')
+    // Every section without a platform list shows on every platform.
+    expect(ids('android')).toEqual(SETTINGS_SECTIONS.filter((s) => !s.platforms).map((s) => s.id))
   })
 
   it('gates a section on exactly the capability it needs', () => {
@@ -293,7 +314,10 @@ describe('searching settings', () => {
     expect(matchSections(SETTINGS_SECTIONS, 'privacy').map((s) => s.id)).toEqual(['privacy'])
     expect(matchSections(SETTINGS_SECTIONS, 'Dark').map((s) => s.id)).toEqual(['look', 'boosts'])
     expect(matchSections(SETTINGS_SECTIONS, 'bar navigation').map((s) => s.id)).toEqual(['look'])
-    expect(matchSections(SETTINGS_SECTIONS, 'default browser').map((s) => s.id)).toEqual(['about'])
+    expect(matchSections(SETTINGS_SECTIONS, 'default browser').map((s) => s.id)).toEqual([
+      'default-browser',
+      'about'
+    ])
   })
 
   it('returns every section for an empty query and none for nonsense', () => {
