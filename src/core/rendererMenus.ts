@@ -26,8 +26,10 @@ export function serialiseMenu(
         checked: Boolean(item.checked),
         icon: item.icon ?? null,
         submenu: item.submenu ? serialise(item.submenu) : null,
-        // Only an icon-row item carries a glyph; every other descriptor keeps its shape.
-        ...(item.glyph ? { glyph: item.glyph } : {})
+        // Only an icon-row item carries a glyph, only a bound action a chord; every other
+        // descriptor keeps its shape.
+        ...(item.glyph ? { glyph: item.glyph } : {}),
+        ...(item.hint ? { hint: item.hint } : {})
       }
     })
   return { items: serialise(items), handlers }

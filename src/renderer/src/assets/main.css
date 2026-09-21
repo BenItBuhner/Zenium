@@ -7034,6 +7034,15 @@
 .zen-v2-menu-hint + .zen-v2-menu-chevron {
   margin-left: 0;
 }
+/*
+ * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill at full ink
+ * while the in-chrome menu stands, said by the `aria-expanded` the menu sets on it, as the
+ * media hub's and the downloads' toolbar buttons keep theirs while their popovers are up.
+ */
+[data-zen-app-menu-button][aria-expanded='true'] {
+  background: var(--zen-element-bg);
+  opacity: 1;
+}
 
 /*
  * The shared menulist (§9.34, §6, §9.13; #106 owns the rule, the look the one its review

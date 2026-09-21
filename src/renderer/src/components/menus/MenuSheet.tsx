@@ -1,10 +1,11 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Check, ChevronLeft, ChevronRight, Download, Info } from 'lucide-react'
-import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor, Rect } from '@shared/types'
-import { popOrigin } from '@renderer/lib/anchor'
+import type { MenuDescriptor, MenuGlyph, MenuItemDescriptor } from '@shared/types'
+import { anchorOf, placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useBackSurface } from '@renderer/lib/back'
 import { useViewport } from '@renderer/lib/formFactor'
+import { APP_MENU_BUTTON } from '@renderer/lib/mediaHub'
 import { isIconRow } from '@renderer/lib/menuIconRow'
 import { handleMenuKey } from '@renderer/lib/menuKeys'
 import {
@@ -22,7 +23,6 @@ import {
   besideOrigin,
   layoutRect,
   placeBeside,
-  placePopover,
   popoverStyle,
   rowRect,
   useLightDismiss,
@@ -352,37 +352,61 @@ function menuRows(panel: HTMLElement | null | undefined): HTMLElement[] {
 }
 
 /**
+ * The control the app menu hangs from: the "⋯" button on screen – the sidebar's toolbar row's
+ * (`APP_MENU_BUTTON`) or a web app window's title bar's – read live as the menu mounts, since
+ * the row remounts its buttons with the tab and the width. None for any other menu, or for an
+ * app menu asked for with no button laid out (the compact sidebar's row away): that one hangs
+ * from the point the descriptor names, as a context menu does.
+ */
+function appMenuButton(menu: MenuDescriptor): HTMLElement | null {
+  if (menu.source !== 'app') return null
+  const button = document.querySelector<HTMLElement>(APP_MENU_BUTTON)
+  return button?.isConnected && button.checkVisibility() ? button : null
+}
+
+/**
  * The descriptor as the shared `.zen-v2-menu` (§4, §5, §6 menus; the vocabulary `LocalMenu` and
  * the bookmarks bar's folder panels draw in), through the chrome layer: a `--v2-panel` at radius
  * 8 – 6 for a context menu, every source but the `···`'s app menu (§2) – with 6 of padding and
- * 31 rows at the 14 px chrome menu size, intrinsic within 232–332, hung from the point the
- * descriptor names (a control's bottom-left, the pointer) by `placePopover` (§9.20: below and
- * start-aligned, flipped or slid inside the window's 8 margin, never taller than the room). A
- * checked row draws its check in the 16 glyph slot, a row with a favicon the favicon there; a
- * submenu row trails the chevron and opens its panel beside the one it is in (`placeBeside`,
- * `placePopover`'s cascade mode: first row on the row that opened it) after the pointer rests
- * on it, or at once from the keyboard – the row keeping the fill while its panel stands
- * (`aria-expanded`).
+ * 31 rows at the 14 px chrome menu size, intrinsic within 232–332 by its longest row, the chord
+ * of a bound row after its label in the deemphasised ink. A context menu hangs from the point
+ * the descriptor names (a control's bottom-left, the pointer); the app menu from the "⋯" button
+ * it finds on screen, as the chrome's other popovers hang from their controls (`placeUnder`,
+ * §9.20: flush under the bar the button sits in – gap 0 – end-aligned when the button is in the
+ * bar's trailing half, flipped or slid inside the window's 8 margin), the button wearing
+ * `aria-expanded` and its pressed fill while the menu stands. A checked row draws its check in the 16
+ * glyph slot, a row with a favicon the favicon there; a submenu row trails the chevron and
+ * opens its panel beside the one it is in (`placeBeside`, `placePopover`'s cascade mode: first
+ * row on the row that opened it) after the pointer rests on it, or at once from the keyboard –
+ * the row keeping the fill while its panel stands (`aria-expanded`).
  *
  * The keyboard is §9.22's, Chrome's native menus as the rule book: opened from the keyboard the
  * first row takes the focus, by pointer the panel itself does and Down starts at the first row;
- * the arrows, Home and End move within the level, Right opens a submenu row's panel on its first
- * row, Left and Backspace close the deepest level onto the row that opened it (at the root, the
- * menu), a letter goes to or runs the row it names (mnemonics, a11y-08), Enter and Space run the
- * row; Escape closes the deepest level, then the menu – onto the control that opened it when a
- * control of the chrome's had the focus as the menu came (the ··· the pointer pressed or the
- * keyboard opened from), which keeps the keyboard, as `LocalMenu` does through `usePopover`;
- * the page takes it back only when it had it (§9.22). Light dismiss is the chrome layer's
- * (§9.20 amended): a press outside the cascade, a scroll, a resize or another popover closes
- * it. The host is told of a pick (`pickMenuItem`) and of a close (`closeMenu`).
+ * the arrows, Home and End move within the level, Tab and Shift+Tab walk it too and wrap – the
+ * menu is the keyboard's while it stands, nothing under it is reachable – Right opens a submenu
+ * row's panel on its first row, Left and Backspace close the deepest level onto the row that
+ * opened it (at the root, the menu), a letter goes to or runs the row it names (mnemonics,
+ * a11y-08), Enter and Space run the row; Escape closes the deepest level, then the menu – onto
+ * the control that opened it when a control of the chrome's had the focus as the menu came (the
+ * ··· the pointer pressed or the keyboard opened from; the app menu's button whenever it is on
+ * screen), which keeps the keyboard, as `LocalMenu` does through `usePopover`; the page takes
+ * it back only when it had it (§9.22). Light dismiss is the chrome layer's (§9.20 amended): a
+ * press outside the cascade, a scroll, a resize or another popover closes it, and a press on the
+ * button that opened it closes it without reopening, the keyboard staying on the button. The
+ * host is told of a pick (`pickMenuItem`) and of a close (`closeMenu`).
  */
 function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   useBackSurface({ name: 'menu', onCommit: () => closeMenu() })
-  // Anchor at the point that opened the menu: the control's edge when the core named one, else
-  // the pointer position captured before the round trip.
-  const anchor = useMemo<Rect>(
-    () => ({ x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y, width: 0, height: 0 }),
-    [menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
+  // The "⋯" button an app menu hangs from, if one is on screen (read once, as the menu mounts).
+  const [button] = useState(() => appMenuButton(menu))
+  // Anchor at the button's box in its bar, else at the point that opened the menu: the control's
+  // edge when the core named one, else the pointer position captured before the round trip.
+  const anchor = useMemo<Anchor>(
+    () =>
+      button
+        ? anchorOf(button)
+        : { x: menu.x ?? lastPointer.x, y: menu.y ?? lastPointer.y, width: 0, height: 0 },
+    [button, menu.id, menu.x, menu.y] // eslint-disable-line react-hooks/exhaustive-deps
   )
   const [fromKeyboard] = useState(() => menu.keyboard ?? openedFromKeyboard())
   const context = menu.source !== 'app'
@@ -392,14 +416,23 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const groupRef = useRef<HTMLDivElement>(null)
   const panelEls = useRef<(HTMLDivElement | null)[]>([])
 
+  // The button keeps its pressed fill and says what it has open while the menu stands (§9.20);
+  // at rest it is the toolbar's own again.
+  useLayoutEffect(() => {
+    if (!button) return
+    button.setAttribute('aria-expanded', 'true')
+    return () => button.removeAttribute('aria-expanded')
+  }, [button])
+
   // The control the menu opened from – what had the focus as the menu mounted, the ··· the
-  // pointer pressed or the keyboard opened from – for Escape's way back (§9.22, as `usePopover`
-  // reads it). None when nothing of the chrome's had the focus (the page did, or a control the
-  // press did not focus): the page takes the keyboard back then, as after any overlay.
+  // pointer pressed or the keyboard opened from, else the app menu's button itself – for
+  // Escape's way back (§9.22, as `usePopover` reads it). None when nothing of the chrome's had
+  // the focus (the page did, or a control the press did not focus) and no button is on screen:
+  // the page takes the keyboard back then, as after any overlay.
   const [opener] = useState<HTMLElement | null>(() =>
     document.activeElement instanceof HTMLElement && document.activeElement !== document.body
       ? document.activeElement
-      : null
+      : button
   )
   const returning = useRef(false)
   /** The keyboard closes the whole menu (Escape, Left or Backspace at the root). */
@@ -436,7 +469,12 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
     [path]
   )
 
-  useLightDismiss(groupRef, () => closeMenu())
+  // A press on the button that opened it closes the menu without reopening (the registry
+  // swallows the rest of the press) and leaves the keyboard on the button (§9.22); any other
+  // press outside, a scroll or a resize closes it and the page takes the keyboard back.
+  useLightDismiss(groupRef, (reason) => closeMenu(true, { keepKeyboard: reason === 'anchor' }), {
+    anchor: () => button
+  })
   useEscape(() => {
     if (path.length) closeTo(path.length - 1, true)
     else closeFromKeyboard()
@@ -488,8 +526,9 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
         else closeFromKeyboard()
         break
       default:
-        // The arrows, Home, End and a letter, as in Chrome's native menus (lib/menuKeys.ts).
-        if (!handleMenuKey(e, rows, { mnemonics: true })) return
+        // The arrows, Home, End and a letter, as in Chrome's native menus (lib/menuKeys.ts); Tab
+        // and Shift+Tab walk the level too and wrap, nothing under the menu being reachable.
+        if (!handleMenuKey(e, rows, { mnemonics: true, tab: true })) return
         e.stopPropagation()
         return
     }
@@ -497,13 +536,14 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
     e.stopPropagation()
   }
 
-  // Placement: the root under its point, every other level beside the row that opened it.
+  // Placement: the root under its anchor (flush under the bar the button sits in, else under
+  // the point), every other level beside the row that opened it.
   const place = useCallback(
     (depth: number, parentId: string | null, el: HTMLElement): Placement | null => {
       const viewport = viewportSize()
       const size = { width: el.offsetWidth, height: el.offsetHeight }
       if (depth === 0 || parentId === null) {
-        const box = placePopover(anchor, anchor, viewport, { measured: size.width }, size.height)
+        const box = placeUnder(anchor, { measured: size.width }, size.height, viewport)
         return { box, origin: popOrigin(anchor, box) }
       }
       const parent = panelEls.current[depth - 1]
@@ -682,6 +722,11 @@ function MenuLevel({
               </span>
             )}
             <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {item.hint && (
+              <span className="zen-v2-menu-hint" aria-hidden>
+                {item.hint}
+              </span>
+            )}
             {item.submenu && <ChevronRight className="zen-v2-menu-chevron" aria-hidden />}
           </button>
         )

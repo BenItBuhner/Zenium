@@ -1321,9 +1321,16 @@ export function closeDrawer(): void {
   returnFocusToPage()
 }
 
+/**
+ * A menu the renderer draws (`menu.show`): the page behind it is captured first – it overlaps
+ * the live view, which composites above the chrome – then the chrome takes the keyboard, as for
+ * every popover of its own (a menu opened by Alt+F while the page had the keyboard must hear
+ * its arrows), and `MenuSheet` mounts over the picture. The picture stays undimmed under a
+ * menu: a popover on a mouse, a sheet with its own scrim on touch (`panelAloneOverContent`).
+ */
 export async function showMenu(menu: MenuDescriptor, activeTabId: string | null): Promise<void> {
-  // Page menus dim the page behind them like every other overlay; the snapshot must exist first.
   await captureActiveTab(activeTabId)
+  run('focus.chrome', undefined)
   uiStore.set({ menu })
 }
 

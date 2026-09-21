@@ -979,6 +979,12 @@ export interface MenuItemTemplate {
    * register it.
    */
   accelerator?: string
+  /**
+   * The same chord as the user reads it (`formatChord`: `Ctrl+Shift+N`, `⌘⇧N` on macOS), for a
+   * menu the renderer draws itself (`RendererMenuHost`, the desktop's in-chrome app menu): a
+   * native menu draws `accelerator` in the OS's own spelling and ignores this.
+   */
+  hint?: string
 }
 
 export type MenuSource =

@@ -10,7 +10,7 @@ import type {
 import { buildSearchUrl } from '../shared/search'
 import { copyConfirmation } from '../shared/clipboard'
 import { internalPageOf } from '../shared/internalPages'
-import { bindingFor, toAccelerator } from '../shared/shortcuts'
+import { bindingFor, formatChord, toAccelerator } from '../shared/shortcuts'
 import {
   BLANK_URL,
   NEW_TAB_URL,
@@ -28,6 +28,7 @@ import {
   type DownloadDeleteFileResult,
   type MenuAnchor,
   type MenuItemDescriptor,
+  type Platform as PlatformOs,
   type Rect,
   type Settings,
   type Shortcut,
@@ -112,24 +113,29 @@ const APPLICATION_MENU_DEBOUNCE_MS = 80
 /**
  * What the key table says about each item, filled in: the chord shown after the label of every
  * item that names an `action` (its primary binding, else its first alternative; nothing when the
- * action is unbound), and the click of items that name one but bring none. Pure: returns copies.
+ * action is unbound) – as the native accelerator and, given the `platform`, as the user reads
+ * it (`hint`, for a menu the renderer draws) – and the click of items that name one but bring
+ * none. Pure: returns copies.
  */
 export function withAccelerators(
   items: Template,
   shortcuts: Shortcut[],
-  run: (action: ShortcutAction) => void
+  run: (action: ShortcutAction) => void,
+  platform?: PlatformOs
 ): Template {
   return items.map((item) => {
     const out: MenuItemTemplate = { ...item }
     const action = item.action
     if (action) {
+      const binding = bindingFor(shortcuts, action)
       if (out.accelerator === undefined) {
-        const accelerator = toAccelerator(bindingFor(shortcuts, action))
+        const accelerator = toAccelerator(binding)
         if (accelerator) out.accelerator = accelerator
       }
+      if (out.hint === undefined && binding && platform) out.hint = formatChord(binding, platform)
       if (!out.click) out.click = () => run(action)
     }
-    if (item.submenu) out.submenu = withAccelerators(item.submenu, shortcuts, run)
+    if (item.submenu) out.submenu = withAccelerators(item.submenu, shortcuts, run, platform)
     return out
   })
 }
@@ -201,8 +207,11 @@ export class Menus {
   }
 
   private popup(template: Template, win: ZenWindow, source: MenuSource, anchor?: MenuAnchor): void {
-    const items = withAccelerators(tidySeparators(template), this.browser.state.shortcuts, (a) =>
-      this.browser.actions.run(a, { sourceTabId: null, win })
+    const items = withAccelerators(
+      tidySeparators(template),
+      this.browser.state.shortcuts,
+      (a) => this.browser.actions.run(a, { sourceTabId: null, win }),
+      this.browser.platform.info.os
     )
     this.browser.platform.menus.popup(items, { source, win, ...anchor })
   }
