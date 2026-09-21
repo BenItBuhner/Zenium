@@ -1,9 +1,10 @@
 import type { SafetyCheckResult, SafetyState, UIState } from '@shared/types'
+import { relativeTime } from './utils'
 
 /**
- * The words and the rows of Settings > Safety check (`components/overlays/SafetyCheckSection`),
- * from one `privacy.safetyCheck` result: what the card says, and one row per area with the
- * action that answers it, described here and rendered there.
+ * The words and the rows of Settings > Safety check (`siteControls/settingsRows.tsx`, the shared
+ * builder of both hosts), from one `privacy.safetyCheck` result: what the card says, and one
+ * row per area with the action that answers it, described here and rendered there.
  */
 
 export function headline(
@@ -40,14 +41,33 @@ export function worstState(result: SafetyCheckResult): SafetyState {
   return states.reduce<SafetyState>((acc, s) => (RANK[s] > RANK[acc] ? s : acc), 'safe')
 }
 
-/** What a row's button does: a core command, the password checkup, or another Settings section. */
+/**
+ * What a row's button does: a core command, the password checkup (run it), a review of the
+ * compromised logins in the manager's checkup view, or another Settings section.
+ */
 export type SafetyAction =
   | {
       kind: 'command'
       command: 'updates.download' | 'updates.install' | 'updates.openRelease' | 'updates.check'
     }
   | { kind: 'passwords-checkup' }
+  | { kind: 'passwords-review' }
   | { kind: 'section'; section: 'site-settings' | 'extensions' }
+
+/**
+ * The Passwords row's sentence: the engine's (the counts, or what to do next) and, once a
+ * checkup has run on this device, when – "No compromised passwords found · Last checked 3 d
+ * ago", the Passwords section's own checkup row's shape – so the row reads as the checkup
+ * summary it is (PS-20 / ID-19).
+ */
+export function passwordsSummary(
+  passwords: SafetyCheckResult['passwords'],
+  now = Date.now()
+): string {
+  if (passwords.checkedAt === null) return passwords.summary
+  const when = relativeTime(passwords.checkedAt, now)
+  return `${passwords.summary} · Last checked ${when === 'Just now' ? 'just now' : when}`
+}
 
 export interface SafetyRow {
   id: keyof Omit<SafetyCheckResult, 'checkedAt'>
@@ -59,9 +79,11 @@ export interface SafetyRow {
 
 /**
  * One row per area, in Chrome's order, each with the action that answers it where there is one:
- * an update to download, install or look for; the password checkup while the vault is open and
- * holds logins; a review of the sites holding permissions or sending notifications; a look at
- * the flagged extensions on a host that runs them.
+ * an update to download, install or look for; for the passwords, while the vault is open and
+ * holds logins, a review of the compromised ones in the manager's checkup view when the
+ * summary counts any (a checkup's finding or a sign-in leak), else the checkup itself – the
+ * offer to run it when it never ran, and to run it again after; a review of the sites holding
+ * permissions or sending notifications; a look at the flagged extensions on a host that runs them.
  */
 export function safetyRows(result: SafetyCheckResult, state: UIState): SafetyRow[] {
   const command = (
@@ -85,14 +107,20 @@ export function safetyRows(result: SafetyCheckResult, state: UIState): SafetyRow
         : command('Check', 'updates.check')
     return null
   }
-  const passwordAction = (): SafetyRow['action'] =>
-    state.passwords.locked || state.passwords.count === 0
-      ? null
-      : {
-          label: 'Check passwords',
-          ariaLabel: 'Run the password checkup',
-          act: { kind: 'passwords-checkup' }
-        }
+  const passwordAction = (): SafetyRow['action'] => {
+    if (state.passwords.locked || state.passwords.count === 0) return null
+    if (result.passwords.compromised > 0)
+      return {
+        label: 'Review',
+        ariaLabel: 'Review compromised passwords',
+        act: { kind: 'passwords-review' }
+      }
+    return {
+      label: 'Check passwords',
+      ariaLabel: 'Run the password checkup',
+      act: { kind: 'passwords-checkup' }
+    }
+  }
 
   return [
     {
@@ -113,7 +141,7 @@ export function safetyRows(result: SafetyCheckResult, state: UIState): SafetyRow
       id: 'passwords',
       label: 'Passwords',
       state: result.passwords.state,
-      summary: result.passwords.summary,
+      summary: passwordsSummary(result.passwords),
       action: passwordAction()
     },
     {

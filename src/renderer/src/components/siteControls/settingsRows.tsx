@@ -9,6 +9,7 @@ import {
 } from '@shared/contentSettings'
 import { run } from '@renderer/lib/api'
 import { headline, safetyRows, worstState, type SafetyAction } from '@renderer/lib/safetyCheck'
+import { openOverlay } from '@renderer/lib/ui'
 import {
   DEFAULT_WORDS,
   SITE_SETTINGS_GROUPS,
@@ -62,7 +63,7 @@ const SAFETY_CHECK_INTRO =
  * permissions or sending notifications open a sheet listing them, each site an action that
  * resets or stops it (Chrome's review pages); the extensions review leaves for that category.
  */
-export function safetyCheckGroups({ state, navigate }: SectionContext): RowGroup[] {
+export function safetyCheckGroups({ state, tab, navigate }: SectionContext): RowGroup[] {
   const result = state.lastSafetyCheck
   const worst = result ? worstState(result) : null
   const check = (): void => run('privacy.safetyCheck', undefined)
@@ -75,6 +76,10 @@ export function safetyCheckGroups({ state, navigate }: SectionContext): RowGroup
         run('passwords.checkupRun', undefined)
         // The checkup reports through the passwords status; read the check again once it has.
         setTimeout(check, 1500)
+        return
+      case 'passwords-review':
+        // The manager's checkup view lists the compromised logins (Chrome's Review).
+        void openOverlay('passwords', tab.id, null, null, 'checkup')
         return
       case 'section':
         // The site-settings reviews are item sheets here (below); only Extensions leaves.
@@ -103,10 +108,14 @@ export function safetyCheckGroups({ state, navigate }: SectionContext): RowGroup
           id,
           label: row.label,
           description: row.summary,
+          // The Passwords row's description is the status sentence ("2 compromised passwords
+          // found; change them now"), so it takes the glyph's ink with it (§9.33, one `data-tone`
+          // on the row – pr-261's contract); the list's other rows are their owner's pass.
+          tone: row.id === 'passwords' && row.state === 'warning' ? 'warn' : undefined,
           keywords: [row.action.label],
           leading,
           leaves:
-            action.kind === 'section'
+            action.kind === 'section' || action.kind === 'passwords-review'
               ? 'chevron'
               : action.kind === 'command' && action.command === 'updates.openRelease'
                 ? 'external'
