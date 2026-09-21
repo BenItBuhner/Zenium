@@ -24,6 +24,10 @@ on:
         options:
           - soft
           - hard
+  # Temporary: the one final recording on the merged head (802fd4199) after the lead's verdict;
+  # removed before the PR leaves draft (the dispatch API is not open to the agent's token).
+  push:
+    branches: [cursor/services-import-ui-24d1]
 
 permissions:
   contents: read
