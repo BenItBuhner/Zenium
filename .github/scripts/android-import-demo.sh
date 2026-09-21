@@ -3,10 +3,11 @@
 # with the import instrumentation selected (Settings > Import's two file rows under real fingers,
 # the system's document picker, the Last import group, the bookmarks overlay on the imported
 # folder, the URL field listing an imported bookmark), then collects the driver's findings
-# (import-results.json, with the frame stats of every gesture scene under `frames`) and its
-# logcat lines next to the recording, the stills and the driver's own text files – the frames
-# table (services-import-android-frames.txt) and the raw gfxinfo dumps
-# (services-import-android-framestats.txt), which the shared script pulls with the stills.
+# (import-results.json: each step's claims, and under `frames` whether each measured scene
+# played) and its logcat lines next to the recording and the stills. The frame statistics are
+# the harness's record (DemoHarness.traceFrames): frames.jsonl, frames.txt, the raw
+# framestats-<scene>.txt dumps and the trace-<scene>.json.gz traces, which the shared script
+# pulls with the stills and the shared workflow renders into the job summary.
 set -euo pipefail
 
 app_id=io.github.benitbuhner.zenium.debug
@@ -20,7 +21,6 @@ status=0
 bash .github/scripts/android-gesture-demo.sh || status=$?
 
 adb exec-out run-as "$app_id" cat "files/$DEMO_DIR/import-results.json" > "$DEMO_OUT/import-results.json" 2>/dev/null || true
-grep -E "ImportDemo|TOUCH FAULT|CLAIM FAILED|FRAMES|closeUrlField|ImportService|TextFiles" "$DEMO_OUT/logcat.txt" | tail -n 400 > "$DEMO_OUT/import-logcat.txt" || true
+grep -E "ImportDemo|TOUCH FAULT|CLAIM FAILED|JANK FAULT|FRAMES|closeUrlField|ImportService|TextFiles" "$DEMO_OUT/logcat.txt" | tail -n 600 > "$DEMO_OUT/import-logcat.txt" || true
 cat "$DEMO_OUT/import-results.json" 2>/dev/null || echo "no import-results.json"
-cat "$DEMO_OUT/services-import-android-frames.txt" 2>/dev/null || echo "no frames table"
 exit "$status"

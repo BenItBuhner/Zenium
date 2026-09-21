@@ -11,7 +11,10 @@ import { EXTENSION_ORIGIN_SUFFIX } from './plan'
  *
  * `runtime.getURL` keeps answering the served spelling: its result is what the extension hands
  * to `fetch`, `<img src>`, `<link href>`, `<iframe src>` and `import()`, and only the served
- * spelling loads there.
+ * spelling loads there. Chrome's spelling written out by hand on an extension page is mapped
+ * before the load: `fetch` and `XMLHttpRequest` in `src/android/extensionCorsProxy.ts`, the
+ * loading elements in `src/android/extensionFrameUrls.ts`, a navigation in
+ * `ext/ExtensionPageNavigation.kt`.
  */
 
 const ID = '[a-p]{32}'

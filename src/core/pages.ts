@@ -203,15 +203,19 @@ export class PageService {
       if (rerouted && win.alive) win.host.focus()
     }
     const tabs = this.browser.tabs
+    const opener =
+      openerTabId === undefined ? tabs.activeTabFor(win) : tabs.tab(openerTabId ?? undefined)
     const existing = page.singleton ? this.findInWindow(page, win) : undefined
     if (existing) {
       if (section !== undefined) this.navigate(existing.id, section)
+      // Re-focused rather than opened: the page now comes from this opener (the rows that read
+      // "the page you came from", the root back rule), not the one it was first opened from; a
+      // request from the page tab itself leaves its opener as it is.
+      if (opener?.id !== existing.id) tabs.setOpener(existing.id, opener?.id ?? null)
       tabs.activateTab(existing.id, win)
       raise()
       return existing.id
     }
-    const opener =
-      openerTabId === undefined ? tabs.activeTabFor(win) : tabs.tab(openerTabId ?? undefined)
     const url = internalPageUrl({ id: page.id, section: section ?? null })
     const tab = tabs.createTab(
       {

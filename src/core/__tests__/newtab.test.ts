@@ -6,7 +6,8 @@ import type {
   Tab
 } from '../../shared/types'
 import { PRIVATE_CONTAINER_ID } from '../../shared/types'
-import { NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
+import { errorPageUrl, NEW_TAB_URL, SETTINGS_URL } from '../../shared/url'
+import { CRASH_ERROR_CODE } from '../../shared/zenPages'
 import { Browser } from '../browser'
 import type { RequestContext } from '../blocking/rules'
 import { MAX_NEW_TAB_SHORTCUTS, normalizeShortcutInput } from '../newtab'
@@ -343,6 +344,22 @@ describe('NewTabService: preloading', () => {
     const live = f.views.filter((v) => v.tabId.startsWith('newtab_preload') && !v.destroyed)
     expect(live).toHaveLength(1)
     expect(live[0]).not.toBe(first)
+  })
+
+  it("an adopted preload's crash reaches the tab with its exit code (the sad tab's code line)", async () => {
+    const f = fixture()
+    const win = f.browser.focusedWindow()
+    win.onChromeReady()
+    await vi.advanceTimersByTimeAsync(800)
+    f.browser.handleCommand(win, 'newtab.open', undefined)
+    const tab = activeTab(f)!
+    const view = f.views.find((v) => v.tabId === tab.id)!
+    view.events.onNavigated('https://adopted.example/', false)
+    view.events.onCrashed('crashed', 11)
+    expect(view.loads.at(-1)).toBe(
+      errorPageUrl(CRASH_ERROR_CODE, 'SIGSEGV', 'https://adopted.example/')
+    )
+    expect(f.browser.tabs.tab(tab.id)?.errorCode).toBe(CRASH_ERROR_CODE)
   })
 })
 

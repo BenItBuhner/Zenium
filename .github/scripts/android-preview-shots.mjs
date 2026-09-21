@@ -68,6 +68,19 @@
 //                      Default: the built-in profile below.
 //   --width, --height, --dpr   viewport in CSS px and device scale factor (412, 915, 2.6)
 //   --settle <ms>      wait after a state is applied before capturing (default 1200)
+//   --audit <dir>      an accessibility audit of every state alongside its still (first scheme
+//                      only): Chromium's accessibility tree (`Accessibility.getFullAXTree`, the
+//                      tree TalkBack reads through the WebView) walked in traversal order, every
+//                      control – a role that acts (button, link, textbox, checkbox, switch, tab,
+//                      menu item, …) or a focusable node – with its name, role, states (pressed,
+//                      expanded, selected, checked, disabled, popup), `aria-posinset` /
+//                      `aria-setsize`, its border box in CSS px and whether it meets the 44 x 44
+//                      target; headings, dialogs and live regions are listed as context. Written
+//                      as `<prefix><label>.json` per state plus one `<prefix>audit.md` table.
+//   --probe <file>     a JavaScript file evaluated in the page after each state has settled (first
+//                      scheme only), its value written as `<prefix><label>.probe.json` beside the
+//                      still and echoed to the log: how a surface is measured on the preview host
+//                      (a row's height, a text's box against its control) for a PR body's numbers.
 //
 // Needs Xvfb (or --display) and nothing beyond electron. Exit code 1 when any capture failed.
 import { spawn } from 'node:child_process'
@@ -95,7 +108,9 @@ function parseArgs(argv) {
     width: 412,
     height: 915,
     dpr: 2.6,
-    settle: 1200
+    settle: 1200,
+    audit: '',
+    probe: ''
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -590,7 +605,218 @@ async function inner(opts) {
   }
   const motionOff = () => cdp('Emulation.setEmulatedMedia', { features: [] })
 
+  // `--audit`: the accessibility tree of the state, as TalkBack walks it. Chromium's tree
+  // (`Accessibility.getFullAXTree`) is what the WebView hands the platform, node for node; its
+  // order is the traversal order, its names are the accessible names TalkBack speaks, and each
+  // control's border box (`DOM.getBoxModel`) is the touch target. Roles that act, and anything
+  // focusable, are the audit's rows; headings, dialogs and live regions give them their context.
+  const CONTROL_ROLES = new Set([
+    'button',
+    'link',
+    'textbox',
+    'searchbox',
+    'combobox',
+    'checkbox',
+    'radio',
+    'switch',
+    'tab',
+    'menuitem',
+    'menuitemcheckbox',
+    'menuitemradio',
+    'option',
+    'slider',
+    'spinbutton',
+    'listbox',
+    'menu',
+    'menubar',
+    'tablist',
+    'treeitem',
+    'ToggleButton',
+    'PopUpButton',
+    'DisclosureTriangle'
+  ])
+  const CONTEXT_ROLES = new Set(['heading', 'dialog', 'alertdialog', 'alert', 'status', 'log'])
+  const STATE_KEYS = [
+    'pressed',
+    'expanded',
+    'selected',
+    'checked',
+    'disabled',
+    'hasPopup',
+    'focusable',
+    'focused',
+    'live',
+    'level',
+    'modal',
+    'readonly',
+    'roledescription'
+  ]
+  const auditRows = []
+  const audit = async (label, state) => {
+    if (!opts.audit) return
+    fs.mkdirSync(opts.audit, { recursive: true })
+    await cdp('Accessibility.enable')
+    await cdp('DOM.enable')
+    const { nodes } = await cdp('Accessibility.getFullAXTree', {}, 60_000)
+    const byId = new Map(nodes.map((n) => [n.nodeId, n]))
+    const root = nodes.find((n) => !n.parentId) ?? nodes[0]
+    const rows = []
+    let order = 0
+    const value = (v) => (v && typeof v === 'object' && 'value' in v ? v.value : v)
+    const describe = async (backendNodeId) => {
+      try {
+        const { node } = await cdp('DOM.describeNode', { backendNodeId })
+        const attrs = {}
+        for (let i = 0; i + 1 < (node.attributes ?? []).length; i += 2)
+          attrs[node.attributes[i]] = node.attributes[i + 1]
+        const classes = (attrs.class ?? '').split(/\s+/).filter(Boolean)
+        const data = Object.keys(attrs)
+          .filter((k) => k.startsWith('data-') && k !== 'data-surface')
+          .slice(0, 3)
+          .map((k) => (attrs[k] === '' || attrs[k] === 'true' ? `[${k}]` : `[${k}=${attrs[k]}]`))
+        const locator =
+          node.nodeName.toLowerCase() +
+          (attrs.id ? `#${attrs.id}` : '') +
+          classes
+            .filter((c) => /^zen-/.test(c))
+            .slice(0, 2)
+            .map((c) => `.${c}`)
+            .join('') +
+          data.join('')
+        return { locator, attrs }
+      } catch {
+        return { locator: '?', attrs: {} }
+      }
+    }
+    const box = async (backendNodeId) => {
+      try {
+        const { model } = await cdp('DOM.getBoxModel', { backendNodeId })
+        const q = model.border
+        const xs = [q[0], q[2], q[4], q[6]]
+        const ys = [q[1], q[3], q[5], q[7]]
+        const x = Math.min(...xs)
+        const y = Math.min(...ys)
+        const w = Math.max(...xs) - x
+        const h = Math.max(...ys) - y
+        return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) }
+      } catch {
+        return null
+      }
+    }
+    const context = []
+    const visit = async (node, depth) => {
+      if (!node) return
+      const role = value(node.role) ?? ''
+      const name = value(node.name) ?? ''
+      const props = Object.fromEntries((node.properties ?? []).map((p) => [p.name, value(p.value)]))
+      const hidden = props.hidden === true
+      const interesting =
+        !node.ignored &&
+        !hidden &&
+        node !== root &&
+        (CONTROL_ROLES.has(role) || CONTEXT_ROLES.has(role) || props.focusable === true)
+      let pushedContext = false
+      if (interesting) {
+        const { locator, attrs } = await describe(node.backendDOMNodeId)
+        const b = await box(node.backendDOMNodeId)
+        const isControl = CONTROL_ROLES.has(role) || props.focusable === true
+        const states = {}
+        for (const key of STATE_KEYS) if (props[key] !== undefined) states[key] = props[key]
+        if (attrs['aria-posinset']) states.posinset = Number(attrs['aria-posinset'])
+        if (attrs['aria-setsize']) states.setsize = Number(attrs['aria-setsize'])
+        if (attrs['aria-live']) states.live = attrs['aria-live']
+        const offscreen =
+          b !== null &&
+          (b.x + b.w <= 0 || b.y + b.h <= 0 || b.x >= opts.width || b.y >= opts.height)
+        rows.push({
+          state,
+          order: isControl ? ++order : null,
+          role,
+          name,
+          states,
+          locator,
+          within: context[context.length - 1] ?? null,
+          box: b,
+          target: b === null ? null : b.w >= 44 && b.h >= 44 ? 'ok' : `${b.w}x${b.h}`,
+          offscreen,
+          depth
+        })
+        if (role === 'dialog' || role === 'alertdialog') {
+          context.push(name || role)
+          pushedContext = true
+        }
+      }
+      for (const id of node.childIds ?? []) await visit(byId.get(id), depth + 1)
+      if (pushedContext) context.pop()
+    }
+    await visit(root, 0)
+    fs.writeFileSync(
+      path.join(opts.audit, `${opts.prefix}${label}.json`),
+      JSON.stringify({ state, label, rows }, null, 2)
+    )
+    auditRows.push(...rows.map((r) => ({ ...r, label })))
+    const controls = rows.filter((r) => r.order !== null)
+    const small = controls.filter((r) => r.target && r.target !== 'ok' && !r.offscreen)
+    const unnamed = controls.filter((r) => !r.name)
+    console.log(
+      `audit ${label}: ${controls.length} controls, ${small.length} under 44 x 44, ${unnamed.length} unnamed`
+    )
+  }
+  const writeAudit = () => {
+    if (!opts.audit || auditRows.length === 0) return
+    const esc = (s) =>
+      String(s ?? '')
+        .replaceAll('|', '\\|')
+        .replaceAll('\n', ' ')
+    const stateText = (s) =>
+      Object.entries(s)
+        .filter(([k]) => !['focusable', 'focused', 'level', 'roledescription'].includes(k))
+        .map(([k, v]) => (v === true ? k : `${k}=${v}`))
+        .join(' ')
+    const lines = [
+      '| State | # | Role | Name | States | Target (w x h) | Element |',
+      '|---|---|---|---|---|---|---|'
+    ]
+    // A grouping role (a listbox, a tablist, a menu) is walked for its order, not for its box:
+    // its members are the targets; context rows (headings, dialogs, live regions) are no target.
+    const GROUPING = new Set(['listbox', 'menu', 'menubar', 'tablist'])
+    const flagged = (r) =>
+      r.order !== null && !GROUPING.has(r.role) && r.target && r.target !== 'ok'
+    for (const r of auditRows) {
+      if (r.offscreen) continue
+      const target = r.box ? `${r.box.w} x ${r.box.h}${flagged(r) ? ' **<44**' : ''}` : '?'
+      lines.push(
+        `| ${esc(r.label)} | ${r.order ?? '–'} | ${esc(r.role)}${r.states.level ? ` ${r.states.level}` : ''} | ${esc(r.name) || '**(none)**'} | ${esc(stateText(r.states))} | ${target} | \`${esc(r.locator)}\` |`
+      )
+    }
+    // The count per state, for a report: controls, how many are under 44 x 44, how many unnamed.
+    lines.push('', '| State | Controls | Under 44 x 44 | Unnamed |', '|---|---|---|---|')
+    for (const label of [...new Set(auditRows.map((r) => r.label))]) {
+      const controls = auditRows.filter(
+        (r) => r.label === label && r.order !== null && !r.offscreen
+      )
+      lines.push(
+        `| ${esc(label)} | ${controls.length} | ${controls.filter(flagged).length} | ${controls.filter((r) => !r.name).length} |`
+      )
+    }
+    fs.writeFileSync(path.join(opts.audit, `${opts.prefix}audit.md`), lines.join('\n') + '\n')
+    console.log(
+      `audit table ${path.join(opts.audit, `${opts.prefix}audit.md`)} (${auditRows.length} rows)`
+    )
+  }
+
   let failures = 0
+  // `--probe`: the file's script, evaluated in the page once the state has settled; its value
+  // (JSON) lands beside the still, so a measurement is taken on the same frame the still shows.
+  const probeScript = opts.probe ? fs.readFileSync(opts.probe, 'utf8') : ''
+  const probe = async (label) => {
+    if (!probeScript) return
+    const value = await js(probeScript)
+    const file = path.join(opts.out, `${opts.prefix}${label}.probe.json`)
+    fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n')
+    console.log(`probe ${label}: ${JSON.stringify(value)}`)
+  }
+
   for (const scheme of schemes) {
     nativeTheme.themeSource = scheme
     await waitFor(
@@ -616,6 +842,8 @@ async function inner(opts) {
         const png = (await wc.capturePage()).toPNG()
         fs.writeFileSync(file, png)
         console.log(`shot ${file} (${png.readUInt32BE(16)}x${png.readUInt32BE(20)})`)
+        if (scheme === schemes[0]) await audit(label, state)
+        if (scheme === schemes[0]) await probe(label)
       } catch (e) {
         failures++
         console.error(`failed ${label} ${scheme}: ${e.message}`)
@@ -625,6 +853,7 @@ async function inner(opts) {
       }
     }
   }
+  writeAudit()
   wc.debugger.detach()
   app.exit(failures ? 1 : 0)
 }

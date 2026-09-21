@@ -1,5 +1,5 @@
-import type { JSX, ReactNode } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import type { JSX, ReactNode, RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ALargeSmall,
   AppWindow,
@@ -32,6 +32,8 @@ import {
 } from '@shared/url'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
 import { run } from '@renderer/lib/api'
+import { chipPrompt } from '@renderer/lib/autofill'
+import { siteBlockingState } from '@renderer/lib/blockingUi'
 import { chromeDropStore } from '@renderer/lib/dnd'
 import { extensionPageChrome } from '@renderer/lib/extensions/pages'
 import { dropStore } from '@renderer/lib/drag'
@@ -56,8 +58,10 @@ import { ToolbarActions } from '../extensions/ToolbarActions'
 import { useLongPress } from '../phone/useLongPress'
 import { BlockedChip } from '../urlbar/BlockedChip'
 import { PillChip } from '../urlbar/PillChip'
+import { CHIP_WIDTH, fittingChips, type PillChipSpec } from '../urlbar/pillChipTiers'
 import { TOOLBAR_STROKE } from '../v2/controls'
 import { WindowControls } from '../WindowControls'
+import { isZoomed } from '../zoom/bubble'
 import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
 import { MediaHubButton } from '../media/MediaHubButton'
@@ -186,6 +190,53 @@ export function NavRow({
   // while the translation shows), and comes up on hover for every other web page.
   const translation = tab && isWebPage ? translateStateOf(state, tab.id) : null
   const translateBarUp = tab ? barStateOf(state, tab.id) !== null : false
+  // The chips fit or hide by priority (`pillChipTiers.ts`, design language v2 §9.29; the #226
+  // finding of five chips running past a 240 px sidebar's pill): the pill measures its content
+  // box and asks which of the chips present fit beside an address that keeps its minimum. The
+  // site icon and the state chips – blocked pop-ups, a save prompt's key – are never hidden;
+  // the star, the shield, the zoom chip and the informational chips (translate, Reader View)
+  // hide from the lowest priority up. The hover-only extras (Boost, Copy URL, Text preferences) are
+  // the stylesheet's container query's. A hidden chip's action stays in the app menu and the
+  // tab's menu; a chip whose popover is up stays put (§9.20).
+  const pill = useRef<HTMLDivElement>(null)
+  const pillInner = usePillInnerWidth(pill)
+  const shieldState =
+    tab && isWebPage && state.capabilities.requestBlocking
+      ? siteBlockingState(tab, state.blocking, state.settings.blocking)
+      : 'no-site'
+  const savePrompt = tab && isWebPage ? chipPrompt(state) : null
+  const zoomed = Boolean(
+    tab &&
+    !state.capabilities.pageControls &&
+    isZoomed(tab, state.settings.pageControls, state.pageEnvironment)
+  )
+  const chipsPresent: PillChipSpec[] = []
+  if (tab && url) chipsPresent.push({ id: 'site', tier: 'site', width: CHIP_WIDTH.site })
+  if (shieldState !== 'no-site') {
+    const counted = shieldState === 'blocking' && tab !== null && tab.blockedCount > 0
+    chipsPresent.push({
+      id: 'shield',
+      tier: 'shield',
+      width: CHIP_WIDTH.iconButton + (counted ? CHIP_WIDTH.badge : 0)
+    })
+  }
+  if (tab && blocked.length > 0) {
+    chipsPresent.push({
+      id: 'popups',
+      tier: 'state',
+      width: CHIP_WIDTH.iconButton + (blocked.length > 1 ? CHIP_WIDTH.badge : 0)
+    })
+  }
+  if (savePrompt && savePrompt.tabId === tab?.id) {
+    chipsPresent.push({ id: 'key', tier: 'state', width: CHIP_WIDTH.iconButton })
+  }
+  if (tab && starred) chipsPresent.push({ id: 'star', tier: 'star', width: CHIP_WIDTH.star })
+  if (zoomed) chipsPresent.push({ id: 'zoom', tier: 'zoom', width: CHIP_WIDTH.small })
+  if (translation) chipsPresent.push({ id: 'translate', tier: 'info', width: CHIP_WIDTH.small })
+  if (tab && !extension && (tab.readerable || isReader)) {
+    chipsPresent.push({ id: 'reader', tier: 'info', width: CHIP_WIDTH.small })
+  }
+  const fits = fittingChips(pillInner, chipsPresent)
   return (
     <div
       ref={row}
@@ -243,13 +294,16 @@ export function NavRow({
           §9.22); the site icon is drawn ahead of it with `order-first`.
         */
         <div
+          ref={pill}
           role="group"
           aria-label="Address"
           className={cn(
             'zen-squircle zen-pill group/pill mx-0.5 flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[10px] bg-[var(--zen-element-bg)] px-2.5 text-left',
             !readOnly && 'hover:bg-[var(--zen-element-bg-hover)]'
           )}
-          title={tab ? presentedUrl(tab.url) : 'Search or enter address'}
+          // The tooltip is the address the pill shows: an error or Reader View page's is the
+          // page it stands in for, never the `zen://` document (§10.1).
+          title={tab ? fullUrl(tab.url) || presentedUrl(tab.url) : 'Search or enter address'}
           data-zen-menu="urlpill"
           data-zen-menu-tab={tab?.id}
           data-readonly={readOnly || undefined}
@@ -356,9 +410,14 @@ export function NavRow({
               <Search className="order-first h-3 w-3 shrink-0 opacity-60" />
             )}
             {tab && isWebPage && state.capabilities.requestBlocking && (
-              <BlockedChip tab={tab} state={state} variant="desktop" />
+              <BlockedChip
+                tab={tab}
+                state={state}
+                variant="desktop"
+                collapsed={!fits.has('shield')}
+              />
             )}
-            {tab && !extension && (tab.readerable || isReader) && (
+            {tab && !extension && (isReader || (tab.readerable && fits.has('reader'))) && (
               <PillChip
                 label="Reader View"
                 title={hint(
@@ -443,27 +502,30 @@ export function NavRow({
                 )}
               </PillChip>
             )}
-            {tab && isWebPage && state.translate.available && (
-              <PillChip
-                label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
-                title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
-                className={cn(
-                  'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
-                  translation &&
-                    isTranslating(translation) &&
-                    'text-[var(--zen-accent)] opacity-100',
-                  translation
-                    ? 'flex'
-                    : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
-                )}
-                onActivate={() => {
-                  if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
-                  else run('translate.offer', { tabId: tab.id })
-                }}
-              >
-                <Languages className="h-3.5 w-3.5" />
-              </PillChip>
-            )}
+            {tab &&
+              isWebPage &&
+              state.translate.available &&
+              (!translation || fits.has('translate')) && (
+                <PillChip
+                  label={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                  title={translateBarUp ? 'Hide the translation bar' : 'Translate this page'}
+                  className={cn(
+                    'h-5 w-5 shrink-0 items-center justify-center rounded opacity-70 hover:bg-[var(--zen-element-bg-hover)]',
+                    translation &&
+                      isTranslating(translation) &&
+                      'text-[var(--zen-accent)] opacity-100',
+                    translation
+                      ? 'flex'
+                      : 'hidden group-hover/pill:flex group-focus-within/chips:flex'
+                  )}
+                  onActivate={() => {
+                    if (translateBarUp) run('translate.dismiss', { tabId: tab.id })
+                    else run('translate.offer', { tabId: tab.id })
+                  }}
+                >
+                  <Languages className="h-3.5 w-3.5" />
+                </PillChip>
+              )}
             {tab && isWebPage && !isPrivate && (
               <PillChip
                 label={boosted ? 'Edit Boost for this site' : 'Boost this site'}
@@ -491,12 +553,13 @@ export function NavRow({
                 <Copy className="h-3 w-3" />
               </PillChip>
             )}
-            {tab && <ZoomChip state={state} tab={tab} />}
+            {tab && <ZoomChip state={state} tab={tab} collapsed={!fits.has('zoom')} />}
             {tab && isWebPage && <AutofillChip state={state} tab={tab} />}
             {tab && starred && (
               <StarChip
                 tab={tab}
                 filled={bookmarked}
+                collapsed={!fits.has('star')}
                 title={hint(
                   bookmarked ? 'Edit bookmark' : 'Bookmark this tab',
                   state,
@@ -532,6 +595,29 @@ export function NavRow({
       </button>
     </div>
   )
+}
+
+/**
+ * The pill's content-box width – what its address and chips share – kept current by a
+ * ResizeObserver; 0 until measured, which the tier reads as "hide nothing yet". (The row's
+ * `useElementWidth` measures a border box; the pill has padding, so it measures its own.)
+ */
+function usePillInnerWidth(ref: RefObject<HTMLDivElement | null>): number {
+  const [width, setWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const style = getComputedStyle(el)
+    const pad = (v: string): number => parseFloat(v) || 0
+    setWidth(Math.max(0, el.clientWidth - pad(style.paddingLeft) - pad(style.paddingRight)))
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) setWidth(entry.contentRect.width)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [ref])
+  return width
 }
 
 /**

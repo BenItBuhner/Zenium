@@ -280,7 +280,9 @@ describe('a page opening a window', () => {
     const background = events.onOpenWindow('https://example.com/b', 'background-tab', true)
     const b = fakeView()
     const { tab: tabB } = background!.adopt(b)
-    expect(space.tabIds.indexOf(tabB.id)).toBe(space.tabIds.indexOf(parent.id) + 1)
+    // The opener's second child joins its opener group after the first (tabs-30): parent, A, B.
+    expect(space.tabIds.indexOf(tabB.id)).toBe(space.tabIds.indexOf(tabA.id) + 1)
+    expect(space.tabIds.indexOf(tabA.id)).toBe(space.tabIds.indexOf(parent.id) + 1)
     expect(win.selectedTabIn(space)).toBe(tabA.id)
     expect(browser.tabs.ownerOf(tabB.id)).toBe(win)
   })

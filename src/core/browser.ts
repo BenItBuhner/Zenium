@@ -29,6 +29,7 @@ import type {
 import { CONTENT_SETTINGS } from '../shared/contentSettings'
 import { BrowserState, type PersistedWindow } from './state'
 import { HistoryService } from './history'
+import { OmniboxShortcutsService } from './omniboxShortcuts'
 import { SessionService } from './session'
 import { NewTabService } from './newtab'
 import { BookmarkService } from './bookmarks'
@@ -101,6 +102,7 @@ import {
 import {
   BLANK_URL,
   displayHost,
+  displayUrl,
   extensionPageOf,
   getDomain,
   inputToUrl,
@@ -201,6 +203,8 @@ const FOCUS_CHROME_EVENTS = new Set<EventName>([
 export class Browser {
   readonly state: BrowserState
   readonly history: HistoryService
+  /** Typed text → chosen destination memory, the omnibox's shortcuts provider (omnibox-03). */
+  readonly omniboxShortcuts: OmniboxShortcutsService
   /**
    * The new tab page on both platforms: `zen://newtab`'s state and the pages preloaded for
    * Ctrl+T (desktop), the shortcuts, the removed hosts and the background image (both).
@@ -331,6 +335,12 @@ export class Browser {
       })
     }
     this.history = new HistoryService(platform.io)
+    this.omniboxShortcuts = new OmniboxShortcutsService(platform.io)
+    // Clearing history clears what the omnibox learned from it (Chromium's ShortcutsBackend
+    // follows the history service's deletions).
+    this.history.onChange((kind) => {
+      if (kind === 'clear') this.omniboxShortcuts.clear()
+    })
     this.bookmarks = new BookmarkService(this.state)
     this.downloads = new DownloadService(
       platform.io,
@@ -1801,6 +1811,7 @@ export class Browser {
   flushSync(): void {
     this.state.flushSync()
     this.history.flushSync()
+    this.omniboxShortcuts.flushSync()
     this.downloads.flushSync()
     this.boosts.flushSync()
     this.liveFolders.flushSync()
@@ -1836,7 +1847,13 @@ export class Browser {
     newTab: boolean,
     tabId: string | null,
     background: boolean,
-    win: ZenWindow
+    win: ZenWindow,
+    extra: {
+      /** Shift+Enter, Ctrl+Shift+Enter, Shift+click: a new window of this window's kind. */
+      newWindow?: boolean
+      /** What was typed before the pick, for the shortcuts provider (never in private). */
+      learn?: { typed: string; title: string; kind?: 'url' | 'search' }
+    } = {}
   ): void {
     const text = input.trim()
     if (!text) return
@@ -1860,6 +1877,13 @@ export class Browser {
     const typed = this.typedToUrl(text)
     if (!typed) return
     const { url, upgradedFrom } = typed
+    this.learnShortcut(text, url, tabId, win, extra.learn)
+    if (extra.newWindow) {
+      // Shift+Enter: the destination in a new window of this window's kind (a private window
+      // opens another private one), the page here left as it is.
+      this.openUrlInWindow(url, win.isPrivate ? 'private' : win.kind, win)
+      return
+    }
     // `zenium://settings/…` typed into the bar: a chrome page opens (or reuses) its own tab with
     // the current tab as opener, whatever tab the text was typed into; a document page loads
     // like any document, in this tab or a new one, unless the window already shows the one it
@@ -1926,6 +1950,39 @@ export class Browser {
   }
 
   /**
+   * The shortcuts provider learns a pick (omnibox-03): what was typed → where it went, never in
+   * a private window or for a private tab, never for Zenium's own pages. A search's row shows
+   * the query; an address's the page's title, from history when the pick did not carry one.
+   */
+  private learnShortcut(
+    text: string,
+    url: string,
+    tabId: string | null,
+    win: ZenWindow,
+    learn: { typed: string; title: string; kind?: 'url' | 'search' } | undefined
+  ): void {
+    if (!learn || !learn.typed.trim()) return
+    if (win.isPrivate) return
+    const tab = tabId ? this.state.model.tabs[tabId] : undefined
+    if (tab?.containerId === PRIVATE_CONTAINER_ID) return
+    if (!/^https?:\/\//i.test(url)) return
+    const kind = learn.kind ?? (inputToUrl(text) ? 'url' : 'search')
+    const engine =
+      kind === 'search'
+        ? this.state.searchEngines.find((e) => url.startsWith(e.searchUrl.split('%s')[0] ?? ''))
+        : undefined
+    const title =
+      learn.title ||
+      (kind === 'search' ? text : (this.history.titleFor(url) ?? displayUrl(url) ?? url))
+    this.omniboxShortcuts.learn(learn.typed, {
+      url,
+      title,
+      kind,
+      ...(engine ? { engineId: engine.id } : {})
+    })
+  }
+
+  /**
    * Chrome's "Paste and go" / "Paste and search" (URL-bar context menu, `urlbar.pasteAndGo` and
    * `urlbar.pasteAndSearch`): the clipboard's text goes where typed text would, or is searched
    * with the default engine whatever it looks like. Nothing happens for an empty clipboard.
@@ -1954,6 +2011,11 @@ export class Browser {
     if (keyword) {
       if (!keyword.query.trim()) return null
       return { url: buildSearchUrl(keyword.engine, keyword.query) }
+    }
+    // Chrome's legacy `?` prefix: what follows is searched, however much it looks like an address.
+    if (text.startsWith('?')) {
+      const terms = text.slice(1).trim()
+      return terms ? { url: buildSearchUrl(this.defaultSearchEngine(), terms) } : null
     }
     const url = inputToUrl(text)
     if (!url) return { url: buildSearchUrl(this.defaultSearchEngine(), text) }
@@ -2148,6 +2210,10 @@ export class Browser {
       this.popups.activate(tabId)
       return
     }
+    if (message.type === 'capture-state') {
+      this.tabs.onCaptureState(tabId, message.capture)
+      return
+    }
     if (message.type === 'popup-blocked') {
       if (typeof message.url === 'string') this.popups.record(tabId, message.url)
       return
@@ -2157,7 +2223,8 @@ export class Browser {
       return
     }
     if (message.type === 'pdf') {
-      if (message.pdf && typeof message.pdf === 'object') this.pdf.onReport(tabId, message.pdf)
+      if (message.pdf && typeof message.pdf === 'object')
+        this.pdf.onReport(tabId, message.pdf, message.token)
       return
     }
     if (message.type === 'forms') {
@@ -2214,6 +2281,7 @@ export class Browser {
             url: message.url,
             active: !message.background,
             afterTabId: tab.essential ? undefined : tabId,
+            openerTabId: tab.essential ? undefined : tabId,
             containerId: tab.containerId,
             spaceId: routed ?? undefined
           },
@@ -2308,7 +2376,8 @@ export class Browser {
 
       'tab.new': (_a, win) => this.openNewTab(win),
       'tab.create': (opts, win) => tabs.createTab(opts, win).id,
-      'tab.activate': ({ tabId, keepFocus }, win) => tabs.activateTab(tabId, win, { keepFocus }),
+      'tab.activate': ({ tabId, keepFocus }, win) =>
+        tabs.activateTab(tabId, win, { keepFocus, userSwitch: true }),
       'tab.close': ({ tabId, force, keepFocus }, win) =>
         void tabs.requestClose(tabId, force, win, { keepFocus }),
       'tab.newPrivate': ({ url }, win) => tabs.newPrivateTab(url, win),
@@ -2480,6 +2549,7 @@ export class Browser {
       'split.resize': ({ groupId, sizes }) => tabs.resizeSplit(groupId, sizes),
       'split.newEmpty': (_a, win) => tabs.newEmptySplit(win),
       'split.addTab': ({ groupId, tabId }) => tabs.addToSplit(groupId, tabId),
+      'split.pickTab': ({ paneTabId, tabId }, win) => tabs.pickTabForPane(paneTabId, tabId, win),
 
       'glance.open': ({ url, parentTabId, originX, originY }, win) =>
         tabs.openGlance(url, parentTabId, originX, originY, win),
@@ -2504,9 +2574,14 @@ export class Browser {
         state.commit()
       },
 
-      'urlbar.suggest': ({ query, tabId }, win) => this.suggestions.suggest(query, tabId, win),
-      'urlbar.submit': ({ input, newTab, tabId, background }, win) =>
-        this.submitUrlbar(input, newTab, tabId, Boolean(background), win),
+      'urlbar.suggest': ({ query, tabId, engineId }, win) =>
+        this.suggestions.suggest(query, tabId, win, { engineId }),
+      'urlbar.submit': ({ input, newTab, tabId, background, newWindow, learn }, win) =>
+        this.submitUrlbar(input, newTab, tabId, Boolean(background), win, {
+          newWindow: Boolean(newWindow),
+          learn
+        }),
+      'urlbar.forgetShortcut': ({ url }) => this.omniboxShortcuts.forgetUrl(url),
       'urlbar.pasteAndGo': ({ tabId }, win) => void this.pasteAndGo(tabId, false, win),
       'urlbar.pasteAndSearch': ({ tabId }, win) => void this.pasteAndGo(tabId, true, win),
       'urlbar.runCommand': ({ action }, win) =>
@@ -2559,7 +2634,11 @@ export class Browser {
 
       'history.search': ({ query, limit }) => this.history.search(query, limit),
       'history.recent': ({ limit }) => this.history.recent(limit),
-      'history.delete': ({ url }) => this.history.delete(url),
+      'history.delete': ({ url }) => {
+        this.history.delete(url)
+        // A page forgotten is not to be recalled by what was typed for it either.
+        this.omniboxShortcuts.forgetUrl(url)
+      },
       'history.clear': () => this.history.clear(),
       'history.visits': ({ query }) => this.history.visits(query),
       'history.grouped': ({ query }) => this.history.groupedByDay(query),
@@ -3110,6 +3189,7 @@ export class Browser {
       }
     }
     s.sidebarWidth = Math.max(160, Math.min(520, s.sidebarWidth))
+    s.splitEdgeZones = s.splitEdgeZones !== false
     s.unloadTimeoutMinutes = sanitizeUnloadTimeout(s.unloadTimeoutMinutes)
     s.essentialsMax = Math.max(1, Math.min(24, Math.round(s.essentialsMax)))
     // A default the profile no longer has an engine for (removed, or named by a peer's build that

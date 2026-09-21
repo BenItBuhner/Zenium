@@ -1,4 +1,10 @@
-import type { Container, ExtensionInfo, Tab } from '@shared/types'
+import type {
+  Container,
+  ExtensionInfo,
+  SearchEngine,
+  SearchEngineControl,
+  Tab
+} from '@shared/types'
 import { RuleEngine } from '@core/blocking/engine'
 import type { Browser } from '@core/browser'
 import type { StoreIO } from '@core/platform'
@@ -37,6 +43,10 @@ export class FakeKotlin implements RuntimeBridge {
   /** Every message the runtime sent to an endpoint, decoded. */
   readonly sent: Sent[] = []
   readonly manifests = new Map<string, Record<string, unknown>>()
+  /** The manifest's text as the file holds it, when a test wants it other than the JSON of `manifests`. */
+  readonly manifestTexts = new Map<string, string>()
+  /** `_locales/<locale>/messages.json` texts per install path, as `ext.open` hands them over. */
+  readonly locales = new Map<string, Record<string, string>>()
   readonly files = new Map<string, string>()
   /** Background pages Kotlin holds right now, by extension id. */
   readonly backgrounds = new Set<string>()
@@ -111,7 +121,10 @@ export class FakeKotlin implements RuntimeBridge {
       case 'ext.open': {
         const manifest = this.manifests.get(String(args.path))
         if (!manifest) throw new Error(`no manifest under ${args.path}`)
-        return { manifest: JSON.stringify(manifest), locales: {} }
+        return {
+          manifest: this.manifestTexts.get(String(args.path)) ?? JSON.stringify(manifest),
+          locales: this.locales.get(String(args.path)) ?? {}
+        }
       }
       case 'ext.configure': {
         const units = args.units as Array<{ key: string }>
@@ -331,6 +344,16 @@ export interface Harness {
   toasts: string[]
   /** What `browser.extensions.list()` answers (the store's view: icons for the menus). */
   infos: ExtensionInfo[]
+  /**
+   * The PDF viewer's documents (`browser.pdf.documentUrl`): a viewer tab's address
+   * (`zen://pdf?id=…`) → the URL of the PDF it shows, which the tab reads as to extensions.
+   */
+  pdfDocuments: Map<string, string>
+  /**
+   * What the runtime told the search model (`state.setExtensionSearch`), every call in order:
+   * the attached extensions' engines and the control of the default.
+   */
+  search: Array<{ engines: SearchEngine[]; control: SearchEngineControl | null }>
   /** Write the debounced JSON documents out now and parse one of them. */
   saved: (name: string) => Record<string, unknown>
 }
@@ -387,6 +410,8 @@ export function harness(
       isFullScreen: () => false
     }
   } as unknown as ZenWindow
+  const pdfDocuments = new Map<string, string>()
+  const search: Harness['search'] = []
   const browser = {
     platform: { io },
     state: {
@@ -395,12 +420,16 @@ export function harness(
         listeners.push(fn)
         return () => undefined
       },
-      commitVolatile: () => undefined
+      commitVolatile: () => undefined,
+      setExtensionSearch: (engines: SearchEngine[], control: SearchEngineControl | null) => {
+        search.push({ engines, control })
+      }
     },
     toast: (message: string) => {
       toasts.push(message)
     },
     extensions: { list: () => infos },
+    pdf: { documentUrl: (url: string) => pdfDocuments.get(url) ?? null },
     tabs: {
       tab: (id: string) => tabs[id],
       activeTabFor: () => (active.id ? tabs[active.id] : undefined),
@@ -469,6 +498,8 @@ export function harness(
     notifyState,
     toasts,
     infos,
+    pdfDocuments,
+    search,
     saved: (name) => {
       runtime.flushSync()
       return JSON.parse(files.get(name) ?? '{}') as Record<string, unknown>
@@ -566,7 +597,11 @@ export async function call(
 }
 
 export function events(h: Harness, ep: string, key: string): Record<string, unknown>[] {
-  const [ns, name] = key.split('.')
+  // The event name follows the last dot: `storage.local.onChanged` is `onChanged` of the
+  // `storage.local` namespace, as the shim spells an area's own event.
+  const dot = key.lastIndexOf('.')
+  const ns = key.slice(0, dot)
+  const name = key.slice(dot + 1)
   return h.kt.to(ep).filter((m) => m.t === 'event' && m.ns === ns && m.name === name)
 }
 

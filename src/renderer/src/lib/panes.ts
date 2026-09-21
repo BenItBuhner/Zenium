@@ -149,6 +149,30 @@ export function releaseChromeFocus(doc: Document = document): boolean {
   return true
 }
 
+/**
+ * Where Tab out of the open URL bar lands (omnibox-50, Chrome's Tab past the popup's last row):
+ * the toolbar control after the address (`next`) or before it (`prev`), in the navigation row,
+ * not the bar's own root; the row's first or last control when the address is not in it. Null
+ * with no toolbar row on screen.
+ */
+export function toolbarControlBesideAddress(
+  move: 'next' | 'prev',
+  doc: Document = document
+): HTMLElement | null {
+  const row = paneRoots('toolbar', doc).find((root) => 'zenNavRow' in root.dataset)
+  if (!row) return null
+  const controls = focusablesIn(row)
+  if (controls.length === 0) return null
+  const inAddress = (el: HTMLElement): boolean =>
+    el.closest('[role="group"][aria-label="Address"]') !== null
+  if (move === 'next') {
+    const last = controls.map(inAddress).lastIndexOf(true)
+    return controls[last + 1] ?? controls[0] ?? null
+  }
+  const first = controls.findIndex(inAddress)
+  return (first > 0 ? controls[first - 1] : controls[controls.length - 1]) ?? null
+}
+
 /** The first control of `pane` on screen (Shift+Alt+T: the toolbar's back button when enabled). */
 export function paneFirstControl(pane: PaneId, doc: Document = document): HTMLElement | null {
   for (const root of paneRoots(pane, doc)) {

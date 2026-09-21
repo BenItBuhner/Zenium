@@ -52,13 +52,46 @@ class PdfViewerTest {
 
     @Test
     fun theDocumentIsOnlyServedToTheViewerPageItself() {
-        val page = PdfViewer.Page("zen://pdf?id=dl_1", PdfViewer.Document("/sdcard/Download/a.pdf", "a.pdf"))
-        assertTrue(PdfViewer.mayServeDocument("https://pdf.zenium.invalid/", page))
-        assertTrue(PdfViewer.mayServeDocument("https://pdf.zenium.invalid/viewer/pdf.worker.mjs", page))
+        val doc = PdfViewer.Document("/sdcard/Download/a.pdf", "a.pdf")
+        // A PDF with no address of its own: the document runs on the viewer's origin and fetches same-origin.
+        val own = PdfViewer.Page("zen://pdf?id=dl_1", PdfViewer.BASE_URL, doc)
+        assertEquals("https://pdf.zenium.invalid", PdfViewer.documentOrigin(own))
+        assertTrue(PdfViewer.mayServeDocument(null, "https://pdf.zenium.invalid/", own))
+        assertTrue(PdfViewer.mayServeDocument(null, "https://pdf.zenium.invalid/viewer/pdf.worker.mjs", own))
         // A web page that learned the address, or a tab that shows no viewer any more.
-        assertFalse(PdfViewer.mayServeDocument("https://evil.example/", page))
-        assertFalse(PdfViewer.mayServeDocument(null, page))
-        assertFalse(PdfViewer.mayServeDocument("https://pdf.zenium.invalid/", null))
+        assertFalse(PdfViewer.mayServeDocument(null, "https://evil.example/", own))
+        assertFalse(PdfViewer.mayServeDocument("https://evil.example", "https://pdf.zenium.invalid/", own))
+        assertFalse(PdfViewer.mayServeDocument(null, null, own))
+        assertFalse(PdfViewer.mayServeDocument(null, "https://pdf.zenium.invalid/", null))
+    }
+
+    @Test
+    fun theDocumentUnderThePdfsOwnUrlFetchesCrossOriginFromThatOrigin() {
+        val doc = PdfViewer.Document("/sdcard/Download/a.pdf", "a.pdf")
+        val page = PdfViewer.Page("zen://pdf?id=dl_2", "http://10.0.2.2:8765/sample.pdf", doc)
+        assertEquals("http://10.0.2.2:8765", PdfViewer.documentOrigin(page))
+        // fetch() from the document: its Origin, and the referrer cut to the origin.
+        assertTrue(PdfViewer.mayServeDocument("http://10.0.2.2:8765", "http://10.0.2.2:8765/", page))
+        assertTrue(PdfViewer.mayServeDocument(null, "http://10.0.2.2:8765/sample.pdf", page))
+        // Another origin's page, or the viewer's own origin, which this document does not run on.
+        assertFalse(PdfViewer.mayServeDocument("https://evil.example", "http://10.0.2.2:8765/", page))
+        assertFalse(PdfViewer.mayServeDocument(null, "https://pdf.zenium.invalid/", page))
+        assertFalse(PdfViewer.mayServeDocument(null, "http://10.0.2.2:87650/", page))
+    }
+
+    @Test
+    fun aCallbackUrlOfTheViewerPagesDocumentIsRecognised() {
+        val doc = PdfViewer.Document("/sdcard/Download/a.pdf", "a.pdf")
+        val page = PdfViewer.Page("zen://pdf?id=dl_2", "https://example.com/files/a.pdf", doc)
+        assertTrue(PdfViewer.isDocumentUrl("https://example.com/files/a.pdf", page))
+        assertTrue(PdfViewer.isDocumentUrl("https://example.com/files/a.pdf#page=2", page))
+        assertTrue(PdfViewer.isDocumentUrl("https://pdf.zenium.invalid/", page))
+        assertFalse(PdfViewer.isDocumentUrl("https://example.com/files/b.pdf", page))
+        assertFalse(PdfViewer.isDocumentUrl("https://example.com/", page))
+        assertFalse(PdfViewer.isDocumentUrl(null, page))
+        val own = PdfViewer.Page("zen://pdf?id=dl_1", PdfViewer.BASE_URL, doc)
+        assertTrue(PdfViewer.isDocumentUrl("https://pdf.zenium.invalid/", own))
+        assertFalse(PdfViewer.isDocumentUrl("https://example.com/files/a.pdf", own))
     }
 
     @Test

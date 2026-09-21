@@ -1,7 +1,8 @@
 name: Android blocking UI demo
 
-# Records the request blocking UI on a hardware-accelerated Android emulator: the address pill's
-# blocked-count chip climbing as the demo page asks nine real ad and tracking hosts again, the
+# Records the request blocking UI on a hardware-accelerated Android emulator: the blocked count
+# climbing as the demo page asks nine real ad and tracking hosts again (spoken at the pill's
+# address stop and read on the shield's row of the site-information sheet, v2 §9.29), the
 # Settings tab's Privacy and Security section (the master switch, the level as a picker sheet,
 # the counter, the filter lists as item rows with a sheet each, the sites without blocking), a
 # level change the Kotlin engine follows, the current site excepted from its switch row and

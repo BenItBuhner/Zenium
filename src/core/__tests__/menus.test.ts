@@ -393,6 +393,13 @@ const DESKTOP_APP_MENU = [
   'Zoom > Zoom In',
   'Zoom > Zoom Out',
   'Zoom > Reset Zoom',
+  'Split View',
+  'Split View > Grid',
+  'Split View > Vertical',
+  'Split View > Horizontal',
+  'Split View > -',
+  'Split View > Unsplit View',
+  'Split View > New Empty Split View',
   'Fullscreen',
   '-',
   'Find in Page…',
@@ -418,7 +425,14 @@ const DESKTOP_APP_MENU = [
   'Quit'
 ]
 
-const DESKTOP_ONLY = ['Search Tabs…', 'Keyboard Shortcuts', 'Compact Mode', 'Fullscreen', 'Quit']
+const DESKTOP_ONLY = [
+  'Search Tabs…',
+  'Keyboard Shortcuts',
+  'Compact Mode',
+  'Split View',
+  'Fullscreen',
+  'Quit'
+]
 
 describe('the app menu', () => {
   it('is unchanged on the desktop', () => {
@@ -2388,6 +2402,157 @@ describe('a menu asked for from the keyboard', () => {
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
     expect(h.where()).toMatchObject({ source: 'tab' })
     expect(h.where()).not.toHaveProperty('x')
+  })
+})
+
+describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
+  /** The item of that label in the last popup, wherever it sits. */
+  const item = (h: Harness, label: string): MenuItemTemplate => {
+    const found = h.shown().find((i) => i.label === label)
+    if (!found) throw new Error(`no "${label}" in ${topLabels(h.shown()).join(', ')}`)
+    return found
+  }
+  const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
+
+  it("the strip's menu is Chrome's trio first, then Zenium's own", () => {
+    const h = pageHarness()
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(topLabels(h.shown())).toEqual([
+      'New Tab',
+      'New Tab in Container',
+      'Reopen Closed Tab',
+      'Bookmark All Tabs…',
+      '-',
+      'New Folder',
+      'New Live Folder…',
+      'New Space…',
+      '-',
+      'Clear Unpinned Tabs'
+    ])
+    expect(item(h, 'Reopen Closed Tab').action).toBe('tab.reopenClosed')
+    expect(item(h, 'Bookmark All Tabs…').action).toBe('bookmark.allTabs')
+  })
+
+  it('greys Reopen Closed Tab while nothing was closed and brings the newest closed tab back', () => {
+    const h = pageHarness()
+    const { tabs } = h.browser
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
+    const closed = tabs.createTab({ url: 'https://closed.example/', active: false }, h.win)
+    tabs.closeTab(closed.id, false, h.win)
+    expect(tabs.tab(closed.id)).toBeUndefined()
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Reopen Closed Tab')).toBe(true)
+    item(h, 'Reopen Closed Tab').click!()
+    const urls = Object.values(h.browser.state.model.tabs).map((t) => t.url)
+    expect(urls).toContain('https://closed.example/')
+    h.browser.handleCommand(h.win, 'newtab.contextMenu', {})
+    expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
+  })
+
+  it("Reopen Closed Tab closes the tab row's menu too, after the close items", () => {
+    const h = pageHarness()
+    h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+    expect(topLabels(h.shown()).slice(-7)).toEqual([
+      'Close Tabs Above',
+      'Close Tabs Below',
+      'Close Other Tabs',
+      '-',
+      'Close Tab',
+      '-',
+      'Reopen Closed Tab'
+    ])
+    expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
+  })
+
+  describe('Close Tabs Above / Below / Other Tabs share one scope: the regular tabs, pinned and Essentials exempt', () => {
+    /** A pinned row P, an essential E, regular rows A B C, in that order in the space. */
+    function strip(): Harness & { ids: Record<string, string> } {
+      const h = harness(DESKTOP)
+      const { tabs } = h.browser
+      const make = (host: string): string =>
+        tabs.createTab({ url: `https://${host}.example/`, active: false }, h.win).id
+      const P = make('p')
+      tabs.togglePin(P, h.win)
+      const E = make('e')
+      tabs.toggleEssential(E, h.win)
+      const A = make('a')
+      const B = make('b')
+      const C = make('c')
+      // The window's first tab is a regular row too; it goes so the strip is exactly P E | A B C.
+      for (const t of Object.values(h.browser.state.model.tabs))
+        if (![P, E, A, B, C].includes(t.id)) tabs.closeTab(t.id, true, h.win)
+      return { ...h, ids: { P, E, A, B, C } }
+    }
+    const scopes = (h: Harness, tabId: string): Record<string, boolean> => {
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId })
+      return {
+        above: enabled(h, 'Close Tabs Above'),
+        below: enabled(h, 'Close Tabs Below'),
+        others: enabled(h, 'Close Other Tabs')
+      }
+    }
+    const alive = (h: Harness): string[] =>
+      Object.values(h.browser.state.model.tabs)
+        .map((t) => t.url.replace('https://', '').replace('.example/', ''))
+        .sort()
+
+    it('reads the regular rows around a regular row', () => {
+      const h = strip()
+      const { tabs } = h.browser
+      expect(tabs.closeScope(h.ids.B, 'above', h.win)).toEqual([h.ids.A])
+      expect(tabs.closeScope(h.ids.B, 'below', h.win)).toEqual([h.ids.C])
+      expect(tabs.closeScope(h.ids.B, 'others', h.win)).toEqual([h.ids.A, h.ids.C])
+      expect(scopes(h, h.ids.B)).toEqual({ above: true, below: true, others: true })
+      expect(scopes(h, h.ids.A)).toEqual({ above: false, below: true, others: true })
+      expect(scopes(h, h.ids.C)).toEqual({ above: true, below: false, others: true })
+    })
+
+    it('from a pinned or essential row has every regular row below, none above, and never closes pinned or Essentials', () => {
+      const h = strip()
+      const { tabs } = h.browser
+      for (const id of [h.ids.P, h.ids.E]) {
+        expect(tabs.closeScope(id, 'above', h.win)).toEqual([])
+        expect(tabs.closeScope(id, 'below', h.win)).toEqual([h.ids.A, h.ids.B, h.ids.C])
+        expect(tabs.closeScope(id, 'others', h.win)).toEqual([h.ids.A, h.ids.B, h.ids.C])
+        expect(scopes(h, id)).toEqual({ above: false, below: true, others: true })
+        // The items are there, greyed, not gone (§9.30).
+        expect(topLabels(h.shown())).toEqual(
+          expect.arrayContaining(['Close Tabs Above', 'Close Tabs Below', 'Close Other Tabs'])
+        )
+      }
+      tabs.closeOthers(h.ids.P, h.win)
+      expect(alive(h)).toEqual(['e', 'p'])
+    })
+
+    it('closes exactly its scope and leaves pinned and Essentials standing', () => {
+      let h = strip()
+      h.browser.tabs.closeAbove(h.ids.B, h.win)
+      expect(alive(h)).toEqual(['b', 'c', 'e', 'p'])
+      h = strip()
+      h.browser.tabs.closeBelow(h.ids.B, h.win)
+      expect(alive(h)).toEqual(['a', 'b', 'e', 'p'])
+      h = strip()
+      h.browser.tabs.closeOthers(h.ids.B, h.win)
+      expect(alive(h)).toEqual(['b', 'e', 'p'])
+      h = strip()
+      h.browser.tabs.closeBelow(h.ids.P, h.win)
+      expect(alive(h)).toEqual(['e', 'p'])
+    })
+
+    it('greys all three on the one regular row', () => {
+      const h = strip()
+      const { tabs } = h.browser
+      tabs.closeTab(h.ids.A, false, h.win)
+      tabs.closeTab(h.ids.C, false, h.win)
+      expect(scopes(h, h.ids.B)).toEqual({ above: false, below: false, others: false })
+      // And on the pinned row, with no regular row left at all.
+      tabs.closeTab(h.ids.B, false, h.win)
+      expect(scopes(h, h.ids.P)).toEqual({ above: false, below: false, others: false })
+      tabs.closeOthers(h.ids.P, h.win)
+      tabs.closeBelow(h.ids.P, h.win)
+      expect(alive(h)).toEqual(['e', 'p'])
+    })
   })
 })
 

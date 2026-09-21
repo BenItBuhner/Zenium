@@ -97,7 +97,7 @@
   }
   [data-form-factor='phone'] .zen-v2-title {
     font-size: var(--v2-font-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   [data-form-factor='phone'] .zen-v2[data-embedded] .zen-v2-title {
     font-size: var(--v2-font-body);
@@ -147,7 +147,7 @@
     white-space: nowrap;
     font-size: var(--v2-font-title);
     font-weight: var(--v2-weight-heading);
-    line-height: 28px;
+    line-height: var(--v2-line-title);
   }
   .zen-v2-deemphasized {
     color: var(--v2-text-deemphasized);
@@ -193,7 +193,7 @@
     margin: 0 0 8px;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
   }
   .zen-v2-card-title .lucide {
     width: var(--v2-icon);
@@ -233,7 +233,7 @@
   }
   .zen-v2-row-lead {
     flex-shrink: 0;
-    margin-top: calc((var(--v2-line-body) - var(--v2-icon)) / 2);
+    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
     color: var(--v2-text-deemphasized);
   }
   .zen-v2-row-lead.lucide,
@@ -466,7 +466,7 @@
     margin: 0;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
     overflow-wrap: anywhere;
   }
   /* The glyph at the title's start: 16 on desktop, 20 on a phone (§9.23), on the title's line. */
@@ -609,7 +609,7 @@
     display: block;
     font-size: var(--v2-font-heading);
     font-weight: var(--v2-weight-heading);
-    line-height: 22px;
+    line-height: var(--v2-line-heading);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -981,7 +981,7 @@
     color: var(--v2-on-accent);
     font-size: var(--v2-font-small);
     font-weight: var(--v2-weight-heading);
-    line-height: 20px;
+    line-height: var(--v2-line-small);
     font-variant-numeric: tabular-nums;
   }
   /* The hold's menu sheet: Remove from Zenium in the danger ink, as a menu's destructive item. */

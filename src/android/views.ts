@@ -12,7 +12,7 @@ import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
 import { zenPageHtml, type ImagePageLookup, type ReaderPageLookup } from '@shared/zenPages'
-import { PDF_VIEWER_ORIGIN, pdfPageDownloadId, type PdfPageLookup } from '@shared/pdfPage'
+import { pdfPageDownloadId, pdfViewerBaseUrl, type PdfPageLookup } from '@shared/pdfPage'
 import type {
   AgentCapture,
   AgentCaptureOptions,
@@ -281,10 +281,12 @@ export class AndroidTabView implements TabView {
         tabId: this.tabId,
         url,
         html: zenPageHtml(url, this.pages.reader, this.pages.image, this.pages.pdf),
-        // The PDF viewer runs on an origin of its own, so pdf.js can fetch its worker and the
-        // document; Kotlin serves both (`PdfViewer.kt`) from the file the download left.
+        // The PDF viewer's document runs under the PDF's own URL, as Chrome's viewer presents
+        // its tab (`pdfViewerBaseUrl`: the viewer's origin for a PDF with none); pdf.js fetches
+        // its worker and the document from the viewer's origin, which Kotlin serves
+        // (`PdfViewer.kt`) from the app's assets and the file the download left.
         ...(pdf
-          ? { baseUrl: `${PDF_VIEWER_ORIGIN}/`, document: { path: pdf.path, name: pdf.name } }
+          ? { baseUrl: pdfViewerBaseUrl(pdf), document: { path: pdf.path, name: pdf.name } }
           : {})
       })
       return

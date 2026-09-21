@@ -4,7 +4,9 @@ import {
   Bot,
   MonitorSmartphone,
   Moon,
+  PictureInPicture2,
   RotateCcw,
+  ScreenShare,
   Snowflake,
   Turtle,
   Volume2,
@@ -14,6 +16,7 @@ import {
 import type { AgentInfo, Tab } from '@shared/types'
 import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '@shared/types'
 import { CONTAINER_COLORS } from '@shared/defaults'
+import { tabAlertTooltip, type TabAlert } from '@shared/captureState'
 import { run } from '@renderer/lib/api'
 import { dropStore, startTabDrag } from '@renderer/lib/drag'
 import { hoverCard, measureRow } from '@renderer/lib/hoverCard'
@@ -73,6 +76,8 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
   const showDropZones = Boolean(dragging) && !isDragSource
   const title = tabTitle(tab)
   const pinnedChanged = tab.pinned && tab.pinnedUrl !== null && tab.url !== tab.pinnedUrl
+  // The indicator slot shows one state, Chrome's priority: recording > capturing > PiP > audio.
+  const alert = !tab.discarded ? (tab.alert ?? null) : null
 
   const onPointerDown = (e: React.PointerEvent): void => {
     if ((e.target as HTMLElement).closest('button')) return
@@ -222,7 +227,15 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
           aria-hidden
         />
       )}
-      {compact && (tab.audible || tab.muted) && (
+      {compact && alert && (
+        <span
+          className="zen-tab-audio-dot zen-tab-alert-dot"
+          data-alert={alert}
+          role="img"
+          aria-label={tabAlertTooltip(alert)}
+        />
+      )}
+      {compact && !alert && (tab.audible || tab.muted) && (
         <span
           className="zen-tab-audio-dot"
           data-muted={tab.muted || undefined}
@@ -289,7 +302,8 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               <Turtle className="h-3.5 w-3.5" />
             </button>
           )}
-          {(tab.audible || tab.muted) && !renaming && (
+          {alert && !renaming && <AlertIndicator alert={alert} />}
+          {!alert && (tab.audible || tab.muted) && !renaming && (
             <button
               type="button"
               tabIndex={-1}
@@ -339,6 +353,37 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * The tab's alert indicator (tabs-43), in the slot the audio indicator takes otherwise: Chrome's
+ * red dot for a camera or microphone in use, the sharing glyph for a screen, window or tab being
+ * shared (Chrome draws its desktop capture in the same red), the picture-in-picture glyph in the
+ * row's ink. Not a control – the tooltip says what it is – so it sits in the 24 px slot without
+ * the button's hover fill; the context menu keeps Mute Site.
+ */
+function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
+  const label = tabAlertTooltip(alert)
+  return (
+    <span
+      className={cn(
+        'zen-tab-alert flex h-6 w-6 shrink-0 items-center justify-center',
+        alert === 'pip' ? 'text-[var(--zen-muted)]' : 'text-[var(--zen-danger)]'
+      )}
+      data-alert={alert}
+      role="img"
+      title={label}
+      aria-label={label}
+    >
+      {alert === 'recording' && (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden focusable="false">
+          <circle cx="12" cy="12" r="7" fill="currentColor" />
+        </svg>
+      )}
+      {alert === 'capturing' && <ScreenShare className="h-3.5 w-3.5" aria-hidden />}
+      {alert === 'pip' && <PictureInPicture2 className="h-3.5 w-3.5" aria-hidden />}
+    </span>
   )
 }
 

@@ -73,16 +73,24 @@ export function OverlayShell({
         onMouseDown={(e) => e.stopPropagation()}
       >
         {header ?? (
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--zen-border)] px-4">
+          // On a phone the close is the 44 icon button (§9.3) in the phone panels' 56 header
+          // (§9.21), named for TalkBack without the keyboard hint a tooltip carries (§9.31).
+          <header
+            className={cn(
+              'flex shrink-0 items-center gap-2 border-b border-[var(--zen-border)]',
+              phone ? 'h-14 pl-4 pr-1.5' : 'h-12 px-4'
+            )}
+          >
             <h2 className="flex-1 text-[14px] font-semibold">{title}</h2>
             {actions}
             <button
               type="button"
-              className="zen-toolbar-button h-7 w-7"
-              title="Close (Esc)"
+              className={cn('zen-toolbar-button', phone ? 'h-11 w-11' : 'h-7 w-7')}
+              title={phone ? undefined : 'Close (Esc)'}
+              aria-label="Close"
               onClick={() => closeOverlay()}
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden />
             </button>
           </header>
         )}

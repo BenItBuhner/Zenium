@@ -40,12 +40,17 @@ export type GhostKind = 'row' | 'into' | 'tearoff'
  * The drop target under the pointer (`key`), the ghost's shape, and whether the sidebar should
  * offer the drop zones that need room of their own (an empty Essentials grid's "Drop here").
  * Nothing in the sidebar moves while the pointer is over the tab rows: those zones mount once
- * the pointer has gone above the tab panel, and stay for the rest of the drag.
+ * the pointer has gone above the tab panel, and stay for the rest of the drag. `page`: the
+ * pointer is over the page (the content viewport) right now – the split targets over it (the
+ * edge zones, the panes) show then and only then (split-12, Edge's behaviour): a drag that
+ * stays in the strip, a plain reorder, never sees them.
  */
-export const dropStore = createStore<{ key: string | null; ghost: GhostKind; zones: boolean }>(
-  { key: null, ghost: 'row', zones: false },
-  'drop'
-)
+export const dropStore = createStore<{
+  key: string | null
+  ghost: GhostKind
+  zones: boolean
+  page: boolean
+}>({ key: null, ghost: 'row', zones: false, page: false }, 'drop')
 
 /** The tab lists' motion, by the scrolling container that holds the list (the panels register). */
 export const listMotions = new WeakMap<HTMLElement, SlideMotion>()
@@ -91,6 +96,8 @@ interface Session {
   /** The list whose rows are slid open right now, own or not. */
   slid: SlideMotion | null
   sidebar: HTMLElement | null
+  /** The content viewport (`data-tear-zone`): the page the split targets show over. */
+  page: HTMLElement | null
   /** Pointer offset inside the picked-up row and the row's size: the ghost keeps both. */
   dx: number
   dy: number
@@ -158,6 +165,7 @@ export function startTabDrag(tab: Tab, e: React.PointerEvent): void {
     s.pointer = { x: ev.clientX, y: ev.clientY }
     placeGhost(ev.clientX, ev.clientY)
     offerZones(s, ev.clientX, ev.clientY)
+    trackPage(s, ev.clientX, ev.clientY)
     apply(resolve(ev.clientX, ev.clientY, s), s)
     run('tab.dragMove', {
       tabId: s.tabId,
@@ -223,6 +231,7 @@ export function remoteDragOver(over: TabDragOver | null): void {
   s.pointer = { x: over.x, y: over.y }
   placeGhost(over.x, over.y)
   offerZones(s, over.x, over.y)
+  trackPage(s, over.x, over.y)
   const target = resolve(over.x, over.y, s)
   apply(target, s)
   const key = target.kind === 'slot' || target.kind === 'key' ? target.key : null
@@ -251,6 +260,7 @@ function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): vo
     motion,
     slid: null,
     sidebar: rowEl.closest<HTMLElement>('aside'),
+    page: pageViewport(),
     dx: startX - rect.left,
     dy: startY - rect.top,
     width: rect.width,
@@ -305,6 +315,7 @@ function beginRemote(over: TabDragOver): void {
     motion,
     slid: null,
     sidebar: document.querySelector<HTMLElement>('aside'),
+    page: pageViewport(),
     dx: REMOTE_GRAB.dx,
     dy: REMOTE_GRAB.dy,
     width,
@@ -375,7 +386,7 @@ function cancel(s: Session): void {
   s.slid?.slide(new Map())
   s.slid = null
   hideCaret()
-  dropStore.set({ key: null, ghost: 'row' })
+  dropStore.set({ key: null, ghost: 'row', page: false })
   const own = ownRect(s)
   settle(s, own ? { x: own.left, y: own.top } : null, true)
 }
@@ -432,7 +443,7 @@ function end(s: Session, focusPage: boolean): void {
   if (s.frame !== null) cancelAnimationFrame(s.frame)
   document.body.style.cursor = ''
   hideCaret()
-  dropStore.set({ key: null, ghost: 'row', zones: false })
+  dropStore.set({ key: null, ghost: 'row', zones: false, page: false })
   uiStore.set({ drag: null })
   invalidateSnapshot()
   // Rows that slid for a drop that never committed (a cancel from the other window, a failed
@@ -474,6 +485,24 @@ function offerZones(s: Session, x: number, y: number): void {
   if (dropStore.get().zones || !inSidebar(s, x, y)) return
   const panel = s.scroller?.getBoundingClientRect()
   if (panel && y < panel.top) dropStore.set({ zones: true })
+}
+
+/** The content viewport the split targets show over; the page is what tears a tab off. */
+function pageViewport(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-tear-zone]')
+}
+
+/**
+ * Whether the pointer is over the page (split-12): the split targets – the four edge zones,
+ * the panes of the split on screen – are drawn while it is and not before, so a drag that
+ * stays in the strip shows none; back in the strip they go again, the page being a target
+ * only under the pointer (Edge). Read off the viewport's box, not hit-tested: the zones are
+ * what would be hit, and they are not there yet.
+ */
+function trackPage(s: Session, x: number, y: number): void {
+  const r = s.page?.getBoundingClientRect()
+  const over = Boolean(r && x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+  if (dropStore.get().page !== over) dropStore.set({ page: over })
 }
 
 /**

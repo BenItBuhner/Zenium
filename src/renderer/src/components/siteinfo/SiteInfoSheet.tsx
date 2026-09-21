@@ -55,6 +55,7 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { LevelMotion, type LevelState } from '@renderer/lib/motion/levels'
 import { openSettings as openSettingsPage } from '@renderer/lib/pages'
 import { useFrameDialog } from '@renderer/lib/portals'
+import { activeTab } from '@renderer/lib/selectors'
 import {
   dismissSiteInfo,
   refreshSiteInfo,
@@ -68,11 +69,13 @@ import {
   closeSiteDataConfirm,
   overlayAvailable,
   pushToast,
+  uiStore,
   type UiState
 } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { useEscapeTrap } from '../bookmarks/escape'
 import { focusAnchor, wrapTab } from '../bookmarks/popover'
+import { pillChipRows, type PillChipModel, type PillChipRow } from '../phone/pillChips'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 import { Favicon } from '../sidebar/Favicon'
 import { SiteInfoDesktopLayer } from '../siteControls/SiteInfoPopover'
@@ -489,8 +492,21 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
     levels.motion.pop()
   }
   const cookies = info?.cookies.items ?? []
-  // The chassis measures its detents again when this changes: a level, or the reading arriving.
-  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}`
+  // The chips the phone pill keeps out of the pill (OMN-02, v2 §9.29): the blocking shield with
+  // its count and the translate offer are this sheet's rows, always, at its top, with the same
+  // names, states and actions the chips had, and a live state chip waits here as a row while a
+  // newer state has the pill's slot (`components/phone/pillChips.tsx`).
+  const mediaSheetOpen = uiStore.use((s) => s.mediaSheet !== null)
+  const pillChips = extension
+    ? []
+    : pillChipRows(state, tab, {
+        siteInfoOpen: true,
+        mediaSheetOpen,
+        activeTabId: activeTab(state)?.id ?? null
+      })
+  // The chassis measures its detents again when this changes: a level, the reading arriving,
+  // or the pill's rows changing under it.
+  const contentKey = `${tab.id}:${level}:${info ? 'ready' : 'reading'}:${allCookies ? 'all' : 'fold'}:${pillChips.length}`
 
   return (
     <>
@@ -499,6 +515,14 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
         onDismissed={() => siteInfoDismissed()}
         contentKey={contentKey}
         handleLabel="Dismiss"
+        // The dialog's name as TalkBack opens it (A11Y-01): what the sheet is and whose, then the
+        // level's title once the sheet has drilled into one (the root pane stays in the track, so
+        // the name is composed rather than pointed at a title element).
+        label={
+          level === 'main'
+            ? `Site information for ${sheetTitleOf(site, extension)}`
+            : LEVEL_TITLES[level]
+        }
         header={
           level !== 'main' ? (
             <>
@@ -509,9 +533,9 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 onClick={pop}
                 aria-label="Back to site information"
               >
-                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} />
+                <ChevronLeft className="h-5 w-5" strokeWidth={1.75} aria-hidden />
               </button>
-              <span className="zen-sheet-title">{LEVEL_TITLES[level]}</span>
+              <h2 className="zen-sheet-title">{LEVEL_TITLES[level]}</h2>
             </>
           ) : undefined
         }
@@ -537,6 +561,9 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
                 />
               </div>
             ) : (
+              <PillChipRows chips={pillChips} />
+            )}
+            {!extension && (
               <SheetMainRows
                 site={site}
                 security={security}
@@ -612,6 +639,11 @@ function PhoneSheet({ tab, state }: { tab: Tab; state: UIState }): JSX.Element {
  * The sheet opens on a title block (§9.23): the favicon on the host's start, the connection
  * under it. An extension's page names no host: the block says whose page it is.
  */
+/** The sheet's title: the site's host, an extension page's kind, or the browser's own name. */
+function sheetTitleOf(site: SiteDescription, extension: ExtensionPageChrome | null): string {
+  return extension ? 'Extension page' : site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+}
+
 function SheetTitle({
   tab,
   state,
@@ -625,7 +657,7 @@ function SheetTitle({
   security: Security
   extension: ExtensionPageChrome | null
 }): JSX.Element {
-  const title = extension ? 'Extension page' : site.web ? site.host.replace(/^www\./, '') : 'Zenium'
+  const title = sheetTitleOf(site, extension)
   const container =
     tab.containerId !== DEFAULT_CONTAINER_ID && tab.containerId !== PRIVATE_CONTAINER_ID
       ? state.containers.find((c) => c.id === tab.containerId)?.name
@@ -651,6 +683,37 @@ function SheetTitle({
           <span className="min-w-0 truncate">{line.join(' · ')}</span>
         </p>
       )}
+    </div>
+  )
+}
+
+/**
+ * What the phone pill carries only here (OMN-02; v2 §9.29 as amended on Bennett's ruling: the
+ * pill shows the favicon, the host and the lock, nothing else): a rows group at the top of the
+ * root level, over a hairline, one chassis row per chip with the chip's name, its state as the
+ * value and its action – the shield row carries the blocked count and leads on to the blocking
+ * lists in Settings, the translate row still offers (the sheet leaves for the bar), a media row
+ * waiting behind a newer state opens the player – so nothing is lost, only moved. No heading:
+ * the rows name themselves. Nothing on a page with neither.
+ */
+function PillChipRows({
+  chips
+}: {
+  chips: ReadonlyArray<PillChipModel & { row: PillChipRow }>
+}): JSX.Element | null {
+  if (chips.length === 0) return null
+  return (
+    <div className="flex flex-col" data-testid="siteinfo-pill-chips">
+      {chips.map((chip) => (
+        <SheetRow
+          key={chip.id}
+          glyph={chip.row.glyph}
+          label={chip.row.label}
+          value={chip.row.value}
+          onClick={chip.row.activate}
+        />
+      ))}
+      <div aria-hidden className="zen-sheet-sep" />
     </div>
   )
 }
@@ -867,6 +930,7 @@ function ConfirmSheet({
       }}
       contentKey={`site-info-confirm:${kind}`}
       handleLabel="Dismiss"
+      label={words.title}
     >
       <div className="zen-sheet-title-block">
         <h2>

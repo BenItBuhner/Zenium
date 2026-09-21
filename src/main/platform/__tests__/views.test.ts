@@ -341,6 +341,80 @@ describe('a hidden tab page and the keyboard', () => {
     await settle()
     expect(keyboard.current).toBe(pageOf(view))
   })
+
+  /**
+   * The core hears of the page taking the keyboard (`onFocused`: the chrome lets go of its
+   * focused control, a split's pane becomes the active one) only for a focus that is the page's
+   * own – not for the one Electron hands a hidden view and this host takes straight back, which
+   * blurred the empty pane's URL field a moment after it opened (split-04).
+   */
+  describe('reporting the focus to the tab', () => {
+    const withEvents = (
+      host: ElectronTabViewHost,
+      window: WindowHost
+    ): { view: ElectronTabView; focused: () => number } => {
+      let focused = 0
+      const events = new Proxy({} as TabViewEvents, {
+        get: (_t, name) =>
+          name === 'onFocused'
+            ? (): void => {
+                focused++
+              }
+            : (): undefined => undefined
+      })
+      const view = host.createView(
+        { id: 'tab_ev', containerId: 'default' } as Tab,
+        events,
+        window
+      ) as ElectronTabView
+      return { view, focused: () => focused }
+    }
+
+    it('says nothing of a hidden page handed the keyboard unasked, which is given back', async () => {
+      const { host, window } = setup()
+      window.chrome.focus()
+      const { view, focused } = withEvents(host, window)
+      takeKeyboard(pageOf(view))
+      await settle()
+      expect(keyboard.current).toBe(window.chrome)
+      expect(focused()).toBe(0)
+    })
+
+    it('reports a page on screen taking it (the user clicked into the pane)', async () => {
+      const { host, window } = setup()
+      window.chrome.focus()
+      const { view, focused } = withEvents(host, window)
+      view.setVisible(true)
+      takeKeyboard(pageOf(view))
+      expect(focused()).toBe(1)
+      await settle()
+      expect(focused()).toBe(1)
+      expect(keyboard.current).toBe(pageOf(view))
+    })
+
+    it('reports the answer to the core asking for it, hidden or not', async () => {
+      const { host, window } = setup()
+      window.chrome.focus()
+      const { view, focused } = withEvents(host, window)
+      view.focus()
+      expect(focused()).toBe(1)
+      await settle()
+      expect(focused()).toBe(1)
+      expect(keyboard.current).toBe(pageOf(view))
+    })
+
+    it('reports it once a page shown between the event and the check keeps it', async () => {
+      const { host, window } = setup()
+      window.chrome.focus()
+      const { view, focused } = withEvents(host, window)
+      takeKeyboard(pageOf(view))
+      expect(focused()).toBe(0)
+      view.setVisible(true)
+      await settle()
+      expect(focused()).toBe(1)
+      expect(keyboard.current).toBe(pageOf(view))
+    })
+  })
 })
 
 /**

@@ -416,6 +416,18 @@ function LookSection({
           </Row>
         </Group>
       )}
+      <Group title="Split view">
+        <Row
+          label="Split view drag and drop"
+          hint="Drag a tab to the edge of the page to open it in a split view."
+        >
+          <Switch
+            aria-label="Split view drag and drop"
+            checked={s.splitEdgeZones}
+            onCheckedChange={(v) => set({ splitEdgeZones: v })}
+          />
+        </Row>
+      </Group>
       <Group title="Glance">
         <Row
           label="Enable Glance"
@@ -803,6 +815,25 @@ function SearchSection({
         <Switch
           checked={state.settings.searchSuggestions}
           onCheckedChange={(v) => set({ searchSuggestions: v })}
+        />
+      </Row>
+      {/* Suggestion privacy (omnibox-45): the local sources each behind their own switch. */}
+      <Row
+        label="Show history suggestions"
+        hint="Pages you visited, and completing an address you typed before."
+      >
+        <Switch
+          checked={state.settings.historySuggestions !== false}
+          onCheckedChange={(v) => set({ historySuggestions: v })}
+        />
+      </Row>
+      <Row
+        label="Show bookmark suggestions"
+        hint="Bookmarks whose title or address matches what you type."
+      >
+        <Switch
+          checked={state.settings.bookmarkSuggestions !== false}
+          onCheckedChange={(v) => set({ bookmarkSuggestions: v })}
         />
       </Row>
       <Row
