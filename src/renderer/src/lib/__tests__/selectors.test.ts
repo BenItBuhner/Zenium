@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Folder, Space, Tab, UIState } from '@shared/types'
-import { tabOrderOf } from '../selectors'
+import type { Folder, Space, SplitGroup, Tab, UIState } from '@shared/types'
+import { stripRows, tabOrderOf } from '../selectors'
 
 function tab(id: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -108,5 +108,61 @@ describe('tabOrderOf', () => {
     } as unknown as UIState
     const order = tabOrderOf(withOrphan, withOrphan.spaces[0]).map((t) => t.id)
     expect(order[order.length - 1]).toBe('orphan')
+  })
+})
+
+/*
+ * The split group's row (design language v2 §9.35): a list draws a split as one row in the slot
+ * of its first pane, gathering the list's other panes into it in the split's order.
+ */
+describe('stripRows', () => {
+  const group = (id: string, tabIds: string[]): SplitGroup => ({
+    id,
+    spaceId: 's1',
+    tabIds,
+    layout: 'vertical',
+    sizes: tabIds.map(() => 1 / tabIds.length)
+  })
+  const rowsOf = (list: Tab[], groups: Record<string, SplitGroup>): string[] =>
+    stripRows(list, groups).map((r) =>
+      r.kind === 'tab' ? r.tab.id : `split(${r.anchor.id}: ${r.tabs.map((t) => t.id).join(' ')})`
+    )
+
+  it('folds the split into one row where its first pane is, the panes in the split’s order', () => {
+    const list = [
+      tab('a'),
+      tab('b', { splitGroupId: 'g' }),
+      tab('c', { splitGroupId: 'g' }),
+      tab('d')
+    ]
+    expect(rowsOf(list, { g: group('g', ['c', 'b']) })).toEqual(['a', 'split(b: c b)', 'd'])
+  })
+
+  it('gathers panes that are not neighbours in the list', () => {
+    const list = [
+      tab('a', { splitGroupId: 'g' }),
+      tab('x'),
+      tab('b', { splitGroupId: 'g' }),
+      tab('y')
+    ]
+    expect(rowsOf(list, { g: group('g', ['a', 'b']) })).toEqual(['split(a: a b)', 'x', 'y'])
+  })
+
+  it('draws a lone pane (its siblings in another list) and a tab of a gone split as plain rows', () => {
+    const list = [tab('a', { splitGroupId: 'g' }), tab('b'), tab('c', { splitGroupId: 'gone' })]
+    expect(rowsOf(list, { g: group('g', ['a', 'elsewhere']) })).toEqual(['a', 'b', 'c'])
+  })
+
+  it('keeps two splits apart, each in its own row', () => {
+    const list = [
+      tab('a', { splitGroupId: 'g1' }),
+      tab('b', { splitGroupId: 'g2' }),
+      tab('c', { splitGroupId: 'g1' }),
+      tab('d', { splitGroupId: 'g2' })
+    ]
+    expect(rowsOf(list, { g1: group('g1', ['a', 'c']), g2: group('g2', ['d', 'b']) })).toEqual([
+      'split(a: a c)',
+      'split(b: d b)'
+    ])
   })
 })

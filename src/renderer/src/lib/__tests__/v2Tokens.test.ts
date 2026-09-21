@@ -68,6 +68,9 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The sidebar tab drag – drop-into targets, the audio indicator, ghost, caret and tear-off card
   // (lib/drag.ts, components/DragLayer.tsx, components/sidebar/TabItem.tsx).
   ['[data-drop-into] {', '.zen-panel {'],
+  // The split group's row in the sidebar (components/sidebar/SplitGroupRow.tsx, §9.35): the
+  // container's hover and selected fills and its segments' 60 % fill in the window family (§9.29).
+  ['.zen-split-row {', '.zen-essential {'],
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],

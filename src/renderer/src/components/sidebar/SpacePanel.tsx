@@ -9,13 +9,14 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
-import { pinnedOf, regularOf } from '@renderer/lib/selectors'
+import { pinnedOf, regularOf, stripRows, type StripRow } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
 import { ListMotionContext } from './listMotion'
+import { SplitGroupRow } from './SplitGroupRow'
 import { TabItem } from './TabItem'
 
 interface Props {
@@ -113,11 +114,11 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                 <SpaceHeader space={space} compact={compact} fallback={activePinnedHidden} />
                 {!space.pinnedCollapsed && (
                   <div className="relative flex flex-col gap-0.5" data-tab-list="pinned">
-                    {pinned.map((tab) => (
-                      <TabItem
-                        key={tab.id}
-                        tab={tab}
-                        active={tab.id === activeTabId}
+                    {stripRows(pinned, state.splitGroups).map((row) => (
+                      <StripRowItem
+                        key={rowKey(row)}
+                        row={row}
+                        activeTabId={activeTabId}
                         compact={compact}
                         parent={pinnedHeaderKey}
                       />
@@ -166,18 +167,20 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
                   dragging={Boolean(drag)}
                   live={Boolean(state.liveFolders[folder.id])}
                   liveError={state.liveFolders[folder.id]?.lastError ?? null}
+                  splitGroups={state.splitGroups}
                 />
               ))}
-              {regular
-                .filter((t) => !t.folderId || !state.folders[t.folderId])
-                .map((tab) => (
-                  <TabItem
-                    key={tab.id}
-                    tab={tab}
-                    active={tab.id === activeTabId}
-                    compact={compact}
-                  />
-                ))}
+              {stripRows(
+                regular.filter((t) => !t.folderId || !state.folders[t.folderId]),
+                state.splitGroups
+              ).map((row) => (
+                <StripRowItem
+                  key={rowKey(row)}
+                  row={row}
+                  activeTabId={activeTabId}
+                  compact={compact}
+                />
+              ))}
             </div>
           </div>
           <NewTabButton
@@ -195,6 +198,46 @@ export function SpacePanel({ state, space, isActive, compact }: Props): JSX.Elem
         </div>
       </div>
     </ListMotionContext.Provider>
+  )
+}
+
+/** A row's React key: the tab's id, or the split row's anchor (the slot it stands in). */
+const rowKey = (row: StripRow): string => (row.kind === 'tab' ? row.tab.id : row.anchor.id)
+
+/** One row of a tab list: a tab's own row, or a split group's row (§9.35). */
+function StripRowItem({
+  row,
+  activeTabId,
+  compact,
+  indent,
+  parent
+}: {
+  row: StripRow
+  activeTabId: string | null
+  compact: boolean
+  indent?: boolean
+  parent?: string
+}): JSX.Element {
+  if (row.kind === 'tab')
+    return (
+      <TabItem
+        tab={row.tab}
+        active={row.tab.id === activeTabId}
+        compact={compact}
+        indent={indent}
+        parent={parent}
+      />
+    )
+  return (
+    <SplitGroupRow
+      group={row.group}
+      anchor={row.anchor}
+      tabs={row.tabs}
+      activeTabId={activeTabId}
+      compact={compact}
+      indent={indent}
+      parent={parent}
+    />
   )
 }
 
@@ -326,6 +369,7 @@ interface FolderRowProps {
   /** Zen Live Folder: contents come from GitHub / RSS / a REST API. */
   live: boolean
   liveError: string | null
+  splitGroups: UIState['splitGroups']
 }
 
 function FolderRow({
@@ -336,7 +380,8 @@ function FolderRow({
   dropKey,
   dragging,
   live,
-  liveError
+  liveError,
+  splitGroups
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
@@ -424,11 +469,11 @@ function FolderRow({
           ))}
       </div>
       {!folder.collapsed &&
-        tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeTabId}
+        stripRows(tabs, splitGroups).map((row) => (
+          <StripRowItem
+            key={rowKey(row)}
+            row={row}
+            activeTabId={activeTabId}
             compact={compact}
             indent
             parent={key}

@@ -245,13 +245,22 @@ export function remoteDragOver(over: TabDragOver | null): void {
 // Session
 // ---------------------------------------------------------------------------
 
+/**
+ * The list a row is a slot of: the rows' parent, or – for a segment of a split group's row
+ * (design language v2 §9.35) – the parent of that row, which is the list's slot in the
+ * segment's stead.
+ */
+function listOf(rowEl: HTMLElement): HTMLElement | null {
+  return rowEl.closest<HTMLElement>('[data-split-row]')?.parentElement ?? rowEl.parentElement
+}
+
 function begin(tab: Tab, rowEl: HTMLElement, startX: number, startY: number): void {
   if (session) end(session, false)
   const rect = rowEl.getBoundingClientRect()
   const scroller = rowEl.closest<HTMLElement>('[data-tab-scroller]')
   const motion = scroller ? (listMotions.get(scroller) ?? null) : null
   // Essentials tiles sit in a grid: they keep their own before / after zones, nothing slides.
-  const list = motion && rowEl.matches('.zen-tab') ? rowEl.parentElement : null
+  const list = motion && rowEl.matches('.zen-tab') ? listOf(rowEl) : null
   session = {
     tabId: tab.id,
     remote: false,
@@ -310,7 +319,7 @@ function beginRemote(over: TabDragOver): void {
   session = {
     tabId: over.tabId,
     remote: true,
-    list: rowEl && motion ? rowEl.parentElement : null,
+    list: rowEl && motion ? listOf(rowEl) : null,
     scroller,
     motion,
     slid: null,
@@ -463,6 +472,12 @@ function listRows(list: HTMLElement): HTMLElement[] {
 }
 
 function ownRect(s: Session): DOMRect | null {
+  // A segment of a split row: its own box, not the row's (the row is the slot in the motion,
+  // under its anchor's id, which may be this tab's).
+  const segment = document.querySelector<HTMLElement>(
+    `[data-split-row] .zen-tab[data-tab-id="${CSS.escape(s.tabId)}"]`
+  )
+  if (segment) return segment.getBoundingClientRect()
   const fromMotion = s.motion?.restingRect(s.tabId) ?? null
   if (fromMotion) return fromMotion
   return (
@@ -566,7 +581,11 @@ function resolveSlot(
   motion: SlideMotion
 ): DropTarget | null {
   const rows = listRows(list)
-  const ownEl = rows.find((r) => r.dataset.tabId === s.tabId) ?? null
+  // A split group's row stands under its anchor's id but is not the hole a lifted segment left:
+  // the row stays, with the segment's slot open in it, and the segment lands like a row from
+  // elsewhere (§9.35; the core takes it out of the split unless it lands beside a sibling).
+  const ownEl =
+    rows.find((r) => r.dataset.tabId === s.tabId && r.dataset.splitRow === undefined) ?? null
   const others = rows.filter((r) => r !== ownEl)
   if (!ownEl && others.length === 0) return null
   const liftedAt = ownEl ? rows.indexOf(ownEl) : others.length
@@ -601,9 +620,10 @@ function resolveSlot(
   const index = slotAt(y, mids)
   const ids = others.map((r) => r.dataset.tabId ?? '')
   const named = slotKey(ids, liftedAt, index)
-  // A row from elsewhere never "stays": past the end it lands after the last row.
+  // A row from elsewhere never "stays": past the end it lands after the last row – unless the
+  // slot is named by the lifted tab itself (the split row it anchors), which is its own.
   const key = named.key
-  const stay = ownEl ? named.stay : false
+  const stay = ownEl ? named.stay : Boolean(key?.startsWith(`tab:${s.tabId}:`))
   const cy = gapCentre(liftedAt, index, spans, own)
   return {
     kind: 'slot',

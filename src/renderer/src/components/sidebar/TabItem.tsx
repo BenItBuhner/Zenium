@@ -41,19 +41,29 @@ interface Props {
   indent?: boolean
   /** The strip header that folds this row away (`folder:<id>`, `header:<spaceId>`), if any. */
   parent?: string
+  /**
+   * A pane of a split group's row (`SplitGroupRow`, design language v2 §9.35): the row's segment
+   * `index` of `count`. The segment keeps the row's favicon, title, close and the state the user
+   * cannot otherwise see (audio, an alert) and drops the rest of the trailing slot; the group's
+   * row is the list's slot (its motion and its hover fill), not the segment.
+   */
+  segment?: { index: number; count: number }
 }
 
-export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.Element {
+export function TabItem({ tab, active, compact, indent, parent, segment }: Props): JSX.Element {
   const dragging = uiStore.use((s) => s.drag)
   const renaming = uiStore.use((s) => s.renamingTabId === tab.id)
   const tabIndex = useStripTabIndex(`tab:${tab.id}`, active)
   const motion = useListMotion()
+  const inSegment = Boolean(segment)
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
-      motion?.attach(tab.id, el)
-      return () => motion?.attach(tab.id, null)
+      // The list's slot is the split row's, attached by `SplitGroupRow`; a segment is not one.
+      const slot = inSegment ? null : motion
+      slot?.attach(tab.id, el)
+      return () => slot?.attach(tab.id, null)
     },
-    [motion, tab.id]
+    [motion, tab.id, inSegment]
   )
   const foreign = browserStore.use((s) => s.state?.foreignTabIds.includes(tab.id) ?? false)
   const agent = browserStore.use(
@@ -172,13 +182,26 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
   // Keyboard reach (§9.22, a11y-07): the strip is one tab stop; arrows, Home/End, Enter/Space,
   // Delete and Escape are the strip's (lib/tabStrip.ts). The row's own buttons stay out of the
   // tab order: Delete closes, the row's context menu has the rest.
+  // In a split row a segment keeps what names the tab and what it must show – the favicon, the
+  // title, the close, a live audio or alert state – and not the trailing slot's other buttons,
+  // whose room a segment does not have (§9.35); their states stay in the row's fade, its tooltip
+  // and its context menu.
+  const trailing = !segment
   return (
     <div
       ref={attach}
-      className={cn('zen-tab group', compact && 'justify-center px-0', indent && 'ml-5')}
+      className={cn(
+        'zen-tab group',
+        segment && 'zen-split-seg',
+        compact && 'justify-center px-0',
+        indent && 'ml-5'
+      )}
       role="tab"
       aria-selected={active}
       aria-label={title}
+      aria-description={
+        segment ? `Split view, pane ${segment.index + 1} of ${segment.count}` : undefined
+      }
       data-active={active}
       data-selected={selected || undefined}
       data-discarded={tab.discarded}
@@ -252,14 +275,14 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               {title}
             </span>
           )}
-          {agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
-          {foreign && active && (
+          {trailing && agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
+          {trailing && foreign && active && (
             <MonitorSmartphone
               className="h-3.5 w-3.5 shrink-0 opacity-60"
               aria-label="Shown in another window"
             />
           )}
-          {tab.discarded && !renaming && (
+          {trailing && tab.discarded && !renaming && (
             <button
               type="button"
               tabIndex={-1}
@@ -274,7 +297,7 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               <Moon className="h-3.5 w-3.5" />
             </button>
           )}
-          {tab.frozen && !renaming && (
+          {trailing && tab.frozen && !renaming && (
             <button
               type="button"
               tabIndex={-1}
@@ -288,7 +311,7 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               <Snowflake className="h-3.5 w-3.5" />
             </button>
           )}
-          {!tab.frozen && tab.cpuThrottle > 1 && !renaming && (
+          {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
             <button
               type="button"
               tabIndex={-1}
@@ -323,7 +346,7 @@ export function TabItem({ tab, active, compact, indent, parent }: Props): JSX.El
               )}
             </button>
           )}
-          {pinnedChanged ? (
+          {trailing && pinnedChanged ? (
             <button
               type="button"
               tabIndex={-1}

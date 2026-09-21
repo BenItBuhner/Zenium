@@ -90,6 +90,9 @@
   --zen-corner: squircle;
   /* Zen 1.22: sidebar type got larger for readability. */
   --zen-sidebar-font: 14px;
+  /* The tab row's height, read by the row and by the split group's row that stands in for rows
+     (design language v2 §9.35); the coarse-pointer block raises it. */
+  --zen-tab-row: 36px;
 }
 
 :root[data-theme='dark'] {
@@ -973,6 +976,7 @@
    */
   .zen-squircle,
   .zen-tab,
+  .zen-split-row,
   .zen-essential,
   .zen-panel,
   .zen-omnibox-sheet,
@@ -1121,7 +1125,7 @@
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 36px;
+    height: var(--zen-tab-row);
     padding: 0 8px 0 10px;
     border-radius: 11px;
     color: var(--zen-fg);
@@ -1202,6 +1206,82 @@
     border-radius: 2px;
     background: var(--zen-accent);
     animation: zen-progress 1.1s var(--zen-ease) infinite;
+  }
+
+  /*
+   * The split group's row (design language v2 §9.35; Zen's `zen-split-view.css`): one container
+   * at the tab row's height holding the split's tabs side by side, radius 10 over segments at 8
+   * with 2 px padding (concentric, §2), in the window family (§9.29). The container takes the
+   * hover fill as one shape; when the group holds the active tab it takes `--v2-window-fill` as
+   * one shape and each segment `--v2-window-fill` again at 60 % over it, its hairlines gone, so
+   * the 2 px rim reads as the group and the segments as its tabs. No border in the expanded
+   * sidebar; the icon rail's column form below gets a 2 px inset outline.
+   */
+  .zen-split-row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    height: var(--zen-tab-row);
+    padding: 2px;
+    border-radius: 10px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-split-row:hover {
+    background: var(--v2-window-fill-hover);
+  }
+  .zen-split-row[data-active='true'] {
+    background: var(--v2-window-fill);
+  }
+  /* A segment: `flex: 1` at its own width, no fill of its own – the row's hover is the group's. */
+  .zen-split-row > .zen-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    gap: 8px;
+    padding: 0 4px 0 8px;
+    border-radius: 8px;
+    container-type: inline-size;
+  }
+  .zen-split-row > .zen-tab:hover {
+    background: transparent;
+  }
+  .zen-split-row > .zen-tab[data-active='true'] {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-split-row[data-active='true'] > .zen-tab {
+    background: color-mix(in srgb, var(--v2-window-fill) 60%, transparent);
+  }
+  /* The 1 × 16 hairline centred on the shared edge: the window's hairline, `--zen-border`. */
+  .zen-split-hairline {
+    flex: none;
+    align-self: center;
+    width: 1px;
+    height: 16px;
+    background: var(--zen-border);
+  }
+  .zen-split-row[data-active='true'] .zen-split-hairline {
+    visibility: hidden;
+  }
+  /* The close shows on hover only where the segment has 70 px for it. */
+  @container (width < 70px) {
+    .zen-split-row > .zen-tab .zen-tab-close {
+      display: none;
+    }
+  }
+  /* The icon rail: the group stacks in a column with 16 × 1 hairlines and a 2 px inset outline. */
+  .zen-split-row-column {
+    flex-direction: column;
+    height: auto;
+    box-shadow: inset 0 0 0 2px var(--zen-border);
+  }
+  .zen-split-row-column > .zen-tab {
+    flex: none;
+    height: calc(var(--zen-tab-row) - 4px);
+  }
+  .zen-split-row-column > .zen-split-hairline {
+    width: 16px;
+    height: 1px;
   }
 
   .zen-essential {
@@ -6131,8 +6211,10 @@
 :root[data-form-factor='phone'][data-text-scale] .zen-overview-card-close {
   border-top-right-radius: 8px;
 }
+:root[data-pointer='coarse'] {
+  --zen-tab-row: 42px;
+}
 :root[data-pointer='coarse'] .zen-tab {
-  height: 42px;
   border-radius: 11px;
 }
 /* Hover-revealed row actions (close a tab, remove an entry) have nothing to hover under a finger. */
