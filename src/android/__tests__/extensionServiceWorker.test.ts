@@ -12,6 +12,8 @@ import {
   workerSelf,
   type ScriptDocument,
   type ScriptElement,
+  type ScriptErrorEvent,
+  type ScriptErrorTarget,
   type ServiceWorkerEndpoint,
   type ServiceWorkerMessage
 } from '../extensionServiceWorker'
@@ -437,18 +439,38 @@ describe('importScripts on the worker page', () => {
    */
   function documentInContext(): {
     document: ScriptDocument
+    /** The page the elements report to: a failing script is an `error` event, uncaught unless prevented. */
+    errors: ScriptErrorTarget
+    uncaught: unknown[]
     context: vm.Context
     ran: string[]
     removed: number
   } {
     const context = vm.createContext({ log: [] as string[] })
     const ran: string[] = []
+    const listeners = new Set<(event: ScriptErrorEvent) => void>()
+    const uncaught: unknown[] = []
     let removed = 0
     const document: ScriptDocument = {
       head: {
         appendChild: (node: ScriptElement) => {
           ran.push(node.textContent ?? '')
-          vm.runInContext(node.textContent ?? '', context)
+          try {
+            vm.runInContext(node.textContent ?? '', context)
+          } catch (error) {
+            // Blink reports a script element's parse or run error to the window, never to the
+            // inserter; the console shows it unless a listener prevents the event's default.
+            let prevented = false
+            const event: ScriptErrorEvent = {
+              error,
+              message: String((error as Error).message),
+              preventDefault: () => {
+                prevented = true
+              }
+            }
+            for (const listener of listeners) listener(event)
+            if (!prevented) uncaught.push(error)
+          }
         }
       },
       documentElement: null,
@@ -461,6 +483,11 @@ describe('importScripts on the worker page', () => {
     }
     return {
       document,
+      errors: {
+        addEventListener: (_type, listener) => listeners.add(listener),
+        removeEventListener: (_type, listener) => listeners.delete(listener)
+      },
+      uncaught,
       context,
       ran,
       get removed() {
@@ -509,6 +536,62 @@ describe('importScripts on the worker page', () => {
     expect(() => importScripts('https://evil.example/x.js')).toThrow(/not on the extension origin/)
     expect(() => importScripts('missing.js')).toThrow(/missing\.js failed \(404\)/)
     expect(d.ran).toEqual([])
+  })
+
+  it("throws what an imported file throws to the caller and stops at it, as a worker's importScripts does (OrbitNote's module among its imports)", () => {
+    // OrbitNote's `worker_wrapper.js`: `try { importScripts("storageHelper.js", ..., "index.js") }
+    // catch (e) { console.log(e) }`, `index.js` an ES module. Chrome throws its SyntaxError to
+    // the wrapper's catch; the page reported it as the worker's uncaught error instead.
+    const files: Record<string, string> = {
+      [`${ORIGIN}/background/storageHelper.js`]: 'log.push("storage")',
+      [`${ORIGIN}/background/index.js`]: 'import { a } from "./a.js"; log.push("index")',
+      [`${ORIGIN}/background/after.js`]: 'log.push("after")',
+      [`${ORIGIN}/background/throws.js`]: 'throw new TypeError("no vault")'
+    }
+    const d = documentInContext()
+    const importScripts = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/background/worker_wrapper.js`,
+      fetchText: (url) => {
+        const text = files[url]
+        return text === undefined ? { status: 404, text: '' } : { status: 200, text }
+      },
+      document: d.document,
+      errors: d.errors
+    })
+    let caught: unknown = null
+    try {
+      importScripts('storageHelper.js', 'index.js', 'after.js')
+    } catch (error) {
+      caught = error
+    }
+    // The context's own SyntaxError (another realm's constructor), the error object itself.
+    expect((caught as Error).name).toBe('SyntaxError')
+    expect(String((caught as Error).message)).toMatch(/import/)
+    // The files before it ran, the one after it did not; nothing reached the console as uncaught.
+    expect(d.context.log).toEqual(['storage'])
+    expect(d.uncaught).toEqual([])
+    expect(d.removed).toBe(2)
+    // A run-time throw of an imported file is the caller's too, the error object itself.
+    let thrown: unknown = null
+    try {
+      importScripts('throws.js')
+    } catch (error) {
+      thrown = error
+    }
+    expect((thrown as Error).name).toBe('TypeError')
+    expect((thrown as Error).message).toBe('no vault')
+    expect(d.uncaught).toEqual([])
+    // Without a page to listen to, the error stays where the page puts it (the older contract).
+    const bare = documentInContext()
+    const bareImport = importScriptsFor({
+      origin: ORIGIN,
+      base: `${ORIGIN}/background/worker_wrapper.js`,
+      fetchText: (url) => ({ status: 200, text: files[url] ?? '' }),
+      document: bare.document
+    })
+    expect(() => bareImport('index.js')).not.toThrow()
+    expect(bare.uncaught).toHaveLength(1)
   })
 })
 

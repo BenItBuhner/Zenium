@@ -78,12 +78,16 @@ class ExtensionWebView(
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()
-            if (url.startsWith("$origin/")) return false
-            if (url.startsWith("http:") || url.startsWith("https:")) {
-                host.chrome.openUrl(url)
-                if (context == "popup") extensions.closePopup()
-            } else {
-                host.openExternal(url)
+            when (val decision = ExtensionPageNavigation.decide(origin, url, request.isForMainFrame)) {
+                ExtensionPageNavigation.Decision.Proceed -> return false
+                is ExtensionPageNavigation.Decision.Load -> view.loadUrl(decision.url)
+                is ExtensionPageNavigation.Decision.OpenTab -> {
+                    host.chrome.openUrl(decision.url)
+                    if (context == "popup") extensions.closePopup()
+                }
+                ExtensionPageNavigation.Decision.Drop ->
+                    android.util.Log.d(Extensions.TAG, "a frame of the ${served.id.take(8)}/$context view asked for ${url.take(120)}: dropped, its element's served src loads instead")
+                is ExtensionPageNavigation.Decision.External -> host.openExternal(decision.url)
             }
             return true
         }

@@ -20,7 +20,7 @@ import {
 } from '@renderer/lib/layout'
 import { pageOffScreen, pageViewStore } from '@renderer/lib/pageView'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
-import { activeTab, visibleTabIds } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane, visibleTabIds } from '@renderer/lib/selectors'
 import { contentAreaStore, coverBandStore, pageHidden, type UiState } from '@renderer/lib/ui'
 
 export interface LayoutInfo {
@@ -201,6 +201,9 @@ export function useLayoutReporter(
         // would only cover it.
         if (formFactor === 'phone')
           placements = placements.filter((p) => state.tabs[p.tabId]?.url !== BLANK_URL)
+        // An empty pane of a split is chrome too (`EmptyPane`, split-04): its field, its "Choose
+        // a tab" button and the URL bar floating in it draw where the blank view would be.
+        if (group) placements = placements.filter((p) => !isEmptySplitPane(state, p.tabId))
         let glance: LayoutReport['glance'] = null
         if (state.glance) {
           // The parent is frozen behind the glance card; the card itself appears once its open

@@ -454,6 +454,25 @@ const DEFS: Def[] = [
     label: 'New Empty Split View',
     ...both({ key: '*', mods: ACCEL_SHIFT })
   },
+  {
+    // Neither reference browser has a chord for the pane (Chrome's and Edge's F6 rotates the
+    // chrome's panes and the pages in turn, which `focus.nextPane` keeps): the space chords with
+    // Shift added, one pane along the split's order.
+    id: 'zen-split-view-next-pane',
+    action: 'split.nextPane',
+    group: 'zen-split-view',
+    label: 'Next Split Pane',
+    zen: { key: 'ArrowRight', mods: ACCEL_ALT_SHIFT },
+    chrome: zenFeature('ArrowRight', true)
+  },
+  {
+    id: 'zen-split-view-previous-pane',
+    action: 'split.prevPane',
+    group: 'zen-split-view',
+    label: 'Previous Split Pane',
+    zen: { key: 'ArrowLeft', mods: ACCEL_ALT_SHIFT },
+    chrome: zenFeature('ArrowLeft', true)
+  },
 
   // --- Zen: other ------------------------------------------------------------
   {
@@ -790,11 +809,19 @@ const DEFS: Def[] = [
 
   // --- Search & find -----------------------------------------------------------
   {
+    // Edge's F4 (Windows and Linux; Ctrl+F4 stays Close Tab) focuses the address bar as well.
     id: 'focusURLBar',
     action: 'urlbar.focus',
     group: 'searchAndFind',
     label: 'Focus Address Bar',
-    ...both({ key: 'l', mods: ACCEL, extra: [{ key: 'd', mods: ALT }] })
+    ...both({
+      key: 'l',
+      mods: ACCEL,
+      extra: [
+        { key: 'd', mods: ALT },
+        { key: 'F4', platforms: WINLIN }
+      ]
+    })
   },
   {
     id: 'key_search',

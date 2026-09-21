@@ -752,16 +752,21 @@ describe('the v2 primitives (§9.34)', () => {
     expect(passwords).toMatch(
       /\.zen-v2-pw-row:not\(\[data-control\], \[data-stack\]\) > \.zen-v2-pw-row-control > \.zen-v2-icon-button,\n\.zen-v2-pw-list-row:not\(\[data-control\]\) > \.zen-v2-icon-button \{\n {2}margin-block: calc\(4px - var\(--v2-row-pad\)\);\n\}/
     )
-    // The rows write the mark: the translate rows on the surface (they have no wrapper), the
-    // autofill and passwords wrappers only for a one-line row (a two-line row takes no mark).
+    // The row wrappers write the mark (§9.34): the translate rows through `ControlRow` (the
+    // surfaces set none by hand; #272's audit), the autofill and passwords wrappers only for a
+    // one-line row (a two-line row takes no mark).
     for (const file of [
       'components/translate/LanguagesSection.tsx',
       'components/translate/SelectionPopover.tsx'
     ]) {
       const text = read(file)
       expect(text, file).not.toMatch(/zen-translate-control-row/)
-      expect(text, file).toMatch(/data-control=(""|\{controls \? '' : undefined\})/)
+      expect(text, file).not.toMatch(/data-control=/)
+      expect(text, file).toMatch(/<ControlRow/)
     }
+    const controlRow = read('components/translate/ControlRow.tsx')
+    expect(controlRow).toMatch(/'data-static': ''/)
+    expect(controlRow).toMatch(/'data-control': control \? '' : undefined/)
     const autofillRows = read('components/overlays/AutofillSection.tsx')
     expect(autofillRows.match(/data-control=\{description \? undefined : ''\}/g)).toHaveLength(2)
     const shared = read('components/overlays/passwords/shared.tsx')

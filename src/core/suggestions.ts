@@ -24,6 +24,7 @@ import type { Browser } from './browser'
 import type { ZenWindow } from './window'
 import { orderedTabsForSpace, tabVisibleIn } from './model'
 import { AnswerService } from './answers'
+import { matchesAtWordStart } from './history'
 
 /**
  * Chromium's relevance scale, so rows from every source sort against each other: the verbatim
@@ -32,11 +33,15 @@ import { AnswerService } from './answers'
  * above the verbatim when one should be inlined).
  */
 export const RELEVANCE = {
+  /** The best learned shortcut, over the history completion (Chromium's shortcut boost, 1414). */
+  shortcut: 1414,
   autofill: 1400,
   verbatim: 1300,
   keywordStarter: 1290,
   answer: 1250,
   intranet: 1240,
+  /** Further shortcuts for the typing: under the verbatim row, over every other local source. */
+  shortcutOther: 1199,
   entity: 1150,
   tabPrefix: 1120,
   bookmarkPrefix: 1100,
@@ -45,9 +50,24 @@ export const RELEVANCE = {
   tab: 1000,
   historyTitlePrefix: 980,
   bookmark: 950,
+  /** A term at the start of a word in the title or of a path segment (HistoryQuick's idea). */
+  historyWordStart: 930,
   space: 900,
   history: 880
 } as const
+
+/** The "Recent searches" section of zero-suggest (omnibox-20). */
+export const RECENT_SEARCHES_GROUP = 'Recent searches'
+/** Remembered searches shown on focus at most (Chrome shows up to eight zero-suggest rows). */
+export const RECENT_SEARCHES_MAX = 8
+
+export interface SuggestOptions {
+  /**
+   * The bar is in keyword or search mode for this engine (tab-to-search, Ctrl+K, `?`): the
+   * query is search terms for it – no address, history, bookmark, tab or command rows.
+   */
+  engineId?: string
+}
 
 /** Rows shown at most; Chrome's desktop popup holds eight, Zenium's field is taller. */
 export const MAX_ROWS = 10
@@ -75,16 +95,27 @@ export class SuggestionService {
   async suggest(
     rawQuery: string,
     currentTabId: string | null,
-    win: ZenWindow = this.browser.focusedWindow()
+    win: ZenWindow = this.browser.focusedWindow(),
+    opts: SuggestOptions = {}
   ): Promise<Suggestion[]> {
-    const query = rawQuery.trim()
+    let query = rawQuery.trim()
     const state = this.browser.state
     const engines = state.searchEngines
     const defaultEngine = state.defaultSearchEngine()
     const isPrivate = this.privateContext(currentTabId, win)
     const local = Boolean(win.localSpace)
+    // Suggestion privacy (omnibox-45): the history and bookmark sources can be switched off.
+    const wantsHistory = !isPrivate && state.settings.historySuggestions !== false
+    const wantsBookmarks = !isPrivate && state.settings.bookmarkSuggestions !== false
 
-    if (!query) return isPrivate ? [] : await this.emptyState()
+    // Search mode (omnibox-26): the bar's engine, or Chrome's legacy `?` prefix in the text.
+    let modeEngine = opts.engineId ? engines.find((e) => e.id === opts.engineId) : undefined
+    if (!modeEngine && query.startsWith('?') && !matchKeyword(rawQuery.trimStart(), engines)) {
+      modeEngine = defaultEngine
+      query = query.slice(1).trim()
+    }
+
+    if (!query) return isPrivate || modeEngine ? [] : await this.emptyState(wantsHistory)
 
     // An extension's `chrome.omnibox` keyword owns the input from the space after it on: the
     // rows are what the extension suggests, nothing else (Chrome's keyword mode).
@@ -116,11 +147,19 @@ export class SuggestionService {
     const signal = controller.signal
 
     // `@ddg ` with nothing after it is already keyword mode: the trailing space counts here.
-    const keyword = matchKeyword(rawQuery.trimStart(), engines)
-    if (keyword?.kind === 'scope') return this.scopeResults(keyword, query, currentTabId, win)
+    const textKeyword = modeEngine ? null : matchKeyword(rawQuery.trimStart(), engines)
+    if (textKeyword?.kind === 'scope')
+      return this.scopeResults(textKeyword, query, currentTabId, win)
+    // Search mode is keyword mode for the bar's engine, the field holding the terms alone.
+    const keyword: KeywordMatch | null =
+      textKeyword ??
+      (modeEngine
+        ? { kind: 'engine', engine: modeEngine, keyword: modeEngine.keyword, query }
+        : null)
     const engine = keyword?.engine ?? defaultEngine
     const searchTerms = keyword ? keyword.query : query
-    const searchFill = (term: string): string => (keyword ? `${keyword.keyword} ${term}` : term)
+    const searchFill = (term: string): string =>
+      textKeyword ? `${textKeyword.keyword} ${term}` : term
 
     const rows: Ranked[] = []
 
@@ -157,8 +196,12 @@ export class SuggestionService {
       })
     }
 
+    // What was typed before led somewhere (the shortcuts provider, omnibox-03): that
+    // destination first, completed inline when its text extends the typing.
+    if (!keyword && wantsHistory) rows.push(...this.shortcutRows(query, engines))
+
     // The default match to complete inline: the most frecent visited host or URL with this prefix.
-    if (!keyword && !isPrivate) {
+    if (!keyword && wantsHistory) {
       const autofill = this.browser.history.autofill(query)
       if (autofill && autofill.fill.length > query.length) {
         rows.push({
@@ -195,10 +238,8 @@ export class SuggestionService {
       rows.push(...this.commandRows(query, win))
       if (!local) rows.push(...this.spaceRows(query, win))
       rows.push(...this.tabRows(query, currentTabId, win, 3))
-      if (!isPrivate) {
-        rows.push(...this.bookmarkRows(query, 3))
-        rows.push(...this.historyRows(query, 6))
-      }
+      if (wantsBookmarks) rows.push(...this.bookmarkRows(query, 3))
+      if (wantsHistory) rows.push(...this.historyRows(query, 6))
     }
 
     // Network sources run together; the popup waits for the slowest but never past its timeout.
@@ -486,6 +527,12 @@ export class SuggestionService {
     return out
   }
 
+  /**
+   * History rows (omnibox-02, Chrome's HistoryURL and HistoryQuick providers): the service ranks
+   * the candidates by typed count, visit count and recency; here the band says how the typing
+   * matched – the address's start, the title's start, the start of a word in the title or of a
+   * path segment, or somewhere inside a word – so a word-start match outranks a mid-word one.
+   */
   private historyRows(query: string, limit: number): Ranked[] {
     const q = query.toLowerCase()
     const out: Ranked[] = []
@@ -495,7 +542,9 @@ export class SuggestionService {
         ? RELEVANCE.historyHostPrefix
         : entry.title.toLowerCase().startsWith(q)
           ? RELEVANCE.historyTitlePrefix
-          : RELEVANCE.history
+          : matchesAtWordStart(`${entry.title} ${shown}`, q)
+            ? RELEVANCE.historyWordStart
+            : RELEVANCE.history
       out.push({
         id: `hist:${entry.url}`,
         kind: 'history',
@@ -505,7 +554,39 @@ export class SuggestionService {
         favicon: entry.favicon,
         targetId: null,
         fill: query,
+        deletable: true,
         relevance: base - out.length
+      })
+    }
+    return out
+  }
+
+  /**
+   * The shortcuts provider's rows: destinations the typing led to before, the best of them
+   * boosted over the history completion (Chromium's shortcut boost) and completed inline when
+   * its text extends what was typed, the others under the verbatim row. Every one is removable.
+   */
+  private shortcutRows(query: string, engines: SearchEngine[]): Ranked[] {
+    const q = query.toLowerCase()
+    const out: Ranked[] = []
+    for (const s of this.browser.omniboxShortcuts.match(query, 3)) {
+      const shown = displayUrl(s.url) || s.url
+      const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
+      const extendsTyped = s.fill.toLowerCase().startsWith(q) && s.fill.length > query.length
+      out.push({
+        id: `shortcut:${s.url}`,
+        kind: s.kind === 'search' ? 'search' : 'url',
+        title: s.kind === 'search' ? s.fill : s.title || shown,
+        subtitle: s.kind === 'search' ? `Search with ${engine?.name ?? 'the web'}` : shown,
+        url: s.url,
+        favicon: s.kind === 'search' ? null : this.browser.history.faviconFor(s.url),
+        targetId: engine?.id ?? null,
+        // The destination's text (Chromium's fill_into_edit: what arrowing onto the row puts in
+        // the field), keeping the user's casing for the part they typed when it extends it, so
+        // the inline completion's selection does not flicker.
+        fill: extendsTyped ? query + s.fill.slice(query.length) : s.fill,
+        deletable: true,
+        relevance: out.length === 0 ? RELEVANCE.shortcut : RELEVANCE.shortcutOther - out.length
       })
     }
     return out
@@ -540,6 +621,7 @@ export class SuggestionService {
       fill: query,
       relevance: RELEVANCE.verbatim
     })
+    // An explicit `@history foo` is the user asking for these rows: the toggles do not apply.
     if (terms) {
       rows.push(
         ...(scope.scope === 'bookmarks'
@@ -555,7 +637,7 @@ export class SuggestionService {
    * copied"; the kind alone, from the clip's description – the content is read only when the
    * user reveals or picks the row), then the recent history.
    */
-  private async emptyState(): Promise<Suggestion[]> {
+  private async emptyState(wantsHistory: boolean): Promise<Suggestion[]> {
     const rows: Suggestion[] = []
     const clip = await this.browser.searchEngines.peekClipboard()
     // An image on the clipboard has nowhere to go: Zenium has no visual search, so no row.
@@ -571,6 +653,25 @@ export class SuggestionService {
         fill: ''
       })
     }
+    if (!wantsHistory) return rows
+    // Zero-suggest (omnibox-20): the searches the user made, most recent first, as a section of
+    // their own over the recent pages – every row removable.
+    const engines = this.browser.state.searchEngines
+    for (const s of this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)) {
+      const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
+      rows.push({
+        id: `recent:${s.url}`,
+        kind: 'search',
+        title: s.fill,
+        subtitle: `Search with ${engine?.name ?? 'the web'}`,
+        url: s.url,
+        favicon: null,
+        targetId: engine?.id ?? null,
+        fill: s.fill,
+        deletable: true,
+        group: RECENT_SEARCHES_GROUP
+      })
+    }
     for (const entry of this.browser.history.recent(8)) {
       rows.push({
         id: `hist:${entry.url}`,
@@ -580,7 +681,8 @@ export class SuggestionService {
         url: entry.url,
         favicon: entry.favicon,
         targetId: null,
-        fill: displayUrl(entry.url)
+        fill: displayUrl(entry.url),
+        deletable: true
       })
     }
     return rows
@@ -670,9 +772,20 @@ function normalizeUrl(url: string): string {
 }
 
 /**
+ * Whether Enter with nothing highlighted may open `row` (Chromium's `allowed_to_be_default_match`):
+ * a page or a search whose text starts with what was typed – the verbatim rows by construction,
+ * a completion that extends the typing. A row whose text is something else (a shortcut or a
+ * history page found by its title) is never the default, however high it ranks.
+ */
+function canBeDefault(row: Suggestion, typed: string): boolean {
+  return (row.kind === 'url' || row.kind === 'search') && row.fill.toLowerCase().startsWith(typed)
+}
+
+/**
  * Order by relevance (ties keep source order), drop rows that name the same page or search,
- * cap the list and mark the default match that is completed inline: the top row when it
- * outranks the verbatim query and extends what was typed.
+ * cap the list, put the default match first – the best row that may be one, as Chromium's
+ * `SortAndCull` rotates it to the front, so the first row is always what Enter opens – and mark
+ * it for inline completion when it outranks the verbatim query and extends what was typed.
  */
 function finish(rows: Ranked[], query: string): Suggestion[] {
   const ordered = rows
@@ -688,14 +801,15 @@ function finish(rows: Ranked[], query: string): Suggestion[] {
     out.push(row)
     if (out.length >= MAX_ROWS) break
   }
-  const top = out[0]
   const typed = query.toLowerCase()
+  const defaultIndex = out.findIndex((row) => canBeDefault(row, typed))
+  if (defaultIndex > 0) out.unshift(...out.splice(defaultIndex, 1))
+  const top = out[0]
   if (
     top &&
+    defaultIndex >= 0 &&
     (top.relevance ?? 0) > RELEVANCE.verbatim &&
-    (top.kind === 'url' || top.kind === 'search') &&
-    top.fill.length > query.length &&
-    top.fill.toLowerCase().startsWith(typed)
+    top.fill.length > query.length
   ) {
     top.inline = true
   }

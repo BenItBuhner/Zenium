@@ -31,11 +31,8 @@ export function Toolbar({
 }): JSX.Element {
   return (
     // A window surface (design language v2 §9.29): its chips draw in the window token family.
-    <div
-      className={cn(floating && 'zen-panel zen-animate-in')}
-      data-surface="window"
-      data-testid="toolbar"
-    >
+    // Floating, it is a panel; the slide that brings it out is its host's (`CompactToolbar`).
+    <div className={cn(floating && 'zen-panel')} data-surface="window" data-testid="toolbar">
       <div
         className="zen-drag flex h-10 items-center gap-1 px-1"
         data-zen-nav-bar

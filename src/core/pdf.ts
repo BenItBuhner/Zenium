@@ -14,7 +14,13 @@
 import type { Browser } from './browser'
 import type { DownloadInit } from './downloads'
 import type { DownloadChangeKind, DownloadItem } from '../shared/types'
-import { pdfPageDownloadId, pdfPageUrl, type PdfDocumentInfo } from '../shared/pdfPage'
+import {
+  pdfPageDownloadId,
+  pdfPageUrl,
+  pdfViewerBaseUrl,
+  type PdfDocumentInfo
+} from '../shared/pdfPage'
+import { newId } from '../shared/ids'
 import {
   pdfCommandScript,
   type PdfViewerCommand,
@@ -51,6 +57,12 @@ export class PdfViewerService {
   private readonly pending = new Map<string, string | null>()
   /** What each viewer tab last reported. */
   private readonly reports = new Map<string, PdfViewerReport>()
+  /**
+   * Each shown download's token (`PdfDocumentInfo.token`), minted when its document is first
+   * looked up and kept while the download is: the viewer's document carries it, and a report
+   * for a tab counts only with the token of the download that tab shows.
+   */
+  private readonly tokens = new Map<string, string>()
 
   constructor(private readonly browser: Browser) {
     browser.onDownloadChange((item, kind) => this.onDownloadChange(item, kind))
@@ -79,6 +91,7 @@ export class PdfViewerService {
   private onDownloadChange(item: DownloadItem, kind: DownloadChangeKind): void {
     if (kind === 'removed') {
       this.pending.delete(item.id)
+      this.tokens.delete(item.id)
       return
     }
     if (kind !== 'done' || !this.pending.has(item.id)) return
@@ -108,7 +121,25 @@ export class PdfViewerService {
   document(id: string): PdfDocumentInfo | null {
     const item = this.browser.downloads.item(id)
     if (!item || !viewable(item)) return null
-    return { id, name: item.finalName || item.filename, path: item.savePath }
+    let token = this.tokens.get(id)
+    if (!token) {
+      token = newId()
+      this.tokens.set(id, token)
+    }
+    return { id, name: item.finalName || item.filename, path: item.savePath, url: item.url, token }
+  }
+
+  /**
+   * The address a viewer tab stands for outside the chrome: the document's own URL, which its
+   * document runs under (`pdfViewerBaseUrl`) and which Chrome's PDF tab reads as to extensions
+   * (`tabs.Tab.url`, `webNavigation`, content-script matching). Null for any other address, for
+   * a viewer address whose download is gone, and for a document with no address to run under.
+   */
+  documentUrl(tabUrl: string): string | null {
+    const id = pdfPageDownloadId(tabUrl)
+    const item = id ? this.browser.downloads.item(id) : undefined
+    if (!item || !viewable(item)) return null
+    return pdfViewerBaseUrl(item) === item.url ? item.url : null
   }
 
   /** The download a viewer tab shows, if it shows one that is still there. */
@@ -140,8 +171,16 @@ export class PdfViewerService {
       await this.browser.platform.shell.share?.({ url: item.url, title: item.finalName, tabId })
   }
 
-  /** The viewer document reported (a `pdf` page message): keep it and tell the chrome. */
-  onReport(tabId: string, report: PdfViewerReport): void {
+  /**
+   * The viewer document reported (a `pdf` page message): keep it and tell the chrome. Only with
+   * the token of the download the tab shows: the document runs under the PDF's own origin, and
+   * a page of that origin (or any page, on a host whose page script relays from every document)
+   * posting a report of its own must not reach the chrome's PDF controls.
+   */
+  onReport(tabId: string, report: PdfViewerReport, token: string | undefined): void {
+    const tab = this.browser.tabs.tab(tabId)
+    const id = tab ? pdfPageDownloadId(tab.url) : null
+    if (!id || !token || this.tokens.get(id) !== token) return
     this.reports.set(tabId, report)
     this.browser.emit('pdf.changed', { tabId, report }, this.browser.tabs.windowFor(tabId))
   }

@@ -21,6 +21,7 @@ import {
   installScreenCaptureBridge,
   installScreenCaptureShim
 } from '../shared/screenCapture'
+import { installCaptureReporter, installCaptureShim } from '../shared/captureState'
 import { installShareBridge, installShareShim } from '../shared/share'
 import { installGeolocationBridge, installGeolocationShim } from '../shared/geolocation'
 import { NOTIFICATION_PERMISSION_CHANNEL } from '../shared/notifications'
@@ -115,6 +116,19 @@ if (location.protocol === 'https:' || location.protocol === 'http:') {
         contextBridge.executeInMainWorld({ func: installScreenCaptureShim, args: [eventName] })
       } catch (error) {
         console.warn('[zen] screen capture shim unavailable:', (error as Error).message)
+      }
+    }
+  })
+  // The tab's alert indicator (tabs-43), from every frame: the main-world shim counts the live
+  // camera / microphone / display tracks, this world watches picture-in-picture, and each change
+  // goes to the browser as one `capture-state` message under the frame's own id.
+  installCaptureReporter({
+    send,
+    installShim: (eventName) => {
+      try {
+        contextBridge.executeInMainWorld({ func: installCaptureShim, args: [eventName] })
+      } catch (error) {
+        console.warn('[zen] capture shim unavailable:', (error as Error).message)
       }
     }
   })

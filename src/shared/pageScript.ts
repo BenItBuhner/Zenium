@@ -12,11 +12,12 @@ import type { MediaReport, MediaSessionHostMessage } from './mediaSession'
 import type { NotificationHostMessage, NotificationPageRequest } from './notifications'
 import { installMediaTracking } from './mediaSessionScript'
 import { READER_MESSAGE_KEY } from './reader'
-import { PDF_VIEWER_ORIGIN, pdfReportOf, type PdfViewerReport } from './pdfViewerProtocol'
+import { pdfReportOf, pdfReportTokenOf, type PdfViewerReport } from './pdfViewerProtocol'
 import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPrompt'
 import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
+import type { CaptureStateReport } from './captureState'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -55,9 +56,12 @@ export interface PageScriptMessage {
     | 'opensearch'
     | 'readAloud'
     | 'fullscreen'
+    | 'capture-state'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
+  /** `capture-state`: one frame's live camera / microphone / display / PiP state (`captureState.ts`). */
+  capture?: CaptureStateReport
   x?: number
   y?: number
   background?: boolean
@@ -78,6 +82,8 @@ export interface PageScriptMessage {
   reader?: unknown
   /** `pdf`: the PDF viewer document's report (`pdfViewerProtocol.ts`). */
   pdf?: PdfViewerReport
+  /** `pdf`: the document's token posted beside the report, for the core to check. */
+  token?: string
   /** `readAloud`: the answer to a `readAloud.extract` request (`readAloudScript.ts`). */
   readAloud?: ReadAloudExtraction
   /**
@@ -488,16 +494,19 @@ function installReaderRelay(transport: PageScriptTransport): void {
 }
 
 /**
- * The PDF viewer document (`zen://pdf`, `pdfPage.ts`) posts its state on its window; only a
- * document of the viewer's own origin – one the host itself served – may relay it, so a web page
- * cannot pose as the viewer to the chrome's PDF controls.
+ * The PDF viewer document (`zen://pdf`, `pdfPage.ts`) posts its state on its window, with the
+ * document's token beside it, and this relays both. The document runs under the PDF's own URL
+ * (`pdfViewerBaseUrl`), an origin no script here can tell from a web page's, so the token is
+ * what keeps a page from posing as the viewer to the chrome's PDF controls: the core takes the
+ * report only with the token it wrote into that document (`PdfViewerService.onReport`).
  */
 function installPdfViewerRelay(transport: PageScriptTransport): void {
-  if (location.origin !== PDF_VIEWER_ORIGIN) return
   window.addEventListener('message', (e: MessageEvent) => {
     if (e.source !== window) return
     const report = pdfReportOf(e.data)
-    if (report) transport.send({ type: 'pdf', pdf: report })
+    if (!report) return
+    const token = pdfReportTokenOf(e.data)
+    if (token) transport.send({ type: 'pdf', pdf: report, token })
   })
 }
 

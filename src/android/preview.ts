@@ -5,7 +5,7 @@ import type { Platform } from '@shared/types'
 import type { VoiceEvent, VoiceStartOutcome } from '@shared/voice'
 import type { QrEvent, QrStartOutcome } from '@shared/qrScan'
 import { PDF_VIEWER_ASSETS, pdfViewerAssetUrl, pdfViewerDocumentUrl } from '@shared/pdfPage'
-import { pdfReportOf } from '@shared/pdfViewerProtocol'
+import { pdfReportOf, pdfReportTokenOf } from '@shared/pdfViewerProtocol'
 import {
   blocksFromHtml,
   type ReadAloudExtractRequest,
@@ -342,14 +342,16 @@ export function createPreviewBridge(): NativeBridge {
       .replace('</head>', `${relay}</head>`)
   }
 
-  // A viewer document's report, relayed by the script above: the tab is the frame it came from.
+  // A viewer document's report, relayed by the script above with the document's token: the tab
+  // is the frame it came from.
   window.addEventListener('message', (e: MessageEvent<unknown>) => {
     if (e.origin !== location.origin) return
     const report = pdfReportOf(e.data)
     if (!report) return
+    const token = pdfReportTokenOf(e.data) ?? undefined
     for (const [tabId, frame] of views) {
       if (frame.contentWindow === e.source) {
-        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report })
+        viewEvent(tabId, 'pageMessage', { type: 'pdf', pdf: report, token })
         return
       }
     }

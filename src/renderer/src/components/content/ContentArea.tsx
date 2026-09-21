@@ -11,7 +11,7 @@ import { SPLIT_GAP, SPLIT_GAP_TOUCH, splitPaneRects } from '@renderer/lib/layout
 import { isPageTab } from '@renderer/lib/pages'
 import { isPdfViewerTab } from '@renderer/lib/pdfViewer'
 import { usePrivateCoverUp } from '@renderer/lib/privateLock'
-import { activeTab, isForeignTab } from '@renderer/lib/selectors'
+import { activeTab, isEmptySplitPane, isForeignTab } from '@renderer/lib/selectors'
 import { useChord } from '@renderer/lib/shortcuts'
 import { barStateOf } from '@renderer/lib/translate'
 import {
@@ -37,6 +37,7 @@ import { TranslateBar } from '../translate/TranslateBar'
 import { CoverImage } from './CoverImage'
 import { CrashRestoreBanner } from './CrashRestoreBanner'
 import { DefaultBrowserBanner } from './DefaultBrowserBanner'
+import { EmptyPane } from './EmptyPane'
 import { FindBar } from './FindBar'
 import { GlanceFrame } from './GlanceFrame'
 import { LoadProgress } from './LoadProgress'
@@ -92,7 +93,20 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
   )
   const local: Rect | null = area ? { x: 0, y: 0, width: area.width, height: area.height } : null
   // The phone shell draws the URL bar itself: its field sits in the bar band outside this frame.
-  const phone = useViewport().formFactor === 'phone'
+  const { formFactor, coarse } = useViewport()
+  const phone = formFactor === 'phone'
+  // The empty panes of the split on screen (split-04): the chrome draws each where its blank
+  // tab's view would be – the field, the "Choose a tab" button – and the URL bar opened for one
+  // floats in that pane's box rather than over the frame.
+  const emptyPanes =
+    group && local && !contentHidden && !glanceActive
+      ? splitPaneRects(local, group, coarse ? SPLIT_GAP_TOUCH : SPLIT_GAP).filter((p) =>
+          isEmptySplitPane(state, p.tabId)
+        )
+      : []
+  const urlbarArea =
+    (ui.urlbar.pane ? emptyPanes.find((p) => p.tabId === ui.urlbar.tabId)?.rect : undefined) ??
+    local
   // The phone's gesture stage draws its own cards where the page was; nothing to dim behind it.
   // Its URL bar covers the frame completely, so there is nothing to dim behind that either.
   const staged = ui.stageActive && !overlayCoversContentBesidesStage(ui)
@@ -125,6 +139,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
     !newTabPage &&
     !lockCover
   const dropKey = dropStore.use((s) => s.key)
+  const dropOverPage = dropStore.use((s) => s.page)
   // The translate bar shares the frame with the live page, under the strips and directly above
   // the page; chrome that stands in for the page (panels, the gesture stage) takes the whole frame.
   const translateBar = barStateOf(state, tab?.id)
@@ -233,13 +248,16 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                  * scrim is the frame dialog host's (the sheet's on a phone). On a phone the
                  * capture is drawn plain: the sheet's scrim, fading with the sheet's own progress
                  * over the receded frame, is the one dim layer (design language v2 draft §11.5)
-                 * – a second, timed fade here was seen stacking with it.
+                 * – a second, timed fade here was seen stacking with it. A tab drag dims the
+                 * page only while the pointer is over it, with the split targets (split-12,
+                 * BUG-011): a plain reorder in the strip leaves the page looking as it was.
                  */}
                 {!phone && !panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',
-                      ui.drag && 'bg-black/20'
+                      ui.drag && 'bg-black/20',
+                      ui.drag && !dropOverPage && 'opacity-0'
                     )}
                   />
                 )}
@@ -254,12 +272,27 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
             {group && local && !contentHidden && !glanceActive && (
               <SplitChrome state={state} group={group} area={local} activeTabId={tab?.id ?? null} />
             )}
-            {ui.drag && local && tab && (
+            {group &&
+              area &&
+              emptyPanes.map((p) => (
+                <EmptyPane
+                  key={p.tabId}
+                  state={state}
+                  ui={ui}
+                  tabId={p.tabId}
+                  groupId={group.id}
+                  rect={p.rect}
+                  viewport={area}
+                />
+              ))}
+            {/* The split targets show once the pointer is over the page, not as the drag starts (split-12). */}
+            {ui.drag && dropOverPage && local && tab && (
               <SplitDropZones
                 dropKey={dropKey}
                 group={group}
                 area={local}
                 draggedTabId={ui.drag.tabId}
+                edges={state.settings.splitEdgeZones}
               />
             )}
             {glanceActive && state.glance && local && (
@@ -275,7 +308,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                 key={`${ui.urlbar.mode}-${ui.urlbar.tabId ?? 'new'}`}
                 state={state}
                 urlbar={ui.urlbar}
-                area={local}
+                area={urlbarArea}
               />
             )}
           </div>
@@ -433,18 +466,22 @@ const ZONE_CLASS =
  * and Edge's edge drop), or to join the split shown here as a pane on that side. With a split
  * open each pane is a target too (Edge): the dragged tab takes the pane over from the tab shown
  * in it, or – dragged from another pane of the same split – swaps panes with it. The edge zones
- * lie over the panes and win where they overlap.
+ * lie over the panes and win where they overlap. Mounted only while the pointer is over the
+ * page (`dropStore.page`, split-12); `edges` off (Settings › Look and Feel › "Split view drag
+ * and drop") leaves the four edge zones out and keeps the panes.
  */
 function SplitDropZones({
   dropKey,
   group,
   area,
-  draggedTabId
+  draggedTabId,
+  edges
 }: {
   dropKey: string | null
   group: SplitGroup | null
   area: Rect
   draggedTabId: string
+  edges: boolean
 }): JSX.Element {
   const { coarse } = useViewport()
   const zone = (key: string, className: string, label: string): JSX.Element => (
@@ -484,14 +521,16 @@ function SplitDropZones({
         </div>
       ))}
       {/* The zones' frame lets the pointer through to the panes; the zones themselves take it. */}
-      <div className="pointer-events-none absolute inset-0 p-4">
-        <div className="relative h-full w-full">
-          {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
-          {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
-          {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
-          {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+      {edges && (
+        <div className="pointer-events-none absolute inset-0 p-4">
+          <div className="relative h-full w-full">
+            {zone('left', 'left-0 top-[20%] bottom-[20%] w-[22%]', 'Split left')}
+            {zone('right', 'right-0 top-[20%] bottom-[20%] w-[22%]', 'Split right')}
+            {zone('top', 'top-0 left-[26%] right-[26%] h-[18%]', 'Split top')}
+            {zone('bottom', 'bottom-0 left-[26%] right-[26%] h-[18%]', 'Split bottom')}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

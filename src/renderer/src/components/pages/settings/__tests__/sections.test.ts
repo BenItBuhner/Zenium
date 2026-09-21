@@ -1796,6 +1796,24 @@ describe('the section model', () => {
     ])
   })
 
+  it('offers a mouse host the split view drag and drop switch before Glance, on by default (split-12)', () => {
+    const c = context(state(), true)
+    const look = buildSection(PAGE.sections[0], c.ctx)
+    expect(look.groups.map((g) => g.id).slice(-2)).toEqual(['split-view', 'glance'])
+    const zones = row(look, 'split-edge-zones')
+    expect(zones).toMatchObject({
+      kind: 'switch',
+      label: 'Split view drag and drop',
+      description: 'Drag a tab to the edge of the page to open it in a split view.',
+      checked: true
+    })
+    if (zones.kind !== 'switch') throw new Error('not a switch')
+    zones.onChange(false)
+    expect(c.patches).toEqual([{ splitEdgeZones: false }])
+    // A finger scrolls the strip rather than dragging a tab: the touch host has no such row.
+    expect(section('look').groups.map((g) => g.id)).not.toContain('split-view')
+  })
+
   it('tells a touch host its own gestures: no double-click, Glance from the link menu', () => {
     const touch = section('look')
     expect(row(touch, 'sidebar-expanded').description).toBe('Show tab titles next to their icons.')
