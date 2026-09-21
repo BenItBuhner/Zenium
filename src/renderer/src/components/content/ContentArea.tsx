@@ -263,6 +263,7 @@ export function ContentArea({ state, ui }: Props): JSX.Element {
                  */}
                 {!phone && !panelAloneOverContent(ui) && !extensionChromeAloneOverContent(ui) && (
                   <div
+                    data-testid="content-dim"
                     className={cn(
                       'absolute inset-0 bg-black/35 transition-opacity',
                       ui.drag && 'bg-black/20',
