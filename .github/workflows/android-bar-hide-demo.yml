@@ -30,6 +30,15 @@ on:
           app.zen.chromium.WebViewLoadDataFoldProbe); empty runs the demo alone
         type: string
         default: ""
+      jank-gate:
+        description: >-
+          The jank budget's gate for the scenes this driver measures (the scroll under the finger,
+          the snap home): soft reports a scene over its budget, hard fails it
+        type: choice
+        default: soft
+        options:
+          - soft
+          - hard
 
 permissions:
   contents: read
@@ -53,6 +62,7 @@ jobs:
         DEMO_OUT=artifacts/android-bar-hide-demo
         DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}
       artifact-path: artifacts/android-bar-hide-demo/
 
@@ -71,5 +81,6 @@ jobs:
         DEMO_OUT=artifacts/android-bar-hide-demo
         DEMO_VIDEO=bar-hide-demo-${{ inputs.theme || 'light' }}.mp4
         DEMO_THEME=${{ inputs.theme || 'light' }}
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-bar-hide-demo-${{ inputs.theme || 'light' }}-second-boot
       artifact-path: artifacts/android-bar-hide-demo/

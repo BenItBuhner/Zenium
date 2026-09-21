@@ -8,10 +8,16 @@ import { useViewport } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import { closeBookmarkChrome } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
+import { V2Button, V2Field, V2FormField, V2TitleBlock } from '../extensions/v2'
 import { FolderField } from './FolderField'
 import { useScrolled, wrapTab } from './popover'
 import { useBookmarkTree } from './tree'
 import { useEscapeTrap } from './escape'
+
+const TITLE_ID = 'zen-bm-edit-title'
+const NAME_ID = 'zen-bm-edit-name'
+const URL_ID = 'zen-bm-edit-url'
+const FOLDER_ID = 'zen-bm-edit-folder'
 
 const close = (): void => closeBookmarkChrome({ bookmarkEdit: null })
 
@@ -25,9 +31,13 @@ export interface EditRequest {
 /**
  * Chrome's "Edit bookmark" / "Add bookmark" dialog (name and URL) and, for folders, "Rename
  * folder" / "New folder" (name only). `prefill` seeds a new bookmark with the current page, as
- * "Add page…" on the bar does. A v2 dialog (draft §9.23): a title block and no X; Escape, the
- * scrim and the footer close it; the name field takes focus and Tab wraps (§9.22). Rendered
- * inside a `FrameDialogHost` (TabDialogs, or the manager's own), which centres it over its scrim.
+ * "Add page…" on the bar does. The star bubble's form on the dialog chassis (v2 draft §9.20,
+ * §9.23): a v2 dialog at the form width, 400, on a frame dialog host (TabDialogs, or the
+ * manager's own) – centred over its scrim (§9.5), the chrome inert, kept through its exit – with
+ * a title block in sentence case and no X, the Name and URL fields (§9.12) and the folder
+ * menulist (§9.13), then the §9.11 footer: Cancel, Save as the one primary, disabled while the
+ * URL is not one (§9.30). Escape, the scrim and the footer close it; the name field takes focus
+ * and Tab wraps (§9.22).
  */
 export function EditBookmarkDialog({
   state,
@@ -66,11 +76,11 @@ export function EditBookmarkDialog({
 
   const title = node
     ? folder
-      ? 'Rename Folder'
-      : 'Edit Bookmark'
+      ? 'Rename folder'
+      : 'Edit bookmark'
     : folder
-      ? 'New Folder'
-      : 'Add Bookmark'
+      ? 'New folder'
+      : 'Add bookmark'
   const target = folder ? null : inputToUrl(url.trim())
   const valid = folder ? name.trim().length > 0 : Boolean(target)
   const save = (): void => {
@@ -95,11 +105,13 @@ export function EditBookmarkDialog({
     <div
       ref={dialogRef}
       role="dialog"
-      aria-labelledby="zen-bm-edit-title"
+      aria-modal="true"
+      aria-labelledby={TITLE_ID}
       className={cn(
-        'zen-animate-pop zen-bm-dialog flex max-h-[calc(100%-24px)] flex-col',
-        phone &&
-          'mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto self-end justify-self-stretch'
+        'zen-v2 zen-animate-pop flex max-h-[calc(100%-24px)] flex-col',
+        phone
+          ? 'zen-bm-dialog mx-2 mb-[calc(8px+var(--zen-inset-bottom,0px))] w-auto self-end justify-self-stretch'
+          : 'zen-v2-dialog'
       )}
       style={phone ? undefined : { width: POPOVER_WIDTH.form }}
       onKeyDown={(e) => {
@@ -112,11 +124,7 @@ export function EditBookmarkDialog({
         wrapTab(e, dialogRef.current)
       }}
     >
-      <div className="zen-bm-title-block" data-scrolled={scrolled || undefined}>
-        <h2 id="zen-bm-edit-title" className="zen-bm-title">
-          {title}
-        </h2>
-      </div>
+      <V2TitleBlock id={TITLE_ID} title={title} scrolled={scrolled} />
       <form
         ref={bodyRef}
         className="zen-bm-popover-body zen-bm-form"
@@ -125,49 +133,51 @@ export function EditBookmarkDialog({
           save()
         }}
       >
-        <label className="zen-bm-label">
-          Name
-          <input
-            ref={nameRef}
-            className="zen-field"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-          />
-        </label>
-        {!folder && (
-          <label className="zen-bm-label">
-            URL
-            <input
-              className="zen-field"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
+        <V2FormField id={NAME_ID} label="Name">
+          {(field) => (
+            <V2Field
+              {...field}
+              ref={nameRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               spellCheck={false}
               autoComplete="off"
-              inputMode="url"
-              placeholder="https://"
             />
-          </label>
+          )}
+        </V2FormField>
+        {!folder && (
+          <V2FormField id={URL_ID} label="URL">
+            {(field) => (
+              <V2Field
+                {...field}
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+                inputMode="url"
+                placeholder="https://"
+              />
+            )}
+          </V2FormField>
         )}
         {!(node && isBookmarkRoot(node.id)) && (
-          <div className="zen-bm-label min-h-0">
-            Folder
-            <FolderField
-              tree={tree}
-              value={tree.get(folderId) ? folderId : edit.parentId}
-              onChange={setFolderId}
-              onNestedChange={setNested}
-            />
-          </div>
+          <V2FormField id={FOLDER_ID} label="Folder">
+            {(field) => (
+              <FolderField
+                id={field.id}
+                tree={tree}
+                value={tree.get(folderId) ? folderId : edit.parentId}
+                onChange={setFolderId}
+                onNestedChange={setNested}
+              />
+            )}
+          </V2FormField>
         )}
         <div className="zen-bm-footer justify-end">
-          <button type="button" className="zen-button" onClick={close}>
-            Cancel
-          </button>
-          <button type="submit" className="zen-button" data-variant="primary" disabled={!valid}>
+          <V2Button onClick={close}>Cancel</V2Button>
+          <V2Button type="submit" variant="primary" disabled={!valid}>
             Save
-          </button>
+          </V2Button>
         </div>
       </form>
     </div>

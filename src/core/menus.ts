@@ -1494,14 +1494,24 @@ export class Menus {
         click: () => tabs.discard(tabId)
       },
       { type: 'separator' },
-      ...(!tab.essential
-        ? [
-            { label: 'Close Tabs Above', click: () => tabs.closeAbove(tabId, win) },
-            { label: 'Close Tabs Below', click: () => tabs.closeBelow(tabId, win) },
-            { label: 'Close Other Tabs', click: () => tabs.closeOthers(tabId, win) },
-            { type: 'separator' as const }
-          ]
-        : []),
+      // One scope for the three (tabs-25, BUG-013): the space's regular tabs in this window,
+      // pinned and Essentials exempt; an item with nothing to close is greyed, not gone (§9.30).
+      {
+        label: 'Close Tabs Above',
+        enabled: tabs.closeScope(tabId, 'above', win).length > 0,
+        click: () => tabs.closeAbove(tabId, win)
+      },
+      {
+        label: 'Close Tabs Below',
+        enabled: tabs.closeScope(tabId, 'below', win).length > 0,
+        click: () => tabs.closeBelow(tabId, win)
+      },
+      {
+        label: 'Close Other Tabs',
+        enabled: tabs.closeScope(tabId, 'others', win).length > 0,
+        click: () => tabs.closeOthers(tabId, win)
+      },
+      { type: 'separator' },
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
@@ -1509,9 +1519,25 @@ export class Menus {
       },
       ...(tab.pinned || tab.essential
         ? [{ label: 'Remove Tab', click: () => void tabs.requestClose(tabId, true, win) }]
-        : [])
+        : []),
+      { type: 'separator' },
+      // Edge's (and Chrome's strip) Reopen closed tab, from any row (tabs-24, history-10).
+      this.reopenClosedItem(win)
     ]
     this.popup(template, win, 'tab', anchor)
+  }
+
+  /**
+   * "Reopen Closed Tab" (Ctrl+Shift+T): the newest recently closed tab or window, greyed while
+   * the list is empty (Chrome's strip menu does the same).
+   */
+  private reopenClosedItem(win: ZenWindow): MenuItemTemplate {
+    return {
+      label: 'Reopen Closed Tab',
+      action: 'tab.reopenClosed',
+      enabled: this.browser.session.recentlyClosed().length > 0,
+      click: () => this.browser.tabs.reopenClosed(win)
+    }
   }
 
   /** Zen: select several tabs (Ctrl / Shift+click) and act on all of them at once. */
@@ -1619,6 +1645,11 @@ export class Menus {
     )
   }
 
+  /**
+   * The tab strip's menu (tabs-35): the New Tab row's and the empty space below the rows share
+   * it. Chrome's strip trio first – New tab, Reopen closed tab, Bookmark all tabs… – then
+   * Zenium's own: the space's folders and spaces, Clear Unpinned Tabs.
+   */
   showNewTabContextMenu(win: ZenWindow, anchor?: MenuAnchor): void {
     const { tabs, state } = this.browser
     const space = win.activeSpace()
@@ -1638,6 +1669,12 @@ export class Menus {
               tabs.createTab({ containerId: cid, active: true }, win)
             )
           ]
+        },
+        this.reopenClosedItem(win),
+        {
+          label: 'Bookmark All Tabs…',
+          action: 'bookmark.allTabs',
+          click: () => this.browser.bookmarkTabs(win)
         },
         { type: 'separator' },
         ...(local

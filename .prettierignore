@@ -9,3 +9,5 @@ android/.gradle
 android/app/src/main/assets
 # Generated snapshot of the Safe Browsing feeds (npm run safebrowsing:snapshot).
 resources/safebrowsing
+# A WebView trace fixture, one line as TracingController writes it (BlinkTraceTest).
+android/app/src/test/resources/blinktrace

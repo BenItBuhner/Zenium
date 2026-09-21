@@ -179,6 +179,11 @@ export interface PageMessage {
     | 'geolocation'
     /** The page script answers a `readAloud.extract` request with the text as blocks (`shared/readAloud`). */
     | 'readAloud'
+    /**
+     * One frame's live capture state – camera, microphone, display sharing, picture-in-picture
+     * (`shared/captureState`); the tab's alert indicator is folded from every frame's (tabs-43).
+     */
+    | 'capture-state'
   url?: string
   /** `opensearch`: the link's `title` attribute, the engine's name when the XML has none. */
   title?: string
@@ -223,6 +228,8 @@ export interface PageMessage {
   geolocation?: unknown
   /** `readAloud`: the extraction (`ReadAloudExtraction`, validated by the core). */
   readAloud?: unknown
+  /** `capture-state`: the frame's report (`CaptureStateReport`, validated by the core). */
+  capture?: unknown
 }
 
 /** The web-app polyfill's messages: `installable` fires `beforeinstallprompt`, `result` settles a `prompt()`, `installed` fires `appinstalled`. */
@@ -479,6 +486,13 @@ export interface TabViewEvents {
   onStopLoading(): void
   /** Load progress 0…1 from hosts that measure it (Android); optional between start and stop. */
   onProgress(progress: number): void
+  /**
+   * A main-frame navigation to `url` began (Electron's `did-start-navigation`), before any
+   * response: `sameDocument` for a pushState / hash change, which shows no throbber (tabs-41)
+   * although the frame's loading state toggles around it. Hosts that cannot tell need not call
+   * it: the throbber then waits from `onStartLoading` to the commit.
+   */
+  onStartNavigation?(url: string, sameDocument: boolean): void
   /** Main-frame navigation committed (`inPage` for pushState / hash changes). */
   onNavigated(url: string, inPage: boolean): void
   /**
@@ -506,7 +520,11 @@ export interface TabViewEvents {
    * (Android, whose guard reads the tables itself); `onFailLoad` follows with the same URL.
    */
   onUnsafeNavigation(url: string, hit: SafeBrowsingHit): void
-  onCrashed(reason: CrashReason): void
+  /**
+   * The page's renderer went away; `exitCode` is the process's where the host has it (Electron's
+   * `render-process-gone` details), for the sad tab's code line.
+   */
+  onCrashed(reason: CrashReason, exitCode?: number): void
   onAudioStateChanged(audible: boolean): void
   onMediaStateChanged(playing: boolean): void
   /** The host's own request engine blocked `count` more requests of this page (Android). */

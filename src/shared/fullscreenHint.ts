@@ -65,19 +65,25 @@ export function browserFullscreenHint(shortcut: string, dark: boolean): PageHint
 }
 
 /**
- * The hint for a page's element in fullscreen: the site's host and how to leave – Esc, or Esc
- * held while the page has the keyboard locked (a short press then does nothing, as in Chrome).
+ * The hint for a page's element in fullscreen: how to leave – Esc, or Esc held while the page
+ * has the keyboard locked (a short press then does nothing, as in Chrome). One line, the same
+ * shape as the window's own hint; the site is not named (Chrome's bubble stopped naming it).
  */
-export function htmlFullscreenHint(host: string, keyboardLocked: boolean, dark: boolean): PageHint {
+export function htmlFullscreenHint(keyboardLocked: boolean, dark: boolean): PageHint {
   return {
-    text: `${host} is now full screen`,
+    text: null,
     exit: keyboardLocked
-      ? { before: 'To exit full screen, press and hold ', key: 'Esc', after: '' }
-      : { before: 'Press ', key: 'Esc', after: ' to exit' },
+      ? { before: 'Press and hold ', key: 'Esc', after: ' to exit full screen' }
+      : { before: 'Press ', key: 'Esc', after: ' to exit full screen' },
     duration: HINT_SHOW_MS,
     dark
   }
 }
+
+/** The bubble's height (px): a §9.20 panel pill, one 15/20 line with 6 above and below. */
+export const HINT_BUBBLE_HEIGHT_PX = 32
+/** From the window's top edge to the bubble's box (px). */
+export const HINT_BUBBLE_TOP_PX = 24
 
 /**
  * The v2 toast surface as the page script paints it: the chrome's `--v2-panel`, `--v2-border`

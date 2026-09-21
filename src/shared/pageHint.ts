@@ -1,4 +1,10 @@
-import { HINT_FADE_MS, hintPalette, type PageHint } from './fullscreenHint'
+import {
+  HINT_BUBBLE_HEIGHT_PX,
+  HINT_BUBBLE_TOP_PX,
+  HINT_FADE_MS,
+  hintPalette,
+  type PageHint
+} from './fullscreenHint'
 import {
   isAtRest,
   SPRING_GENTLE,
@@ -10,9 +16,10 @@ import {
 import { REDUCED_FADE_MS, TOAST_CARD } from './toastCard'
 
 /*
- * The fullscreen hint as the page script draws it: a v2 toast (radius 8, a 1px border, the
- * panel colour, 15px text) centred at the top of the page, in the top layer so it stands over
- * the element in fullscreen, fading in and – after its time – out. It lives in a closed shadow
+ * The fullscreen hint as the page script draws it: a v2 panel pill (§9.20: radius 8, a 1px
+ * border, the panel colour, one 15/20 line, 32 tall) centred at the top of the page, in the top
+ * layer so it stands over the element in fullscreen, fading in and – after its time – out. It
+ * has no button and takes no focus (`role="status"`). It lives in a closed shadow
  * root on a tag of its own so the page's styles do not reach it, and every style is set through
  * the CSSOM so a page's content security policy has nothing to refuse.
  *
@@ -61,7 +68,7 @@ export function renderHint(hint: PageHint): HTMLElement {
   Object.assign(host.style, {
     position: 'fixed',
     inset: 'auto',
-    top: toast ? 'auto' : '24px',
+    top: toast ? 'auto' : `${HINT_BUBBLE_TOP_PX}px`,
     bottom: toast ? `calc(${TOAST_INSET_PX}px + env(safe-area-inset-bottom, 0px))` : 'auto',
     left: toast ? `${TOAST_INSET_PX}px` : '0',
     right: toast ? `${TOAST_INSET_PX}px` : '0',
@@ -82,22 +89,22 @@ export function renderHint(hint: PageHint): HTMLElement {
   })
   const root = host.attachShadow({ mode: 'closed' })
   const panel = document.createElement('div')
+  // The bubble is one row: 32 tall, 12 from its edge to the text's box, the body type (15/20).
+  const bubblePad = (HINT_BUBBLE_HEIGHT_PX - TOAST_CARD.linePx) / 2 - 1
   Object.assign(panel.style, {
     display: 'flex',
-    flexDirection: toast ? 'row' : 'column',
+    flexDirection: 'row',
     alignItems: 'center',
     gap: toast ? `${TOAST_CARD.gapPx}px` : '4px',
     boxSizing: 'border-box',
-    minHeight: toast ? `${TOAST_ROW_PX}px` : 'auto',
-    padding: toast ? `${TOAST_CARD.padPx}px ${TOAST_CARD.gutterPx}px` : '10px 16px',
+    minHeight: toast ? `${TOAST_ROW_PX}px` : `${HINT_BUBBLE_HEIGHT_PX}px`,
+    padding: toast ? `${TOAST_CARD.padPx}px ${TOAST_CARD.gutterPx}px` : `${bubblePad}px 12px`,
     borderRadius: `${TOAST_CARD.radiusPx}px`,
     border: `1px solid ${palette.border}`,
     background: palette.panel,
     color: palette.text,
     boxShadow: TOAST_CARD.shadow,
-    font: toast
-      ? `${TOAST_CARD.weight} ${TOAST_CARD.fontPx}px/${TOAST_CARD.linePx}px ${FONT}`
-      : `15px/1.4 ${FONT}`,
+    font: `${TOAST_CARD.weight} ${TOAST_CARD.fontPx}px/${TOAST_CARD.linePx}px ${FONT}`,
     textAlign: toast ? 'left' : 'center',
     whiteSpace: toast ? 'normal' : 'nowrap',
     overflowWrap: 'anywhere'
@@ -109,10 +116,13 @@ export function renderHint(hint: PageHint): HTMLElement {
     panel.appendChild(line)
   }
   if (hint.exit) {
+    // A flex row of its own, the body line tall: an inline box around the key cap would add
+    // baseline slack under it and grow the pill past its 32.
     const line = document.createElement('div')
     Object.assign(line.style, {
-      display: 'inline-flex',
+      display: 'flex',
       alignItems: 'center',
+      height: `${TOAST_CARD.linePx}px`,
       gap: '4px',
       opacity: hint.text ? '0.69' : '1'
     })

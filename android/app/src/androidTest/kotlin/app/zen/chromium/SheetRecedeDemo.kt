@@ -73,6 +73,13 @@ import kotlin.math.sqrt
  * Driven by the `android-sheet-recede-demo` workflow; see [DemoHarness] for the plumbing. The
  * page comes from a loopback server in this process ([DemoServer]). The `theme` instrumentation
  * argument (`light`, the default, or `dark`) picks the colour scheme.
+ *
+ * The jank record ([traceFrames], `frames.jsonl`): before the probed steps the menu is opened
+ * and closed once with no camera on it, the `menu-sheet-open` and `menu-sheet-close` scenes
+ * (`open`), each with the chrome WebView's trace around it (the renderer main thread's layouts,
+ * paints and time per frame while the sheet mounts and springs), whose numbers the budget's gate
+ * (`jankGate`, soft unless the workflow says hard) reports or fails. The cycle is unmarked, so the
+ * recording's judgement begins at step 1.
  */
 @RunWith(AndroidJUnit4::class)
 class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "sheet-recede-demo") {
@@ -184,6 +191,25 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
     override fun demo() {
         demoStart = SystemClock.uptimeMillis()
         val f = Finger()
+
+        // 0. The app menu up and down once with nothing else running: the jank record's two `open`
+        //    scenes (DemoHarness.traceFrames). The probes below screenshot as fast as the emulator
+        //    gives frames while a sheet moves, which the app's own frames would pay for, so the
+        //    frames are read here, on the cycle before them; the menu button is found before the
+        //    block (a read of the tree is the app's main thread's work). The block waits [MOTION_MS]
+        //    for the spring: a frame nothing moves in is no frame, so a wait past the landing costs
+        //    the reading nothing.
+        val menu = menuButton()
+        traceFrames("menu-sheet-open", JankBudget.Kind.OPEN) {
+            f.tap(menu)
+            SystemClock.sleep(MOTION_MS)
+        }
+        settleUp()
+        traceFrames("menu-sheet-close", JankBudget.Kind.OPEN) {
+            back()
+            SystemClock.sleep(MOTION_MS)
+        }
+        settleDown()
 
         // 1. The app menu, closed by system back.
         probe("menu-open", Kind.TRANSITION) { f.tap(menuButton()) }
@@ -1031,6 +1057,12 @@ class SheetRecedeDemo : DemoHarness("sheet-recede-demo-state.json", "sheets", "s
         private const val HOLD_MS = 1_400L
         /** After letting go: the spring back to rest. */
         private const val RELEASE_MS = 4_000L
+        /**
+         * What the measured menu cycle ([measureFrames]' `menu-sheet-open` / `menu-sheet-close`)
+         * gives the sheet's spring with no camera on it: the half-second spring at the emulator's
+         * pace, with room; the frames after its landing are not rendered and cost nothing.
+         */
+        private const val MOTION_MS = 3_000L
         /** The longest a spring is given to land, on that emulator. */
         private const val SETTLE_MS = 8_000L
         /** Brightness (0…255) two frames of the same picture differ by, JPEG and dithering included. */

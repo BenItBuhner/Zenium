@@ -16,6 +16,7 @@ import { INSTALL_PROMPT_EVENTS, type InstallPromptShimEvents } from './installPr
 import type { ReadAloudExtraction, ReadAloudHostMessage } from './readAloud'
 import { installReadAloud } from './readAloudScript'
 import { installReaderExtrasWhenReady } from './readerExtras'
+import type { CaptureStateReport } from './captureState'
 
 /**
  * Runs inside every web page. It implements the click behaviours Zen adds on top of the engine:
@@ -53,9 +54,12 @@ export interface PageScriptMessage {
     | 'opensearch'
     | 'readAloud'
     | 'fullscreen'
+    | 'capture-state'
   url?: string
   /** `opensearch`: the link's `title`, the engine's name when its description has none. */
   title?: string
+  /** `capture-state`: one frame's live camera / microphone / display / PiP state (`captureState.ts`). */
+  capture?: CaptureStateReport
   x?: number
   y?: number
   background?: boolean
