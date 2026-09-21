@@ -547,16 +547,49 @@ class FakeboxMorphJudgeTest {
         assertTrue(v.detail, v.detail.contains("pending on the compositor"))
         // The same rows without the pending are the cut they look like.
         assertFalse(FakeboxMorph.reducedFade(cut).ok)
-        // A fade the compositor did draw is judged, pending or not, and one surface excuses the pending frames.
+        // A fade the compositor did draw is judged, pending or not, and one surface excuses the pending frames
+        // and the frames within one fade of them (the rest frame 40 ms before the first, the open frame 40 ms after the last).
         val drawn = reducedOpening(listOf(0.3f, 0.7f, 1f)).map { if (it.phase == "opening") it.copy(pending = 1) else it }
         assertTrue(FakeboxMorph.reducedFade(drawn).judged)
         val one = FakeboxMorph.oneSurface(drawn, reduced = true)
         assertTrue(one.detail, one.ok)
-        assertTrue(one.detail, one.detail.contains("3 frame(s) not judged"))
+        assertTrue(one.detail, one.detail.contains("5 frame(s) not judged"))
         // A double still travelling under a pending fade is the chrome's fault, judged and failed.
         val travelled = FakeboxMorph.reducedFade(reducedOpening(listOf(0f, 0f, 1f), m = 0.5f).map { if (it.phase == "opening") it.copy(pending = 1) else it })
         assertFalse(travelled.ok)
         assertTrue(travelled.judged)
+    }
+
+    @Test
+    fun `a rest frame with nothing pending, within one fade of a frame with something pending, is the compositor's too`() {
+        // Run 3's reduced-bottom closing on the emulator: the value jumped at 2716 ms with 17 fades pending; at rest 300 ms
+        // later the page was still at 0 with three pending, 16 ms after that at 0 with none (the compositor had taken the
+        // fade's start time and drawn nothing yet), 150 ms after that at 0 with two pending, and back at 1 by 3682 ms.
+        val home = PageField(top.rest, 1f)
+        val gone = PageField(top.rest, 0f)
+        val restAt = { t: Int, page: PageField, pending: Int -> frame(t, "rest", "", 0f, top, omniTop, pageField = page, pill = well, urlbarOpen = false).copy(pending = pending) }
+        val frames = listOf(
+            frame(2716, "closing", "closing", 0f, top, omniTop, pageField = gone, omniField = OmniField(omniTop, 1f, 1f), pill = well).copy(pending = 17),
+            restAt(3016, gone, 3),
+            restAt(3032, gone, 0),
+            restAt(3182, gone, 2),
+            restAt(3682, home, 7),
+            restAt(3966, home, 0),
+            restAt(4449, home, 0)
+        )
+        val one = FakeboxMorph.oneSurface(frames, reduced = true)
+        assertTrue(one.detail, one.ok)
+        assertTrue(one.detail, one.detail.contains("5 frame(s) not judged"))
+        assertTrue(FakeboxMorph.pendingNear(frames, 2))
+        // The same page still gone a fade's length and more after the last pending frame is the chrome's, and failed.
+        val stuck = frames.map { if (it.t >= 3682) it.copy(pageField = gone, pending = 0) else it }
+        val failed = FakeboxMorph.oneSurface(stuck, reduced = true)
+        assertFalse(failed.detail, failed.ok)
+        assertTrue(failed.detail, failed.detail.contains("3 frame(s) draw it twice or not at all; first: frame 4 (rest, scroll 0.0)"))
+        assertFalse(FakeboxMorph.pendingNear(stuck, 4))
+        // Nothing pending anywhere: every frame is judged, and a frame drawing nothing fails.
+        val bare = frames.map { it.copy(pending = 0) }
+        assertFalse(FakeboxMorph.oneSurface(bare, reduced = true).ok)
     }
 
     @Test

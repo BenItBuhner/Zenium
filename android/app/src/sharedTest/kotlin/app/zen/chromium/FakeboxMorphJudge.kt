@@ -295,6 +295,11 @@ object FakeboxMorph {
      * rest with the omnibox up are another hand's (the pill tapped once docked) and are left
      * alone; so, under reduced motion, is a frame on which a fade is still [Frame.pending] on the
      * compositor – the emulator's frame, not the chrome's – and the verdict says how many were.
+     * The flag drops the frame the compositor takes the fade's start time, and the first frame
+     * drawn with it comes a compositor frame later still (run 3's reduced-bottom closing: nothing
+     * pending 16 ms after a frame with three, the page still at 0, the next frame pending again,
+     * the page back at 3682 ms), so the excuse runs on for one fade's length past a frame with
+     * something pending, on either side of it ([pendingNear]).
      */
     fun oneSurface(frames: List<Frame>, reduced: Boolean = false): Verdict {
         var worst: String? = null
@@ -306,7 +311,7 @@ object FakeboxMorph {
             val omni = f.omniField?.drawn ?: 0f
             val pillWords = f.pillSlot?.let { if (it.away) it.words else if (f.look == "docked") 1f else 0f } ?: 0f
             val fault: String? = when {
-                reduced && f.pending > 0 -> {
+                reduced && pendingNear(frames, i) -> {
                     excused++
                     null
                 }
@@ -348,6 +353,27 @@ object FakeboxMorph {
             faults == 0,
             if (faults == 0) "every frame draws the field once (${frameRate(frames)})$pending" else "$faults frame(s) draw it twice or not at all; first: $worst$pending"
         )
+    }
+
+    /**
+     * Whether frame [i] is the compositor's under reduced motion: a fade [Frame.pending] on it, or
+     * on a frame within one fade's length ([REDUCED_FADE_MS]) before or after it – the flag drops
+     * when the start time is taken, a compositor frame before anything is drawn with it.
+     */
+    fun pendingNear(frames: List<Frame>, i: Int): Boolean {
+        val f = frames[i]
+        if (f.pending > 0) return true
+        var j = i - 1
+        while (j >= 0 && f.t - frames[j].t <= REDUCED_FADE_MS) {
+            if (frames[j].pending > 0) return true
+            j--
+        }
+        j = i + 1
+        while (j < frames.size && frames[j].t - f.t <= REDUCED_FADE_MS) {
+            if (frames[j].pending > 0) return true
+            j++
+        }
+        return false
     }
 
     // --- no pop ----------------------------------------------------------------------------------
