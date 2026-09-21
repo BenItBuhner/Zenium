@@ -293,7 +293,14 @@ export const API_SPEC: ApiSpec = {
       }
     }
   },
-  action: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 3 },
+  // `onUserSettingsChanged` (Chrome 130) is `action`'s alone: the toolbar pin of an MV2
+  // `browserAction` has no event. Zenium pins every action, so it exists and never fires (Meta
+  // Ads Data Advisor's worker init dereferences it before its side panel behaviour).
+  action: {
+    methods: ACTION_METHODS,
+    events: { onClicked: {}, onUserSettingsChanged: {} },
+    manifestVersion: 3
+  },
   browserAction: { methods: ACTION_METHODS, events: { onClicked: {} }, manifestVersion: 2 },
   alarms: {
     methods: {
@@ -874,6 +881,37 @@ export const API_SPEC: ApiSpec = {
     events: { onMessage: {}, onMessagesDeleted: {}, onSendError: {} },
     constants: { MAX_MESSAGE_SIZE: 4096 },
     shape: true,
+    permissions: ['gcm']
+  },
+  // A print destination the extension provides to Chrome's print preview: four events the
+  // browser raises from its print dialog, no methods. Zenium's print dialog is the engine's own
+  // and asks no extension for printers yet, so the events exist and never fire; the namespace
+  // is the shape Chrome has once the permission is declared (Save to Google Drive registers all
+  // three of its listeners in its worker's constructor, and a missing namespace ended it there).
+  printerProvider: {
+    methods: {},
+    events: {
+      onGetPrintersRequested: {},
+      onGetUsbPrinterInfoRequested: {},
+      onGetCapabilityRequested: {},
+      onPrintRequested: {}
+    },
+    shape: true,
+    permissions: ['printerProvider']
+  },
+  // Chrome exposes `instanceID` with the `gcm` permission. The ID itself is local (Chrome
+  // generates it without the server), so `getID` is stable per install, `getCreationTime` dates
+  // it and `deleteID` drops it; tokens are GCM's, so `getToken` / `deleteToken` fail as Chrome's
+  // Instance ID does with GCM off (WPS PDF watches `getID` from its popup and options).
+  instanceID: {
+    methods: {
+      getID: { params: [] },
+      getCreationTime: { params: [] },
+      getToken: { params: [object('getTokenParams')] },
+      deleteToken: { params: [object('deleteTokenParams')] },
+      deleteID: { params: [] }
+    },
+    events: { onTokenRefresh: {} },
     permissions: ['gcm']
   },
   // The panel is Zenium's own view beside the page; the options follow Chrome's default-plus-per-tab

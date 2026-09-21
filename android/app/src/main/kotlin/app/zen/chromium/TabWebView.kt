@@ -1293,12 +1293,14 @@ class TabWebView(
     /**
      * A `zen://` page of the core's, rendered straight into the view under its own address. The
      * PDF viewer page comes with a base URL of its own and the file it shows (`PdfViewer`): the
-     * document runs on that origin, so pdf.js can fetch its worker and the bytes, while the
-     * history entry – what [getUrl] and the navigation events show – stays `url`.
+     * document runs under that URL – the PDF's own, as Chrome's viewer presents its tab, so an
+     * extension's content script matching it runs there; the viewer's origin for a PDF with no
+     * address – and fetches pdf.js and the bytes from the viewer's origin, while the history
+     * entry – what [getUrl] and the navigation events show – stays `url`.
      */
     fun loadHtml(url: String, html: String, baseUrl: String? = null, document: PdfViewer.Document? = null) {
         rememberCurrentPage()
-        pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, document) else null
+        pdfPage = if (baseUrl != null && document != null) PdfViewer.Page(url, baseUrl, document) else null
         loadDataWithBaseURL(baseUrl ?: url, html, "text/html", "utf-8", url)
     }
 
@@ -1307,13 +1309,21 @@ class TabWebView(
 
     /**
      * The address a navigation callback's URL stands for: the viewer page's `zen://pdf` address
-     * for anything under the viewer's origin (WebView may report either the base or the history
-     * URL of a `loadDataWithBaseURL` document), the URL itself otherwise.
+     * for its document's URL (WebView may report either the base or the history URL of a
+     * `loadDataWithBaseURL` document; the base is the PDF's own address or the viewer's origin),
+     * the URL itself otherwise.
      */
     private fun pageUrlFor(url: String): String {
         val page = pdfPage ?: return url
-        return if (PdfViewer.isViewerUrl(url)) page.url else url
+        return if (PdfViewer.isDocumentUrl(url, page)) page.url else url
     }
+
+    /**
+     * The URL the viewer page's document reports as its own (`location.href`: the base URL it
+     * runs under), when the view shows one; null otherwise. The extension layer keeps the
+     * endpoints of a document that said hello under it (`Extensions.onDocumentGone`).
+     */
+    private fun pdfDocumentUrl(): String? = pdfPage?.baseUrl
 
     // A load the core asked for: the user agent follows the rules for the URL before it leaves.
     override fun loadUrl(requested: String) {
@@ -1837,7 +1847,7 @@ class TabWebView(
             if (PageRules.isWebPage(url)) setDarkening(host.pageRules.darken(url))
             lastProgressAt = 0L
             failPendingEvals("the page navigated away before the script finished")
-            host.extensions?.onDocumentGone(this@TabWebView, url)
+            host.extensions?.onDocumentGone(this@TabWebView, url, pdfDocumentUrl())
             host.viewEvent(tabId, "startLoading", null)
             if (muted) setMuted(true)
             // An extension page the runtime refused: the empty document it answered with is

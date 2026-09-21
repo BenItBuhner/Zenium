@@ -10,21 +10,30 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.webkit.TracingConfig
+import android.webkit.TracingController
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.OutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -39,7 +48,10 @@ import kotlin.math.roundToInt
  *  - the driver writes `record` once its warm-up is done and waits for `recording`, which the
  *    workflow creates after starting `screenrecord`;
  *  - it writes `done` when the sequence is over, so the recording stops before the process does;
- *  - screenshots land next to them as `<shotPrefix>-<name>.png`.
+ *  - screenshots land next to them as `<shotPrefix>-<name>.png`;
+ *  - the frame statistics of every scene the driver measured ([measureFrames], [traceFrames])
+ *    land there too, as `frames.jsonl` (one JSON line per scene) and `frames.txt` (the tables),
+ *    with the raw dumps and the scenes' WebView traces (`trace-<scene>.json.gz`).
  *
  * `stateAsset` is the profile to seed; `null` leaves the profile empty (the first run). A demo
  * that is the second act of another – the process was stopped between them (`am force-stop`
@@ -120,15 +132,27 @@ abstract class DemoHarness(
             // A sequence that threw (a driver's `error(...)`) still lands its stills before the
             // instrumentation's exit takes the process, and with them the frames of the failure.
             awaitShots()
+            // The frames record settled with every scene known (a baseline measured after the
+            // scene that names it); a failure here never hides the driver's own.
+            try {
+                settleFrames()
+            } catch (e: RuntimeException) {
+                Log.e(tag, "the frames record could not be settled", e)
+            }
         }
         // Tell the recorder to stop while the app is still on screen: the instrumentation's exit
         // kills the process, and the launcher must not be the last frame.
         File(out, "done").writeText("done\n")
         SystemClock.sleep(4_000)
         Log.i(tag, "done")
+        val faults = ArrayList<String>()
         if (touchFaults.isNotEmpty()) {
-            throw AssertionError("${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}")
+            faults += "${touchFaults.size} touch(es) did not take: ${touchFaults.joinToString("; ")}"
         }
+        if (jankFaults.isNotEmpty()) {
+            faults += "${jankFaults.size} scene(s) over the jank budget under a hard gate:\n" + jankFaults.joinToString("\n")
+        }
+        if (faults.isNotEmpty()) throw AssertionError(faults.joinToString("\n"))
     }
 
     // --- setup -----------------------------------------------------------------------------------
@@ -938,6 +962,276 @@ abstract class DemoHarness(
         return true
     }
 
+    // --- frames: the jank budget gate ------------------------------------------------------------
+    //
+    // The performance program's rule (perf-program.md): no phone gesture or spring regresses
+    // silently again. Every driver measures its scenes through [measureFrames] or [traceFrames],
+    // the one helper, so the numbers of every run are read the same way and land in the same two
+    // places: the run's findings (`frames.jsonl`, one JSON object per scene, and `frames.txt`, the
+    // same as tables) and the driver's log (the table, `FRAMES` lines). The shared workflow renders
+    // the record into the job summary and hands it on as its `jank-report` output; the release
+    // dry-run shows main's latest table.
+    //
+    // TWO INSTRUMENTS, one gated. (1) HWUI's own frame statistics for the app's process, as
+    // `dumpsys gfxinfo <package> framestats` reports them – `dumpsys gfxinfo <package> reset`
+    // before the scene, the scene's real-touch gesture inside the block, the dump after it – read
+    // by [FrameStats] (sharedTest, tested on the JVM): the frames rendered and the janky ones by
+    // HWUI's rule, the 50th / 90th / 95th / 99th percentile frame times, and from the CSV of the
+    // last frames each stage's time (input, animation, layout, draw, sync, the render thread's
+    // draw commands, the swap, the GPU) so the long stage of every long frame is named and the
+    // stage most often long is the scene's `dominant`. These are the ANDROID UI THREAD's and the
+    // RENDER THREAD's numbers, and on the recipe's software GPU (`-gpu swangle`: ANGLE over
+    // SwiftShader composites every 720x1600 frame on the CPU, 100 ms and more) every frame misses
+    // its deadline whatever the chrome does: REPORTED, never gated. (2) The chrome WebView's own
+    // Chromium trace (`android.webkit.TracingController`, [traceFrames]), read by [BlinkTrace]
+    // (sharedTest): the renderer MAIN THREAD's work in the scene – Blink's layouts, paints and
+    // style recalculations per frame, the main-thread time per frame, the long tasks – which is
+    // where a stutter of the chrome is made and what `gfxinfo` cannot see. These the software GPU
+    // does not dominate: GATED. And a scene may name a same-run BASELINE scene (the same motion
+    // with the chrome's part removed: the bar-hide scroll's baseline is the same drag with the
+    // setting off), against which its p95 and janky share are read as RATIOS: recipe-independent,
+    // GATED. The `<package>` is the app's applicationId (`io.github.benitbuhner.zenium.debug` for
+    // the debug build the drivers run against; the Kotlin package `app.zen.chromium` names no
+    // process), read off the context.
+    //
+    // The budget: [JankBudget], one place for the numbers, a budget per scene kind (`gesture`,
+    // `spring`, `open`): the ratios a scene may reach against its baseline and the trace columns
+    // it may reach per frame. The gate is [jankGate]: SOFT (the default: every scene is reported,
+    // nothing fails) or HARD (`-e jankGate hard`, from the driver script's `JANK_GATE` environment
+    // and the workflows' `jank-gate` input): a scene over its budget is then a jank fault, and
+    // like a touch fault it fails the run once the recording is done ([runDemo]) with the scene's
+    // table in the message – the scene is the claim that failed, the rest of the sequence still
+    // runs. The verdicts are SETTLED at the end of the run ([settleFrames]), when every baseline
+    // is known; `frames.jsonl` is written as the scenes are measured and rewritten settled.
+    //
+    // The emulator caveat, for every reading of the HWUI numbers: a janky share of 100 percent
+    // and a p50 of 300 to 500 ms here are the recipe, not the chrome. Frame times compare on ONE
+    // recipe alone and are never quoted as device performance; the trace's main-thread time per
+    // frame and layout / paint counts per frame are the numbers that carry over to a phone.
+    //
+    // One line of `frames.jsonl` (schema `v` 2; keys in this order; ms are HWUI's whole ms for the
+    // percentiles, decimals for the stages and the trace):
+    //   {"v":2,"scene":"bar-hide-scroll-bottom","kind":"gesture","gate":"soft",
+    //    "at":"2026-09-20T21:00:00Z","durationMs":2400,"baseline":"bar-hide-scroll-setting-off",
+    //    "frames":5,"janky":5,"jankyShare":1,"jankyLegacy":5,"p50":250,"p90":700,"p95":700,"p99":700,
+    //    "reasons":{"Missed Vsync":3,"High input latency":0,"Slow UI thread":1,"Slow bitmap uploads":0,
+    //               "Slow issue draw commands":4,"Frame deadline missed":5,"Frame deadline missed (legacy)":5},
+    //    "sampled":5,"skipped":1,"long":5,
+    //    "stageMs":{"delay":{"mean":1.2,"max":9.8,"long":0},"input":{...},"animation":{...},"layout":{...},
+    //               "draw":{...},"sync":{...},"commands":{...},"swap":{...},"gpu":{...}},
+    //    "dominant":"sync",
+    //    "ratio":{"p95":1.17,"sharePoints":0},
+    //    "trace":{"found":true,"thread":"5656:5692","frames":12,"mainThreadMs":{"mean":8.1,"max":41.2,"p95":30.5},
+    //             "busyMs":512.3,"busyPerFrameMs":42.7,"scriptMs":120.1,"layoutCount":11,"paintCount":10,
+    //             "styleRecalcCount":12,"layerChurn":38,"longTasks":1,"longestTaskMs":72.4,
+    //             "perFrame":{"layout":0.917,"paint":0.833,"styleRecalc":1,"layerChurn":3.167},
+    //             "events":8123,"threads":31,"windowMs":2410.5,"whole":false},
+    //    "traceMissing":null,
+    //    "budget":{"p95Ratio":2,"sharePoints":0.1,"layoutsPerFrame":2,"paintsPerFrame":2,"mainThreadP95Ms":120,
+    //              "longTasks":3,"provisional":true},
+    //    "gated":["ratio","trace"],"verdict":"within","breaches":[],"notes":[],"enforced":false}
+    // `frames`, `janky` and the percentiles are the summary's (every frame since the reset);
+    // `sampled`, `skipped`, `long`, `stageMs` and `dominant` are read off the CSV's last frames
+    // (about 120); `jankyLegacy` is -1 before Android 12; `dominant` is null with no long frame.
+    // `ratio` is null without a baseline (or one the run did not measure); `trace` is null when
+    // the scene took no trace, `traceMissing` says why when it asked for one. In `trace`, the
+    // counts (`layoutCount`, `paintCount`, `styleRecalcCount`, `layerChurn`, `longTasks`) are PER
+    // SCENE, `perFrame` divides them by the main-thread frames (`ProxyMain::BeginMainFrame`), and
+    // `mainThreadMs` is PER FRAME: mean, max and 95th percentile of the frames' main-thread time;
+    // `busyMs` and `scriptMs` are the scene's totals. `gated` lists the halves of the budget that
+    // applied (`ratio`, `trace`; empty = reported only), `verdict` is `within` or `over`, `breaches`
+    // names what was over, `notes` what did not apply, `enforced` says the gate made it a fault.
+
+    /**
+     * The gate this run measures under: the `jankGate` instrumentation argument (`soft` or
+     * `hard`), soft when absent or unreadable. The driver script passes `JANK_GATE` through.
+     */
+    protected val jankGate: JankBudget.Gate =
+        JankBudget.Gate.parse(InstrumentationRegistry.getArguments().getString(JANK_GATE_ARGUMENT))
+
+    /**
+     * Every scene measured so far, in order, with the verdicts as they stand (settled at the end
+     * of the run); for a driver that wants to write them down itself. (Named for the frames:
+     * `scenes` alone is a driver's own word for which of ITS scenes run, ChromeA11yDemo's `scenes`
+     * argument among them.)
+     */
+    protected val frameScenes: List<FrameStats.Scene> get() = measuredScenes
+    private val measuredScenes = ArrayList<FrameStats.Scene>()
+
+    /** The scenes over budget under a hard gate, each with its table; [runDemo] fails on them at the end. */
+    private val jankFaults = ArrayList<String>()
+
+    /**
+     * Measure the frames of one scene: reset HWUI's statistics for the app, run `block` – the
+     * scene's gesture by real touch, with whatever wait the scene's motion needs to land (a
+     * release's spring is frames too; a block that lifts the finger and returns at once measures
+     * the drag alone) – and read the statistics after it. `scene` names the scene in the record
+     * (`<what>-<where>`, stable across runs, since the summary and the release table key on it);
+     * `kind` picks the budget ([JankBudget.Kind]: a finger-driven `GESTURE`, the default; a
+     * release's `SPRING`; a surface's `OPEN`); `baseline` names the same-run scene the ratios are
+     * read against (measured before or after this one: the verdict settles at the end of the
+     * run); `trace` records the chrome WebView's Chromium trace around the block and reads the
+     * renderer main thread's work out of it ([traceFrames] is this with `trace = true`). The
+     * [FrameStats.Scene] is written down (one line of `frames.jsonl`, its table in `frames.txt`
+     * and the log) and returned for the driver's own claims; under a hard gate a scene over its
+     * budget is a jank fault. A block that throws measures nothing: the exception is the driver's.
+     *
+     * Nothing else should run in the block: a screenshot ([shot]) or a read of the chrome
+     * ([chromeJs]) inside it is work the app did not do for the user and shows in the frames.
+     * Take the still before or after, and read the chrome's value after.
+     */
+    protected fun measureFrames(
+        scene: String,
+        kind: JankBudget.Kind = JankBudget.Kind.GESTURE,
+        baseline: String? = null,
+        trace: Boolean = false,
+        block: () -> Unit
+    ): FrameStats.Scene {
+        val pkg = app.packageName
+        var tracing: String? = null
+        if (trace) {
+            tracing = startTrace()
+            // The renderer picks the configuration up a moment after the controller says it is on.
+            if (tracing == null) SystemClock.sleep(TRACE_WARM_UP_MS)
+        }
+        shellCommand("dumpsys gfxinfo $pkg reset")
+        val startedAt = System.currentTimeMillis()
+        val t0 = SystemClock.uptimeMillis()
+        val fromUs = System.nanoTime() / 1_000
+        block()
+        val toUs = System.nanoTime() / 1_000
+        val durationMs = SystemClock.uptimeMillis() - t0
+        val text = shellCommand("dumpsys gfxinfo $pkg framestats")
+        var reading: BlinkTrace.Reading? = null
+        if (trace && tracing == null) {
+            val file = File(out, "trace-$scene.json.gz")
+            tracing = stopTrace(file)
+            if (tracing == null) {
+                try {
+                    reading = BlinkTrace.parse({ GZIPInputStream(FileInputStream(file)).bufferedReader() }, BlinkTrace.Window(fromUs, toUs))
+                    if (reading.whole) Log.w(tag, "scene $scene: the trace's window ${fromUs}..${toUs} µs held no main-thread event; the whole trace was read")
+                } catch (e: Exception) {
+                    tracing = "the trace could not be read: ${e.javaClass.simpleName} ${e.message}"
+                    Log.e(tag, "scene $scene: $tracing", e)
+                }
+            }
+        }
+        val dump = FrameStats.parse(text)
+        if (dump.summary == null) Log.w(tag, "no HWUI summary for $pkg in the dump of scene $scene (${text.length} chars)")
+        val result = FrameStats.scene(
+            scene, kind, jankGate, startedAt, durationMs, dump,
+            baseline = baseline, trace = reading, traceMissing = if (trace) tracing else null, measured = measuredScenes
+        )
+        measuredScenes += result
+        File(out, FRAMES_RECORD).appendText(result.toJson() + "\n")
+        File(out, FRAMES_TABLES).appendText(result.table() + "\n\n")
+        // The raw dump beside the reading, for a second opinion (the parser is fed such a dump on the JVM).
+        File(out, "framestats-$scene.txt").writeText(text)
+        for (line in result.table().lines()) Log.i(tag, "FRAMES $line")
+        return result
+    }
+
+    /**
+     * [measureFrames] with the chrome WebView's Chromium trace around the block: the renderer main
+     * thread's layouts, paints and style recalculations per frame, its time per frame and its long
+     * tasks go into the record's `trace` ([BlinkTrace]), and the trace itself into the findings as
+     * `trace-<scene>.json.gz` (Trace Event JSON, gzipped: what `chrome://tracing`, Perfetto's UI and
+     * PERF-1's / PERF-2's readers open). Tracing costs the renderer a little on every frame, so a
+     * traced scene's HWUI numbers are read against traced baselines. A driver that traces the whole
+     * run itself (its `TracingController` already on) gets no second trace here: the scene is
+     * measured without one, the record says why, and the driver cuts its own trace per scene with
+     * `BlinkTrace.parse(open, BlinkTrace.Window(fromUs, toUs))` – `System.nanoTime() / 1000` at the
+     * block's bounds is the trace's clock.
+     */
+    protected fun traceFrames(
+        scene: String,
+        kind: JankBudget.Kind = JankBudget.Kind.GESTURE,
+        baseline: String? = null,
+        block: () -> Unit
+    ): FrameStats.Scene = measureFrames(scene, kind, baseline, trace = true, block)
+
+    private val traceWriter = Executors.newSingleThreadExecutor()
+
+    /** Start the WebViews' Chromium trace ([BlinkTrace.CATEGORIES]); null when on, else why not. */
+    private fun startTrace(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return "WebView tracing needs Android 9 (API ${Build.VERSION.SDK_INT})"
+        var problem: String? = null
+        instrumentation.runOnMainSync {
+            val controller = TracingController.getInstance()
+            if (controller.isTracing) {
+                problem = "WebView tracing was already on (a driver tracing the whole run reads its scenes with BlinkTrace.parse)"
+                return@runOnMainSync
+            }
+            controller.start(
+                TracingConfig.Builder()
+                    .addCategories(*BlinkTrace.CATEGORIES.toTypedArray())
+                    .setTracingMode(TracingConfig.RECORD_CONTINUOUSLY)
+                    .build()
+            )
+            if (!controller.isTracing) problem = "WebView tracing did not start"
+        }
+        problem?.let { Log.w(tag, it) }
+        return problem
+    }
+
+    /**
+     * Stop the trace and write it, gzipped, to `file`; waits for Chromium to close the stream (the
+     * write is asynchronous). Null when written, else why not.
+     */
+    private fun stopTrace(file: File): String? {
+        val closed = CountDownLatch(1)
+        val stream: OutputStream = object : GZIPOutputStream(FileOutputStream(file), 1 shl 16) {
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    closed.countDown()
+                }
+            }
+        }
+        var stopped = false
+        instrumentation.runOnMainSync {
+            val controller = TracingController.getInstance()
+            stopped = controller.isTracing && controller.stop(stream, traceWriter)
+        }
+        if (!stopped) {
+            stream.close()
+            return "WebView tracing was not on at the end of the scene"
+        }
+        if (!closed.await(TRACE_WRITE_TIMEOUT_S, TimeUnit.SECONDS)) return "the trace was still being written after $TRACE_WRITE_TIMEOUT_S s"
+        Log.i(tag, "trace ${file.name}: ${file.length()} bytes")
+        return null
+    }
+
+    /**
+     * The frames record settled with every scene known: the verdicts read again (a baseline
+     * measured after the scene that names it counts now), `frames.jsonl` and `frames.txt`
+     * rewritten, and the scenes over budget under a hard gate made jank faults. Once, at the
+     * end of the run ([runDemo]).
+     */
+    private fun settleFrames() {
+        if (measuredScenes.isEmpty()) return
+        val settled = FrameStats.resolve(measuredScenes)
+        val before = ArrayList(measuredScenes)
+        measuredScenes.clear()
+        measuredScenes += settled
+        File(out, FRAMES_RECORD).writeText(settled.joinToString("") { it.toJson() + "\n" })
+        File(out, FRAMES_TABLES).writeText(settled.joinToString("\n\n") { it.table() } + "\n")
+        for ((i, scene) in settled.withIndex()) {
+            if (scene.verdict != before[i].verdict || scene.ratio != before[i].ratio) {
+                for (line in scene.table().lines()) Log.i(tag, "FRAMES (settled) $line")
+            }
+            if (scene.enforced) {
+                Log.e(tag, "JANK FAULT: scene ${scene.name} is over its budget under a hard gate")
+                jankFaults += scene.table()
+            }
+        }
+    }
+
+    /** Run a shell command with the instrumentation's shell permissions; its whole output. */
+    protected fun shellCommand(command: String): String =
+        ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand(command)).use { it.bufferedReader().readText() }
+
     // --- the chrome's bridge ---------------------------------------------------------------------
 
     /** Evaluate in the chrome WebView; the raw JSON-encoded result ("" when it never answered). */
@@ -1177,6 +1471,15 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+        /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
+        const val JANK_GATE_ARGUMENT = "jankGate"
+        /** The frames record in the run's findings: one JSON line per measured scene, and the tables. */
+        const val FRAMES_RECORD = "frames.jsonl"
+        const val FRAMES_TABLES = "frames.txt"
+        /** After `TracingController.start`, before the scene: the renderer's time to take the configuration up. */
+        private const val TRACE_WARM_UP_MS = 600L
+        /** How long the trace's asynchronous write may take before the scene goes on without it. */
+        private const val TRACE_WRITE_TIMEOUT_S = 120L
         private const val STEP_MS = 8L
         /** Two reads of a node's bounds this far apart agreeing count as settled ([steadyBounds]). */
         private const val BOUNDS_SETTLE_MS = 350L

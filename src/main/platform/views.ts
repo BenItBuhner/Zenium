@@ -230,16 +230,26 @@ export class ElectronTabView implements TabView {
     this.wc.on('focus', () => {
       const asked = this.keyboardAsked
       this.keyboardAsked = false
-      if (asked || this.visible) return
+      if (asked || this.visible) {
+        this.events?.onFocused?.()
+        return
+      }
       // A page that is not on screen took the keyboard without the core asking for it. Electron
       // 44 gives a new WebContentsView the keyboard once its renderer is up, hidden or not, so a
       // tab opened in the background (a middle-clicked link, `target=_blank`) would leave the
       // next Ctrl+1..9 or Ctrl+W with a page nobody sees: a hidden widget drops its key events.
-      // Deferred, and asked again then: the core may activate this very tab meanwhile.
+      // Deferred, and asked again then: the core may activate this very tab meanwhile. Not
+      // reported as the page taking the keyboard either (`onFocused`), or the chrome would let
+      // go of the control it is typing in over a focus that is handed back a moment later – the
+      // empty pane's URL field (split-04) lost its cursor to the blank page made for the pane.
       defer(() => {
         const win = this.win
-        if (!win || this.visible || this.keyboardAsked) return
-        if (this.wc.isDestroyed() || !this.wc.isFocused()) return
+        if (!win || this.wc.isDestroyed() || !this.wc.isFocused()) return
+        if (this.visible || this.keyboardAsked) {
+          // Shown or asked for meanwhile: the keyboard is the page's own after all.
+          this.events?.onFocused?.()
+          return
+        }
         this.owner.keyboardTaken(win, this.wc)
       })
     })
@@ -282,7 +292,7 @@ export class ElectronTabView implements TabView {
           : null
       ev.onFailLoad(code, description, url, isCertificateError(code) ? { certificate } : undefined)
     })
-    wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason))
+    wc.on('render-process-gone', (_e, details) => ev.onCrashed(details.reason, details.exitCode))
     wc.on('audio-state-changed', (e) => ev.onAudioStateChanged(e.audible))
     wc.on('media-started-playing', () => ev.onMediaStateChanged(true))
     wc.on('media-paused', () => ev.onMediaStateChanged(false))
@@ -317,7 +327,8 @@ export class ElectronTabView implements TabView {
       }
       if (ev.onKey(key)) event.preventDefault()
     })
-    wc.on('focus', () => ev.onFocused?.())
+    // `focus` is reported (`onFocused`) by the constructor's listener, which tells the page
+    // taking the keyboard from a hidden view being handed it by mistake.
     wc.on('update-target-url', (_e, url) => ev.onTargetUrl(url))
     wc.on('will-prevent-unload', (event) => this.onWillPreventUnload(event))
     // Internal pages are the user's to open, never a web page's (Chrome's rule for chrome://):
@@ -332,8 +343,11 @@ export class ElectronTabView implements TabView {
       if (ev.onWillNavigate(url)) event.preventDefault()
     })
     wc.on('did-start-navigation', (details) => {
+      if (!details.isMainFrame) return
+      // The row's throbber learns here whether the load is a same-document one (tabs-41).
+      ev.onStartNavigation?.(details.url, details.isSameDocument)
       // The page is unloading (its `beforeunload` let it): nothing is left to replay.
-      if (!details.isMainFrame || details.isSameDocument) return
+      if (details.isSameDocument) return
       this.leaveApproved = false
       this.hostNavigation = null
       this.pageIntent = null

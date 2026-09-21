@@ -5,6 +5,7 @@ import {
   MenuError,
   MenuRegistry,
   actionMenuEntriesFor,
+  hasLazyBackground,
   menuEntriesFor,
   normalizeCreateProperties,
   normalizeUpdateProperties,
@@ -29,6 +30,13 @@ import {
  * item shows it directly, one with several gets a submenu titled with its name, both carrying
  * the extension icon) and the toolbar button's own menu. Clicks become `onClicked(info, tab)`
  * and grant `activeTab` like a toolbar click does.
+ *
+ * The items of an extension with a lazy background (MV3 worker, MV2 event page) are persisted
+ * as Chrome's `MenuManager` persists them: written after every `create` / `update` / `remove` /
+ * `removeAll` and after a checkbox or radio click, restored when the extension loads (before its
+ * worker runs, so an `update` of an `onInstalled` item at a later start finds it, and a `create`
+ * of the same id fails with the duplicate-id error, as in Chrome), kept while the extension is
+ * unloaded or disabled, dropped with the rest of its records when it is uninstalled.
  */
 export class ContextMenusApi {
   private readonly registries = new Map<string, MenuRegistry>()
@@ -54,8 +62,24 @@ export class ContextMenusApi {
     return registry
   }
 
+  /** The extension loaded: its persisted items are back before its background runs. */
+  load(ext: LoadedExtension): void {
+    if (!hasLazyBackground(ext.manifest)) return
+    const persisted = this.host.store.contextMenuItems(ext.id)
+    if (!Array.isArray(persisted) || persisted.length === 0) return
+    this.registry(ext.id).restore(persisted)
+  }
+
+  /** The extension unloaded: the in-memory items go, the persisted ones stay for the next load. */
   forget(extensionId: string): void {
     this.registries.delete(extensionId)
+  }
+
+  /** `MenuManager::WriteToStorage`: the whole tree, for lazy-background extensions only. */
+  private persist(ext: LoadedExtension): void {
+    if (!hasLazyBackground(ext.manifest)) return
+    const registry = this.registries.get(ext.id)
+    this.host.store.setContextMenuItems(ext.id, registry ? registry.toPersisted() : [])
   }
 
   // ---------------------------------------------------------------------------
@@ -78,6 +102,7 @@ export class ContextMenusApi {
       const normalized = normalizeCreateProperties(props, { requiresId })
       if (normalized.id === undefined && isMenuItemId(generatedId)) normalized.id = generatedId
       const item = this.registry(ctx.extensionId).create(normalized)
+      this.persist(ctx.extension)
       return item.id
     } catch (error) {
       throw toApiError(error)
@@ -88,6 +113,7 @@ export class ContextMenusApi {
     if (!isMenuItemId(id)) throw new ApiError('Invalid menu item id')
     try {
       this.registry(ctx.extensionId).update(id, normalizeUpdateProperties(props))
+      this.persist(ctx.extension)
     } catch (error) {
       throw toApiError(error)
     }
@@ -97,6 +123,7 @@ export class ContextMenusApi {
     if (!isMenuItemId(id)) throw new ApiError('Invalid menu item id')
     try {
       this.registry(ctx.extensionId).remove(id)
+      this.persist(ctx.extension)
     } catch (error) {
       throw toApiError(error)
     }
@@ -104,6 +131,7 @@ export class ContextMenusApi {
 
   private removeAll(ctx: ApiContext): void {
     this.registry(ctx.extensionId).removeAll()
+    this.persist(ctx.extension)
   }
 
   // ---------------------------------------------------------------------------
@@ -189,6 +217,8 @@ export class ContextMenusApi {
     const item = registry?.get(id)
     if (!registry || !item) return
     const checkState = registry.clicked(id)
+    // A checkbox toggled or a radio picked is state Chrome writes (`MenuManager::ExecuteCommand`).
+    if (item.type === 'checkbox' || item.type === 'radio') this.persist(ext)
     const info = onClickData(item, click, checkState)
     if (tab) this.activeTab.grant(ext.id, tab)
     const chromeTab = tab

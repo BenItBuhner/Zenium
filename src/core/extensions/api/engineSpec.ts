@@ -669,10 +669,12 @@ export const NAMESPACE_PERMISSIONS: Record<string, string | null> = {
   // this table was a TypeError before the first listener was registered.
   proxy: 'proxy',
   gcm: 'gcm',
+  instanceID: 'gcm',
   debugger: 'debugger',
   topSites: 'topSites',
   tts: 'tts',
-  contentSettings: 'contentSettings'
+  contentSettings: 'contentSettings',
+  printerProvider: 'printerProvider'
 }
 
 /** Permissions that grant a namespace registered under another name. */

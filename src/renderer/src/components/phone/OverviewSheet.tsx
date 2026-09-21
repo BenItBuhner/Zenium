@@ -1,5 +1,5 @@
 import type { JSX, ReactNode } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useBackSurface } from '@renderer/lib/back'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
@@ -32,6 +32,7 @@ interface Props {
  */
 export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.Element {
   const sheet = useRef<BottomSheetHandle>(null)
+  const titleId = useId()
 
   useBackSurface({
     name: 'overview-sheet',
@@ -58,7 +59,12 @@ export function OverviewSheet({ title, header, actions, onClose }: Props): JSX.E
       onDismissed={onClose}
       contentKey={`${title}:${actions.map((a) => a.id).join('/')}`}
       handleLabel="Resize sheet"
-      header={<span className="zen-sheet-title">{title}</span>}
+      labelledBy={titleId}
+      header={
+        <h2 id={titleId} className="zen-sheet-title">
+          {title}
+        </h2>
+      }
     >
       {header}
       <ul className="flex flex-col pb-1">

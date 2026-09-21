@@ -25,6 +25,15 @@ on:
         options:
           - light
           - dark
+      jank-gate:
+        description: >-
+          The jank budget's gate for the scenes this driver measures (the menu sheet's open and
+          close): soft reports a scene over its budget, hard fails it
+        type: choice
+        default: soft
+        options:
+          - soft
+          - hard
 
 permissions:
   contents: read
@@ -48,6 +57,7 @@ jobs:
       # Android 15: predictive back animations are the default, and the back gesture is one of
       # the things recorded.
       api-level: '35'
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-sheet-recede-demo-${{ inputs.theme || 'light' }}
       artifact-path: artifacts/android-sheet-recede-demo/
 
@@ -67,5 +77,6 @@ jobs:
       setup-script: |
         sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
       api-level: '35'
+      jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-sheet-recede-demo-${{ inputs.theme || 'light' }}-second-boot
       artifact-path: artifacts/android-sheet-recede-demo/

@@ -106,6 +106,26 @@ export function viewCover(area: Rect, rect: Rect, cover: ContentCover): ContentC
   return top > 0 || bottom > 0 ? { top, bottom } : undefined
 }
 
+/** The desktop URL bar's field row is this tall (`.zen-omnibox-input-row`). */
+export const URLBAR_FIELD_HEIGHT = 62
+
+/**
+ * Where the desktop URL bar's field goes in `area` – the content frame, or the empty split pane
+ * the bar is the field of (split-04): floating, centred, at most 907 wide with 16 to the area's
+ * sides, its top at 16% of the area's height (24 at the least); attached, 8 inside the area's
+ * top and sides. The empty pane draws its resting field on the same box (`EmptyPane`), so
+ * opening the bar changes nothing but the field's state.
+ */
+export function urlbarFieldBox(area: Rect, floating: boolean): Rect {
+  const width = floating ? Math.min(907, area.width - 32) : area.width - 16
+  return {
+    x: area.x + (floating ? (area.width - width) / 2 : 8),
+    y: area.y + (floating ? Math.max(24, area.height * 0.16) : 8),
+    width,
+    height: URLBAR_FIELD_HEIGHT
+  }
+}
+
 /** Rect of the glance card inside the content area. */
 export function glanceRect(area: Rect): Rect {
   const width = Math.min(area.width * 0.85, 1280)

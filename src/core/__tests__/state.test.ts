@@ -418,6 +418,23 @@ describe('state.json v5 (new tab page)', () => {
     expect(s.settings.newTab).toEqual({ ...DEFAULT_NEW_TAB_SETTINGS, background: 'solid' })
   })
 
+  it('reads the split view drag and drop switch as on unless the profile turned it off (split-12)', () => {
+    const without = structuredClone(DEFAULT_SETTINGS) as Partial<typeof DEFAULT_SETTINGS>
+    delete without.splitEdgeZones
+    const older = state(fakeIo(legacyProfile(5, { settings: without as typeof DEFAULT_SETTINGS })))
+    expect(older.settings.splitEdgeZones).toBe(true)
+
+    const garbage = structuredClone(DEFAULT_SETTINGS)
+    ;(garbage as unknown as Record<string, unknown>).splitEdgeZones = 'off'
+    expect(state(fakeIo(legacyProfile(5, { settings: garbage }))).settings.splitEdgeZones).toBe(
+      true
+    )
+
+    const off = structuredClone(DEFAULT_SETTINGS)
+    off.splitEdgeZones = false
+    expect(state(fakeIo(legacyProfile(5, { settings: off }))).settings.splitEdgeZones).toBe(false)
+  })
+
   it('folds a v4 profile carrying both keys into the one model, once', async () => {
     const io = fakeIo(
       legacyProfile(4, {

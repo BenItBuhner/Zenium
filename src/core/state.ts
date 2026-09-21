@@ -526,6 +526,8 @@ export class BrowserState {
     this.settings.defaultBrowserPromo = sanitizePromoState(data.settings?.defaultBrowserPromo)
     this.settings.blocking = sanitizeBlockingSettings(data.settings?.blocking)
     this.settings.pageControls = sanitizePageControls(data.settings?.pageControls)
+    // Off only when the profile says so: an older profile, or anything but a boolean, reads on.
+    this.settings.splitEdgeZones = data.settings?.splitEdgeZones !== false
     if (!BOOKMARKS_BAR_MODES.includes(this.settings.bookmarksBar)) {
       this.settings.bookmarksBar = DEFAULT_SETTINGS.bookmarksBar
     }
@@ -600,8 +602,11 @@ export class BrowserState {
       })
       tab.splitGroupId = raw.splitGroupId ?? null
       tab.loading = false
+      tab.waiting = false
       tab.progress = 0
       tab.audible = false
+      // Live capture is a session's own: a restored page holds no camera until it asks again.
+      tab.alert = null
       tab.errorCode = null
       // A chrome page tab restored inside a section has the landing beneath it (PageService).
       if (isChromePageUrl(tab.url)) tab.canGoBack = parseInternalPageUrl(tab.url)?.section != null
@@ -927,8 +932,10 @@ export class BrowserState {
         .map((t) => ({
           ...t,
           loading: false,
+          waiting: false,
           progress: 0,
           audible: false,
+          alert: null,
           errorCode: null,
           // A certificate proceeded past is a decision of the session, not of the tab.
           certificateError: null,
