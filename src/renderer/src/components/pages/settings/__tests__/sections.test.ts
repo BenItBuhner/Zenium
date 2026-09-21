@@ -1665,7 +1665,8 @@ describe('the section model', () => {
         compromised: 0,
         weak: 0,
         reused: 0,
-        known: false
+        known: false,
+        checkedAt: null
       },
       permissions: {
         state: 'warning',
