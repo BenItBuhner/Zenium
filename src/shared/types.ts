@@ -835,7 +835,16 @@ export interface PasswordSettings {
    * (only when it is still there); 0 leaves it.
    */
   clipboardClearSeconds: number
+  /**
+   * Chrome's "Warn you if passwords are exposed in a data breach": a password submitted in a
+   * sign-in form is looked up in the breach corpus (the k-anonymity range check of the checkup)
+   * and a warning is raised when it is known breached (ID-31). On by default, as in Chrome.
+   */
+  leakDetection: boolean
 }
+
+/** Chrome's limit for a saved password's note (ID-34): the field clips at this many characters. */
+export const NOTE_MAX_LENGTH = 1000
 
 /**
  * A saved login. The password only ever leaves the core through the re-authenticated commands
@@ -851,10 +860,128 @@ export interface Credential {
   password: string
   /** HTTP authentication realm (Basic / Digest prompts); `null` for form logins. */
   realm: string | null
+  /**
+   * The user's note on the login (ID-34), up to `NOTE_MAX_LENGTH` characters when written here;
+   * encrypted with the rest of the entry and synced with it. '' when there is none.
+   */
   notes: string
   createdAt: number
   updatedAt: number
   lastUsedAt: number | null
+  /**
+   * How often this password appears in the breach corpus, as of `checkedAt`: 0 for a clean one,
+   * null while it has never been looked up. Written by the sign-in leak check and by Password
+   * Checkup; reset whenever the password changes (the four fields below describe one value).
+   */
+  breached: number | null
+  /** When the breach lookup last ran for this password value; null when never. */
+  checkedAt: number | null
+  /** When a sign-in leak warning was last shown for this password value (shown once); null when never. */
+  leakWarnedAt: number | null
+  /**
+   * The user chose Ignore on a leak warning for this password value (Chrome's dismissed
+   * warning): no warning again until the password changes, and Safety Check leaves it out of the
+   * compromised count. Null otherwise.
+   */
+  leakIgnoredAt: number | null
+}
+
+/**
+ * The fields of a login that describe its breach state for one password value
+ * (`Credential.breached` and the three timestamps); they reset together when the value changes.
+ */
+export type CredentialLeakFields = Pick<
+  Credential,
+  'breached' | 'checkedAt' | 'leakWarnedAt' | 'leakIgnoredAt'
+>
+
+export function emptyLeakFields(): CredentialLeakFields {
+  return { breached: null, checkedAt: null, leakWarnedAt: null, leakIgnoredAt: null }
+}
+
+/**
+ * A sign-in leak warning waiting for the user (ID-31): the password just submitted in a tab is
+ * known breached. One per tab at most; the chrome shows its active tab's as Chrome's "Change
+ * your password" dialog (a sheet on the phone) and answers it with `passwords.leakRespond`.
+ */
+export interface CredentialLeakWarning {
+  id: string
+  tabId: string
+  /** The site's origin and its label ("example.com"). */
+  origin: string
+  site: string
+  /** The username the form submitted; '' when the form had none. */
+  username: string
+  /** How many times the password appears in known breaches (at least 1). */
+  breachCount: number
+  /**
+   * The saved login the warning is about, when the submitted credentials are saved and the tab
+   * is not private (Ignore is remembered on it); null for an unsaved sign-in or a private tab,
+   * where nothing is remembered.
+   */
+  credentialId: string | null
+  /** The tab is private: the check ran and warns, but no memory is kept (Chrome does the same). */
+  private: boolean
+}
+
+/**
+ * What the user chose on a leak warning: open the site's change-password page (its
+ * `/.well-known/change-password` when the site serves one, else the site itself) in the warning's
+ * tab; remember the warning as ignored for this password value; open the password manager; or
+ * just close it (nothing remembered beyond the warning having been shown once).
+ */
+export type CredentialLeakAction = 'changePassword' | 'ignore' | 'openManager' | 'dismiss'
+
+/**
+ * The last Password Checkup's counts and time, kept on this device (with the profile, outside
+ * the vault, so Safety Check reads it while the vault is locked). `compromised` is kept live
+ * from the logins' `breached` flags while the vault is open: a sign-in leak warning raises it,
+ * an Ignore or a changed password lowers it. `weak` and `reused` are the last checkup's.
+ */
+export interface CheckupSummary {
+  compromised: number
+  weak: number
+  reused: number
+  /** When the last full checkup finished; null when it never ran (Safety Check offers to run it). */
+  checkedAt: number | null
+}
+
+export function emptyCheckupSummary(): CheckupSummary {
+  return { compromised: 0, weak: 0, reused: 0, checkedAt: null }
+}
+
+/** `raw` as a `CheckupSummary`: whatever it lacks or misspells falls back to the empty summary. */
+export function sanitizeCheckupSummary(raw: unknown): CheckupSummary {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const count = (key: 'compromised' | 'weak' | 'reused'): number => {
+    const value = source[key]
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+  }
+  const at = source.checkedAt
+  return {
+    compromised: count('compromised'),
+    weak: count('weak'),
+    reused: count('reused'),
+    checkedAt: typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : null
+  }
+}
+
+/**
+ * The password manager's device-local state (`BrowserState.passwordsDevice`, the shape of
+ * `newTabDevice`: persisted with the profile, never synced): the last checkup's summary, which
+ * Safety Check reads without opening the vault.
+ */
+export interface PasswordsDeviceState {
+  checkupSummary: CheckupSummary
+}
+
+export function emptyPasswordsDevice(): PasswordsDeviceState {
+  return { checkupSummary: emptyCheckupSummary() }
+}
+
+export function sanitizePasswordsDevice(raw: unknown): PasswordsDeviceState {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return { checkupSummary: sanitizeCheckupSummary(source.checkupSummary) }
 }
 
 /** What the chrome lists: a credential without its secret. */
@@ -897,6 +1024,10 @@ export interface PasswordsStatus {
   /** The vault file could not be read; the manager offers to start over. */
   error: string | null
   checkup: CheckupState
+  /** The last checkup's counts and time, kept on this device; what Safety Check's Passwords row reads. */
+  checkupSummary: CheckupSummary
+  /** Sign-in leak warnings waiting for the user, oldest first (one per tab at most). */
+  leaks: CredentialLeakWarning[]
 }
 
 /** Outcome of a command that needs the user to re-authenticate first. */
@@ -2732,8 +2863,10 @@ export interface SafetyCheckResult {
     compromised: number
     weak: number
     reused: number
-    /** The vault is locked or the checkup never ran: counts are unknown. */
+    /** The counts are known: the checkup ran on this device, or a sign-in leak check flagged a login. */
     known: boolean
+    /** When the last full checkup finished on this device; null when it never ran. */
+    checkedAt: number | null
   }
   /** Sites holding several granted permissions, or granted ones not visited for weeks. */
   permissions: SafetyCheckRow & {
@@ -4237,6 +4370,12 @@ export interface Commands {
   }
   'passwords.checkupRun': { args: void; result: void }
   'passwords.checkupCancel': { args: void; result: void }
+  /**
+   * Answer a sign-in leak warning (`PasswordsStatus.leaks`): `changePassword` opens the site's
+   * change-password page in the warning's tab, `ignore` remembers the warning as dismissed for
+   * this password value, `openManager` opens Settings › Passwords, `dismiss` only closes it.
+   */
+  'passwords.leakRespond': { args: { id: string; action: CredentialLeakAction }; result: void }
   /** Pick a CSV export (Chrome, Edge, Firefox, Bitwarden, Safari, LastPass) and import it. */
   'passwords.import': { args: { conflict: ImportConflict }; result: ImportResult | null }
   /**

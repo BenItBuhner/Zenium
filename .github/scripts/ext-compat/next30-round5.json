@@ -1,0 +1,831 @@
+{
+ "$comment": "Desktop compatibility sweep round 5: the next 30 Chrome Web Store extensions by install count after the top 30 of round 1, the 30 of next30.json, the 30 of next30-round3.json and the 30 of next30-round4.json (ranks 121-150; the harness at /tmp/zen-compat reads this list; manifests under the project store internal/extensions/next30-round5/). Counts are the store detail pages' rounded figures read 2026-09-21; ties inside one rounded bucket are ordered by the page's rating count (equal counts by name). Candidates came from the store's category listings and keyword searches, about 10,800 detail pages probed across rounds 3 to 5 (vidIQ and Web PKI, 4M each, surfaced in this round's probe, not in rounds 3 and 4's). Not ranked: themes, Chrome Apps (Google Classroom), organisation-login-only items (Endpoint Verification, ClassLink OneClick, Clever, Mobility Print, Lightspeed Insight Agent, Okta Browser Plugin, Trellix Endpoint Security Web Control, LearnPlatform for Students, OpenText Content Server Browser Web Extension, My Apps Secure Sign-in Extension, MasteryConnect LockDown Browser, HID Credential Management Extension) and Google items whose detail pages publish no user count (Office Editing for Docs, Sheets & Slides and the Drive, Docs, Sheets, Slides, YouTube and Gmail shortcuts). The rounded 2,000,000 bucket held 28 rankable items for 25 places; the rating-count tie-break leaves out The QR Code Generator (501 ratings), Cookie-Editor (410) and Browsing Protection by WithSecure (11).",
+ "measuredAt": "2026-09-21",
+ "baseline": "b5f669d7",
+ "rows": [
+  {
+   "rank": 1,
+   "id": "pachckjkecffpdphbpmfolblodfkgbhl",
+   "name": "vidIQ Vision for YouTube",
+   "version": "3.219.2",
+   "mv": 3,
+   "users": 4000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/vidiq-vision-for-youtube/pachckjkecffpdphbpmfolblodfkgbhl), \"4,000,000 users\", read 2026-09-21; 11.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": "options.html",
+   "permissions": [
+    "cookies",
+    "clipboardWrite",
+    "storage",
+    "background",
+    "declarativeNetRequestWithHostAccess"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 12,
+   "nativeMessaging": false,
+   "crxBytes": 17181038
+  },
+  {
+   "rank": 2,
+   "id": "dcngeagmmhegagicpcmpinaoklddcgon",
+   "name": "Web PKI",
+   "version": "2.18.3",
+   "mv": 3,
+   "users": 4000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/web-pki/dcngeagmmhegagicpcmpinaoklddcgon), \"4,000,000 users\", read 2026-09-21; 419 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "nativeMessaging",
+    "storage",
+    "downloads",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 734567
+  },
+  {
+   "rank": 3,
+   "id": "kjeghcllfecehndceplomkocgfbklffd",
+   "name": "Web Threat Shield",
+   "version": "2.3.26191.1",
+   "mv": 3,
+   "users": 3000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/web-threat-shield/kjeghcllfecehndceplomkocgfbklffd), \"3,000,000 users\", read 2026-09-21; 343 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "browser_actions/keycode_ui/keycode_ui.html",
+   "options": "options/options.html",
+   "permissions": [
+    "activeTab",
+    "storage",
+    "notifications",
+    "downloads",
+    "webRequest",
+    "nativeMessaging"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": true,
+   "crxBytes": 784778
+  },
+  {
+   "rank": 4,
+   "id": "nikfmfgobenbhmocjaaboihbeocackld",
+   "name": "Enable local file links",
+   "version": "0.10.0",
+   "mv": 3,
+   "users": 3000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/enable-local-file-links/nikfmfgobenbhmocjaaboihbeocackld), \"3,000,000 users\", read 2026-09-21; 74 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "options/index.html",
+   "permissions": [
+    "storage",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "file:///*",
+    "*://*/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 9797
+  },
+  {
+   "rank": 5,
+   "id": "glghokcicpikglmflbbelbgeafpijkkf",
+   "name": "Signer.Digital Digital Signature, PKI",
+   "version": "5.3.0",
+   "mv": 3,
+   "users": 3000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/signerdigital-digital-sig/glghokcicpikglmflbbelbgeafpijkkf), \"3,000,000 users\", read 2026-09-21; 63 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "nativeMessaging"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 1,
+   "nativeMessaging": true,
+   "crxBytes": 56889
+  },
+  {
+   "rank": 6,
+   "id": "pioclpoplcdbaefihamjohnefbikjilc",
+   "name": "Evernote Web Clipper",
+   "version": "7.41.1",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/evernote-web-clipper/pioclpoplcdbaefihamjohnefbikjilc), \"2,000,000 users\", read 2026-09-21; 129.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "OptionsFrame.html",
+   "permissions": [
+    "activeTab",
+    "tabs",
+    "cookies",
+    "contextMenus",
+    "storage",
+    "notifications",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 4024088
+  },
+  {
+   "rank": 7,
+   "id": "bkkbcggnhapdmkeljlodobbkopceiche",
+   "name": "Pop up blocker for Chrome™ - Poper Blocker",
+   "version": "8.10.4",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/pop-up-blocker-for-chrome/bkkbcggnhapdmkeljlodobbkopceiche), \"2,000,000 users\", read 2026-09-21; 81.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "action.html",
+   "options": "options.html",
+   "permissions": [
+    "storage",
+    "activeTab",
+    "webRequest",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "contextMenus",
+    "scripting",
+    "webNavigation",
+    "alarms"
+   ],
+   "optionalPermissions": [
+    "contentSettings"
+   ],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 9,
+   "nativeMessaging": false,
+   "crxBytes": 6026473
+  },
+  {
+   "rank": 8,
+   "id": "ohahllgiabjaoigichmmfljhkcfikeof",
+   "name": "AdBlocker Ultimate",
+   "version": "4.4.0",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/adblocker-ultimate/ohahllgiabjaoigichmmfljhkcfikeof), \"2,000,000 users\", read 2026-09-21; 63.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "pages/popup.html",
+   "options": "pages/options.html",
+   "permissions": [
+    "tabs",
+    "webRequest",
+    "webNavigation",
+    "storage",
+    "unlimitedStorage",
+    "contextMenus",
+    "cookies",
+    "declarativeNetRequest",
+    "scripting",
+    "userScripts"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 2,
+   "nativeMessaging": false,
+   "crxBytes": 20951518
+  },
+  {
+   "rank": 9,
+   "id": "akcocjjpkmlniicdeemdceeajlmoabhg",
+   "name": "Free VPN Proxy - 1VPN",
+   "version": "4.1.6",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/free-vpn-proxy-1vpn/akcocjjpkmlniicdeemdceeajlmoabhg), \"2,000,000 users\", read 2026-09-21; 63.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "proxy",
+    "storage",
+    "webRequest",
+    "privacy",
+    "alarms",
+    "management",
+    "scripting",
+    "webNavigation",
+    "webRequestAuthProvider"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1627904
+  },
+  {
+   "rank": 10,
+   "id": "adbacgifemdbhdkfppmeilbgppmhaobf",
+   "name": "RoPro - Enhance Your Roblox Experience",
+   "version": "1.7.2",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/ropro-enhance-your-roblox/adbacgifemdbhdkfppmeilbgppmhaobf), \"2,000,000 users\", read 2026-09-21; 33.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "options.html",
+   "options": null,
+   "permissions": [
+    "notifications",
+    "storage",
+    "alarms",
+    "declarativeNetRequestWithHostAccess"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.roblox.com/*",
+    "https://roblox.com/*",
+    "https://*.ropro.io/*",
+    "https://ropro.io/*",
+    "https://*.rbxcdn.com/*"
+   ],
+   "contentScripts": 23,
+   "nativeMessaging": false,
+   "crxBytes": 4557446
+  },
+  {
+   "rank": 11,
+   "id": "jpkfgepcmmchgfbjblnodjhldacghenp",
+   "name": "Pie Adblock - A Powerful Free Ad Blocker",
+   "version": "1.33.9",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/pie-adblock-a-powerful-fr/jpkfgepcmmchgfbjblnodjhldacghenp), \"2,000,000 users\", read 2026-09-21; 30.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popover.html",
+   "options": "options.html",
+   "permissions": [
+    "alarms",
+    "cookies",
+    "tabs",
+    "storage",
+    "scripting",
+    "webNavigation",
+    "unlimitedStorage",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback",
+    "webRequest",
+    "management",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 8,
+   "nativeMessaging": false,
+   "crxBytes": 7065299
+  },
+  {
+   "rank": 12,
+   "id": "mihcahmgecmbnbcchbopgniflfhgnkff",
+   "name": "Google Mail Checker",
+   "version": "4.4.4",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/google-mail-checker/mihcahmgecmbnbcchbopgniflfhgnkff), \"2,000,000 users\", read 2026-09-21; 26.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*.google.com/"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 53560
+  },
+  {
+   "rank": 13,
+   "id": "fjnbnpbmkenffdnngjfgmeleoegfcffe",
+   "name": "Stylish - Custom themes for any website",
+   "version": "3.4.18",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/stylish-custom-themes-for/fjnbnpbmkenffdnngjfgmeleoegfcffe), \"2,000,000 users\", read 2026-09-21; 22.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "pages/options/options.html",
+   "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "scripting",
+    "webNavigation",
+    "webRequest",
+    "contextMenus"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 1557617
+  },
+  {
+   "rank": 14,
+   "id": "hnmpcagpplmpfojmgmnngilcnanddlhb",
+   "name": "Free VPN For Chrome - VPN Extension - Windscribe",
+   "version": "4.2.9",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/free-vpn-for-chrome-vpn-e/hnmpcagpplmpfojmgmnngilcnanddlhb), \"2,000,000 users\", read 2026-09-21; 21K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess",
+    "privacy",
+    "proxy",
+    "notifications",
+    "scripting",
+    "storage",
+    "tabs",
+    "webRequest",
+    "webRequestAuthProvider",
+    "management",
+    "alarms",
+    "offscreen",
+    "unlimitedStorage"
+   ],
+   "optionalPermissions": [
+    "contentSettings"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 18529785
+  },
+  {
+   "rank": 15,
+   "id": "agionbommeaifngbhincahgmoflcikhm",
+   "name": "Image downloader - Imageye",
+   "version": "5.30.1",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/image-downloader-imageye/agionbommeaifngbhincahgmoflcikhm), \"2,000,000 users\", read 2026-09-21; 16.7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "downloads",
+    "storage",
+    "webRequest",
+    "scripting",
+    "declarativeNetRequest",
+    "sidePanel"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*",
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 2235117
+  },
+  {
+   "rank": 16,
+   "id": "nmigaijibiabddkkmjhlehchpmgbokfj",
+   "name": "Sound Booster - increase volume up",
+   "version": "1.0.14",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/sound-booster-increase-vo/nmigaijibiabddkkmjhlehchpmgbokfj), \"2,000,000 users\", read 2026-09-21; 14.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "tabCapture",
+    "storage",
+    "system.display",
+    "offscreen"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 415680
+  },
+  {
+   "rank": 17,
+   "id": "bfogiafebfohielmmehodmfbbebbbpei",
+   "name": "Keeper® Password Manager & Digital Vault",
+   "version": "18.0.0",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/keeper%C2%AE-password-manager/bfogiafebfohielmmehodmfbbebbbpei), \"2,000,000 users\", read 2026-09-21; 8.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "browser_action/browser_action.html",
+   "options": "extension_pages/options.html",
+   "permissions": [
+    "contextMenus",
+    "tabs",
+    "alarms",
+    "idle",
+    "storage",
+    "browsingData",
+    "webNavigation",
+    "scripting",
+    "declarativeNetRequestWithHostAccess",
+    "clipboardWrite",
+    "offscreen",
+    "webRequest",
+    "webRequestAuthProvider",
+    "privacy"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "http://*/*",
+    "https://*/*",
+    "<all_urls>"
+   ],
+   "contentScripts": 3,
+   "nativeMessaging": false,
+   "crxBytes": 120206813
+  },
+  {
+   "rank": 18,
+   "id": "ammjkodgmmoknidbanneddgankgfejfh",
+   "name": "7TV",
+   "version": "3.1.25",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/7tv/ammjkodgmmoknidbanneddgankgfejfh), \"2,000,000 users\", read 2026-09-21; 8.2K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "index.html#/popup?noheader=1",
+   "options": "index.html",
+   "permissions": [
+    "scripting",
+    "storage",
+    "activeTab"
+   ],
+   "optionalPermissions": [
+    "management"
+   ],
+   "hostPermissions": [
+    "*://*.twitch.tv/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 3721980
+  },
+  {
+   "rank": 19,
+   "id": "mbniclmhobmnbdlbpiphghaielnnpgdp",
+   "name": "Lightshot (screenshot tool)",
+   "version": "7.0.1",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/lightshot-screenshot-tool/mbniclmhobmnbdlbpiphghaielnnpgdp), \"2,000,000 users\", read 2026-09-21; 7K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "activeTab",
+    "storage",
+    "unlimitedStorage",
+    "notifications",
+    "clipboardWrite",
+    "downloads",
+    "cookies"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "*://*/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 701950
+  },
+  {
+   "rank": 20,
+   "id": "cndibmoanboadcifjkjbdpjgfedanolh",
+   "name": "BetterCampus (prev. BetterCanvas)",
+   "version": "9.8.13",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/bettercampus-prev-betterc/cndibmoanboadcifjkjbdpjgfedanolh), \"2,000,000 users\", read 2026-09-21; 4.5K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "tabs"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 7,
+   "nativeMessaging": false,
+   "crxBytes": 11491229
+  },
+  {
+   "rank": 21,
+   "id": "hoombieeljmmljlkjmnheibnpciblicm",
+   "name": "Language Reactor",
+   "version": "5.1.8",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/language-reactor/hoombieeljmmljlkjmnheibnpciblicm), \"2,000,000 users\", read 2026-09-21; 4.4K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "scripting"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://i.ytimg.com/*"
+   ],
+   "contentScripts": 4,
+   "nativeMessaging": false,
+   "crxBytes": 4200021
+  },
+  {
+   "rank": 22,
+   "id": "jplgfhpmjnbigmhklmmbgecoobifkmpa",
+   "name": "Proton VPN: Fast & Secure",
+   "version": "1.3.6",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/proton-vpn-fast-secure/jplgfhpmjnbigmhklmmbgecoobifkmpa), \"2,000,000 users\", read 2026-09-21; 4.3K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "idle",
+    "notifications",
+    "privacy",
+    "proxy",
+    "scripting",
+    "storage",
+    "tabs",
+    "webRequest",
+    "webRequestAuthProvider"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*/",
+    "http://*/",
+    "ftp://*/",
+    "wss://*/",
+    "ws://*/"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 2604047
+  },
+  {
+   "rank": 23,
+   "id": "nmmicjeknamkfloonkhhcjmomieiodli",
+   "name": "YouTube Summary with ChatGPT & Claude",
+   "version": "2.4.0",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/youtube-summary-with-chat/nmmicjeknamkfloonkhhcjmomieiodli), \"2,000,000 users\", read 2026-09-21; 4.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "src/options/index.html",
+   "permissions": [
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 9,
+   "nativeMessaging": false,
+   "crxBytes": 1377800
+  },
+  {
+   "rank": 24,
+   "id": "cnpniohnfphhjihaiiggeabnkjhpaldj",
+   "name": "Image Downloader",
+   "version": "4.5.3",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/image-downloader/cnpniohnfphhjihaiiggeabnkjhpaldj), \"2,000,000 users\", read 2026-09-21; 2.6K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "src/Popup/index.html",
+   "options": "src/Options/index.html",
+   "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads",
+    "sidePanel",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 140840
+  },
+  {
+   "rank": 25,
+   "id": "pocpnlppkickgojjlmhdmidojbmbodfm",
+   "name": "Chromebook Recovery Utility",
+   "version": "0.2.3",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/chromebook-recovery-utili/pocpnlppkickgojjlmhdmidojbmbodfm), \"2,000,000 users\", read 2026-09-21; 2.2K ratings (tie-break within the rounded bucket; equal rounded rating counts ordered by name)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "chromeosInfoPrivate",
+    "feedbackPrivate",
+    "fileSystem",
+    "imageWriterPrivate",
+    "metricsPrivate",
+    "storage"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://dl.google.com/dl/edgedl/chromeos/recovery/recovery2.json",
+    "https://dl.google.com/dl/edgedl/chromeos/recovery/cloudready_recovery2.json",
+    "https://www.google-analytics.com/"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 1959166
+  },
+  {
+   "rank": 26,
+   "id": "dmghijelimhndkbmpgbldicpogfkceaj",
+   "name": "Dark Mode",
+   "version": "0.5.8",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/dark-mode/dmghijelimhndkbmpgbldicpogfkceaj), \"2,000,000 users\", read 2026-09-21; 2.2K ratings (tie-break within the rounded bucket; equal rounded rating counts ordered by name)",
+   "bg": "sw",
+   "popup": null,
+   "options": "data/options/options.html",
+   "permissions": [
+    "storage",
+    "contextMenus"
+   ],
+   "optionalPermissions": [
+    "alarms"
+   ],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 315845
+  },
+  {
+   "rank": 27,
+   "id": "bfgdeiadkckfbkeigkoncpdieiiefpig",
+   "name": "Bitmoji",
+   "version": "11.0.0",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/bitmoji/bfgdeiadkckfbkeigkoncpdieiiefpig), \"2,000,000 users\", read 2026-09-21; 2.1K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "popup.html",
+   "options": null,
+   "permissions": [
+    "storage",
+    "cookies",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.google.com/*",
+    "https://*.bitbucket.org/*",
+    "https://*.github.com/*",
+    "https://*.atlassian.net/*",
+    "https://*.bitmoji.com/*",
+    "https://*.snapchat.com/*"
+   ],
+   "contentScripts": 1,
+   "nativeMessaging": false,
+   "crxBytes": 1522182
+  },
+  {
+   "rank": 28,
+   "id": "hniebljpgcogalllopnjokppmgbhaden",
+   "name": "Screen Recorder",
+   "version": "3.3.1",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/screen-recorder/hniebljpgcogalllopnjokppmgbhaden), \"2,000,000 users\", read 2026-09-21; 1.9K ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": "index.html#/settings",
+   "permissions": [
+    "desktopCapture"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 268140
+  },
+  {
+   "rank": 29,
+   "id": "dahenjhkoodjbpjheillcadbppiidmhp",
+   "name": "Google Scholar PDF Reader",
+   "version": "0.5.2",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/google-scholar-pdf-reader/dahenjhkoodjbpjheillcadbppiidmhp), \"2,000,000 users\", read 2026-09-21; 708 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": null,
+   "options": null,
+   "permissions": [
+    "webNavigation",
+    "webRequest",
+    "declarativeNetRequest",
+    "scripting",
+    "storage",
+    "offscreen",
+    "clipboardWrite"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "<all_urls>"
+   ],
+   "contentScripts": 4,
+   "nativeMessaging": false,
+   "crxBytes": 3712847
+  },
+  {
+   "rank": 30,
+   "id": "bkbeeeffjjeopflfhgeknacdieedcoml",
+   "name": "Microsoft Defender Browser Protection",
+   "version": "1.664",
+   "mv": 3,
+   "users": 2000000,
+   "usersSource": "store detail page (https://chromewebstore.google.com/detail/microsoft-defender-browse/bkbeeeffjjeopflfhgeknacdieedcoml), \"2,000,000 users\", read 2026-09-21; 628 ratings (tie-break within the rounded bucket)",
+   "bg": "sw",
+   "popup": "pages/popup.html",
+   "options": null,
+   "permissions": [
+    "tabs",
+    "storage",
+    "webNavigation"
+   ],
+   "optionalPermissions": [],
+   "hostPermissions": [
+    "https://*.smartscreen.microsoft.com/*"
+   ],
+   "contentScripts": 0,
+   "nativeMessaging": false,
+   "crxBytes": 245623
+  }
+ ]
+}

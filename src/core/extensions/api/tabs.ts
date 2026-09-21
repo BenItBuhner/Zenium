@@ -10,6 +10,19 @@ export const WINDOW_ID_NONE = -1
 export const WINDOW_ID_CURRENT = -2
 export const TAB_GROUP_NONE = -1
 
+/**
+ * Chrome's `kFileUrlsNotAllowedInExtensionNavigations`: `tabs.create`, `tabs.update` and
+ * `windows.create` refuse a `file:` URL for an extension whose "Allow access to file URLs" switch
+ * is off (`ExtensionTabUtil::PrepareURLForNavigation`).
+ */
+export const FILE_URL_WITHOUT_ACCESS_ERROR =
+  'Cannot navigate to a file URL without local file access.'
+
+/** Whether an API-triggered navigation to `url` needs the extension's file-access switch. */
+export function isFileNavigation(url: string): boolean {
+  return /^file:/i.test(url)
+}
+
 export type TabStatus = 'unloaded' | 'loading' | 'complete'
 
 export interface MutedInfo {

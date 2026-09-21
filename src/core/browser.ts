@@ -3007,6 +3007,7 @@ export class Browser {
       'passwords.generate': ({ options, domain }) => this.passwords.generate(options, domain),
       'passwords.checkupRun': () => this.passwords.runCheckup(),
       'passwords.checkupCancel': () => this.passwords.cancelCheckup(),
+      'passwords.leakRespond': ({ id, action }, win) => this.passwords.leakRespond(id, action, win),
       'passwords.import': ({ conflict }, win) => this.passwords.import(conflict, win),
       'passwords.export': ({ passphrase }, win) => this.passwords.export(passphrase, win),
       'blocking.updateLists': ({ id }) => this.blocking.updateLists(id),

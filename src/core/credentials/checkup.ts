@@ -62,6 +62,29 @@ export interface CheckupResult {
   unchecked: string[]
   /** The breach service could not be reached at all. */
   offline: boolean
+  /**
+   * Every login whose lookup completed: how often its password appears in the corpus, 0 when
+   * clean (what the service records on the login as `breached` / `checkedAt`).
+   */
+  breachCounts: Map<string, number>
+}
+
+/**
+ * The sign-in leak check (ID-31): how often one password appears in the breach corpus, by the
+ * same range request as the checkup (the hash prefix only, padded), retried like it; null when
+ * the network failed for good, which the caller treats as "not checked" (no warning, nothing
+ * recorded, the next sign-in tries again).
+ */
+export async function lookupBreachCount(
+  password: string,
+  deps: Pick<CheckupDeps, 'fetchRange'>,
+  signal: AbortSignal
+): Promise<number | null> {
+  if (!password) return null
+  const hash = (await sha1Hex(password)).toUpperCase()
+  const text = await fetchWithRetry(deps, hash.slice(0, 5), signal)
+  if (text === null) return null
+  return breachCount(hash, parseRange(text))
 }
 
 /** Group logins by identical password; only groups with two or more members are reported. */
@@ -117,7 +140,8 @@ export async function runCheckup(
     weak: [],
     reused: [],
     unchecked: [],
-    offline: false
+    offline: false,
+    breachCounts: new Map()
   }
   result.reused = await findReused(credentials)
   result.weak = await findWeak(credentials, deps.score, signal)
@@ -152,7 +176,10 @@ export async function runCheckup(
         const range = parseRange(text)
         for (const id of ids) {
           const hash = hashes.get(id)
-          if (hash && breachCount(hash, range) > 0) result.compromised.push(id)
+          if (!hash) continue
+          const count = breachCount(hash, range)
+          result.breachCounts.set(id, count)
+          if (count > 0) result.compromised.push(id)
         }
       }
       checked += ids.length
@@ -169,7 +196,7 @@ export async function runCheckup(
 }
 
 async function fetchWithRetry(
-  deps: CheckupDeps,
+  deps: Pick<CheckupDeps, 'fetchRange'>,
   prefix: string,
   signal: AbortSignal
 ): Promise<string | null> {
