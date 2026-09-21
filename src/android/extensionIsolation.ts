@@ -31,6 +31,32 @@ export function collectBuiltins(realWindow: object): Set<PropertyKey> {
 }
 
 /**
+ * The keys of the global's operations at document start: the function-valued data properties
+ * of the global and its prototype chain that are not constructors (a native method has no
+ * `prototype`; `fetch`, `setTimeout`, `addEventListener`, `requestAnimationFrame`, …).
+ * Accessors are not read. A function read through one of these keys is a call on the window
+ * whatever function a page script has put there since: Sentry's `browserApiErrors` replaces
+ * `EventTarget.prototype.addEventListener` and the timer functions with plain wrappers that
+ * forward `this` to the native, and a plain function has a `prototype`, so the shape test
+ * alone would hand it back unbound and a bare `addEventListener(...)` in a `with` block would
+ * call it with the scope object as `this` (roblox.com's Sentry: `Illegal invocation`).
+ */
+export function collectOperations(realWindow: object): Set<PropertyKey> {
+  const operations = new Set<PropertyKey>()
+  let obj: object | null = realWindow
+  while (obj && obj !== Object.prototype) {
+    for (const key of Reflect.ownKeys(obj)) {
+      if (typeof key !== 'string' || key[0] !== key[0].toLowerCase()) continue
+      const desc = Object.getOwnPropertyDescriptor(obj, key)
+      const value = desc?.value as { prototype?: unknown } | undefined
+      if (typeof value === 'function' && !('prototype' in value)) operations.add(key)
+    }
+    obj = Object.getPrototypeOf(obj)
+  }
+  return operations
+}
+
+/**
  * A per-extension stand-in for `window` / `self` / `globalThis`: expandos land in a private
  * store and never reach the page, reads of browser globals fall through to the real window with
  * native methods bound so `window.setTimeout(...)` keeps working, page globals read as
@@ -39,13 +65,24 @@ export function collectBuiltins(realWindow: object): Set<PropertyKey> {
  * the extension wrote; `has` answers for the store and the browser's globals only, so
  * `'IntersectionObserver' in window` stays honest and the group's own `var`s still resolve.
  *
+ * A function is bound to the real window when it is method-shaped (no `prototype`, lower-case
+ * name) or when its key is one of `operations` (the window's operations at document start,
+ * `collectOperations`): a bare call inside the `with` block otherwise runs with the scope object
+ * as `this`, and a native, or a page's wrapper forwarding `this` to the native, refuses that
+ * receiver. The binding follows the current value: a function the page replaces after a first
+ * read is bound afresh. Constructors keep their identity.
+ *
  * What it cannot hide is what makes the host report reduced isolation: the page and the script
  * share prototypes, and a bare identifier the page defined is found through the real global
  * scope when the store and the browser do not have it.
  */
-export function createScopeProxy(realWindow: object, builtins: Set<PropertyKey>): Any {
+export function createScopeProxy(
+  realWindow: object,
+  builtins: Set<PropertyKey>,
+  operations: ReadonlySet<PropertyKey> = new Set()
+): Any {
   const store: Any = Object.create(null) as Any
-  const bound = new Map<PropertyKey, unknown>()
+  const bound = new Map<PropertyKey, { of: unknown; fn: unknown }>()
   const target = Object.create(Object.getPrototypeOf(realWindow) as object) as Any
   const win = realWindow as Any
   const findSetter = (key: PropertyKey): boolean => {
@@ -70,14 +107,15 @@ export function createScopeProxy(realWindow: object, builtins: Set<PropertyKey>)
       if ((key === 'top' || key === 'parent') && value === realWindow) return proxy
       if (typeof value === 'function' && typeof key === 'string') {
         const fn = value as { prototype?: unknown }
-        // Methods (no `prototype`, lower-case name) need `this === window`; constructors keep identity.
-        if (!('prototype' in fn) && key[0] === key[0].toLowerCase()) {
+        // Methods (no `prototype`, lower-case name) and the window's operations of document
+        // start, whatever their shape now, need `this === window`; constructors keep identity.
+        if (operations.has(key) || (!('prototype' in fn) && key[0] === key[0].toLowerCase())) {
           let b = bound.get(key)
-          if (!b) {
-            b = (value as (...a: unknown[]) => unknown).bind(realWindow)
+          if (!b || b.of !== value) {
+            b = { of: value, fn: (value as (...a: unknown[]) => unknown).bind(realWindow) }
             bound.set(key, b)
           }
-          return b
+          return b.fn
         }
       }
       return value

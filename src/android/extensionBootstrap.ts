@@ -25,6 +25,7 @@ import {
 } from '@core/extensions/runtime/scheduling'
 import {
   collectBuiltins,
+  collectOperations,
   createScopeProxy,
   installTrustedTypesShield,
   ownScriptMatcher,
@@ -635,6 +636,9 @@ declare const __zenExtBoot: Boot
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
   const builtins = collectBuiltins(realWindow)
+  // The window's operations at document start, for the `with` fallback's scope proxies; read
+  // once per frame, on the first proxy (a frame with worlds never needs it).
+  let operations: ReadonlySet<PropertyKey> | null = null
   const stats: BootStats | null = boot.debug
     ? {
         frame: frame.url,
@@ -769,7 +773,8 @@ declare const __zenExtBoot: Boot
       root = realWindow
     } else {
       shieldWorld(ext, 'with')
-      root = createScopeProxy(realWindow, builtins)
+      operations ??= collectOperations(realWindow)
+      root = createScopeProxy(realWindow, builtins, operations)
       // A module the content script imports evaluates on the real global, not in the proxy's
       // scope: the host brackets the served module text, and this accessor answers the
       // extension's `chrome` there while the module's body runs (extensionModuleChrome.ts).
