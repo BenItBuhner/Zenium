@@ -128,7 +128,13 @@ describe('hoverCardHost', () => {
   })
 
   it('shows the address of a Zenium page, the word for a file, nothing for a blank tab', () => {
-    expect(hoverCardHost('zen://settings/?pane=tabs')).toBe('zen://settings')
+    // A page tab's address as the user knows it: `zenium://`, page and section, never the
+    // `zen://` the tab carries or the page's query (v2 §10.1).
+    expect(hoverCardHost('zen://settings/?pane=tabs')).toBe('zenium://settings')
+    expect(hoverCardHost('zen://settings/privacy')).toBe('zenium://settings/privacy')
+    expect(hoverCardHost('zen://history?q=zen')).toBe('zenium://history')
+    expect(hoverCardHost('zen://bookmarks?folder=f1')).toBe('zenium://bookmarks')
+    expect(hoverCardHost('zen://downloads')).toBe('zenium://downloads')
     expect(hoverCardHost('file:///home/me/notes.html')).toBe('File on this computer')
     expect(hoverCardHost('about:blank')).toBe('')
     expect(hoverCardHost('zen://blank')).toBe('')

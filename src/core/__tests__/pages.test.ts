@@ -356,6 +356,198 @@ describe('typed and external page addresses', () => {
   })
 })
 
+describe('History, the bookmarks manager and Downloads as page tabs (styling pass 6, v2 §10.1)', () => {
+  const PAGES = [
+    ['history', 'history.open', 'History'],
+    ['bookmarks', 'bookmarks.open', 'Bookmarks'],
+    ['downloads', 'downloads.open', 'Downloads']
+  ] as const
+
+  function overlays(f: Fixture): unknown[] {
+    return f.sent.filter((s) => s.name === 'overlay.open').map((s) => s.payload)
+  }
+
+  it('opens one chrome page tab per window from the shortcut’s action and re-focuses it on a second press', () => {
+    for (const [id, action, title] of PAGES) {
+      const f = fixture()
+      const site = openSite(f, 'https://a.test/')
+      f.browser.actions.run(action, { sourceTabId: site.id, win: f.win })
+      const tab = activeTab(f)
+      expect(tab?.url).toBe(`zen://${id}`)
+      expect(tab?.title).toBe(title)
+      expect(tab?.openerTabId).toBe(site.id)
+      // A chrome page: no page view, nothing loaded.
+      expect(f.viewsFor).not.toContain(tab?.id)
+      expect(f.browser.pages.isChromePage(tab!)).toBe(true)
+      // Something else in front, then the shortcut again: the one tab is re-focused.
+      openSite(f, 'https://b.test/')
+      f.browser.actions.run(action, { sourceTabId: null, win: f.win })
+      expect(activeTab(f)?.id).toBe(tab?.id)
+      expect(spaceUrls(f).filter((u) => u.startsWith(`zen://${id}`))).toHaveLength(1)
+      expect(overlays(f)).toEqual([])
+    }
+  })
+
+  it('opens the tab from the typed zenium:// address, the chrome:// one and a deep link, one per window', () => {
+    for (const [id] of PAGES) {
+      const f = fixture()
+      const site = openSite(f, 'https://a.test/')
+      f.browser.handleCommand(f.win, 'urlbar.submit', {
+        input: `zenium://${id}`,
+        newTab: false,
+        tabId: site.id,
+        background: false
+      })
+      const tab = activeTab(f)
+      expect(tab?.url).toBe(`zen://${id}`)
+      expect(tab?.openerTabId).toBe(site.id)
+      expect(f.browser.tabs.tab(site.id)?.url).toBe('https://a.test/')
+      f.browser.tabs.activateTab(site.id, f.win)
+      f.browser.handleCommand(f.win, 'urlbar.submit', {
+        input: `chrome://${id}`,
+        newTab: false,
+        tabId: site.id,
+        background: false
+      })
+      expect(activeTab(f)?.id).toBe(tab?.id)
+      f.browser.openExternalUrl(`zenium://${id}`, f.win, { fromIntent: true })
+      expect(activeTab(f)?.id).toBe(tab?.id)
+      expect(spaceUrls(f).filter((u) => u.startsWith(`zen://${id}`))).toHaveLength(1)
+    }
+  })
+
+  it('carries the page’s query: @history and @bookmarks search the page, a folder opens the manager on it', () => {
+    const f = fixture()
+    const site = openSite(f, 'https://a.test/')
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: '@history zen browser',
+      newTab: false,
+      tabId: site.id,
+      background: false
+    })
+    const history = activeTab(f)
+    expect(history?.url).toBe('zen://history?q=zen+browser')
+    expect(history?.title).toBe('History')
+    // The search of the open tab changes: the tab is re-focused and moved, a step it can back out of.
+    f.browser.tabs.activateTab(site.id, f.win)
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: '@history other',
+      newTab: false,
+      tabId: site.id,
+      background: false
+    })
+    expect(activeTab(f)?.id).toBe(history?.id)
+    expect(activeTab(f)?.url).toBe('zen://history?q=other')
+    expect(activeTab(f)?.canGoBack).toBe(true)
+    back(f, history!.id)
+    expect(activeTab(f)?.url).toBe('zen://history?q=zen+browser')
+    // A plain open leaves the search as it is; the landing (section null) with no query clears it.
+    f.browser.pages.open('history', undefined, f.win)
+    expect(activeTab(f)?.url).toBe('zen://history?q=zen+browser')
+    f.browser.pages.open('history', null, f.win)
+    expect(activeTab(f)?.url).toBe('zen://history')
+
+    const bookmarks = f.browser.pages.open('bookmarks', null, f.win, undefined, {
+      query: { folder: 'f_work' }
+    })
+    expect(f.browser.tabs.tab(bookmarks ?? undefined)?.url).toBe('zen://bookmarks?folder=f_work')
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: '@bookmarks zen',
+      newTab: false,
+      tabId: bookmarks,
+      background: false
+    })
+    expect(activeTab(f)?.id).toBe(bookmarks)
+    expect(activeTab(f)?.url).toBe('zen://bookmarks?q=zen')
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://bookmarks'))).toHaveLength(1)
+  })
+
+  it('is the phone’s panel or sheet on its layout although the host has page tabs, the query as the overlay knows it', () => {
+    const f = fixture()
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'phone' })
+    const site = openSite(f, 'https://a.test/')
+    const before = spaceUrls(f)
+    for (const [id, action] of PAGES) {
+      f.browser.actions.run(action, { sourceTabId: site.id, win: f.win })
+      expect(overlays(f).pop()).toEqual({ kind: id, section: undefined, folderId: undefined })
+    }
+    expect(
+      f.browser.pages.open('bookmarks', null, f.win, undefined, { query: { folder: 'f1' } })
+    ).toBeNull()
+    expect(overlays(f).pop()).toEqual({ kind: 'bookmarks', section: undefined, folderId: 'f1' })
+    // Typed, the address opens the panel too, the tab left alone.
+    f.browser.handleCommand(f.win, 'urlbar.submit', {
+      input: 'zenium://history',
+      newTab: false,
+      tabId: site.id,
+      background: false
+    })
+    expect(overlays(f).pop()).toEqual({ kind: 'history', section: undefined, folderId: undefined })
+    expect(spaceUrls(f)).toEqual(before)
+    // Settings names no layouts: the phone's Settings is the tab.
+    expect(f.browser.pages.opensPageAsTab('settings', f.win)).toBe(true)
+    expect(f.browser.pages.opensPageAsTab('history', f.win)).toBe(false)
+    // The tablet's layout holds the tabs as the desktop's does.
+    f.browser.handleCommand(f.win, 'window.formFactor', { formFactor: 'tablet' })
+    expect(f.browser.pages.opensPageAsTab('downloads', f.win)).toBe(true)
+  })
+
+  it('falls back to the overlay on a host without page tabs', () => {
+    const f = fixture({ pageTabs: false })
+    openSite(f, 'https://a.test/')
+    for (const [id, action] of PAGES) {
+      f.browser.actions.run(action, { sourceTabId: null, win: f.win })
+      expect(overlays(f).pop()).toEqual({ kind: id, section: undefined, folderId: undefined })
+    }
+    expect(spaceUrls(f).some((u) => u.startsWith('zen://history'))).toBe(false)
+  })
+
+  it('opens the three pages from a private window in the regular window used last, none in the private one', () => {
+    const f = fixture({ windows: true })
+    openSite(f, 'https://a.test/')
+    const priv = f.browser.createWindow({ kind: 'private', from: f.win })
+    if (!priv.isPrivate || !priv.localSpace) throw new Error('a private window has a local space')
+    const privBefore = [...priv.localSpace.tabIds]
+    for (const [id, action] of PAGES) {
+      f.browser.actions.run(action, { sourceTabId: null, win: priv })
+      const tab = f.browser.tabs.tab(f.browser.tabs.activeTabFor(f.win)?.id)
+      expect(tab?.url).toBe(`zen://${id}`)
+      expect(f.browser.tabs.windowFor(tab?.id ?? '')).toBe(f.win)
+      expect(tab?.openerTabId).toBeNull()
+      expect(tab?.containerId).toBe(DEFAULT_CONTAINER_ID)
+      expect(f.browser.tabs.isPrivate(tab!)).toBe(false)
+    }
+    expect(priv.localSpace.tabIds).toEqual(privBefore)
+    expect(f.browser.tabs.privateTabs()).toHaveLength(1)
+    expect(f.raised.get(f.win.id)).toBe(3)
+    // Typed into the private tab: the same reroute, the private tab left on its page.
+    const privTab = f.browser.tabs.tab(privBefore[0])!
+    f.browser.tabs.navigate(privTab.id, 'https://p.test/')
+    f.browser.handleCommand(priv, 'urlbar.submit', {
+      input: 'zenium://downloads',
+      newTab: false,
+      tabId: privTab.id,
+      background: false
+    })
+    expect(f.browser.tabs.tab(privTab.id)?.url).toBe('https://p.test/')
+    expect(
+      Object.values(f.browser.state.model.tabs).filter((t) => t.url.startsWith('zen://downloads'))
+    ).toHaveLength(1)
+    expect(overlays(f)).toEqual([])
+  })
+
+  it('never shares a split and takes no star', () => {
+    const f = fixture()
+    const a = openSite(f, 'https://a.test/')
+    for (const [id] of PAGES) {
+      const tabId = f.browser.pages.open(id, undefined, f.win) ?? ''
+      f.browser.tabs.createSplit([a.id, tabId], 'vertical', f.win)
+      expect(f.browser.tabs.tab(tabId)?.splitGroupId).toBeNull()
+      expect(f.browser.bookmarkable(`zen://${id}`)).toBe(false)
+    }
+  })
+})
+
 describe('moving between sections', () => {
   it('keeps a history the toolbar reads like a document history', () => {
     const f = fixture()
@@ -507,7 +699,7 @@ describe('registry attributes the core reads', () => {
   it('lets a page whose entry allows it share a split (a document page)', () => {
     const f = fixture({ pages: TRIAL })
     const a = openSite(f, 'https://a.test/')
-    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'library' }) as string
     f.browser.tabs.createSplit([a.id, id], 'vertical', f.win)
     const group = f.browser.tabs.tab(a.id)?.splitGroupId
     expect(group).toBeTruthy()
@@ -1041,6 +1233,76 @@ describe('a restored session', () => {
     expect(f.browser.tabs.tab(settings.id)?.canGoBack).toBe(false)
     expect(f.browser.tabs.tab(site.id)).toBeDefined()
   })
+
+  it('brings History, Bookmarks and Downloads back as page tabs, the query they were left on kept', () => {
+    const space = createSpace('Work', '')
+    const records = [
+      ['zen://history?q=zen', 'History'],
+      ['zen://bookmarks?folder=f1', 'Bookmarks'],
+      ['zen://downloads', 'Downloads']
+    ].map(([url]) => createTabRecord({ spaceId: space.id, containerId: 'default', url }))
+    space.tabIds = records.map((t) => t.id)
+    space.activeTabId = records[0].id
+    const f = fixture({
+      profile: {
+        version: 2,
+        spaces: [space],
+        tabs: records,
+        essentialTabIds: [],
+        activeSpaceId: space.id,
+        settings: { onboardingDone: true }
+      }
+    })
+    for (const [i, [url, title]] of [
+      ['zen://history?q=zen', 'History'],
+      ['zen://bookmarks?folder=f1', 'Bookmarks'],
+      ['zen://downloads', 'Downloads']
+    ].entries()) {
+      const restored = f.browser.tabs.tab(records[i].id)
+      expect(restored?.url).toBe(url)
+      expect(restored?.title).toBe(title)
+      expect(restored?.discarded).toBe(false)
+      expect(f.viewsFor).not.toContain(records[i].id)
+      expect(f.browser.pages.isChromePage(restored!)).toBe(true)
+      // No section beneath: the page is the whole history.
+      expect(restored?.canGoBack).toBe(false)
+    }
+    // The restored tab is the window's one: a second open re-focuses it.
+    openSite(f, 'https://a.test/')
+    expect(f.browser.pages.open('downloads', undefined, f.win)).toBe(records[2].id)
+  })
+})
+
+describe('a closed page tab (Recently closed, Ctrl+Shift+T)', () => {
+  it('lands in Recently closed under its title and address, and comes back as a page on its query', () => {
+    const f = fixture()
+    openSite(f, 'https://a.test/')
+    const id = f.browser.handleCommand(f.win, 'page.open', {
+      id: 'history',
+      query: { q: 'zen' }
+    }) as string
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://history?q=zen')
+    f.browser.tabs.closeTab(id, true, f.win)
+    expect(f.browser.tabs.tab(id)).toBeUndefined()
+    // The entry the chrome lists (the History page's group, the tab search popover), whose
+    // favicon slot draws the page's glyph from the address: no icon was ever fetched.
+    const [entry] = f.browser.session.summaries()
+    expect(entry).toMatchObject({
+      kind: 'tab',
+      title: 'History',
+      url: 'zen://history?q=zen',
+      favicon: null
+    })
+    f.browser.session.reopenClosed(f.win)
+    const back = activeTab(f)
+    expect(back?.url).toBe('zen://history?q=zen')
+    expect(back?.title).toBe('History')
+    expect(back && f.browser.pages.isChromePage(back)).toBe(true)
+    expect(f.viewsFor).not.toContain(back?.id)
+    // It is the window's History tab again: the shortcut re-focuses it rather than opening another.
+    expect(f.browser.pages.open('history', undefined, f.win)).toBe(back?.id)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://history'))).toHaveLength(1)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1061,9 +1323,11 @@ const TRIAL: InternalPageRegistry = {
     splittable: true,
     sections: []
   },
-  downloads: {
-    id: 'downloads',
-    title: 'Downloads',
+  // A singleton document page with a section, standing in for none in the real registry (whose
+  // Downloads is a chrome page without sections since pass 6).
+  library: {
+    id: 'library',
+    title: 'Library',
     render: 'document',
     singleton: true,
     glyph: 'download',
@@ -1093,30 +1357,30 @@ describe('a document page on the same route', () => {
   it('is a tab on a host without page tabs too: only chrome pages fall back to an overlay', () => {
     const f = fixture({ pages: TRIAL, pageTabs: false })
     openSite(f, 'https://a.test/')
-    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' })
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'library' })
     expect(typeof id).toBe('string')
-    expect(activeTab(f)?.url).toBe('zen://downloads')
+    expect(activeTab(f)?.url).toBe('zen://library')
     expect(f.sent.filter((s) => s.name === 'overlay.open')).toHaveLength(0)
   })
 
   it('keeps one per window when asked, focusing it from a typed address in another tab', () => {
     const f = fixture({ pages: TRIAL })
     const site = openSite(f, 'https://a.test/')
-    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'library' }) as string
     f.browser.tabs.activateTab(site.id, f.win)
     // (The canonical form: `inputToUrl` only knows the alias for pages in the real registry.)
     f.browser.handleCommand(f.win, 'urlbar.submit', {
-      input: 'zen://downloads/active',
+      input: 'zen://library/active',
       newTab: false,
       tabId: site.id,
       background: false
     })
     expect(activeTab(f)?.id).toBe(id)
-    expect(f.browser.tabs.tab(id)?.url).toBe('zen://downloads/active')
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://library/active')
     expect(f.browser.tabs.tab(site.id)?.url).toBe('https://a.test/')
-    expect(spaceUrls(f).filter((u) => u.startsWith('zen://downloads'))).toHaveLength(1)
+    expect(spaceUrls(f).filter((u) => u.startsWith('zen://library'))).toHaveLength(1)
     // Loaded by the view, as a document: no section history of the service's own.
-    expect(f.loaded).toContain('zen://downloads/active')
+    expect(f.loaded).toContain('zen://library/active')
     expect(f.browser.tabs.tab(id)?.canGoBack).toBe(false)
   })
 
@@ -1136,9 +1400,9 @@ describe('a document page on the same route', () => {
   it('navigates a document page to a section through its view', () => {
     const f = fixture({ pages: TRIAL })
     openSite(f, 'https://a.test/')
-    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'downloads' }) as string
+    const id = f.browser.handleCommand(f.win, 'page.open', { id: 'library' }) as string
     f.browser.handleCommand(f.win, 'page.navigate', { tabId: id, section: 'active' })
-    expect(f.browser.tabs.tab(id)?.url).toBe('zen://downloads/active')
-    expect(f.loaded.at(-1)).toBe('zen://downloads/active')
+    expect(f.browser.tabs.tab(id)?.url).toBe('zen://library/active')
+    expect(f.loaded.at(-1)).toBe('zen://library/active')
   })
 })

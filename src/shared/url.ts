@@ -16,12 +16,14 @@ export const BLANK_URL = 'zen://blank'
 export const NEW_TAB_URL = 'zen://newtab'
 export const ERROR_URL_PREFIX = 'zen://error'
 export const READER_URL_PREFIX = 'zen://reader'
-/** The history page: a chrome surface, not a document (see `overlayForUrl` in zenPages). */
+/** The History page: an internal page that opens as a tab (see `shared/internalPages.ts`). */
 export const HISTORY_URL = 'zen://history'
 /** The Settings page: an internal page that opens as a tab (see `shared/internalPages.ts`). */
 export const SETTINGS_URL = 'zen://settings'
-/** The bookmark manager: typed or linked, it opens the manager instead of navigating (zenPages). */
+/** The bookmarks manager: an internal page that opens as a tab (see `shared/internalPages.ts`). */
 export const BOOKMARKS_URL = 'zen://bookmarks'
+/** The Downloads page: an internal page that opens as a tab (see `shared/internalPages.ts`). */
+export const DOWNLOADS_URL = 'zen://downloads'
 /** The addresses of an empty tab (Zen's blank page and the aliases that resolve to it). */
 const NEW_TAB_URLS = new Set([BLANK_URL, NEW_TAB_URL, 'about:newtab', 'about:blank', ''])
 
@@ -56,7 +58,8 @@ const INTERNAL_PAGE_ALIASES: Record<string, string> = {
   preferences: SETTINGS_URL,
   settings: SETTINGS_URL,
   history: HISTORY_URL,
-  bookmarks: BOOKMARKS_URL
+  bookmarks: BOOKMARKS_URL,
+  downloads: DOWNLOADS_URL
 }
 /** `host:port[/path]` – looks like a scheme but is a bare host with a port (dev servers). */
 const HOST_PORT_RE =

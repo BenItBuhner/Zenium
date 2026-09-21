@@ -71,8 +71,8 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   // The overlay header (§9.7, overlays/OverlayShell.tsx): the title on the type scale, the
   // hairline in the border token once the body scrolls under it.
   ['.zen-overlay-header {', '/* The 1px outline is a spread shadow'],
-  // The downloads bubble, toolbar button and zen://downloads page (components/downloads,
-  // overlays/DownloadsPanel.tsx). Its block sits between the bookmark chrome's rules and the
+  // The downloads bubble and toolbar button (components/downloads; the zen://downloads page tab
+  // is the list pages' block below). Its block sits between the bookmark chrome's rules and the
   // comment that ends them, so it is taken out first.
   ['.zen-dl-surface {', '@keyframes zen-dl-pop-out {'],
   // The bookmark chrome: bar, panels, star bubble, dialogs, manager (components/bookmarks/*).
@@ -126,7 +126,12 @@ const V2_SURFACES: ReadonlyArray<readonly [start: string, end: string]> = [
   ['.zen-omnibox-header {', ' * Settings as a tab (design language v2 draft'],
   // The Settings tab (components/pages/settings): the page host, the shared v2 rows, fields,
   // icon buttons and image radio cards it introduces, its sheets and its overview thumbnail.
-  ['.zen-page-host {', ' * History page (design language v2 draft'],
+  ['.zen-page-host {', ' * List pages as chrome page tabs'],
+  // The list pages as chrome page tabs – History, the bookmarks manager, Downloads (components/
+  // pages/PageFrame.tsx and pages/history, pages/bookmarks, pages/downloads; §10.1): the sticky
+  // header with the title block and search field, the text column, the group headings, the
+  // two-line rows' slots and reveal, the empty state.
+  ['.zen-page {', '/*\n * Find in page, zoom and fullscreen'],
   // The desktop's install dialog (components/install/InstallDialog.tsx, MW-22): its scrolling
   // body and §9.11 footer on the `--v2-dialog`; it shares the phone sheet's tile, name, origin,
   // field and screenshot strip above it, whose span would enclose it, so it is cut out first.
@@ -173,8 +178,6 @@ const V2_FILES: ReadonlyArray<string> = [
   // the save / update prompts, the pickers, the passkey and passphrase dialogs, the editors and
   // Settings > Autofill with its managers.
   'assets/autofill.css',
-  // The desktop bookmark manager's selection count pill (components/bookmarks/*, #90).
-  'components/bookmarks/BookmarkManager.tsx',
   // The window prompts' checkbox accent (§9.5 modals, #129).
   'components/dialogs/WindowPromptDialog.tsx',
   // The page dialogs' message (alert, confirm, prompt): 13 px on the small line (§4, §9.2).

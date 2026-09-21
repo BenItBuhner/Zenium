@@ -19,7 +19,7 @@ import type {
   ProtectionCheck,
   ThirdPartyCookiePrivateMode
 } from './privacy'
-import type { InternalPageId } from './internalPages'
+import type { InternalPageId, InternalPageQuery } from './internalPages'
 import type { InstallSurface, WebAppInfo } from './webApp'
 import type { ContentDefault } from './contentSettings'
 import type { VoiceEvent, VoiceStartOutcome } from './voice'
@@ -4039,21 +4039,28 @@ export interface Commands {
    * closes it back to that tab. `section: null` is the landing page; leaving it out keeps the
    * section a reused tab is on. A chrome page's section history is the tab's history: `tab.back`
    * / `tab.forward` step through it and `Tab.canGoBack` reads it. A chrome page on a host
-   * without `capabilities.pageTabs` opens as its overlay instead. Resolves with the tab id, or
-   * null when an overlay was opened.
+   * without `capabilities.pageTabs`, or on a layout the page is not a tab in (`layouts`), opens
+   * as its overlay instead. `query` is the page's own parameters (`InternalPageQuery`: History's
+   * `q`, the manager's `folder`), which a reused tab moves to as it would to a section. Resolves
+   * with the tab id, or null when an overlay was opened.
    */
   'page.open': {
-    args: { id: InternalPageId; section?: string | null; openerTabId?: string | null }
+    args: {
+      id: InternalPageId
+      section?: string | null
+      openerTabId?: string | null
+      query?: InternalPageQuery
+    }
     result: string | null
   }
   /**
-   * Move a page tab to a section of its page (`null` is the landing page): a new history entry,
-   * or with `replace` the current one rewritten – the two-pane layout's nav switches categories
-   * without stacking them (v2 §10.5, Firefox's `about:preferences#category`). A document page
-   * loads the section's address in its view.
+   * Move a page tab to a section of its page (`null` is the landing page), with the page's
+   * `query` when it has one: a new history entry, or with `replace` the current one rewritten –
+   * the two-pane layout's nav switches categories without stacking them (v2 §10.5, Firefox's
+   * `about:preferences#category`). A document page loads the section's address in its view.
    */
   'page.navigate': {
-    args: { tabId: string; section: string | null; replace?: boolean }
+    args: { tabId: string; section: string | null; replace?: boolean; query?: InternalPageQuery }
     result: void
   }
   /**
@@ -4734,6 +4741,11 @@ export interface Events {
   'externalProtocol.cancel': { requestId: string }
   /** History changed: visits are throttled to twice a second, deletions arrive at once. */
   'history.changed': { kind: 'visit' | 'delete' | 'clear' }
+  /**
+   * "Select" in a History page row's menu: the page picks the visit, entering its selection mode
+   * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
+   */
+  'history.select': { visitId: string }
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
