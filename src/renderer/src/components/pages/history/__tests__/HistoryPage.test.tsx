@@ -95,6 +95,15 @@ const CLOSED: ClosedEntrySummary[] = [
     favicon: null,
     closedAt: NOW - 30_000,
     tabCount: 1
+  },
+  {
+    id: 'c2',
+    kind: 'tab',
+    title: 'Example Domain',
+    url: 'https://www.example.com/about',
+    favicon: null,
+    closedAt: NOW - 60_000,
+    tabCount: 1
   }
 ]
 
@@ -318,8 +327,8 @@ describe('the History page tab (§10.1)', () => {
   it('the arrows walk the rows across the groups, Home and End jump (§9.22)', async () => {
     const el = await mountPage()
     const targets = [...el.querySelectorAll<HTMLButtonElement>('button[data-row-focus]')]
-    // The closed tab, then the five visits over four days.
-    expect(targets.length).toBe(6)
+    // The two closed tabs, then the five visits over four days.
+    expect(targets.length).toBe(7)
     targets[1]!.focus()
     const key = (k: string): void => {
       document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
@@ -329,7 +338,7 @@ describe('the History page tab (§10.1)', () => {
     await act(async () => key('ArrowUp'))
     expect(document.activeElement).toBe(targets[1])
     await act(async () => key('End'))
-    expect(document.activeElement).toBe(targets[5])
+    expect(document.activeElement).toBe(targets[6])
     await act(async () => key('Home'))
     expect(document.activeElement).toBe(targets[0])
   })
@@ -404,11 +413,19 @@ describe('the History page tab (§10.1)', () => {
     expect(text(group.querySelector('h2'))).toBe('Recently closed')
     const row = group.querySelector('[data-closed-id="c1"]')!
     expect(text(row.querySelector('.zen-page-row-label'))).toBe('Settings')
-    // A closed page tab carries its registered glyph in the favicon slot (§10.1), not the globe.
+    // A closed page tab carries its registered glyph in the favicon slot (§10.1), not the globe,
+    // and its zenium:// address on the second line, where a site's row reads its host.
     const glyph = row.querySelector('.zen-page-row-lead svg')!
     expect(glyph.classList.contains('lucide-settings')).toBe(true)
     expect(glyph.classList.contains('zen-page-row-glyph')).toBe(true)
     expect(row.querySelector('.zen-page-row-favicon-fallback')).toBeNull()
+    expect(text(row.querySelector('.zen-page-row-desc'))).toBe('zenium://settings')
+    expect(row.querySelector('button[data-row-focus]')!.getAttribute('title')).toBe(
+      'zenium://settings'
+    )
+    const site = group.querySelector('[data-closed-id="c2"]')!
+    expect(text(site.querySelector('.zen-page-row-label'))).toBe('Example Domain')
+    expect(text(site.querySelector('.zen-page-row-desc'))).toBe('example.com')
     await act(async () => row.querySelector<HTMLButtonElement>('button[data-row-focus]')!.click())
     expect(calls('session.restoreClosed')).toEqual([{ id: 'c1' }])
     await act(async () =>

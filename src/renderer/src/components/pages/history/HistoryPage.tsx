@@ -525,6 +525,14 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
             entry.kind === 'window'
               ? `Window with ${entry.tabCount} ${entry.tabCount === 1 ? 'tab' : 'tabs'}`
               : entry.title || host
+          // A page tab's second line is its zenium:// address (§10.1, what its pill and tooltip
+          // say); the host line would only repeat the title ("Downloads" under "Downloads").
+          const desc =
+            entry.kind === 'window'
+              ? entry.title
+              : entry.url && internalPageOf(entry.url)
+                ? presentedUrl(entry.url)
+                : host
           return (
             <li key={entry.id} className="zen-v2-row zen-page-row" data-closed-id={entry.id}>
               {/* Keeps the favicons in line with the visit rows, which lead with a checkbox. */}
@@ -544,9 +552,7 @@ function RecentlyClosed({ entries }: { entries: ClosedEntrySummary[] }): JSX.Ele
                 onClick={restore}
               >
                 <span className="zen-page-row-label">{label}</span>
-                <span className="zen-page-row-desc">
-                  {entry.kind === 'window' ? entry.title : host}
-                </span>
+                <span className="zen-page-row-desc">{desc}</span>
               </button>
               <time
                 className="zen-page-row-time"
