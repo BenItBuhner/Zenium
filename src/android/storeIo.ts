@@ -1,6 +1,7 @@
 import { INDEX_FILE } from '@core/blocking/store'
 import type { StoreIO, StoreWriteOptions } from '@core/platform'
 import type { Bridge } from './bridge'
+import { fetchStoredDocument, type HandoffFetch } from './handoff'
 
 /**
  * Documents cross the bridge in pieces of this many characters. One bridge call carrying a
@@ -49,15 +50,18 @@ export function readDocument(bridge: Bridge, name: string): string | null {
  * – stay on disk and are read through the bridge when asked for, in pieces past
  * {@link CHUNK_CHARS}.
  *
- * Two things keep the boot path to one transfer per document (`BootHandoff.kt`, `handoff.ts`):
+ * Three things keep the boot path to one transfer per document, and the Safe Browsing feed
+ * documents off it altogether (`BootHandoff.kt`, `handoff.ts`):
  *
  *  - Documents the payload deferred for their size come in by file ({@link adopt}) before the
  *    core starts, and the core's synchronous read at start finds them here, once: a folder
- *    document (a Safe Browsing feed's prefix table, an extension's rule-set document) is handed
- *    over and let go of, so the chrome does not hold a second copy of the megabytes the service
- *    keeps. A folder document is never mirrored, whatever its size: a feed that arrives small
- *    and grows with its first refresh would otherwise park its whole text here for the rest of
- *    the process, and the rule-set store keeps a set's rules parsed, never its text.
+ *    document (an extension's rule-set document) is handed over and let go of, so the chrome
+ *    does not hold a second copy of the megabytes its service keeps. A folder document is never
+ *    mirrored, whatever its size: the rule-set store keeps a set's rules parsed, never its text.
+ *  - The documents the core does not need at start – the Safe Browsing feed documents, megabytes
+ *    once the feeds were refreshed, and not in the payload at all – it reads once it is up
+ *    ({@link read}): fetched from the same handler, off the main thread, and handed over once,
+ *    not mirrored.
  *  - A write of the very bytes the mirror already holds goes nowhere. The engine writes its index
  *    back at start (every set it loaded is set again) with the text it was booted with; sending
  *    it through the bridge had the Kotlin host rewrite the file and rebuild its request engine
@@ -79,10 +83,15 @@ export class AndroidStoreIO implements StoreIO {
   /** Deferred documents the core read through the bridge before they arrived: `adopt` leaves them be. */
   private readonly served = new Set<string>()
 
+  /**
+   * `fetch` reaches the document handler for a read after boot ({@link read}); without one (the
+   * tests, a host without the handler) such a read goes through the bridge like any other.
+   */
   constructor(
     private readonly bridge: Bridge,
     private readonly files: Record<string, string>,
-    deferred: ReadonlyArray<{ name: string }> = []
+    deferred: ReadonlyArray<{ name: string }> = [],
+    private readonly fetch: HandoffFetch | null = null
   ) {
     this.pending = new Set(deferred.map((doc) => doc.name))
     // A folder document the payload inlined (a Safe Browsing feed still small) is handed to its
@@ -133,6 +142,30 @@ export class AndroidStoreIO implements StoreIO {
       this.served.add(name)
     }
     const text = readDocument(this.bridge, name)
+    if (text !== null && this.mirrored(name)) this.files[name] = text
+    return text
+  }
+
+  /**
+   * A document the core reads once it is up rather than at start (a Safe Browsing feed
+   * document): from the mirror or the handed-over copies where one is there, else fetched from
+   * the document handler – the file streamed off the main thread, like a deferred boot document
+   * – and read through the bridge when the handler cannot serve it (`fetchStoredDocument`).
+   * Bookkept like {@link readSync}: a mirrored name is remembered, a folder document is not.
+   */
+  async read(name: string): Promise<string | null> {
+    const cached = this.files[name]
+    if (cached !== undefined) return cached
+    const handed = this.handed.get(name)
+    if (handed !== undefined) {
+      this.handed.delete(name)
+      return handed
+    }
+    if (!this.fetch) return this.readSync(name)
+    const text = await fetchStoredDocument(name, {
+      fetch: this.fetch,
+      readSync: (missing) => this.readSync(missing)
+    })
     if (text !== null && this.mirrored(name)) this.files[name] = text
     return text
   }

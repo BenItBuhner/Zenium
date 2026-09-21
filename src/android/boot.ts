@@ -38,7 +38,7 @@ import {
 import { applyTextScale } from '@renderer/lib/textScale'
 import { pushToast } from '@renderer/lib/ui'
 import { Bridge, getNativeBridge } from './bridge'
-import { fetchDeferredDocuments } from './handoff'
+import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
@@ -113,7 +113,9 @@ export interface HostGlobal {
  * background, the session, the history, the downloads, the permissions, the extension registry)
  * find every document as they always did. A document read before its file has arrived would be
  * read through the bridge instead (`AndroidStoreIO`), never reported absent: a profile is not
- * mistaken for a first run and overwritten.
+ * mistaken for a first run and overwritten. The Safe Browsing feed documents – the megabytes a
+ * refreshed profile would otherwise boot through – are not in the payload at all: the Kotlin
+ * engine holds the tables, and the core's service reads them once it is up (`AndroidStoreIO.read`).
  */
 export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; preview: boolean }> {
   const native = getNativeBridge()
@@ -124,10 +126,11 @@ export async function bootAndroid(): Promise<{ browser: Browser; api: ZenApi; pr
   const hostGlobal = installHostGlobal(bridge, platformRef)
 
   const boot = bridge.callSync<BootInfo>('boot', {})
-  const io = new AndroidStoreIO(bridge, boot.files, boot.deferred)
+  const handoffFetch: HandoffFetch = (url, init) => fetch(url, init)
+  const io = new AndroidStoreIO(bridge, boot.files, boot.deferred, handoffFetch)
   io.adopt(
     await fetchDeferredDocuments(boot.deferred, {
-      fetch: (url, init) => fetch(url, init),
+      fetch: handoffFetch,
       readSync: (name) => readDocument(bridge, name)
     })
   )

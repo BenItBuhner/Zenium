@@ -3,11 +3,17 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Browser } from '../../browser'
-import type { NetHost, StoreIO } from '../../platform'
-import { DEFAULT_PRIVACY_SETTINGS, type PrivacySettings } from '../../../shared/privacy'
+import type { NetHost, PrivacyHost, StoreIO } from '../../platform'
+import {
+  DEFAULT_PRIVACY_SETTINGS,
+  type PrivacySettings,
+  type SafeBrowsingHit
+} from '../../../shared/privacy'
+import { prefixCountOf } from '../document'
 import { SAFE_BROWSING_FEEDS, safeBrowsingFeed } from '../feeds'
 import { PrefixTable } from '../prefixes'
 import {
+  DOCUMENT_LOAD_DELAY_MS,
   FEED_DOCUMENT_VERSION,
   SafeBrowsingService,
   bypassKey,
@@ -358,6 +364,208 @@ describe('SafeBrowsingService', () => {
   })
 })
 
+/**
+ * Android: the Kotlin engine reads the feed documents and checks requests itself; the service
+ * keeps the documents' metadata and the schedule, reads the documents after start – off the boot
+ * path – and asks the host where it needs a table's word.
+ */
+describe('SafeBrowsingService with the tables at the host', () => {
+  interface HostFake extends Fake {
+    reads: string[]
+    syncReads: string[]
+    lookups: string[]
+    hits: Map<string, SafeBrowsingHit>
+  }
+
+  function hostFake(overrides: Partial<PrivacySettings> = {}): HostFake {
+    const f = fake(overrides) as HostFake
+    f.reads = []
+    f.syncReads = []
+    f.lookups = []
+    f.hits = new Map()
+    const readSync = f.io.readSync
+    f.io.readSync = (name) => {
+      f.syncReads.push(name)
+      return readSync(name)
+    }
+    f.io.read = async (name) => {
+      f.reads.push(name)
+      await settle()
+      return f.io.files.get(name) ?? null
+    }
+    const privacy = f.browser.platform.privacy as PrivacyHost
+    Object.assign(privacy, {
+      safeBrowsingTables: 'host',
+      lookupSafeBrowsing: async (url: string) => {
+        f.lookups.push(url)
+        return f.hits.get(url) ?? null
+      }
+    } satisfies Partial<PrivacyHost>)
+    return f
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
+  it('reads no document at start; the documents come in after the delay, for their metadata, with no table built', async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    const listed = document('urlhaus', ['evil.example'], { updatedAt: 1_700_000_000_000 })
+    f.io.files.set(feedFile('urlhaus'), JSON.stringify(listed))
+    f.io.files.set(
+      feedFile('phishing-database'),
+      JSON.stringify(document('phishing-database', ['a.example', 'b.example'], { entries: 0 }))
+    )
+    const changes = vi.fn()
+    const service = new SafeBrowsingService(f.browser)
+    services.push(service)
+    service.onChange(changes)
+    service.start()
+
+    // Nothing was read, synchronously or otherwise, and the card says the feeds are loading.
+    expect(f.syncReads).toEqual([])
+    expect(f.reads).toEqual([])
+    expect(service.status()).toMatchObject({ ready: false, entries: 0 })
+    expect(changes).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS - 1)
+    expect(f.reads).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(f.reads).toEqual(SAFE_BROWSING_FEEDS.map((feed) => feedFile(feed.id)))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(f.syncReads).toEqual([])
+
+    const status = service.status()
+    expect(status.ready).toBe(true)
+    // The documents' counts: the writer's, or – a document without one – the prefixes' length.
+    expect(status.feeds.find((x) => x.id === 'urlhaus')?.entries).toBe(1)
+    expect(status.feeds.find((x) => x.id === 'phishing-database')?.entries).toBe(2)
+    expect(status.entries).toBe(3)
+    expect(status.lastUpdatedAt).toBe(1_700_000_000_000)
+    // No table here: the host's engine answers requests; the reserved test hosts stay the service's.
+    expect(service.lookup('http://evil.example/')).toBeNull()
+    expect(service.lookup('http://malware.zenium.test/')).toMatchObject({ feedId: 'test' })
+  })
+
+  it('seeds the bundled snapshot and starts the schedule only once the documents are in', async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    f.bundled.set('urlhaus', JSON.stringify(document('urlhaus', ['bundled.example'])))
+    const service = start(f)
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS - 1)
+    expect(f.io.files.has(feedFile('urlhaus'))).toBe(false)
+    await vi.advanceTimersByTimeAsync(20)
+    // The snapshot's whole document went to the file (the host reads the table from it), marked bundled.
+    const stored = parseFeedDocument(f.io.files.get(feedFile('urlhaus')) ?? null, 'urlhaus')
+    expect(stored).toMatchObject({ bundled: true, entries: 1 })
+    expect(stored?.prefixes.length).toBeGreaterThan(0)
+    expect(service.status().feeds.find((x) => x.id === 'urlhaus')).toMatchObject({
+      bundled: true,
+      entries: 1
+    })
+    // The startup sweep follows the load, not the start: a bundled feed is stale, so it is fetched.
+    expect(f.fetchText).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(f.fetchText).toHaveBeenCalled()
+  })
+
+  it('keeps what a refresh brought over the document read after it, and never the prefixes', async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    f.io.files.set(feedFile('urlhaus'), JSON.stringify(document('urlhaus', ['old.example'])))
+    f.fetchText.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: '0.0.0.0 fresh.example\n0.0.0.0 other.example\n',
+      headers: { etag: '"v2"' }
+    })
+    const service = start(f)
+    // "Update now" before the documents were read: the refresh lands first.
+    const refreshed = service.refresh('urlhaus')
+    await vi.advanceTimersByTimeAsync(1)
+    await refreshed
+    expect(service.status().feeds[0]).toMatchObject({ entries: 2, lastError: null })
+    const written = parseFeedDocument(f.io.files.get(feedFile('urlhaus')) ?? null, 'urlhaus')
+    expect(written).toMatchObject({ entries: 2, etag: '"v2"' })
+    expect(written?.prefixes.length).toBeGreaterThan(0)
+
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS + 10)
+    expect(service.status().ready).toBe(true)
+    expect(service.status().feeds[0]).toMatchObject({ entries: 2 })
+
+    // A 304 moves the check's time here, and rewrites nothing: the host would decode the
+    // megabytes again for a date.
+    const before = f.io.files.get(feedFile('urlhaus'))
+    f.fetchText.mockResolvedValueOnce({ ok: false, status: 304, text: '' })
+    await service.refresh('urlhaus')
+    expect(f.fetchText.mock.calls[1][1].headers).toMatchObject({ 'If-None-Match': '"v2"' })
+    expect(f.io.files.get(feedFile('urlhaus'))).toBe(before)
+    expect(service.status().feeds[0].updatedAt).toBeGreaterThan(written?.updatedAt ?? 0)
+  })
+
+  it("asks the host's tables for a download's verdict, under this side's switch and bypasses", async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    f.hits.set('http://evil.example/setup.exe', {
+      feedId: 'urlhaus',
+      threat: 'malware',
+      expression: 'evil.example',
+      remote: false
+    })
+    const service = start(f)
+    const provider = service.verdictProvider()
+    const signal = new AbortController().signal
+    const ask = (url: string): Promise<unknown> =>
+      provider.verdict({ url, filename: 'setup.exe', mimeType: '' } as never, signal)
+    expect(await ask('http://evil.example/setup.exe')).toMatchObject({
+      level: 'dangerous',
+      reason: 'url-verdict'
+    })
+    expect(await ask('https://fine.example/a.zip')).toBeNull()
+    expect(f.lookups).toEqual(['http://evil.example/setup.exe', 'https://fine.example/a.zip'])
+    // Bypassed here, off here: the host is not asked.
+    service.bypass('http://evil.example/')
+    expect(await ask('http://evil.example/setup.exe')).toBeNull()
+    f.settings.safeBrowsingEnabled = false
+    expect(await ask('https://fine.example/a.zip')).toBeNull()
+    expect(f.lookups).toHaveLength(2)
+    // The reserved test hosts never need the host.
+    f.settings.safeBrowsingEnabled = true
+    expect(await ask('http://malware.zenium.test/x.exe')).toMatchObject({ level: 'dangerous' })
+    expect(f.lookups).toHaveLength(2)
+  })
+
+  it('reads through readSync where the host has no asynchronous read, and survives a failed one', async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    f.io.files.set(feedFile('urlhaus'), JSON.stringify(document('urlhaus', ['x.example'])))
+    delete f.io.read
+    const service = start(f)
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS + 1)
+    expect(f.syncReads).toEqual(SAFE_BROWSING_FEEDS.map((feed) => feedFile(feed.id)))
+    expect(service.status()).toMatchObject({ ready: true, entries: 1 })
+
+    const g = hostFake()
+    g.io.read = async () => {
+      throw new Error('the handler is gone')
+    }
+    const other = start(g)
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS + 1)
+    expect(other.status()).toMatchObject({ ready: true, entries: 0 })
+  })
+
+  it('reads nothing once stopped before the delay', async () => {
+    vi.useFakeTimers()
+    const f = hostFake()
+    const service = start(f)
+    service.stop()
+    await vi.advanceTimersByTimeAsync(DOCUMENT_LOAD_DELAY_MS + 1)
+    expect(f.reads).toEqual([])
+    expect(service.status().ready).toBe(false)
+  })
+})
+
 describe('helpers', () => {
   it('parses persisted documents strictly', () => {
     const doc = document('urlhaus', ['a.example'])
@@ -367,6 +575,15 @@ describe('helpers', () => {
     expect(parseFeedDocument(JSON.stringify({ ...doc, prefixes: 7 }), 'urlhaus')).toBeNull()
     expect(parseFeedDocument('not json', 'urlhaus')).toBeNull()
     expect(parseFeedDocument(null, 'urlhaus')).toBeNull()
+  })
+
+  it('counts the prefixes of a document from its base64 alone', () => {
+    for (const n of [0, 1, 2, 3, 1000]) {
+      const hosts = Array.from({ length: n }, (_, i) => `h${i}.example`)
+      expect(prefixCountOf(PrefixTable.fromHosts(hosts).toBase64())).toBe(n)
+    }
+    expect(prefixCountOf('AAAA\nAAAAAAAAAAA=\n')).toBe(1)
+    expect(prefixCountOf('AAAA')).toBe(0)
   })
 
   it('keys bypasses on the host and compares documents without their fragment', () => {

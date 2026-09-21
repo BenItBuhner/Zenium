@@ -107,6 +107,13 @@ export interface StoreWriteOptions {
 export interface StoreIO {
   /** Synchronous read at startup; `null` when the document does not exist. */
   readSync(name: string): string | null
+  /**
+   * Asynchronous read of a document the core does not need at start (a Safe Browsing feed
+   * document, megabytes once the feeds were refreshed): a host may bring it in off its main
+   * thread (Android fetches it from the document handler). `null` when it does not exist. Hosts
+   * without it are read through `readSync`.
+   */
+  read?(name: string): Promise<string | null>
   /** Atomic write; the promise settles once the document is durable. */
   write(name: string, text: string, options?: StoreWriteOptions): Promise<void>
   /** Synchronous write used when the process is about to go away. */
@@ -1187,6 +1194,22 @@ export interface PrivacyHost {
    * `SafeBrowsingService` persists, as text), or null when the build has no snapshot of it.
    */
   bundledSafeBrowsingFeed?(id: string): Promise<string | null>
+  /**
+   * Who holds the Safe Browsing tables. `'core'` (the default): the service loads them from the
+   * feed documents at start and answers `lookup` itself; Electron's request handler asks it for
+   * every request. `'host'`: the host reads the documents the service writes and checks
+   * requests against tables of its own (Android's Kotlin engine, `privacy/SafeBrowsing.kt`,
+   * which reports a refused navigation as the `unsafe` view event); the service then builds no
+   * table, reads the documents after start – off the boot path – for their metadata alone (the
+   * refresh schedule, the status card) and asks {@link lookupSafeBrowsing} where it needs a
+   * table's word (a download's verdict).
+   */
+  readonly safeBrowsingTables?: 'core' | 'host'
+  /**
+   * With `safeBrowsingTables: 'host'`: the host's tables' word on `url` under its own switch and
+   * bypasses – the hit, or null for nothing listed (or tables not loaded yet).
+   */
+  lookupSafeBrowsing?(url: string): Promise<SafeBrowsingHit | null>
 }
 
 export interface NetHost {
