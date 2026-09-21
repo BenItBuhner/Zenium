@@ -333,9 +333,7 @@ async function unlockAndSeed(
     store.add({ url: accounts.origin, username: 'ada.lovelace', password: 'staple-battery' })
   }
   if (note) {
-    const existing = store
-      .findForOrigin(ORIGIN)
-      .find((c) => c.username === 'ada@example.com')
+    const existing = store.findForOrigin(ORIGIN).find((c) => c.username === 'ada@example.com')
     if (!existing) {
       store.add({
         url: `${ORIGIN}/login`,
