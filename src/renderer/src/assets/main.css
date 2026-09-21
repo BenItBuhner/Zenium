@@ -3661,12 +3661,9 @@
     display: none;
   }
   /*
-   * The overflow » (§9.3): the toolbar button, at the chips' radius rather than the toolbar's 9
-   * and in the window fills the chips take; lit with the pressed fill while its panel is open.
+   * The overflow » (§9.3): the toolbar button – radius 6 is the button's own since shell pass
+   * 7(a) – in the window fills the chips take, lit with the pressed fill while its panel is open.
    */
-  .zen-bm-overflow {
-    border-radius: 6px;
-  }
   .zen-bm-overflow:hover:not(:disabled) {
     background: var(--v2-window-fill);
   }
