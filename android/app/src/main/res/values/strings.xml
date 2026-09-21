@@ -27,6 +27,7 @@
     <string name="cct_find_next">Next match</string>
     <string name="cct_find_previous">Previous match</string>
     <string name="cct_downloading">Downloading %1$s</string>
+    <string name="cct_download_insecure">%1$s can’t be downloaded securely</string>
     <string name="cct_permission_camera">Use your camera</string>
     <string name="cct_permission_microphone">Use your microphone</string>
     <string name="cct_permission_media">Use your camera and microphone</string>

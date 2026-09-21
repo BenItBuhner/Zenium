@@ -230,6 +230,7 @@ type ProgressPatch = Partial<
     | 'lastModified'
     | 'mimeType'
     | 'error'
+    | 'autoResumeAt'
   >
 >
 
@@ -242,6 +243,11 @@ interface AutoResume {
   timer: ReturnType<typeof setTimeout> | null
   /** Waiting for the host's online signal. */
   unsubscribe: (() => void) | null
+  /**
+   * The attempt was handed to the host: the next interrupted report is its failure, even when
+   * the engine never said `progressing` in between (a resume refused on the spot).
+   */
+  fired: boolean
 }
 
 /**
@@ -406,6 +412,7 @@ export class DownloadService {
     record.endedAt = now
     delete record.completedAt
     this.clearError(record)
+    this.clearAutoResume(record)
     // No bytes will come: the verdicts still land on the row, nothing waits for them.
     const transfer = this.transfers.get(record.id)
     if (transfer) transfer.verdicts = null
@@ -522,7 +529,12 @@ export class DownloadService {
     this.rename(record, finalName)
     record.state = state
     if (state === 'interrupted') this.setError(record, record.error ?? 'network-failed')
-    else this.clearError(record)
+    else {
+      this.clearError(record)
+      // A host that retries on its own announced its next attempt with the interruption; the
+      // transfer running again ends that wait.
+      delete record.autoResumeAt
+    }
     if (transfer) {
       if (stateChanged) transfer.rate.reset(record.receivedBytes, now)
       else transfer.rate.update(record.receivedBytes, now)
@@ -530,7 +542,7 @@ export class DownloadService {
     }
     record.etaMs = estimateEta(record)
     if (state === 'interrupted') {
-      if (stateChanged) this.considerAutoResume(record)
+      if (stateChanged || this.autoResumes.get(id)?.fired) this.considerAutoResume(record)
     } else if (state === 'progressing') {
       this.noteProgress(record)
     }
@@ -560,6 +572,9 @@ export class DownloadService {
     this.rename(record, finalName)
     record.bytesPerSecond = 0
     record.etaMs = null
+    // The transfer is over: whatever attempt the host had announced is not coming (the core's
+    // own schedule, when there is one, is set again below).
+    delete record.autoResumeAt
     if (state === 'completed') {
       if (record.totalBytes <= 0) record.totalBytes = record.receivedBytes
       void this.complete(record, transfer)
@@ -603,6 +618,9 @@ export class DownloadService {
    * file error or the user's own stop never schedule anything.
    */
   private considerAutoResume(record: DownloadItem): void {
+    // The host's downloader retries on its own and announces each attempt (`autoResumeAt` in
+    // its progress report): nothing to schedule, nothing of its announcement to undo.
+    if (this.host.autoResume === 'host') return
     const entry = this.autoResumes.get(record.id)
     if (!this.mayAutoResume(record)) {
       this.clearAutoResume(record)
@@ -620,7 +638,8 @@ export class DownloadService {
       attempts,
       receivedAt: record.receivedBytes,
       timer: null,
-      unsubscribe: null
+      unsubscribe: null,
+      fired: false
     }
     next.timer = setTimeout(() => {
       next.timer = null
@@ -666,6 +685,7 @@ export class DownloadService {
     }
     entry.attempts++
     entry.timer = null
+    entry.fired = true
     this.host.resume(record)
   }
 
@@ -802,9 +822,22 @@ export class DownloadService {
     } else if (canRetry(item)) this.retry(id)
   }
 
+  /**
+   * Cancel a running transfer – or an interrupted row still waiting for its automatic resume
+   * (Chrome's Cancel on a resumable interruption): the schedule is dropped and the row ends
+   * cancelled, through the engine's own item when the host still holds one, else here.
+   */
   cancel(id: string): void {
     const item = this.item(id)
-    if (item && isInFlight(item.state)) this.host.cancel(id)
+    if (!item) return
+    if (isInFlight(item.state)) {
+      this.host.cancel(id)
+      return
+    }
+    if (item.state !== 'interrupted' || !this.autoResumes.has(id)) return
+    this.clearAutoResume(item)
+    if (this.transfers.has(id)) this.host.cancel(id)
+    else this.finish(id, 'cancelled')
   }
 
   /**
