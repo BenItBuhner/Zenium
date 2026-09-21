@@ -1,6 +1,8 @@
 package app.zen.chromium
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +52,28 @@ class WebNotificationsTest {
         assertEquals("zenium.site:", SitesChannels.PREFIX)
         assertEquals("zenium.sites", SitesChannels.GROUP_ID)
         assertEquals("Sites", SitesChannels.GROUP_NAME)
+    }
+
+    // --- the app's Sharing channel (tabs sent from another device) ---------------------------------
+
+    @Test
+    fun aSentTabsRequestIsToldApartByItsChannel() {
+        assertTrue(WebNotifications.isSharing(JSONObject().put("channel", "sharing")))
+        // A page's request never carries one; an unknown value is a page's too (never the app's channel by accident).
+        assertFalse(WebNotifications.isSharing(JSONObject().put("origin", "https://a.example")))
+        assertFalse(WebNotifications.isSharing(JSONObject().put("channel", "sites")))
+        assertFalse(WebNotifications.isSharing(JSONObject().put("channel", "")))
+    }
+
+    @Test
+    fun theSharingChannelIsTheAppsOwnBesideTheSitesGroup() {
+        assertEquals("Sharing", SharingChannel.NAME)
+        assertEquals("sharing", SharingChannel.KIND)
+        // Not a site's channel (the sites' prefix would make it one the site's permission could withdraw).
+        assertFalse(SharingChannel.ID.startsWith(SitesChannels.PREFIX))
+        // Its id is its own among the app's fixed channels.
+        val ids = listOf(SharingChannel.ID, PrivateSession.CHANNEL_ID, MediaSessions.CHANNEL_ID, DownloadNotifications.CHANNEL_PROGRESS, DownloadNotifications.CHANNEL_DONE)
+        assertEquals(ids.size, ids.toSet().size)
     }
 
     @Test

@@ -7,6 +7,7 @@ import type {
   ExtensionAction,
   ExtensionInfo,
   MenuItemDescriptor,
+  PhoneBarPosition,
   Tab,
   UIState
 } from '@shared/types'
@@ -22,6 +23,12 @@ import { applyPrivateLock, liftLanded, privateLockStore } from '@renderer/lib/pr
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { abortPull, dispatchPullEvent, PULL_THRESHOLD, pullTravelFor } from '@renderer/lib/pull'
 import { barHideStore, dispatchBarScroll, resetBarHide } from '@renderer/lib/barHide'
+import {
+  fakeboxMorphStore,
+  fakeboxScrubTravel,
+  holdFakeboxMorph,
+  tapFakebox
+} from '@renderer/lib/fakeboxMorph'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { installBannerShown, presentInstallBanner } from '@renderer/lib/installBanner'
 import { isInternalPageUrl } from '@shared/internalPages'
@@ -94,6 +101,7 @@ import {
   parsePreviewSpec,
   type PreviewDownloadSpec,
   type PreviewMediaVariant,
+  type PreviewNtpPose,
   type PreviewPrivateSurface,
   type PreviewState,
   type PreviewStep,
@@ -269,12 +277,19 @@ function apply(browser: Browser, spec: string): void {
     // they hang from the tab that was active in it. A private tab a previous state opened goes
     // too (its session ends, as when the user closes the last one): the next state starts on
     // the regular tabs, and an "empty" pane is empty. A tab a `pdf=` state turned to the viewer
-    // goes back to its page, unless the next state is another document for the same viewer.
+    // goes back to its page, unless the next state is another document for the same viewer. The
+    // new tab page an `ntp=` state opened goes the same way, and the bar is docked where the
+    // seed says before the state is reached.
     void clearAutofill(browser)
       .then(dissolveGroup)
       .then(closeExtensionPage)
       .then(() => (parsePreviewSpec(spec).kind === 'pdf' ? undefined : leavePdf()))
-      .then(() => closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest))))
+      .then(closeNewTabPage)
+      .then(() =>
+        dockBar(seed.bar, () =>
+          closePrivateTabs(() => closeSheets(() => reach(browser, spec, securityAtRest)))
+        )
+      )
   })
 }
 
@@ -456,6 +471,51 @@ async function leavePdf(): Promise<void> {
   if (!isPdfViewerTab(state, made.tabId)) return
   await cmd('tab.navigate', { tabId: made.tabId, input: made.url }).catch(() => undefined)
   await new Promise<void>((resolve) => untilState((s) => !isPdfViewerTab(s, made.tabId), resolve))
+}
+
+/**
+ * The blank tab the last `ntp=` state opened and the tab that was active before it, put back
+ * before the next state (as the extension page is). A private pose's tab is a private tab, and
+ * `closePrivateTabs` takes it.
+ */
+let previewNewTab: { tabId: string; activeId: string | null } | null = null
+
+/** The new tab page's tab goes and the tab that was active before it is active again. */
+async function closeNewTabPage(): Promise<void> {
+  const made = previewNewTab
+  previewNewTab = null
+  const state = made ? browserStore.get().state : null
+  if (!made || !state) return
+  const quiet = (): undefined => undefined
+  const restored = made.activeId && state.tabs[made.activeId] ? made.activeId : null
+  if (restored && activeTab(state)?.id !== restored)
+    await cmd('tab.activate', { tabId: restored }).catch(quiet)
+  if (state.tabs[made.tabId])
+    await cmd('tab.close', { tabId: made.tabId, force: true }).catch(quiet)
+  await new Promise<void>((resolve) =>
+    untilState(
+      (s) => !s.tabs[made.tabId] && (restored === null || activeTab(s)?.id === restored),
+      resolve
+    )
+  )
+}
+
+/**
+ * Dock the phone bar where the seed says (`bar=top` / `bar=bottom`) through the setting, and
+ * `then` once the state carries it (the bar has moved by its next render); no seed leaves the
+ * dock as it is.
+ */
+function dockBar(position: PhoneBarPosition | null, then: () => void): void {
+  const state = browserStore.get().state
+  if (position === null || !state || state.settings.phoneBarPosition === position) {
+    then()
+    return
+  }
+  run('settings.update', { phoneBarPosition: position })
+  whenState(
+    (s) => s.settings.phoneBarPosition === position,
+    () => afterFrames(2, then)
+  )
 }
 
 /** The name and colour of the group a `group=<n>` state makes. */
@@ -763,6 +823,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
       (s) => s.permissionPrompts.some((p) => p.tabId === tab.id),
       () => afterFrames(2, () => done(spec))
     )
+  } else if (target.kind === 'ntp' && state) {
+    applyNewTabPose(target, state, finish)
   } else if (target.kind === 'private' && state) {
     // The steps, if any, once the surface is up: the overview's header menu, then its question.
     const then = target.then ?? []
@@ -1974,6 +2036,102 @@ function whenState(test: (state: UIState) => boolean, fn: () => void): void {
     unsubscribe()
     fn()
   })
+}
+
+/** The new tab page's scroller (`NewTabPage.tsx`), which carries the field toward the pill's slot. */
+const NTP_SCROLLER = '.zen-ntp-scroll'
+
+/**
+ * The new tab page with its field at a pose of the morph (`ntp=<pose>`): a blank tab is opened
+ * (a private one for a private pose) and, once its page has registered the field with the morph
+ * (`fakeboxMorphStore.tabId`), the pose is taken – a scroll of the page's own scroller for the
+ * scrubbed poses (as far as the page can scroll: a page that does not overflow does not scrub),
+ * the tap for `open`, and the held spring for `morph:<n>`, which no tap reaches on its own. The
+ * state is reached once the bar is up for the open poses (the omnibox mounts on the frame after
+ * the tap) and a frame later for the rest.
+ */
+function applyNewTabPose(
+  target: Extract<PreviewState, { kind: 'ntp' }>,
+  state: UIState,
+  finish: () => void
+): void {
+  const activeId = activeTab(state)?.id ?? null
+  const opened = target.private
+    ? cmd('tab.newPrivate', {})
+    : cmd('tab.create', { url: BLANK_URL, active: true })
+  void opened.then((tabId) => {
+    if (!tabId) {
+      finish()
+      return
+    }
+    if (!target.private) previewNewTab = { tabId, activeId }
+    whenMorph(
+      () => fakeboxMorphStore.get().tabId === tabId,
+      () => afterFrames(2, () => takeNewTabPose(target.pose, finish))
+    )
+  })
+}
+
+/**
+ * Runs `then` once `ready` holds, watching the morph's store and the chrome's (the omnibox
+ * mounts on the frame after a tap), or once waiting stops being worth it.
+ */
+function whenMorph(ready: () => boolean, then: () => void): void {
+  if (ready()) {
+    then()
+    return
+  }
+  let settled = false
+  const finish = (): void => {
+    if (settled) return
+    settled = true
+    for (const unsubscribe of unsubscribes) unsubscribe()
+    clearTimeout(timer)
+    then()
+  }
+  const check = (): void => {
+    if (ready()) finish()
+  }
+  const unsubscribes = [fakeboxMorphStore.subscribe(check), uiStore.subscribe(check)]
+  const timer = setTimeout(finish, SURFACE_TIMEOUT_MS)
+}
+
+function takeNewTabPose(pose: PreviewNtpPose, finish: () => void): void {
+  const scroller = document.querySelector<HTMLElement>(NTP_SCROLLER)
+  const scrollTo = (px: number): void => {
+    if (scroller) scroller.scrollTop = px
+  }
+  // The omnibox's field is on the frame: the double has its target and the sheet is fading in.
+  const opened = (): boolean =>
+    uiStore.get().urlbar.open && document.querySelector('.zen-omnibox-field') !== null
+  switch (pose.kind) {
+    case 'rest':
+      afterFrames(2, finish)
+      return
+    case 'scroll':
+      scrollTo(pose.px)
+      afterFrames(2, finish)
+      return
+    case 'scrub':
+      scrollTo(pose.t * (fakeboxScrubTravel() ?? 0))
+      afterFrames(2, finish)
+      return
+    case 'docked':
+      scrollTo(fakeboxScrubTravel() ?? Number.MAX_SAFE_INTEGER)
+      afterFrames(2, finish)
+      return
+    case 'open':
+      tapFakebox()
+      whenMorph(
+        () => opened() && fakeboxMorphStore.get().phase === 'open',
+        () => afterFrames(2, finish)
+      )
+      return
+    case 'morph':
+      holdFakeboxMorph(pose.t)
+      whenMorph(opened, () => afterFrames(3, finish))
+      return
+  }
 }
 
 /** The page a private tab is put on when the state names none. */

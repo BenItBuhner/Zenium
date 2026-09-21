@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "url": "https://orchard.example/",
+      "title": "Orchard - Fresh fruit, delivered",
+      "visitCount": 12,
+      "lastVisit": "{{now-1h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://tides.example/",
+      "title": "Tides - Coastal weather",
+      "visitCount": 11,
+      "lastVisit": "{{now-2h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://atlas.example/",
+      "title": "Atlas - Maps for walkers",
+      "visitCount": 10,
+      "lastVisit": "{{now-3h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://ledger.example/",
+      "title": "Ledger - Personal finance",
+      "visitCount": 9,
+      "lastVisit": "{{now-4h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://foundry.example/",
+      "title": "Foundry - Type design",
+      "visitCount": 8,
+      "lastVisit": "{{now-5h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://meadow.example/",
+      "title": "Meadow - Field notes",
+      "visitCount": 7,
+      "lastVisit": "{{now-6h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://lantern.example/",
+      "title": "Lantern - Late reading",
+      "visitCount": 6,
+      "lastVisit": "{{now-7h}}",
+      "favicon": null
+    },
+    {
+      "url": "https://quarry.example/",
+      "title": "Quarry - Stone and slate",
+      "visitCount": 5,
+      "lastVisit": "{{now-8h}}",
+      "favicon": null
+    }
+  ]
+}
