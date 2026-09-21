@@ -76,10 +76,12 @@ export function useLayoutReporter(
     }
     measure()
     // Measured again over the next two frames: a move the ResizeObserver never sees (the bar
-    // changing edges slides the viewport by the bar's band without resizing it) can still be
-    // under way when the effect measures – under `prefers-reduced-motion` every property change
-    // is a 0.01 ms transition (main.css), and a transition is at its start until the frame after
-    // it is made, so the shell's padding reads as it was; on the frame after that it has moved.
+    // changing edges slides the viewport by the bar's band without resizing it) may land a
+    // frame or two after the effect measures – an inset variable arriving with the frame, a
+    // style the host writes late. The column's own padding is not among those: it is laid out
+    // the moment the edge changes, kept out of reduced motion's 0.01 ms transitions (main.css,
+    // `.zen-content-column`), which a slow compositor would hold at the old edge for longer
+    // than any fixed number of frames covers.
     let frame = requestAnimationFrame(() => {
       measure()
       frame = requestAnimationFrame(() => {

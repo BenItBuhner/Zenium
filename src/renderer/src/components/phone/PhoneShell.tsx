@@ -273,10 +273,12 @@ export function PhoneShell({ state, ui, isDark }: Props): JSX.Element {
           a frame dialog is up (§9.22, `holdChromeInert` in lib/portals.tsx). */}
       <main
         data-shell-chrome
-        className="relative flex min-h-0 flex-1 flex-col"
+        className="zen-content-column relative flex min-h-0 flex-1 flex-col"
         style={{
           // The bar's edge reserves the bar band (the URL bar's field takes it over while the bar
-          // is hidden); the other edge keeps the content gutter above the inset.
+          // is hidden); the other edge keeps the content gutter above the inset. Laid out, never
+          // transitioned (main.css keeps it out of reduced motion's 0.01 ms rule): the content
+          // frame is measured the moment the edge changes (`useLayoutReporter`).
           paddingTop: edgePadding('top', edge, barAway),
           paddingBottom: edgePadding('bottom', edge, barAway),
           paddingLeft: 'var(--zen-padding)',

@@ -10770,6 +10770,20 @@
     transition-property: none !important;
   }
   /*
+   * The content column's frame is laid out, never transitioned. Its padding moves the page's
+   * frame from one edge to the other when the bar changes dock, and the chrome measures that
+   * frame the moment the edge changes (`useLayoutReporter`: the store the morph and the drivers
+   * lay out against). Under full motion the padding has no transition; the 0.01 ms the rule
+   * above would give it is held at the old edge until the compositor starts it – a frame on a
+   * phone, several on a slow one (run 2's reduced-top-scrub on the emulator: the frame's top read
+   * 30 at a top dock, the bottom dock's, 2.5 s after the change) – and a slide the observer
+   * cannot see (the band leaves one edge for the other; the height is the same) is never
+   * measured again.
+   */
+  :root[data-form-factor='phone'] .zen-content-column {
+    transition-property: none !important;
+  }
+  /*
    * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
    * the pop's scale dropped (lib/portals.tsx keeps the panel until this ends). Not the phone's:
    * there the sheet chassis runs the leave.
