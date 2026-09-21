@@ -4,8 +4,9 @@ import { AppWindow, EllipsisVertical, Globe, RotateCcw, X } from 'lucide-react'
 import { internalPageOf, parseInternalPageUrl } from '@shared/internalPages'
 import type { ClosedEntrySummary, HistoryDayGroup, HistoryVisit, Tab } from '@shared/types'
 import { presentedUrl } from '@shared/url'
-import { dayLabel } from '@shared/dayKey'
+import { dayKeyOf } from '@shared/dayKey'
 import { cmd, onEvent, run } from '@renderer/lib/api'
+import { dayLabel } from '@renderer/lib/historyGroups'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
 import { presentedHost, useExtensionList } from '@renderer/lib/extensions/pages'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
@@ -314,7 +315,9 @@ function DayGroup({
   onToggle: (id: string, checked: boolean) => void
   onOpen: (url: string, newTab: boolean) => void
 }): JSX.Element {
-  const label = dayLabel(group.dayKey, now)
+  // "Today", "Yesterday", the weekday for the rest of the week, then the date: the phone
+  // history list's vocabulary (`historyGroups.ts`), one across both platforms.
+  const label = dayLabel(group.dayKey, dayKeyOf(now))
   return (
     <PageGroup
       heading={label}

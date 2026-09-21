@@ -19,6 +19,9 @@ const DAY = 86_400_000
 const NOW = Date.now()
 const TODAY = dayKeyOf(NOW)
 const YESTERDAY = dayKeyOf(NOW - DAY)
+const WEEKDAY = dayKeyOf(NOW - 3 * DAY)
+const DATED = dayKeyOf(NOW - 10 * DAY)
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 const GROUPS: HistoryDayGroup[] = [
   {
@@ -51,6 +54,32 @@ const GROUPS: HistoryDayGroup[] = [
         title: 'Zen',
         favicon: null,
         visitTime: NOW - DAY,
+        transition: 'link'
+      }
+    ]
+  },
+  {
+    dayKey: WEEKDAY,
+    visits: [
+      {
+        id: 'v4',
+        url: 'https://react.dev/',
+        title: 'React',
+        favicon: null,
+        visitTime: NOW - 3 * DAY,
+        transition: 'link'
+      }
+    ]
+  },
+  {
+    dayKey: DATED,
+    visits: [
+      {
+        id: 'v5',
+        url: 'https://developer.mozilla.org/',
+        title: 'MDN',
+        favicon: null,
+        visitTime: NOW - 10 * DAY,
         transition: 'link'
       }
     ]
@@ -189,7 +218,22 @@ describe('the History page tab (§10.1)', () => {
     const el = await mountPage()
     expect(calls('history.grouped')).toEqual([{ query: { text: undefined, limit: 300 } }])
     const headings = [...el.querySelectorAll('.zen-page-group h2')].map(text)
-    expect(headings).toEqual(['Recently closed', 'Today', 'Yesterday'])
+    // The phone list's vocabulary (`historyGroups.ts`): a day within the week is its weekday,
+    // an older one the date – "Friday", then "Friday, September 11".
+    const weekday = WEEKDAY_NAMES[new Date(NOW - 3 * DAY).getDay()]!
+    expect(headings).toEqual([
+      'Recently closed',
+      'Today',
+      'Yesterday',
+      weekday,
+      new Intl.DateTimeFormat(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: DATED.slice(0, 4) === TODAY.slice(0, 4) ? undefined : 'numeric',
+        timeZone: 'UTC'
+      }).format(new Date(`${DATED}T12:00:00Z`))
+    ])
     const today = el.querySelector(`[data-day="${TODAY}"]`)!
     expect(text(today.querySelector('.zen-page-heading-aside'))).toBe('2')
     const rows = [...today.querySelectorAll('li.zen-v2-row.zen-page-row')]
@@ -274,7 +318,8 @@ describe('the History page tab (§10.1)', () => {
   it('the arrows walk the rows across the groups, Home and End jump (§9.22)', async () => {
     const el = await mountPage()
     const targets = [...el.querySelectorAll<HTMLButtonElement>('button[data-row-focus]')]
-    expect(targets.length).toBe(4)
+    // The closed tab, then the five visits over four days.
+    expect(targets.length).toBe(6)
     targets[1]!.focus()
     const key = (k: string): void => {
       document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
@@ -284,7 +329,7 @@ describe('the History page tab (§10.1)', () => {
     await act(async () => key('ArrowUp'))
     expect(document.activeElement).toBe(targets[1])
     await act(async () => key('End'))
-    expect(document.activeElement).toBe(targets[3])
+    expect(document.activeElement).toBe(targets[5])
     await act(async () => key('Home'))
     expect(document.activeElement).toBe(targets[0])
   })
