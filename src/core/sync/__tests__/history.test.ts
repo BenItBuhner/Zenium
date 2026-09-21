@@ -23,6 +23,7 @@ import {
   pruneDeletions,
   readHistoryPage,
   readHistoryState,
+  refreshTitles,
   rememberDeletion,
   seedFloor,
   takeWrites,
@@ -176,6 +177,33 @@ describe('the publisher', () => {
     expect(big.open.at(-1)).toEqual({ type: 'cleared', at: NOW })
     // Four over the cap (the written one, the two extra visits, the clear): visits 1-4 went.
     expect(big.open[1]).toEqual(visit(5, 6))
+  })
+
+  it('gives the visits not yet in the folder the titles their pages have by now, leaving what was written', () => {
+    const state = initialHistoryState()
+    appendOpen(state, [
+      { type: 'visit', visit: { url: 'https://w.example/', at: 1, title: 'w.example' } },
+      { type: 'visit', visit: { url: 'https://p.example/', at: 2, title: 'p.example' } },
+      { type: 'cleared', at: 3 },
+      { type: 'visit', visit: { url: 'https://n.example/', at: 4 } }
+    ])
+    state.written = 1
+    const titles: Record<string, string | null> = {
+      'https://w.example/': 'Written already',
+      'https://p.example/': 'Page',
+      'https://n.example/': null
+    }
+    refreshTitles(state, (url) => titles[url] ?? null)
+    expect(state.open.map((e) => (e.type === 'visit' ? e.visit.title : e.type))).toEqual([
+      'w.example',
+      'Page',
+      'cleared',
+      undefined
+    ])
+    // The address as a title is no title.
+    titles['https://n.example/'] = 'https://n.example/'
+    refreshTitles(state, (url) => titles[url] ?? null)
+    expect(state.open[3]).toEqual({ type: 'visit', visit: { url: 'https://n.example/', at: 4 } })
   })
 
   it('plans full pages as sealed, the rest as the open page, and only what is not yet in the folder', () => {

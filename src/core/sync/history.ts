@@ -324,6 +324,24 @@ export function appendOpen(state: HistorySyncState, entries: HistoryEntry[]): vo
   state.open = kept
 }
 
+/**
+ * A page names itself after the navigation that recorded its visit (the model's `updateTitle`,
+ * no `onVisits` event of its own): before the buffer goes out, the visits not yet in the folder
+ * take the model's current title, so the other devices see the page's name rather than its
+ * address. What is in the folder already stays as written (a reader applies each entry once).
+ */
+export function refreshTitles(
+  state: HistorySyncState,
+  titleFor: (url: string) => string | null
+): void {
+  for (let i = state.written; i < state.open.length; i += 1) {
+    const e = state.open[i]
+    if (e.type !== 'visit') continue
+    const title = titleFor(e.visit.url)
+    if (title && title !== e.visit.url && title !== e.visit.title) e.visit.title = title
+  }
+}
+
 export interface PageWrite {
   seq: number
   page: HistoryPage

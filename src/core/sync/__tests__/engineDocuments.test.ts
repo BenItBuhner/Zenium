@@ -90,8 +90,11 @@ describe('the history stream', () => {
     // Nothing in the folder is readable without the key.
     for (const text of folderFiles('/drive').values()) expect(text).not.toContain('a.example')
 
-    // Live: a visit on A after the join reaches B on the next round; one on B reaches A.
-    a.browser.history.visit('https://a.example/three', 'Three', null, { at: T0 + 2000 })
+    // Live: a visit on A after the join reaches B on the next round; one on B reaches A. A page
+    // names itself after the navigation recorded its visit (the tab's title is the address until
+    // then): the title the page has when the round runs is the one that travels.
+    a.browser.history.visit('https://a.example/three', 'a.example/three', null, { at: T0 + 2000 })
+    a.browser.history.updateTitle('https://a.example/three', 'Three')
     b.browser.history.visit('https://b.example/', 'B', null, { at: T0 + 3000 })
     await round(a, b, a)
     expect(urlsOf(b)).toEqual([
@@ -100,6 +103,7 @@ describe('the history stream', () => {
       'https://a.example/three',
       'https://b.example/'
     ])
+    expect(visitsOf(b).find((v) => v.url === 'https://a.example/three')?.title).toBe('Three')
     expect(urlsOf(a)).toEqual(urlsOf(b))
   }, 30_000)
 

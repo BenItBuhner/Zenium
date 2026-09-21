@@ -57,6 +57,7 @@ import {
   planWrites,
   readHistoryPage,
   readHistoryState,
+  refreshTitles,
   rememberDeletion,
   seedFloor,
   takeWrites,
@@ -764,7 +765,9 @@ export class SyncEngine implements SyncHost {
       else state.seed.cursor = page.next
       seeded += 1
     }
-    // 2. The buffer as pages; the state moves only once every write went through.
+    // 2. The buffer as pages (the visits not yet out with the titles their pages have by now);
+    //    the state moves only once every write went through.
+    refreshTitles(state, (url) => this.browser.history.titleFor(url))
     const plannedOpen = state.open.length
     const { writes, after } = planWrites(state)
     for (const w of writes) {
