@@ -71,7 +71,8 @@ export function readOpenTabs(data: unknown): OpenTabsDocument | null {
       url: t.url,
       title: typeof t.title === 'string' && t.title ? t.title : t.url,
       favicon: typeof t.favicon === 'string' && t.favicon ? t.favicon : null,
-      lastActive: typeof t.lastActive === 'number' && Number.isFinite(t.lastActive) ? t.lastActive : 0,
+      lastActive:
+        typeof t.lastActive === 'number' && Number.isFinite(t.lastActive) ? t.lastActive : 0,
       windowId: typeof t.windowId === 'string' ? t.windowId : null
     })
   }

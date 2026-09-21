@@ -43,7 +43,12 @@ describe('document names', () => {
   })
 
   it('never mistake one kind for another, nor for the device file', () => {
-    for (const name of ['device_a.zensync', 'README.txt', 'device_a.tabs.zenpage', 'x.history.zenpage']) {
+    for (const name of [
+      'device_a.zensync',
+      'README.txt',
+      'device_a.tabs.zenpage',
+      'x.history.zenpage'
+    ]) {
       expect(parseHistoryPageName(name)).toBeNull()
     }
     expect(parseOpenTabsName('device_a.history.1.zenpage')).toBeNull()
@@ -53,7 +58,13 @@ describe('document names', () => {
   })
 
   it('serialises a document with its identity in the clear and parses back, refusing garbage', () => {
-    const envelope = { v: 1 as const, salt: 'c2FsdA==', iv: 'aXY=', tag: 'dGFn', ciphertext: 'ZGF0YQ==' }
+    const envelope = {
+      v: 1 as const,
+      salt: 'c2FsdA==',
+      iv: 'aXY=',
+      tag: 'dGFn',
+      ciphertext: 'ZGF0YQ=='
+    }
     const text = serializeDocument({
       kind: 'history',
       deviceId: 'device_a',
@@ -69,8 +80,12 @@ describe('document names', () => {
       envelope
     })
     expect(parseDocument('{')).toBeNull()
-    expect(parseDocument(JSON.stringify({ kind: 'mystery', deviceId: 'a', updatedAt: 1, envelope }))).toBeNull()
-    expect(parseDocument(JSON.stringify({ kind: 'send-tab', deviceId: 'a', updatedAt: 1 }))).toBeNull()
+    expect(
+      parseDocument(JSON.stringify({ kind: 'mystery', deviceId: 'a', updatedAt: 1, envelope }))
+    ).toBeNull()
+    expect(
+      parseDocument(JSON.stringify({ kind: 'send-tab', deviceId: 'a', updatedAt: 1 }))
+    ).toBeNull()
     expect(
       parseDocument(JSON.stringify({ kind: 'open-tabs', deviceId: 'a', updatedAt: 1, envelope }))
     ).toMatchObject({ deviceName: 'a' })
@@ -124,15 +139,47 @@ describe('the open-tabs record', () => {
     expect(isPublishedTab(tab({ url: '' }))).toBe(false)
     expect(isPublishedTab(tab({ discarded: true }))).toBe(true)
     const doc = collectOpenTabs([
-      tab({ id: 'old', url: 'https://old.example/', lastActiveAt: 10, title: '', customTitle: null }),
-      tab({ id: 'new', url: 'https://new.example/', lastActiveAt: 20, customTitle: 'Mine', favicon: 'i', windowId: 'win_2' }),
-      tab({ id: 'p', url: 'https://p.example/', containerId: PRIVATE_CONTAINER_ID, lastActiveAt: 30 })
+      tab({
+        id: 'old',
+        url: 'https://old.example/',
+        lastActiveAt: 10,
+        title: '',
+        customTitle: null
+      }),
+      tab({
+        id: 'new',
+        url: 'https://new.example/',
+        lastActiveAt: 20,
+        customTitle: 'Mine',
+        favicon: 'i',
+        windowId: 'win_2'
+      }),
+      tab({
+        id: 'p',
+        url: 'https://p.example/',
+        containerId: PRIVATE_CONTAINER_ID,
+        lastActiveAt: 30
+      })
     ])
     expect(doc).toEqual({
       v: 1,
       tabs: [
-        { tabId: 'new', url: 'https://new.example/', title: 'Mine', favicon: 'i', lastActive: 20, windowId: 'win_2' },
-        { tabId: 'old', url: 'https://old.example/', title: 'https://old.example/', favicon: null, lastActive: 10, windowId: null }
+        {
+          tabId: 'new',
+          url: 'https://new.example/',
+          title: 'Mine',
+          favicon: 'i',
+          lastActive: 20,
+          windowId: 'win_2'
+        },
+        {
+          tabId: 'old',
+          url: 'https://old.example/',
+          title: 'https://old.example/',
+          favicon: null,
+          lastActive: 10,
+          windowId: null
+        }
       ]
     })
     const many = Array.from({ length: OPEN_TABS_MAX + 5 }, (_, i) =>
@@ -149,14 +196,21 @@ describe('the open-tabs record', () => {
     expect(openTabsHash(collectOpenTabs([tab({ lastActiveAt: 2 })]))).not.toBe(openTabsHash(a))
   })
 
-  it('reads another device\'s list, dropping what cannot be opened', () => {
+  it("reads another device's list, dropping what cannot be opened", () => {
     expect(readOpenTabs(null)).toBeNull()
     expect(readOpenTabs({ v: 1 })).toBeNull()
     expect(
       readOpenTabs({
         v: 1,
         tabs: [
-          { tabId: 't', url: 'https://a.example/', title: 'A', favicon: '', lastActive: 5, windowId: null },
+          {
+            tabId: 't',
+            url: 'https://a.example/',
+            title: 'A',
+            favicon: '',
+            lastActive: 5,
+            windowId: null
+          },
           { url: 'https://b.example/' },
           { tabId: 'z', url: 'zen://settings', title: 'S', lastActive: 9 },
           'junk'
@@ -165,8 +219,22 @@ describe('the open-tabs record', () => {
     ).toEqual({
       v: 1,
       tabs: [
-        { tabId: 't', url: 'https://a.example/', title: 'A', favicon: null, lastActive: 5, windowId: null },
-        { tabId: 'https://b.example/', url: 'https://b.example/', title: 'https://b.example/', favicon: null, lastActive: 0, windowId: null }
+        {
+          tabId: 't',
+          url: 'https://a.example/',
+          title: 'A',
+          favicon: null,
+          lastActive: 5,
+          windowId: null
+        },
+        {
+          tabId: 'https://b.example/',
+          url: 'https://b.example/',
+          title: 'https://b.example/',
+          favicon: null,
+          lastActive: 0,
+          windowId: null
+        }
       ]
     })
     // Newest list first; an empty list and one older than 30 days are not shown.
@@ -175,9 +243,51 @@ describe('the open-tabs record', () => {
     const lists = sortDeviceTabs(
       [
         { deviceId: 'a', deviceName: 'A', updatedAt: now - 3 * DAY, tabs: [] },
-        { deviceId: 'b', deviceName: 'B', updatedAt: now - 2 * DAY, tabs: [{ tabId: 't', url: 'https://x.example/', title: 'X', favicon: null, lastActive: 1, windowId: null }] },
-        { deviceId: 'c', deviceName: 'C', updatedAt: now - DAY, tabs: [{ tabId: 't', url: 'https://y.example/', title: 'Y', favicon: null, lastActive: 1, windowId: null }] },
-        { deviceId: 'stale', deviceName: 'S', updatedAt: now - 35 * DAY, tabs: [{ tabId: 't', url: 'https://z.example/', title: 'Z', favicon: null, lastActive: 1, windowId: null }] }
+        {
+          deviceId: 'b',
+          deviceName: 'B',
+          updatedAt: now - 2 * DAY,
+          tabs: [
+            {
+              tabId: 't',
+              url: 'https://x.example/',
+              title: 'X',
+              favicon: null,
+              lastActive: 1,
+              windowId: null
+            }
+          ]
+        },
+        {
+          deviceId: 'c',
+          deviceName: 'C',
+          updatedAt: now - DAY,
+          tabs: [
+            {
+              tabId: 't',
+              url: 'https://y.example/',
+              title: 'Y',
+              favicon: null,
+              lastActive: 1,
+              windowId: null
+            }
+          ]
+        },
+        {
+          deviceId: 'stale',
+          deviceName: 'S',
+          updatedAt: now - 35 * DAY,
+          tabs: [
+            {
+              tabId: 't',
+              url: 'https://z.example/',
+              title: 'Z',
+              favicon: null,
+              lastActive: 1,
+              windowId: null
+            }
+          ]
+        }
       ],
       now
     )

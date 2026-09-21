@@ -1,14 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FOLDER_LOST_MESSAGE } from '../engine'
 import { README_NAME, SYNC_DIR_NAME, isDeviceFileName } from '../transport'
-import {
-  device,
-  folderFiles,
-  published,
-  setup,
-  teardown,
-  unlockVault
-} from './harness'
+import { device, folderFiles, published, setup, teardown, unlockVault } from './harness'
 
 afterEach(teardown)
 

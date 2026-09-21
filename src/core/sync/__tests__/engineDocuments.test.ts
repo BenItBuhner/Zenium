@@ -76,7 +76,9 @@ describe('the history stream', () => {
       },
       { url: 'https://a.example/two', title: 'Two', at: T0 + 1000, transition: 'typed' }
     ])
-    expect(b.browser.history.recent(10).find((e) => e.url === 'https://a.example/two')).toMatchObject({
+    expect(
+      b.browser.history.recent(10).find((e) => e.url === 'https://a.example/two')
+    ).toMatchObject({
       typedCount: 1,
       visitCount: 1
     })
@@ -120,7 +122,11 @@ describe('the history stream', () => {
     // The tombstone is A's; B applied it and published nothing (the echo guard).
     const aStream = await streamOf(a)
     expect(aStream.filter((e) => e.type === 'removed')).toEqual([
-      { type: 'removed', at: expect.any(Number), keys: [{ url: 'https://a.example/2', at: T0 + 120_000 }] }
+      {
+        type: 'removed',
+        at: expect.any(Number),
+        keys: [{ url: 'https://a.example/2', at: T0 + 120_000 }]
+      }
     ])
     expect((await streamOf(b)).filter((e) => e.type !== 'visit')).toEqual([])
 
@@ -270,7 +276,9 @@ describe('the history stream', () => {
     // The open page grows in place; a new visit lands on B without the sealed pages re-read.
     a.browser.history.visit('https://a.example/live', 'Live', null, { at: T0 + 2_000_000 })
     await round(a, b)
-    expect((await documents<HistoryPage>(a, 'history')).get(historyPageName(aId, 2))!.entries).toHaveLength(151)
+    expect(
+      (await documents<HistoryPage>(a, 'history')).get(historyPageName(aId, 2))!.entries
+    ).toHaveLength(151)
     expect(visitsOf(b)).toHaveLength(1_151)
   }, 60_000)
 })
@@ -284,7 +292,10 @@ describe('tabs from other devices', () => {
     const win = a.browser.ensureWindow()
     const one = a.browser.tabs.createTab({ url: 'https://a.example/one', active: true }, win)
     a.browser.tabs.createTab({ url: 'https://a.example/two' }, win)
-    a.browser.tabs.createTab({ url: 'https://secret.example/', containerId: PRIVATE_CONTAINER_ID }, win)
+    a.browser.tabs.createTab(
+      { url: 'https://secret.example/', containerId: PRIVATE_CONTAINER_ID },
+      win
+    )
     await join(a, b)
     const aId = a.engine.status().deviceId
     const doc = (await documents<OpenTabsDocument>(a, 'open-tabs')).get(openTabsName(aId))
@@ -311,7 +322,9 @@ describe('tabs from other devices', () => {
     // A closes a tab: the list follows on the next rounds; the version moves once it did.
     a.browser.tabs.closeTab(one.id, false, win)
     await round(a, b)
-    expect(b.engine.tabsFromDevices()[0].tabs.map((t) => t.url)).not.toContain('https://a.example/one')
+    expect(b.engine.tabsFromDevices()[0].tabs.map((t) => t.url)).not.toContain(
+      'https://a.example/one'
+    )
     expect(b.engine.status().remoteTabsVersion).toBeGreaterThan(version)
 
     // With the toggle off on B, B shows none; off on A, A's document goes.
@@ -358,7 +371,9 @@ describe('send to your devices', () => {
     folderFiles('/drive').set(inbox[0], inboxText)
     await round(b)
     expect(
-      Object.values(b.browser.state.model.tabs).filter((t) => t.url === 'https://sent.example/article')
+      Object.values(b.browser.state.model.tabs).filter(
+        (t) => t.url === 'https://sent.example/article'
+      )
     ).toHaveLength(1)
     expect(folderFiles('/drive').has(inboxName(bId, sendId))).toBe(false)
 

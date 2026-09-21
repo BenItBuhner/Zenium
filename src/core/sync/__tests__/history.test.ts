@@ -78,7 +78,10 @@ describe('the wire shape', () => {
       )
     ).toEqual([
       { type: 'visit', visit: { url: 'https://a.example/', title: 'A', at: 5 } },
-      { type: 'visit', visit: { url: 'https://b.example/', at: 6, transition: 'typed', favicon: 'i' } }
+      {
+        type: 'visit',
+        visit: { url: 'https://b.example/', at: 6, transition: 'typed', favicon: 'i' }
+      }
     ])
     const keys = Array.from({ length: REMOVED_KEYS_PER_ENTRY + 1 }, (_, i) => ({
       url: `https://k.example/${i}`,
@@ -132,7 +135,11 @@ describe('the wire shape', () => {
       cursors: { dev: { seq: 1, index: 2, updatedAt: 7 }, bad: { seq: 'a' } },
       seed: { since: 5, until: 9, cursor: 'c' },
       publishedUntil: 12,
-      deletions: { keys: { '1\nhttps://a.example/': 3, bad: 'x' }, ranges: [{ from: 1, to: 2, at: 3 }, {}], clearedAt: 2 }
+      deletions: {
+        keys: { '1\nhttps://a.example/': 3, bad: 'x' },
+        ranges: [{ from: 1, to: 2, at: 3 }, {}],
+        clearedAt: 2
+      }
     })
     expect(state.seq).toBe(4)
     expect(state.open).toEqual([visit(1)])
@@ -223,7 +230,8 @@ describe('the publisher', () => {
       exportVisits: ({ cursor, since }: { since: number; cursor?: string | null }) => {
         const start = cursor ? Number(cursor) : 0
         const page = times.filter((t) => t >= since).slice(start, start + 500)
-        const next = start + 500 < times.filter((t) => t >= since).length ? String(start + 500) : null
+        const next =
+          start + 500 < times.filter((t) => t >= since).length ? String(start + 500) : null
         return { visits: page.map((at) => ({ url: 'https://s.example/', at })), next }
       }
     }
@@ -286,15 +294,18 @@ describe('the reader', () => {
       { type: 'removed', at: NOW - RETENTION_MS - 5, keys: [{ url: 'https://o.example/', at: 1 }] },
       NOW - RETENTION_MS
     )
-    rememberDeletion(memory, { type: 'range-removed', at: NOW - RETENTION_MS - 5, from: 0, to: 1 }, NOW - RETENTION_MS)
+    rememberDeletion(
+      memory,
+      { type: 'range-removed', at: NOW - RETENTION_MS - 5, from: 0, to: 1 },
+      NOW - RETENTION_MS
+    )
     rememberDeletion(memory, { type: 'cleared', at: NOW - RETENTION_MS - 5 }, NOW - RETENTION_MS)
     expect(Object.keys(memory.keys)).toHaveLength(1)
     expect(memory.ranges).toHaveLength(1)
     expect(memory.clearedAt).toBe(NOW - RETENTION_MS - 5)
     pruneDeletions(memory, NOW)
     expect(memory).toEqual(emptyDeletions())
-    for (let i = 0; i < 5_200; i += 1)
-      memory.keys[`${i}\nhttps://k.example/`] = NOW - 5_200 + i
+    for (let i = 0; i < 5_200; i += 1) memory.keys[`${i}\nhttps://k.example/`] = NOW - 5_200 + i
     pruneDeletions(memory, NOW)
     expect(Object.keys(memory.keys)).toHaveLength(5_000)
     expect(memory.keys['0\nhttps://k.example/']).toBeUndefined()

@@ -466,7 +466,9 @@ export class SyncEngine implements SyncHost {
       this.browser.toast(`Sent to ${target.name}`, 'info', win)
     } catch (error) {
       this.browser.toast(
-        isFolderLost(error) ? FOLDER_LOST_MESSAGE : `Could not send the tab: ${this.describe(error)}`,
+        isFolderLost(error)
+          ? FOLDER_LOST_MESSAGE
+          : `Could not send the tab: ${this.describe(error)}`,
         'error',
         win
       )

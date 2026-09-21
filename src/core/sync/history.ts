@@ -248,7 +248,9 @@ export function entriesFromEvent(event: HistoryVisitsEvent, at: number): History
         out.push({
           type: 'removed',
           at,
-          keys: event.keys.slice(i, i + REMOVED_KEYS_PER_ENTRY).map((k) => ({ url: k.url, at: k.at }))
+          keys: event.keys
+            .slice(i, i + REMOVED_KEYS_PER_ENTRY)
+            .map((k) => ({ url: k.url, at: k.at }))
         })
       return out
     }
@@ -266,12 +268,10 @@ export function entriesFromVisits(visits: ImportedVisit[]): HistoryEntry[] {
 
 /** The model's pure export, as the seed needs it. */
 export interface HistoryExporter {
-  exportVisits(query: {
-    since: number
-    until?: number
-    limit?: number
-    cursor?: string | null
-  }): { visits: ImportedVisit[]; next: string | null }
+  exportVisits(query: { since: number; until?: number; limit?: number; cursor?: string | null }): {
+    visits: ImportedVisit[]
+    next: string | null
+  }
 }
 
 /**
@@ -339,7 +339,10 @@ export type PublisherState = Pick<HistorySyncState, 'seq' | 'written' | 'open' |
  * once the writes have succeeded (`takeWrites`); a caller whose write fails keeps `state` as it
  * was.
  */
-export function planWrites(state: HistorySyncState): { writes: PageWrite[]; after: PublisherState } {
+export function planWrites(state: HistorySyncState): {
+  writes: PageWrite[]
+  after: PublisherState
+} {
   const writes: PageWrite[] = []
   const after: PublisherState = {
     seq: state.seq,
@@ -370,7 +373,11 @@ export function planWrites(state: HistorySyncState): { writes: PageWrite[]; afte
  * they were in flight (it held `plannedOpen` entries when `planWrites` looked) is queued again
  * behind it.
  */
-export function takeWrites(state: HistorySyncState, after: PublisherState, plannedOpen: number): void {
+export function takeWrites(
+  state: HistorySyncState,
+  after: PublisherState,
+  plannedOpen: number
+): void {
   const appended = state.open.slice(plannedOpen)
   state.seq = after.seq
   state.written = after.written
@@ -514,5 +521,7 @@ export function pagesToRead(available: number[], cursor: StreamCursor | undefine
 
 /** The cursor after a page was applied to its end. */
 export function advanceCursor(page: HistoryPage): StreamCursor {
-  return page.sealed ? { seq: page.seq + 1, index: 0 } : { seq: page.seq, index: page.entries.length }
+  return page.sealed
+    ? { seq: page.seq + 1, index: 0 }
+    : { seq: page.seq, index: page.entries.length }
 }
