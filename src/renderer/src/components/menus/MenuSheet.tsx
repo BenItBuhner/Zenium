@@ -21,6 +21,7 @@ import { openedFromKeyboard } from '@renderer/lib/popover'
 import {
   ChromePortal,
   besideOrigin,
+  intrinsicSize,
   layoutRect,
   placeBeside,
   popoverStyle,
@@ -543,7 +544,9 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const place = useCallback(
     (depth: number, parentId: string | null, el: HTMLElement): Placement | null => {
       const viewport = viewportSize()
-      const size = { width: el.offsetWidth, height: el.offsetHeight }
+      // The used size, with the fraction of a pixel the longest row runs to: pinned to the
+      // offsets' rounded width the row would end in an ellipsis (§5).
+      const size = intrinsicSize(el)
       if (depth === 0 || parentId === null) {
         const box = placeUnder(anchor, { measured: size.width }, size.height, viewport, undefined, {
           capHeight: false

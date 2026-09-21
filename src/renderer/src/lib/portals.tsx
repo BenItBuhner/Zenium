@@ -1313,6 +1313,24 @@ export function layoutRect(el: HTMLElement): Rect {
 }
 
 /**
+ * A panel's intrinsic size before `placePopover` pins it: the used width and height from the
+ * computed style, which keep the fraction of a pixel the longest row's text runs to – the
+ * offsets round it away, and a menu pinned to the rounded width (§5: a menu is as wide as its
+ * longest row) puts an ellipsis on that very row – and, like the offsets, ignore the pop
+ * animation's transform. Rounded up, so the pinned box never runs short of its content. Where
+ * there is no layout (tests) the offsets stand in.
+ */
+export function intrinsicSize(el: HTMLElement): Size {
+  const style = getComputedStyle(el)
+  const width = parseFloat(style.width)
+  const height = parseFloat(style.height)
+  return {
+    width: Number.isFinite(width) && width > 0 ? Math.ceil(width) : el.offsetWidth,
+    height: Number.isFinite(height) && height > 0 ? Math.ceil(height) : el.offsetHeight
+  }
+}
+
+/**
  * A row's box in the viewport, from its offsets inside the panel that holds it (`panel`, the
  * row's offset parent and its scroll container) and that panel's own `layoutRect`: the offsets
  * count from the panel's padding edge, so its border (`clientTop` / `clientLeft`) is added back.

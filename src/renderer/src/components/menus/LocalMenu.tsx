@@ -8,7 +8,13 @@ import { useArrowKeys, usePopover } from '@renderer/hooks/usePopover'
 import { placeUnder, popOrigin, type Anchor } from '@renderer/lib/anchor'
 import { useViewport } from '@renderer/lib/formFactor'
 import { openedFromKeyboard } from '@renderer/lib/popover'
-import { ChromePortal, popoverStyle, useLightDismiss, type PopoverBox } from '@renderer/lib/portals'
+import {
+  ChromePortal,
+  intrinsicSize,
+  popoverStyle,
+  useLightDismiss,
+  type PopoverBox
+} from '@renderer/lib/portals'
 import { BottomSheet, type BottomSheetHandle } from '../sheet/BottomSheet'
 
 export interface LocalMenuItem {
@@ -90,12 +96,14 @@ function PopoverMenu({
     const el = ref.current
     if (!el) return
     // A menu keeps its intrinsic width and is as tall as its rows (§5, §9.20's exemption):
-    // measured as layout size, not the client rect – the pop animation's first frame is scaled
-    // to .94, and an end-aligned menu measured through it would land 6% of its width off. It is
-    // exempt from the 60% cap too (§6 "Menus"): it takes the room down to the window's 8 px
-    // bottom margin and scrolls only past that.
+    // measured as the used size, not the client rect – the pop animation's first frame is
+    // scaled to .94, and an end-aligned menu measured through it would land 6% of its width off
+    // – kept to the fraction of a pixel the longest row runs to, so that row ends in no ellipsis.
+    // It is exempt from the 60% cap too (§6 "Menus"): it takes the room down to the window's
+    // 8 px bottom margin and scrolls only past that.
+    const size = intrinsicSize(el)
     setBox(
-      placeUnder(anchor, { measured: el.offsetWidth }, el.offsetHeight, undefined, undefined, {
+      placeUnder(anchor, { measured: size.width }, size.height, undefined, undefined, {
         capHeight: false
       })
     )
