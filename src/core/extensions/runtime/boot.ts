@@ -1,5 +1,5 @@
 import type { LocaleMessages, RunAt, RuntimeManifest, ScriptWorld } from './manifest'
-import { planInjection, type RegisteredContentScript } from './plan'
+import { planInjection, resolveDotSegments, type RegisteredContentScript } from './plan'
 
 /**
  * What the host hands the content bootstrap (the script injected at document start into tab
@@ -219,7 +219,7 @@ export function backgroundPageHtml(manifest: RuntimeManifest): string {
 }
 
 export function absolutePath(path: string): string {
-  return '/' + path.replace(/^\/+/, '')
+  return '/' + resolveDotSegments(path.replace(/^\/+/, ''))
 }
 
 function escapeAttribute(value: string): string {
