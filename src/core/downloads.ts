@@ -649,11 +649,18 @@ export class DownloadService {
     record.autoResumeAt = this.now() + delay
   }
 
+  /**
+   * The engine retries on its own only what can continue from the kept bytes: a transient
+   * reason, a host that says the transfer can resume, and a validator (`ETag` or
+   * `Last-Modified`) on the row. Without one every resume starts over from byte 0 (Chromium's
+   * `restart_required` without strong validators), and a restart is the user's Retry.
+   */
   private mayAutoResume(record: DownloadItem): boolean {
     if (this.quitting || this.host.autoResume === 'host') return false
     return (
       record.state === 'interrupted' &&
       record.canResume &&
+      hasValidator(record) &&
       isTransientInterrupt(record.error) &&
       !record.url.startsWith('blob:')
     )
@@ -725,6 +732,9 @@ export class DownloadService {
     const record = this.item(id)
     if (!record || record.state !== 'interrupted' || record.error === reason) return
     this.setError(record, reason)
+    // A server refusal behind what looked like the network's failure (a 200 to the range
+    // request: no ranges; a 404; a 403) is nothing the engine retries: the schedule goes.
+    if (!this.mayAutoResume(record)) this.clearAutoResume(record)
     this.persist()
     this.onChange(record, 'progress')
   }
@@ -1250,6 +1260,11 @@ export function isFinal(state: DownloadState): boolean {
  */
 export function isTransientInterrupt(reason: DownloadInterruptReason | undefined): boolean {
   return reason !== undefined && reason.startsWith('network-')
+}
+
+/** The row carries a validator (`ETag` or `Last-Modified`), so a resume can continue the partial file rather than start over. */
+export function hasValidator(item: DownloadItem): boolean {
+  return Boolean(item.etag || item.lastModified)
 }
 
 /** Whether "Keep anyway" may be offered on an `insecure-blocked` row (never for a dangerous type). */

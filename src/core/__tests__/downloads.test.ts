@@ -162,6 +162,7 @@ function begin(
     savePath: '/dl/report.pdf.zeniumdownload',
     sourceTabId: 't1',
     canResume: true,
+    etag: '"v1"',
     ...over
   })
 }
@@ -1088,6 +1089,28 @@ describe('automatic resume after a transient network failure (HB-43)', () => {
       error: 'network-failed'
     })
     expect(blob.autoResumeAt).toBeUndefined()
+    // No validator on the row (no ETag, no Last-Modified): a resume could only start over from
+    // byte 0, and a restart is the user's Retry, whatever the host says about resuming.
+    const unverified = begin(h, { etag: '', lastModified: '' })
+    h.service.progress(unverified.id, {
+      receivedBytes: 10,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    expect(unverified.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(0)
+    // A Last-Modified alone is a validator.
+    const dated = begin(h, { etag: '', lastModified: 'Mon, 21 Sep 2026 10:00:00 GMT' })
+    h.service.progress(dated.id, {
+      receivedBytes: 10,
+      state: 'interrupted',
+      canResume: true,
+      error: 'network-failed'
+    })
+    expect(dated.autoResumeAt).toBe(h.clock.now + 2000)
+    h.service.remove(dated.id)
     // A terminal interruption (the host's done) that is resumable and transient also schedules.
     const term = begin(h)
     h.service.finish(term.id, 'interrupted', { canResume: true, error: 'network-failed' })
@@ -1178,6 +1201,30 @@ describe('automatic resume after a transient network failure (HB-43)', () => {
     expect(item.autoResumeAt).toBeUndefined()
     vi.advanceTimersByTime(60_000)
     expect(h.host.count('resume')).toBe(0)
+  })
+
+  it('the exact reason arriving late as a server refusal drops the schedule; a network one keeps it', () => {
+    // The host probed the server after the drop and found it answers the range with a 200: no
+    // ranges, so the engine's next attempt would only start over. Nothing is retried.
+    const noRange = dropped()
+    expect(noRange.autoResumeAt).toBe(h.clock.now + 2000)
+    h.service.reclassify(noRange.id, 'server-no-range')
+    expect(noRange.error).toBe('server-no-range')
+    expect(noRange.autoResumeAt).toBeUndefined()
+    vi.advanceTimersByTime(60_000)
+    expect(h.host.count('resume')).toBe(0)
+    expect(noRange.state).toBe('interrupted')
+    // A 404 behind it likewise.
+    const gone = dropped()
+    h.service.reclassify(gone.id, 'server-bad-content')
+    expect(gone.autoResumeAt).toBeUndefined()
+    // The network's own reasons refining each other change nothing about the schedule.
+    const timedOut = dropped()
+    const at = timedOut.autoResumeAt
+    h.service.reclassify(timedOut.id, 'network-timeout')
+    expect(timedOut.autoResumeAt).toBe(at)
+    vi.advanceTimersByTime(2000)
+    expect(h.host.ids('resume')).toEqual([timedOut.id])
   })
 })
 
