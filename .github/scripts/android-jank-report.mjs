@@ -23,12 +23,17 @@
 //   node android-jank-report.mjs main [--repo owner/name] [--branch main] [--fallback-branch <b>]
 //     The latest tables of the given branch (main), for the release dry-run's summary: the
 //     `jank-report-*` artifacts of the most recent GREEN runs of the android-*.yml workflows on
-//     that branch, read through `gh` (GH_TOKEN with actions: read), the newest measurement of
-//     every scene kept, with the run it came from. Reading the artifacts costs seconds; booting
-//     an emulator for a scene of its own would cost the release ten minutes and a runner. With
-//     nothing on the branch the table says so; --fallback-branch shows that branch's latest
-//     instead, labelled (a pull request's dry-run shows its own head's numbers before they are
-//     on main). Never fails: an API error is a line in the summary.
+//     that branch – and of its stand-ins, the temporary `cursor/main-jank-<hex>` branches cut
+//     from its tip with the demos' push triggers on (no token of the program's can dispatch a
+//     workflow, so a run "on main" is pushed that way and the branch deleted once read); a
+//     stand-in's run counts when its head is one commit past the branch and that commit touched
+//     nothing outside `.github/workflows/`, and the table names the branch's own commit –
+//     read through `gh` (GH_TOKEN with actions: read), the newest measurement of every scene
+//     kept, with the run it came from. Reading the artifacts costs seconds; booting an emulator
+//     for a scene of its own would cost the release ten minutes and a runner. With nothing on
+//     the branch the table says so; --fallback-branch shows that branch's latest instead,
+//     labelled (a pull request's dry-run shows its own head's numbers before they are on main).
+//     Never fails: an API error is a line in the summary.
 //
 // The caveat printed under every table: HWUI's numbers are the Android UI thread's and render
 // thread's on a software GPU (-gpu swangle) – 100 percent janky, frame times in the hundreds of
@@ -266,7 +271,8 @@ function render(scenes, { title, gate, withRun = false, note = '' }) {
   )
   const runCell = (s) =>
     s.run
-      ? `[${s.run.name} #${s.run.number}](${s.run.url}) · ${s.run.sha.slice(0, 7)} · ${s.run.date}`
+      ? `[${s.run.name} #${s.run.number}](${s.run.url}) · ${s.run.sha.slice(0, 7)} · ${s.run.date}` +
+        (s.run.via ? ` <sub>via ${code(s.run.via)}</sub>` : '')
       : '–'
   const sceneCell = (s) => code(s.scene) + (s.source ? ` <sub>${s.source}</sub>` : '')
 
@@ -396,8 +402,16 @@ function gh(...ghArgs) {
   })
 }
 
-/** The green android-*.yml runs of `branch`, newest first, within the artifacts' retention. */
-function greenDemoRuns(repo, branch) {
+/**
+ * The temporary branches a run of `branch`'s code is pushed on: `cursor/main-jank-<hex>`, cut
+ * from the branch's tip with the demos' push triggers on, since no token of the program's can
+ * dispatch a workflow, and deleted once the run is read (`run.head_branch` keeps the name).
+ */
+const STAND_IN_BRANCH = /^cursor\/main-jank-[0-9a-f]+$/
+const DEMO_WORKFLOW = /^\.github\/workflows\/android-[^/]+\.ya?ml$/
+
+/** The green android-*.yml runs the API lists for `params`, newest first, within the artifacts' retention. */
+function listGreenDemoRuns(repo, params, keep) {
   const since = Date.now() - RETENTION_DAYS * 86_400_000
   const runs = []
   for (let page = 1; page <= 3 && runs.length < RUN_LIMIT; page++) {
@@ -407,8 +421,7 @@ function greenDemoRuns(repo, branch) {
         '-X',
         'GET',
         `repos/${repo}/actions/runs`,
-        '-f',
-        `branch=${branch}`,
+        ...params.flatMap((p) => ['-f', p]),
         '-f',
         'status=success',
         '-f',
@@ -420,13 +433,53 @@ function greenDemoRuns(repo, branch) {
     const list = body.workflow_runs ?? []
     for (const run of list) {
       if (new Date(run.created_at).getTime() < since) return runs
-      if (!/^\.github\/workflows\/android-[^/]+\.ya?ml$/.test(run.path ?? '')) continue
+      if (!DEMO_WORKFLOW.test(run.path ?? '')) continue
+      if (!keep(run)) continue
       runs.push(run)
       if (runs.length >= RUN_LIMIT) break
     }
     if (list.length < 100) break
   }
   return runs
+}
+
+/**
+ * Whether a stand-in branch's run measured `branch`'s own code: its head is exactly one commit
+ * past `branch` (the trigger commit over the tip as it was) and that commit changed nothing
+ * outside `.github/workflows/`. Returns the branch's commit the run stands in for, or null.
+ */
+function standsInFor(repo, branch, run) {
+  try {
+    const compare = JSON.parse(
+      gh('api', '-X', 'GET', `repos/${repo}/compare/${branch}...${run.head_sha}`)
+    )
+    if (compare.ahead_by !== 1) return null
+    const files = compare.files ?? []
+    if (files.some((f) => !String(f.filename).startsWith('.github/workflows/'))) return null
+    return compare.merge_base_commit?.sha ?? null
+  } catch (error) {
+    console.error(
+      `${run.head_branch} ${run.head_sha.slice(0, 7)}: ${String(error.message).split('\n')[0]}`
+    )
+    return null
+  }
+}
+
+/**
+ * The green android-*.yml runs of `branch`, newest first, within the artifacts' retention: the
+ * runs on the branch itself, and the pushed runs of its stand-in branches whose head is the
+ * branch's tip plus the trigger (`standsInFor`), each of those marked with the commit it measured.
+ */
+function greenDemoRuns(repo, branch) {
+  const own = listGreenDemoRuns(repo, [`branch=${branch}`], () => true)
+  const standIns = listGreenDemoRuns(repo, ['event=push'], (run) =>
+    STAND_IN_BRANCH.test(run.head_branch ?? '')
+  )
+    .map((run) => ({ ...run, standsInFor: standsInFor(repo, branch, run) }))
+    .filter((run) => run.standsInFor)
+  return [...own, ...standIns]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, RUN_LIMIT)
 }
 
 /** The scenes of `branch`'s latest green runs: for every scene name, the newest record, with its run. */
@@ -471,7 +524,9 @@ function latestScenes(repo, branch) {
             name: run.name,
             number: run.run_number,
             url: run.html_url,
-            sha: run.head_sha,
+            // A stand-in's run names the branch's commit it measured, and the branch it was pushed on.
+            sha: run.standsInFor ?? run.head_sha,
+            via: run.standsInFor ? run.head_branch : undefined,
             date: run.created_at.slice(0, 10)
           }
         })
@@ -493,13 +548,17 @@ function main() {
     const onBranch = latestScenes(repo, branch)
     const dispatchNote =
       `The demos run by dispatch: the table is empty until \`Android bar hide on scroll demo\` or \`Android sheet recede demo\` ` +
-      `has run green on \`${branch}\` with the frame statistics in its findings (\`jank-report-*\` artifacts, kept ${RETENTION_DAYS} days).`
+      `has run green on \`${branch}\` – or on a \`cursor/main-jank-<hex>\` branch cut from its tip with the push trigger on – ` +
+      `with the frame statistics in its findings (\`jank-report-*\` artifacts, kept ${RETENTION_DAYS} days).`
     if (onBranch.scenes.length > 0) {
       console.log(
         render(onBranch.scenes, {
           title: `Android frame statistics on \`${branch}\` (the jank budget gate)`,
           withRun: true,
-          note: `The newest green measurement of every scene among the last ${onBranch.runs} green demo runs on \`${branch}\` (${onBranch.opened} report${onBranch.opened === 1 ? '' : 's'} read).`
+          note:
+            `The newest green measurement of every scene among the last ${onBranch.runs} green demo runs on \`${branch}\` ` +
+            `(${onBranch.opened} report${onBranch.opened === 1 ? '' : 's'} read; a run pushed on a \`cursor/main-jank-*\` stand-in ` +
+            `names the \`${branch}\` commit it measured).`
         })
       )
       return
