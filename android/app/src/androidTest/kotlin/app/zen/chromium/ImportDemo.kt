@@ -25,8 +25,10 @@ import java.io.File
  *     `UIState.import` must end `done` with the five bookmarks in an "Imported" folder (the bar
  *     already holds one bookmark, so the import lands in a folder as Chrome's does) and the one
  *     repeated URL counted a duplicate. The "Last import" group shows the result; a finger on
- *     "Show imported bookmarks" must open the bookmarks overlay on that folder; a finger on
- *     "Dismiss" must clear the group (`UIState.import` null again).
+ *     "Show imported bookmarks" must open the bookmarks overlay on that folder (a claim of the
+ *     run since the third recording: the row found through the tree or, while the tree still
+ *     trails the picker's leave, through the chrome's DOM – [awaitRow], [touchRowExpecting]); a
+ *     finger on "Dismiss" must clear the group (`UIState.import` null again).
  *  2. A finger on "Import passwords from a file", the CSV in the picker: four logins added into
  *     a vault the plain Keystore key creates on the way (no device credential on the emulator),
  *     the repeated row a duplicate, the row without a password invalid.
@@ -225,37 +227,58 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
 
         // The result's rows are on screen: a finger on Show imported bookmarks must open the
         // bookmarks overlay on the Imported folder – the overlay's open and its close a scene each.
-        if (folderId != null && awaitRow(SHOW_ROW, 8_000) != null) {
-            SystemClock.sleep(600)
-            val shown = scene("imported-bookmarks-overlay-open", JankBudget.Kind.OPEN) {
-                touchTapLabelExpecting(SHOW_ROW, "the bookmarks overlay is up on the imported folder", timeoutMs = 10_000) {
-                    chromeSurfaceUp() && overlay() == "bookmarks" && overlayFolderId() == folderId
+        // The row is waited for outside the scene ([awaitRow]: the tree, or the chrome's DOM while
+        // the tree still trails the picker's leave), so the measured block holds the finger and
+        // the overlay's coming up and nothing else; the tap is a claim of the run.
+        val showRow = if (folderId != null) awaitRow(SHOW_ROW, SHOW_ROW_ID, ROW_WAIT_MS) else null
+        step.put("showRow", showRow != null)
+        if (folderId != null) {
+            var shown = false
+            if (showRow != null) {
+                SystemClock.sleep(600)
+                shown = scene("imported-bookmarks-overlay-open", JankBudget.Kind.OPEN) {
+                    touchRowExpecting(SHOW_ROW, showRow, "the bookmarks overlay is up on the imported folder", timeoutMs = 10_000) {
+                        chromeSurfaceUp() && overlay() == "bookmarks" && overlayFolderId() == folderId
+                    }
                 }
+            } else {
+                Log.w(tag, "no '$SHOW_ROW' row on screen (tree or DOM) within $ROW_WAIT_MS ms of the import's end")
             }
             step.put("showOpenedOverlay", shown).put("overlay", overlay()).put("overlayFolder", overlayFolderId() ?: JSONObject.NULL)
-            snap("bookmarks-imported-folder")
-            step.put("folderHeadingShown", findNode { it == IMPORTED_FOLDER } != null)
-            val overlayClosed = scene("imported-bookmarks-overlay-close", JankBudget.Kind.OPEN) {
-                closeOverlay()
-                !chromeSurfaceUp()
+            claim(shown, "a finger on '$SHOW_ROW' opened the bookmarks overlay on the imported folder")
+            if (shown) {
+                snap("bookmarks-imported-folder")
+                step.put("folderHeadingShown", findNode { it == IMPORTED_FOLDER } != null || chromeJs("document.body.innerText.indexOf('$IMPORTED_FOLDER') >= 0").trim() == "true")
+                val overlayClosed = scene("imported-bookmarks-overlay-close", JankBudget.Kind.OPEN) {
+                    closeOverlay()
+                    !chromeSurfaceUp()
+                }
+                step.put("overlayClosed", overlayClosed)
+                claim(overlayClosed, "the bookmarks overlay closed")
             }
-            step.put("overlayClosed", overlayClosed)
-        } else {
-            step.put("showRow", false)
         }
 
         // Dismiss under a finger: the Last import group goes and the core forgets the result.
-        if (awaitRow(DISMISS_ROW, 5_000) == null && openSettings("Import")) revealRow(DISMISS_ROW)
+        // The row waited for outside the scene, as above; the page pushed again when it is not
+        // on screen (the overlay's close may have left the landing).
+        var dismissRow = awaitRow(DISMISS_ROW, DISMISS_ROW_ID, ROW_WAIT_MS)
+        if (dismissRow == null && openSettings("Import")) dismissRow = awaitRow(DISMISS_ROW, DISMISS_ROW_ID, ROW_WAIT_MS)
         SystemClock.sleep(600)
         var lingered = false
-        val dismissed = scene("last-import-dismiss") {
-            val took = touchTapLabelExpecting(DISMISS_ROW, "the last import is dismissed", timeoutMs = 8_000) {
-                coreState().isNull("import")
+        val dismissed = if (dismissRow == null) {
+            Log.w(tag, "no '$DISMISS_ROW' row on screen (tree or DOM) within $ROW_WAIT_MS ms")
+            false
+        } else {
+            scene("last-import-dismiss") {
+                val took = touchRowExpecting(DISMISS_ROW, dismissRow, "the last import is dismissed", timeoutMs = 8_000) {
+                    coreState().isNull("import")
+                }
+                if (took && !awaitRowGone(DISMISS_ROW, DISMISS_ROW_ID, 5_000)) lingered = true
+                took
             }
-            if (took && !waitForGone(DISMISS_ROW, 5_000)) lingered = true
-            took
         }
         step.put("dismissed", dismissed)
+        claim(dismissed, "a finger on '$DISMISS_ROW' cleared the last import")
         if (lingered) step.put("dismissRowLingered", true)
         snap("settings-import-dismissed")
         Log.i(tag, "bookmarks: $step")
@@ -442,19 +465,108 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
     }
 
     /**
-     * Poll the app's tree for the Settings row starting with `label`, then scroll it into view
-     * ([revealRow]); null when none appears within `timeoutMs`. One read is not a verdict here:
-     * after the system's document picker has gone, the accessibility service's active window
-     * trails the app by a moment (the first recording read the result's rows 30 ms after the
-     * picker and found nothing that its still shows).
+     * The Settings row starting with `label`, on screen: its tree node first – the active
+     * window's, then any window of the app's ([findInWindows]) – scrolled into view
+     * ([revealRow]); then, once [TREE_PATIENCE_MS] have passed with the tree holding no such
+     * row, the row read off the chrome's DOM by its `data-row` id ([domRowRect]). Null when
+     * neither has it within `timeoutMs`. One read is not a verdict here, and the tree alone is
+     * not either: after the system's document picker has gone, the accessibility service's
+     * active window trails the app – the first recording read the result's rows 30 ms after the
+     * picker and found nothing its still shows; the second polled the tree 13 s and found neither
+     * Show imported bookmarks nor Dismiss, both on screen in the still, and found Dismiss at once
+     * after the page was left and pushed again. The chrome's own DOM is what the user sees.
      */
-    private fun awaitRow(label: String, timeoutMs: Long): Rect? {
-        val deadline = SystemClock.uptimeMillis() + timeoutMs
+    private fun awaitRow(label: String, rowId: String, timeoutMs: Long): Rect? {
+        val started = SystemClock.uptimeMillis()
+        val deadline = started + timeoutMs
         while (true) {
-            if (findNode { it.startsWith(label) } != null) return revealRow(label)
+            if (findRowNode(label) != null) revealRow(label)?.let { return it }
+            if (SystemClock.uptimeMillis() - started >= TREE_PATIENCE_MS) {
+                domRowRect(rowId)?.let { rect ->
+                    Log.i(tag, "row '$label' read off the chrome's DOM at $rect (the tree holds no such row: the active window trails the app after the picker)")
+                    return rect
+                }
+            }
             if (SystemClock.uptimeMillis() >= deadline) return null
             SystemClock.sleep(300)
         }
+    }
+
+    /** The Settings row starting with `label` in the active window, or in any window of the app's. */
+    private fun findRowNode(label: String): AccessibilityNodeInfo? =
+        findNode { it.startsWith(label) } ?: findInWindows(app.packageName) { it.startsWith(label) }
+
+    /**
+     * A finger on the Settings row starting with `label`, found at `rect` ([awaitRow]), then up
+     * to `timeoutMs` for `took` – the step's claim, named by `effect`. Through the tree where it
+     * holds the row now ([touchTapLabelExpecting], the harness's step); where the tree still
+     * holds nothing, the finger goes to the rect the chrome's DOM gave and the claim is polled
+     * the same way – a miss is a [touchFault] either way.
+     */
+    private fun touchRowExpecting(label: String, rect: Rect, effect: String, timeoutMs: Long, took: () -> Boolean): Boolean {
+        if (findRowNode(label) != null) return touchTapLabelExpecting(label, effect, timeoutMs = timeoutMs, prefix = true, took = took)
+        Log.i(tag, "touch at ${rect.exactCenterX()},${rect.exactCenterY()} on '$label' (bounds $rect from the chrome's DOM)")
+        Finger().tap(rect.exactCenterX(), rect.exactCenterY())
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(tag, "the touch on '$label' took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * Whether the Settings row starting with `label` (`data-row` `rowId`) has left the screen
+     * within `timeoutMs`: gone from the tree ([waitForGone]) and from the chrome's DOM both, since
+     * a tree that never held the row would say gone at once.
+     */
+    private fun awaitRowGone(label: String, rowId: String, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        if (!waitForGone(label, timeoutMs)) return false
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (!domHasRow(rowId)) return true
+            SystemClock.sleep(200)
+        }
+        return !domHasRow(rowId)
+    }
+
+    /** Whether the chrome's DOM has a Settings row with `data-row` `rowId`. */
+    private fun domHasRow(rowId: String): Boolean =
+        chromeJs("Boolean(document.querySelector(${JSONObject.quote("[data-row=\"$rowId\"]")}))").trim() == "true"
+
+    /**
+     * Where the Settings row with `data-row` `rowId` is on screen, by the chrome's DOM: the row
+     * scrolled to the middle of the page first, its `getBoundingClientRect` a moment later, CSS
+     * px to the chrome WebView's px by the display's density, then onto the screen by where the
+     * WebView is ([chromeOrigin]). Null when the chrome has no such row.
+     */
+    private fun domRowRect(rowId: String): Rect? {
+        val selector = JSONObject.quote("[data-row=\"$rowId\"]")
+        if (chromeJs("(function(){var r=document.querySelector($selector);if(!r)return false;r.scrollIntoView({block:'center'});return true})()").trim() != "true") return null
+        SystemClock.sleep(500)
+        val json = chromeJs("(function(){var r=document.querySelector($selector);if(!r)return null;var b=r.getBoundingClientRect();return [b.left,b.top,b.right,b.bottom]})()").trim()
+        if (json.isEmpty() || json == "null") return null
+        val box = runCatching { JSONArray(json) }.getOrNull() ?: return null
+        if (box.length() != 4) return null
+        val origin = chromeOrigin()
+        val rect = Rect(
+            (box.getDouble(0) * density).toInt() + origin[0],
+            (box.getDouble(1) * density).toInt() + origin[1],
+            (box.getDouble(2) * density).toInt() + origin[0],
+            (box.getDouble(3) * density).toInt() + origin[1]
+        )
+        return rect.takeIf { it.width() > 0 && it.height() > 0 }
+    }
+
+    /** The chrome WebView's top-left on screen (px), asked of the view itself; 0,0 when there is none. */
+    private fun chromeOrigin(): IntArray {
+        val origin = IntArray(2)
+        instrumentation.runOnMainSync { (activity as? MainActivity)?.host?.chrome?.getLocationOnScreen(origin) }
+        return origin
     }
 
     /** Whether the core's bookmark tree (`UIState.bookmarks`, every node) holds a bookmark titled `title`. */
@@ -632,7 +744,13 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         const val BOOKMARKS_ROW_ID = "import-bookmarks-file"
         const val PASSWORDS_ROW = "Import passwords from a file"
         const val SHOW_ROW = "Show imported bookmarks"
+        const val SHOW_ROW_ID = "import-last-show"
         const val DISMISS_ROW = "Dismiss"
+        const val DISMISS_ROW_ID = "import-last-dismiss"
+        /** How long a result row is waited for, tree then DOM ([awaitRow]). */
+        const val ROW_WAIT_MS = 8_000L
+        /** How long the tree alone is given before the chrome's DOM is read for a row ([awaitRow]). */
+        const val TREE_PATIENCE_MS = 3_000L
         /** The phone overlay's close control (`aria-label`). */
         const val CLOSE_LABEL = "Close"
         /** `IMPORTED_FOLDER_TITLES.file`: the folder a file import makes when the bar is not empty. */
