@@ -156,6 +156,8 @@ interface FakeWebContents {
   destroyed: boolean
   once(event: string, fn: () => void): void
   destroy(): void
+  /** Set on the page of a popup window, which the router reads the consumer's URL from. */
+  getURL?(): string
 }
 
 function fakeWebContents(id: number): FakeWebContents {
@@ -180,6 +182,8 @@ interface World {
   registered: Array<{ target: number; consumer: number; id: string }>
   grant(extensionId: string, chromeTabId: number): void
   addTab(zenId: string, chromeId: number, url: string): { tab: Tab; wc: FakeWebContents }
+  /** An extension popup window (`windows.create({type: "popup"})`): its one tab is its page. */
+  addPopupWindow(chromeId: number, url: string): FakeWebContents
   page(id: number): FakeWebContents
   workerCtx(extensionId?: string): ApiContext
   frameCtx(wc: FakeWebContents, extensionId?: string, parent?: unknown): ApiContext
@@ -199,13 +203,19 @@ function world(): World {
   const registered: World['registered'] = []
   const clock = { now: 1_000 }
   let engineIds = 0
+  const popups = new Map<number, { wc: FakeWebContents; url: string }>()
   const model = {
     tab: (zenId: string) => tabs.get(zenId),
     zenTab: (chromeId: number) => [...tabs.values()].find((t) => chromeIds.get(t.id) === chromeId),
     chromeTabId: (tab: Tab) => chromeIds.get(tab.id) ?? -1,
     webContentsOf: (tab: Tab) => contents.get(tab.id) as unknown as WebContents | undefined,
     windowOfTab: () => win,
-    lastFocusedWindow: () => win
+    lastFocusedWindow: () => win,
+    popupForTabId: (chromeId: number) => {
+      const popup = popups.get(chromeId)
+      if (!popup || popup.wc.destroyed) return undefined
+      return { bw: { webContents: popup.wc, isDestroyed: () => popup.wc.destroyed } }
+    }
   }
   const host = {
     model,
@@ -247,6 +257,13 @@ function world(): World {
       contents.set(zenId, wc)
       active ??= tab
       return { tab, wc }
+    },
+    addPopupWindow: (chromeId, url) => {
+      const wc = fakeWebContents(chromeId)
+      wc.getURL = () => url
+      pages.set(chromeId, wc)
+      popups.set(chromeId, { wc, url })
+      return wc
     },
     page: (id) => {
       const wc = fakeWebContents(id)
@@ -344,6 +361,37 @@ describe('TabCaptureApi', () => {
     // The engine's id passes through the shim's resolution untouched.
     expect(w.api.handlers.resolveStreamId(w.frameCtx(consumer), 'engine-1')).toBe('engine-1')
     expect(w.api.handlers.resolveStreamId(w.frameCtx(consumer), 'unknown-id')).toBe('unknown-id')
+  })
+
+  it("the tab of an extension popup window is a consumer too (a recorder window naming itself), as Chrome's GetTabById finds it", () => {
+    const w = world()
+    const { wc: target } = w.addTab('t1', 5, 'https://example.com/')
+    w.grant(EXT, 5)
+    // The popup window's page (`windows.create({type: "popup", url: "window.html"})`): its tab id
+    // is its WebContents id, the one `tabs.getCurrent()` answers it.
+    const recorder = w.addPopupWindow(41, `chrome-extension://${EXT}/window.html?tabId=5`)
+    const id = w.api.handlers.getMediaStreamId(w.frameCtx(recorder), {
+      targetTabId: 5,
+      consumerTabId: 41
+    })
+    expect(id).toBe('engine-1')
+    expect(w.registered).toEqual([{ target: target.id, consumer: 41, id: 'engine-1' }])
+    expect(
+      w.api.allowsMediaRequest(target as unknown as WebContents, `chrome-extension://${EXT}`)
+    ).toBe(true)
+    // A popup window on a plain http page is refused as any insecure consumer is.
+    const plain = w.addPopupWindow(42, 'http://plain.example/recorder')
+    expect(() =>
+      w.api.handlers.getMediaStreamId(w.frameCtx(plain), { targetTabId: 5, consumerTabId: 42 })
+    ).toThrow(TAB_CAPTURE_TAB_URL_NOT_SECURE_ERROR)
+    // A closed popup window is no tab; an id that is neither is Chrome's "Invalid tab specified.".
+    recorder.destroy()
+    expect(() =>
+      w.api.handlers.getMediaStreamId(w.frameCtx(w.page(43)), { targetTabId: 5, consumerTabId: 41 })
+    ).toThrow(TAB_CAPTURE_INVALID_TAB_ERROR)
+    expect(() =>
+      w.api.handlers.getMediaStreamId(w.frameCtx(w.page(43)), { targetTabId: 5, consumerTabId: 99 })
+    ).toThrow(TAB_CAPTURE_INVALID_TAB_ERROR)
   })
 
   it('capture from a popup: the options come back with the source constraints, status follows the stream', () => {

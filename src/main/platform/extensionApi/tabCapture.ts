@@ -117,11 +117,11 @@ export class TabCaptureApi {
     const chromeTabId = this.host.model.chromeTabId(target)
     this.requireGrant(ctx.extensionId, chromeTabId, target)
     if (options.consumerTabId !== undefined) {
-      const consumer = this.tabById(options.consumerTabId)
+      const consumer = this.consumerById(options.consumerTabId)
       const origin = originOf(consumer.url)
       if (!origin || !isPotentiallyTrustworthyUrl(consumer.url))
         throw new ApiError(TAB_CAPTURE_TAB_URL_NOT_SECURE_ERROR)
-      const consumerWc = this.host.model.webContentsOf(consumer)
+      const consumerWc = consumer.wc
       if (!consumerWc) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
       const targetWc = this.host.model.webContentsOf(target)
       if (!targetWc) throw new ApiError(TAB_CAPTURE_FINDING_TAB_ERROR)
@@ -314,6 +314,22 @@ export class TabCaptureApi {
     const tab = this.host.model.zenTab(tabId)
     if (!tab) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
     return tab
+  }
+
+  /**
+   * The consumer named by `consumerTabId`. Chrome's `GetTabById` finds any tab of the profile:
+   * the browser's, and the one tab of an extension popup window (`windows.create({type:
+   * "popup"})`), which an extension's recorder window passes as itself (`tabs.getCurrent()`).
+   * The page may be unloaded (no `wc`); the caller reports that after the URL checks, as Chrome
+   * orders them.
+   */
+  private consumerById(tabId: number): { url: string; wc: WebContents | undefined } {
+    const tab = this.host.model.zenTab(tabId)
+    if (tab) return { url: tab.url, wc: this.host.model.webContentsOf(tab) }
+    const popup = this.host.model.popupForTabId(tabId)
+    if (!popup) throw new ApiError(TAB_CAPTURE_INVALID_TAB_ERROR)
+    const wc = popup.bw.webContents
+    return { url: wc.getURL(), wc }
   }
 
   /** Chrome's `FindAnyBrowser` + active tab: the caller's window, else the last focused one. */
