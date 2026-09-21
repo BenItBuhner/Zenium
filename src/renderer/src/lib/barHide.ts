@@ -586,6 +586,9 @@ function publishHidden(hidden: boolean): void {
   if (uiStore.get().barHidden !== hidden) uiStore.set({ barHidden: hidden })
   const el = root()
   if (!el) return
+  // Written only when it changes: a set of the value already there is an attribute mutation all
+  // the same (a fling ending under a hidden bar arrives at the hidden rest a second time).
+  if (hidden === (el.dataset.barHidden === 'true')) return
   if (hidden) el.dataset.barHidden = 'true'
   else delete el.dataset.barHidden
 }

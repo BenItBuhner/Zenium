@@ -328,6 +328,10 @@ describe('the published hide progress', () => {
       if (flips[flips.length - 1] !== hidden) flips.push(hidden)
     })
     const columns = hostFrames.length
+    // The attribute itself: a write of the value already there is a mutation all the same (the
+    // stylesheet's `[data-bar-hidden]` rules are re-matched for it), so none may happen either.
+    const attributeWrites = new MutationObserver(() => {})
+    attributeWrites.observe(root(), { attributes: true, attributeFilter: ['data-bar-hidden'] })
 
     // A finger down on the page with the bar hidden (rest → dragging at the full travel).
     dispatchBarScroll('t1', 'start', null)
@@ -359,8 +363,12 @@ describe('the published hide progress', () => {
     expect(barHideStore.get().phase).toBe('rest')
     expect(uiStore.get().barHidden).toBe(true)
     expectAgreement()
-    // Not one flip of the boolean, and not one new frame for the host: the bar never moved.
+    // Not one flip of the boolean, not one write of the attribute (the fling's landing at the
+    // hidden rest is the second arrival there), and not one new frame for the host: the bar
+    // never moved.
     expect(flips).toEqual([])
+    expect(attributeWrites.takeRecords()).toEqual([])
+    attributeWrites.disconnect()
     expect(hostFrames.length).toBe(columns)
     unsubscribe()
 
