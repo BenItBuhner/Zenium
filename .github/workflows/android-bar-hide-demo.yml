@@ -15,6 +15,9 @@ name: Android bar hide on scroll demo
 # `harness-tests` input runs other instrumentation classes on the same emulator ahead of the
 # demo, e.g. WebViewLoadDataFoldProbe (the bare-WebView loadDataWithBaseURL history probe).
 on:
+  # TEMPORARY (PERF-1 final verification run, the retry): worker tokens cannot dispatch; removed in the next commit.
+  push:
+    branches: [cursor/android-perf-bar-hide-95ab]
   workflow_dispatch:
     inputs:
       theme:
