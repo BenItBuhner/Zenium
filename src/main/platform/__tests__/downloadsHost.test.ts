@@ -280,6 +280,8 @@ function harness(
   observer: FakeObserver
   announce: (item: FakeItem, source?: WebContents) => { preventDefault: ReturnType<typeof vi.fn> }
   started: Array<string | null>
+  /** Tabs whose pending navigation the host stopped (`bind`'s `stopNavigation`). */
+  stopped: string[]
 } {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'zen-ext-dl-'))
   if (!options.dir) dirs.push(dir)
@@ -296,7 +298,12 @@ function harness(
     verdicts: new DangerVerdictRegistry(),
     now: options.now
   })
-  host.bind(service, { tabIdFor: () => null, parentWindow: () => undefined })
+  const stopped: string[] = []
+  host.bind(service, {
+    tabIdFor: () => null,
+    parentWindow: () => undefined,
+    stopNavigation: (tabId) => stopped.push(tabId)
+  })
   const observer = new FakeObserver()
   host.observeRequests(observer)
   const session = new FakeSession()
@@ -310,7 +317,7 @@ function harness(
     session.emit('will-download', event, item as unknown as ElectronDownloadItem, source)
     return event
   }
-  return { dir, io, host, service, session, observer, announce, started }
+  return { dir, io, host, service, session, observer, announce, started, stopped }
 }
 
 describe('ElectronDownloads interrupt reasons', () => {
@@ -684,6 +691,9 @@ describe('ElectronDownloads dead download links', () => {
     // Announced like a download that started, from its tab; the tab's failure is this row's.
     expect(h.started).toEqual(['t1'])
     expect(h.service.takeDeadLink('t1', 'https://example.com/dl/42')).toBe(true)
+    // The tab's navigation was stopped while the response was still held, so no error document
+    // of Chromium's commits over the page (the page stays, as Chrome's does).
+    expect(h.stopped).toEqual(['t1'])
     // The navigation's own error follows and parks nothing: a later transfer of the URL that
     // ends non-resumably reads by Chromium's verdict, not by a stale note.
     h.observer.fire('onErrorOccurred', {
@@ -739,6 +749,9 @@ describe('ElectronDownloads dead download links', () => {
       ['résumé.pdf', 'server-failed', ''],
       ['résumé.pdf', 'server-forbidden', '']
     ])
+    // A frame's dead link keeps to its frame (Chromium's error document there, as in Chrome);
+    // only the tab's own navigations are stopped.
+    expect(h.stopped).toEqual(['t1', 't1'])
   })
 
   it('is for frames only, for attachments only, and keeps private rows private', () => {

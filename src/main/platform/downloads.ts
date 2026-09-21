@@ -209,6 +209,8 @@ export class ElectronDownloads implements DownloadHost {
   private readonly overwriting = new Set<string>()
   private tabIdFor: (source: WebContents) => string | null = () => null
   private parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined = () => undefined
+  /** Stop the tab's pending navigation (a dead download link's, see `deadLink`). */
+  private stopNavigation: (tabId: string) => void = () => undefined
   /** The core's automatic resumes waiting for the network (see `onOnline`). */
   private readonly onlineWaiters = new Set<() => void>()
   private onlinePoll: ReturnType<typeof setInterval> | null = null
@@ -228,11 +230,14 @@ export class ElectronDownloads implements DownloadHost {
     hooks: {
       tabIdFor: (source: WebContents) => string | null
       parentWindow: (sourceTabId: string | null) => BrowserWindow | undefined
+      /** Stop the tab's pending navigation, a dead download link's (nothing when absent). */
+      stopNavigation?: (tabId: string) => void
     }
   ): void {
     this.service = service
     this.tabIdFor = hooks.tabIdFor
     this.parentWindow = hooks.parentWindow
+    this.stopNavigation = hooks.stopNavigation ?? (() => undefined)
   }
 
   /**
@@ -311,10 +316,18 @@ export class ElectronDownloads implements DownloadHost {
    * header (RFC 6266, `filename*` first) or the URL's last segment, typed by `Content-Type`, in
    * the request's container and from its tab, which the core then leaves as it was (no error
    * page of ours). Frames only: a fetch or XHR never becomes a download, whatever it answers.
+   *
+   * The page itself has to stay too: left alone, the refused navigation commits Chromium's own
+   * error document (`chrome-error://chromewebdata/`, a blank tab with a history entry of its
+   * own) under an address bar the core keeps on the page. The response is still held by this
+   * blocking listener, so the tab's navigation is stopped here and ends `ERR_ABORTED`, which
+   * commits nothing and which the tab service already ignores. The tab's own navigation only:
+   * a frame's dead link keeps its frame's error document, as in Chrome.
    */
   private deadLink(details: WebRequestDetails, reason: DownloadInterruptReason): void {
     const service = this.service
     if (!service) return
+    if (details.resourceType === 'main_frame' && details.tabId) this.stopNavigation(details.tabId)
     const referrer =
       [details.documentUrl, details.initiator].find((u) => u && /^https?:/.test(u)) ?? ''
     const record = service.begin({
