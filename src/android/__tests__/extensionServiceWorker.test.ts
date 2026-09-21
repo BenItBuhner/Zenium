@@ -460,6 +460,34 @@ describe('the worker lifecycle events', () => {
     ) as (self: unknown, scope: unknown) => boolean
     expect(guard(self, scope)).toBe(true)
   })
+
+  it("the page's navigator is a WorkerNavigator and its location a WorkerLocation, nothing else is, and neither constructs (Read&Write's message router)", () => {
+    const { worker } = pair()
+    const navigator = { userAgent: 'test' }
+    const location = { href: 'https://x.ext.zenium.invalid/sw.js' }
+    Object.defineProperty(worker, 'navigator', { value: navigator, configurable: true })
+    Object.defineProperty(worker, 'location', { value: location, configurable: true })
+    const workerNavigator = worker.WorkerNavigator as new () => never
+    const workerLocation = worker.WorkerLocation as new () => never
+    expect(navigator instanceof workerNavigator).toBe(true)
+    expect(location instanceof workerLocation).toBe(true)
+    expect(location instanceof workerNavigator).toBe(false)
+    expect(navigator instanceof workerLocation).toBe(false)
+    expect({} instanceof workerNavigator).toBe(false)
+    expect(undefined instanceof workerNavigator).toBe(false)
+    expect(() => new workerNavigator()).toThrow(TypeError)
+    expect(() => new workerLocation()).toThrow(TypeError)
+    expect(workerNavigator.name).toBe('WorkerNavigator')
+    // Read&Write's router clause, run as the worker's script would with the page's navigator.
+    const router = new Function(
+      'navigator',
+      'WorkerGlobalScope',
+      'importScripts',
+      'WorkerNavigator',
+      "return typeof WorkerGlobalScope !== 'undefined' && typeof importScripts === 'function' && navigator instanceof WorkerNavigator"
+    ) as (...args: unknown[]) => boolean
+    expect(router(navigator, worker.WorkerGlobalScope, () => undefined, workerNavigator)).toBe(true)
+  })
 })
 
 describe('importScripts on the worker page', () => {

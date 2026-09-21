@@ -718,6 +718,15 @@ interface WorkerOptions {
  * the guard read false, the template renderer never loaded and every lookup ended in
  * `ReferenceError: Mustache is not defined`. Distinct from `typeof window`, which stays the
  * page's (round 4, settled): only what a script reaches through `self` / `globalThis` is a worker's.
+ *
+ * With them the two interfaces a worker's `navigator` and `location` are instances of,
+ * `WorkerNavigator` and `WorkerLocation` (Chrome's worker has no `Navigator` or `Location`;
+ * the page's are what the worker page reaches, so each answers `instanceof` for that one
+ * object). Read&Write's worker routes a message to its handlers only `typeof WorkerGlobalScope
+ * !== 'undefined' && typeof importScripts === 'function' && navigator instanceof
+ * WorkerNavigator` (a bundled worker test); once `WorkerGlobalScope` existed the third clause
+ * threw `ReferenceError: WorkerNavigator is not defined` on every message and the toolbar's
+ * chain (worker, offscreen document, speech frame) never completed.
  */
 export function installWorkerScopeInterfaces(target: Any): void {
   const isWorkerGlobal = (value: unknown): boolean =>
@@ -738,7 +747,25 @@ export function installWorkerScopeInterfaces(target: Any): void {
     value: isWorkerGlobal,
     configurable: true
   })
-  define(target, { WorkerGlobalScope: scope, ServiceWorkerGlobalScope: serviceScope })
+  const oneOf = (name: string, key: 'navigator' | 'location'): (() => never) => {
+    const ctor = {
+      [name]: function (): never {
+        throw new TypeError('Illegal constructor')
+      }
+    }[name] as () => never
+    Object.defineProperty(ctor, Symbol.hasInstance, {
+      value: (value: unknown): boolean =>
+        value !== undefined && value !== null && value === Reflect.get(target, key),
+      configurable: true
+    })
+    return ctor
+  }
+  define(target, {
+    WorkerGlobalScope: scope,
+    ServiceWorkerGlobalScope: serviceScope,
+    WorkerNavigator: oneOf('WorkerNavigator', 'navigator'),
+    WorkerLocation: oneOf('WorkerLocation', 'location')
+  })
 }
 
 /**
