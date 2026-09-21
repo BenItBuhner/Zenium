@@ -74,7 +74,7 @@ export function LiveFolderEditor({
       className="w-[520px]"
     >
       <form
-        className="flex flex-col gap-4 p-4"
+        className="flex flex-col gap-4 px-4 pb-4"
         onSubmit={(e) => {
           e.preventDefault()
           if (canSave) void save()

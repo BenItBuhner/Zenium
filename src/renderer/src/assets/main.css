@@ -783,8 +783,52 @@
 
   * {
     box-sizing: border-box;
+  }
+
+  /*
+   * Scrollbars (v2 §9.20, the #265 verdict). A finger's chrome – Android's WebView – keeps the
+   * UA's own overlay bar, which hides itself, thinned and in the theme's ink through the standard
+   * properties. A mouse's chrome – the desktop – would get Chromium's classic buttoned bar, a
+   * defect inside a `--v2-panel`: every scrolling chrome surface draws the thin overlay bar
+   * instead – an 8 gutter, no buttons, no track, the thumb a 6 pill in the surface family's ink
+   * at the spec's 30 % (`--v2-control-text`: the page ink on a page, the theme's on the window,
+   * §9.29; the page ink where no family is set) and nothing else: §9.20 names one rendering and
+   * no pointer state, as Firefox's panel bars have none. One rule, here at the chassis, on every
+   * element of the chrome document: popover bodies, menus and menulists, the Settings tab's
+   * panes, the tab strip, the overlays' bodies, the pages.
+   * Chromium 121+ paints the `::-webkit-scrollbar` parts only where `scrollbar-width` and
+   * `scrollbar-color` are both `auto` – the spec's `scrollbar-width: thin` alone brings the
+   * buttoned bar back – so the desktop leaves the standard properties at their initial value
+   * and no component states either (lib/__tests__/v2Tokens.test.ts guards it); a scroller that
+   * hides its bar by design says `scrollbar-width: none`. Web content is its own document and
+   * keeps the OS's bar.
+   */
+  :root[data-pointer='coarse'] * {
     scrollbar-width: thin;
     scrollbar-color: rgb(var(--zen-fg-rgb) / 0.25) transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-button {
+    display: none;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-track,
+  :root[data-pointer='fine'] ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 30%, transparent);
+    background-clip: padding-box;
+  }
+  /* The thumb answers the pointer (§9.20; Firefox's and macOS's do): 50 %, no size change. */
+  :root[data-pointer='fine'] ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--v2-control-text, var(--v2-text)) 50%, transparent);
+    background-clip: padding-box;
   }
 }
 
@@ -818,6 +862,21 @@
     outline: 2px solid var(--v2-ring);
     outline-offset: -2px;
   }
+}
+
+/*
+ * Text selection (v2 §9.6): one rule, once, on the chrome document's root – the accent at 30 %
+ * (`--v2-selection`), the text keeping its own ink – and no component sets `::selection` of its
+ * own (the guard in lib/__tests__/v2Tokens.test.ts). The chrome layer is named beside the window
+ * because popovers and menus portal there, outside `.zen-window` (lib/portals.tsx), and a field
+ * in one is chrome text too. Unlayered, like the `zen-v2-` primitives, so no layered copy can
+ * beat it. Web content is its own document and keeps the site's selection colour; zen://newtab
+ * cannot link this sheet and writes the same rule into its own (shared/newTabPage.ts).
+ */
+.zen-window ::selection,
+.zen-chrome-layer ::selection {
+  background: var(--v2-selection);
+  color: inherit;
 }
 
 /*
@@ -926,10 +985,6 @@
    */
   :root[data-form-factor='phone'] .zen-window {
     transition: none;
-  }
-  .zen-window ::selection {
-    background: color-mix(in srgb, var(--zen-accent) 30%, transparent);
-    color: inherit;
   }
   /* Private windows: Zen tints the chrome purple and marks it with a mask. */
   .zen-window[data-window-kind='private'] {
@@ -1267,6 +1322,70 @@
     border: 1px solid rgb(var(--zen-fg-rgb) / 0.1);
     border-radius: 16px;
     box-shadow: var(--zen-shadow);
+  }
+
+  /*
+   * The overlay header (design language v2 §9.7; overlays/OverlayShell.tsx, every overlay on the
+   * shell inheriting): a title block, no line at rest – the title 17/600 on 22 for a panel (the
+   * `dock` and `dialog` variants) or 22/600 on 28 for a page (`full`) – 16 from the panel's top
+   * edge to the title's line box and 16 from the line box to the first content box (§5, box to
+   * box; the body carries no padding of its own above its first box). The row is the 28 close
+   * button's (§9.3), so a panel header's 13 is the 16 less the 3 the row adds around the 22
+   * line: 13 + 28 + 13 = 54, as a §9.23 title block alone measures; a page's 28 line fills the
+   * row, 16 + 28 + 16 = 60. The hairline is its own element at the bottom edge (v1 §7.4:
+   * opacity, not a border), in only while the body is scrolled under the header
+   * (`data-scrolled`, the bookmark popovers' pattern) and out again at scroll top; it replaces
+   * the permanent `border-b` and the fading start edge the body drew under it. On a phone the
+   * header is §9.16's bar header instead: 56 tall, the 44 close at a 6 margin, the title 17/600
+   * on 22 at the 16 gutter, a page's title the same 17 (§9.26: no 22 under an overlay's title).
+   */
+  .zen-overlay-header {
+    position: relative;
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 16px;
+  }
+  .zen-overlay-header[data-size='page'] {
+    padding: 16px;
+  }
+  :root[data-form-factor='phone'] .zen-overlay-header {
+    padding: 6px 6px 6px 16px;
+  }
+  .zen-overlay-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--v2-font-heading);
+    font-weight: var(--v2-weight-heading);
+    line-height: var(--v2-line-heading);
+    letter-spacing: -0.012em;
+  }
+  .zen-overlay-header[data-size='page'] .zen-overlay-title {
+    font-size: var(--v2-font-title);
+    line-height: var(--v2-line-title);
+    letter-spacing: -0.014em;
+  }
+  :root[data-form-factor='phone'] .zen-overlay-header[data-size='page'] .zen-overlay-title {
+    font-size: var(--v2-font-heading);
+    line-height: var(--v2-line-heading);
+    letter-spacing: -0.012em;
+  }
+  .zen-overlay-header::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 1px;
+    background: var(--v2-border);
+    opacity: 0;
+    transition: opacity 120ms var(--zen-ease);
+  }
+  .zen-overlay-header[data-scrolled]::after {
+    opacity: 1;
   }
 
   /* The 1px outline is a spread shadow: its corners are the page's radius plus 1px, concentric. */
@@ -2052,16 +2171,6 @@
   .zen-omnibox-field > * {
     position: relative;
     animation: zen-fade 220ms var(--zen-ease);
-  }
-  /*
-   * Selected text in the chrome takes the space's accent at 30 %, never the browser's default
-   * blue; the accent-fill shade so it stays legible on dark, with the raw accent for WebViews
-   * that cannot mix colours.
-   */
-  .zen-omnibox-field input::selection {
-    background: rgb(var(--zen-accent-rgb) / 0.3);
-    background: color-mix(in srgb, var(--zen-accent-fill) 30%, transparent);
-    color: var(--zen-fg);
   }
   /* Rows sit 4 px inside the sheet: concentric with its corners whatever the frame radius is. */
   .zen-suggestion-sheet {
@@ -3660,7 +3769,6 @@
     position: fixed;
     z-index: 80;
     outline: none;
-    scrollbar-width: thin;
     will-change: transform;
   }
   /* The rows keep their height under the panel's cap; the panel scrolls, they do not shrink. */
@@ -3969,7 +4077,6 @@
     margin-inline: -16px;
     padding-block: var(--v2-ring-room);
     overflow-y: auto;
-    scrollbar-width: thin;
   }
   .zen-bm-pick-row[aria-selected='true'] {
     background: var(--v2-selected);
@@ -7158,7 +7265,6 @@
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-body);
   outline: none;
-  scrollbar-width: thin;
 }
 .zen-v2-menulist-option {
   display: flex;
@@ -7226,10 +7332,15 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: 24px;
-  scrollbar-width: none;
 }
-.zen-settings-scroll::-webkit-scrollbar {
-  display: none;
+/*
+ * The panes' bars (§9.20): on the desktop the chassis's thin overlay bar, drawn by the base
+ * layer's rule; a finger's Settings (Android's) hides its own, the WebView's overlay bar being
+ * the phone's.
+ */
+:root[data-pointer='coarse'] .zen-settings-scroll,
+:root[data-pointer='coarse'] .zen-settings-nav {
+  scrollbar-width: none;
 }
 
 /* Landing (§10.2): a title block, the search field, the categories. */
@@ -7949,10 +8060,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 0 24px;
-  scrollbar-width: none;
-}
-.zen-settings-nav::-webkit-scrollbar {
-  display: none;
 }
 .zen-settings-nav-title {
   display: flex;
@@ -8568,63 +8675,42 @@
  */
 @layer components {
   /*
-   * The find bar (§9.21): a panel row of control + 8 under the page, a 320px field with Chrome's
-   * n/m count inside it (13 tabular at 69%), 28px icon buttons at 8. Plain: the hairline above
-   * is the only edge, the miss shows in the count alone.
+   * The find bar (§9.32): a docked row at the bottom of the content frame, `--v2-control` + 8
+   * tall on `--v2-panel`, the 1 px `--v2-border` top edge its only edge. In it the shared 320
+   * field (§9.12, `.zen-v2-field`; its width is a modifier beside the primitive, below), then
+   * the match count 13/20 at 69 % in `tabular-nums`, then previous, next and close as the shared
+   * §9.3 icon buttons (`.zen-v2-icon-button`), 8 apart. Plain: the miss shows in the count alone.
    */
   .zen-find-bar {
+    position: relative;
     height: calc(var(--v2-control) + 8px);
     gap: 8px;
-    padding: 0 8px 0 12px;
-    border-top: 1px solid var(--v2-border);
+    /* §9.32's rhythm: the field 16 in (the docked panels' gutter), the count 8 after it, the
+     * buttons 8 apart, the close 8 from the far edge. */
+    padding: 0 8px 0 16px;
     background: var(--v2-panel);
     color: var(--v2-text);
   }
-  .zen-find-field {
-    display: flex;
-    width: 320px;
-    max-width: 100%;
-    height: var(--v2-control);
-    align-items: center;
-    padding: 0 12px;
-    border: 1px solid var(--v2-border);
-    border-radius: var(--v2-radius-control);
-  }
-  .zen-find-field:focus-within {
-    outline: 2px solid var(--v2-accent);
-    outline-offset: 0;
-  }
-  .zen-find-field > input {
-    min-width: 0;
-    flex: 1;
-    height: 100%;
-    background: transparent;
-    color: var(--v2-text);
-    font-size: 13px;
-    outline: none;
-  }
-  .zen-find-field > input::placeholder {
-    color: var(--v2-text-deemphasized);
+  /*
+   * The top edge is the row's top pixel, as the frame strips draw theirs at the bottom (§9.7): a
+   * border would take that pixel out of the 40 and leave the 32 field half a pixel off centre.
+   */
+  .zen-find-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: var(--v2-border);
   }
   .zen-find-count {
     flex-shrink: 0;
-    padding-left: 8px;
     color: var(--v2-text-deemphasized);
-    font-size: 13px;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
     font-variant-numeric: tabular-nums;
   }
-  .zen-find-field[data-no-match='true'] .zen-find-count {
+  .zen-find-count[data-no-match='true'] {
     color: var(--v2-danger);
-  }
-  .zen-find-button {
-    border-radius: 6px;
-    color: var(--v2-text);
-  }
-  .zen-find-button:hover:not(:disabled) {
-    background: var(--v2-fill);
-  }
-  .zen-find-button:active:not(:disabled) {
-    background: var(--v2-fill-hover);
   }
 
   /*
@@ -8643,6 +8729,12 @@
     padding: 0;
     color: var(--v2-text);
   }
+}
+/* The find bar's field (§9.32): the shared field at the 320 width, giving way in a narrow frame.
+   A modifier on the primitive, unlayered as the primitive is (§9.34). */
+.zen-v2-field.zen-find-field {
+  width: 320px;
+  max-width: 100%;
 }
 
 /*
@@ -9127,93 +9219,27 @@
 }
 
 /*
- * Settings → Default Browser and the "Make Zenium your default browser" strip, with the desktop's
- * default-browser prompt, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): a
- * flat card with a 1 px border, the shared v2 button above, rows that grow around their control
- * (§9.21), the strip as a window surface (§9.29). v1 motion only. They read the token block and
- * nothing else.
+ * The frame's strips – "Make Zenium your default browser" (content/DefaultBrowserBanner.tsx) and
+ * "Restore pages?" (content/CrashRestoreBanner.tsx) – and the desktop's default-browser prompt's
+ * icon, on design language v2 (docs/design-language-v2-draft.md §1–§3, §9): the strip as a
+ * window surface (§9.29) around the shared v2 button. v1 motion only. They read the token block
+ * and nothing else. (Settings → Default Browser and the prompt's title block draw on the §9.34
+ * primitives; the flat card and rows they once had here went with them.)
  */
 @layer components {
-  /* The frame's strips ("Make Zenium your default browser", "Restore pages?") stay in layout but
-     vanish under an open overlay: `visibility` inherits through the `display: contents` wrapper. */
+  /* The frame's strips stay in layout but vanish under an open overlay: `visibility` inherits
+     through the `display: contents` wrapper. */
   .zen-frame-strips[data-under-overlay] {
     visibility: hidden;
   }
-  .zen-default-browser-card {
-    color: var(--v2-text);
-    background: var(--v2-card);
-    border: 1px solid var(--v2-card-border);
-    border-radius: var(--v2-radius-card);
-  }
-  /* A title block (§9.23): 17/600 on 22, then 16 px to the body; the row's glyph is the status. */
-  .zen-default-browser-title {
-    margin: 0 0 16px;
-    font-size: var(--v2-font-heading);
-    font-weight: var(--v2-weight-heading);
-    line-height: var(--v2-line-heading);
-  }
   /*
-   * A row: the base height (§9.2, one line 32 / two lines 52, padding 6) or, holding a control,
-   * the control plus 8 (§9.21: 40 for the 32 px button), the 4 above and below being the row's own
-   * padding so rows touch. Trailing controls centre on the row (§9.18); a leading glyph sits on the
-   * first text line (§9.2), so glyph and text form one body that centres against the control.
-   * Text 15 on 20; a description 13 on the same 20 px line (18 is not used).
-   */
-  .zen-default-browser-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: var(--v2-row);
-    padding: 6px 0;
-    font-size: var(--v2-font-body);
-    line-height: var(--v2-line-body);
-  }
-  .zen-default-browser-body {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .zen-default-browser-row[data-two-line] {
-    min-height: var(--v2-row-two-line);
-  }
-  .zen-default-browser-row[data-control] {
-    min-height: max(var(--v2-row), calc(var(--v2-control) + 8px));
-    padding: 4px 0;
-  }
-  .zen-default-browser-row[data-control][data-two-line] {
-    min-height: max(var(--v2-row-two-line), calc(var(--v2-control) + 8px));
-    padding: 6px 0;
-  }
-  /* The strip is one such row on its card: 12 px before the glyph, 8 px after the buttons. */
-  .zen-default-browser-row[data-strip] {
-    padding-left: 12px;
-    padding-right: 8px;
-  }
-  .zen-default-browser-glyph {
-    flex-shrink: 0;
-    width: var(--v2-icon);
-    height: var(--v2-icon);
-    margin-top: calc((var(--v2-line-body-box) - var(--v2-icon)) / 2);
-  }
-  .zen-default-browser-description {
-    font-size: var(--v2-font-small);
-    line-height: var(--v2-line-body);
-  }
-  .zen-default-browser-muted,
-  .zen-default-browser-description {
-    color: var(--v2-text-deemphasized);
-  }
-  .zen-default-browser-ok {
-    color: var(--v2-ok);
-  }
-  /*
-   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx): a window
-   * surface (§9.29, `data-surface="window"` on it) – the theme's ink on `--v2-window-fill` – with
-   * §9.7's hairline at its bottom edge, the one line it draws. It grows around its 32 px buttons
-   * to 40 (§9.21: the 4 above and below are its own padding), 16 px gutters, the sentence at 15
-   * on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx,
+   * content/CrashRestoreBanner.tsx): a window surface (§9.29, `data-surface="window"` on it) –
+   * the theme's ink on `--v2-window-fill` – with §9.7's hairline at its bottom edge, the one
+   * line it draws. It grows around its 32 px buttons to 40 (§9.21: the 4 above and below are
+   * its own padding, the control + 8 its own statement, so no strip sets `data-control` by
+   * hand – §9.34 leaves that to a row wrapper rendering a control), 16 px gutters, the sentence
+   * at 15 on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
    */
   .zen-frame-strip {
     position: relative;

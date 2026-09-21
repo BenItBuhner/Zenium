@@ -70,7 +70,7 @@ export function ThemePicker({ state, spaceId }: { state: UIState; spaceId: strin
       variant="dialog"
       className="mb-3 ml-3 mr-auto mt-auto w-[420px]"
     >
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col gap-4 px-4 pb-4">
         <div className="flex gap-4">
           <ColorWheel
             colors={working.colors}
