@@ -15,7 +15,7 @@ import { onLayoutApplied, onViewDrawn } from '@renderer/lib/pageView'
 import { focusPane, releaseChromeFocus } from '@renderer/lib/panes'
 import { dropStalePdfReports, setPdfReport } from '@renderer/lib/pdfViewer'
 import { APP_MENU_EVENT } from '@renderer/lib/shortcuts'
-import { openMediaHub } from '@renderer/lib/mediaHub'
+import { mediaHubFolded, openMediaHub } from '@renderer/lib/mediaHub'
 import { openImportSurface, openSettings } from '@renderer/lib/pages'
 import {
   configureThumbnails,
@@ -177,10 +177,11 @@ export function useMainEvents(): void {
         toggleTabSearch()
       }),
       onEvent('mediahub.open', () => {
-        // The app menu's "Now Playing" row (§9.29): the hub's popover from its toolbar button,
-        // or from the "⋯" button where the toolbar button has folded. A menu command, not a
-        // press on the surface: the core focused the chrome for it, so the page has no focus to
-        // get back and the popover takes the keyboard as it does when opened from the keyboard.
+        // The app menu's "Now playing…" row (§9.29): the hub's popover from the "⋯" button the
+        // row's menu hung from (`mediaHubAnchor`: the toolbar button, were it up – but the row
+        // is the fold's). A menu command, not a press on the surface: the core focused the
+        // chrome for it, so the page has no focus to get back and the popover takes the keyboard
+        // as it does when opened from the keyboard.
         if (isPhone()) return
         openMediaHub({ fromKeyboard: true })
       }),
@@ -189,7 +190,7 @@ export function useMainEvents(): void {
         // the menu from itself, so Escape leaves the keyboard on it); otherwise the menu opens
         // at the pointer, keyboard mode all the same.
         const claimed = !window.dispatchEvent(new CustomEvent(APP_MENU_EVENT, { cancelable: true }))
-        if (!claimed) run('app.menu', { keyboard: true })
+        if (!claimed) run('app.menu', { keyboard: true, mediaHubFolded: mediaHubFolded() })
       }),
       // F6 / Shift+F6 / Shift+Alt+T / Shift+Alt+B: the keyboard moves between the chrome's panes
       // and the page (lib/panes.ts).

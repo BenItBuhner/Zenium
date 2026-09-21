@@ -14,9 +14,10 @@ import { TOOLBAR_STROKE } from '../v2/controls'
 
 /**
  * The accent dot that says something plays: on the hub's toolbar button, and – the same dot,
- * the same token – on the "⋯" menu button while a session is live, Firefox's badge on its menu
- * button (§9.29), since the menu's "Now Playing" row is where the hub goes when the button has
- * folded. Decorative: the button it sits on names the state.
+ * the same token, the window's `--zen-accent` (§9.29) – on the "⋯" menu button while that
+ * toolbar button has folded, Firefox's badge on its menu button, since the menu's "Now
+ * playing…" row is then where the hub goes. One of the two wears it, never both. Decorative:
+ * the button it sits on names the state.
  */
 export function MediaLiveDot({ state }: { state: UIState }): JSX.Element | null {
   if (!mediaPlaying(state)) return null

@@ -1,16 +1,14 @@
 import type { MediaState, UIState } from '@shared/types'
 import { extrapolatePosition as extrapolateReport } from '@shared/mediaSession'
+import { displayHost } from '@shared/url'
 
 /**
  * What the in-app players (MW-16: the pill's Now playing chip and the media sheet on the phone,
  * the toolbar button and the media hub on the desktop) read from `UIState.media`: the session –
  * the one tab whose media the OS controls show, as the core picked it – and the numbers a player
  * draws from a report that is a moment old. The desktop hub's own pieces (the players' order,
- * the button's label, the open state) are `lib/mediaHub.ts`'s. The detail line is the shared
- * module's (`shared/mediaHub.ts`), which the core's app-menu row reads too (§9.29).
+ * the button's label, the open state) are `lib/mediaHub.ts`'s.
  */
-
-export { mediaDetail } from '@shared/mediaHub'
 
 /** The tab whose media the OS controls show, or null while nothing plays or played. */
 export function mediaSession(state: UIState): MediaState | null {
@@ -45,6 +43,28 @@ export function formatMediaTime(seconds: number): string {
   const s = total % 60
   const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
   return `${h > 0 ? `${h}:` : ''}${mm}:${String(s).padStart(2, '0')}`
+}
+
+/**
+ * The line under the title: the artist (the page's metadata, else the site the core filled in)
+ * and the site, once each – a page without metadata already has its site for an artist – and
+ * never the site when `title`, the line shown above, is the site already (a page without a
+ * title of its own reads as its host): the title over the site, as Chrome's notification, and
+ * the site never twice. An artist the page set stays even when it matches the title.
+ */
+export function mediaDetail(
+  media: MediaState,
+  tab: UIState['tabs'][string] | undefined,
+  title = ''
+): string {
+  const parts: string[] = []
+  const shown = title.trim()
+  const artist = media.artist?.trim() ?? ''
+  const host = tab ? displayHost(tab.url) : ''
+  const artistIsSite = artist === host
+  if (artist && !(artistIsSite && artist === shown)) parts.push(artist)
+  if (host && host !== artist && host !== shown) parts.push(host)
+  return parts.join(' · ')
 }
 
 /** Whether the page handles `action` itself (registered a Media Session handler for it). */

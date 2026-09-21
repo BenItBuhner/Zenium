@@ -59,7 +59,7 @@ import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
-import { mediaHubVisible, mediaPlaying } from '@renderer/lib/mediaHub'
+import { mediaHubVisible, mediaPlaying, useMediaHubFolded } from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -174,6 +174,8 @@ export function NavRow({
   const starred = Boolean(tab && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
+  // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
+  const mediaFolded = useMediaHubFolded(state)
   useEffect(() => {
     // Alt+F / F10: the menu opens from this button with the keyboard on it, so Escape closes
     // the menu and leaves the focus here (design language v2 §9.22).
@@ -618,10 +620,11 @@ export function NavRow({
         compact={compact}
       />
       {/*
-        The "⋯" carries the media hub's accent dot while something plays (design language v2
-        §9.29: the hub folds into the menu's "Now Playing" row at the 240 sidebar, and the dot on
-        the menu button is Firefox's badge saying so); the name says it for the tree. The dot
-        shows with the toolbar button's own until the width tier folds that button.
+        The "⋯" carries the media hub's accent dot while something plays and the hub's toolbar
+        button has folded (design language v2 §9.29: at the 240 sidebar the hub folds into the
+        menu's "Now playing…" row, and the dot on the menu button is Firefox's badge saying so;
+        with the button up, the button wears the dot and ⋯ says nothing twice). The name says it
+        for the tree, keeping the chord the title shows.
       */}
       <button
         ref={menuButton}
@@ -629,12 +632,16 @@ export function NavRow({
         data-zen-app-menu-button
         className="zen-toolbar-button relative"
         title={hint('Menu', state, 'menu.app')}
-        aria-label={mediaPlaying(state) ? 'Menu, media playing' : undefined}
+        aria-label={
+          mediaFolded && mediaPlaying(state)
+            ? `${hint('Menu', state, 'menu.app')}, media playing`
+            : undefined
+        }
         aria-haspopup="menu"
         onClick={() => openAppMenu(menuButton.current)}
       >
         <MoreHorizontal className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
-        <MediaLiveDot state={state} />
+        {mediaFolded && <MediaLiveDot state={state} />}
       </button>
     </div>
   )

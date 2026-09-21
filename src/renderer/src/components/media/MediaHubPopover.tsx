@@ -71,7 +71,7 @@ export function MediaHubLayer(): JSX.Element | null {
  * controls send (`media.action`, `media.toggle`). The popover leaves with the last player;
  * Escape returns the keyboard to the button, a press anywhere else, a resize and another
  * popover opening put it away (§9.22). Where the toolbar button has folded into the app menu's
- * "Now Playing" row (§9.29) the row's pick opens the same popover from the "⋯" menu button,
+ * "Now playing…" row (§9.29) the row's pick opens the same popover from the "⋯" menu button,
  * which is then its anchor for placement, light dismiss and the keyboard's return alike.
  */
 function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {

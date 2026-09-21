@@ -40,7 +40,7 @@ import { bookmarkUrlCount, isBookmarkRoot } from '../shared/bookmarks'
 import { fileExtension, resolveDownloadSettings } from '../shared/downloads'
 import { canRetryDownload, deleteFileToast, displayName } from '../shared/downloadsShell'
 import { languageName, sortedByName } from '../shared/languageNames'
-import { mediaDetail, mediaTitle, orderMediaEntries } from '../shared/mediaHub'
+import { orderMediaEntries } from '../shared/mediaHub'
 import { serialiseMenu } from './rendererMenus'
 import { dictionaryFor } from '../shared/spellcheck'
 import { installMenuLabel, openAppMenuLabel } from '../shared/webApp'
@@ -149,9 +149,6 @@ const SELECTION_LABEL_MAX = 50
 const SPELLING_SUGGESTIONS_MAX = 5
 /** The "Spell check" submenu lists the user's languages, not every dictionary there is. */
 const SPELLCHECK_MENU_LANGUAGES_MAX = 8
-/** The "Now Playing" row's title, clipped as Chrome clips a page title in a menu; then its detail. */
-const NOW_PLAYING_TITLE_MAX = 32
-const NOW_PLAYING_CONTENT_MAX = 48
 
 /**
  * Context menus. Zen (Firefox) uses native-styled menus everywhere; the core builds the templates
@@ -2351,9 +2348,14 @@ export class Menus {
    * layout: an item the host cannot do is left out (`caps`), and the phone layout – which has no
    * sidebar, window frame or keyboard to speak of – also drops the items that only act on those
    * (Chrome's phone menu has none of them either). The desktop menu is unchanged by this: its
-   * host has every capability the items ask for.
+   * host has every capability the items ask for. `mediaHubFolded` is the chrome's word that the
+   * media hub's toolbar button is off the row (design language v2 §9.29): the menu then heads
+   * with the "Now playing…" row in its stead.
    */
-  showAppMenu(win: ZenWindow, options: { anchor?: Rect; keyboard: boolean }): void {
+  showAppMenu(
+    win: ZenWindow,
+    options: { anchor?: Rect; keyboard: boolean; mediaHubFolded?: boolean }
+  ): void {
     const { state, tabs } = this.browser
     const caps = state.capabilities
     const active = tabs.activeTabFor(win)
@@ -2379,10 +2381,11 @@ export class Menus {
         // Page info and Reload / Stop, which the chrome draws as a row of icon buttons from each
         // item's glyph. The desktop's native menu has no such row and is unchanged.
         ...when(phone, ...this.phoneIconRow(active, win), { type: 'separator' }),
-        // The window's live media heads the sidebar layouts' menu while there is any (design
-        // language v2 §9.29): the media hub's toolbar button folds into the menu at the 240
-        // sidebar, and this row is where it goes. The phone has its own chip and sheet (§9.33).
-        ...desktop(...this.nowPlayingRow(win)),
+        // The window's live media heads the sidebar layouts' menu while the media hub's toolbar
+        // button has folded (design language v2 §9.29: the sidebar's width tier folds it at 240,
+        // and this row is where it goes; with the button up, the button is the hub). The phone
+        // has its own chip and sheet (§9.33).
+        ...desktop(...when(Boolean(options.mediaHubFolded), ...this.nowPlayingRow(win))),
         { label: 'New Tab', action: 'tab.new', click: () => this.browser.openNewTab(win) },
         // Chrome's tab search (tabs-17): a popover of the sidebar layouts; the phone's tab
         // switcher searches on its own.
@@ -2663,22 +2666,24 @@ export class Menus {
   }
 
   /**
-   * The "Now Playing" row at the head of the desktop app menu (design language v2 §9.29, §9.32):
-   * the media hub's toolbar button is tiered by the sidebar's width like the pill's chips, and
-   * where it has folded (the 240 sidebar) the menu carries the window's live media instead –
-   * Firefox's badge on its menu button, with the row at the menu's top saying what the badge is
-   * about. The row mirrors the hub's first card (`shared/mediaHub.ts`: the session first, then
-   * what plays): its artwork as the item's icon where the host's menus draw one, else the tab's
-   * favicon (the menu's own way with a page, as its Recently Closed entries lead with theirs; a
-   * native menu has no tile for the kind's glyph), then the title and the artist · site the card
-   * shows, the title clipped as a page title in a menu is. Its pick opens the hub – every player
-   * and the whole transport – from the toolbar button while it is in the row, else from the
-   * "⋯" button (`mediahub.open`), so the fold loses no control. There while anything is to be
-   * controlled (a tab that paused stays until its media goes, as the button does), gone
-   * otherwise, and no separate row per player: the hub is the list. The label keeps "Now
-   * Playing" whatever the state, as the phone's sheet keeps its title (ruled on #233). The
-   * window's media only: the hub reads its cards from the tabs the window lists, and the row is
-   * that hub's first card, not another window's.
+   * The "Now playing…" row at the head of the desktop app menu (design language v2 §9.29,
+   * §9.32): the media hub's toolbar button is tiered by the sidebar's width like the pill's
+   * chips, and where it has folded (the 240 sidebar) the menu carries the window's live media
+   * instead – Firefox's badge on its menu button, with the row at the menu's top saying what
+   * the badge is about. The row is its name alone: a native menu row is one line beside an
+   * accelerator column, so any content in the label widens the whole menu past §5's 232–332,
+   * and the title, artist and site are the hub's to show on the pick. Sentence case, as the
+   * ruling and §9.29 write it – it names a state, as the phone's chip does – and the ellipsis
+   * because it opens a popover, as "Search Tabs…" does. Its icon is the hub's first card's
+   * artwork (`shared/mediaHub.ts`: the session first, then what plays) where the host's menus
+   * draw one; without artwork the row has no icon – the kind's glyph (`Music` / `Film` on the
+   * hub's tile) has no rasterised form for a native menu item, and the favicon is not the
+   * card's picture. Its pick opens the hub – every player and the whole transport – from the
+   * "⋯" button the menu hung from (`mediahub.open`), so the fold loses no control. There while
+   * anything is to be controlled (a tab that paused stays until its media goes, as the button
+   * does), gone otherwise, and no separate row per player: the hub is the list. The window's
+   * media only: the hub reads its cards from the tabs the window lists, and the row is that
+   * hub's first card, not another window's.
    */
   private nowPlayingRow(win: ZenWindow): Template {
     const { state, tabs } = this.browser
@@ -2690,14 +2695,10 @@ export class Menus {
     )
     const first = entries[0]
     if (!first) return []
-    const tab = tabs.tab(first.tabId)
-    const title = clipLabel(mediaTitle(first, tab), NOW_PLAYING_TITLE_MAX)
-    const detail = mediaDetail(first, tab, title)
-    const content = clipLabel(detail ? `${title} · ${detail}` : title, NOW_PLAYING_CONTENT_MAX)
     return [
       {
-        label: `Now Playing: ${content}`,
-        icon: first.artwork || tab?.favicon || null,
+        label: 'Now playing…',
+        icon: first.artwork || null,
         click: () => this.browser.emit('mediahub.open', undefined, win)
       },
       { type: 'separator' }

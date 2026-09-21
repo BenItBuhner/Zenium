@@ -3441,9 +3441,15 @@ export interface Commands {
   /**
    * The "⋯" application menu. `anchor` is the menu button in chrome CSS pixels: the menu opens
    * along its bottom edge; without it the menu opens at the pointer. `keyboard` marks a menu
-   * opened by a shortcut, whose first item starts selected.
+   * opened by a shortcut, whose first item starts selected. `mediaHubFolded` says the media
+   * hub's toolbar button is not on screen (design language v2 §9.29: the sidebar's width tier
+   * folds it at 240): the menu then heads with the "Now playing…" row in its stead. The chrome
+   * reads the fold from the button's box; the core builds the menu without the toolbar's width.
    */
-  'app.menu': { args: { anchor?: Rect; keyboard?: boolean }; result: void }
+  'app.menu': {
+    args: { anchor?: Rect; keyboard?: boolean; mediaHubFolded?: boolean }
+    result: void
+  }
   /** Renderer-hosted menus: an item was picked / the menu was dismissed. */
   'menu.click': { args: { menuId: string; itemId: string }; result: void }
   'menu.close': { args: { menuId: string }; result: void }
@@ -4487,9 +4493,9 @@ export interface Events {
    */
   'tabsearch.open': void
   /**
-   * The app menu's "Now Playing" row asked for the media hub (design language v2 §9.29: the
+   * The app menu's "Now playing…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's
-   * popover from the toolbar button while it is in the row, else from the "⋯" menu button.
+   * popover from the "⋯" menu button the row's menu hung from (the toolbar button, were it up).
    */
   'mediahub.open': void
   /**

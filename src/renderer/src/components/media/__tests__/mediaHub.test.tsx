@@ -10,12 +10,18 @@ vi.mock('@renderer/lib/api', () => ({
   onEvent: vi.fn(() => () => undefined)
 }))
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { defaultShortcuts } from '@shared/shortcuts'
 import { run } from '@renderer/lib/api'
-import { mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
+import { mediaHubFolded, mediaHubUi, openMediaHub } from '@renderer/lib/mediaHub'
 import { closeAllPopovers } from '@renderer/lib/portals'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { MediaHubButton, MediaLiveDot } from '../MediaHubButton'
 import { MediaHubLayer } from '../MediaHubPopover'
+import { NavRow } from '../../sidebar/SidebarTop'
+
+const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
 
 /*
  * The desktop's media hub (MW-16: Chrome's global media controls): the toolbar button
@@ -398,6 +404,7 @@ describe('the hub from the app menu (§9.29)', () => {
   function mountMenuButton(): HTMLButtonElement {
     const bar = document.createElement('div')
     bar.setAttribute('data-bar', '')
+    bar.setAttribute('data-mock-bar', '')
     bar.getBoundingClientRect = () =>
       ({ x: 0, y: 0, left: 0, top: 0, right: 1024, bottom: 40, width: 1024, height: 40 }) as DOMRect
     const button = document.createElement('button')
@@ -419,10 +426,10 @@ describe('the hub from the app menu (§9.29)', () => {
   }
 
   afterEach(() => {
-    document.querySelector('[data-bar]')?.remove()
+    document.querySelector('[data-mock-bar]')?.remove()
   })
 
-  it('draws the dot on the menu button while anything plays, the hub button’s dot and token, and not otherwise', () => {
+  it('the dot lights while anything plays – the hub button’s own disc – and not otherwise', () => {
     render(<MediaLiveDot state={stateWith([])} />)
     expect(q('.zen-mhub-dot')).toBeNull()
     render(<MediaLiveDot state={stateWith([track({ playing: false })])} />)
@@ -434,6 +441,105 @@ describe('the hub from the app menu (§9.29)', () => {
     // Media of a tab that is gone lights nothing.
     render(<MediaLiveDot state={stateWith([track({ tabId: 'closed' })])} />)
     expect(q('.zen-mhub-dot')).toBeNull()
+  })
+
+  /** Enough of a snapshot for the whole toolbar row (`NavRow`), the pill and its chips included. */
+  function rowState(entries: MediaState[]): UIState {
+    return {
+      ...stateWith(entries),
+      capabilities: { windowControls: false },
+      settings: { urlbarBehavior: 'normal' },
+      window: { kind: 'normal', fullscreen: false, htmlFullscreenTabId: null },
+      boosts: [],
+      extensions: [],
+      bookmarks: [],
+      downloads: [],
+      downloadsProgress: { received: 0, total: 0, indeterminate: false, active: 0 },
+      shortcuts: defaultShortcuts('linux', 'chrome'),
+      blockedPopups: {},
+      translate: { available: true, tabs: {} },
+      securityPrompts: [],
+      autofill: { prompts: [], picker: null }
+    } as unknown as UIState
+  }
+
+  /** The row re-reads the fold as the window does on a resize (the tier's box change). */
+  function resized(): void {
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+  }
+
+  it('the ⋯ button wears the dot and says so only while the hub button has folded: one dot at any width (§9.29)', () => {
+    const state = rowState([track()])
+    render(<NavRow state={state} tab={music} compact={false} />)
+    const hubButton = q('[data-zen-media-hub-button]')!
+    const menu = q('[data-zen-app-menu-button]')!
+    // The button up (every width until the tier folds it): the button's disc, ⋯ bare, its name
+    // the title's.
+    expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
+    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
+    expect(menu.getAttribute('aria-label')).toBeNull()
+    expect(menu.getAttribute('title')).toMatch(/^Menu \(.+\)$/)
+    // The tier folds the button by stylesheet: the disc moves to ⋯, whose name keeps the chord.
+    hubButton.style.display = 'none'
+    resized()
+    expect(menu.querySelector('.zen-mhub-dot')).not.toBeNull()
+    expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+    // And back at 270.
+    hubButton.style.display = ''
+    resized()
+    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
+    expect(menu.getAttribute('aria-label')).toBeNull()
+    // The dot is the accent of the window the buttons sit on, not the page family's.
+    expect(css).toMatch(/\.zen-mhub-dot \{[^}]*background: var\(--zen-accent\);/)
+    expect(css).not.toMatch(/\.zen-mhub-dot \{[^}]*--v2-accent/)
+  })
+
+  it('re-reads the fold as the button comes and goes with the media, no resize needed', () => {
+    render(<NavRow state={rowState([])} tab={music} compact={false} />)
+    const menu = q('[data-zen-app-menu-button]')!
+    expect(q('[data-zen-media-hub-button]')).toBeNull()
+    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
+    // A track starts: the button mounts in the same commit and takes the dot; ⋯ stays bare.
+    render(<NavRow state={rowState([track()])} tab={music} compact={false} />)
+    expect(q('[data-zen-media-hub-button] .zen-mhub-dot')).not.toBeNull()
+    expect(menu.querySelector('.zen-mhub-dot')).toBeNull()
+    // The media goes: the button leaves, and with nothing playing ⋯ has nothing to say.
+    render(<NavRow state={rowState([])} tab={music} compact={false} />)
+    expect(q('.zen-mhub-dot')).toBeNull()
+  })
+
+  it('folded and paused, neither button is lit; folded by an unmount, ⋯ takes the dot too', () => {
+    render(<NavRow state={rowState([track({ playing: false })])} tab={music} compact={false} />)
+    q('[data-zen-media-hub-button]')!.style.display = 'none'
+    resized()
+    expect(q('.zen-mhub-dot')).toBeNull()
+    // The tier may take the button out of the row altogether: a row without it is folded.
+    expect(mediaHubFolded()).toBe(true)
+    act(() => root!.unmount())
+    root = null
+    mount?.remove()
+    expect(q('[data-zen-media-hub-button]')).toBeNull()
+    expect(mediaHubFolded()).toBe(true)
+  })
+
+  it('the menu request carries the fold, so the core builds the row only for a folded button', () => {
+    const state = rowState([track()])
+    render(<NavRow state={state} tab={music} compact={false} />)
+    const menu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
+    vi.mocked(run).mockClear()
+    click(menu)
+    expect(vi.mocked(run).mock.calls.at(-1)).toEqual([
+      'app.menu',
+      expect.objectContaining({ mediaHubFolded: false })
+    ])
+    q('[data-zen-media-hub-button]')!.style.display = 'none'
+    click(menu)
+    expect(vi.mocked(run).mock.calls.at(-1)).toEqual([
+      'app.menu',
+      expect.objectContaining({ mediaHubFolded: true })
+    ])
   })
 
   it('opens from the row’s pick hanging from the "⋯" button when the toolbar button has folded, with every player', async () => {
