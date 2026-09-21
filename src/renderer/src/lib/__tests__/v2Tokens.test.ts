@@ -671,7 +671,10 @@ describe('the v2 primitives (§9.34)', () => {
     // The group heading (§9.27, §10.3) with its 20 / 4 beat: the customise sheet's layered copy
     // and the Settings tab's and phone panels' local beats went with it; what each surface adds
     // (the first heading's 8 under a header, a popover's tighter 12) is an unlayered modifier.
-    '.zen-v2-heading'
+    '.zen-v2-heading',
+    // The inline link (§9.10, the #294 ruling): the extensions UI's layered copy in the accent
+    // and the passwords detail's `.zen-v2-pw-link` went with it; the test below pins its values.
+    '.zen-v2-link'
   ]
 
   it('are one unlayered rule each, tokens only, with no layered or second copy', () => {
@@ -1052,6 +1055,112 @@ describe('the v2 primitives (§9.34)', () => {
       // column (every row fills it), a lone status row's glyph trails (§9.33).
       expect(bare).not.toContain(`.zen-settings-row[data-tone='${tone}'] .zen-settings-leading`)
     }
+  })
+
+  it('draw an inline link as text with a 40 % underline, the accent on hover and focus-visible (§9.10): one unlayered rule, the old forms gone', () => {
+    // The #294 ruling: a `.zen-v2-link` in the accent with no underline at rest was the
+    // primitive's fault, and the 18 px site link in the passwords detail the other failure case.
+    // The one rule sits after the token block, unlayered, and states §9.10's declarations and
+    // nothing else: the surrounding ink and font (never larger), the underline at 40 % of the
+    // ink with a 2 px offset, the pointer a link has.
+    const declarations = (at: number): string[] =>
+      (bare.slice(at, bare.indexOf('}', at)).match(/^ +[a-z-]+:[^;]+;/gm) ?? []).map((d) =>
+        d.trim()
+      )
+    const base = ruleAt('.zen-v2-link')
+    expect(base).toBeGreaterThan(bare.indexOf('--v2-page:'))
+    expect(nesting(base)).toBe(0)
+    expect(bare.match(/\n\.zen-v2-link \{/g)).toHaveLength(1)
+    expect(declarations(base)).toEqual([
+      'color: inherit;',
+      'font: inherit;',
+      'text-decoration: underline;',
+      'text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);',
+      'text-underline-offset: 2px;',
+      'cursor: pointer;'
+    ])
+    // Hover – a mouse's, under the hover media query – and focus-visible: the surface family's
+    // accent through the §9.29 control role, the underline in the same. Beside the rule,
+    // unlayered like it.
+    const media = '\n@media (hover: hover) {'
+    const hover = bare.indexOf('\n  .zen-v2-link:hover {')
+    expect(hover).toBeGreaterThan(base)
+    expect(bare.slice(hover - media.length, hover)).toBe(media)
+    expect(layered(hover + 1)).toBe(false)
+    const focus = ruleAt('.zen-v2-link:focus-visible')
+    expect(nesting(focus)).toBe(0)
+    for (const at of [hover + 1, focus])
+      expect(declarations(at)).toEqual([
+        'color: var(--v2-control-accent, var(--v2-accent));',
+        'text-decoration-color: currentColor;'
+      ])
+    // The trailing glyph (§9.10: a link that leaves the app): the icon token's 16 / 20 at the
+    // size's stroke, 4 after the last word; a link that carries one lays out as an inline-flex
+    // so the glyph is centred on the line and never orphaned, and a link without one sets no
+    // `display` – it is inline in a sentence and wraps as text does.
+    expect(declarations(ruleAt('.zen-v2-link > svg'))).toEqual([
+      'flex-shrink: 0;',
+      'width: var(--v2-icon);',
+      'height: var(--v2-icon);',
+      'stroke-width: var(--v2-icon-stroke);'
+    ])
+    expect(declarations(ruleAt('.zen-v2-link:has(> svg)'))).toEqual([
+      'display: inline-flex;',
+      'align-items: center;',
+      'gap: 4px;'
+    ])
+    // A link standing alone on its line takes `data-touch`, and on a phone its hit area grows
+    // to the row height around the unchanged text (the passwords detail's extender, folded in).
+    expect(declarations(ruleAt('.zen-v2-link[data-touch]'))).toEqual(['position: relative;'])
+    const touch = ruleAt(":root[data-form-factor='phone'] .zen-v2-link[data-touch]::before")
+    expect(nesting(touch)).toBe(0)
+    expect(declarations(touch)).toEqual([
+      "content: '';",
+      'position: absolute;',
+      'inset: calc((var(--v2-row) - 100%) / -2) 0;'
+    ])
+    // No stylesheet keeps the old forms: no `.zen-v2-link` rule outside main.css (the extensions
+    // UI's accent-and-no-underline copy went), no second link under another name (the passwords
+    // detail's `.zen-v2-pw-link` and its phone extender went), and at rest no rule anywhere inks
+    // a link in the accent or takes its underline off.
+    const root = fileURLToPath(new URL('../../', import.meta.url))
+    const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((f) => f.split('\\').join('/'))
+      .filter((f) => /\.(css|tsx?)$/.test(f) && !f.includes('__tests__'))
+    for (const file of sources) {
+      const text = readFileSync(join(root, file), 'utf8')
+      expect(text, `${file} names the passwords link`).not.toMatch(/zen-v2-pw-link/)
+      if (!file.endsWith('.css')) continue
+      const rules = text.replace(/\/\*[\s\S]*?\*\//g, '')
+      if (file !== 'assets/main.css') {
+        expect(rules, `${file} restates the link`).not.toMatch(/\.zen-v2-link[^{]*\{/)
+        expect(rules, `${file} restates the phone extender`).not.toMatch(
+          /inset: calc\(\(var\(--v2-row\) - 100%\) \/ -2\) 0/
+        )
+        continue
+      }
+      for (const rule of rules.matchAll(/[^\n{}]*\.zen-v2-link(?![\w-])[^{]*\{/g)) {
+        const selector = rule[0].trim()
+        if (/:hover|:focus-visible/.test(selector)) continue
+        const body = rules.slice(rule.index + rule[0].length, rules.indexOf('}', rule.index))
+        expect(body, `"${selector}" inks the link in the accent at rest`).not.toMatch(
+          /color: var\(--v2-(control-)?accent/
+        )
+        expect(body, `"${selector}" takes the underline off`).not.toMatch(/text-decoration: none/)
+      }
+    }
+    // Its two consumers on main take the class and add nothing of their own: the extension
+    // details' store link with its glyph, and the login detail's site link (a button, as the
+    // site opens through a command) with `data-touch` – no size utility on the glyph, no link
+    // class of the surface's.
+    const details = readFileSync(join(root, 'components/extensions/ExtensionDetails.tsx'), 'utf8')
+    expect(details).toMatch(/className="zen-v2-link"/)
+    const login = readFileSync(
+      join(root, 'components/overlays/passwords/LoginDetail.tsx'),
+      'utf8'
+    )
+    expect(login).toMatch(/className="zen-v2-link min-w-0 max-w-full"\n\s+data-touch=""/)
+    expect(login).toMatch(/<ExternalLink \/>/)
   })
 })
 
