@@ -1149,15 +1149,22 @@ describe('the v2 primitives (§9.34)', () => {
         expect(body, `"${selector}" takes the underline off`).not.toMatch(/text-decoration: none/)
       }
     }
-    // Its two consumers on main take the class and add nothing of their own: the extension
-    // details' store link with its glyph, and the login detail's site link (a button, as the
-    // site opens through a command) with `data-touch` – no size utility on the glyph, no link
-    // class of the surface's.
+    // Its three consumers on main take the class and add nothing of their own: the extension
+    // details' store link with its glyph, the login detail's site link (a button, as the site
+    // opens through a command) with `data-touch` – no size utility on the glyph, no link class
+    // of the surface's – and the leak warning's manager link in a sentence, which navigates
+    // inside the app and so carries no glyph and no `data-touch` (never in running prose).
     const details = readFileSync(join(root, 'components/extensions/ExtensionDetails.tsx'), 'utf8')
     expect(details).toMatch(/className="zen-v2-link"/)
     const login = readFileSync(join(root, 'components/overlays/passwords/LoginDetail.tsx'), 'utf8')
     expect(login).toMatch(/className="zen-v2-link min-w-0 max-w-full"\n\s+data-touch=""/)
     expect(login).toMatch(/<ExternalLink \/>/)
+    const leak = readFileSync(join(root, 'components/autofill/LeakWarning.tsx'), 'utf8')
+    const manager = /<a\n\s+className="zen-v2-link"\n[\s\S]*?>\s*password manager\s*<\/a>/.exec(
+      leak
+    )
+    expect(manager, 'the leak warning links the manager as plain text').not.toBeNull()
+    expect(manager?.[0]).not.toMatch(/data-touch|<svg|Lucide|Icon/)
   })
 })
 
