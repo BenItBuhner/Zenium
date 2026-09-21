@@ -102,6 +102,14 @@ export interface PreviewDownloadSpec {
   paused: boolean
   /** The transfer fails where it is, with this error (`network-timeout`, `file-no-space`, …). */
   error: string | null
+  /**
+   * With `error` a `network-*` reason: how many of the downloader's own attempts fail again
+   * before one gets through. The stand-in then retries as `Downloads.kt` does (HB-43) – 2, 4,
+   * then 8 s after each failure, the attempt's time announced with the interruption
+   * (`autoResumeAt`), so the row counts down – and gives up after the third attempt fails,
+   * leaving the row interrupted with Resume. Absent or 0, the failure is final at once.
+   */
+  retrying?: number
   /** The transfer is already complete and its file since gone: the row reads Deleted (#166). */
   deleted: boolean
   /** The file comes from the private container. */
@@ -459,11 +467,14 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * surfaces and the load bar, `webapp=<surface>` for one of PREVIEW_WEBAPP_SURFACES ("Add to
  * Home screen"), `download=<file>` for a transfer the stand-in downloader plays back
  * (`size=<bytes>`, `at=<percent>` already received, `speed=<bytes per second>`, `paused`,
- * `fail=<error>`, `deleted` for a finished file since gone from disk, `private`, `url=<url>`,
- * `mime=<type>`), `media=<variant>` for the active page reporting media as one of PREVIEW_MEDIA
- * (the Now playing chip in the pill; `&player` opens the in-app player on it), `popups=<n>` for
- * n pop-ups blocked on the active page (`&list` opens the list of them, `&allowed` remembers the
- * site as allowed), `prompt=http-auth` / `prompt=certificate` for a security dialog over the
+ * `fail=<error>` – with `retrying=<n>` for a network failure the stand-in downloader retries on
+ * its own n more times, the row counting down to each attempt – `deleted` for a finished file
+ * since gone from disk, `private`, `url=<url>` (an `http:` one is refused as insecure under the
+ * stand-in's https referrer, HB-44), `mime=<type>`), `media=<variant>` for the active page
+ * reporting media as one of PREVIEW_MEDIA (the Now playing chip in the pill; `&player` opens the
+ * in-app player on it), `popups=<n>` for n pop-ups blocked on the active page (`&list` opens the
+ * list of them, `&allowed` remembers the site as allowed), `prompt=http-auth` /
+ * `prompt=certificate` for a security dialog over the
  * page (`&failed`, `&proxy`, `&secure` vary the sign-in), `prompt=<any other value>` for the
  * permission that page asks for (the permission prompt sheet), `private=<surface>|new|<url>`
  * for a private tab, `voice=<script>` for voice search from the active tab, `overview` for the
@@ -752,6 +763,7 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
     bytesPerSecond: Math.round(number('speed', 2_400_000)),
     paused: params.has('paused'),
     error: error ? error : null,
+    retrying: Math.round(number('retrying', 0)),
     deleted: params.has('deleted'),
     private: params.has('private')
   }

@@ -5,6 +5,11 @@ export const PREVIEW_DOWNLOAD_EVENT = 'zen-preview-download'
 
 /** How often a playing transfer reports, like `Downloads.kt`'s throttle. */
 const TICK_MS = 250
+/** `DownloadLogic.MAX_AUTO_RESUMES`: the downloader's own attempts after a network failure. */
+const MAX_AUTO_RESUMES = 3
+/** `DownloadLogic.autoResumeDelayMs`: 2 s, 4 s, then 8 s before attempt 1, 2, 3. */
+const autoResumeDelayMs = (attempt: number): number =>
+  2000 << Math.min(Math.max(attempt - 1, 0), MAX_AUTO_RESUMES - 1)
 
 interface HostEvents {
   hostEvent(name: string, json: string): void
@@ -19,6 +24,11 @@ interface Playing {
   spec: PreviewDownloadSpec
   received: number
   timer: ReturnType<typeof setInterval> | null
+  /** The downloader's own attempts made after a network failure (HB-43), and the next one waiting. */
+  attempts: number
+  retry: ReturnType<typeof setTimeout> | null
+  /** How many of those attempts the spec still has failing again. */
+  failuresLeft: number
 }
 
 /**
@@ -30,7 +40,11 @@ interface Playing {
  * UI can be exercised (and captured) in a desktop browser. The finished files it pretends to
  * have written answer the engine's existence check (`download.exists`, which the sheet asks for
  * as it opens) and its Delete file (`download.deleteFile`), so a `deleted` spec – or a Delete
- * file from a mouse's panel – reads Deleted in the row as it does on a phone (#166).
+ * file from a mouse's panel – reads Deleted in the row as it does on a phone (#166). A network
+ * failure with `retrying` is retried the way `Downloads.kt` retries its own (HB-43): the
+ * interruption is reported with the next attempt's time (`autoResumeAt`, 2 / 4 / 8 s on), the
+ * row counts down to it, and the attempt plays on or fails again as the spec says – the core
+ * schedules nothing for this host (`autoResume: 'host'`), exactly as on a phone.
  */
 export function createPreviewDownloads(
   host: () => HostEvents,
@@ -50,6 +64,8 @@ export function createPreviewDownloads(
   const stop = (p: Playing): void => {
     if (p.timer !== null) clearInterval(p.timer)
     p.timer = null
+    if (p.retry !== null) clearTimeout(p.retry)
+    p.retry = null
   }
 
   const report = (p: Playing, state: 'progressing' | 'paused'): void =>
@@ -95,11 +111,58 @@ export function createPreviewDownloads(
     else report(p, 'progressing')
   }
 
+  /**
+   * The transfer failed with the spec's network reason and the downloader will try again itself
+   * (`retrying`): the interruption goes out as Kotlin's does, with the time of the next attempt,
+   * and at that time the attempt either fails again (the spec has failures left) or plays on;
+   * the fourth failure in a row is final, as `DownloadLogic.shouldAutoResume` makes it.
+   */
+  const interrupt = (p: Playing): void => {
+    const error = p.spec.error ?? 'network-failed'
+    const attempt = p.attempts + 1
+    if (!error.startsWith('network-') || attempt > MAX_AUTO_RESUMES) {
+      finish(p, 'interrupted', error)
+      return
+    }
+    const at = Date.now() + autoResumeDelayMs(attempt)
+    emit('download.progress', {
+      token: p.token,
+      receivedBytes: p.received,
+      totalBytes: p.spec.totalBytes,
+      state: 'interrupted',
+      canResume: true,
+      etag: '"preview"',
+      lastModified: '',
+      savePath: partialPath(p),
+      filename: p.spec.filename,
+      finalName: p.spec.filename,
+      mimeType: p.spec.mimeType,
+      error,
+      autoResumeAt: at
+    })
+    p.retry = setTimeout(() => {
+      p.retry = null
+      p.attempts = attempt
+      report(p, 'progressing')
+      if (p.failuresLeft > 0) {
+        p.failuresLeft--
+        interrupt(p)
+      } else {
+        p.timer = setInterval(() => tick(p), TICK_MS)
+      }
+    }, at - Date.now())
+  }
+
   /** The core has bound the announced transfer: play it from where the spec put it. */
   const play = (p: Playing): void => {
     if (p.spec.error) {
       report(p, 'progressing')
-      finish(p, 'interrupted', p.spec.error)
+      if ((p.spec.retrying ?? 0) > 0) {
+        p.failuresLeft = p.spec.retrying ?? 0
+        interrupt(p)
+      } else {
+        finish(p, 'interrupted', p.spec.error)
+      }
       return
     }
     // A finished file since gone: complete at once, and the file is not there when asked.
@@ -131,7 +194,10 @@ export function createPreviewDownloads(
       id: resumes,
       spec,
       received,
-      timer: null
+      timer: null,
+      attempts: 0,
+      retry: null,
+      failuresLeft: 0
     }
     playing.set(p.token, p)
     emit('download.started', {
@@ -177,8 +243,9 @@ export function createPreviewDownloads(
       navigation: false
     }
     // The transfer the spec had failing, pausing or losing its file has done that once; it runs
-    // on from here, and the file it writes is there again.
-    const running = { ...spec, paused: false, error: null, deleted: false }
+    // on from here (a Resume during the countdown drops the attempt waiting: `stop` above), and
+    // the file it writes is there again.
+    const running = { ...spec, paused: false, error: null, retrying: 0, deleted: false }
     const received = fromScratch ? 0 : (previous?.received ?? 0)
     gone.delete(`${downloadsDir}/${spec.filename}`)
     announce(running, id, received)
