@@ -2,7 +2,9 @@ package app.zen.chromium
 
 import android.util.Log
 import java.io.IOException
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
@@ -20,26 +22,48 @@ import java.util.concurrent.atomic.AtomicInteger
  * driver can tell a page served from the cache from one fetched again. `address` is the
  * loopback address to listen on – 127.0.0.1 unless a demo needs several sites, which are told
  * apart by host: any 127.x.y.z is the loopback too, so one server per address on one port gives
- * each site its own host. A path in `delays` answers that many milliseconds late: a slow script
- * or image, for a page that takes its time to load.
+ * each site its own host – and `0.0.0.0` listens on every interface, for a demo whose site must
+ * NOT be the loopback (an insecure origin: the device's own network address, [siteAddress]). A
+ * path in `delays` answers that many milliseconds late: a slow script or image, for a page that
+ * takes its time to load. A path in `cuts` is a file whose server drops the connection ([Cut]):
+ * what the downloads demos need from the runner's Node server, served from the device instead.
  */
 class DemoServer(
     private val port: Int,
     private val routes: Map<String, Pair<String, ByteArray>>,
     private val address: String = "127.0.0.1",
     private val delays: Map<String, Long> = emptyMap(),
-    private val cacheable: Set<String> = emptySet()
+    private val cacheable: Set<String> = emptySet(),
+    private val cuts: Map<String, Cut> = emptyMap()
 ) : Thread("demo-server-$address-$port") {
+    /**
+     * A file whose server fails the downloader (the phone's `Downloads.kt`, which fetches a tapped
+     * link itself once the WebView has handed it over): after the first full response to the path
+     * – the WebView's navigation, which reads the headers and drops its request – the next
+     * `responses` responses die, a full one after `at` body bytes, a `Range` one right after its
+     * headers (a resume that moves resets the downloader's retry budget; one that does not,
+     * counts), and every response after those is served whole. The count is of full responses
+     * plus dying ones, so a Range warm-up shifts nothing – the rule `downloads-demo-server.mjs`
+     * settled on for dead.bin.
+     */
+    class Cut(val at: Int, val responses: Int)
+
     // Android's InetAddress.getLoopbackAddress() is ::1; a socket bound to it alone refuses the
     // 127.0.0.1 the pages' URLs name, so bind the IPv4 loopback explicitly.
     private val socket = ServerSocket(port, 16, InetAddress.getByAddress(ipv4(address)))
     @Volatile private var closed = false
     private val requests = ConcurrentHashMap<String, AtomicInteger>()
+    /** Full (non-Range) responses served so far per cut path, and how many responses have died. */
+    private val fullResponses = ConcurrentHashMap<String, AtomicInteger>()
+    private val deaths = ConcurrentHashMap<String, AtomicInteger>()
 
     val origin: String get() = "http://$address:$port"
 
     /** How many requests `path` has answered so far (404s included). */
     fun hits(path: String): Int = requests[path]?.get() ?: 0
+
+    /** How many responses to a cut path have died so far. */
+    fun deaths(path: String): Int = deaths[path]?.get() ?: 0
 
     /** Fetch `/` the way the WebView will and describe the outcome. */
     fun selfCheck(): String = runCatching {
@@ -93,6 +117,16 @@ class DemoServer(
             // real server answers, so a WAV or an MP4 is seekable in the WebView.
             val part = if (route != null) range?.let { r -> byteRange(r, body.size) } else null
             val cache = if (route != null && path in cacheable) "max-age=3600" else "no-store"
+            // A cut path: does this response die, and after how many body bytes?
+            val cut = cuts[path]?.let { c ->
+                val nthFull = if (part == null) fullResponses.getOrPut(path) { AtomicInteger() }.incrementAndGet() else 0
+                if (nthFull == 1) return@let null
+                val died = deaths.getOrPut(path) { AtomicInteger() }
+                if (died.get() >= c.responses) return@let null
+                val n = died.incrementAndGet()
+                Log.i("DemoServer", "$path: response $n of ${c.responses} dies ${if (part == null) "after ${c.at} bytes" else "after its headers"}")
+                if (part == null) c.at else 0
+            }
             val out = it.getOutputStream()
             val head = StringBuilder()
             if (part != null) {
@@ -104,7 +138,12 @@ class DemoServer(
             }
             head.append("Content-Type: $type\r\nAccept-Ranges: bytes\r\nCache-Control: $cache\r\nConnection: close\r\n\r\n")
             out.write(head.toString().toByteArray())
-            if (part != null) out.write(body, part.first, part.second - part.first + 1) else out.write(body)
+            val from = part?.first ?: 0
+            val length = part?.let { p -> p.second - p.first + 1 } ?: body.size
+            // A dying response closes the socket short of its Content-Length: the client reads what
+            // was sent, then the end of the stream where bytes were promised (an IOException on its
+            // side, the network giving up as far as the downloader can tell).
+            out.write(body, from, if (cut != null) minOf(cut, length) else length)
             out.flush()
         }
     }
@@ -147,6 +186,20 @@ class DemoServer(
             require(parts.size == 4) { "not a dotted IPv4 address: $address" }
             return ByteArray(4) { parts[it].toInt().toByte() }
         }
+
+        /**
+         * The device's own IPv4 address on its network (the emulator's `10.0.2.15` on eth0, or its
+         * Wi-Fi's `192.168.232.x`): a host that is NOT the loopback, so a page served there is
+         * what Chromium's `IsUrlPotentiallyTrustworthy` – and the core's and `DownloadLogic.kt`'s
+         * ports of it – call insecure, where `127.0.0.1` is as trustworthy as `https:`. Null on a
+         * device with no network interface up.
+         */
+        fun siteAddress(): String? =
+            NetworkInterface.getNetworkInterfaces()?.toList()
+                ?.filter { runCatching { it.isUp && !it.isLoopback }.getOrDefault(false) }
+                ?.flatMap { it.inetAddresses.toList() }
+                ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress }
+                ?.hostAddress
 
         /** A minimal HTML document with a heading, and `body` after it. */
         fun page(title: String, body: String = ""): Pair<String, ByteArray> =
