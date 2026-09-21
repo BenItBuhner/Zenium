@@ -1317,13 +1317,24 @@ export class Menus {
       active?.id === tab.id ? { action } : {}
     const otherWindows = tabs.windowsForMove(tabId, win)
 
-    const template: Template = [
+    const when = (able: boolean, ...items: Template): Template => (able ? items : [])
+
+    // Firefox's tab menu in Firefox's groups (design language v2 §6 "Menus": a context menu that
+    // runs long is regrouped to the app menu's counts – about eighteen rows, four separators at
+    // most): the new tab; the tab's own state – reload, mute, pin, duplicate, Zen's rename, icon
+    // and Essentials; the tab's place – bookmark, unload, "Move Tab ▸" with the space, folder,
+    // routing and window moves that were five rows, split, container, share; closing, with the
+    // three scoped closes under Firefox's "Close Multiple Tabs ▸"; then Reopen Closed Tab. Nothing
+    // the flat menu did is gone – the long tails are in the submenus.
+    const openGroup: Template = [
       {
         label: 'New Tab Below',
         enabled: !tab.essential,
         click: () => this.browser.newTabAfter(tabId, win)
-      },
-      { type: 'separator' },
+      }
+    ]
+
+    const stateGroup: Template = [
       {
         label: tab.discarded ? 'Load Tab' : 'Reload Tab',
         ...key('nav.reload'),
@@ -1339,21 +1350,6 @@ export class Menus {
         enabled: Boolean(domain),
         click: () => tabs.toggleMuteSite(tabId)
       },
-      { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
-      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
-      { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) },
-      { type: 'separator' },
-      ...(local
-        ? []
-        : [
-            tab.essential
-              ? { label: 'Remove from Essentials', click: () => tabs.toggleEssential(tabId, win) }
-              : {
-                  label: 'Add to Essentials',
-                  enabled: m.essentialTabIds.length < state.settings.essentialsMax,
-                  click: () => tabs.toggleEssential(tabId, win)
-                }
-          ]),
       tab.essential
         ? { label: 'Unpin Tab', ...key('tab.togglePin'), click: () => tabs.togglePin(tabId, win) }
         : {
@@ -1361,110 +1357,113 @@ export class Menus {
             ...key('tab.togglePin'),
             click: () => tabs.togglePin(tabId, win)
           },
-      ...(tab.pinned || tab.essential
-        ? [
-            {
-              label: 'Reset Pinned Tab',
-              ...key('tab.resetPinned'),
-              enabled: pinnedChanged,
-              click: () => tabs.resetPinned(tabId, true, win)
-            },
-            {
-              label: 'Edit Pinned Tab…',
-              click: () => this.browser.emit('tab.editPinnedUrl', { tabId }, win)
+      ...when(
+        tab.pinned || tab.essential,
+        {
+          label: 'Reset Pinned Tab',
+          ...key('tab.resetPinned'),
+          enabled: pinnedChanged,
+          click: () => tabs.resetPinned(tabId, true, win)
+        },
+        {
+          label: 'Edit Pinned Tab…',
+          click: () => this.browser.emit('tab.editPinnedUrl', { tabId }, win)
+        }
+      ),
+      { label: 'Duplicate Tab', ...key('tab.duplicate'), click: () => tabs.duplicate(tabId, win) },
+      ...when(
+        !local,
+        tab.essential
+          ? { label: 'Remove from Essentials', click: () => tabs.toggleEssential(tabId, win) }
+          : {
+              label: 'Add to Essentials',
+              enabled: m.essentialTabIds.length < state.settings.essentialsMax,
+              click: () => tabs.toggleEssential(tabId, win)
             }
-          ]
-        : []),
-      { type: 'separator' },
-      {
-        label: 'Split with Current Tab',
-        enabled: canSplitWithActive,
-        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
-      },
-      ...(tab.splitGroupId
-        ? [{ label: 'Un-split Tab', click: () => tabs.removeFromSplit(tabId, true, win) }]
-        : []),
-      {
-        label: local ? 'Move to Space…' : 'Move to Space',
-        enabled: !tab.essential && otherSpaces.length > 0,
-        submenu: otherSpaces.map((s) => ({
-          label: spaceLabel(s),
-          click: () =>
-            tabs.moveTab(
-              tabId,
-              {
-                spaceId: s.id,
-                section: tab.pinned ? 'pinned' : 'regular',
-                index: Number.MAX_SAFE_INTEGER
-              },
-              win
-            )
-        }))
-      },
-      ...(local
-        ? []
-        : [
-            // Chrome's group items (context-menus-91): "Add tab to new group" while the space
-            // has no folder, else "Add tab to group ›" – a new folder first, then the space's
-            // folders, the tab's own checked – and "Remove from group" beside it.
-            folders.length === 0
-              ? {
-                  label: 'Add Tab to New Folder',
-                  enabled: !tab.essential && !tab.pinned,
-                  click: () => this.browser.newFolderWithTab(space.id, tabId, win)
-                }
-              : {
-                  label: 'Move to Folder',
-                  enabled: !tab.essential && !tab.pinned,
-                  submenu: [
-                    {
-                      label: 'New Folder…',
-                      click: () => this.browser.newFolderWithTab(space.id, tabId, win)
-                    },
-                    { type: 'separator' as const },
-                    ...folders.map((f) => ({
-                      label: `${f.icon} ${f.name}`,
-                      type: 'checkbox' as const,
-                      checked: tab.folderId === f.id,
-                      click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
-                    }))
-                  ]
+      ),
+      { label: 'Rename Tab…', click: () => this.browser.emit('tab.startRename', { tabId }, win) },
+      { label: 'Change Icon…', click: () => this.browser.emit('tab.pickIcon', { tabId }, win) }
+    ]
+
+    // Firefox's "Move Tab ▸" holds every move: to a space, a folder (Chrome's group items,
+    // context-menus-91: "Add Tab to New Folder" while the space has no folder, else "Move to
+    // Folder ▸" – a new folder first, then the space's folders, the tab's own checked – and
+    // "Remove from Folder" beside it), the domain's route, and – Chrome's pair (tabs-23,
+    // context-menus-93) – to a new window or to another, listed by their active tab, most
+    // recently focused first and greyed with none to go to.
+    const moveTab: Template = joinGroups([
+      [
+        {
+          label: local ? 'Move to Space…' : 'Move to Space',
+          enabled: !tab.essential && otherSpaces.length > 0,
+          submenu: otherSpaces.map((s) => ({
+            label: spaceLabel(s),
+            click: () =>
+              tabs.moveTab(
+                tabId,
+                {
+                  spaceId: s.id,
+                  section: tab.pinned ? 'pinned' : 'regular',
+                  index: Number.MAX_SAFE_INTEGER
                 },
-            ...(tab.folderId
-              ? [{ label: 'Remove from Folder', click: () => tabs.moveToFolder(tabId, null) }]
-              : []),
-            {
-              label: 'Add Route for Domain',
-              enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
-              submenu: this.spaceSubmenu(null, (sid) => this.browser.addRouteForTab(tabId, sid))
-            }
-          ]),
-      ...(caps.windows
-        ? [
-            // Chrome's pair (tabs-23, context-menus-93): the second lists the other windows by
-            // their active tab, most recently focused first, and is greyed with none to go to.
-            {
-              label: 'Move Tab to New Window',
-              click: () => void tabs.moveTabToNewWindow(tabId, null, win)
-            },
-            {
-              label: 'Move Tab to Another Window',
-              enabled: otherWindows.length > 0,
-              submenu: otherWindows.map((w) => ({
-                label: this.windowLabel(w),
-                click: () => void tabs.moveTabToWindow(tabId, w, null, win)
-              }))
-            }
-          ]
-        : []),
-      {
-        label: 'Open in New Container Tab',
-        enabled: !win.isPrivate,
-        submenu: this.containerSubmenu((cid) =>
-          tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
+                win
+              )
+          }))
+        },
+        ...when(
+          !local,
+          folders.length === 0
+            ? {
+                label: 'Add Tab to New Folder',
+                enabled: !tab.essential && !tab.pinned,
+                click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+              }
+            : {
+                label: 'Move to Folder',
+                enabled: !tab.essential && !tab.pinned,
+                submenu: [
+                  {
+                    label: 'New Folder…',
+                    click: () => this.browser.newFolderWithTab(space.id, tabId, win)
+                  },
+                  { type: 'separator' as const },
+                  ...folders.map((f) => ({
+                    label: `${f.icon} ${f.name}`,
+                    type: 'checkbox' as const,
+                    checked: tab.folderId === f.id,
+                    click: () => tabs.moveToFolder(tabId, tab.folderId === f.id ? null : f.id)
+                  }))
+                ]
+              },
+          ...when(Boolean(tab.folderId), {
+            label: 'Remove from Folder',
+            click: () => tabs.moveToFolder(tabId, null)
+          }),
+          {
+            label: 'Add Route for Domain',
+            enabled: Boolean(domain) && !state.settings.spaceRouting[domain],
+            submenu: this.spaceSubmenu(null, (sid) => this.browser.addRouteForTab(tabId, sid))
+          }
         )
-      },
-      { type: 'separator' },
+      ],
+      when(
+        caps.windows,
+        {
+          label: 'Move Tab to New Window',
+          click: () => void tabs.moveTabToNewWindow(tabId, null, win)
+        },
+        {
+          label: 'Move Tab to Another Window',
+          enabled: otherWindows.length > 0,
+          submenu: otherWindows.map((w) => ({
+            label: this.windowLabel(w),
+            click: () => void tabs.moveTabToWindow(tabId, w, null, win)
+          }))
+        }
+      )
+    ])
+
+    const placeGroup: Template = [
       {
         label: tab.bookmarked ? 'Remove Bookmark' : 'Bookmark Tab',
         ...key('bookmark.add'),
@@ -1477,14 +1476,45 @@ export class Menus {
         click: () => this.browser.bookmarkTabs(win)
       },
       {
+        label: 'Unload Tab',
+        enabled: !tab.discarded && active?.id !== tabId,
+        click: () => tabs.discard(tabId)
+      },
+      tab.frozen || tab.cpuThrottle > 1
+        ? {
+            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
+            click: () => void this.browser.governor.wakeTab(tabId)
+          }
+        : {
+            label: 'Freeze Tab',
+            enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
+            click: () => void this.browser.governor.freezeTab(tabId)
+          },
+      { label: 'Move Tab', submenu: moveTab },
+      {
+        label: 'Split with Current Tab',
+        enabled: canSplitWithActive,
+        click: () => active && tabs.createSplit([active.id, tab.id], 'vertical', win)
+      },
+      ...when(Boolean(tab.splitGroupId), {
+        label: 'Un-split Tab',
+        click: () => tabs.removeFromSplit(tabId, true, win)
+      }),
+      {
+        label: 'Open in New Container Tab',
+        enabled: !win.isPrivate,
+        submenu: this.containerSubmenu((cid) =>
+          tabs.createTab({ url: tab.url, active: true, containerId: cid }, win)
+        )
+      },
+      {
         label: 'Share',
         submenu: [
-          ...(caps.share
-            ? [
-                { label: 'Share…', click: () => this.browser.shareTab(tabId, win) },
-                { type: 'separator' as const }
-              ]
-            : []),
+          ...when(
+            caps.share,
+            { label: 'Share…', click: () => this.browser.shareTab(tabId, win) },
+            { type: 'separator' as const }
+          ),
           { label: 'Copy Link', ...key('tab.copyUrl'), click: () => tabs.copyUrl(tabId) },
           {
             label: 'Copy Link as Markdown',
@@ -1500,54 +1530,52 @@ export class Menus {
               )
           }
         ]
-      },
-      { type: 'separator' },
-      tab.frozen || tab.cpuThrottle > 1
-        ? {
-            label: tab.frozen ? 'Wake Tab' : 'Remove CPU Throttling',
-            click: () => void this.browser.governor.wakeTab(tabId)
-          }
-        : {
-            label: 'Freeze Tab',
-            enabled: !tab.discarded && tabs.windowsShowing(tabId).length === 0,
-            click: () => void this.browser.governor.freezeTab(tabId)
+      }
+    ]
+
+    const closeGroup: Template = [
+      {
+        // Firefox's "Close Multiple Tabs ▸". One scope for the three (tabs-25, BUG-013): the
+        // space's regular tabs in this window, pinned and Essentials exempt; an item with
+        // nothing to close is greyed, not gone (§9.30).
+        label: 'Close Multiple Tabs',
+        submenu: [
+          {
+            label: 'Close Tabs Above',
+            enabled: tabs.closeScope(tabId, 'above', win).length > 0,
+            click: () => tabs.closeAbove(tabId, win)
           },
-      {
-        label: 'Unload Tab',
-        enabled: !tab.discarded && active?.id !== tabId,
-        click: () => tabs.discard(tabId)
+          {
+            label: 'Close Tabs Below',
+            enabled: tabs.closeScope(tabId, 'below', win).length > 0,
+            click: () => tabs.closeBelow(tabId, win)
+          },
+          {
+            label: 'Close Other Tabs',
+            enabled: tabs.closeScope(tabId, 'others', win).length > 0,
+            click: () => tabs.closeOthers(tabId, win)
+          }
+        ]
       },
-      { type: 'separator' },
-      // One scope for the three (tabs-25, BUG-013): the space's regular tabs in this window,
-      // pinned and Essentials exempt; an item with nothing to close is greyed, not gone (§9.30).
-      {
-        label: 'Close Tabs Above',
-        enabled: tabs.closeScope(tabId, 'above', win).length > 0,
-        click: () => tabs.closeAbove(tabId, win)
-      },
-      {
-        label: 'Close Tabs Below',
-        enabled: tabs.closeScope(tabId, 'below', win).length > 0,
-        click: () => tabs.closeBelow(tabId, win)
-      },
-      {
-        label: 'Close Other Tabs',
-        enabled: tabs.closeScope(tabId, 'others', win).length > 0,
-        click: () => tabs.closeOthers(tabId, win)
-      },
-      { type: 'separator' },
       {
         label: tab.pinned || tab.essential ? 'Close Tab (keep pinned)' : 'Close Tab',
         ...key('tab.close'),
         click: () => void tabs.requestClose(tabId, false, win)
       },
-      ...(tab.pinned || tab.essential
-        ? [{ label: 'Remove Tab', click: () => void tabs.requestClose(tabId, true, win) }]
-        : []),
-      { type: 'separator' },
-      // Edge's (and Chrome's strip) Reopen closed tab, from any row (tabs-24, history-10).
-      this.reopenClosedItem(win)
+      ...when(tab.pinned || tab.essential, {
+        label: 'Remove Tab',
+        click: () => void tabs.requestClose(tabId, true, win)
+      })
     ]
+
+    // Edge's (and Chrome's strip) Reopen closed tab, from any row (tabs-24, history-10).
+    const template = joinGroups([
+      openGroup,
+      stateGroup,
+      placeGroup,
+      closeGroup,
+      [this.reopenClosedItem(win)]
+    ])
     this.popup(template, win, 'tab', anchor)
   }
 

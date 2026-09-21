@@ -2741,13 +2741,138 @@ describe('a menu asked for from the keyboard', () => {
 })
 
 describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
-  /** The item of that label in the last popup, wherever it sits. */
+  /** The item of that label in the last popup, wherever it sits – in a submenu too. */
   const item = (h: Harness, label: string): MenuItemTemplate => {
-    const found = h.shown().find((i) => i.label === label)
-    if (!found) throw new Error(`no "${label}" in ${topLabels(h.shown()).join(', ')}`)
+    const found = allItems(h.shown()).find((i) => i.label === label)
+    if (!found) throw new Error(`no "${label}" in ${labels(h.shown()).join(', ')}`)
     return found
   }
   const enabled = (h: Harness, label: string): boolean => item(h, label).enabled !== false
+
+  describe("the tab row's menu is Firefox's, in Firefox's groups (§6 Menus: a long context menu regrouped to the app menu's counts)", () => {
+    /** Firefox's skeleton for a regular row: five groups, four separators, twenty rows. */
+    const REGULAR_TAB_MENU = [
+      'New Tab Below',
+      '-',
+      'Reload Tab',
+      'Mute Tab',
+      'Mute Site',
+      'Pin Tab',
+      'Duplicate Tab',
+      'Add to Essentials',
+      'Rename Tab…',
+      'Change Icon…',
+      '-',
+      'Bookmark Tab',
+      'Bookmark All Tabs…',
+      'Unload Tab',
+      'Freeze Tab',
+      'Move Tab',
+      'Split with Current Tab',
+      'Open in New Container Tab',
+      'Share',
+      '-',
+      'Close Multiple Tabs',
+      'Close Tab',
+      '-',
+      'Reopen Closed Tab'
+    ]
+
+    it('a regular row: twenty rows and four separators, every move under Move Tab and the three scoped closes under Close Multiple Tabs', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const shown = h.shown()
+      expect(topLabels(shown)).toEqual(REGULAR_TAB_MENU)
+      expect(topLabels(shown).filter((l) => l !== '-')).toHaveLength(20)
+      expect(separators(shown)).toBe(4)
+      expect(topLabels(item(h, 'Move Tab').submenu!)).toEqual([
+        'Move to Space',
+        'Add Tab to New Folder',
+        'Add Route for Domain',
+        '-',
+        'Move Tab to New Window',
+        'Move Tab to Another Window'
+      ])
+      expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+        'Close Tabs Above',
+        'Close Tabs Below',
+        'Close Other Tabs'
+      ])
+      expect(topLabels(item(h, 'Share').submenu!)).toEqual([
+        'Copy Link',
+        'Copy Link as Markdown',
+        'Email Link…'
+      ])
+    })
+
+    it('nothing the flat menu did is gone: every one of its rows is in the regrouped menu, at the top or in a submenu', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const all = allItems(h.shown())
+        .map((i) => i.label)
+        .filter((l): l is string => Boolean(l))
+      // The flat menu's rows for a regular tab (#263, before this regrouping).
+      for (const label of [
+        'New Tab Below',
+        'Reload Tab',
+        'Mute Tab',
+        'Mute Site',
+        'Duplicate Tab',
+        'Rename Tab…',
+        'Change Icon…',
+        'Add to Essentials',
+        'Pin Tab',
+        'Split with Current Tab',
+        'Move to Space',
+        'Add Tab to New Folder',
+        'Add Route for Domain',
+        'Move Tab to New Window',
+        'Move Tab to Another Window',
+        'Open in New Container Tab',
+        'Bookmark Tab',
+        'Bookmark All Tabs…',
+        'Share',
+        'Copy Link',
+        'Copy Link as Markdown',
+        'Email Link…',
+        'Freeze Tab',
+        'Unload Tab',
+        'Close Tabs Above',
+        'Close Tabs Below',
+        'Close Other Tabs',
+        'Close Tab',
+        'Reopen Closed Tab'
+      ])
+        expect(all).toContain(label)
+    })
+
+    it("a pinned row's state rows stand with Pin: Unpin, Reset Pinned Tab, Edit Pinned Tab…; its close is Close Tab (keep pinned) with Remove Tab beside it", () => {
+      const h = pageHarness()
+      h.browser.tabs.togglePin(h.tabId, h.win)
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      const top = topLabels(h.shown())
+      expect(top.slice(top.indexOf('Mute Site') + 1, top.indexOf('Duplicate Tab'))).toEqual([
+        'Unpin Tab',
+        'Reset Pinned Tab',
+        'Edit Pinned Tab…'
+      ])
+      expect(top.slice(-5)).toEqual([
+        'Close Multiple Tabs',
+        'Close Tab (keep pinned)',
+        'Remove Tab',
+        '-',
+        'Reopen Closed Tab'
+      ])
+      expect(separators(h.shown())).toBe(4)
+    })
+
+    it('every row is Title Case (§9.1)', () => {
+      const h = pageHarness()
+      h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
+      for (const label of topLabels(h.shown()).filter((l) => l !== '-'))
+        expect(label, label).toMatch(/^[A-Z0-9]/)
+    })
+  })
 
   it("the strip's menu is Chrome's trio first, then Zenium's own", () => {
     const h = pageHarness()
@@ -2788,14 +2913,17 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
   it("Reopen Closed Tab closes the tab row's menu too, after the close items", () => {
     const h = pageHarness()
     h.browser.handleCommand(h.win, 'tab.contextMenu', { tabId: h.tabId })
-    expect(topLabels(h.shown()).slice(-7)).toEqual([
-      'Close Tabs Above',
-      'Close Tabs Below',
-      'Close Other Tabs',
+    expect(topLabels(h.shown()).slice(-5)).toEqual([
       '-',
+      'Close Multiple Tabs',
       'Close Tab',
       '-',
       'Reopen Closed Tab'
+    ])
+    expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+      'Close Tabs Above',
+      'Close Tabs Below',
+      'Close Other Tabs'
     ])
     expect(enabled(h, 'Reopen Closed Tab')).toBe(false)
   })
@@ -2852,9 +2980,11 @@ describe('the tab strip menus (tabs-35, tabs-24, tabs-25)', () => {
         expect(tabs.closeScope(id, 'others', h.win)).toEqual([h.ids.A, h.ids.B, h.ids.C])
         expect(scopes(h, id)).toEqual({ above: false, below: true, others: true })
         // The items are there, greyed, not gone (§9.30).
-        expect(topLabels(h.shown())).toEqual(
-          expect.arrayContaining(['Close Tabs Above', 'Close Tabs Below', 'Close Other Tabs'])
-        )
+        expect(topLabels(item(h, 'Close Multiple Tabs').submenu!)).toEqual([
+          'Close Tabs Above',
+          'Close Tabs Below',
+          'Close Other Tabs'
+        ])
       }
       tabs.closeOthers(h.ids.P, h.win)
       expect(alive(h)).toEqual(['e', 'p'])
