@@ -86,6 +86,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     private class Grade(val verdict: String, val note: String, val extra: JSONObject? = null)
 
+    /** An `identity.launchWebAuthFlow` sheet of the row's, up on the provider's page (`accountGate`). */
+    private class AuthSheet(val url: String)
+
     /** One row of the table: the store id, the name, a slug for the screenshots, the store when not the Chrome Web Store, and the core check. */
     private inner class Row(
         val id: String,
@@ -1438,7 +1441,10 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
      * row's own page as a tab (NordPass's app page, signed out), injects its UI into the page
      * (`injects`, Read&Write's `gw-toolbar`, which its content script shows on the worker's
      * `tabs.sendMessage`), or the row's own page (`page`, Claude's side panel document, which the
-     * phone has no panel to host: opened as a tab) shows its sign-in. Each is the row's sign-in
+     * phone has no panel to host: opened as a tab) shows its sign-in, or the click runs the
+     * provider's sign-in through `identity.launchWebAuthFlow`, whose sheet is up with the
+     * provider's page (Read&Write: its toolbar mounts hidden and Texthelp's IdP asks for a
+     * provider, as Chrome's first click does). Each is the row's sign-in
      * surface: `n/m`, the account being the gate (`gate` names another gate: Avast's cloud
      * verdict, IE Tab's Windows companion). A row whose click runs into the gate in its worker
      * instead (`gateLog`: Save to Google Drive's `identity.getAuthToken`, refused as Zenium
@@ -1470,15 +1476,25 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                         ?: now.entries.firstOrNull { it.key !in before && extensionPage(it.value, row.id) }
                         ?: activeCoreTab()?.optString("id")?.takeIf { it != activeBefore && it != tab }
                             ?.let { id -> now.entries.firstOrNull { it.key == id && opens.containsMatchIn(it.value) } }
+                        ?: authSheetUrl(row.id)?.let { url -> AuthSheet(url) }
                         ?: injects?.let { selector -> json(tabEval(view, INJECTED_UI.replace("__SELECTOR__", JSONObject.quote(selector)))).takeIf { it.optBoolean("pass") } }
                 }
                 @Suppress("UNCHECKED_CAST")
                 val landed = hit as? Map.Entry<String, String>
                 val injected = hit as? JSONObject
+                val authSheet = hit as? AuthSheet
                 if (injected != null) {
                     SystemClock.sleep(scaled(2_000, factor))
                     snap("${entry.optString("slug")}-injected")
                     extra.put("injected", injected)
+                }
+                if (authSheet != null) {
+                    // The provider's page in the identity sheet: its host and what it says, once it shows.
+                    val sheet = poll(scaled(15_000, factor), 500) { authSheetView(row.id)?.takeIf { rendered(it) } }
+                    val said = sheet?.let { json(tabEval(it, DEEP_TEXT)).optString("text").replace(Regex("\\s+"), " ").trim() } ?: ""
+                    extra.put("authSheet", JSONObject().put("url", (authSheetUrl(row.id) ?: authSheet.url).take(200)).put("text", said.take(200)))
+                    injects?.let { selector -> extra.put("pageWithSheet", json(tabEval(view, INJECTION_MISS.replace("__SELECTOR__", JSONObject.quote(selector))))) }
+                    snap("${entry.optString("slug")}-sign-in")
                 }
                 runCatching { coreInvoke("extension.closePopup", "null") }
                 extra.put("tabsAfterClick", JSONArray(tabUrls().values.toList()))
@@ -1525,6 +1541,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                     else -> "switched to its tab"
                 }
                 when {
+                    authSheet != null -> {
+                        val sheet = extra.optJSONObject("authSheet")
+                        val host = sheet?.optString("url")?.let { runCatching { java.net.URI(it).host }.getOrNull() } ?: ""
+                        val mounted = extra.optJSONObject("pageWithSheet")?.optJSONObject("element")?.let { el ->
+                            "; its <${el.optString("tag")}> is in the page (display ${el.optString("display")}, ${el.optInt("shadowEls")} elements in its shadow root)"
+                        } ?: ""
+                        Grade("n/m", "$label: the action click opened the provider's sign-in in its identity.launchWebAuthFlow sheet ($host: \"${sheet?.optString("text")?.take(80) ?: ""}\")$mounted; the core needs $gate (not measurable here)", extra)
+                    }
                     injected != null ->
                         Grade("n/m", "$label: the action click injected its <${injected.optString("tag")}> (${injected.optInt("w")}x${injected.optInt("h")} css px, \"${injected.optString("text").take(80)}\") into the page; the tools need $gate (not measurable here)", extra)
                     landed != null && opens.containsMatchIn(landed.value) ->
@@ -3267,9 +3291,13 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
 
     private fun isUncaught(line: String): Boolean = line.startsWith("ERROR ") && line.contains("Uncaught")
 
-    /** The document has content: text, or more than a handful of elements (an icon-only popup). */
+    /**
+     * The document has content: text, more than a handful of elements (an icon-only popup), or an
+     * embedded document or drawing (Tag Assistant's side panel is one cross-origin frame of
+     * tagassistant.google.com and nothing else; what the frame shows is its own).
+     */
     private fun rendered(view: WebView): Boolean =
-        tabEval(view, "String(!!document.body && (document.body.innerText.trim().length > 0 || document.body.querySelectorAll('*').length > 3))", 5) == "true"
+        tabEval(view, "String(!!document.body && (document.body.innerText.trim().length > 0 || document.body.querySelectorAll('*').length > 3 || !!document.body.querySelector('iframe,embed,object,canvas,video,img,svg')))", 5) == "true"
 
     /** The document shows text (innerText leaves out what visibility hides): the page as seen. */
     private fun visibleText(view: WebView): Boolean =
@@ -3356,6 +3384,20 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         var v: ExtensionWebView? = null
         instrumentation.runOnMainSync { v = host.extensions.popupView() }
         return v
+    }
+
+    /** The row's `identity.launchWebAuthFlow` sheet when one is up, or null. */
+    private fun authSheetView(id: String): WebView? {
+        var v: WebView? = null
+        instrumentation.runOnMainSync { v = host.extensions.authSheetView(id) }
+        return v
+    }
+
+    /** The URL the row's auth sheet is on, or null without a sheet or before its first page. */
+    private fun authSheetUrl(id: String): String? {
+        var url: String? = null
+        instrumentation.runOnMainSync { url = host.extensions.authSheetView(id)?.url?.takeIf { it.isNotEmpty() && it != "about:blank" } }
+        return url
     }
 
     private fun backgroundView(id: String): ExtensionWebView? {
