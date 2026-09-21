@@ -1,4 +1,4 @@
-import type { OverlayKind } from '@shared/types'
+import type { OverlayKind, PhoneBarPosition } from '@shared/types'
 import { INTERNAL_PAGE_IDS, type InternalPageId } from '@shared/internalPages'
 import type { ThirdPartyCookieMode } from '@shared/privacy'
 import { isPreviewPdfVariant, type PreviewPdfVariant } from './previewPdf'
@@ -89,6 +89,24 @@ export type PreviewReadAloudStatus = (typeof PREVIEW_READ_ALOUD_STATUSES)[number
 export const PREVIEW_PRIVATE_SURFACES = ['newtab', 'page', 'overview', 'tabs', 'empty'] as const
 export type PreviewPrivateSurface = (typeof PREVIEW_PRIVATE_SURFACES)[number]
 const PREVIEW_COOKIE_MODES: readonly ThirdPartyCookieMode[] = ['allow', 'block-private', 'block']
+
+/**
+ * The phone new tab page's field on its way to the omnibox (`ntp=<pose>`; NTP-02 / MOT-08,
+ * `lib/fakeboxMorph.ts`): `rest` is the page as it opens, `morph:<n>` the field held n percent
+ * of the way from the page to the omnibox with the bar open under it (the stills' source; the
+ * spring never rests there), `open` the field landed and the omnibox its own, `scroll:<px>` the
+ * page scrolled by that many px (the field carried toward the pill's slot as far as the page can
+ * scroll), `scrub:<n>` the page scrolled to n percent of the field's travel to the slot, and
+ * `docked` scrolled until the field has landed in the slot. `&private` puts the pose on the
+ * private new tab page; `bar=top` on the spec docks the bar at the top first (a seed).
+ */
+export type PreviewNtpPose =
+  | { kind: 'rest' }
+  | { kind: 'morph'; t: number }
+  | { kind: 'open' }
+  | { kind: 'scroll'; px: number }
+  | { kind: 'scrub'; t: number }
+  | { kind: 'docked' }
 
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
@@ -245,6 +263,13 @@ export type PreviewState =
       kind: 'sheet'
       sheet: PreviewSheet
       then?: PreviewStep[]
+    }
+  | {
+      /** The phone new tab page with its field at a pose of the morph (`ntp=<pose>`). */
+      kind: 'ntp'
+      pose: PreviewNtpPose
+      /** On the private new tab page rather than the space's. */
+      private: boolean
     }
   | {
       /** The active page asks for a permission (`prompt=<permission>`; the security dialogs' `prompt=` values are `kind: 'prompt'`). */
@@ -413,6 +438,8 @@ export interface PreviewSeed {
    * stand-in host's word (`vault=none` is a device without one).
    */
   screenLock: boolean | null
+  /** Where the phone bar docks (`bar=top` / `bar=bottom`; the setting `phoneBarPosition`). */
+  bar: PhoneBarPosition | null
 }
 
 /** Types for the stand-in downloader to report, by extension; anything else is a plain stream. */
@@ -454,6 +481,9 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * of PREVIEW_SHEETS, the chrome's own sheets (the Extensions sheet the app menu's row opens;
  * `then=<steps>` takes steps on it: `tap:<row>` is the row's tap, `hold:<row>` its long press),
  * `prompt=<permission>` for the active page asking for that permission (the prompt sheet),
+ * `ntp=<pose>` for the phone new tab page with its field at a pose of its morph into the omnibox
+ * (`rest`, `morph:<percent>`, `open`, `scroll:<px>`, `scrub:<percent>`, `docked`; `&private`
+ * for the private page; see `PreviewNtpPose`),
  * `private=<surface>` for one of PREVIEW_PRIVATE_SURFACES (a private tab on its new tab page or
  * a page, the overview's Tabs and Private panes and the empty Private pane; `url=<page>` names
  * the private tab's page; `private=new` is the new tab page and `private=<url>` that page, as
@@ -497,13 +527,13 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * clipboard row shows; `then=tap:<label>;…` presses the editor's controls once the suggestions
  * are up: `Show`, `Edit`, `Refine`). When several are given, `page` wins over
  * `extension-page`, that over `group`, `group` over `overlay`, `overlay` over `menu`, `menu`
- * over `sheet`, `sheet` over the permission `prompt`, that over `private`, `private` over
- * `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along), `find` over
- * `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`, `readAloud`
- * over `reader`, `reader` over `error`, `error` over the messages, the messages over `webapp`,
- * `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups` over the
- * security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over `urlbar`.
- * A leading `#` (the URL hash as read) is ignored.
+ * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
+ * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
+ * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
+ * `readAloud` over `reader`, `reader` over `error`, `error` over the messages, the messages over
+ * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups`
+ * over the security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over
+ * `urlbar`. A leading `#` (the URL hash as read) is ignored.
  */
 export function parsePreviewSpec(spec: string): PreviewState {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
@@ -574,6 +604,10 @@ export function parsePreviewSpec(spec: string): PreviewState {
   const prompt = params.get('prompt')
   const securityPrompt = prompt === 'http-auth' || prompt === 'certificate'
   if (prompt && !securityPrompt) return { kind: 'permission', permission: prompt }
+  const ntp = params.get('ntp')
+  if (ntp !== null) {
+    return { kind: 'ntp', pose: parsePreviewNtpPose(ntp), private: params.has('private') }
+  }
   const priv = params.get('private')
   if (priv !== null && priv !== '') return parsePrivate(priv, params)
   const autofill = params.get('autofill')
@@ -784,19 +818,47 @@ function parseDownload(filename: string, params: URLSearchParams): PreviewDownlo
 
 /**
  * The seeding a spec asks for on top of its state: `rules=<n>` remembered site permissions,
- * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock.
+ * `lock=on` the private tabs' lock, `screenlock=off` (or `on`) the device's screen lock,
+ * `bar=top` / `bar=bottom` the phone bar's dock (the setting; left as it is without one).
  */
 export function parsePreviewSeed(spec: string): PreviewSeed {
   const params = new URLSearchParams(spec.startsWith('#') ? spec.slice(1) : spec)
   const rules = params.get('rules')
   const onOff = (value: string | null): boolean | null =>
     value === null ? null : ['on', '1', 'true', ''].includes(value)
+  const bar = params.get('bar')
   return {
     rules:
       rules !== null && rules !== '' && Number.isFinite(Number(rules))
         ? Math.max(0, Math.floor(Number(rules)))
         : null,
     lock: onOff(params.get('lock')) === true,
-    screenLock: onOff(params.get('screenlock'))
+    screenLock: onOff(params.get('screenlock')),
+    bar: bar === 'top' || bar === 'bottom' ? bar : null
+  }
+}
+
+/**
+ * `ntp=<pose>`: `rest`, `open`, `docked`, `morph:<n>` and `scrub:<n>` with n a percentage
+ * (clamped to 0…100), `scroll:<px>`; anything else is the page at rest.
+ */
+export function parsePreviewNtpPose(value: string): PreviewNtpPose {
+  const at = value.indexOf(':')
+  const kind = at < 0 ? value : value.slice(0, at)
+  const number = at < 0 ? NaN : Number(value.slice(at + 1))
+  const percent = Number.isFinite(number) ? Math.min(1, Math.max(0, number / 100)) : 0
+  switch (kind) {
+    case 'open':
+      return { kind: 'open' }
+    case 'docked':
+      return { kind: 'docked' }
+    case 'morph':
+      return { kind: 'morph', t: percent }
+    case 'scrub':
+      return { kind: 'scrub', t: percent }
+    case 'scroll':
+      return { kind: 'scroll', px: Number.isFinite(number) ? Math.max(0, number) : 0 }
+    default:
+      return { kind: 'rest' }
   }
 }

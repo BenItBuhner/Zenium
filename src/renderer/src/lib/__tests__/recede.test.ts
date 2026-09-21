@@ -110,13 +110,25 @@ describe('the bar fade (§11.1): the bottom-docked bar, and only that one', () =
     // No other rule of the bar's writes an opacity: not one for the top edge, not one without
     // an edge that a top-docked bar would take. The hide on scroll (lib/barHide.ts) slides the
     // bar at either edge – its transform alone, the clip being its parent box's (#270) – and
-    // fades nothing: the fade is the sheet's vocabulary.
+    // fades nothing: the fade is the sheet's vocabulary. The one other fade is the new tab page's
+    // field landing in the bar's band (NTP-02, `data-fakebox` on the root, lib/fakeboxMorph.ts):
+    // the omnibox takes the band at either edge, so the bar's buttons go under the arriving
+    // field – not a sheet's recede – and those rules apply only while the morph owns the bar; at
+    // the bottom edge they compose the recede in.
     const barRules = [...css.matchAll(/[^{}]*\.zen-phone-bar[^{}]*\{[^}]*\}/g)].map((m) => m[0])
     expect(barRules.length).toBeGreaterThan(1)
     const fading = barRules.filter((r) => /opacity\s*:/.test(r))
-    expect(fading).toHaveLength(1)
-    expect(fading[0]).toContain("[data-edge='bottom']")
-    expect(fading[0]).not.toContain('--zen-bar-hide')
+    const morph = fading.filter((r) => r.includes('data-fakebox'))
+    expect(morph.length).toBeGreaterThan(0)
+    for (const r of morph) {
+      expect(r).toContain('--zen-ntp-morph')
+      if (r.includes("[data-edge='bottom']")) expect(r).toContain('--zen-recede')
+      else expect(r).not.toContain("[data-edge='top']")
+    }
+    const recedes = fading.filter((r) => !r.includes('data-fakebox'))
+    expect(recedes).toHaveLength(1)
+    expect(recedes[0]).toContain("[data-edge='bottom']")
+    expect(recedes[0]).not.toContain('--zen-bar-hide')
     const hiding = barRules.filter((r) => /var\(--zen-bar-hide\)/.test(r))
     expect(hiding).toHaveLength(2)
     for (const r of hiding) {
