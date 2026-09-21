@@ -7253,14 +7253,16 @@
  * The row's ring sits inside its edge (§1, the reason the field's does): the page's rows and
  * the sheets' option rows run edge to edge inside a clipping scroll body, so the shared 2
  * outside would lose both sides and leave two bars – as the phone list's rows found
- * (phonePanels.css). The row moves the shared ring through the offset token, as the field does.
- * The token inherits, so it reaches everything inside the row: safe because the row is the
- * only target in it – a pressable row is a `button`, which holds no interactive content, and
- * an info row's trailing slot carries a status glyph or text – so no focusable `zen-v2-` control
- * ever takes the inset on its own fill; one that ever sat in the slot would set the token back
- * on itself, as the picked swatch does under the card radio (v2Tokens.test.ts pins the slot).
+ * (phonePanels.css). The row moves the shared ring through the offset token, as the field does
+ * – set on the rows that ARE the target, the `button` rows (the pressable row, an option sheet's
+ * radio row), never on `.zen-settings-row` itself: the token inherits, and the desktop's static
+ * rows (§10.5) hold a menulist, a button, a field or a checkbox in their slot (`.zen-settings-
+ * control-row`, `.zen-settings-check-row`), each ringing at its own offset – 2 outside, the
+ * field's own −2. A `button` holds no interactive content, so nothing inside these two rows can
+ * take the inherited inset (v2Tokens.test.ts pins both selectors to `button` elements).
  */
-.zen-settings-row {
+.zen-settings-row-pressable,
+.zen-settings-radio-row {
   --v2-ring-offset: -2px;
 }
 .zen-settings-row-text {

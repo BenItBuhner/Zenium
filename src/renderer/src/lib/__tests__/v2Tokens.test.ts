@@ -1021,30 +1021,72 @@ describe('the focus ring (§1, §4)', () => {
     expect(rule(panels, '.zen-phone-field:focus-within')).toMatch(/outline-offset: -2px;/)
     expect(panels).not.toMatch(/\.zen-phone-field[^{]*\{[^}]*--v2-ring-offset/)
     // A row that runs edge to edge inside a clipping scroll body takes the inset ring for the
-    // field's reason – the Settings tab's page rows and its sheets' option rows through the
-    // token, the phone list's rows (phonePanels.css) as the −2 they state on the row.
-    expect(block('.zen-settings-row').match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
+    // field's reason – the Settings tab's rows that are themselves the target (the pressable
+    // row, an option sheet's radio row) through the token, the phone list's rows
+    // (phonePanels.css) as the −2 they state on the row.
+    const INSET_ROWS = ['.zen-settings-row-pressable', '.zen-settings-radio-row']
+    expect(block(INSET_ROWS.join(',\n')).match(/^ {2}[a-z0-9-]+:[^;]+;/gm)).toEqual([
       '  --v2-ring-offset: -2px;'
     ])
     expect(rule(panels, '.zen-phone-row:has(> .zen-list-main:focus-visible)')).toMatch(
       /outline-offset: -2px;/
     )
-    // The token inherits, so the Settings row's −2 reaches everything inside it (the #272
-    // review): safe while the row is the only target in it. The wrappers keep it so – the
-    // pressable row is a `button` (no interactive content inside one), the switch it trails is
-    // an `aria-hidden` span, and the info row's slot takes glyphs and text – so `rows.tsx`
-    // renders no `zen-v2-` control inside a row; one that ever did would reset the token.
-    const rows = readFileSync(
-      fileURLToPath(new URL('../../components/pages/settings/rows.tsx', import.meta.url)),
-      'utf8'
+    // The token inherits (the #272 review), so it is set only where nothing inside can take
+    // it: never on `.zen-settings-row` itself – the desktop's static rows (§10.5) hold a
+    // menulist, a button, a field or a checkbox in their slot, each ringing at its own offset –
+    // and every element that carries an inset row's class, in any surface, is a `button`, which
+    // holds no interactive content. Every declaration of the token, by its rule's selector: the
+    // light block's default, the field, the picked card radio and its swatch, the two rows.
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const declaring = [...bare.matchAll(/--v2-ring-offset:/g)].map((m) => {
+      const open = bare.lastIndexOf('{', m.index)
+      const from = Math.max(
+        bare.lastIndexOf('}', open),
+        bare.lastIndexOf('{', open - 1),
+        bare.lastIndexOf(';', open)
+      )
+      return bare
+        .slice(from + 1, open)
+        .trim()
+        .replace(/\s*\n\s*/g, ' ')
+    })
+    expect(declaring).toEqual([
+      ':root',
+      '.zen-v2-field',
+      ".zen-v2-card-radio[aria-checked='true']",
+      ".zen-v2-card-radio.zen-group-editor-swatch[aria-checked='true']",
+      INSET_ROWS.join(', ')
+    ])
+    const components = fileURLToPath(new URL('../../components/', import.meta.url))
+    const carriers: string[] = []
+    for (const entry of readdirSync(components, { recursive: true, encoding: 'utf8' })) {
+      const file = entry.split('\\').join('/')
+      if (!file.endsWith('.tsx') || file.includes('__tests__')) continue
+      const source = readFileSync(join(components, entry), 'utf8')
+      const marks = source.match(/\bzen-settings-(?:row-pressable|radio-row)\b/g) ?? []
+      if (marks.length === 0) continue
+      // The nearest tag opener before each mark, with no other `<` between them.
+      const openers = [
+        ...source.matchAll(/<([a-zA-Z][\w.]*)\b[^<]*?\bzen-settings-(?:row-pressable|radio-row)\b/g)
+      ]
+      expect(openers, `${file}: every inset row's class sits in a tag opener`).toHaveLength(
+        marks.length
+      )
+      for (const [, tag] of openers) {
+        expect(tag, `${file}: an inset row is a <${tag}>`).toBe('button')
+        carriers.push(file)
+      }
+    }
+    // The three rows that take the inset today; a fourth carrier is a `button` or fails above.
+    expect(new Set(carriers)).toEqual(
+      new Set(['pages/settings/rows.tsx', 'pages/settings/blocks.tsx', 'translate/pickers.tsx'])
     )
-    expect(rows).toMatch(
-      /<button\s[^>]*className=\{cn\(\s*'zen-settings-row zen-settings-row-pressable zen-v2-row'/
-    )
+    // Their trailing marks are presentational: the switch and the radio circle are `aria-hidden`
+    // spans, the row button being the switch / radio itself.
+    const rows = readFileSync(join(components, 'pages/settings/rows.tsx'), 'utf8')
     expect(rows).toMatch(/<span className="zen-v2-switch" aria-hidden="true" \/>/)
-    expect(new Set(rows.match(/zen-v2-[a-z-]+/g))).toEqual(
-      new Set(['zen-v2-heading', 'zen-v2-row', 'zen-v2-switch'])
-    )
+    const blocks = readFileSync(join(components, 'pages/settings/blocks.tsx'), 'utf8')
+    expect(blocks).toMatch(/<span className="zen-v2-radio" aria-hidden="true" \/>/)
   })
 
   it('leaves a popover row the room its ring now takes: --v2-ring-room is 4 (§9.20, the #251 chassis (b))', () => {
