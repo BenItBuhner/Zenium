@@ -1466,6 +1466,34 @@ describe('AutofillService: the sign-in leak warning (ID-31)', () => {
     expect(w.passwords.status().checkupSummary.compromised).toBe(0)
   })
 
+  it('remembers an Ignore given before the login is saved – the phone’s order: the warning, Ignore, then the save sheet – on the login the prompt then creates', async () => {
+    const w = breachedWorld()
+    await w.passwords.unlock()
+    w.addTab('t1', 'https://example.com/login')
+    await signIn(w, 't1', 'password')
+    const [warning] = w.passwords.status().leaks
+    expect(warning).toMatchObject({ credentialId: null, username: 'ada' })
+    // Ignore first, with nothing saved yet: no login to write on, the warning goes.
+    await w.passwords.leakRespond(warning.id, 'ignore')
+    expect(w.passwords.status().leaks).toEqual([])
+    expect(w.passwords.store.list()).toEqual([])
+    // Then Save on the deferred prompt: the login carries the count, the warning and the Ignore.
+    const [prompt] = w.autofill.uiState().prompts
+    expect(prompt.kind).toBe('save-login')
+    w.autofill.respond(prompt.id, { action: 'save' })
+    await w.settle()
+    const [saved] = w.passwords.store.list()
+    expect(saved).toMatchObject({ password: 'password', breached: 10_434_004 })
+    expect(saved.leakWarnedAt).not.toBeNull()
+    expect(saved.leakIgnoredAt).not.toBeNull()
+    // Ignored: Safety Check does not count it, and the same sign-in asks and warns no more.
+    expect(w.passwords.status().checkupSummary.compromised).toBe(0)
+    const before = rangeRequests(w).length
+    await signIn(w, 't1', 'password')
+    expect(rangeRequests(w)).toHaveLength(before)
+    expect(w.passwords.status().leaks).toEqual([])
+  })
+
   it('takes Change password to the well-known page when the site serves one, else to the site, and opens the manager', async () => {
     const w = breachedWorld()
     await w.passwords.unlock()
