@@ -1,13 +1,16 @@
 package app.zen.chromium
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.util.TypedValue
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -42,7 +45,9 @@ import java.util.concurrent.TimeUnit
  *     painted into the reader document itself, the line focus band following the sentence read;
  *     Pause under a finger; Close under a finger ends the session.
  *  4. Everything again in dark, for the design record: the reader document (its theme following
- *     the colour scheme), the sheet with the extras, the player.
+ *     the colour scheme – Zenium's own Dark set first, the system's second, the order that
+ *     settles an open page's `prefers-color-scheme`; see [dark]), the sheet with the extras, the
+ *     player.
  *
  * The jank record ([traceFrames], `frames.jsonl`; Bennett's rule of 2026-09-20, the Android
  * program's PERF-3 harness of #268 and its scene names): the app menu opened under a finger and
@@ -449,15 +454,37 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
 
     // --- 4. dark ---------------------------------------------------------------------------------
 
+    /**
+     * The dark record. Zenium's own Dark first (`settings.update`; the chrome answers with
+     * `chrome.setTheme` and the host sets the app's night mode from it), the system's second
+     * (`cmd uimode night yes`), and the same order back. A page WebView re-reads the app theme
+     * its `prefers-color-scheme` follows on `View.onConfigurationChanged` – which only a system
+     * configuration change dispatches down the view tree, after the activity's own callback (so
+     * after AppCompat has applied Zenium's choice to the activity); AppCompat's in-place night-mode
+     * change reaches the activity alone. In this order the document's scheme is settled the
+     * moment the system's change lands; the other order races the two messages (run 35550279100
+     * won it, 35552126903 lost it: the document read light with the chrome dark). What Zenium's
+     * own choice does to an open page by itself is probed between the two and reported, not
+     * gated: the Android host's item ([nightState] says where the theme stands when it fails).
+     */
     private fun dark() {
         finding("\ndesign record: the reader document, the sheet and the player in dark")
-        shell("cmd uimode night yes")
         coreInvoke("settings.update", "{\"colorScheme\":\"dark\"}")
-        SystemClock.sleep(4_000)
+        val applied = poll(8_000) { activityNight() }
+        finding("  Zenium's own Dark reached the app's night mode: $applied (${nightState()})")
+        val alone = poll(2_000) { readerProbe().optString("scheme") == "dark" }
+        finding(
+            "  the open reader document follows Zenium's own Dark with the system still light: $alone " +
+                "(reported, not gated: an open page WebView re-reads the app theme on a system configuration change or on re-attach; the Android host's item)"
+        )
+        shell("cmd uimode night yes")
+        val dark = poll(10_000) { readerProbe().optString("scheme") == "dark" }
         ensureForeground()
         val probe = readerProbe()
         finding("  the reader document in dark: $probe")
+        if (!dark) finding("  the document stayed light; ${nightState()}")
         check("the reader's Default theme follows the colour scheme (the document paints dark: ${probe.optString("bg")})", probe.optString("scheme") == "dark" && probe.optString("bg").startsWith("rgb(24, 24, 28)"))
+        SystemClock.sleep(1_000)
         snap("reader-document-dark")
         beat()
         if (openSheet()) {
@@ -475,9 +502,43 @@ class ReaderUiDemo : DemoHarness("read-aloud-demo-state.json", MEDIA_PREFIX, "re
             touchTapLabelExpecting("Close", "the session ends", timeoutMs = 6_000) { readAloud() == null }
             SystemClock.sleep(1_200)
         }
-        shell("cmd uimode night no")
+        // Back the same way round: Zenium's Light first, then the system's change that carries it
+        // into the page.
         coreInvoke("settings.update", "{\"colorScheme\":\"light\"}")
-        SystemClock.sleep(1_500)
+        poll(8_000) { !activityNight() }
+        shell("cmd uimode night no")
+        val light = poll(8_000) { readerProbe().optString("scheme") == "light" }
+        finding("  back in light: the document follows: $light")
+        SystemClock.sleep(800)
+    }
+
+    /** The activity's night bit, read on the main thread: Zenium's scheme as AppCompat applied it. */
+    private fun activityNight(): Boolean {
+        var night = false
+        instrumentation.runOnMainSync {
+            night = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        }
+        return night
+    }
+
+    /**
+     * Where the theme stands, for a document that reads the wrong scheme: the activity's night
+     * bit, AppCompat's default mode, the demo tab's view (attached, shown) and what its own
+     * context's theme says – `isLightTheme` is what a page WebView's `prefers-color-scheme` reads.
+     */
+    private fun nightState(): String {
+        var state = ""
+        instrumentation.runOnMainSync {
+            val night = { mode: Int -> mode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES }
+            val view = host.tabs.get(TAB)
+            val light = view?.context?.takeIf { Build.VERSION.SDK_INT >= 29 }?.let { context ->
+                val value = TypedValue()
+                if (context.theme.resolveAttribute(android.R.attr.isLightTheme, value, true)) value.data != 0 else null
+            }
+            state = "activity night=${night(activity.resources.configuration.uiMode)}, AppCompat default=${AppCompatDelegate.getDefaultNightMode()}, " +
+                "tab view=${if (view == null) "none" else "attached=${view.isAttachedToWindow} shown=${view.isShown} context night=${night(view.context.resources.configuration.uiMode)} isLightTheme=$light"}"
+        }
+        return state
     }
 
     // --- the sheet ---------------------------------------------------------------------------------
