@@ -8,9 +8,12 @@ vi.mock('@renderer/lib/api', () => ({
 }))
 
 import { run } from '@renderer/lib/api'
+import { TOOLBAR_BUTTON, TOOLBAR_GAP } from '@renderer/lib/extensions/toolbar'
 import { mediaDetail } from '@renderer/lib/media'
 import {
+  MEDIA_HUB_PILL,
   closeMediaHub,
+  mediaHubButtonFits,
   mediaHubEntries,
   mediaHubLabel,
   mediaHubUi,
@@ -19,6 +22,7 @@ import {
   openMediaHub,
   toggleMediaHub
 } from '@renderer/lib/mediaHub'
+import { PILL_PADDING } from '@renderer/components/urlbar/pillChipTiers'
 
 /*
  * What the desktop's media hub (MW-16, Chrome's global media controls) reads from the state's
@@ -72,6 +76,46 @@ describe('mediaHubEntries', () => {
     expect(mediaHubVisible(stateWith([], []))).toBe(false)
     expect(mediaHubVisible(stateWith([media({ tabId: 'gone' })], []))).toBe(false)
     expect(mediaHubVisible({ tabs: {} } as unknown as UIState)).toBe(false)
+  })
+})
+
+/*
+ * The hub button's width tier (design language v2 §9.29): tiered exactly as the pill's chips
+ * are, never by the active tab – folded into the app menu at the 240 sidebar, back at 270 with
+ * the star and the tools. The row asks with its own width and the count of the other buttons in
+ * it; the answer never includes the hub's own box, so it cannot flip on itself.
+ */
+describe('mediaHubButtonFits (the §9.29 tier)', () => {
+  const slot = TOOLBAR_BUTTON + TOOLBAR_GAP
+  /** The nav row is the sidebar less its 8 px gutters each side. */
+  const row = (sidebar: number): number => sidebar - 16
+  /** Back, forward, reload and ⋯: the buttons the row always has. */
+  const always = 4
+
+  it('folds at the 240 sidebar and returns at 270, where the pill is the one the star returns at', () => {
+    expect(mediaHubButtonFits(row(240), always)).toBe(false)
+    expect(mediaHubButtonFits(row(269), always)).toBe(false)
+    expect(mediaHubButtonFits(row(270), always)).toBe(true)
+    // 254 − 4 × 32 = 126: the 270 sidebar's pill, whose content box is the tier's 110.
+    expect(row(270) - always * slot).toBe(MEDIA_HUB_PILL)
+    expect(MEDIA_HUB_PILL - PILL_PADDING).toBe(110)
+  })
+
+  it('makes room against the puzzle piece and the downloads button too, one slot each', () => {
+    expect(mediaHubButtonFits(row(270), always + 1)).toBe(false)
+    expect(mediaHubButtonFits(row(270 + slot), always + 1)).toBe(true)
+    expect(mediaHubButtonFits(row(270 + slot), always + 2)).toBe(false)
+    expect(mediaHubButtonFits(row(270 + 2 * slot), always + 2)).toBe(true)
+  })
+
+  it('shows the button before the row has a width, and is monotonic in the width', () => {
+    expect(mediaHubButtonFits(0, always)).toBe(true)
+    let up = false
+    for (let width = 1; width <= 600; width += 1) {
+      const fits = mediaHubButtonFits(width, always)
+      expect(fits || !up, `folded again at ${width}`).toBe(true)
+      up = fits
+    }
   })
 })
 

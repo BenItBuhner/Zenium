@@ -524,6 +524,55 @@ describe('the hub from the app menu (§9.29)', () => {
     expect(mediaHubFolded()).toBe(true)
   })
 
+  it('the tier: the row unmounts the hub button at the 240 sidebar – ⋯ takes the dot and the menu request says folded – and mounts it again at 270 (§9.29)', () => {
+    // The row is the sidebar less its 8 px gutters each side; happy-dom lays nothing out, so the
+    // width the row measures before its first paint is set here (the nav row alone – every
+    // other box stays 0, as the pill's unmeasured content box shows every chip).
+    const widths = { row: 240 - 16 }
+    const rects = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element
+    ) {
+      const width = this.hasAttribute('data-zen-nav-row') ? widths.row : 0
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0 } as DOMRect
+    })
+    try {
+      const state = rowState([track()])
+      render(<NavRow key="at-240" state={state} tab={music} compact={false} />)
+      const menu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
+      // Unmounted, not hidden: no box in the row for `checkVisibility` to find, so the fold
+      // predicate, the dot and the menu's row agree without a stylesheet.
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      expect(mediaHubFolded()).toBe(true)
+      expect(menu.querySelector('.zen-mhub-dot')).not.toBeNull()
+      expect(menu.getAttribute('aria-label')).toBe(`${menu.getAttribute('title')}, media playing`)
+      vi.mocked(run).mockClear()
+      click(menu)
+      expect(vi.mocked(run).mock.calls.at(-1)).toEqual([
+        'app.menu',
+        expect.objectContaining({ mediaHubFolded: true })
+      ])
+      // One pixel under 270 the row still has no room for it.
+      widths.row = 269 - 16
+      render(<NavRow key="at-269" state={state} tab={music} compact={false} />)
+      expect(q('[data-zen-media-hub-button]')).toBeNull()
+      // At 270 the button returns with its own disc, and ⋯ says nothing twice.
+      widths.row = 270 - 16
+      render(<NavRow key="at-270" state={state} tab={music} compact={false} />)
+      const hubButton = q('[data-zen-media-hub-button]')!
+      expect(hubButton).not.toBeNull()
+      expect(hubButton.querySelector('.zen-mhub-dot')).not.toBeNull()
+      const wideMenu = q<HTMLButtonElement>('[data-zen-app-menu-button]')!
+      expect(wideMenu.querySelector('.zen-mhub-dot')).toBeNull()
+      expect(wideMenu.getAttribute('aria-label')).toBeNull()
+      // The compact column has no pill to keep: the button stays whatever the width.
+      widths.row = 56
+      render(<NavRow key="rail" state={state} tab={music} compact />)
+      expect(q('[data-zen-media-hub-button]')).not.toBeNull()
+    } finally {
+      rects.mockRestore()
+    }
+  })
+
   it('the menu request carries the fold, so the core builds the row only for a folded button', () => {
     const state = rowState([track()])
     render(<NavRow state={state} tab={music} compact={false} />)

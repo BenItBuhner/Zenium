@@ -59,7 +59,13 @@ import { ZoomChip } from '../zoom/ZoomChip'
 import { DownloadButton } from '../downloads/DownloadButton'
 import { MediaHubButton, MediaLiveDot } from '../media/MediaHubButton'
 import { downloadButtonVisible, downloadsUi } from '@renderer/lib/downloads'
-import { mediaHubVisible, mediaPlaying, useMediaHubFolded } from '@renderer/lib/mediaHub'
+import { actionable } from '@renderer/lib/extensions/toolbar'
+import {
+  mediaHubButtonFits,
+  mediaHubVisible,
+  mediaPlaying,
+  useMediaHubFolded
+} from '@renderer/lib/mediaHub'
 
 /** Back, forward, reload, the puzzle piece and the menu: always in the row, never folded. */
 const FIXED_BUTTONS = 5
@@ -174,6 +180,19 @@ export function NavRow({
   const starred = Boolean(tab && (isWebPage || internalPageOf(tab.url)?.pill.showStar))
   const bookmarked = Boolean(tab && starred && tree.hasUrl(tab.url))
   const menuButton = useRef<HTMLButtonElement>(null)
+  // The hub's toolbar button is tiered by the row's width, as the pill's chips are (§9.29,
+  // `mediaHubButtonFits`): at the 240 sidebar it is unmounted – never hidden with an opacity or
+  // a `visibility` that would keep its box laid out – and the hub folds into the app menu's
+  // "Now Playing…" row; it returns at 270 with the star and the tools. The buttons it makes
+  // room against are the ones always in the row (back, forward, reload, ⋯), the puzzle piece
+  // while there are extensions and the downloads button while it is up; the compact column has
+  // no pill to keep, so there the button stays whenever there is media.
+  const downloadsUp = downloadButtonVisible(state, downloadsUiState)
+  const puzzleUp = actionable(state.extensions).length > 0
+  const hubUp =
+    mediaHubVisible(state) &&
+    (compact ||
+      mediaHubButtonFits(rowWidth, FIXED_BUTTONS - (puzzleUp ? 0 : 1) + (downloadsUp ? 1 : 0)))
   // The hub's toolbar button off the row (§9.29's fold): the ⋯ button then wears the hub's dot.
   const mediaFolded = useMediaHubFolded(state)
   useEffect(() => {
@@ -612,17 +631,14 @@ export function NavRow({
           </span>
         </div>
       )}
-      <MediaHubButton state={state} />
+      {hubUp && <MediaHubButton state={state} />}
       <DownloadButton state={state} activeTabId={tab?.id ?? null} />
       <ToolbarActions
         state={state}
         rowWidth={compact ? null : rowWidth}
-        // The media and downloads buttons join the fixed set while they are in the row.
-        fixedButtons={
-          FIXED_BUTTONS +
-          (mediaHubVisible(state) ? 1 : 0) +
-          (downloadButtonVisible(state, downloadsUiState) ? 1 : 0)
-        }
+        // The media and downloads buttons join the fixed set while they are in the row – the
+        // hub's only while the tier has it up, not while it has folded into the menu.
+        fixedButtons={FIXED_BUTTONS + (hubUp ? 1 : 0) + (downloadsUp ? 1 : 0)}
         compact={compact}
       />
       {/*
