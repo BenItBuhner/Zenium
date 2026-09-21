@@ -71,11 +71,18 @@ interface Props {
   phoneEdge?: PhoneBarPosition
   /**
    * Tablet layout: the toolbar's address pill, in the coordinates of the layer the bar is drawn
-   * in. The bar is then the pill's popup (TB-21): attached, flush under it and as wide as it,
-   * growing down over the page as far as `area` (the shell's box) lets it.
+   * in. The bar is then the pill's popup (TB-21): attached, hung `POPUP_GAP` under it and as
+   * wide as it, growing down over the page as far as `area` (the shell's box) lets it.
    */
   anchor?: Rect | null
 }
+
+/**
+ * The gap between the tablet pill and its popup (v2 §9.36: Zen's floating bar under the pill,
+ * as the design gate's stills showed it): 4 px of the toolbar's own bottom padding, so the popup
+ * reads as hung from the pill rather than fused to it, while it still meets no other edge.
+ */
+const POPUP_GAP = 4
 
 /**
  * Zen remembers what you typed until you navigate away: the desktop bar's per-tab draft, kept
@@ -931,9 +938,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   const style = useMemo(() => {
     if (!area) return undefined
     if (anchor) {
-      // Flush under the pill and as wide as it (TB-21), down to the bottom of the shell's box
-      // less a gutter – the keyboard's inset has already taken its share of the box.
-      const top = anchor.y + anchor.height + 4
+      // Hung `POPUP_GAP` under the pill and as wide as it (TB-21), down to the bottom of the
+      // shell's box less a gutter – the keyboard's inset has already taken its share of the box.
+      const top = anchor.y + anchor.height + POPUP_GAP
       return {
         left: anchor.x,
         top,
