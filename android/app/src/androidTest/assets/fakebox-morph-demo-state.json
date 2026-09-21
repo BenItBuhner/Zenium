@@ -1,0 +1,88 @@
+{
+  "version": 2,
+  "activeSpaceId": "space_home",
+  "spaces": [
+    {
+      "id": "space_home",
+      "name": "Home",
+      "icon": "\ud83c\udf3f",
+      "containerId": "default",
+      "theme": {
+        "type": "gradient",
+        "colors": [
+          {
+            "c": [
+              96,
+              110,
+              235
+            ],
+            "x": 0.3,
+            "y": 0.35,
+            "isPrimary": true
+          },
+          {
+            "c": [
+              214,
+              92,
+              160
+            ],
+            "x": 0.7,
+            "y": 0.65
+          }
+        ],
+        "opacity": 0.55,
+        "texture": 0,
+        "algorithm": "floating",
+        "monochrome": false,
+        "rotation": 40
+      },
+      "tabIds": [
+        "tab_demo"
+      ],
+      "activeTabId": "tab_demo",
+      "pinnedCollapsed": false
+    }
+  ],
+  "folders": [],
+  "tabs": [
+    {
+      "id": "tab_demo",
+      "spaceId": "space_home",
+      "containerId": "default",
+      "folderId": null,
+      "url": "zen://blank",
+      "title": "New tab",
+      "pinned": false,
+      "essential": false
+    }
+  ],
+  "essentialTabIds": [],
+  "containers": [],
+  "splitGroups": [],
+  "settings": {
+    "onboardingDone": true,
+    "colorScheme": "light",
+    "privacy": {
+      "httpsOnly": "off"
+    },
+    "updates": {
+      "autoCheck": false,
+      "autoDownload": false,
+      "channel": "stable"
+    }
+  },
+  "shortcutOverrides": {},
+  "bookmarks": [],
+  "windows": [
+    {
+      "id": "window_main",
+      "bounds": null,
+      "maximized": false,
+      "activeSpaceId": "space_home",
+      "selection": {
+        "space_home": "tab_demo"
+      },
+      "compact": false
+    }
+  ]
+}

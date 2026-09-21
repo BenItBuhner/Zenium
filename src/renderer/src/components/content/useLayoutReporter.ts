@@ -75,10 +75,25 @@ export function useLayoutReporter(
       setArea((prev) => (sameRect(prev, next) ? prev : next))
     }
     measure()
+    // Measured again over the next two frames: a move the ResizeObserver never sees (the bar
+    // changing edges slides the viewport by the bar's band without resizing it) may land a
+    // frame or two after the effect measures – an inset variable arriving with the frame, a
+    // style the host writes late. The column's own padding is not among those: it is laid out
+    // the moment the edge changes, kept out of reduced motion's 0.01 ms transitions (main.css,
+    // `.zen-content-column`), which a slow compositor would hold at the old edge for longer
+    // than any fixed number of frames covers.
+    let frame = requestAnimationFrame(() => {
+      measure()
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        measure()
+      })
+    })
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     window.addEventListener('resize', measure)
     return () => {
+      if (frame) cancelAnimationFrame(frame)
       ro.disconnect()
       window.removeEventListener('resize', measure)
     }

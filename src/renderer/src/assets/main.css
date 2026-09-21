@@ -5858,6 +5858,177 @@
   :root[data-form-factor='phone'] .zen-ntp-grow-capture {
     will-change: clip-path;
   }
+  /*
+   * The field becoming the omnibox (NTP-02 / MOT-08, Chrome's fakebox, v2 §11.8;
+   * lib/motion/fakebox.ts is the machine, lib/fakeboxMorph.ts drives it, FakeboxMorphLayer
+   * paints the field's double). One value, `--zen-ntp-morph` on the root (0 the page's field, 1
+   * the omnibox's), written per frame by the controller, moves everything besides the double's
+   * rectangle: the bar and the double's page-field content go over its first half, the page is
+   * gone by six tenths of it, the omnibox's sheet arrives from four tenths and the double's
+   * omnibox-field content over the second half; the omnibox's own field draws nothing until the
+   * landing. A second value, `--zen-ntp-pill`, is the handover to the pill at the end of the
+   * scroll scrub: the field fades out by it as the pill's slot – the well the field left, #27's –
+   * fills in with the pill's own look and words under it (at a top dock the double carried to
+   * the slot; at a bottom dock the page's own field, riding out of the frame with the page). The
+   * root's `data-fakebox` names the phase (scrub, docked, opening, open, pulled, closing): while
+   * the morph owns the bar, the omnibox's own entrance animations (the pill-grow and its fades,
+   * which are the cut's) yield to it, and the page's own field yields to the double
+   * (`data-away`).
+   */
+  :root[data-form-factor='phone'] .zen-ntp-field[data-away] {
+    visibility: hidden;
+  }
+  :root[data-form-factor='phone'] .zen-ntp-field {
+    opacity: calc(1 - var(--zen-ntp-pill, 0));
+  }
+  :root[data-form-factor='phone'] .zen-ntp-fades {
+    opacity: clamp(0, 1 - var(--zen-ntp-morph, 0) / 0.6, 1);
+  }
+  /*
+   * The double: the field's own look at one end and the omnibox field's at the other, on two
+   * layers handed over by the value (opacity per frame, never a shadow tweened) – the omnibox's
+   * look arrives over the first half on top of the field's, whole by the midpoint, and the
+   * field's leaves under it over the second, so no frame has the surface see-through (two half
+   * fades stacked would) and the landing is the omnibox field's own look exactly. Its contents
+   * ride with it: the page field's (`.zen-fakebox-field`: the glyph and the words in the page
+   * field's layout and ink) leave over the first half, and the omnibox field's
+   * (`.zen-fakebox-omni`: the engine's chip, the words, the mic and the camera in the omnibox
+   * field's layout and the window family's ink, as Urlbar.tsx draws them) arrive over the
+   * second, so the omnibox's own content, kept blank until the landing, takes over pixel for
+   * pixel. Its box is laid out per frame by the layer (left, top, width, height, radius) – the
+   * overview hero card's pattern, the second and last layout-per-frame exception (v2 §11.8),
+   * since the words inside must not scale. `will-change` only while a write moves the box
+   * (`data-moving`, set by the controller with a write and released two frames after the last;
+   * v1 §7 rule 4): never on the page at rest. Each content is laid out once at the widest pose
+   * (`.zen-fakebox-content`, its width set by the layer) inside a clip the box's size, so it
+   * never re-wraps or re-truncates on the way; the controls ride the box's right edge. The value
+   * the double reads is its own pose's, written on the box by the layer (under reduced motion it
+   * holds a scrubbed field's look while it fades in place).
+   */
+  :root[data-form-factor='phone'] .zen-fakebox {
+    corner-shape: var(--zen-corner);
+  }
+  :root[data-form-factor='phone'] .zen-fakebox[data-moving] {
+    will-change: left, top, width, height;
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-look,
+  :root[data-form-factor='phone'] .zen-fakebox-part,
+  :root[data-form-factor='phone'] .zen-fakebox-clip {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    corner-shape: inherit;
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-clip {
+    overflow: hidden;
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-look-field {
+    background: var(--v2-urlbar);
+    box-shadow: var(--v2-shadow-panel);
+    opacity: calc(clamp(0, 2 - 2 * var(--zen-ntp-morph, 0), 1) * (1 - var(--zen-ntp-pill, 0)));
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-look-omni {
+    background: var(--zen-panel-bg);
+    box-shadow: var(--zen-shadow-1);
+    opacity: clamp(0, 2 * var(--zen-ntp-morph, 0), 1);
+  }
+  /* The page field's content, in its ink (§9.29's field): the glyph and the words go over the
+     morph's first half and with the handover to the pill; the mic and the camera leave as soon
+     as the field moves, as Chrome's do. */
+  :root[data-form-factor='phone'] .zen-fakebox-field {
+    color: var(--v2-text);
+    font-size: var(--v2-font-body);
+    line-height: var(--v2-line-body);
+    --zen-fg: var(--v2-text);
+    --zen-fg-rgb: var(--v2-text-rgb);
+    --zen-element-bg: var(--v2-fill);
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-field .zen-fakebox-content {
+    color: var(--v2-text-deemphasized);
+    opacity: calc(clamp(0, 1 - 2 * var(--zen-ntp-morph, 0), 1) * (1 - var(--zen-ntp-pill, 0)));
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-trailing {
+    opacity: clamp(0, 1 - 4 * var(--zen-fakebox-away, 0), 1);
+  }
+  /* The omnibox field's content, in the window family's ink the omnibox field draws in (the
+     chip on `--zen-element-bg`, the words `--zen-muted`, the controls the toolbar button's
+     resting 85 %): arrives over the second half. */
+  :root[data-form-factor='phone'] .zen-fakebox-omni {
+    color: var(--zen-fg);
+    opacity: clamp(0, 2 * var(--zen-ntp-morph, 0) - 1, 1);
+  }
+  :root[data-form-factor='phone'] .zen-fakebox-omni-trailing > * {
+    opacity: 0.85;
+  }
+  /*
+   * The pill's slot while the field is the page's: the well, filling in with the pill's tint and
+   * words as the scroll hands the field over (`--zen-ntp-pill`), so that at the landing the pill
+   * is whole and the double has nothing left to draw. The handover is the words' one source of
+   * opacity, hence the `!important`: the pill's content arrives on a 160 ms entrance fade
+   * (`zen-animate-fade`), and the bar is mounted again as a closing or a pull begins (the shell
+   * takes it down while the omnibox is open), so that fade replays under the field coming home
+   * – and an animation's value outranks a plain declaration, so for its length the well's words
+   * would draw over an empty handover (run 3's `top-rest`, one frame at .15 on the emulator,
+   * where the fade started late; a faint ghost of the words for two frames on a phone). An
+   * important declaration outranks the animation; nothing restarts when the class comes off.
+   */
+  :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away {
+    background: rgb(var(--zen-fg-rgb) / calc(0.04 + 0.03 * var(--zen-ntp-pill, 0)));
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / calc(0.06 * (1 - var(--zen-ntp-pill, 0))));
+  }
+  :root[data-form-factor='phone'] .zen-phone-pill.zen-pill-away > * {
+    opacity: var(--zen-ntp-pill, 0) !important;
+    pointer-events: none;
+  }
+  /*
+   * The omnibox under the morph: the sheet fades in on the value rather than its own 160 ms,
+   * from four tenths of the way (FAKEBOX_SHEET_FROM: the page is nearly gone by then, so the
+   * suggestions rise in under the arriving field rather than over the tiles); its field's
+   * backdrop and content are the double's until the field lands – the field draws nothing of
+   * its own on the way, so no frame has two fields – and at the landing nothing replays: the
+   * pill-grow and the fades stay off while the morph owns the bar. The content's own opacity
+   * transitions (the toolbar button's 120 ms, its resting 85 %) are off too: the field's content
+   * is the double's until the landing and the double's again from the frame a pull begins, so
+   * the omnibox's own goes and comes on that frame, not over a fade beside its stand-in.
+   */
+  :root[data-fakebox='opening'] .zen-omnibox-sheet,
+  :root[data-fakebox='closing'] .zen-omnibox-sheet,
+  :root[data-fakebox='pulled'] .zen-omnibox-sheet {
+    animation: none;
+    opacity: clamp(0, (var(--zen-ntp-morph, 0) - 0.4) / 0.6, 1);
+  }
+  :root[data-fakebox='opening'] .zen-omnibox-field::before,
+  :root[data-fakebox='closing'] .zen-omnibox-field::before,
+  :root[data-fakebox='pulled'] .zen-omnibox-field::before,
+  :root[data-fakebox='opening'] .zen-omnibox-field > *,
+  :root[data-fakebox='closing'] .zen-omnibox-field > *,
+  :root[data-fakebox='pulled'] .zen-omnibox-field > * {
+    animation: none;
+    transition: none;
+    opacity: 0;
+  }
+  /*
+   * Nothing the double flies over takes a tap until the landing: the suggestion list is rising
+   * in beneath it from four tenths and a row is hit-testable at any opacity, so a second tap
+   * where the field was a moment ago – a phone's impatient double tap lands 150 ms after the
+   * first, half the flight – would take a suggestion nobody can see yet (run 2's bottom-retap:
+   * the tap the emulator delivered late hit a row at .2 and navigated). The sheet itself keeps
+   * the pointer, so the tap ends there – nothing happens, as for a tap on the double mid-flight
+   * (`tapFakebox` at opening) – rather than reaching the scrim as a dismissal. The rows are live
+   * again from the frame the field lands (`open`).
+   */
+  :root[data-fakebox='opening'] .zen-omnibox-sheet > *,
+  :root[data-fakebox='closing'] .zen-omnibox-sheet > * {
+    pointer-events: none;
+  }
+  :root[data-fakebox='open'] .zen-omnibox-sheet,
+  :root[data-fakebox='open'] .zen-omnibox-field::before,
+  :root[data-fakebox='open'] .zen-omnibox-field > * {
+    animation: none;
+  }
+  :root[data-fakebox='open'] .zen-omnibox-field .zen-toolbar-button {
+    transition-property: background, transform;
+  }
 }
 
 /*
@@ -5968,6 +6139,28 @@
  */
 :root[data-form-factor='phone'] .zen-phone-bar[data-edge='bottom'] {
   opacity: calc(1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1));
+}
+/*
+ * The new tab page's field on its way to or from the omnibox (NTP-02, lib/fakeboxMorph.ts): the
+ * bar stays mounted under the arriving sheet and fades out over the first half of the morph's
+ * value – its buttons go as the field widens toward them, Chrome's focus animation, and are gone
+ * before the omnibox field's own controls arrive over the second half, so the two never share a
+ * frame – and back in as the field returns. Inert meanwhile: the sheet's scrim is what a tap
+ * there reaches. Composed with the recede at the bottom edge, where a sheet fades the bar too.
+ */
+:root[data-form-factor='phone'][data-fakebox='opening'] .zen-phone-bar,
+:root[data-form-factor='phone'][data-fakebox='closing'] .zen-phone-bar,
+:root[data-form-factor='phone'][data-fakebox='pulled'] .zen-phone-bar {
+  opacity: clamp(0, 1 - 2 * var(--zen-ntp-morph, 0), 1);
+  pointer-events: none;
+}
+:root[data-form-factor='phone'][data-fakebox='opening'] .zen-phone-bar[data-edge='bottom'],
+:root[data-form-factor='phone'][data-fakebox='closing'] .zen-phone-bar[data-edge='bottom'],
+:root[data-form-factor='phone'][data-fakebox='pulled'] .zen-phone-bar[data-edge='bottom'] {
+  opacity: calc(
+    clamp(0, 1 - 2 * var(--zen-ntp-morph, 0), 1) *
+      (1 - var(--zen-recede, 0) * var(--zen-recede-gain, 1))
+  );
 }
 
 /*
@@ -10525,6 +10718,118 @@
   .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
   .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     transition-duration: 120ms !important;
+  }
+  /*
+   * The new tab page's field and the omnibox (NTP-02, v2 §11.3): the spring's part of the morph
+   * is a cut – no double flies; the page's field fades with the page (lib/fakeboxMorph.ts keeps
+   * it painted), and a field the scroll holds part way, whose double is what draws it, fades in
+   * place over the same 120 ms (out as the omnibox arrives, in as it leaves; the layer is
+   * mounted only for those) – and the omnibox appears and leaves on a 120 ms opacity fade in
+   * place: the sheet's and its field's own fades at that length, the bar's and the page's the
+   * same length on the value's jump. The controller holds the phase for those 120 ms. The scroll
+   * scrub is the finger's own motion and stays, as the bar's hide does (§11.5).
+   */
+  :root[data-fakebox='opening'] .zen-fakebox-layer {
+    animation: zen-fade-out 120ms var(--zen-ease) both !important;
+  }
+  :root[data-fakebox='closing'] .zen-fakebox-layer {
+    animation: zen-fade 120ms var(--zen-ease) both !important;
+  }
+  :root[data-fakebox='opening'] .zen-fakebox-layer .zen-fakebox,
+  :root[data-fakebox='closing'] .zen-fakebox-layer .zen-fakebox {
+    pointer-events: none;
+  }
+  :root[data-fakebox='opening'] .zen-omnibox-sheet,
+  :root[data-fakebox='opening'] .zen-omnibox-field::before,
+  :root[data-fakebox='opening'] .zen-omnibox-field > *,
+  :root[data-fakebox='closing'] .zen-phone-bar {
+    animation: zen-fade 120ms var(--zen-ease) both !important;
+  }
+  :root[data-fakebox='closing'] .zen-omnibox-sheet,
+  :root[data-fakebox='closing'] .zen-omnibox-field::before,
+  :root[data-fakebox='closing'] .zen-omnibox-field > * {
+    animation: zen-fade-out 120ms var(--zen-ease) both !important;
+  }
+  :root[data-fakebox='opening'] .zen-phone-bar,
+  :root[data-fakebox='opening'] .zen-ntp-fades,
+  :root[data-fakebox='closing'] .zen-ntp-fades {
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+  /*
+   * What the scrub and the morph write per frame – the double's box and the layer's clip, the
+   * page field's and the pill's opacities on `--zen-ntp-pill`, the double's looks and contents
+   * on `--zen-ntp-morph`, the pill's well filling in – never transitions: the 0.01 ms the rule
+   * above leaves every property change would put each of them one frame behind the finger (a
+   * transition starts on the next frame, however short), so the box would trail the scroll by a
+   * frame and at the handover the pill's words and the field would both be drawn, or neither,
+   * for a frame. The finger's motion is one to one (§11.3). The layer's 120 ms fades above are
+   * animations, untouched by this.
+   */
+  :root[data-form-factor='phone'] .zen-fakebox-layer,
+  :root[data-form-factor='phone'] .zen-fakebox,
+  :root[data-form-factor='phone'] .zen-ntp-field,
+  :root[data-form-factor='phone'] .zen-phone-pill,
+  :root[data-form-factor='phone'] .zen-phone-pill > *,
+  :root[data-form-factor='phone'] .zen-fakebox-look,
+  :root[data-form-factor='phone'] .zen-fakebox-content,
+  :root[data-form-factor='phone'] .zen-fakebox-omni,
+  :root[data-form-factor='phone'] .zen-fakebox-trailing {
+    transition-property: none !important;
+  }
+  /*
+   * The content column's frame is laid out, never transitioned. Its padding moves the page's
+   * frame from one edge to the other when the bar changes dock, and the chrome measures that
+   * frame the moment the edge changes (`useLayoutReporter`: the store the morph and the drivers
+   * lay out against). Under full motion the padding has no transition; the 0.01 ms the rule
+   * above would give it is held at the old edge until the compositor starts it – a frame on a
+   * phone, several on a slow one (run 2's reduced-top-scrub on the emulator: the frame's top read
+   * 30 at a top dock, the bottom dock's, 2.5 s after the change) – and a slide the observer
+   * cannot see (the band leaves one edge for the other; the height is the same) is never
+   * measured again.
+   */
+  :root[data-form-factor='phone'] .zen-content-column {
+    transition-property: none !important;
+  }
+  /*
+   * The bar's box likewise. A change of dock moves the clip box from one edge to the other
+   * (`top` / `bottom`) and swaps the bar's inset paddings; under full motion those are cuts, and
+   * the 0.01 ms rule above would hold each of them at the old edge's value until the compositor
+   * starts it – on a slow one, frames. The morph measures the pill's slot the frame the page's
+   * frame has moved (`fakeboxMorph.ts` on the layout reporter's store), and in that window the
+   * bar still had the bottom dock's paddings inside a clip still at the top edge's old `top`:
+   * the slot read 48 px above its rest – the clip's inset short and the padding's – and the
+   * scrub carried the double along a line to a slot that was not there (run 3's
+   * reduced-top-scrub on the emulator: 31 frames off the line, by 48 px times the way along it).
+   * The bar keeps its opacity as the one property that may transition: the morph's rule above
+   * fades it over the value's jump.
+   */
+  :root[data-form-factor='phone'] .zen-phone-bar-clip {
+    transition-property: none !important;
+  }
+  :root[data-form-factor='phone'] .zen-phone-bar {
+    transition-property: opacity !important;
+  }
+  /*
+   * The page's visibility is a cut, on the page and on everything in it. The new tab page is
+   * kept mounted and unpainted under the omnibox (`.zen-ntp[data-hidden]`, ContentArea.tsx),
+   * and comes back the frame the morph's closing begins; `visibility` transitions, and the
+   * 0.01 ms rule above made that change a transition too – one that is play-pending until the
+   * compositor starts its batch, and a pending transition draws its start value: the page stayed
+   * `hidden` past the commit that showed it, a frame on a phone, 0.7 to 1.1 s on the emulator
+   * (run 3's reduced-bottom: the omnibox gone, the field home by the machine, the page blank at
+   * rest with nothing pending on anything the sampler watched). `visibility` inherits, so each
+   * descendant would take a pending transition of its own when the page cuts – the field before
+   * its words, the tiles before their letters, as the emulator drew it. Nothing in the page
+   * transitions but the fades on `.zen-ntp-fades` (the page's opacity over the value's jump, the
+   * morph's rule above, at its 120 ms): opacity is their one property, written after the page's
+   * rule at equal specificity.
+   */
+  :root[data-form-factor='phone'] .zen-ntp,
+  :root[data-form-factor='phone'] .zen-ntp * {
+    transition-property: none !important;
+  }
+  :root[data-form-factor='phone'] .zen-ntp-fades {
+    transition-property: opacity !important;
   }
   /*
    * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,

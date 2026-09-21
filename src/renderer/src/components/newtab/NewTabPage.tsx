@@ -1,5 +1,5 @@
-import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import type { CSSProperties, JSX, ReactNode, UIEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
   Camera,
@@ -19,6 +19,12 @@ import { MAX_NEW_TAB_SHORTCUTS, newTabSections } from '@shared/newTab'
 import { qrScanAvailable } from '@shared/qrScan'
 import { voiceSearchAvailable } from '@shared/voice'
 import { run } from '@renderer/lib/api'
+import {
+  fakeboxMorphStore,
+  fakeboxScrolled,
+  registerFakebox,
+  tapFakebox
+} from '@renderer/lib/fakeboxMorph'
 import { useViewport } from '@renderer/lib/formFactor'
 import { PROTECTION_TEXT } from '@renderer/lib/protectionUi'
 import { topSites, type TopSite } from '@renderer/lib/historyAdapter'
@@ -33,7 +39,7 @@ import {
 } from '@renderer/lib/newtab'
 import { isPrivateTab } from '@renderer/lib/privateTabs'
 import { startQrScan } from '@renderer/lib/qrScan'
-import { contentAreaStore, openUrlbar } from '@renderer/lib/ui'
+import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { useLongPress } from '../phone/useLongPress'
@@ -116,7 +122,14 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
       style={style}
     >
       {wallpaper === 'image' && <div className="zen-ntp-scrim absolute inset-0" aria-hidden />}
-      <div className="relative flex min-h-0 flex-1 flex-col items-center px-4">
+      {/* The column scrolls where its content overflows the frame (a short viewport, large type),
+          and its scroll carries the field toward the bar's pill slot (lib/fakeboxMorph.ts); the
+          whole of it fades under the arriving omnibox. */}
+      <div
+        className="zen-ntp-scroll zen-ntp-fades relative flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4"
+        style={{ overscrollBehavior: 'contain' }}
+        onScroll={onNewTabScroll}
+      >
         <div className="min-h-6" style={{ flex: 3 }} />
         {sections.searchBox && <SearchField state={state} tab={tab} />}
         {sections.shortcuts && <TopSites state={state} tab={tab} />}
@@ -124,7 +137,7 @@ function SpaceNewTabPage({ state, tab, hidden }: Props): JSX.Element {
       </div>
       <button
         type="button"
-        className="zen-toolbar-button absolute h-11 w-11"
+        className="zen-ntp-fades zen-toolbar-button absolute h-11 w-11"
         style={{ right: 12, bottom: 12 }}
         aria-label="Customise the new tab page"
         onClick={openCustomize}
@@ -185,7 +198,11 @@ function PrivateNewTabPage({ state, tab, hidden }: Props): JSX.Element {
       data-testid="private-ntp"
       style={backdrop}
     >
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div
+        className="zen-ntp-scroll zen-ntp-fades relative flex min-h-0 flex-1 flex-col overflow-y-auto"
+        style={{ overscrollBehavior: 'contain' }}
+        onScroll={onNewTabScroll}
+      >
         <div className="mx-auto flex w-full max-w-[520px] flex-col px-4 pb-6 pt-8">
           <SearchField state={state} tab={tab} />
           <div className="zen-firstrun-intro mt-8 flex flex-col gap-1">
@@ -277,26 +294,41 @@ function ThirdPartyCookiesRow({ state }: { state: UIState }): JSX.Element {
   )
 }
 
+/** The page's scroll carries the field toward the bar's pill slot (NTP-02, the scroll scrub). */
+function onNewTabScroll(e: UIEvent<HTMLDivElement>): void {
+  fakeboxScrolled(e.currentTarget.scrollTop)
+}
+
 /**
  * The search field: the floating URL bar's field with a placeholder, the search glyph and the
  * trailing icon buttons – the mic where the host has a speech recogniser (OMN-19: the listening
  * sheet, its result loading in this tab), the camera where it has a back camera (OMN-22, NTP-04:
  * the scan sheet, its payload loading in this tab). A tap on the field opens the omnibox for
  * this tab – the field itself never takes input, so what is typed goes where every other
- * address does.
+ * address does. The field does not cut to the omnibox: it morphs into it (NTP-02 / MOT-08,
+ * lib/fakeboxMorph.ts), which registers the field here and paints its double while it is on
+ * its way (`data-away`: the page's own field yields to the double).
  */
 function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element {
-  const open = (): void => void openUrlbar('edit', tab.id, { attached: true })
+  const fieldRef = useRef<HTMLDivElement>(null)
+  const away = fakeboxMorphStore.use((s) => s.tabId === tab.id && !s.pageField)
+  useLayoutEffect(() => {
+    const field = fieldRef.current
+    if (!field) return
+    return registerFakebox(tab.id, field, field.closest<HTMLElement>('.zen-ntp-scroll'))
+  }, [tab.id])
   const voice = voiceSearchAvailable(state.capabilities)
   const camera = qrScanAvailable(state.capabilities)
   const trailing = voice || camera
   return (
     // The floating URL bar's field is an opaque panel on the window: a page surface of its own.
     <div
+      ref={fieldRef}
       role="group"
       aria-label="Search"
       className="zen-ntp-field flex w-full max-w-[520px]"
       data-surface="page"
+      data-away={away || undefined}
     >
       <button
         type="button"
@@ -304,7 +336,7 @@ function SearchField({ state, tab }: { state: UIState; tab: Tab }): JSX.Element 
           'zen-ntp-field-main flex h-full min-w-0 flex-1 items-center gap-3 pl-4 text-left',
           !trailing && 'pr-4'
         )}
-        onClick={open}
+        onClick={tapFakebox}
       >
         <Search className="zen-ntp-placeholder h-5 w-5 shrink-0" strokeWidth={1.75} />
         {/* The pill's words (PhoneShell), one string for the address wherever it is asked for. */}
