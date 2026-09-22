@@ -1849,11 +1849,12 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
       permissions: ['webRequest', 'storage'],
       origins: ['https://example.com/*']
     })
-    // Nor can it be requested: it is not a permission of this manifest.
+    // Nor can it be requested: it is not a permission of this manifest (Chrome's lastError).
     const requested = await call(h, 'bg1', 'permissions', 'request', [
       { permissions: ['webRequestBlocking'] }
     ])
-    expect(requested.result).toBe(false)
+    expect(requested.ok).toBe(false)
+    expect(requested.error).toBe('Only permissions specified in the manifest may be requested.')
     const optional = await call(h, 'bg1', 'permissions', 'request', [
       { permissions: ['downloads'] }
     ])
@@ -1957,6 +1958,37 @@ describe('AndroidExtensionRuntime: chrome.permissions', () => {
       permissions: [],
       origins: ['https://api.example.org/*']
     })
+  })
+
+  it('an optional <all_urls> lets a site pattern be requested and, granted, answers contains for it by containment (Cookie-Editor on the fixture host)', async () => {
+    const h = harness()
+    const m = manifest({
+      permissions: ['cookies', 'storage'],
+      optional_host_permissions: ['<all_urls>']
+    })
+    await h.runtime.attach(record(h, {}, m))
+    backgroundUp(h, 'bg1', ['permissions.onAdded'])
+    const origins = ['http://10.0.2.2/*', 'http://*.2.2/*']
+    // Nothing held yet: `contains` is false, and the popup asks.
+    expect((await call(h, 'bg1', 'permissions', 'contains', [{ origins }])).result).toBe(false)
+    // The request is within the optional set by containment, so it is granted as asked.
+    expect((await call(h, 'bg1', 'permissions', 'request', [{ origins }])).result).toBe(true)
+    expect(events(h, 'bg1', 'permissions.onAdded')[0].args).toEqual([{ permissions: [], origins }])
+    expect(h.kt.hosts.get(ID)).toEqual(origins)
+    expect((await call(h, 'bg1', 'permissions', 'contains', [{ origins }])).result).toBe(true)
+    // A narrower pattern than a granted one is contained too; a foreign scheme is not.
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['http://10.0.2.2/a/*'] }]))
+        .result
+    ).toBe(true)
+    expect(
+      (await call(h, 'bg1', 'permissions', 'contains', [{ origins: ['https://10.0.2.2/*'] }]))
+        .result
+    ).toBe(false)
+    // A malformed pattern is Chrome's error, not a silent false.
+    const bad = await call(h, 'bg1', 'permissions', 'request', [{ origins: ['example.com'] }])
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toContain('Invalid value for origin pattern example.com')
   })
 })
 

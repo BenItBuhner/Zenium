@@ -18,6 +18,15 @@ import type { ProxyConfig } from '@core/extensions/api/proxy'
 import type { LocaleMessages } from '@core/extensions/api/i18n'
 import { globToRegExp, matchesAnyPattern } from '@core/extensions/api/matchPattern'
 import {
+  addPermissionSets,
+  type ManifestPermissionSets,
+  missingPermissions,
+  normalizePermissionSet,
+  type PermissionSet,
+  permissionSetContains,
+  requestablePermissions
+} from '@core/extensions/api/permissions'
+import {
   SYSTEM_DISPLAY_NO_PERMISSION_ERROR,
   SYSTEM_DISPLAY_PERMISSION
 } from '@core/extensions/api/systemDisplay'
@@ -1799,16 +1808,25 @@ export class ExtensionApi {
   private permissionsCall(ext: AttachedExtension, method: string, args: unknown[]): unknown {
     const { manifest } = ext
     const id = ext.record.id
-    const wanted = asRecord(args[0])
-    const permissions = asStringArray(wanted.permissions)
-    const origins = asStringArray(wanted.origins)
+    const wanted = normalizePermissionSet(args[0] ?? {})
+    if (!wanted) throw new Error('Invalid value for argument 1. Property is not an object.')
     const grantedHosts = this.grantedHosts.get(id) ?? new Set<string>()
     const grantedApis = this.grantedApis.get(id) ?? new Set<string>()
-    const hosts = (): string[] => [...manifest.hostPermissions, ...grantedHosts]
-    const apis = (): string[] => [...manifest.permissions, ...grantedApis]
-    const has = (): boolean =>
-      permissions.every((p) => manifest.permissions.includes(p) || grantedApis.has(p)) &&
-      origins.every((o) => hosts().includes(o) || manifest.hostPermissions.includes('<all_urls>'))
+    // Host patterns hold by containment, as Chrome's `URLPatternSet` does: an optional
+    // `<all_urls>` lets `http://example.com/*` be requested and, granted, answers `contains` for
+    // it (the desktop's `permissions.ts` set arithmetic, shared here).
+    const sets: ManifestPermissionSets = {
+      required: { permissions: [...manifest.permissions], origins: [...manifest.hostPermissions] },
+      optional: {
+        permissions: [...manifest.optionalPermissions],
+        origins: [...manifest.optionalHostPermissions]
+      }
+    }
+    const granted = (): PermissionSet =>
+      addPermissionSets(sets.required, {
+        permissions: [...grantedApis],
+        origins: [...grantedHosts]
+      })
     // Kotlin's CORS proxy hears the host patterns only when they moved; the grants and the
     // contexts' shims hear every change.
     const commit = (hostsMoved: boolean): void => {
@@ -1817,46 +1835,36 @@ export class ExtensionApi {
       if (grantedApis.size > 0) this.grantedApis.set(id, grantedApis)
       else this.grantedApis.delete(id)
       if (hostsMoved) this.host.hostsGranted(id, [...grantedHosts])
-      this.host.setGrants(id, { permissions: [...grantedApis], origins: [...grantedHosts] }, apis())
+      this.host.setGrants(
+        id,
+        { permissions: [...grantedApis], origins: [...grantedHosts] },
+        granted().permissions
+      )
     }
     switch (method) {
       case 'contains':
-        return has()
+        return permissionSetContains(granted(), wanted)
       case 'getAll':
-        return { permissions: apis(), origins: hosts() }
+        return granted()
       case 'request': {
-        const allowed =
-          permissions.every(
-            (p) => manifest.permissions.includes(p) || manifest.optionalPermissions.includes(p)
-          ) &&
-          origins.every(
-            (o) =>
-              manifest.hostPermissions.includes(o) || manifest.optionalHostPermissions.includes(o)
-          )
-        if (!allowed) return false
-        const addedApis = permissions.filter(
-          (p) => !manifest.permissions.includes(p) && !grantedApis.has(p)
-        )
-        const addedHosts = origins.filter(
-          (o) => !manifest.hostPermissions.includes(o) && !grantedHosts.has(o)
-        )
-        if (addedApis.length === 0 && addedHosts.length === 0) return true
-        for (const p of addedApis) grantedApis.add(p)
-        for (const o of addedHosts) grantedHosts.add(o)
-        commit(addedHosts.length > 0)
-        this.host.emit(id, 'permissions', 'onAdded', [
-          { permissions: addedApis, origins: addedHosts }
-        ])
+        const requestable = requestablePermissions(sets, wanted)
+        if (!requestable.ok) throw new Error(requestable.error)
+        const missing = missingPermissions(granted(), wanted)
+        if (missing.permissions.length === 0 && missing.origins.length === 0) return true
+        for (const p of missing.permissions) grantedApis.add(p)
+        for (const o of missing.origins) grantedHosts.add(o)
+        commit(missing.origins.length > 0)
+        this.host.emit(id, 'permissions', 'onAdded', [missing])
         return true
       }
       case 'remove': {
         if (
-          permissions.some((p) => manifest.permissions.includes(p)) ||
-          origins.some((o) => manifest.hostPermissions.includes(o))
+          wanted.permissions.some((p) => sets.required.permissions.includes(p)) ||
+          wanted.origins.some((o) => sets.required.origins.includes(o))
         )
           throw new Error('You cannot remove required permissions.')
-        const removedApis = permissions.filter((p) => grantedApis.delete(p))
-        const removedHosts = origins.filter((o) => grantedHosts.delete(o))
+        const removedApis = wanted.permissions.filter((p) => grantedApis.delete(p))
+        const removedHosts = wanted.origins.filter((o) => grantedHosts.delete(o))
         if (removedApis.length === 0 && removedHosts.length === 0) return true
         commit(removedHosts.length > 0)
         this.host.emit(id, 'permissions', 'onRemoved', [
