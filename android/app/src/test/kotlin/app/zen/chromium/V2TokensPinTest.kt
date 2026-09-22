@@ -107,8 +107,15 @@ class V2TokensPinTest {
         assertEquals(PromptSheetSpec.BLOCK_PADDING_DP, px(block, "padding"))
         assertEquals(PromptSheetSpec.BODY_GAP_DP, px(block, "padding"))
         assertEquals(PromptSheetSpec.DESCRIPTION_GAP_DP, px(block, "gap"))
-        // §9.7: the hairline under a scrolled title block – the border ink, 1 px, on the grip's 120 ms.
-        assertTrue(css.text.contains("box-shadow: 0 ${PromptSheetSpec.HAIRLINE_PX}px 0 var(--v2-border);"))
+        // The hairline: `.zen-sheet`'s 1 CSS px border – a dp – round the top and the sides, none along the
+        // bottom (`border-bottom: 0`); the same px on a field's and a checkbox's edge.
+        val sheetRule = css.rule(".zen-sheet")
+        assertEquals("${PromptSheetSpec.HAIRLINE_DP}px solid var(--v2-border)", declaration(sheetRule, "border"))
+        assertEquals("the sheet meets the screen's edge without a hairline", "0", declaration(sheetRule, "border-bottom"))
+        assertEquals("${PromptSheetSpec.HAIRLINE_DP}px solid var(--v2-border)", declaration(css.rule(".zen-v2-field"), "border"))
+        assertTrue(declaration(css.rule(".zen-v2-checkbox"), "border").startsWith("${PromptSheetSpec.HAIRLINE_DP}px solid "))
+        // §9.7: the hairline under a scrolled title block – the border ink, the same dp, on the grip's 120 ms.
+        assertTrue(css.text.contains("box-shadow: 0 ${PromptSheetSpec.HAIRLINE_DP}px 0 var(--v2-border);"))
         assertTrue(css.rule(".zen-sheet-grip").contains("transition: box-shadow ${PromptSheetSpec.HAIRLINE_FADE_MS}ms var(--zen-ease);"))
         // §9.12: the label 4 above its field (`.zen-bm-label`, the one §9.12 label rule in main.css).
         assertEquals(PromptSheetSpec.LABEL_GAP_DP, px(css.rule(".zen-bm-label"), "gap"))
@@ -149,6 +156,53 @@ class V2TokensPinTest {
         }
         val sheet = File(root, "src/renderer/src/lib/motion/sheet.ts").readText()
         assertEquals(PromptSheetSpec.SHEET_TOP_MARGIN_DP, Regex("""export const SHEET_TOP_MARGIN = (\d+)""").find(sheet)!!.groupValues[1].toInt())
+    }
+
+    /**
+     * The hairline is one dp on the device, in whole pixels: the chrome's `1px` border is a CSS px,
+     * one dp; a physical pixel would be 0.57 dp at 1.75x. Rounded at the density, never under one.
+     */
+    @Test
+    fun theHairlineIsOneDpInWholePixels() {
+        assertEquals(1, PromptSheetSpec.HAIRLINE_DP)
+        assertEquals("1x (mdpi)", 1, PromptSheetSpec.hairlinePx(1f))
+        assertEquals("1.5x (hdpi)", 2, PromptSheetSpec.hairlinePx(1.5f))
+        assertEquals("1.75x (W4-5's run-2 device)", 2, PromptSheetSpec.hairlinePx(1.75f))
+        assertEquals("2x (xhdpi)", 2, PromptSheetSpec.hairlinePx(2f))
+        assertEquals("2.625x (Pixel 6 / the CI emulator's 420 dpi)", 3, PromptSheetSpec.hairlinePx(2.625f))
+        assertEquals("under 1x: the floor of one pixel", 1, PromptSheetSpec.hairlinePx(0.75f))
+    }
+
+    /**
+     * §9.25's arithmetic in the chrome's shape: from the footer's peers to the sheet's edge is the
+     * footer's padding plus the inset or the floor, whichever is larger (`BottomSheet.tsx` pads the
+     * sheet `Math.max(8, insets.bottom)`, `.zen-sheet-footer` its padding above that). Two cases –
+     * a host reporting no inset and one reporting a 24 bar – hold the chassis to that shape, so the
+     * chassis and the chrome differ by the one padding constant alone (16 here, 8 there, the drift
+     * `theSpecNumbersAreTheSheetRules` pins), and the lead's ruling on it moves that constant only.
+     */
+    @Test
+    fun theFooterArithmeticIsTheChromesShape() {
+        val footer = css.rule(".zen-sheet-footer")
+        val cssPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues[3].toInt()
+        val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
+        val cssFloor = Regex("""paddingBottom: Math\.max\((\d+), insets\.bottom\)""").find(bottomSheet)!!.groupValues[1].toInt()
+        assertEquals(cssFloor, PromptSheetSpec.SHEET_INSET_FLOOR_DP)
+        // §9.25: "24 from the buttons to the sheet's edge" where the host reports none.
+        assertEquals(24, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, 0))
+        for (inset in listOf(0, 24)) {
+            val chrome = PromptSheetSpec.footerToEdge(cssPadding, cssFloor, inset)
+            val native = PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, inset)
+            assertEquals("inset $inset: the chrome's footer is its padding plus the larger of the floor and the inset", cssPadding + maxOf(cssFloor, inset), chrome)
+            assertEquals("inset $inset: the chassis differs from the chrome by the padding constant alone", PromptSheetSpec.FOOTER_BOTTOM_DP - cssPadding, native - chrome)
+            // The column's share: the sheet pads the inset, the footer its padding, the column what the inset falls short of the floor.
+            assertEquals("inset $inset: the column's padding makes the whole", native, PromptSheetSpec.FOOTER_BOTTOM_DP + inset + PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, inset))
+        }
+        assertEquals("the chrome at no inset (W4-5's reading: max(8, 0) + 8)", 16, PromptSheetSpec.footerToEdge(cssPadding, cssFloor, 0))
+        assertEquals("the chrome at a 24 bar (max(8, 24) + 8)", 32, PromptSheetSpec.footerToEdge(cssPadding, cssFloor, 24))
+        assertEquals("the chassis at a 24 bar: the bar and the spec's 16", 40, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, 24))
+        assertEquals("under a 24 bar the column pads nothing", 0, PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, 24))
+        assertEquals("with no bar the column pads the floor", 8, PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, 0))
     }
 
     // --- the stylesheet, read ------------------------------------------------------------------

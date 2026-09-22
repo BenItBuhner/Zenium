@@ -1,7 +1,12 @@
 package app.zen.chromium
 
 import android.content.Context
-import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
@@ -42,12 +47,39 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 object PromptSheetSpec {
     /** `--v2-radius-sheet`: the sheet's top corners. */
     const val SHEET_RADIUS_DP = 12
-    /** `.zen-sheet`'s `border: 1px`: the hairline round the sheet, under a scrolled title block, round a field, a checkbox. */
-    const val HAIRLINE_PX = 1
+    /**
+     * `.zen-sheet`'s `border: 1px` – a CSS px, one dp on the device: the hairline round the sheet's
+     * top and sides (`border-bottom: 0`: none along the screen's edge), under a scrolled title block
+     * (§9.7), round a field (§9.12), a checkbox (§9.14). Drawn at [hairlinePx].
+     */
+    const val HAIRLINE_DP = 1
     /** `SHEET_TOP_MARGIN` (lib/motion/sheet.ts): the page kept in view above an expanded sheet. */
     const val SHEET_TOP_MARGIN_DP = 40
     /** §9.25: the bottom inset is the host's safe area, or 8 where it reports none (`BottomSheet.tsx`'s `Math.max(8, insets.bottom)`). */
     const val SHEET_INSET_FLOOR_DP = 8
+
+    /**
+     * The hairline in device pixels: [HAIRLINE_DP] at the density, rounded, never under one pixel – 1
+     * at 1x, 2 at 1.75x, 3 at 2.625x – as the chrome's 1 CSS px border is one dp of the screen and
+     * a physical pixel would be 0.57 dp at 1.75x.
+     */
+    fun hairlinePx(density: Float): Int = maxOf(1, Math.round(HAIRLINE_DP * density))
+
+    /**
+     * §9.25's arithmetic in the chrome's shape (`BottomSheet.tsx` pads the sheet `Math.max(8,
+     * insets.bottom)` and `.zen-sheet-footer` its padding above that): from the footer's peers to the
+     * sheet's edge is the footer's padding plus the inset or the floor, whichever is larger – so
+     * where the host reports none it is the padding and the floor, and where it reports a bar the
+     * padding and the bar. The chrome and the chassis differ in the padding alone (8 there, 16 here:
+     * `V2TokensPinTest`), so a ruling on it moves [FOOTER_BOTTOM_DP] and nothing of the shape.
+     */
+    fun footerToEdge(padding: Int, floor: Int, inset: Int): Int = padding + maxOf(floor, inset)
+
+    /**
+     * The column's share of [footerToEdge]: the sheet pads its bottom by the inset itself, the
+     * footer brings its padding, and the column adds what the inset falls short of the floor.
+     */
+    fun floorPadding(floor: Int, inset: Int): Int = (floor - inset).coerceAtLeast(0)
 
     /** §9.9: the grip strip, with the 32 × 4 grabber at radius 2, 8 from the top, in the text at 25 %. */
     const val GRIP_STRIP_DP = 20
@@ -102,8 +134,9 @@ object PromptSheetSpec {
 
     /**
      * §9.11 / §9.25: the footer's 16 above its peers (`.zen-sheet-footer`'s `padding-top`), the peers at an
-     * 8 gap, and 16 from the peers to the bottom inset – §9.25's number; main.css's `.zen-sheet-footer`
-     * stands at 8 there, the one chassis value the pin found off the spec (`V2TokensPinTest`).
+     * 8 gap, and 16 from the peers to the bottom inset – §9.25's number, the one constant of
+     * [footerToEdge]; main.css's `.zen-sheet-footer` stands at 8 there, the one chassis value the
+     * pin found off the spec (`V2TokensPinTest`).
      */
     const val FOOTER_TOP_DP = 16
     const val FOOTER_BOTTOM_DP = 16
@@ -136,8 +169,10 @@ object PromptSheetSpec {
  * so the composition is imitated here, held to the sheet's numbers ([PromptSheetSpec]) and the
  * theme's inks ([V2Ink]) exactly, both pinned against main.css by `V2TokensPinTest`.
  *
- * The composition, top to bottom: the panel surface with its hairline and 12 top radii, edge to
- * edge at the bottom; the §9.9 grip strip; the title block, PINNED – an optional 20 glyph on the
+ * The composition, top to bottom: the panel surface with its 12 top radii and the hairline round
+ * its top and sides (none along the screen's edge, as `.zen-sheet`'s `border-bottom: 0`; every
+ * hairline one dp – [PromptSheetSpec.hairlinePx] – as the chrome's 1 CSS px), edge to edge at
+ * the bottom; the §9.9 grip strip; the title block, PINNED – an optional 20 glyph on the
  * title's start at the 8 gap, the title 17/600 on 22, and an optional description 15 at 69 % on
  * 20, 4 under it, for a sentence of OURS ("Changes you made may not be saved.", "This page isn't
  * responding…") – 16 to the body; the body, which SCROLLS under the block with §9.7's hairline at
@@ -150,7 +185,8 @@ object PromptSheetSpec {
  * 10 % fill, the primary trailing in the accent fill with the on-accent label or, for a
  * destructive answer, in the 10 % fill with the label in the danger ink (Exit page, Remove) –
  * or one action spanning the row; and §9.25's 16 to the bottom inset, the inset the host's bar
- * or 8 where it reports none. The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
+ * or 8 where it reports none ([PromptSheetSpec.footerToEdge]: the padding plus the larger of the
+ * floor and the inset, the chrome's arithmetic). The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
@@ -226,6 +262,8 @@ class NativePromptSheet(
     class Answer(val accepted: Boolean, val text: String?, val checked: Boolean)
 
     private val density = context.resources.displayMetrics.density
+    /** Every hairline's width on this screen: one dp in whole pixels. */
+    private val hairline = PromptSheetSpec.hairlinePx(density)
     private var dialog: BottomSheetDialog? = null
     private var field: EditText? = null
     private var check: CheckBox? = null
@@ -311,7 +349,7 @@ class NativePromptSheet(
     private fun content(): View {
         val column = Column().apply {
             orientation = LinearLayout.VERTICAL
-            background = edge()
+            background = SheetEdge()
             // The container holds the focus on open (§9.22); it draws no ring for it.
             isFocusable = true
             isFocusableInTouchMode = true
@@ -335,19 +373,41 @@ class NativePromptSheet(
     }
 
     /**
-     * The hairline round the sheet at its top radii, over the panel fill the sheet style paints;
-     * its bottom side pushed a stroke past the column's edge, where the clip hides it – the sheet
-     * is edge to edge, and the column ends above the bar the sheet pads for.
+     * The hairline round the sheet, over the panel fill the sheet style paints: one open path up
+     * the left side, round the two top radii, down the right side – the top and the sides, as
+     * `.zen-sheet`'s `border: 1px` with `border-bottom: 0` – and no run along the bottom, where a
+     * bottom sheet meets the screen's edge. The stroke lies inside the bounds, its outer edge on
+     * the sheet's radius, one dp wide.
      */
-    private fun edge(): Drawable {
-        val stroke = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            val r = dp(PromptSheetSpec.SHEET_RADIUS_DP).toFloat()
-            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-            setColor(Color.TRANSPARENT)
-            setStroke(PromptSheetSpec.HAIRLINE_PX, ink.border)
+    private inner class SheetEdge : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = hairline.toFloat()
+            color = ink.border
         }
-        return LayerDrawable(arrayOf(stroke)).apply { setLayerInset(0, 0, 0, 0, -PromptSheetSpec.HAIRLINE_PX) }
+        private val path = Path()
+
+        override fun onBoundsChange(bounds: Rect) {
+            val half = hairline / 2f
+            // The stroke's centre line: half a stroke in from the edge, its radius the sheet's less that half.
+            val r = (dp(PromptSheetSpec.SHEET_RADIUS_DP) - half).coerceAtLeast(0f)
+            val left = bounds.left + half
+            val right = bounds.right - half
+            val top = bounds.top + half
+            val bottom = bounds.bottom.toFloat()
+            path.reset()
+            path.moveTo(left, bottom)
+            path.lineTo(left, top + r)
+            path.arcTo(left, top, left + 2 * r, top + 2 * r, 180f, 90f, false)
+            path.lineTo(right - r, top)
+            path.arcTo(right - 2 * r, top, right, top + 2 * r, 270f, 90f, false)
+            path.lineTo(right, bottom)
+        }
+
+        override fun draw(canvas: Canvas) = canvas.drawPath(path, paint)
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Deprecated in Java") override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
     }
 
     /** §9.9: the grabber in its strip; a tap on the strip dismisses (the grip is the first thing in the order). */
@@ -451,7 +511,7 @@ class NativePromptSheet(
      */
     private fun scrollingBody(body: View): View {
         val frame = FrameLayout(context)
-        val hairline = View(context).apply {
+        val boundary = View(context).apply {
             setBackgroundColor(ink.border)
             alpha = 0f
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -461,13 +521,13 @@ class NativePromptSheet(
             val now = y > 0
             if (now == scrolled) return@BodyScroller
             scrolled = now
-            hairline.animate().alpha(if (now) 1f else 0f).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
+            boundary.animate().alpha(if (now) 1f else 0f).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
         }.apply {
             isVerticalScrollBarEnabled = false
             addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         frame.addView(scroller, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        frame.addView(hairline, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, PromptSheetSpec.HAIRLINE_PX, Gravity.TOP))
+        frame.addView(boundary, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, hairline, Gravity.TOP))
         return frame
     }
 
@@ -506,7 +566,7 @@ class NativePromptSheet(
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(PromptSheetSpec.CONTROL_RADIUS_DP).toFloat()
                 setColor(ink.page)
-                setStroke(PromptSheetSpec.HAIRLINE_PX, edge)
+                setStroke(hairline, edge)
             }
         }
         return EditText(context).apply {
@@ -549,7 +609,7 @@ class NativePromptSheet(
                 setSize(size, size)
                 if (on) setColor(ink.accent) else {
                     setColor(ink.page)
-                    setStroke(PromptSheetSpec.HAIRLINE_PX, ink.checkboxBorder)
+                    setStroke(hairline, ink.checkboxBorder)
                 }
             }
         }
@@ -645,7 +705,9 @@ class NativePromptSheet(
      * (the window less the bottom the Material sheet pads for: the host's bar, the keyboard while it
      * is up) less the status bar and the margin kept above an expanded sheet so the page shows over
      * it – with the body taking whatever the grip, the pinned block and the pinned footer leave
-     * under it. Its bottom padding is §9.25's floor: what the host's bar falls short of 8.
+     * under it. Its bottom padding is its share of §9.25's arithmetic ([PromptSheetSpec.footerToEdge]):
+     * the sheet pads for the bar (or the keyboard over it), the footer brings its padding, and the
+     * column adds what the bar falls short of the 8 floor.
      */
     private inner class Column : LinearLayout(context) {
         private var insetTop = 0
@@ -653,7 +715,7 @@ class NativePromptSheet(
         fun applyInsets(insets: WindowInsetsCompat) {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            val floor = (dp(PromptSheetSpec.SHEET_INSET_FLOOR_DP) - maxOf(bars.bottom, ime.bottom)).coerceAtLeast(0)
+            val floor = PromptSheetSpec.floorPadding(dp(PromptSheetSpec.SHEET_INSET_FLOOR_DP), maxOf(bars.bottom, ime.bottom))
             if (insetTop != bars.top || paddingBottom != floor) {
                 insetTop = bars.top
                 setPadding(0, 0, 0, floor)
