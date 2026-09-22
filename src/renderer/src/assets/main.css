@@ -8036,7 +8036,9 @@
 /*
  * The shared checkbox (§9.34, §6; #93 owns the rule, the values are the ones the extensions
  * surfaces drew it with): 16 on a mouse, 20 on a phone, radius 2, the accent fill with an
- * on-accent check when on, the hover fill on a mouse. As a row's leading box it sits
+ * on-accent check when on, the hover fill on a mouse while off only – the hover rule at 0,3,0
+ * outranks `:checked` at 0,2,0, so it must step aside from every checked form itself (a checked
+ * box under the pointer had lost its accent to `--v2-fill`). As a row's leading box it sits
  * (line − box) / 2 below the first text line's top (§9.2) and never grows the line. Disabled is
  * the one number (§9.30). A check row disabled as a dependent row puts the .4 on its content –
  * not on the row, whose hairline is structure (§0) – and the box inside that content stays at 1
@@ -8063,7 +8065,12 @@
     border-color 120ms var(--zen-ease);
 }
 @media (hover: hover) {
-  .zen-v2-checkbox:hover:not(:disabled) {
+  .zen-v2-checkbox:hover:not(
+      :disabled,
+      :checked,
+      [aria-checked='true'],
+      [aria-checked='true'] > *
+    ) {
     background: var(--v2-fill);
   }
 }
