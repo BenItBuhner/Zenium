@@ -45,6 +45,7 @@ import {
   type RawCpuReading,
   type RawMemoryReading
 } from '@core/extensions/api/systemInfo'
+import { TAB_CAPTURE_PERMISSION, type CaptureInfo } from '@core/extensions/api/tabCapture'
 import { FILE_URL_WITHOUT_ACCESS_ERROR, isFileNavigation } from '@core/extensions/api/tabs'
 import { normalizeInjection, type UserScriptInjection } from '@core/extensions/api/userScripts'
 import type { ExtensionRecord } from '@core/extensions/registry'
@@ -847,6 +848,17 @@ export class ExtensionApi {
           this.host.browser.tabs.createTab({ url, active: false }, this.host.window())
           return this.tabs.peekNext()
         }
+        break
+      case 'tabCapture':
+        // The WebView has no tab capture to source a stream from (no `getDisplayMedia`, no tab
+        // media source for `getUserMedia`: compat round 9's AHA Music), so `capture` and
+        // `getMediaStreamId` stay unimplemented below; `getCapturedTabs` answers as Chrome does
+        // when nothing is being captured, the empty list, for an extension that declared the
+        // permission. Mobile simulator asks it on every action click and reads `.some` off the
+        // answer before it opens its simulator page (round 9, row 8); the rejection left it
+        // with `undefined` and a TypeError in its worker instead of the page.
+        if (method === 'getCapturedTabs' && this.holdsPermission(ext, TAB_CAPTURE_PERMISSION))
+          return [] satisfies CaptureInfo[]
         break
     }
     throw new Error(`chrome.${ns}.${method} ${NOT_IMPLEMENTED}`)

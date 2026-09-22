@@ -2249,6 +2249,35 @@ describe('AndroidExtensionRuntime: chrome.system.cpu and chrome.system.memory', 
   })
 })
 
+describe('AndroidExtensionRuntime: chrome.tabCapture on a WebView that captures nothing', () => {
+  it("answers getCapturedTabs with Chrome's empty list for an extension holding the permission", async () => {
+    // Mobile simulator's action click: `getCapturedTabs(tabs => tabs.some(...))` before it opens
+    // its simulator page; a rejection hands the callback `undefined` and its `.some` throws.
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['tabCapture', 'storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: true,
+      result: []
+    })
+    // The capture itself has no source on the WebView: still the runtime's own refusal.
+    expect(await call(h, 'bg1', 'tabCapture', 'getMediaStreamId', [{}])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getMediaStreamId is not implemented')
+    })
+  })
+
+  it('keeps refusing an extension without the permission', async () => {
+    const h = harness()
+    await h.runtime.attach(record(h, {}, manifest({ permissions: ['storage'] })))
+    backgroundUp(h, 'bg1')
+    expect(await call(h, 'bg1', 'tabCapture', 'getCapturedTabs', [])).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('chrome.tabCapture.getCapturedTabs is not implemented')
+    })
+  })
+})
+
 describe('AndroidExtensionRuntime: the bridge under a message storm', () => {
   it('drops the bridge token Kotlin left in the frame text, and sends to endpoints one way', async () => {
     const h = harness()
