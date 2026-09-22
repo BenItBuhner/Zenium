@@ -20,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.ImageViewCompat
 import androidx.core.widget.TextViewCompat
 import com.google.android.material.bottomsheet.BottomSheetBehavior
@@ -34,8 +35,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
  *
  * The composition is the chassis's (`.zen-sheet` and `PhoneSheet`'s block pose in `main.css`),
  * number for number: the panel (`--v2-panel`) edge to edge at the bottom with its 12 top radii
- * and the 1 px hairline (`--v2-border`), under the navigation bar with the bar's inset as its
- * padding (Material's edge-to-edge sheet, as the chassis pads `max(8, inset)`); the 20 grip strip
+ * and the 1 px hairline (`--v2-border`), running under the navigation bar with `max(8, inset)`
+ * under its footer as the chassis's `BottomSheet` pads (Material's edge-to-edge sheet, its own
+ * inset padding off so the two do not stack); the 20 grip strip
  * – the 32 × 4 grabber 8 from the top in the text at 25 % (`.zen-sheet-handle`), its 96 × 44 hit
  * overlapping the block by 24 as `.zen-sheet-handle-hit` does, a tap on it Wait (one detent,
  * nothing to resize); the title block padded 16 with the site as its identity – its favicon at
@@ -70,7 +72,7 @@ class UnresponsivePrompt(
 
     fun show() {
         if (dialog != null) return
-        val dialog = BottomSheetDialog(context, if (dark) R.style.ThemeOverlay_Zen_Sheet_Dark else R.style.ThemeOverlay_Zen_Sheet)
+        val dialog = BottomSheetDialog(context, if (dark) R.style.ThemeOverlay_Zen_Prompt_Dark else R.style.ThemeOverlay_Zen_Prompt)
         dialog.setContentView(content(dialog))
         // The window's name for TalkBack is the site's, as the sheet's title is.
         dialog.setTitle(site)
@@ -108,15 +110,20 @@ class UnresponsivePrompt(
     }
 
     /**
-     * The column: grip, block, footer; the footer's 8 under the buttons is the column's bottom
-     * padding, and the navigation bar's inset is the sheet's own (`paddingBottomSystemWindowInsets`
-     * in the sheet's style), the panel running under the bar as the chassis's does.
+     * The column: grip, block, footer; under the buttons the footer's 8 and then, as the chassis's
+     * `BottomSheet` pads its sheet, `max(8, inset)` for the navigation bar the panel runs under
+     * (the sheet's own inset padding is off in `Widget.Zen.Prompt`, so the two do not stack).
      */
     private fun content(dialog: BottomSheetDialog): View {
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = edge()
-            setPadding(0, 0, 0, dp(8))
+            setPadding(0, 0, 0, dp(8) + dp(8))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(column) { view, insets ->
+            val bar = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()).bottom
+            view.setPadding(0, 0, 0, dp(8) + maxOf(dp(8), bar))
+            insets
         }
         column.addView(grip {
             answered = true

@@ -52,6 +52,22 @@
         <item name="cornerSizeBottomRight">0dp</item>
     </style>
 
+    <!-- The page-unresponsive prompt (UnresponsivePrompt, §9.23's native imitation): the same sheet,
+         but the navigation bar's inset is the content's to pad – the chassis's BottomSheet pads
+         max(8, inset) under its footer, and Material's own inset padding would sit under that. -->
+    <style name="ThemeOverlay.Zen.Prompt" parent="ThemeOverlay.Zen.Sheet">
+        <item name="bottomSheetStyle">@style/Widget.Zen.Prompt</item>
+    </style>
+    <style name="ThemeOverlay.Zen.Prompt.Dark" parent="ThemeOverlay.Zen.Sheet.Dark">
+        <item name="bottomSheetStyle">@style/Widget.Zen.Prompt.Dark</item>
+    </style>
+    <style name="Widget.Zen.Prompt" parent="Widget.Zen.Sheet">
+        <item name="paddingBottomSystemWindowInsets">false</item>
+    </style>
+    <style name="Widget.Zen.Prompt.Dark" parent="Widget.Zen.Sheet.Dark">
+        <item name="paddingBottomSystemWindowInsets">false</item>
+    </style>
+
     <!-- The page-unresponsive prompt's window: the sheet and its scrim fade 120 ms in and out
          together, the one motion the v2 draft lets the native imitation take (§9.23) in place of
          the chassis's spring; the system's Remove animations shortens it to nothing. -->
