@@ -14,6 +14,7 @@ import { DEFAULT_PAGE_ENVIRONMENT } from '@shared/pageControls'
 import { DEFAULT_SEARCH_ENGINES } from '@shared/search'
 import type { TranslateUIState } from '@shared/translate'
 import { emptyPrivacyStatus } from '@shared/privacy'
+import { emptySiteDataStatus } from '@shared/siteData'
 import { emptyUpdateStatus } from '@shared/updates'
 
 /*
@@ -322,6 +323,7 @@ function desktopState(): UIState {
       siteExceptions: ['https://news.example']
     },
     privacy: { ...emptyPrivacyStatus(), httpsOnlyExceptions: ['intranet.example'] },
+    siteData: emptySiteDataStatus(),
     translate: TRANSLATE,
     pageEnvironment: DEFAULT_PAGE_ENVIRONMENT,
     spellcheck: {
@@ -490,8 +492,10 @@ const INVENTORY: Record<string, readonly string[]> = {
     'Add a site',
     // Clear Browsing Data (#135)
     'Clear browsing data',
-    // Cookies, HTTPS-only, secure DNS, signals (#156)
-    'Third-party cookies',
+    // Cookies, HTTPS-only, secure DNS, signals (#156). The Third-party cookies row folded into
+    // Cookies and site data's default radio on #322 (the lead's ruling on Q3): the mode is the
+    // "Default behaviour" choice there and the private-only switch under it.
+    'Only in private windows',
     'HTTPS-only mode',
     'intranet.example',
     'Use secure DNS',
@@ -643,7 +647,8 @@ const HEADINGS: Record<string, readonly string[]> = {
     'Your filters',
     'Sites without blocking',
     'Clear browsing data',
-    'Third-party cookies',
+    // #156's Third-party cookies heading folded into #310's Cookies and site data (#322, Q3).
+    'Cookies and site data',
     'Site settings',
     'Content',
     'Additional permissions',

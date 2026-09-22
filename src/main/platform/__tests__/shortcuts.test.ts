@@ -6,6 +6,42 @@ import type { ShortcutRequest } from '../../../core/platform'
 
 const written: Array<{ path: string; op: string; options: Record<string, unknown> }> = []
 
+/**
+ * The host's subprocesses, without spawning: `update-desktop-database` answers at once (the
+ * runner need not have it), and a `touch` behaves like a slow `touch(1)` – 30 ms after the call
+ * it creates the path when it is gone and bumps its mtime. That is the production race the
+ * macOS bundle test guards against: a fire-and-forget `touch` outliving `pin()` and re-creating
+ * a bundle an `unpin()` had already removed.
+ */
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  const fs = await import('node:fs')
+  const execFile: typeof actual.execFile = ((
+    file: string,
+    args: readonly string[],
+    _options: unknown,
+    callback?: (error: Error | null, stdout: string, stderr: string) => void
+  ) => {
+    if (file === 'touch') {
+      setTimeout(() => {
+        try {
+          for (const path of args) {
+            fs.closeSync(fs.openSync(path, 'a'))
+            fs.utimesSync(path, new Date(), new Date())
+          }
+        } catch {
+          // A path whose folder is gone: `touch(1)` would fail the same way.
+        }
+        callback?.(null, '', '')
+      }, 30)
+    } else {
+      callback?.(null, '', '')
+    }
+    return {}
+  }) as unknown as typeof actual.execFile
+  return { ...actual, execFile }
+})
+
 /** A PNG-shaped buffer the fake renderer answers with; the size is encoded so tests can see it. */
 const png = (size: number): Uint8Array =>
   new Uint8Array([0x89, 0x50, 0x4e, 0x47, size >> 8, size & 0xff])
@@ -271,5 +307,29 @@ describe('ElectronShortcuts on macOS', () => {
     expect(manifest.directories).toEqual([bundle])
     await host.unpin(REQUEST.id)
     await expectGone(bundle)
+  })
+
+  /**
+   * The bundle's mtime bump used to be a fire-and-forget `touch` subprocess: an `unpin()` right
+   * after `pin()` removed the bundle, then `touch` ran and re-created the path as an empty FILE
+   * (`touch(1)` creates what is missing) – a stray `<App>.app` under ~/Applications/Zenium Apps,
+   * and this file's macOS test failing on CI when the spawn lost the race. With the mocked slow
+   * `touch` above the old code fails every round; `pin()` must return with nothing pending, so
+   * the removal is final. Twenty rounds, as the race was seen on some of them, not all.
+   */
+  it('leaves nothing behind when an uninstall follows the install at once', async () => {
+    const host = h.host('darwin')
+    const bundle = join(h.paths.userApplications, LAUNCHER_FOLDER, 'Sketch Studio.app')
+    for (let round = 0; round < 20; round++) {
+      expect(await host.pin(REQUEST)).toBe(true)
+      expect(statSync(bundle).isDirectory()).toBe(true)
+      await host.unpin(REQUEST.id)
+      // No poll: nothing is pending after `pin()`, so the path is gone the moment `unpin()`
+      // returns – and stays gone past the time a straggling subprocess would re-create it.
+      expect(existsSync(bundle)).toBe(false)
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      expect(existsSync(bundle)).toBe(false)
+    }
+    expect(h.confirmed).toHaveLength(20)
   })
 })

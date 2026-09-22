@@ -15,6 +15,15 @@ import { cmd, run } from '@renderer/lib/api'
 import { manageExtension } from '@renderer/lib/extensions/manage'
 import { extensionPageChrome, extensionPageLine } from '@renderer/lib/extensions/pages'
 import { POPOVER_WIDTH } from '@renderer/lib/portals'
+import {
+  SITE_DATA_TEXT,
+  applySiteDataChoice,
+  siteDataChoice,
+  siteDataChoiceOptions,
+  siteDataDecider,
+  siteDataOverviewLine,
+  type SiteDataChoice
+} from '@renderer/lib/siteDataUi'
 import { dismissSiteInfo, refreshSiteInfo, siteInfoStore } from '@renderer/lib/siteInfo'
 import {
   blockingSummary,
@@ -137,6 +146,16 @@ export function SiteInfoPopover({
         })
       refreshSiteInfo()
     })
+  // The site onto the list picked, or off its list (Chrome's "Add" of the cookies page, from the
+  // page itself): the engine says why when it refused (a list at its thousand); the reading is
+  // taken again either way, the row and the cookies under it with it.
+  const setSiteData = (choice: SiteDataChoice): Promise<void> =>
+    act(async () => {
+      if (!info) return
+      const problem = await applySiteDataChoice(info.siteData, tab.url, choice)
+      if (problem) pushToast(problem, 'error')
+      refreshSiteInfo()
+    })
   const reload = (): void => {
     run('tab.reload', { tabId: tab.id })
     onDismiss()
@@ -233,6 +252,8 @@ export function SiteInfoPopover({
                       />
                       <ListRow
                         label="Cookies and site data"
+                        // A list's word for the site is the row's second line (§9.2).
+                        description={info ? siteDataOverviewLine(info.siteData) : undefined}
                         trailing={
                           <RowValue muted={!info || cookies.length === 0}>
                             {info ? cookiesSummary(info) : loading ? 'Reading…' : '—'}
@@ -309,8 +330,10 @@ export function SiteInfoPopover({
               info={info}
               loading={loading}
               busy={busy}
+              nextLaunch={state.siteData.clearsAtNextLaunch}
               onBack={() => go('overview')}
               onClear={() => go('clear-cookies')}
+              onSiteData={(choice) => void setSiteData(choice)}
             />
           )}
 
@@ -466,15 +489,20 @@ function CookiesLevel({
   info,
   loading,
   busy,
+  nextLaunch,
   onBack,
-  onClear
+  onClear,
+  onSiteData
 }: {
   id: string
   info: SiteInfoSnapshot | null
   loading: boolean
   busy: boolean
+  /** The host clears on exit at its next launch (Android): the clear-on-exit option says so. */
+  nextLaunch: boolean
   onBack: () => void
   onClear: () => void
+  onSiteData: (choice: SiteDataChoice) => void
 }): JSX.Element {
   const [scrolled, setScrolled] = useState(false)
   const cookies = info?.cookies.items ?? []
@@ -486,6 +514,32 @@ function CookiesLevel({
       <BarHeader id={id} title="Cookies and site data" onBack={onBack} scrolled={scrolled} />
       <Body onScrolled={setScrolled}>
         {!info && loading && <EmptyLine>Reading…</EmptyLine>}
+        {info && (
+          <>
+            {/*
+              The per-site policy first (Chrome's cookies page, reached from page info): the
+              choice as a menulist trailing the row (§9.13, §9.21), the entry that decides – or
+              the default the page falls to – as the row's description. A page with no site to
+              add keeps the control at §9.30's .4.
+            */}
+            <ListRow
+              label={SITE_DATA_TEXT.site.label}
+              description={siteDataDecider(info.siteData)}
+              control
+              trailing={
+                <Menulist<SiteDataChoice>
+                  value={siteDataChoice(info.siteData)}
+                  options={siteDataChoiceOptions(info.siteData, nextLaunch)}
+                  label={SITE_DATA_TEXT.site.picker}
+                  disabled={!info.siteData.addable && !info.siteData.pattern}
+                  readOnly={busy}
+                  onChange={onSiteData}
+                />
+              }
+            />
+            <Separator />
+          </>
+        )}
         {empty && <EmptyLine>This site has not stored any cookies or data</EmptyLine>}
         {cookies.length > 0 && (
           <>
