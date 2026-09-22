@@ -27,9 +27,6 @@ name: Android offline and hung page demo
 # driver, never when the driver failed.
 on:
   workflow_dispatch:
-  # TEMPORARY: the one authorised run on the consumer head (W4-5); off again in the final head.
-  push:
-    branches: [cursor/android-offline-hung-67ce]
 
 permissions:
   contents: read
