@@ -13,6 +13,7 @@ vi.mock('@renderer/lib/api', () => ({
 import { run } from '@renderer/lib/api'
 import { viewportStore } from '@renderer/lib/formFactor'
 import {
+  readerTranslateError,
   readerTranslateProgress,
   readerTranslateTarget,
   readerTranslateWorking
@@ -107,6 +108,63 @@ describe('the rows’ rules', () => {
     ).toBeNull()
   })
 
+  it('the article’s own language is never proposed once known: the next preferred language, else English, else the source itself when nothing else is reached', () => {
+    // The reader's own translation named the source (a failure told it, or an earlier run).
+    expect(
+      readerTranslateTarget(
+        translation({ status: 'error', source: 'fr', target: null }),
+        null,
+        TRANSLATE
+      )
+    ).toBe('en')
+    // The page translate's detection stands in before the reader looked.
+    expect(readerTranslateTarget(null, null, TRANSLATE, 'fr')).toBe('en')
+    expect(readerTranslateTarget(null, null, TRANSLATE, 'de')).toBe('fr')
+    // English is the pivot when no preferred language but the source is reached.
+    expect(
+      readerTranslateTarget(
+        null,
+        null,
+        {
+          ...TRANSLATE,
+          preferences: { ...TRANSLATE.preferences, preferred: ['fr'] }
+        },
+        'fr'
+      )
+    ).toBe('en')
+    // Only the source is reached: it stays the proposal rather than nothing.
+    expect(
+      readerTranslateTarget(
+        null,
+        null,
+        {
+          languages: ['fr'],
+          preferences: { ...TRANSLATE.preferences, preferred: ['fr'] }
+        },
+        'fr'
+      )
+    ).toBe('fr')
+    // The user's pick and the translation's target still win over the rule.
+    expect(readerTranslateTarget(null, 'fr', TRANSLATE, 'fr')).toBe('fr')
+    expect(
+      readerTranslateTarget(translation({ target: 'fr', source: 'fr' }), null, TRANSLATE)
+    ).toBe('fr')
+  })
+
+  it('the failure line: the core’s "already in <code>" names the language, another reason reads as a sentence, none reads "Translation failed."', () => {
+    expect(readerTranslateError('This article is already in en.')).toBe(
+      'This article is already in English.'
+    )
+    expect(readerTranslateError('This article is already in pt-BR')).toBe(
+      'This article is already in Portuguese (Brazil).'
+    )
+    expect(readerTranslateError('no model for German to Japanese')).toBe(
+      'No model for German to Japanese.'
+    )
+    expect(readerTranslateError(null)).toBe('Translation failed.')
+    expect(readerTranslateError('  ')).toBe('Translation failed.')
+  })
+
   it('at work while the language is told, the model arrives or the blocks translate; the progress line says which', () => {
     expect(readerTranslateWorking(null)).toBe(false)
     expect(readerTranslateWorking(translation({ status: 'detecting' }))).toBe(true)
@@ -150,6 +208,38 @@ describe('the Translate rows', () => {
     expect(el.querySelector('[data-reader-pref="showOriginal"]')).toBeNull()
     act(() => translate.click())
     expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'fr' })
+  })
+
+  it('an article the page translate found in the first preferred language: the menulist on the next one, so the press does not answer "already in"', () => {
+    viewportStore.set({ ...viewportStore.get(), formFactor: 'desktop', coarse: false })
+    const el = render(
+      <TranslateRows
+        tabId="t1"
+        translate={{
+          ...TRANSLATE,
+          tabs: {
+            t1: {
+              tabId: 't1',
+              status: 'offer',
+              source: 'fr',
+              confidence: 0.9,
+              target: 'en',
+              progress: null,
+              download: null,
+              error: null,
+              auto: true,
+              dismissed: true
+            }
+          }
+        }}
+        translation={null}
+      />
+    )
+    expect(el.querySelector<HTMLButtonElement>('[aria-haspopup="listbox"]')!.textContent).toContain(
+      'English'
+    )
+    act(() => row(el, 'translate').click())
+    expect(run).toHaveBeenCalledWith('translate.reader', { tabId: 't1', target: 'en' })
   })
 
   it('at work: a busy row with the progress as its second line, a press doing nothing', () => {

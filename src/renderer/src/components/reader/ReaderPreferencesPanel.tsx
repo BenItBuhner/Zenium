@@ -26,11 +26,12 @@ import { useBackSurface } from '@renderer/lib/back'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
+  readerTranslateError,
   readerTranslateProgress,
   readerTranslateTarget,
   readerTranslateWorking
 } from '@renderer/lib/readerTranslate'
-import { errorCaption, languageOptions } from '@renderer/lib/translate'
+import { languageOptions } from '@renderer/lib/translate'
 import {
   closeReaderPreferences,
   readerPreferencesChanged,
@@ -296,7 +297,10 @@ interface TranslateRowsProps {
 export function TranslateRows({ tabId, translate, translation }: TranslateRowsProps): JSX.Element {
   const [chosen, setChosen] = useState<string | null>(null)
   const options = languageOptions(translate.languages)
-  const target = readerTranslateTarget(translation, chosen, translate)
+  // The page translate's detection stands in for the article's language until the reader's own
+  // translation names it: the default target skips it (the core's `defaultTarget` rule).
+  const pageSource = translate.tabs[tabId]?.source ?? null
+  const target = readerTranslateTarget(translation, chosen, translate, pageSource)
   const working = readerTranslateWorking(translation)
   const translated = translation?.status === 'translated'
   const pick = (code: string): void => {
@@ -306,8 +310,9 @@ export function TranslateRows({ tabId, translate, translation }: TranslateRowsPr
   let description: ReactNode
   if (translation && working) description = readerTranslateProgress(translation)
   else if (translation?.status === 'error') {
-    const caption = errorCaption(translation.error) ?? 'Translation failed.'
-    description = <span className="zen-settings-danger">{caption}</span>
+    description = (
+      <span className="zen-settings-danger">{readerTranslateError(translation.error)}</span>
+    )
   }
   return (
     <>

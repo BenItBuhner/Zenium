@@ -73,6 +73,13 @@ import java.io.File
  * languages English (United States) then German so the list has a row to move; the scheme from
  * the `theme` argument, light for the workflow's run so the flip goes to dark and back). Every
  * control pressed inside a sheet is a real injected finger with an assertion (#198's rule).
+ *
+ * The tree is read past UiAutomation's cache wherever a claim rests on it ([awaitRow],
+ * [fingerWhere], [poll]: the cache dropped and a frame asked of the chrome each round, the
+ * harness's remedy above [dropTreeCache]): the first run read Look and Feel 1.2 s after its
+ * drill-in and found no row while the screen showed them all, and every section after it went
+ * the same way. A text field is found by its hint ([findField]): the WebView keeps a field's
+ * name there, not in its text.
  */
 @RunWith(AndroidJUnit4::class)
 class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json", MEDIA_PREFIX, "fonts-languages-demo") {
@@ -98,6 +105,11 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
     /** The scheme from the `theme` argument alone: this profile names no locked page. */
     override fun patchState(json: String): String = patchTheme(json)
+
+    /** The harness's notes (how long the tree took to list a control) go into the findings too. */
+    override fun noteLine(line: String) {
+        if (::findings.isInitialized) finding(line) else super.noteLine(line)
+    }
 
     override fun warmUp() {
         findings = File(out, FINDINGS)
@@ -161,16 +173,40 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     private fun Finger.tap(at: PointF) = tap(at.x, at.y)
 
     /**
-     * Where a finger lands on the node reading `label` (exactly, or with a description running on
-     * after it when `prefix`, as a Settings row's text does), found now – before a scene's clock
-     * starts – and settled ([steadyBounds]); null, with a finding, when nothing on screen reads
-     * it or no part of it is inside the touchable window.
+     * A finger on the node reading `label` ([fingerOn]: read past the cache), then up to
+     * `timeoutMs` for `took`, the step's claim named by `effect` – the harness's
+     * [touchTapLabelExpecting] with the tree read fresh on both sides. A miss is a [touchFault]
+     * either way; false when nothing on screen reads `label`.
+     */
+    private fun pressExpecting(label: String, effect: String, timeoutMs: Long = 6_000, prefix: Boolean = false, took: () -> Boolean): Boolean {
+        val at = fingerOn(label, prefix) ?: run {
+            touchFault("nothing on screen reads '$label' to touch (for: $effect)")
+            return false
+        }
+        Finger().tap(at)
+        if (poll(timeoutMs, took)) {
+            Log.i(tag, "the touch on '$label' took: $effect")
+            return true
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /**
+     * Where a finger lands on the node reading `label` (exactly, or with a description or value
+     * running on after it when `prefix`, as a Settings row's text does – a space, a line, or the
+     * comma a value row's name puts before its value: "Colour scheme, Light"), found now – before
+     * a scene's clock starts – past the cache ([awaitFresh]) and settled ([steadyBounds]); null,
+     * with a finding, when nothing on screen reads it or no part of it is inside the touchable
+     * window.
      */
     private fun fingerOn(label: String, prefix: Boolean = false, timeoutMs: Long = 8_000): PointF? =
-        fingerWhere(label, timeoutMs) { it == label || (prefix && (it.startsWith("$label ") || it.startsWith("$label\n"))) }
+        fingerWhere(label, timeoutMs) {
+            it == label || (prefix && (it.startsWith("$label ") || it.startsWith("$label\n") || it.startsWith("$label,")))
+        }
 
     private fun fingerWhere(what: String, timeoutMs: Long = 8_000, matches: (String) -> Boolean): PointF? {
-        val node = awaitNode(timeoutMs, matches) ?: run {
+        val node = awaitFresh(timeoutMs, "'$what'", matches) ?: run {
             finding("  nothing on screen reads '$what'")
             return null
         }
@@ -181,6 +217,56 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         return touchPoint(bounds) ?: run {
             finding("  no part of '$what' ($bounds) is inside the touchable window")
             null
+        }
+    }
+
+    /**
+     * Where a finger lands on the text field named `label` ([findField]: the WebView keeps a
+     * field's name in the EditText's hint), read past the cache for up to `timeoutMs`; when the
+     * tree never lists it, the box the chrome's own document gives for `selector`. Null, with a
+     * finding, when neither has it.
+     */
+    private fun fieldPoint(label: String, selector: String, timeoutMs: Long = 8_000): PointF? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            dropTreeCache()
+            val node = findField(label)
+            if (node != null) {
+                val point = steadyBounds(node)?.let { touchPoint(it) }
+                if (point != null) return point
+            }
+            nudgeFrame()
+            SystemClock.sleep(250)
+        }
+        val box = chromeRect(selector) ?: run {
+            finding("  no field named '$label' in the tree or the chrome's document")
+            return null
+        }
+        finding("  the tree lists no field named '$label'; the finger goes to the chrome's box for it, $box")
+        return touchPoint(box)
+    }
+
+    /**
+     * The Settings row starting with `label` scrolled into view ([revealRow]), waited for past
+     * UiAutomation's cache first: the tree trails a section's drill-in by seconds on the software
+     * GPU, so each round drops the cache and asks the chrome for a frame ([freshNodes],
+     * [nudgeFrame]) for up to `timeoutMs`. Null, with a finding naming what the chrome's document
+     * holds instead, when the tree never listed the row.
+     */
+    private fun awaitRow(label: String, timeoutMs: Long = ROW_WAIT_MS): Rect? {
+        val start = SystemClock.uptimeMillis()
+        while (true) {
+            if (freshNodes { it.startsWith(label) }.isNotEmpty()) {
+                val took = SystemClock.uptimeMillis() - start
+                if (took > 1_000) finding("  (the tree listed the $label row after $took ms)")
+                return revealRow(label)
+            }
+            if (SystemClock.uptimeMillis() - start >= timeoutMs) {
+                finding("  (the tree did not list the $label row within $timeoutMs ms; the chrome's rows: ${domRows()})")
+                return null
+            }
+            nudgeFrame()
+            SystemClock.sleep(250)
         }
     }
 
@@ -269,7 +355,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
      * `measured`. True once the row reads `to`.
      */
     private fun colourScheme(from: String, to: String, measured: Boolean): Boolean {
-        if (revealRow(COLOR_SCHEME_ROW) == null) {
+        if (awaitRow(COLOR_SCHEME_ROW) == null) {
             check("Look and Feel lists the $COLOR_SCHEME_ROW row", false)
             return false
         }
@@ -326,7 +412,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("Look and Feel opens for the fonts group", false)
             return
         }
-        if (revealRow(FONT_SIZE_ROW) == null) {
+        if (awaitRow(FONT_SIZE_ROW) == null) {
             check("Look and Feel carries the Customise fonts group with its Font size row", false)
             ensureChromeClear()
             return
@@ -360,7 +446,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         snap("customise-fonts-size-20")
 
         // Minimum font size: to 12 px. The article's 11 px small print is lifted to 12.
-        revealRow(MINIMUM_FONT_SIZE_ROW)
+        awaitRow(MINIMUM_FONT_SIZE_ROW)
         SystemClock.sleep(600)
         val minimumTook = dragSlider("fonts-minimum-size", MINIMUM_FONT_SIZE_MAX_INDEX, MINIMUM_FONT_SIZE_TARGET_INDEX, "minimum-font-size-slider-drag") {
             fonts().optInt("minimumSize") == 12
@@ -372,7 +458,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Standard font: the action row opens the phone's picker sheet (each face drawn in
         // itself), Cursive under a finger sets the family and closes the sheet.
-        revealRow(STANDARD_FONT_ROW)
+        awaitRow(STANDARD_FONT_ROW)
         SystemClock.sleep(600)
         val familyRow = fingerOn(STANDARD_FONT_ROW, prefix = true)
         if (familyRow != null) {
@@ -407,7 +493,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Off the defaults: the Reset row is listed; the preview follows the committed values.
         SystemClock.sleep(800)
-        val reset = revealRow(RESET_ROW)
+        val reset = awaitRow(RESET_ROW)
         val after = groupRows("fonts")
         finding("  the group now: $after; preview ${previewMetrics()}")
         check("the Reset fonts row appears once anything stands off the defaults", reset != null && "fonts-reset" in after)
@@ -475,9 +561,9 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         // Reset fonts: the action row under a finger; the open article back at 16 px, no floor,
         // the platform's face – in place.
         var reset = false
-        if (revealRow(RESET_ROW) != null) {
+        if (awaitRow(RESET_ROW) != null) {
             SystemClock.sleep(600)
-            reset = touchTapLabelExpecting(RESET_ROW, "settings.fonts back at the defaults", timeoutMs = 6_000, prefix = true) {
+            reset = pressExpecting(RESET_ROW, "settings.fonts back at the defaults", timeoutMs = 6_000, prefix = true) {
                 fonts().let { it.optInt("size") == 16 && it.optInt("minimumSize") == 0 && it.isNull("standard") }
             }
             val behind = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
@@ -513,7 +599,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("the app menu's Settings opens Languages", false)
             return
         }
-        if (revealRow(ADD_LANGUAGE_ROW) == null) {
+        if (awaitRow(ADD_LANGUAGE_ROW) == null) {
             check("Languages carries the Preferred languages group with its Add language row", false)
             ensureChromeClear()
             return
@@ -567,20 +653,23 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Add language: the picker sheet with its filter field; `basq` typed narrows the list to
         // Basque; Basque under a finger adds it and closes the sheet.
-        revealRow(ADD_LANGUAGE_ROW)
+        awaitRow(ADD_LANGUAGE_ROW)
         SystemClock.sleep(600)
         val add = fingerOn(ADD_LANGUAGE_ROW, prefix = true)
         if (add != null) {
-            val listed = { findNode { it == FILTER_LABEL } != null && findNode { it.startsWith("Afrikaans") } != null }
+            // The sheet is up once the chrome's document has the filter field and the tree lists
+            // the catalogue's first row (the field itself is an EditText named by its hint, which
+            // the label reads never see: [findField]).
+            val listed = { chromeHas(FILTER_SELECTOR) && findNode { it.startsWith("Afrikaans") } != null }
             val opened = scene("add-language-picker-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = listed) { Finger().tap(add) }
             check("a finger on Add language opens the picker sheet with the filter field pinned over the list", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val all = pickerCount()
-                finding("  the picker lists $all languages; the filter field reads \"${filterValue()}\"")
+                finding("  the picker lists $all languages; the filter field reads \"${filterValue()}\"; the tree's field: ${describeNode(findField(FILTER_LABEL))}")
                 snap("add-language-picker")
                 beat()
-                val field = fingerOn(FILTER_LABEL)
+                val field = fieldPoint(FILTER_LABEL, FILTER_SELECTOR)
                 if (field != null) {
                     Finger().tap(field)
                     val focused = poll(4_000) { chromeString("document.activeElement&&document.activeElement.getAttribute('aria-label')||''") == FILTER_LABEL }
@@ -598,11 +687,11 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                         back()
                         awaitIme(shown = false, timeoutMs = 6_000)
                         SystemClock.sleep(800)
-                        check("the back with the keyboard up puts the keyboard away and leaves the sheet standing", !imeShown() && findNode { it == FILTER_LABEL } != null)
+                        check("the back with the keyboard up puts the keyboard away and leaves the sheet standing", !imeShown() && chromeHas(FILTER_SELECTOR) && filterValue() == "basq")
                     }
                     val basque = fingerWhere("Basque") { it == "Basque" || it.startsWith("Basque ") || it.startsWith("Basque\n") }
                     if (basque != null) {
-                        val added = { languages().contains("eu") && findNode { it == FILTER_LABEL } == null }
+                        val added = { languages().contains("eu") && !chromeHas(FILTER_SELECTOR) }
                         val took = scene("add-language-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = added) { Finger().tap(basque) }
                         finding("  after Basque: languages ${languages()}; rows ${groupRows("preferred")}")
                         check("a finger on Basque adds it (settings.languages de, en-US, eu) and closes the picker (§9.13)", took && groupRows("preferred") == listOf("languages-preferred:de", "languages-preferred:en-US", "languages-preferred:eu", "languages-add"))
@@ -677,10 +766,13 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         }
         val t0 = SystemClock.uptimeMillis()
         Finger().tap(translate)
-        val started = poll(10_000) { readerStatus() in WORKING || readerStatus() == "translated" }
+        // The press reached the core once the tab has a reader translation state at all (the
+        // language told and the model fetched can be over before a poll sees them working).
+        val started = poll(10_000) { readerStatus().isNotEmpty() }
         finding("  real touch on Translate: status ${readerStatus()} after ${SystemClock.uptimeMillis() - t0} ms")
-        if (!started) touchFault("a touch on Translate did not start the reader translation (status ${readerStatus()})")
+        if (!started) touchFault("a touch on Translate did not reach the core: the tab has no reader translation state")
         var busyShot = false
+        var retried = false
         var seen = ""
         val deadline = SystemClock.uptimeMillis() + 300_000
         while (SystemClock.uptimeMillis() < deadline) {
@@ -697,6 +789,22 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                 finding("  busy: the row reads \"${rowDescription("Translate")}\" (busy=${rowBusy("Translate")})")
                 check("while the core works the Translate row is busy with the progress as its second line (§9.30)", rowBusy("Translate") && rowDescription("Translate").isNotEmpty())
                 snap("reader-prefs-translating")
+            }
+            // The article already in the target (the languages step left English first): the
+            // row's second line says so in the danger ink, Translate into moves past the
+            // article's language now that it is known (`readerTranslateTarget`), and the press is
+            // the retry (§9.33) – taken once, so the section goes on to the translation.
+            if (status == "error" && !retried && state?.optString("error").orEmpty().contains("already in")) {
+                retried = true
+                val moved = poll(6_000) { menulistValue("Translate into").let { it.isNotEmpty() && it != target } }
+                finding("  the core answered \"${rowDescription("Translate")}\"; Translate into now reads ${menulistValue("Translate into")} (past the article's language: $moved)")
+                check("after \"already in\" the Translate into row skips the article's language and the Translate row keeps the press as its retry (§9.33)", moved && rowNode("Translate") != null)
+                snap("reader-prefs-translate-already")
+                val again = fingerWhere("Translate") { it == "Translate" || (it.startsWith("Translate ") && !it.startsWith("Translate into")) }
+                if (again == null) break
+                Finger().tap(again)
+                poll(10_000) { readerStatus() != "error" }
+                continue
             }
             if (status == "translated" || status == "error") break
             SystemClock.sleep(400)
@@ -723,7 +831,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         beat()
 
         // Show original under a finger: the English again, the translation kept; and back.
-        touchTapLabelExpecting("Show original", "the reader shows the article as written", timeoutMs = 8_000, prefix = true) {
+        pressExpecting("Show original", "the reader shows the article as written", timeoutMs = 8_000, prefix = true) {
             readerState()?.optBoolean("showOriginal") == true && readerText() == original
         }
         finding("  after Show original: showOriginal=${readerState()?.optBoolean("showOriginal")}, lang ${articleValue("document.documentElement.lang")}, text \"${readerText().take(60)}…\"")
@@ -731,7 +839,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         SystemClock.sleep(800)
         snap("reader-prefs-show-original")
         beat()
-        touchTapLabelExpecting("Show original", "the reader shows the German again", timeoutMs = 8_000, prefix = true) {
+        pressExpecting("Show original", "the reader shows the German again", timeoutMs = 8_000, prefix = true) {
             readerState()?.optBoolean("showOriginal") == false && readerText() != original
         }
         check("Show original off shows the German again", readerState()?.optBoolean("showOriginal") == false && readerText() != original)
@@ -813,6 +921,15 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     /** The string a script evaluates to in the chrome ("" when it did not answer or was not a string). */
     private fun chromeString(code: String): String = jsonString(chromeJs(code))
 
+    /** Whether the chrome's document has an element matching `selector` (a sheet's field, a row). */
+    private fun chromeHas(selector: String): Boolean =
+        chromeJs("Boolean(document.querySelector(${JSONObject.quote(selector)}))").trim() == "true"
+
+    /** The `data-row` ids the chrome's document holds now, the first thirty, for a finding when the tree has none of them. */
+    private fun domRows(): List<String> = jsonList(chromeString(
+        "JSON.stringify(Array.from(document.querySelectorAll('[data-row]')).slice(0,30).map(function(e){return e.getAttribute('data-row')}))"
+    ))
+
     /** The row ids of the Settings group `groupId`, in order. */
     private fun groupRows(groupId: String): List<String> = jsonList(chromeString(
         "(function(){var g=document.querySelector('[data-group=\"$groupId\"]');if(!g)return '[]';" +
@@ -887,7 +1004,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
     /** What the picker's filter field holds. */
     private fun filterValue(): String = chromeString(
-        "(function(){var f=document.querySelector('.zen-settings-pick-filter input');return f?f.value:''})()"
+        "(function(){var f=document.querySelector(${JSONObject.quote(FILTER_SELECTOR)});return f?f.value:''})()"
     )
 
     /** The open sheet's title-block description (§9.23). */
@@ -927,7 +1044,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     private fun rowNode(label: String): AccessibilityNodeInfo? {
         val reads = { node: AccessibilityNodeInfo ->
             val text = (node.text ?: node.contentDescription)?.toString()
-            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label\n"))
+            text != null && (text == label || text.startsWith("$label ") || text.startsWith("$label\n") || text.startsWith("$label,"))
         }
         return findNodeWhere { node -> node.isClickable && reads(node) } ?: findNodeWhere(reads)
     }
@@ -993,13 +1110,22 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
     // --- findings ------------------------------------------------------------------------------------------
 
+    /**
+     * Up to `timeoutMs` for `condition`, UiAutomation's node cache dropped before each read so a
+     * condition on the tree sees the WebView's tree as it stands rather than as the cache kept
+     * it, and a frame asked of the chrome between reads so Blink serialises its changes meanwhile
+     * (the harness's remedy above [dropTreeCache]). Every claim a scene polls goes through here,
+     * after the measured block, never inside it.
+     */
     private fun poll(timeoutMs: Long, condition: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
-        while (SystemClock.uptimeMillis() < deadline) {
+        while (true) {
+            dropTreeCache()
             if (condition()) return true
+            if (SystemClock.uptimeMillis() >= deadline) return false
+            nudgeFrame()
             SystemClock.sleep(200)
         }
-        return condition()
     }
 
     private fun check(what: String, ok: Boolean) {
@@ -1033,6 +1159,10 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         private const val RESET_ROW = "Reset fonts"
         private const val ADD_LANGUAGE_ROW = "Add language"
         private const val FILTER_LABEL = "Find a language"
+        /** The picker sheet's filter field in the chrome's document (`LanguagePickList.tsx`). */
+        private const val FILTER_SELECTOR = ".zen-settings-pick-filter input"
+        /** How long a Settings row is waited for past the cache after a section's drill-in ([awaitRow]). */
+        private const val ROW_WAIT_MS = 15_000L
         /** The app menu's row that opens the sheet (`core/menus.ts`; U+2026). */
         private const val PREFERENCES_ITEM = "Text Preferences…"
         /** `FONT_SIZE_STEPS` has 25 stops (index 7 is 16 px, index 10 is 20 px); `MINIMUM_FONT_SIZE_STEPS` 17 (index 7 is 12 px). */

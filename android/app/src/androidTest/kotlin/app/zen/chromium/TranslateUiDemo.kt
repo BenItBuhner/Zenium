@@ -216,10 +216,12 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
         // sheet is up by the document (`[data-sheet-layer] [role=dialog]` named by its title,
         // [sheetPresented]), the tree's node second.
         // Preferred languages' Add language row opens the §9.13 picker sheet with its filter field
-        // ("Find a language") pinned over the list – the field is what tells the sheet is up. Its
-        // rows read the language's name and, under it, the native name (`Basque` / `euskara`):
-        // the document finds the row by its label, the tree by the prefix.
-        val addSheet = { sheetPresented("Add language", prefix = true) || findByLabel("Find a language") != null }
+        // ("Find a language") pinned over the list – the field is what tells the sheet is up: the
+        // document's sheet ([sheetPresented]), or the tree's EditText named by its hint
+        // ([findField], never a label read). Its rows read the language's name and, under it, the
+        // native name (`Basque` / `euskara`): the document finds the row by its label, the tree by
+        // the prefix.
+        val addSheet = { sheetPresented("Add language", prefix = true) || findField("Find a language") != null }
         val addOpened = touchSettingsRowExpecting("Add language", "the Add language picker sheet is up (its Find a language field)", timeoutMs = 8_000, took = addSheet) ||
             addSheet() ||
             standIn("Add language") { clickSettingsRow("Add language") && awaitTook(addSheet, 8_000) }
@@ -234,7 +236,7 @@ class TranslateUiDemo : TranslateDemoBase("services-translate-android-ui") {
             took = readsBasque
         )
         if (!basqueRead && !readsBasque()) standIn("Basque") { (clickSettingsRow("Basque") || clickByLabel("Basque")) && awaitTook(readsBasque, 5_000) }
-        val addClosed = awaitSheetGone("Add language", 5_000, prefix = true) && waitForGone("Find a language", 3_000)
+        val addClosed = awaitSheetGone("Add language", 5_000, prefix = true) && awaitTook({ findField("Find a language") == null }, 3_000)
         val basqueRow = awaitSettingsRow("Basque", 8_000) || waitFor("Basque", 3_000) != null
         results.put(
             "addLanguageSheet",
