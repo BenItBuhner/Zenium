@@ -17,8 +17,11 @@ name: Android motion perf
 # before the recorder rolls, since screenrecord composes a second copy of every frame on the
 # emulator's software GPU; the recorded part is the media. The app's startup sweeps (Safe
 # Browsing's, the blocker's) are HELD for the run (`holdBackgroundWork`, #313: the sweep is not
-# the motion under test; the release table's stand-ins keep measuring without it). Dispatch-only:
-# about fifteen minutes. The build, the emulator and the Gradle cache live in
+# the motion under test; the release table's stand-ins keep measuring without it). After the
+# profile, the same boot runs the surfaces' functional drivers (android-motion-perf.sh: the pill's
+# GestureDemo, the OverviewDemo), each under its own directory of the artifact, so a perf PR's one
+# dispatch also shows its surfaces' drivers green. Dispatch-only: about fifteen minutes for the
+# profile, some ten more for the drivers. The build, the emulator and the Gradle cache live in
 # android-emulator-demo.yml.
 on:
   workflow_dispatch:
@@ -35,6 +38,12 @@ on:
           The scene groups the driver measures: all, or a comma list of tab-swipe, overview
         type: string
         default: all
+      functional-drivers:
+        description: >-
+          After the profile, the surfaces' functional drivers on the same boot (the pill's
+          GestureDemo, the OverviewDemo): the perf PR's proof that they stay green
+        type: boolean
+        default: true
       jank-gate:
         description: >-
           The jank budget's gate for the scenes this driver measures: soft reports a scene over
@@ -57,13 +66,12 @@ jobs:
     name: Motion perf (${{ inputs.theme || 'light' }})
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
-      script: .github/scripts/android-gesture-demo.sh
+      script: .github/scripts/android-motion-perf.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.MotionPerfDemo
-        DEMO_DIR=perf-motion
+        PERF_OUT=artifacts/android-motion-perf
+        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_SCENES=${{ inputs.scenes || 'overview' }}
-        DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -71,7 +79,8 @@ jobs:
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}
       artifact-path: artifacts/android-motion-perf/
-      timeout-minutes: 60
+      # The profile's scenes (about fifteen minutes) and then the two functional drivers.
+      timeout-minutes: 90
 
   # One more boot when the emulator itself went away under the driver (adb lost the device), and
   # never when the driver failed.
@@ -81,13 +90,12 @@ jobs:
     if: ${{ failure() && needs.profile.outputs.emulator-died == 'true' }}
     uses: ./.github/workflows/android-emulator-demo.yml
     with:
-      script: .github/scripts/android-gesture-demo.sh
+      script: .github/scripts/android-motion-perf.sh
       script-env: |
-        DEMO_CLASS=app.zen.chromium.MotionPerfDemo
-        DEMO_DIR=perf-motion
+        PERF_OUT=artifacts/android-motion-perf
+        PERF_FUNCTIONAL=${{ format('{0}', inputs.functional-drivers) == 'false' && '0' || '1' }}
         DEMO_THEME=${{ inputs.theme || 'light' }}
         DEMO_SCENES=${{ inputs.scenes || 'overview' }}
-        DEMO_OUT=artifacts/android-motion-perf
         DEMO_VIDEO=android-perf-motion-${{ inputs.theme || 'light' }}.mp4
         DEMO_ARGS=-e holdBackgroundWork true
         DEMO_HANDSHAKE_S=600
@@ -95,4 +103,5 @@ jobs:
       jank-gate: ${{ inputs.jank-gate || 'soft' }}
       artifact-name: android-motion-perf-${{ inputs.theme || 'light' }}-second-boot
       artifact-path: artifacts/android-motion-perf/
-      timeout-minutes: 60
+      # The profile's scenes (about fifteen minutes) and then the two functional drivers.
+      timeout-minutes: 90
