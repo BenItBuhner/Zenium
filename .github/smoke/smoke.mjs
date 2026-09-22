@@ -2067,16 +2067,23 @@ async function scenarioWalkthrough() {
       if (IS_MAC) {
         await s.press('Meta+,')
       } else {
-        // No default Settings shortcut outside macOS: the toolbar "Menu" button (its title carries
-        // the shortcut hint, "Menu (Alt+F)") pops up the native application menu; the hook picks
-        // its "Settings" item.
-        await s.app.evaluate(() => {
-          globalThis.__smoke.autoPickMenuItem = 'Settings'
-        })
-        await s.chrome
-          .locator('button[aria-haspopup="menu"][title^="Menu"]')
-          .first()
-          .click({ timeout: 5000 })
+        // No default Settings shortcut outside macOS: the toolbar "⋯" button opens the in-chrome
+        // application menu – a `.zen-v2-menu` popover of the chrome document under the button
+        // (design language v2 §6 "Menus"), not the OS's menu, so no native-menu hook here – and
+        // its "Settings" row is a menuitem to click. The page under it stays undimmed (§9.20).
+        const button = s.chrome.locator('[data-zen-app-menu-button]').first()
+        await button.click({ timeout: 5000 })
+        const menu = s.chrome.locator('.zen-v2-menu[role="menu"]').first()
+        await menu.waitFor({ state: 'visible', timeout: 5000 })
+        if ((await button.getAttribute('aria-expanded')) !== 'true') {
+          throw new Error('the "⋯" button is not marked aria-expanded while its menu stands')
+        }
+        if (await s.chrome.locator('[data-testid="content-dim"]').first().isVisible()) {
+          throw new Error('the page under the app menu is dimmed (§9.20: no scrim under a menu)')
+        }
+        await s.shot('07b-app-menu')
+        await menu.getByRole('menuitem', { name: 'Settings', exact: true }).click({ timeout: 5000 })
+        await menu.waitFor({ state: 'hidden', timeout: 5000 })
       }
       await page.first().waitFor({ state: 'visible', timeout: 10000 })
       await waitFor(

@@ -1,5 +1,6 @@
 import { Menu, nativeImage, net, type MenuItemConstructorOptions } from 'electron'
 import type { MenuHost, MenuItemTemplate, MenuPopupOptions } from '../../core/platform'
+import { RendererMenuHost } from '../../core/rendererMenus'
 import type { ElectronWindow } from './window'
 
 /** Longest a menu waits for uncached remote favicons before it opens without them. */
@@ -7,13 +8,20 @@ const ICON_FETCH_MS = 400
 const ICON_CACHE_MAX = 200
 
 /**
- * Native popup menus. Zen (Firefox) uses native-styled menus everywhere, and native popups are
- * also the only thing that can draw above the tab views in Electron. On macOS the same
- * templates make the menu bar.
+ * The desktop's menus. The context menus (page, link, selection, tab, the sidebar's rows) are
+ * native popups, as Zen (Firefox) draws them, and the only thing that can draw above the tab
+ * views in Electron. The "⋯" app menu is not: it is Zenium's in-chrome panel on every desktop –
+ * Firefox's, not the OS's menu (design language v2 §6 "Menus") – drawn by the renderer from the
+ * same template through `RendererMenuHost` (`menu.show`, picks back through `menu.click`), over a
+ * picture of the page as the chrome's other popovers stand. On macOS the same templates make
+ * the menu bar.
  */
 export class ElectronMenus implements MenuHost {
   /** Decoded favicons by URL (`null` = could not be fetched or decoded; not retried). */
   private readonly icons = new Map<string, Electron.NativeImage | null>()
+
+  /** The renderer-drawn menus: the app menu (`source: 'app'`), the browser window's and a web app window's alike. */
+  private readonly inChrome = new RendererMenuHost()
 
   /**
    * The menu bar. Only macOS has one worth the name (Windows and Linux windows are frameless
@@ -30,11 +38,17 @@ export class ElectronMenus implements MenuHost {
   }
 
   /**
-   * Opens at the pointer unless the core anchors the menu to a control (the "⋯" button). A menu
-   * opened by the keyboard says so: Chromium then starts with its first item selected, and the
-   * arrow keys and Escape work from there (Escape leaves the keyboard where it was, on the button).
+   * The app menu goes to the renderer, which hangs it from the "⋯" button it finds on screen
+   * (end-aligned under its bar, §9.20) and starts on its first row when the keyboard asked. A
+   * native menu opens at the pointer unless the core anchors it to a control; opened by the
+   * keyboard it says so: Chromium then starts with its first item selected, and the arrow keys
+   * and Escape work from there (Escape leaves the keyboard where it was, on the button).
    */
   popup(items: MenuItemTemplate[], options: MenuPopupOptions): void {
+    if (options.source === 'app') {
+      this.inChrome.popup(items, options)
+      return
+    }
     const host = options.win.host as ElectronWindow | undefined
     if (!host?.alive) return
     const show = (): void => {
@@ -54,6 +68,16 @@ export class ElectronMenus implements MenuHost {
     }
     // Recently closed entries carry remote favicons: fetch what is missing (bounded), then open.
     void Promise.all(pending.map((url) => this.fetchIcon(url))).then(show)
+  }
+
+  /** A pick in the renderer-drawn menu runs the template's handler on this side. */
+  activate(menuId: string, itemId: string): void {
+    this.inChrome.activate(menuId, itemId)
+  }
+
+  /** The renderer closed its menu without a pick. */
+  dismiss(menuId: string): void {
+    this.inChrome.dismiss(menuId)
   }
 
   private toElectron(item: MenuItemTemplate): MenuItemConstructorOptions {

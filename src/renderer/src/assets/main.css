@@ -1452,6 +1452,18 @@
   .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving] {
     animation: zen-pop-out 180ms var(--zen-ease) forwards;
   }
+  /*
+   * Under reduced motion the way out stays a departure: the 120 ms fade in place of v2 §11.3,
+   * the pop's scale dropped, on the panel and its scrim alike (`useLeavingPanels` keeps the
+   * panel until the animation ends). Declared here, `!important`, past the global rule at the
+   * foot that removes every other animation.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
+    .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
+      animation: zen-fade-out 120ms var(--zen-ease) forwards !important;
+    }
+  }
   .zen-frame-dialogs-slot {
     position: absolute;
     inset: 0;
@@ -1509,11 +1521,15 @@
     > :not([data-sheet-layer]) {
     pointer-events: none;
   }
-  /* Reduced motion (§11.3): the spring jumps, and the jump becomes a 120 ms fade in place. */
+  /*
+   * Reduced motion (§11.3): the spring jumps, and the jump becomes a 120 ms fade in place –
+   * opacity alone, `!important` past the global rule at the foot that removes every other
+   * transition (the slot's transform lands on the frame the chassis writes it).
+   */
   @media (prefers-reduced-motion: reduce) {
     .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
     .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
-      transition: opacity 120ms var(--zen-ease);
+      transition: opacity 120ms var(--zen-ease) !important;
     }
   }
   .zen-chrome-layer {
@@ -1538,6 +1554,12 @@
     height: 2px;
     opacity: 0;
     transition: opacity 200ms var(--zen-ease);
+  }
+  /* Its appearance and departure stay an opacity fade under reduced motion, at v2 §11.3's 120 ms. */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-load-progress {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
   }
   .zen-load-progress[data-shown] {
     opacity: 1;
@@ -1584,13 +1606,9 @@
   .zen-ptr-glyph[data-spinning] {
     color: var(--v2-text);
   }
+  /* Still under reduced motion, like every spinner: the global rule at the foot removes the turn. */
   .zen-ptr-glyph[data-spinning] {
     animation: zen-ptr-spin 900ms linear infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .zen-ptr-glyph[data-spinning] {
-      animation: none;
-    }
   }
 
   .zen-space-strip {
@@ -1700,11 +1718,27 @@
     animation: zen-fade-in 160ms var(--zen-ease);
   }
   /*
+   * The desktop panels' appearances (v2 §11.3: they drop the pop's scale and the drop's travel
+   * and keep a fade): under reduced motion `zen-animate-pop`, `zen-animate-in` and
+   * `zen-animate-fade` are one 120 ms opacity fade in place – the frame dialogs, popovers and
+   * menus that pop, the floating sidebar and the overlays that drop in, the passwords panes
+   * that fade. Declared `!important` past the global rule at the foot that removes every other
+   * animation. The desktop program's surfaces: the Android program's rule, for their nod.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-animate-pop,
+    .zen-animate-in,
+    .zen-animate-fade {
+      animation: zen-fade 120ms var(--zen-ease) !important;
+    }
+  }
+  /*
    * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
    * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
    * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
    * chrome mounts it hidden and opens it a frame later; `data-open` off slides it away before
-   * it unmounts. Reduced motion collapses the travel to the global 0.01 ms.
+   * it unmounts. Reduced motion removes the travel (the global rule at the foot): it is there
+   * or it is not.
    */
   .zen-toolbar-reveal {
     transform: translateY(calc(-100% - 8px));
@@ -1726,7 +1760,8 @@
    * first response, the accent turning forwards once the document is coming in (the colour
    * eases over between them). The favicon that takes the ring's place fades back in over
    * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
-   * 60 %, a sleeping row's 69 %). Reduced motion collapses both to the global 0.01 ms.
+   * 60 %, a sleeping row's 69 %). Reduced motion removes both (the global rule at the foot): a
+   * still ring, the favicon there at once.
    */
   .zen-tab-throbber {
     border-color: var(--zen-muted);
@@ -1749,6 +1784,12 @@
   }
   .zen-toast {
     animation: zen-toast-in 180ms var(--zen-ease);
+  }
+  /* The sidebar's toast under reduced motion: the rise goes, a 120 ms fade in place stays (§11.3). */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-toast {
+      animation: zen-fade 120ms var(--zen-ease) !important;
+    }
   }
 
   /*
@@ -2517,6 +2558,17 @@
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
+  /*
+   * A group's header and tint coming on at the end of the glide keep their 120 ms fade under
+   * reduced motion (v2 §11.3, §11.4): an appearance in place, opacity alone – the header's
+   * press fill cuts with every other transition the global rule at the foot removes.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-group::before,
+    .zen-group-header {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
+  }
   .zen-group-header:active {
     background: rgb(var(--zen-group-rgb) / 0.12);
   }
@@ -2537,23 +2589,15 @@
   }
   /*
    * Reduced motion in the overview (v2 §11.3): the grid appears with a 120 ms fade at scale 1
-   * (`TabOverview` leaves the transform alone then); state changes take at most 1 ms – the
-   * ghost's landing among them, the release jumps. The two appearances in place keep their
-   * 120 ms fade: the grid's, and the group's header and tint at the end of the glide; their
-   * durations are held at the end of the sheet, past the global rule that cuts the rest.
+   * (`TabOverview` leaves the transform alone then); every other transition here – a card's
+   * lift, the ghost's landing, a group's shadow, the swatch – is removed by the global rule at
+   * the foot, so the release jumps. The appearances in place keep their 120 ms fade, each
+   * declared `!important` where it lives: the grid's here, the group's header and tint at the
+   * end of the glide below, the panes' further down.
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-overview {
-      animation: zen-fade 120ms var(--zen-ease);
-    }
-    .zen-overview-card,
-    .zen-overview-new,
-    .zen-overview .zen-essential,
-    .zen-overview-strip > button,
-    .zen-overview-ghost,
-    .zen-group,
-    .zen-group-swatch {
-      transition-duration: 1ms;
+      animation: zen-fade 120ms var(--zen-ease) !important;
     }
   }
   /* Along the top of a grouped tab's card on the swipe track. */
@@ -2716,11 +2760,6 @@
     bottom: 0;
     overflow: hidden;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .zen-group-chip-face {
-      transition-duration: 1ms;
-    }
-  }
   /* Titles of the phone's overview, drawer and sheets. */
   .zen-title {
     font-size: 17px;
@@ -2741,13 +2780,19 @@
    * fades in over 120 ms while a still of the one leaving fades out over the same slot for the
    * same 120 ms (`PaneSlot`, on the Web Animations API) – a state change in place (v2 §11.4:
    * content changing in place on a window strip cross-fades on opacity, no slide and no cut),
-   * which reduced motion keeps (the sheet's closing block holds these durations past its cut) –
-   * while the window surfaces blend to the pane's theme (§11.6). The Tabs | Private segment above
-   * them is the shared `.zen-v2-segment` primitive (§9.34, with the other primitives at the end
-   * of the sheet), in the window family through the overview's `data-surface="window"`.
+   * which reduced motion keeps (the rule below, `!important` past the global rule at the foot;
+   * the still's fade is `PaneSlot`'s own) – while the window surfaces blend to the pane's theme
+   * (§11.6). The Tabs | Private segment above them is the shared `.zen-v2-segment` primitive
+   * (§9.34, with the other primitives at the end of the sheet), in the window family through the
+   * overview's `data-surface="window"`.
    */
   .zen-overview-pane {
     animation: zen-fade 120ms var(--zen-ease);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zen-overview-pane {
+      animation: zen-fade 120ms var(--zen-ease) !important;
+    }
   }
 
   /*
@@ -2800,6 +2845,16 @@
     background: var(--v2-window-fill);
     color: var(--zen-fg);
     transition: opacity 120ms var(--zen-ease);
+  }
+  /*
+   * Under reduced motion the band comes and goes on that fade in place of the slide (§11.3;
+   * `SelectionActions` writes the opacity), re-declared here because the foot's rule removes
+   * every transition it does not: opacity alone, 120 ms.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-overview-actions-band {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
   }
   .zen-overview-action {
     display: flex;
@@ -3000,13 +3055,15 @@
   }
   /*
    * Reduced motion (v2 §11.3): the spring jumps the sheet to its detent and off it, and the
-   * chassis turns each jump into a 120 ms opacity fade in place – the sheet's and its scrim's.
-   * Nowhere else does the chassis put a timed transition on a sheet.
+   * chassis turns each jump into a 120 ms opacity fade in place – the sheet's and its scrim's,
+   * opacity alone, `!important` past the global rule at the foot that removes every other
+   * transition (the detent's transform lands on the frame the chassis writes it: no frame at the
+   * old pose). Nowhere else does the chassis put a timed transition on a sheet.
    */
   @media (prefers-reduced-motion: reduce) {
     .zen-sheet-scrim,
     .zen-sheet-detents {
-      transition: opacity 120ms var(--zen-ease);
+      transition: opacity 120ms var(--zen-ease) !important;
     }
   }
   /*
@@ -3070,6 +3127,17 @@
   }
   .zen-sheet-item-secondary {
     color: var(--v2-text-deemphasized);
+  }
+  /* An empty state's sentence as a row of a group (§9.17): the row's metrics in the deemphasised ink, no press. */
+  .zen-sheet-note {
+    display: flex;
+    height: var(--v2-row);
+    align-items: center;
+    padding: 0 16px;
+    color: var(--v2-text-deemphasized);
+    font-size: var(--v2-font-body);
+    font-weight: var(--v2-weight-body);
+    line-height: var(--v2-line-body);
   }
   /* Groups of rows are told apart by a hairline in the gutter (§6 menus, phone). */
   .zen-sheet-sep {
@@ -4997,12 +5065,9 @@
       transform: translateX(333%);
     }
   }
+  /* Reduced motion: the sweep is removed by the global rule at the foot; the bar stands still, dimmed. */
   @media (prefers-reduced-motion: reduce) {
-    .zen-downloads-progress-bar {
-      transition: none;
-    }
     .zen-downloads-progress[data-indeterminate] .zen-downloads-progress-bar {
-      animation: none;
       transform: none;
       width: 100%;
       opacity: 0.5;
@@ -5831,12 +5896,19 @@
   :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-ntp-site {
     animation-play-state: paused;
   }
-  /* Reduced motion (v2 §11.3): one 120 ms fade for all of them, no stagger; the global rule that
-     cuts every animation to nothing is overruled here on purpose – the fade is the orientation. */
+  /*
+   * Reduced motion (v2 §11.3): one 120 ms fade for all of them, no stagger (the shorthand's
+   * delay is 0), `!important` past the global rule at the foot that removes every other
+   * animation – the fade is the orientation. The wait while the page is not painted is
+   * re-declared with it, since the shorthand would run the fade under the omnibox.
+   */
   @media (prefers-reduced-motion: reduce) {
     :root[data-form-factor='phone'] .zen-ntp-site {
-      animation-duration: 120ms !important;
-      animation-delay: 0ms;
+      animation: zen-fade 120ms var(--zen-ease) both !important;
+    }
+    :root[data-form-factor='phone'] .zen-ntp[data-hidden] .zen-ntp-site,
+    :root[data-form-factor='phone'] .zen-ntp[data-grow='growing'] .zen-ntp-site {
+      animation-play-state: paused !important;
     }
   }
   /* The phone's tiles take the space's corner shape, as the Essentials tiles do. */
@@ -6139,6 +6211,55 @@
   }
   :root[data-fakebox='open'] .zen-omnibox-field .zen-toolbar-button {
     transition-property: background, transform;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /*
+     * Reduced motion (NTP-02, v2 §11.3; #243): the spring's part of the morph is a cut – no
+     * double flies; the page's field fades with the page (lib/fakeboxMorph.ts keeps it painted),
+     * and a field the scroll holds part way, whose double is what draws it, fades in place over
+     * the same 120 ms (out as the omnibox arrives, in as it leaves; the layer is mounted only for
+     * those) – and the omnibox appears and leaves on a 120 ms opacity fade in place: the sheet's
+     * and its field's own fades at that length, the bar's and the page's the same length on the
+     * value's jump. The controller holds the phase for those 120 ms. The scroll scrub is the
+     * finger's own motion and stays, as the bar's hide does (§11.5). Every fade here is
+     * `!important` in this layer: it beats the unlayered rule at the foot that removes every
+     * other animation and transition, and the sheet's own `zen-animate-fade` on specificity.
+     */
+    :root[data-fakebox='opening'] .zen-fakebox-layer {
+      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+    }
+    :root[data-fakebox='closing'] .zen-fakebox-layer {
+      animation: zen-fade 120ms var(--zen-ease) both !important;
+    }
+    :root[data-fakebox='opening'] .zen-fakebox-layer .zen-fakebox,
+    :root[data-fakebox='closing'] .zen-fakebox-layer .zen-fakebox {
+      pointer-events: none;
+    }
+    :root[data-fakebox='opening'] .zen-omnibox-sheet,
+    :root[data-fakebox='opening'] .zen-omnibox-field::before,
+    :root[data-fakebox='opening'] .zen-omnibox-field > *,
+    :root[data-fakebox='closing'] .zen-phone-bar {
+      animation: zen-fade 120ms var(--zen-ease) both !important;
+    }
+    :root[data-fakebox='closing'] .zen-omnibox-sheet,
+    :root[data-fakebox='closing'] .zen-omnibox-field::before,
+    :root[data-fakebox='closing'] .zen-omnibox-field > * {
+      animation: zen-fade-out 120ms var(--zen-ease) both !important;
+    }
+    :root[data-fakebox='opening'] .zen-phone-bar,
+    :root[data-fakebox='opening'] .zen-ntp-fades,
+    :root[data-fakebox='closing'] .zen-ntp-fades {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
+    /*
+     * What the scrub and the morph write per frame – the double's box and the layer's clip, the
+     * page field's and the pill's opacities on `--zen-ntp-pill`, the double's looks and contents
+     * on `--zen-ntp-morph`, the pill's well filling in, the content column's padding and the
+     * bar's clip box at a dock change, the page's `visibility` under the omnibox – never
+     * transitions: the global rule at the foot removes every transition, so each lands on the
+     * frame it is written and the finger's motion is one to one (§11.3). The page's fades on
+     * `.zen-ntp-fades` and the bar's are the two rules above, for the morph's two phases alone.
+     */
   }
 }
 
@@ -7332,6 +7453,16 @@
 .zen-v2-segment > [role='tab'][aria-selected='true']::after {
   opacity: 1;
 }
+/*
+ * Under reduced motion the line's arrival on the picked tab keeps its 120 ms fade – a change in
+ * place on a window strip (v2 §11.4), opacity alone, `!important` past the global rule at the
+ * foot; the ink's colour cuts with every other transition that rule removes.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .zen-v2-segment > [role='tab']::after {
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+}
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
 .zen-v2-card-radio {
@@ -7658,6 +7789,15 @@
   background: var(--v2-fill);
   outline: none;
 }
+/*
+ * A menu the keyboard opened (`MenuSheet`'s popover from Alt+F / F10 while the page had the
+ * keyboard: the shortcut is the main process's, no key event reaches this document, and
+ * `:focus-visible` has nothing to key on): the row the menu focuses is the cursor from its
+ * first focus (§9.22), not from the first arrow key.
+ */
+.zen-v2-menu-keyboard .zen-v2-menu-item:focus {
+  background: var(--v2-fill);
+}
 @media (hover: hover) {
   .zen-v2-menu-item:hover:not(:disabled) {
     background: var(--v2-fill);
@@ -7669,8 +7809,34 @@
 .zen-v2-menu-item:disabled {
   opacity: 0.4;
 }
+/*
+ * A disabled row is one ink (§9.30): under the row's .4 its shortcut hint and its chevron take
+ * the label's ink, not the 69% ink compounded – which put a dark menu's "Ctrl+Alt+R" at .276 of
+ * the text, 1.9:1 – so nothing in the row falls below .4 of the text, as Firefox's `GrayText`
+ * greys a disabled item's label and accelerator alike. The shared rule: every renderer-drawn
+ * menu's rows (`MenuSheet`, `LocalMenu`, the tablet's) are `.zen-v2-menu-item`.
+ */
+.zen-v2-menu-item:disabled .zen-v2-menu-hint,
+.zen-v2-menu-item:disabled .zen-v2-menu-chevron {
+  color: inherit;
+}
 .zen-v2-menu-item[data-danger] {
   color: var(--v2-danger);
+}
+/*
+ * An empty state's sentence in a menu (§9.17: "No recently closed tabs" – sentence case, no full
+ * stop, the deemphasised ink): a row at the rows' own height and inset, so it sits where a label
+ * would, with no fill, focus or press – it is not a command and is not a menuitem.
+ */
+.zen-v2-menu-note {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: var(--v2-menu-row);
+  padding: 0 8px;
+  color: var(--v2-text-deemphasized);
+  white-space: nowrap;
 }
 .zen-v2-menu-separator {
   flex-shrink: 0;
@@ -7690,6 +7856,15 @@
 }
 .zen-v2-menu-hint + .zen-v2-menu-chevron {
   margin-left: 0;
+}
+/*
+ * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill at full ink
+ * while the in-chrome menu stands, said by the `aria-expanded` the menu sets on it, as the
+ * media hub's and the downloads' toolbar buttons keep theirs while their popovers are up.
+ */
+[data-zen-app-menu-button][aria-expanded='true'] {
+  background: var(--zen-element-bg);
+  opacity: 1;
 }
 
 /*
@@ -10393,8 +10568,8 @@
   }
   /*
    * The keyword chip (omnibox-08, -26) slides in from the glyph's side over Chrome's ~150 ms;
-   * the global reduced-motion rule cuts it to a frame. It is a pill chip (a button) in the
-   * badge look, so a click can leave keyword mode.
+   * under reduced motion the global rule removes the slide and it is simply there. It is a pill
+   * chip (a button) in the badge look, so a click can leave keyword mode.
    */
   .zen-omnibox-keyword-chip {
     animation: zen-omnibox-chip-in 150ms var(--zen-ease);
@@ -10817,6 +10992,15 @@
     opacity 120ms var(--zen-ease),
     transform 120ms var(--zen-ease);
 }
+/*
+ * The play / pause swap is a change in place (v2 §11.4): under reduced motion its 120 ms fade
+ * stays, opacity alone, `!important` past the global rule at the foot; the settling scale cuts.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .zen-read-aloud-toggle > svg {
+    transition: opacity 120ms var(--zen-ease) !important;
+  }
+}
 .zen-read-aloud-toggle > .zen-read-aloud-glyph-pause,
 .zen-read-aloud-toggle[data-playing] > .zen-read-aloud-glyph-play {
   opacity: 0;
@@ -10854,186 +11038,40 @@
   visibility: hidden;
 }
 
+/*
+ * Reduced motion (v2 §11.3 as amended): a transition or a keyframe animation that is not one of
+ * the fades §11.3 keeps is REMOVED, never shortened. A shortened one is still a transition – the
+ * element draws its start value until the compositor starts it – so the 0.01 ms this rule once
+ * gave every property change put a frame of stale geometry on every layout change and a frame of
+ * the wrong state on every `visibility` change: #243's emulator runs read the content column's
+ * padding at the old edge 2.5 s after a dock change, the bar's clip box and paddings a dock
+ * behind with the morph's slot 48 px off, and the new tab page `hidden` for 0.7 to 1.1 s past the
+ * commit that showed it (`visibility` inherits, so every descendant took a pending transition of
+ * its own). The one global rule below removes instead: `transition-property: none` and
+ * `animation: none` on everything, pseudo-elements included (the initial `transition-property`
+ * is `all`, so a duration alone would have every element transition every change), and what a
+ * finger or a spring writes per frame lands on the frame it is written. One global rule may
+ * remove; none may shorten.
+ *
+ * The fades that stay are declared where they live, each an explicit `transition: opacity 120ms`
+ * or a 120 ms opacity-only keyframe animation under the same media query, `!important` so it
+ * beats this rule (an important declaration in a layer beats an unlayered important one; an
+ * unlayered one beats `*` on specificity) – the sheet chassis' scrim and detents and the phone
+ * frame-dialog host's sheet, the load bar, the overview's grid, panes and select-tabs action
+ * band, a group's header and tint at the end of the glide, the segment's line, the read aloud
+ * glyph swap, the new tab page's tiles, the desktop panels' pop and the frame dialogs' way out,
+ * the sidebar's toast, and the morph's fades in the new tab page's section. Nothing re-declares
+ * a duration alone; `reducedMotion.test.ts` guards both halves. The fades the components write
+ * per frame or on the Web Animations API – the message cards, the FLIP cross-fades, departing
+ * cards, the pill run's and the page row's ghosts, the panes' stills, the group strip's chips –
+ * are no stylesheet's and untouched by any of this.
+ */
 @media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-  /*
-   * The load bar's appearance and departure stay an opacity fade, at v2 §11.3's 120 ms, not a
-   * cut; so do a sheet's and its scrim's (the chassis rules above transition opacity alone under
-   * reduced motion, and the phone frame-dialog host's sheet does the same).
-   */
-  .zen-load-progress,
-  .zen-sheet-scrim,
-  .zen-sheet-detents,
-  .zen-frame-dialogs[data-sheet] .zen-frame-scrim,
-  .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
-    transition-duration: 120ms !important;
-  }
-  /*
-   * The new tab page's field and the omnibox (NTP-02, v2 §11.3): the spring's part of the morph
-   * is a cut – no double flies; the page's field fades with the page (lib/fakeboxMorph.ts keeps
-   * it painted), and a field the scroll holds part way, whose double is what draws it, fades in
-   * place over the same 120 ms (out as the omnibox arrives, in as it leaves; the layer is
-   * mounted only for those) – and the omnibox appears and leaves on a 120 ms opacity fade in
-   * place: the sheet's and its field's own fades at that length, the bar's and the page's the
-   * same length on the value's jump. The controller holds the phase for those 120 ms. The scroll
-   * scrub is the finger's own motion and stays, as the bar's hide does (§11.5).
-   */
-  :root[data-fakebox='opening'] .zen-fakebox-layer {
-    animation: zen-fade-out 120ms var(--zen-ease) both !important;
-  }
-  :root[data-fakebox='closing'] .zen-fakebox-layer {
-    animation: zen-fade 120ms var(--zen-ease) both !important;
-  }
-  :root[data-fakebox='opening'] .zen-fakebox-layer .zen-fakebox,
-  :root[data-fakebox='closing'] .zen-fakebox-layer .zen-fakebox {
-    pointer-events: none;
-  }
-  :root[data-fakebox='opening'] .zen-omnibox-sheet,
-  :root[data-fakebox='opening'] .zen-omnibox-field::before,
-  :root[data-fakebox='opening'] .zen-omnibox-field > *,
-  :root[data-fakebox='closing'] .zen-phone-bar {
-    animation: zen-fade 120ms var(--zen-ease) both !important;
-  }
-  :root[data-fakebox='closing'] .zen-omnibox-sheet,
-  :root[data-fakebox='closing'] .zen-omnibox-field::before,
-  :root[data-fakebox='closing'] .zen-omnibox-field > * {
-    animation: zen-fade-out 120ms var(--zen-ease) both !important;
-  }
-  :root[data-fakebox='opening'] .zen-phone-bar,
-  :root[data-fakebox='opening'] .zen-ntp-fades,
-  :root[data-fakebox='closing'] .zen-ntp-fades {
-    transition: opacity 120ms var(--zen-ease) !important;
-  }
-  /*
-   * What the scrub and the morph write per frame – the double's box and the layer's clip, the
-   * page field's and the pill's opacities on `--zen-ntp-pill`, the double's looks and contents
-   * on `--zen-ntp-morph`, the pill's well filling in – never transitions: the 0.01 ms the rule
-   * above leaves every property change would put each of them one frame behind the finger (a
-   * transition starts on the next frame, however short), so the box would trail the scroll by a
-   * frame and at the handover the pill's words and the field would both be drawn, or neither,
-   * for a frame. The finger's motion is one to one (§11.3). The layer's 120 ms fades above are
-   * animations, untouched by this.
-   */
-  :root[data-form-factor='phone'] .zen-fakebox-layer,
-  :root[data-form-factor='phone'] .zen-fakebox,
-  :root[data-form-factor='phone'] .zen-ntp-field,
-  :root[data-form-factor='phone'] .zen-phone-pill,
-  :root[data-form-factor='phone'] .zen-phone-pill > *,
-  :root[data-form-factor='phone'] .zen-fakebox-look,
-  :root[data-form-factor='phone'] .zen-fakebox-content,
-  :root[data-form-factor='phone'] .zen-fakebox-omni,
-  :root[data-form-factor='phone'] .zen-fakebox-trailing {
+  *,
+  ::before,
+  ::after {
     transition-property: none !important;
-  }
-  /*
-   * The content column's frame is laid out, never transitioned. Its padding moves the page's
-   * frame from one edge to the other when the bar changes dock, and the chrome measures that
-   * frame the moment the edge changes (`useLayoutReporter`: the store the morph and the drivers
-   * lay out against). Under full motion the padding has no transition; the 0.01 ms the rule
-   * above would give it is held at the old edge until the compositor starts it – a frame on a
-   * phone, several on a slow one (run 2's reduced-top-scrub on the emulator: the frame's top read
-   * 30 at a top dock, the bottom dock's, 2.5 s after the change) – and a slide the observer
-   * cannot see (the band leaves one edge for the other; the height is the same) is never
-   * measured again.
-   */
-  :root[data-form-factor='phone'] .zen-content-column {
-    transition-property: none !important;
-  }
-  /*
-   * The bar's box likewise. A change of dock moves the clip box from one edge to the other
-   * (`top` / `bottom`) and swaps the bar's inset paddings; under full motion those are cuts, and
-   * the 0.01 ms rule above would hold each of them at the old edge's value until the compositor
-   * starts it – on a slow one, frames. The morph measures the pill's slot the frame the page's
-   * frame has moved (`fakeboxMorph.ts` on the layout reporter's store), and in that window the
-   * bar still had the bottom dock's paddings inside a clip still at the top edge's old `top`:
-   * the slot read 48 px above its rest – the clip's inset short and the padding's – and the
-   * scrub carried the double along a line to a slot that was not there (run 3's
-   * reduced-top-scrub on the emulator: 31 frames off the line, by 48 px times the way along it).
-   * The bar keeps its opacity as the one property that may transition: the morph's rule above
-   * fades it over the value's jump.
-   */
-  :root[data-form-factor='phone'] .zen-phone-bar-clip {
-    transition-property: none !important;
-  }
-  :root[data-form-factor='phone'] .zen-phone-bar {
-    transition-property: opacity !important;
-  }
-  /*
-   * The page's visibility is a cut, on the page and on everything in it. The new tab page is
-   * kept mounted and unpainted under the omnibox (`.zen-ntp[data-hidden]`, ContentArea.tsx),
-   * and comes back the frame the morph's closing begins; `visibility` transitions, and the
-   * 0.01 ms rule above made that change a transition too – one that is play-pending until the
-   * compositor starts its batch, and a pending transition draws its start value: the page stayed
-   * `hidden` past the commit that showed it, a frame on a phone, 0.7 to 1.1 s on the emulator
-   * (run 3's reduced-bottom: the omnibox gone, the field home by the machine, the page blank at
-   * rest with nothing pending on anything the sampler watched). `visibility` inherits, so each
-   * descendant would take a pending transition of its own when the page cuts – the field before
-   * its words, the tiles before their letters, as the emulator drew it. Nothing in the page
-   * transitions but the fades on `.zen-ntp-fades` (the page's opacity over the value's jump, the
-   * morph's rule above, at its 120 ms): opacity is their one property, written after the page's
-   * rule at equal specificity.
-   */
-  :root[data-form-factor='phone'] .zen-ntp,
-  :root[data-form-factor='phone'] .zen-ntp * {
-    transition-property: none !important;
-  }
-  :root[data-form-factor='phone'] .zen-ntp-fades {
-    transition-property: opacity !important;
-  }
-  /*
-   * A frame dialog's way out on a mouse stays a departure: the 120 ms fade in place of v2 §11.3,
-   * the pop's scale dropped (lib/portals.tsx keeps the panel until this ends). Not the phone's:
-   * there the sheet chassis runs the leave.
-   */
-  .zen-frame-dialogs:not([data-sheet]) .zen-frame-dialogs-slot > [data-leaving],
-  .zen-frame-dialogs:not([data-sheet]) .zen-frame-scrim[data-leaving] {
-    animation-name: zen-fade-out;
-    animation-duration: 120ms !important;
-  }
-  /*
-   * The phone overview's appearances in place stay the 120 ms fade too (v2 §11.3, §11.4): the
-   * grid's own, and a group's header and tint coming on at the end of the glide – the header's
-   * press fill, first in its transition list, cuts.
-   */
-  .zen-overview {
-    animation-duration: 120ms !important;
-  }
-  .zen-group-header {
-    transition-duration: 1ms, 120ms !important;
-  }
-  .zen-group::before {
-    transition-duration: 120ms !important;
-  }
-  /*
-   * The overview's panes and the segment primitive (TAB-02, TAB-03; §9.34): content changing in
-   * place on a window strip fades the same under reduced motion (v2 §11.4) – a pane coming up
-   * keeps its 120 ms fade (the still of the one leaving its 120 ms out, in `PaneSlot`), a
-   * segment's ink and its line their 120 ms; neither moves in full motion either.
-   */
-  .zen-overview-pane {
-    animation-duration: 120ms !important;
-  }
-  .zen-v2-segment > [role='tab'],
-  .zen-v2-segment > [role='tab']::after {
-    transition-duration: 120ms !important;
-  }
-  /*
-   * The select-tabs mode's action row comes and goes on its 120 ms opacity fade in place of the
-   * slide (§11.3; `SelectionActions` writes the opacity, the transition is the band's own).
-   */
-  .zen-overview-actions-band {
-    transition-duration: 120ms !important;
-  }
-  /*
-   * Read aloud's play / pause glyph swap is a change in place (§11.4): its 120 ms fade stays,
-   * the settling scale cuts (§11.3: a transition other than opacity is ≤ 1 ms; the list is
-   * opacity, then transform).
-   */
-  .zen-read-aloud-toggle > svg {
-    transition-duration: 120ms, 1ms !important;
+    animation: none !important;
   }
 }
 

@@ -210,7 +210,7 @@ describe('useLayoutReporter under the recede', () => {
   it('a setting written with a sheet up (the bar-position picker) measures through the receded frame and still reports the layout box', () => {
     const { rerender } = render(<Probe state={state('bottom')} />)
     close(area(), viewportBox)
-    sheetUp()
+    const h = sheetUp()
     // What the DOM paints: 3 percent short, the frame's 21 px – PERF-4's `page 783 vs 805`.
     expect(viewportBox.height - painted.viewport.height).toBeGreaterThan(20)
     // The picker writes the bar to the top edge: the reporter measures again, the sheet still up.
@@ -218,6 +218,17 @@ describe('useLayoutReporter under the recede', () => {
     close(area(), viewportBox)
     act(() => frames.splice(0).forEach((f) => f()))
     close(area(), viewportBox)
+    // To the bit, not within ε: the run-back answers on the layout grid, so the re-measure at
+    // the recede's rest finds the same rect and reports nothing more – the store keeps the very
+    // object (an ε-different answer would cost one more `layout.report`, and the host a 1 px
+    // relayout, at the rest).
+    const under = area()
+    expect(under).toEqual(viewportBox)
+    act(() => {
+      recedeTo(0)
+      h.progress(0)
+    })
+    expect(area()).toBe(under)
   })
 
   it('measures once more the moment the recede returns to 0: a measure that missed a transform is put right at the rest', () => {

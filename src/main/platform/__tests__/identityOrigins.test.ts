@@ -20,6 +20,7 @@ const { RuleEngine } = await import('../../../core/blocking/engine')
 const { BUILTIN_RULE_SETS, RULE_SET_PRIORITY } = await import('../../../core/blocking/rules')
 const { httpsOnlyRule } = await import('../../../core/protection/service')
 const { DEFAULT_PRIVACY_SETTINGS } = await import('../../../shared/privacy')
+const { DEFAULT_SITE_DATA_POLICY } = await import('../../../shared/siteData')
 const { PRIVATE_CONTAINER_ID } = await import('../../../shared/types')
 
 type Details = Electron.OnBeforeSendHeadersListenerDetails
@@ -196,6 +197,7 @@ function pipeline(flags: Partial<PrivacyFlags> = {}): {
     dnt: DEFAULT_PRIVACY_SETTINGS.dnt,
     secureDnsMode: DEFAULT_PRIVACY_SETTINGS.secureDnsMode,
     secureDnsServers: [],
+    siteData: DEFAULT_SITE_DATA_POLICY,
     ...flags
   }
   const mux = new WebRequestMultiplexer({ tabIdForWebContents: () => 'tab-1' })

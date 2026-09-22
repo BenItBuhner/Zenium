@@ -276,11 +276,11 @@ describe('the empty pane (split-04)', () => {
 })
 
 describe('the ways into a split (split-01)', () => {
-  it('the app menu has a Split View submenu: the layouts in the chords\u2019 order, then Unsplit View and New Empty Split View, each on its action', () => {
+  it('the app menu has a Split View submenu under More Tools (§6: Firefox\u2019s groups, the rest in submenus): the layouts in the chords\u2019 order, then Unsplit View and New Empty Split View, each on its action', () => {
     const h = harness()
     h.open('https://a.example/')
     h.browser.handleCommand(h.win, 'app.menu', {})
-    const items = submenu(h.shown(), 'Split View')
+    const items = submenu(submenu(h.shown(), 'More Tools'), 'Split View')
     expect(labels(items)).toEqual([
       'Grid',
       'Vertical',
@@ -314,13 +314,13 @@ describe('the ways into a split (split-01)', () => {
     const b = h.open('https://b.example/')
     h.browser.tabs.activateTab(a.id, h.win)
     h.browser.handleCommand(h.win, 'app.menu', {})
-    click(submenu(h.shown(), 'Split View'), 'Vertical')
+    click(submenu(submenu(h.shown(), 'More Tools'), 'Split View'), 'Vertical')
     const group = Object.values(h.browser.state.model.splitGroups)[0]
     expect(group?.layout).toBe('vertical')
     expect(group?.tabIds).toEqual([a.id, b.id])
 
     h.browser.handleCommand(h.win, 'app.menu', {})
-    let items = submenu(h.shown(), 'Split View')
+    let items = submenu(submenu(h.shown(), 'More Tools'), 'Split View')
     expect(items.find((i) => i.label === 'Vertical')?.checked).toBe(true)
     expect(items.find((i) => i.label === 'Grid')?.checked).toBe(false)
     expect(items.find((i) => i.label === 'Unsplit View')?.enabled).toBe(true)
@@ -328,7 +328,7 @@ describe('the ways into a split (split-01)', () => {
     expect(h.browser.state.model.splitGroups[group!.id]?.layout).toBe('grid')
 
     h.browser.handleCommand(h.win, 'app.menu', {})
-    items = submenu(h.shown(), 'Split View')
+    items = submenu(submenu(h.shown(), 'More Tools'), 'Split View')
     click(items, 'Unsplit View')
     expect(Object.keys(h.browser.state.model.splitGroups)).toHaveLength(0)
     expect(h.browser.tabs.tab(a.id)?.splitGroupId).toBeNull()

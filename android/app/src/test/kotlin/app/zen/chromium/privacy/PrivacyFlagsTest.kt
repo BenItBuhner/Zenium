@@ -125,6 +125,90 @@ class PrivacyFlagsTest {
     }
 
     @Test
+    fun `the per-site cookie policy parses from the document, is empty without one, and rides the stored copy`() {
+        val flags = PrivacyFlags.parse(pushed)
+        assertSame(SiteDataPolicy.EMPTY, flags.siteData)
+        assertSame(SiteDataPolicy.EMPTY, PrivacyFlags.DEFAULT.siteData)
+        val withSites = PrivacyFlags.parse(
+            JSONObject(
+                """{"thirdPartyCookies":"allow","siteData":{"blockAll":false,"allow":["Shop.example"],
+                    "clearOnExit":["[*.]news.example"],"block":["tracker.example","https://[*.]ads.example"]}}"""
+            )
+        )
+        assertEquals(listOf("shop.example"), withSites.siteData.allow)
+        assertEquals(listOf("[*.]news.example"), withSites.siteData.clearOnExit)
+        assertEquals(listOf("tracker.example", "https://[*.]ads.example"), withSites.siteData.block)
+        assertFalse(withSites.siteData.blockAll)
+        // Malformed: the empty policy, never a crash.
+        assertSame(SiteDataPolicy.EMPTY, PrivacyFlags.parse(JSONObject("""{"siteData":"none"}""")).siteData)
+        assertSame(SiteDataPolicy.EMPTY, PrivacyFlags.parse(JSONObject("""{"siteData":7}""")).siteData)
+        // The lists are settings, not session state: the copy on disk keeps them and reads them back.
+        val stored = withSites.withoutSession()
+        assertEquals(withSites.siteData, stored.siteData)
+        val read = PrivacyFlags.parse(JSONObject(stored.toJson().toString()))
+        assertEquals(withSites.siteData, read.siteData)
+        assertEquals(true, PrivacyFlags.parse(JSONObject("""{"siteData":{"blockAll":true}}""")).toJson().getJSONObject("siteData").getBoolean("blockAll"))
+    }
+
+    @Test
+    fun `cookies are withheld for a never-site, never for a listed site, and by the third-party rule for the rest`() {
+        val flags = PrivacyFlags.parse(
+            JSONObject(
+                """{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["shop.example"],
+                    "siteData":{"allow":["[*.]ok.example"],"clearOnExit":["s.example"],"block":["[*.]never.example"]}}"""
+            )
+        )
+        // The never list: the document itself, a frame of it, a request from anywhere.
+        assertTrue(flags.cookiesWithheld("https://never.example/", null, "default"))
+        assertTrue(flags.cookiesWithheld("https://cdn.never.example/frame", "https://news.example/", "default"))
+        assertTrue(flags.cookiesWithheld("https://never.example/", null, PrivacyFlags.PRIVATE_CONTAINER))
+        // The allow list and the clear-on-exit list are sites that may use cookies, third party or not.
+        assertFalse(flags.cookiesWithheld("https://ok.example/", null, "default"))
+        assertFalse(flags.cookiesWithheld("https://ok.example/frame", "https://news.example/", "default"))
+        assertFalse(flags.cookiesWithheld("https://s.example/frame", "https://news.example/", "default"))
+        // Unlisted: the third-party rule – a document's own request is never third party; a
+        // cross-site frame under the global block is, unless either site is excepted.
+        assertFalse(flags.cookiesWithheld("https://news.example/", null, "default"))
+        assertTrue(flags.cookiesWithheld("https://ads.example/frame", "https://news.example/", "default"))
+        assertFalse(flags.cookiesWithheld("https://ads.example/frame", "https://shop.example/", "default"))
+        assertFalse(flags.cookiesWithheld("https://shop.example/frame", "https://news.example/", "default"))
+        assertFalse(flags.cookiesWithheld("https://www.news.example/frame", "https://news.example/", "default"))
+        // A never-site's frame: withheld even where the top site is excepted.
+        assertTrue(flags.cookiesWithheld("https://never.example/frame", "https://shop.example/", "default"))
+
+        // Third-party cookies allowed: only the never list withholds.
+        val allow = PrivacyFlags.parse(JSONObject("""{"thirdPartyCookies":"allow","siteData":{"block":["never.example"]}}"""))
+        assertFalse(allow.cookiesWithheld("https://ads.example/frame", "https://news.example/", "default"))
+        assertTrue(allow.cookiesWithheld("https://never.example/frame", "https://news.example/", "default"))
+        // `block-private`: the private container's frames only.
+        val private = PrivacyFlags.parse(JSONObject("""{"thirdPartyCookies":"block-private"}"""))
+        assertFalse(private.cookiesWithheld("https://ads.example/frame", "https://news.example/", "default"))
+        assertTrue(private.cookiesWithheld("https://ads.example/frame", "https://news.example/", PrivacyFlags.PRIVATE_CONTAINER))
+        assertFalse(private.cookiesWithheld("https://ads.example/", null, PrivacyFlags.PRIVATE_CONTAINER))
+        // No policy at all: nothing withheld, fast.
+        assertFalse(PrivacyFlags.DEFAULT.cookiesWithheld("https://news.example/", null, "default"))
+    }
+
+    @Test
+    fun `block all cookies withholds every unlisted site's, the allow and clear-on-exit lists excepted`() {
+        val all = PrivacyFlags.parse(
+            JSONObject("""{"thirdPartyCookies":"allow","siteData":{"blockAll":true,"allow":["ok.example"],"clearOnExit":["[*.]s.example"]}}""")
+        )
+        assertTrue(all.cookiesWithheld("https://news.example/", null, "default"))
+        assertTrue(all.cookiesWithheld("https://news.example/frame", "https://news.example/", "default"))
+        assertTrue(all.cookiesWithheld("https://news.example/", null, PrivacyFlags.PRIVATE_CONTAINER))
+        assertFalse(all.cookiesWithheld("https://ok.example/", null, "default"))
+        assertFalse(all.cookiesWithheld("https://cart.s.example/", null, "default"))
+        // An exact-host allow does not reach the subdomain: blocked with the rest.
+        assertTrue(all.cookiesWithheld("https://www.ok.example/", null, "default"))
+        // The third-party exception list is about third-party cookies, not about "block all".
+        val excepted = PrivacyFlags.parse(
+            JSONObject("""{"thirdPartyCookies":"block","thirdPartyCookieExceptions":["news.example"],"siteData":{"blockAll":true}}""")
+        )
+        assertTrue(excepted.cookiesWithheld("https://news.example/", null, "default"))
+    }
+
+    @Test
     fun `plaintext is allowed when the mode is off or the site was allowed, subdomains included`() {
         val flags = PrivacyFlags.parse(pushed)
         assertTrue(flags.plaintextAllowed("http://legacy.example/"))

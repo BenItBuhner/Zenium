@@ -1,9 +1,9 @@
 /**
  * The reduced-motion fade (design language v2 §11.3): with `prefers-reduced-motion: reduce` an
  * appearance or departure is a 120 ms opacity fade in place, nothing travels. Written per frame,
- * because the reduced-motion stylesheet cuts every CSS transition to nothing, so a transition
- * could not carry it. `SpringAnimation` jumps under the same preference; a surface whose spring
- * carried its arrival runs this instead.
+ * because the reduced-motion stylesheet removes every CSS transition it does not re-declare, so
+ * a transition could not carry it. `SpringAnimation` jumps under the same preference; a surface
+ * whose spring carried its arrival runs this instead.
  */
 
 /** How long the fade takes. */

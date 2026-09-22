@@ -6,6 +6,7 @@ import {
   engineKeywords,
   matchKeyword,
   parseSuggestPayload,
+  searchTermsFromUrl,
   type KeywordMatch,
   type SuggestPayload
 } from '../shared/search'
@@ -60,6 +61,8 @@ export const RELEVANCE = {
 export const RECENT_SEARCHES_GROUP = 'Recent searches'
 /** Remembered searches shown on focus at most (Chrome shows up to eight zero-suggest rows). */
 export const RECENT_SEARCHES_MAX = 8
+/** Recent pages shown on focus at most, under the recent searches. */
+const RECENT_PAGES_MAX = 8
 
 export interface SuggestOptions {
   /**
@@ -659,7 +662,14 @@ export class SuggestionService {
     // Zero-suggest (omnibox-20): the searches the user made, most recent first, as a section of
     // their own over the recent pages – every row removable.
     const engines = this.browser.state.searchEngines
-    for (const s of this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)) {
+    const defaultEngine = this.browser.state.defaultSearchEngine()
+    const recent = this.browser.omniboxShortcuts.recentSearches(RECENT_SEARCHES_MAX)
+    // What the searches were, by engine, so the engine's results page for the same terms – the
+    // history entry the search left – is not listed again under them as a recent page (the
+    // lead's #289 ruling: zero-suggest dedupes the default engine's results pages against
+    // "Recent searches"). A search remembered without its engine went to the default one.
+    const searched: { engine: SearchEngine; terms: Set<string>; urls: Set<string> }[] = []
+    for (const s of recent) {
       const engine = s.engineId ? engines.find((e) => e.id === s.engineId) : undefined
       rows.push({
         id: `recent:${s.url}`,
@@ -673,8 +683,25 @@ export class SuggestionService {
         deletable: true,
         group: RECENT_SEARCHES_GROUP
       })
+      const searchedWith = engine ?? defaultEngine
+      let hit = searched.find((e) => e.engine.id === searchedWith.id)
+      if (!hit) searched.push((hit = { engine: searchedWith, terms: new Set(), urls: new Set() }))
+      hit.terms.add(s.fill.trim().toLowerCase())
+      hit.urls.add(s.url)
     }
-    for (const entry of this.browser.history.recent(8)) {
+    const duplicatesRecentSearch = (url: string): boolean =>
+      searched.some(({ engine, terms, urls }) => {
+        if (urls.has(url)) return true
+        const found = searchTermsFromUrl(engine, url)
+        return found !== null && terms.has(found.toLowerCase())
+      })
+    // The pages a dropped results page would have stood among come up in its place, so the
+    // section keeps its size.
+    let pages = 0
+    for (const entry of this.browser.history.recent(RECENT_PAGES_MAX + recent.length)) {
+      if (pages >= RECENT_PAGES_MAX) break
+      if (duplicatesRecentSearch(entry.url)) continue
+      pages += 1
       rows.push({
         id: `hist:${entry.url}`,
         kind: 'history' as const,

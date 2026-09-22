@@ -52,10 +52,12 @@ export function AppTitleBar({
     return () => window.removeEventListener(APP_MENU_EVENT, fromKeyboard)
   }, [])
   return (
-    // A window surface (design language v2 §9.29), as the toolbar row is.
+    // A window surface (design language v2 §9.29), as the toolbar row is; the bar the in-chrome
+    // app menu hangs from (§9.20: flush under it, end-aligned with its "⋯").
     <div
       className="zen-app-titlebar zen-drag"
       data-surface="window"
+      data-bar=""
       data-zen-app-titlebar
       data-testid="app-titlebar"
       style={{
@@ -70,6 +72,9 @@ export function AppTitleBar({
       <button
         ref={menuButton}
         type="button"
+        // The "⋯" the renderer-drawn menu finds and hangs from (`APP_MENU_BUTTON`), as the
+        // browser toolbar's; the menu marks it `aria-expanded` while it stands.
+        data-zen-app-menu-button
         className="zen-toolbar-button zen-no-drag"
         title={hint('Menu', state, 'menu.app')}
         aria-haspopup="menu"

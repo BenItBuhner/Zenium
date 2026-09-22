@@ -529,6 +529,11 @@ export class PermissionService {
     }
   }
 
+  /** Write a pending change now (the quit path: a reset the on-exit clear made must land). */
+  flushSync(): void {
+    this.store.flushSync()
+  }
+
   private update(key: string, decision: Decision | null, change: PermissionChange): void {
     // A stored answer supersedes any "Allow once" for the same question.
     for (const grants of this.sessionAllows.values()) grants.delete(key)

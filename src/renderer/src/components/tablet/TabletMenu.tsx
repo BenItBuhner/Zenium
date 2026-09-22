@@ -158,6 +158,13 @@ function MenuPanel({ ref, items, label, style, depth, onLeft, ...data }: PanelPr
       {items.map((item) =>
         item.type === 'separator' ? (
           <li key={item.id} role="separator" className="zen-v2-menu-separator" />
+        ) : item.note ? (
+          // An empty state's sentence (§9.17): not a menuitem, so the keys pass it by; the
+          // glyph slot keeps the labels' edge, as every row of this menu has one.
+          <li key={item.id} role="none" className="zen-v2-menu-note" data-menu-note>
+            <span className="zen-v2-menu-glyph" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          </li>
         ) : (
           <MenuRow
             key={item.id}
