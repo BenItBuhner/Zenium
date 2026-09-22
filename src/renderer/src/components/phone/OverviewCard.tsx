@@ -1,6 +1,6 @@
 import type { CSSProperties, JSX } from 'react'
 import { useRef } from 'react'
-import { Moon, VenetianMask, X } from 'lucide-react'
+import { Moon, Plus, VenetianMask, X } from 'lucide-react'
 import type { Tab } from '@shared/types'
 import { useOnScreen } from '@renderer/hooks/useOnScreen'
 import { closeTabLabel, tabCardLabel } from '@renderer/lib/overviewLabels'
@@ -224,6 +224,25 @@ export function CardBody({
       <div className="zen-overview-card-preview relative min-h-0 flex-1 overflow-hidden">
         <TabPreview tab={tab} scale={0.8} visible={visible} />
       </div>
+    </>
+  )
+}
+
+/**
+ * The New Tab card's face – the plus (the mask on the private pane) over its label – shared by
+ * the grid's card (`NewTabCard` in TabOverview, a `.zen-overview-new` button) and its exit: a
+ * query takes the card off the grid with the cards that do not match (§9.34), and the exit is
+ * the same face drawn where the card stood, leaving as they do (`Departures`).
+ */
+export function NewTabFace({ isPrivate }: { isPrivate: boolean }): JSX.Element {
+  return (
+    <>
+      {isPrivate ? (
+        <VenetianMask className="h-6 w-6" strokeWidth={1.75} />
+      ) : (
+        <Plus className="h-6 w-6" />
+      )}
+      <span className="text-[13px] font-medium">{isPrivate ? 'New Private Tab' : 'New Tab'}</span>
     </>
   )
 }

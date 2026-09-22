@@ -5,10 +5,17 @@ import { createStore } from '@renderer/lib/store'
  * A card on its way out of the grid, drawn where it was when its tab (or group) was told to
  * close, collapsing and fading while the browser removes the tab and the neighbours glide into
  * the gap. The record of the tab travels with it: by the time it is drawn, the tab is gone.
+ *
+ * A `filtered` card is one the overview's search dropped (TAB-21): its tab stays open, so the
+ * grid, not the browser, is what shows its gap – `TabOverview` releases the exit in the commit
+ * that unmounts the card, and drops it if the card is back before it has run. The New Tab card
+ * leaves the same way when a query stands (§9.34: it is not a match), as the pane's `new-tab`
+ * departure, which hides no tab.
  */
 export type Departure =
-  | { key: string; kind: 'tab'; tab: Tab; rect: Rect }
+  | { key: string; kind: 'tab'; tab: Tab; rect: Rect; filtered?: true }
   | { key: string; kind: 'group'; folder: Folder; tabs: Tab[]; rect: Rect; columns: number }
+  | { key: string; kind: 'new-tab'; isPrivate: boolean; rect: Rect }
 
 interface DepartState {
   items: Departure[]
@@ -31,7 +38,7 @@ function hiddenBy(items: Departure[]): ReadonlySet<string> {
   const ids = new Set<string>()
   for (const item of items) {
     if (item.kind === 'tab') ids.add(item.tab.id)
-    else for (const t of item.tabs) ids.add(t.id)
+    else if (item.kind === 'group') for (const t of item.tabs) ids.add(t.id)
   }
   return ids
 }

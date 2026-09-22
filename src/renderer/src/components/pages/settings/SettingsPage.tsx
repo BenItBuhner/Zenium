@@ -55,11 +55,13 @@ import { useSheetStack } from './useSheetStack'
  * column, the nav switching sections without a history entry. The page measures itself rather
  * than the window, so a split or a narrow window falls back to the landing and drill-ins.
  *
- * The page's one parameter (`InternalPageQuery`) is Privacy's `site`: `zen://settings/privacy?
- * site=<origin>` is the section asked for a site – the site-information sheet's "Requests
- * blocked" row – and opens with the site's own group ({@link SITE_ROW}, "Block on <host>") on
- * screen, where Chrome's order has it one screen down. Chrome's `siteDetails?site=`, less the
- * page of its own.
+ * The page's parameters (`InternalPageQuery`): Privacy's `site` – `zen://settings/privacy?
+ * site=<origin>` is the section asked for a site, the site-information sheet's "Requests
+ * blocked" row, and opens with the site's own group ({@link SITE_ROW}, "Block on <host>") on
+ * screen, where Chrome's order has it one screen down; Chrome's `siteDetails?site=`, less the
+ * page of its own – and `row`, a section asked for one of its rows (`zen://settings/sync?row=
+ * sync-scope:openTabs`, the History page's "Open sync settings" row landing on the Open tabs
+ * switch), which opens with that row's group on screen the same way.
  */
 
 /** Width from which the tab shows the two-pane layout (v2 §10.2, §10.5; the pages' shared one). */
@@ -67,6 +69,9 @@ export { TWO_PANE_MIN_WIDTH }
 
 /** The row for the site Privacy was asked for (`tracking.tsx`): the switch its group is brought on screen for. */
 const SITE_ROW = 'tracking-site-current'
+
+/** A row id as `?row=` may carry it: the ids are words, colons and dashes (`sync-scope:openTabs`). */
+const ROW_ID_RE = /^[\w:-]+$/
 
 /**
  * What draws each section's drill-in page (`InternalPageSection.pages`, §10.2), by
@@ -97,19 +102,22 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   // shows the section for it and opens the page's content as a dialog from its row (§10.5).
   const subpage = current?.pages?.find((p) => p.id === ref?.subpage) ?? null
   const twoPane = width >= TWO_PANE_MIN_WIDTH
-  // Privacy asked for a site: its group is scrolled on screen before the paint, once per address
-  // (and again should the layout change under it) – a later visit to the section from the
-  // landing or the nav has no `site` and opens at the top. The row is the opener's site's
-  // (`trackingGroups`); a restored tab without its opener has none, and the page opens at the
-  // top as it would.
+  // Privacy asked for a site, or a section for one of its rows: the row's group is scrolled on
+  // screen before the paint, once per address (and again should the layout change under it) – a
+  // later visit to the section from the landing or the nav has no `site` or `row` and opens at
+  // the top. The site's row is the opener's site's (`trackingGroups`); a restored tab without its
+  // opener has none, and the page opens at the top as it would, as it does for a row the section
+  // does not have.
   const site = current?.id === 'privacy' ? (ref?.query?.site ?? null) : null
+  const asked = ref?.query?.row
+  const row = site ? SITE_ROW : asked && ROW_ID_RE.test(asked) ? asked : null
   useLayoutEffect(() => {
-    if (!site) return
+    if (!row) return
     root.current
-      ?.querySelector(`[data-row="${SITE_ROW}"]`)
+      ?.querySelector(`[data-row="${row}"]`)
       ?.closest('[data-group]')
       ?.scrollIntoView({ block: 'start' })
-  }, [site, tab.url, twoPane])
+  }, [row, tab.url, twoPane])
   return (
     <div ref={root} className="zen-settings-page" data-layout={twoPane ? 'two-pane' : 'phone'}>
       {twoPane ? (
