@@ -33,6 +33,8 @@ export class SlideMotion {
   private readonly layout = new Map<string, number>()
   /** Items still growing into their slot. */
   private readonly entering = new Map<string, SpringAnimation>()
+  /** Items new to the list whose arrival is another motion's: placed on the next commit, no entry. */
+  private readonly placed = new Set<string>()
   private settleTimer: ReturnType<typeof setTimeout> | null = null
   private committed = false
   private scroller: HTMLElement | null
@@ -95,6 +97,15 @@ export class SlideMotion {
   }
 
   /**
+   * Items about to be new to the list whose arrival another motion draws – a group's rows as
+   * the group unfolds around them on its own height spring (`FolderRow`) – are placed on the
+   * next commit rather than grown into their slot; a later arrival of theirs enters as usual.
+   */
+  placeNext(ids: Iterable<string>): void {
+    for (const id of ids) this.placed.add(id)
+  }
+
+  /**
    * Called after every commit: items that were laid out elsewhere spring from there to here,
    * items new to the list grow into their slot. The item whose ghost is still travelling
    * (`still`) is placed, not animated. With `animate` false the positions are only recorded
@@ -123,7 +134,14 @@ export class SlideMotion {
       if (was === undefined) {
         spring.stop()
         this.draw(id, 0)
-        if (motion && this.enterNew && this.committed && id !== still && size > 0)
+        if (
+          motion &&
+          this.enterNew &&
+          this.committed &&
+          id !== still &&
+          !this.placed.has(id) &&
+          size > 0
+        )
           this.enter(id, el, size)
         continue
       }
@@ -139,6 +157,7 @@ export class SlideMotion {
       spring.start(delta, velocity, 0)
     }
     for (const id of [...this.layout.keys()]) if (!this.elements.has(id)) this.layout.delete(id)
+    this.placed.clear()
     this.committed = true
   }
 

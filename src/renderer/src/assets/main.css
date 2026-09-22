@@ -6821,6 +6821,92 @@
 }
 
 /*
+ * A tab group's row on the tablet sidebar (TABLET-04, `SpacePanel`'s `FolderRow` with
+ * `GroupChip`): the group as a chip in the row's leading slot – a 32 pill in the group's colour
+ * at 16% (`--zen-group-rgb`, the group card's tint family) 6 in from the row's edge, so its 10
+ * dot centres on the favicon column's 21; the name at §9.36's 14 px in the row's ink; the count,
+ * 13 tabular at 69%, after the name while the group is folded (or saved, with its kept pages);
+ * the chevron a 16 glyph at 69% at the trailing edge, the desktop row's, in a 44 box – it says
+ * the fold, the row's tap does it. A saved group's glyph is a 2 px ring of the colour where an
+ * open group's is the dot (the Groups pane's two states); a folder given its own icon on the
+ * desktop keeps it, as a glyph at 14 (§4: glyphs hold while text scales). The name being edited
+ * takes the chip's text slot at the same 14. The rail shows the chip as its glyph alone, a 32
+ * circle. The block of header and rows (`.zen-group-fold`) is clipped while its height runs on
+ * the fold's spring (`useGroupFold`) and left alone at rest, so a lifted row's ghost and a focus
+ * ring are never cut.
+ */
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row {
+  padding-left: 6px;
+  gap: 0;
+}
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row.justify-center {
+  padding-left: 0;
+}
+.zen-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: 16px;
+  background: rgb(var(--zen-group-rgb) / 0.16);
+  color: var(--zen-fg);
+  font-size: 14px;
+  line-height: 20px;
+}
+.zen-group-chip-glyph-only {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+.zen-group-chip-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(var(--zen-group-rgb));
+}
+.zen-group-chip[data-saved] .zen-group-chip-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
+}
+.zen-group-chip-icon {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: calc(14px / var(--zen-text-zoom, 1));
+  line-height: 1;
+}
+.zen-group-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zen-group-chip input {
+  font-size: 14px;
+}
+.zen-group-chip-count {
+  flex-shrink: 0;
+  color: var(--v2-control-text-deemphasized, var(--zen-muted));
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.zen-group-row-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  opacity: 0.69;
+}
+.zen-group-fold[data-folding] {
+  overflow: hidden;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
@@ -7491,52 +7577,35 @@
  * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
  * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
  * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
- * overview's window backdrop, so they draw in the window family (§9.29) through the control
- * roles the overview root's `data-surface="window"` resolves: the theme's ink, its 69% for the
- * count and the time, the window fill for the press – where the panels' own draw in the page's.
- * A modifier by context on the primitives, unlayered beside them (§9.34), each rule outranking
- * the primitive's by specificity; the disabled row (an empty group, `data-disabled` on the
- * panels' modifier) keeps its no-fill. The heading carries its count as a §10.3 aside at the
+ * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
+ * page ink and fills the primitives read to the control roles the overview root's
+ * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
+ * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
+ * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
+ * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
  * gutter's end; the first heading stands under the segment (or the space strip), which already
  * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
  * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
  * on the glyph). The pane's empty state is `PrivateEmpty`'s composition (§9.17) in the window ink.
  */
-.zen-overview-groups .zen-v2-row {
-  color: var(--v2-control-text);
-}
-.zen-overview-groups
-  .zen-v2-row:active:not([aria-disabled='true'], [data-static], [data-disabled]) {
-  background: var(--v2-control-fill);
-}
-@media (hover: hover) {
-  .zen-overview-groups
-    .zen-v2-row:hover:not([aria-disabled='true'], [data-static], [data-disabled]) {
-    background: var(--v2-control-fill);
-  }
-}
-.zen-overview-groups .zen-list-subtitle {
-  color: var(--v2-control-text-deemphasized);
-}
-.zen-overview-groups .zen-v2-icon-button {
-  color: var(--v2-control-text);
-}
-.zen-overview-groups .zen-v2-icon-button:active:not(:disabled) {
-  background: var(--v2-control-fill);
+.zen-overview-groups {
+  --v2-text: var(--v2-control-text);
+  --v2-text-deemphasized: var(--v2-control-text-deemphasized);
+  --v2-fill: var(--v2-control-fill);
+  --v2-fill-hover: var(--v2-control-fill-hover);
 }
 .zen-overview-groups .zen-v2-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  color: var(--v2-control-text);
 }
 .zen-overview-groups > :first-child > .zen-v2-heading {
   margin-top: 4px;
 }
 .zen-overview-groups-aside {
   flex-shrink: 0;
-  color: var(--v2-control-text-deemphasized);
+  color: var(--v2-text-deemphasized);
   font-size: var(--v2-font-small);
   font-weight: var(--v2-weight-body);
   line-height: var(--v2-line-small);
@@ -7559,7 +7628,7 @@
   line-height: var(--v2-line-body);
 }
 .zen-overview-groups-empty p {
-  color: var(--v2-control-text-deemphasized);
+  color: var(--v2-text-deemphasized);
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */

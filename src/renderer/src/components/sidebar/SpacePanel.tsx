@@ -7,6 +7,7 @@ import { useFadeEdges } from '@renderer/hooks/useFadeEdges'
 import { run } from '@renderer/lib/api'
 import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
+import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
@@ -15,8 +16,11 @@ import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@re
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { useLongPress } from '../phone/useLongPress'
+import { GroupChip } from './GroupChip'
 import { ListMotionContext } from './listMotion'
 import { TabItem } from './TabItem'
+import { useGroupFold } from './useGroupFold'
 
 interface Props {
   state: UIState
@@ -340,6 +344,11 @@ function FolderRow({
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
+  // The tablet's row (TABLET-04): the group's colour chip in the leading slot, the fold on a
+  // spring (`useGroupFold`), and a SAVED group – its tabs closed, its pages kept (TAB-16) – as
+  // a row whose tap opens it. The desktop's row is as it was.
+  const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
+  const saved = tablet && tabs.length === 0 && Boolean(folder.savedTabs?.length)
   const lastClick = useRef(0)
   const collapsedBeforeClick = useRef(folder.collapsed)
   const containsActive = tabs.some((t) => t.id === activeTabId)
@@ -348,29 +357,53 @@ function FolderRow({
     run('folder.update', { folderId: folder.id, patch: { collapsed: !folder.collapsed } })
   // The header is a tab group's (tabs-14): a press folds or unfolds it; the second press of a
   // double-click undoes the first's fold and opens the group editor bubble (tabs-13) instead, as
-  // does the folder menu's Edit Folder…. It is a strip item (lib/tabStrip.ts) – Chrome's group
+  // does the folder menu's Edit Folder… (the tablet's tap always folds: its menu, on the hold,
+  // has the group's name and colour). It is a strip item (lib/tabStrip.ts) – Chrome's group
   // header: Enter, Space, Left and Right fold it, the arrows reach it from the rows (§9.22) – and
   // the strip's tab stop while it stands for the active tab (folded around it).
   const key = `folder:${folder.id}`
   const tabIndex = useStripTabIndex(key, containsActive && folder.collapsed)
+  const shell = useRef<HTMLDivElement>(null)
+  const header = useRef<HTMLDivElement>(null)
+  const drawn = useGroupFold(shell, header, folder.collapsed, tabs, tablet)
+  const count = saved ? (folder.savedTabs?.length ?? 0) : tabs.length
+  const unit = count === 1 ? 'tab' : 'tabs'
+  const description = tablet
+    ? `Tab group, ${saved ? 'saved, ' : ''}${count} ${unit}`
+    : `${live ? 'Live folder' : 'Folder'}, ${count} ${unit}`
+  // The tablet row's hold (the phone's group card's, `useLongPress`: a haptic tick at 380 ms, the
+  // menu on the release, the click after it swallowed): the group's menu as a popover at the
+  // finger (`TabletMenu` opens at the last press when the descriptor carries no point).
+  const press = useLongPress(() => run('folder.contextMenu', { folderId: folder.id }))
+  const { onContextMenu: holdMenu, ...hold } = press.handlers
   return (
-    <div className="flex flex-col gap-0.5">
+    <div ref={shell} className="zen-group-fold flex flex-col gap-0.5">
       <div
-        className={cn('zen-tab h-8', compact && 'justify-center px-0')}
+        ref={header}
+        className={cn('zen-tab h-8', compact && 'justify-center px-0', tablet && 'zen-group-row')}
         role="button"
         aria-label={folder.name}
-        aria-description={`${live ? 'Live folder' : 'Folder'}, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`}
-        aria-expanded={!folder.collapsed}
+        aria-description={description}
+        aria-expanded={saved ? undefined : !folder.collapsed}
         data-strip-item={key}
         tabIndex={tabIndex}
         data-active={containsActive && folder.collapsed}
         data-editing={editing || undefined}
         data-drop-into={isDropTarget || undefined}
         data-tab-folder={folder.id}
+        data-saved={saved || undefined}
         onFocus={stripFocusIn}
         onBlur={stripFocusOut}
         onKeyDown={stripKeyDown}
         onClick={() => {
+          if (tablet) {
+            // A hold's release is the menu's, not a tap; the name being edited takes the taps;
+            // a saved group's tap brings its pages back.
+            if (press.swallowsClick() || renaming) return
+            if (saved) run('folder.open', { folderId: folder.id })
+            else toggle()
+            return
+          }
           const now = performance.now()
           if (now - lastClick.current < 400) {
             lastClick.current = 0
@@ -386,54 +419,81 @@ function FolderRow({
           toggle()
         }}
         onContextMenu={(e) => {
+          // The tablet's is the hold's (Chromium raises it during the hold): the menu at the
+          // finger, once.
+          if (tablet) return holdMenu(e)
           e.preventDefault()
           run('folder.contextMenu', { folderId: folder.id, ...contextMenuAnchor(e) })
         }}
+        {...(tablet ? hold : {})}
         title={compact ? folder.name : undefined}
       >
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
-        <span className="text-sm leading-none">{folder.icon}</span>
-        {folder.color && !compact && (
-          <span
-            className="h-2 w-2 shrink-0 rounded-full"
-            style={{ background: FOLDER_COLORS[folder.color] }}
-          />
-        )}
-        {!compact &&
-          (renaming ? (
-            <FolderRename folder={folder} />
-          ) : (
-            <>
-              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-              {live && (
-                <span
-                  className={cn(
-                    'h-1.5 w-1.5 shrink-0 rounded-full',
-                    liveError ? 'bg-red-500' : 'zen-live-dot bg-[var(--zen-accent)]'
-                  )}
-                  title={liveError ?? 'Live folder – updates automatically'}
-                />
-              )}
-              <span className="text-[11px] text-[var(--zen-muted)]">{tabs.length}</span>
-              {folder.collapsed ? (
-                <ChevronRight className="h-3.5 w-3.5 opacity-60" />
+        {tablet ? (
+          <>
+            <GroupChip folder={folder} count={count} saved={saved} compact={compact}>
+              {renaming ? (
+                <FolderRename folder={folder} />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                <span className="zen-group-chip-name">{folder.name}</span>
               )}
-            </>
-          ))}
+            </GroupChip>
+            {!compact && !saved && (
+              <>
+                <span className="min-w-0 flex-1" />
+                {folder.collapsed ? (
+                  <ChevronRight className="zen-group-row-chevron" aria-hidden />
+                ) : (
+                  <ChevronDown className="zen-group-row-chevron" aria-hidden />
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-sm leading-none">{folder.icon}</span>
+            {folder.color && !compact && (
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: FOLDER_COLORS[folder.color] }}
+              />
+            )}
+            {!compact &&
+              (renaming ? (
+                <FolderRename folder={folder} />
+              ) : (
+                <>
+                  <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+                  {live && (
+                    <span
+                      className={cn(
+                        'h-1.5 w-1.5 shrink-0 rounded-full',
+                        liveError ? 'bg-red-500' : 'zen-live-dot bg-[var(--zen-accent)]'
+                      )}
+                      title={liveError ?? 'Live folder – updates automatically'}
+                    />
+                  )}
+                  <span className="text-[11px] text-[var(--zen-muted)]">{tabs.length}</span>
+                  {folder.collapsed ? (
+                    <ChevronRight className="h-3.5 w-3.5 opacity-60" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                  )}
+                </>
+              ))}
+          </>
+        )}
       </div>
-      {!folder.collapsed &&
-        tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeTabId}
-            compact={compact}
-            indent
-            parent={key}
-          />
-        ))}
+      {drawn.map((tab) => (
+        <TabItem
+          key={tab.id}
+          tab={tab}
+          active={tab.id === activeTabId}
+          compact={compact}
+          indent
+          parent={key}
+        />
+      ))}
     </div>
   )
 }

@@ -336,6 +336,19 @@ export const FOLDER_COLOR_ORDER: readonly FolderColor[] = [
   'orange'
 ]
 
+/** What each colour is called: the swatch's name to assistive technology, the menu's radio item. */
+export const FOLDER_COLOR_NAMES: Record<FolderColor, string> = {
+  grey: 'Grey',
+  blue: 'Blue',
+  red: 'Red',
+  yellow: 'Yellow',
+  green: 'Green',
+  pink: 'Pink',
+  purple: 'Purple',
+  cyan: 'Cyan',
+  orange: 'Orange'
+}
+
 /** Privacy- and productivity-focused sites, mirroring Zen's onboarding essentials picks. */
 export const ONBOARDING_ESSENTIALS: Array<{ title: string; url: string }> = [
   { title: 'Proton Mail', url: 'https://mail.proton.me/' },

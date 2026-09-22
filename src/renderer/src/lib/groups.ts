@@ -1,30 +1,18 @@
 import type { Folder, FolderColor, Tab, UIState } from '@shared/types'
-import { FOLDER_COLOR_ORDER, FOLDER_COLORS } from '@shared/defaults'
+import { FOLDER_COLOR_NAMES, FOLDER_COLOR_ORDER, FOLDER_COLORS } from '@shared/defaults'
 import { hexToRgb } from '@shared/theme'
 
 /** Folders are tab groups on the phone; this is the colour a group without one is painted in. */
 export const DEFAULT_GROUP_COLOR: FolderColor = 'grey'
 
-const GROUP_COLOR_NAMES: Record<FolderColor, string> = {
-  grey: 'Grey',
-  blue: 'Blue',
-  red: 'Red',
-  yellow: 'Yellow',
-  green: 'Green',
-  pink: 'Pink',
-  purple: 'Purple',
-  cyan: 'Cyan',
-  orange: 'Orange'
-}
-
 /**
  * Chrome's nine group colours in Chrome's order (`FOLDER_COLOR_ORDER`, the order the core hands
  * them to new folders too), each with the name its swatch announces – the desktop group editor
- * bubble (tabs-13). The values are Zenium's own (`FOLDER_COLORS`, shared with the phone's
- * group cards).
+ * bubble (tabs-13), the touch hosts' Colour menu (`FOLDER_COLOR_NAMES`). The values are
+ * Zenium's own (`FOLDER_COLORS`, shared with the phone's group cards).
  */
 export const GROUP_PALETTE: ReadonlyArray<{ color: FolderColor; name: string }> =
-  FOLDER_COLOR_ORDER.map((color) => ({ color, name: GROUP_COLOR_NAMES[color] }))
+  FOLDER_COLOR_ORDER.map((color) => ({ color, name: FOLDER_COLOR_NAMES[color] }))
 
 /** The group's colour as space-separated channels, for `rgb(<channels> / <alpha>)`. */
 export function groupColorChannels(color: FolderColor | null | undefined): string {
