@@ -548,6 +548,15 @@ class IndexDifferentialTest {
         assertTrue("header rules applied: $edited", edited > 10)
         assertTrue("the edits of more than one rule stacked: $stacked", stacked > 5)
         assertTrue("a header-conditioned edit joined at the header stage: $editedTwice", editedTwice >= 1)
+        // The run's numbers, for the record (the JUnit report's system-out).
+        println(
+            "IndexDifferential: $total request-stage probes, $decidedByRule decided by a rule, $redirected redirected, " +
+                "$decidedTwice decided twice (needsHeaders), $direct at the header stage directly, $headerStageNamed header-stage decisions naming a rule " +
+                "($headerStageByRule by a header-conditioned rule: $headerStageBlocks blocks, $headerStageRedirects redirects), " +
+                "$differing differing from / $sameAsRequestStage the same as the request stage, " +
+                "$edited modifyHeaders decisions ($stacked with more than one rule's edits, $editedTwice whose response edits grew at the header stage), " +
+                "${mismatches.size} mismatches, ${violations.size} invariant violations"
+        )
         assertTrue("mismatches:\n" + mismatches.joinToString("\n"), mismatches.isEmpty())
         assertTrue("invariants:\n" + violations.joinToString("\n"), violations.isEmpty())
     }
@@ -647,6 +656,7 @@ class IndexDifferentialTest {
                 stage("expectedWithHeaders", HeaderCondition.index(fields))
             }
         }
+        println("IndexDifferential fixture: ${probes.length()} probes, $stages stages decided through decide and decideLinear, ${failures.size} failures")
         assertTrue("stages decided: $stages", stages >= 20)
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }

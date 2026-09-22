@@ -290,6 +290,15 @@
       "note": "No workflow of its own: the sheet touch audit chains it."
     },
     {
+      "id": "dnr-modify-headers",
+      "class": "ModifyHeadersDemo",
+      "shard": "phone-b",
+      "mirrors": "android-dnr-modify-headers-demo.yml:system-webview",
+      "dir": "modify-headers-demo",
+      "estimate": 2,
+      "note": "The workflow's second job runs the same driver on the webview shard's image; the proof here is the API 34 image's own WebView."
+    },
+    {
       "id": "appicon",
       "class": "AppIconDemo",
       "shard": "phone-b",
