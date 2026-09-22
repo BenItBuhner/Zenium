@@ -241,15 +241,22 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         }
         val picked = colourScheme(own, other, measured = true)
         if (picked) {
-            val flipped = poll(8_000) { articleValue(SCHEME_JS) == other.lowercase() }
-            val same = articleValue("performance.timeOrigin") == document
-            finding("  the article sees ${articleValue(SCHEME_JS)} under the ${other.lowercase()} chrome; same document: $same")
-            check("the open article's prefers-color-scheme flips to ${other.lowercase()} with the chrome, the same document (no reload)", flipped && same)
+            // The host dispatches the configuration change to every page, on screen or not; what
+            // the article sees while Settings stands over it is noted, the claim is made once the
+            // article is back in front (the page-controls demo's reading).
+            val behind = poll(6_000) { articleValue(SCHEME_JS) == other.lowercase() }
+            finding("  with Settings over it the article sees ${articleValue(SCHEME_JS)} (flipped behind Settings: $behind)")
             SystemClock.sleep(800)
             snap("look-and-feel-${other.lowercase()}")
         }
         ensureChromeClear()
         awaitPage(HOST, 10_000, "/")
+        if (picked) {
+            val flipped = poll(8_000) { articleValue(SCHEME_JS) == other.lowercase() }
+            val same = articleValue("performance.timeOrigin") == document
+            finding("  the article sees ${articleValue(SCHEME_JS)} under the ${other.lowercase()} chrome; same document: $same")
+            check("the open article's prefers-color-scheme flips to ${other.lowercase()} with the chrome, the same document (no reload)", flipped && same)
+        }
         SystemClock.sleep(1_500)
         snap("article-${other.lowercase()}-same-document")
         beat()
@@ -343,9 +350,11 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             fonts().optInt("size") == 20
         }
         val sizeReads = sliderValue("fonts-size")
+        // What the article behind Settings sees is noted here (the host hands every page its
+        // WebSettings at once); the page's claim is made once it is back in front, below.
         val bodySize = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "20px" }
-        finding("  after the drag: settings.fonts.size=${fonts().optInt("size")}, the row reads $sizeReads, the article's body font-size ${articleValue(BODY_FONT_SIZE_JS)} (same document: ${articleValue("performance.timeOrigin") == document})")
-        check("Font size dragged three stops applies 20 px on release: the core's setting, the row's value, the open article's body text", sizeTook && sizeReads == "20 px" && bodySize)
+        finding("  after the drag: settings.fonts.size=${fonts().optInt("size")}, the row reads $sizeReads, the article's body font-size behind Settings ${articleValue(BODY_FONT_SIZE_JS)} (at 20 px: $bodySize; same document: ${articleValue("performance.timeOrigin") == document})")
+        check("Font size dragged three stops applies 20 px on release: the core's setting and the row's value", sizeTook && sizeReads == "20 px")
         if (!sizeTook) touchFault("the Font size slider drag did not take: settings.fonts.size is ${fonts().optInt("size")}, not 20")
         SystemClock.sleep(600)
         snap("customise-fonts-size-20")
@@ -357,8 +366,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             fonts().optInt("minimumSize") == 12
         }
         val smallLifted = poll(6_000) { articleValue(SMALL_FONT_SIZE_JS) == "12px" }
-        finding("  after the drag: settings.fonts.minimumSize=${fonts().optInt("minimumSize")}, the row reads ${sliderValue("fonts-minimum-size")}, the article's 11 px small print at ${articleValue(SMALL_FONT_SIZE_JS)}")
-        check("Minimum font size dragged to 12 px lifts the article's 11 px small print to 12 (WebSettings.minimumFontSize, in place)", minimumTook && sliderValue("fonts-minimum-size") == "12 px" && smallLifted)
+        finding("  after the drag: settings.fonts.minimumSize=${fonts().optInt("minimumSize")}, the row reads ${sliderValue("fonts-minimum-size")}, the article's 11 px small print behind Settings at ${articleValue(SMALL_FONT_SIZE_JS)} (lifted to 12: $smallLifted)")
+        check("Minimum font size dragged to 12 px on release: the core's setting and the row's value", minimumTook && sliderValue("fonts-minimum-size") == "12 px")
         if (!minimumTook) touchFault("the Minimum font size slider drag did not take: settings.fonts.minimumSize is ${fonts().optInt("minimumSize")}, not 12")
 
         // Standard font: the action row opens the phone's picker sheet (each face drawn in
@@ -382,8 +391,8 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                     val set = { fonts().optString("standard") == "cursive" && findNode { it == "Serif monospace" } == null }
                     val took = scene("font-family-picker-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = set) { Finger().tap(cursive) }
                     val family = poll(6_000) { articleValue(BODY_FONT_FAMILY_JS) == "cursive" }
-                    finding("  after Cursive: settings.fonts.standard=${fonts().optString("standard")}, the row reads ${rowText("fonts-standard-phone")}, the article's body font-family ${articleValue(BODY_FONT_FAMILY_JS)}")
-                    check("a finger on Cursive sets the standard family and closes the picker (§9.13); the open article's text is set in it", took && family)
+                    finding("  after Cursive: settings.fonts.standard=${fonts().optString("standard")}, the row reads ${rowText("fonts-standard-phone")}, the article's body font-family behind Settings ${articleValue(BODY_FONT_FAMILY_JS)} (cursive: $family)")
+                    check("a finger on Cursive sets the standard family and closes the picker (§9.13)", took)
                     if (!took) touchFault("a touch on Cursive did not take: settings.fonts.standard is ${fonts().optString("standard")}")
                 } else {
                     touchFault("the family picker listed no Cursive row to touch")
@@ -461,21 +470,19 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("Look and Feel opens again", false)
             return
         }
-        if (colourScheme(from, to, measured = false)) {
-            val flipped = poll(8_000) { articleValue(SCHEME_JS) == to.lowercase() }
-            finding("  the article sees ${articleValue(SCHEME_JS)} under the ${to.lowercase()} chrome; same document: ${articleValue("performance.timeOrigin") == document}")
-            check("the article follows back to ${to.lowercase()}, still the same document", flipped && articleValue("performance.timeOrigin") == document)
-        }
+        val schemeBack = colourScheme(from, to, measured = false)
+        if (schemeBack) finding("  with Settings over it the article sees ${articleValue(SCHEME_JS)}")
         // Reset fonts: the action row under a finger; the open article back at 16 px, no floor,
         // the platform's face – in place.
+        var reset = false
         if (revealRow(RESET_ROW) != null) {
             SystemClock.sleep(600)
-            val reset = touchTapLabelExpecting(RESET_ROW, "settings.fonts back at the defaults", timeoutMs = 6_000, prefix = true) {
+            reset = touchTapLabelExpecting(RESET_ROW, "settings.fonts back at the defaults", timeoutMs = 6_000, prefix = true) {
                 fonts().let { it.optInt("size") == 16 && it.optInt("minimumSize") == 0 && it.isNull("standard") }
             }
-            val page = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
-            finding("  after Reset fonts: fonts ${fonts()}; the article's body ${articleValue(BODY_FONT_SIZE_JS)} ${articleValue(BODY_FONT_FAMILY_JS)}, small print ${articleValue(SMALL_FONT_SIZE_JS)}; the Reset row listed: ${"fonts-reset" in groupRows("fonts")}")
-            check("Reset fonts puts the type back (16 px, no minimum, the platform's face) on the open article and the row leaves the group", reset && page && "fonts-reset" !in groupRows("fonts"))
+            val behind = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
+            finding("  after Reset fonts: fonts ${fonts()}; behind Settings the article's body ${articleValue(BODY_FONT_SIZE_JS)} ${articleValue(BODY_FONT_FAMILY_JS)}, small print ${articleValue(SMALL_FONT_SIZE_JS)} (back at the defaults: $behind); the Reset row listed: ${"fonts-reset" in groupRows("fonts")}")
+            check("Reset fonts puts settings.fonts back at the defaults and the row leaves the group", reset && "fonts-reset" !in groupRows("fonts"))
             SystemClock.sleep(600)
             snap("customise-fonts-reset")
         } else {
@@ -483,6 +490,16 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         }
         ensureChromeClear()
         awaitPage(HOST, 10_000, "/")
+        if (schemeBack) {
+            val flipped = poll(8_000) { articleValue(SCHEME_JS) == to.lowercase() }
+            finding("  the article sees ${articleValue(SCHEME_JS)} under the ${to.lowercase()} chrome; same document: ${articleValue("performance.timeOrigin") == document}")
+            check("the article follows back to ${to.lowercase()}, still the same document", flipped && articleValue("performance.timeOrigin") == document)
+        }
+        if (reset) {
+            val page = poll(8_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
+            finding("  the article after Reset: ${articleMetrics()} (same document: ${articleValue("performance.timeOrigin") == document})")
+            check("the open article is back in the default type (16 px, the 11 px small print at 11, the platform's face), the same document", page && articleValue("performance.timeOrigin") == document)
+        }
         SystemClock.sleep(1_200)
         snap("article-${to.lowercase()}-reset")
         beat()
