@@ -1662,7 +1662,10 @@ class TabWebView(
      * chrome lies under the pages; a sheet over the page would hide it), and the card whose
      * Capture more asked is on its way out as this is called – its strip along the frame's
      * bottom edge is the chrome's, not the page's ([cover]), and the copies wait for the strip
-     * to close over the page again (bounded: a strip that never closes is not waited on for ever).
+     * to close over the page again. A strip that stays – a banner at rest above the page
+     * (default browser, add to home screen) – is not waited on: past the deadline the cover is
+     * held at 0 for the capture, so the page draws over the banner and every copy of the frame
+     * is the page alone, and released with the result ([ContentCover.hold]).
      */
     fun captureLong(callback: (PageCapture.Capture?) -> Unit) {
         val radius = radiusPx
@@ -1673,8 +1676,14 @@ class TabWebView(
         val capture = PageCapture(this, host.activity.window, encoder, square, ::evaluate)
         val deadline = SystemClock.uptimeMillis() + COVER_CLEAR_WAIT_MS
         fun whenUncovered() {
-            if (!cover.active || SystemClock.uptimeMillis() >= deadline) {
+            if (!cover.active) {
                 capture.runBitmap(CapturePlan.MODE_LONG, null, callback)
+            } else if (SystemClock.uptimeMillis() >= deadline) {
+                cover.hold()
+                capture.runBitmap(CapturePlan.MODE_LONG, null) { result ->
+                    cover.release()
+                    callback(result)
+                }
             } else {
                 postOnAnimation { whenUncovered() }
             }
@@ -2225,7 +2234,8 @@ class TabWebView(
 
         /**
          * The most [captureLong] waits for the message strip at the frame's edge to close over
-         * the page (the card's exit and the strip's spring take a fraction of it).
+         * the page (the card's exit and the strip's spring take a fraction of it); a strip still
+         * there at the end of it stays for good, and is held out of the capture instead.
          */
         private const val COVER_CLEAR_WAIT_MS = 1_500L
 
