@@ -667,6 +667,20 @@ class TabWebView(
         postToPage(formsConfig())
     }
 
+    /**
+     * A hardware keyboard's Tab entering this page from the chrome ([FocusHandoff], A11Y-09): the
+     * view takes the keyboard with its document's focus unplaced – out of touch mode WebView's
+     * own `requestFocus` would focus the document's first node, the wrong end for a Shift+Tab –
+     * and the page script lands it on the first or last tabbable (`focus` in `pageScript.ts`,
+     * `@shared/focusEdge`). `edge` is `first` or `last`.
+     */
+    fun focusEdge(edge: String) {
+        settings.setNeedInitialFocus(false)
+        requestFocus()
+        settings.setNeedInitialFocus(true)
+        postToPage(json("type" to "focus", "edge" to edge).toString())
+    }
+
     /** Deliver a browser → page message (JSON text) over the reply proxy (or the legacy bridge). */
     fun postToPage(payload: String) {
         val proxy = replyProxy

@@ -8,6 +8,7 @@ import type {
 } from '@shared/types'
 import type { SafeBrowsingHit } from '@shared/privacy'
 import type { FormsCommand } from '@shared/forms'
+import type { FocusEdge } from '@shared/focusEdge'
 import { isCertificateError, type SiteCertificate } from '@shared/siteInfo'
 import { certificateDetailsFrom } from '@shared/url'
 import type { NavigationReport } from './extensionWebNavigation'
@@ -517,6 +518,14 @@ export class AndroidTabView implements TabView {
 
   focus(): void {
     this.bridge.send('view.focus', { tabId: this.tabId })
+  }
+
+  /**
+   * A Tab entering the page from the chrome (A11Y-09): Kotlin gives the view the keyboard with
+   * its focus unplaced and posts the page script the edge to land on (`focus` in `pageScript.ts`).
+   */
+  focusEdge(edge: FocusEdge): void {
+    this.bridge.send('view.focusEdge', { tabId: this.tabId, edge })
   }
 
   isDestroyed(): boolean {

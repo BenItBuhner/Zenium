@@ -1,5 +1,7 @@
 import type { FocusPaneRequest, PaneId } from '@shared/types'
+import { focusEdge } from '@shared/focusEdge'
 import { run } from './api'
+import { noteInput } from './lastInput'
 import { closeUrlbar, uiStore } from './ui'
 
 /**
@@ -141,6 +143,23 @@ export function currentPane(
 ): PaneId | null {
   if (from === 'page' || !doc.hasFocus()) return 'page'
   return paneOf(doc.activeElement)
+}
+
+/**
+ * A hardware keyboard's Tab ran past the page's last tabbable (Shift+Tab past its first) and the
+ * host handed the chrome the keyboard (A11Y-09's remainder, the phone's `FocusHandoff.kt`): the
+ * focus lands on the chrome's first control forward, its last backward – the document's own
+ * order, `@shared/focusEdge`, less what is `inert` or hidden from the tree (a bar that is away).
+ * The Tab was the keyboard's, so it is the last input (`data-input`): the landing draws the
+ * shared ring, as the same Tab pressed inside the chrome would. The control landed on, or null
+ * in a chrome with nothing to land on (the keyboard then rests on the document).
+ */
+export function pageHandedKeyboard(
+  direction: 'forward' | 'backward',
+  doc: Document = document
+): HTMLElement | null {
+  noteInput('keyboard', doc.documentElement)
+  return focusEdge(direction === 'forward' ? 'first' : 'last', doc)
 }
 
 /**

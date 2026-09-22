@@ -78,6 +78,7 @@ import type {
 import type { NotificationHostMessage, NotificationPageRequest } from '../shared/notifications'
 import type { ReadAloudHostMessage, ReadAloudVoice } from '../shared/readAloud'
 import type { TextFragmentHostMessage } from '../shared/textFragmentScript'
+import type { FocusEdge, FocusEdgeHostMessage } from '../shared/focusEdge'
 import type { PrivacyFlags, SafeBrowsingHit } from '../shared/privacy'
 import type { RawWebAppManifest, ShortcutIconKind } from '../shared/webApp'
 import type { VoiceStartOutcome } from '../shared/voice'
@@ -294,7 +295,8 @@ export interface DisplayModeHostMessage {
  * web-app polyfill's events, the media session's actions (the OS controls, the in-app player),
  * the notification polyfill's answers and events, a share call's outcome, a position, the
  * page's display mode, read aloud's extraction request and highlight, the request for the
- * selection's text directive (a link to the highlight, SH-11).
+ * selection's text directive (a link to the highlight, SH-11), and where a Tab entering the
+ * page from the chrome lands (`focus`, A11Y-09).
  */
 export type PageHostMessage =
   | WebAppHostMessage
@@ -305,6 +307,7 @@ export type PageHostMessage =
   | DisplayModeHostMessage
   | ReadAloudHostMessage
   | TextFragmentHostMessage
+  | FocusEdgeHostMessage
 
 /** What a host reports when a page calls `alert`, `confirm` or `prompt`. */
 export interface PageDialogRequest {
@@ -719,6 +722,12 @@ export interface TabView {
   showHint?(hint: PageHint | null): void
   setBackgroundColor(color: string): void
   focus(): void
+  /**
+   * Give the page the keyboard with the focus landed on its first or last tabbable control: a
+   * hardware keyboard's Tab or Shift+Tab entering the page from the chrome (A11Y-09). Hosts
+   * whose engine walks the focus between the page and the chrome itself leave this out.
+   */
+  focusEdge?(edge: FocusEdge): void
   /** Whether this page holds the keyboard right now. Hosts that cannot tell leave it out. */
   isFocused?(): boolean
   isDestroyed(): boolean

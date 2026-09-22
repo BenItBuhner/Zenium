@@ -88,6 +88,12 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     var chrome = ChromeWebView(activity, this)
         private set
     override val tabs = TabHost(root, this)
+    /**
+     * Page-to-chrome Tab traversal for a hardware keyboard (A11Y-09): the chrome's WebView and
+     * every page's are wired into it ([TabHost.create]); a Tab run off one document lands in
+     * the other, [onFocusLanding].
+     */
+    override val focusHandoff = FocusHandoff(root) { landing -> onFocusLanding(landing) }
     val agentServer = AgentServer(this)
     val updates = Updates(activity, this)
     val translate = Translate(activity, this)
@@ -102,6 +108,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     val touchExploration: Boolean get() = accessibility?.isTouchExplorationEnabled == true
 
     init {
+        focusHandoff.wireChrome(chrome)
         // A private session the last run did not get to end (a crash, the system killing the app)
         // ends now, before any tab exists and while its profile is free to be deleted; the card
         // that offered to close its tabs goes with the PrivateSession below.
@@ -318,6 +325,27 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
     override val underlay: View get() = chrome
     override fun backChanged() = back.refresh()
     override fun onPageTransitionEnded(transition: PageBackTransition) = back.onPageTransitionEnded(transition)
+
+    /**
+     * A hardware keyboard's Tab ran off one WebView's document ([FocusHandoff], A11Y-09). Into
+     * the chrome: its WebView takes the keyboard with the document's focus left for the chrome
+     * to place (`setNeedInitialFocus(false)`), on its first or last control per the
+     * `focus.fromPage` event (`lib/panes.ts`). Into the page: the core is asked (`focus.toPage`)
+     * – it knows which tab is the active one – and answers with `view.focusEdge` for it
+     * ([TabWebView.focusEdge]).
+     */
+    private fun onFocusLanding(landing: FocusHandoff.Landing) {
+        val forward = landing == FocusHandoff.Landing.CHROME_FIRST || landing == FocusHandoff.Landing.PAGE_FIRST
+        val direction = if (forward) "forward" else "backward"
+        val toChrome = landing == FocusHandoff.Landing.CHROME_FIRST || landing == FocusHandoff.Landing.CHROME_LAST
+        Log.d(TAG, "keyboard Tab $direction off the ${if (toChrome) "page: the chrome takes it" else "chrome: the active page takes it"}")
+        if (toChrome) {
+            chrome.requestFocus()
+            chrome.hostEvent("focus.fromPage", json("direction" to direction))
+        } else {
+            chrome.hostEvent("focus.toPage", json("direction" to direction))
+        }
+    }
 
     // --- the shared renderer: gone (ERR-15), or not answering (ERR-16) -------------------------------
 
@@ -676,6 +704,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
                 reply(null)
             }
             "view.focus" -> { tab?.requestFocus(); reply(null) }
+            "view.focusEdge" -> { tab?.focusEdge(args.str("edge", "first")); reply(null) }
             "view.setBounds" -> { tabs.setBounds(args.str("tabId"), args.obj("rect")); reply(null) }
             "view.setRadius" -> { tabs.setRadius(args.str("tabId"), args.num("radius")); reply(null) }
             "view.setPullOffset" -> { tab?.setPullOffset(args.num("offset")); reply(null) }
@@ -1839,6 +1868,7 @@ class Host(override val activity: MainActivity, private val root: FrameLayout, p
         runCatching { dead.destroy() }
         val fresh = ChromeWebView(activity, this)
         root.addView(fresh, if (index >= 0) index else 0, params)
+        focusHandoff.wireChrome(fresh)
         chrome = fresh
         val delay = lifecycle.chromeRebuildDelayMs()
         if (delay > 0) Log.w(TAG, "the rebuilt chrome died again (${lifecycle.consecutiveRapidRebuilds}x in a row); loading it in $delay ms")
