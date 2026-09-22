@@ -413,12 +413,16 @@ describe('DesktopPopover focus', () => {
       render(<Prompt closing={false} />)
       const panel = document.querySelector<HTMLElement>('[role="dialog"]')!
       expect(panel.classList.contains('zen-desktop-popover')).toBe(true)
+      const shown = { transform: panel.style.transform, origin: panel.style.transformOrigin }
+      expect(shown.transform).not.toBe('')
       act(() => root!.render(<Prompt closing />))
-      // Nothing travels: no transform, the one 120 ms fade on opacity – the length the
-      // stylesheet re-declares on `.zen-desktop-popover[data-collapsing]` past the global rule.
+      // Nothing travels: the transform stays where the spring left it (not dropped to `none`),
+      // the one 120 ms fade on opacity – the length the stylesheet re-declares on
+      // `.zen-desktop-popover[data-collapsing]` past the global rule.
       expect(panel.getAttribute('data-collapsing')).toBe('true')
       expect(panel.style.opacity).toBe('0')
-      expect(panel.style.transform).toBe('')
+      expect(panel.style.transform).toBe(shown.transform)
+      expect(panel.style.transformOrigin).toBe(shown.origin)
       expect(panel.style.transition).toBe('opacity 120ms var(--zen-ease)')
       expect(onClosed).not.toHaveBeenCalled()
       // A child's transition ending is not the popover's.

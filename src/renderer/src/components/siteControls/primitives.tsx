@@ -249,7 +249,9 @@ export function DesktopPopover({
   }, [])
 
   // The same two functions as the spring's shown state, so the transition interpolates each;
-  // the reduced-motion fade names opacity alone, at §11.3's one length.
+  // the reduced-motion fade names opacity alone, at §11.3's one length, and keeps the transform
+  // where the spring left it (the computed value stays the shown state's identity matrix rather
+  // than going to `none`): nothing travels, and nothing re-rasterises under the fade.
   const motion: CSSProperties =
     collapsing === 'pop'
       ? {
@@ -262,6 +264,8 @@ export function DesktopPopover({
       : collapsing === 'fade'
         ? {
             opacity: 0,
+            transform: style.transform,
+            transformOrigin: style.transformOrigin,
             transition: `opacity ${REDUCED_FADE_MS}ms var(--zen-ease)`,
             pointerEvents: 'none'
           }
