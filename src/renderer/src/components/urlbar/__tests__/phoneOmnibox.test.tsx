@@ -723,3 +723,52 @@ describe('the card’s section headings (OMN-18)', () => {
     expect(headings(el)[0]).toBe(pages)
   })
 })
+
+describe('the field’s engine mark (NTP-09)', () => {
+  const withEngine = (id: string): ReactElement =>
+    createElement(Urlbar, {
+      state: {
+        ...state(tab(NEW_TAB_URL)),
+        settings: { ...DEFAULT_SETTINGS, searchEngineId: id }
+      } as UIState,
+      urlbar: urlbarState('new-tab'),
+      area: null,
+      phoneEdge: 'top'
+    })
+  const slot = (el: HTMLElement): HTMLElement =>
+    el.querySelector<HTMLElement>('.zen-omnibox-field [data-testid="engine-field-glyph"]')!
+
+  it('keeps the letter tile for the vendor’s default', async () => {
+    const el = await render(withEngine('google'))
+    expect(slot(el).textContent).toBe('G')
+    expect(slot(el).getAttribute('aria-label')).toBe('Search engine: Google')
+    expect(slot(el).querySelector('img')).toBeNull()
+  })
+
+  it('shows the chosen engine’s favicon at 20 in the 28 slot once it loads, the letter until then', async () => {
+    const el = await render(withEngine('bing'))
+    const s = slot(el)
+    expect(s.getAttribute('aria-label')).toBe('Search engine: Bing')
+    const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.getAttribute('src')).toBe('https://www.bing.com/favicon.ico')
+    expect(s.textContent).toBe('B')
+    act(() => {
+      img.dispatchEvent(new Event('load'))
+    })
+    expect(s.textContent).toBe('')
+    expect(s.className).not.toContain('rounded-full')
+    expect(img.className).toContain('h-5 w-5')
+    // The favicon keeps its own colours; the wrapper is still the 28 slot the double lays out.
+    expect(s.className).toContain('h-7 w-7')
+  })
+
+  it('shows a favicon that loaded once this session at once, with no letter first', async () => {
+    // Bing's loaded in the test above; a fresh field shows it from its first frame.
+    const el = await render(withEngine('bing'))
+    const s = slot(el)
+    expect(s.textContent).toBe('')
+    const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.className).not.toContain('invisible')
+    expect(img.dataset.arrived).toBeUndefined()
+  })
+})

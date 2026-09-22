@@ -45,6 +45,7 @@ import { cn } from '@renderer/lib/utils'
 import { startVoiceSearch } from '@renderer/lib/voiceSearch'
 import { V2_GLYPH } from '../v2/controls'
 import { Highlighted } from '../v2/Highlighted'
+import { EngineFieldGlyph } from './EngineFieldGlyph'
 import { matchRanges } from './highlight'
 import { isShareableUrl, showsPageHeader } from './omniboxHeader'
 import {
@@ -1098,13 +1099,9 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
               phoneBarForHost(state.settings.phoneBar, phoneBarOffered(state.capabilities))
             )}
           >
-            <span
-              role="img"
-              aria-label={`Search engine: ${engine.name}`}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--zen-element-bg)] text-[11px] font-semibold"
-            >
-              {engine.glyph}
-            </span>
+            {/* The engine's mark (NTP-09): its favicon when it is not the vendor's default, the
+                letter tile otherwise; the morph's double draws the same (FakeboxMorphLayer). */}
+            <EngineFieldGlyph engine={engine} fallback="tile" />
             <input
               ref={inputRef}
               value={text}

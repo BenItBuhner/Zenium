@@ -10397,6 +10397,17 @@
 .zen-omnibox-list[data-edge='bottom'] > .zen-v2-heading.zen-omnibox-sheet-heading:last-child {
   margin-top: 8px;
 }
+/*
+ * The engine's favicon in a field's leading slot (NTP-09, components/urlbar/EngineFieldGlyph):
+ * content drawn in chrome, its own colours (§9.29); when it arrives after the slot's fallback
+ * was painted it fades in place over 120 ms (§11.4, the same under reduced motion).
+ */
+.zen-engine-field-favicon {
+  object-fit: contain;
+}
+.zen-engine-field-favicon[data-arrived] {
+  animation: zen-fade 120ms var(--zen-ease);
+}
 
 /*
  * The page zoom sheet (design language v2 draft §1–§3, §6, §9, §11), the docked panel under the
@@ -10744,8 +10755,12 @@
   .zen-frame-dialogs[data-sheet] .zen-frame-dialogs-slot {
     transition-duration: 120ms !important;
   }
-  /* A section heading arriving on the omnibox card (OMN-18) keeps its §11.4 fade in place. */
-  .zen-v2-heading.zen-omnibox-sheet-heading {
+  /*
+   * A section heading arriving on the omnibox card (OMN-18) and an engine's favicon arriving
+   * in a field's slot (NTP-09) keep their §11.4 fade in place.
+   */
+  .zen-v2-heading.zen-omnibox-sheet-heading,
+  .zen-engine-field-favicon[data-arrived] {
     animation-duration: 120ms !important;
   }
   /*
