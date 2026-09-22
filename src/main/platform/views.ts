@@ -41,6 +41,14 @@ import {
   type PageDialogCall
 } from '../../shared/pageDialogIpc'
 import type { FormsCommand } from '../../shared/forms'
+import {
+  cdpFontFamilies,
+  chromiumFontPreferences,
+  DEFAULT_FONT_SETTINGS,
+  ELECTRON_FONT_DEFAULTS,
+  type ChromiumFontPreferences,
+  type PageFontSettings
+} from '../../shared/fonts'
 import { defer } from '../../core/platform'
 import type { PdfRenderOptions } from '../../shared/print'
 import type {
@@ -148,10 +156,26 @@ interface UnloadCheck {
   settle: (leave: boolean) => void
 }
 
+/**
+ * The page fonts every new page view is made with (Settings › Appearance › Customize fonts,
+ * CT-25): the setting as the core last handed it over (`ElectronTabViewHost.applyFonts`), in
+ * the engine's terms. Web preferences are read once, as a page's contents are made; a page
+ * already open takes a change over the DevTools protocol (`ElectronTabView.applyFonts`).
+ */
+let pageFonts: ChromiumFontPreferences = chromiumFontPreferences(DEFAULT_FONT_SETTINGS)
+/** The setting behind `pageFonts` (what an open page is brought to). */
+let pageFontSettings: PageFontSettings = DEFAULT_FONT_SETTINGS
+
+/** One string per font setting, so a page knows whether it has the one that stands. */
+function fontsKey(fonts: PageFontSettings): string {
+  return JSON.stringify(fonts)
+}
+
 /** What every tab page runs with; `session` picks the container (omitted for pages that exist). */
 function pageWebPreferences(session?: Session): WebPreferences {
   return {
     ...(session ? { session } : {}),
+    ...pageFonts,
     preload: pagePreload,
     sandbox: true,
     contextIsolation: true,
@@ -215,6 +239,20 @@ export class ElectronTabView implements TabView {
    */
   private keyboardAsked = false
 
+  /**
+   * The page fonts this page has (`fontsKey`): the setting its web preferences were made from,
+   * then whatever a live change brought it to. Compared with the setting on each change and
+   * each navigation (`applyFonts`, `refreshFonts`).
+   */
+  private fontsApplied = fontsKey(pageFontSettings)
+  /** The families the page has by name, so `Page.setFontFamilies` (once per session) is sent only for a change. */
+  private familiesApplied = JSON.stringify(cdpFontFamilies(pageFontSettings, ELECTRON_FONT_DEFAULTS))
+  /** What the page's web preferences were made from: where the engine takes it back to. */
+  private readonly fontsBorn = this.fontsApplied
+  private readonly familiesBorn = this.familiesApplied
+  /** Live font changes in flight, one after the other. */
+  private fontsTurn: Promise<void> = Promise.resolve()
+
   constructor(
     readonly view: WebContentsView,
     private readonly owner: ElectronTabViewHost
@@ -273,7 +311,12 @@ export class ElectronTabView implements TabView {
     const id = wc.id
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
-    wc.on('did-navigate', (_e, url) => ev.onNavigated(url, false))
+    wc.on('did-navigate', (_e, url) => {
+      ev.onNavigated(url, false)
+      // A new document takes the web preferences its contents were made with: a page whose
+      // fonts changed since is brought to the setting again (the debugger permitting).
+      this.refreshFonts()
+    })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) ev.onNavigated(url, true)
     })
@@ -1068,6 +1111,77 @@ export class ElectronTabView implements TabView {
   /** Whether the current session was opened by `withDebugger` (and is ours to close). */
   private cdpAttachedHere = false
 
+  // --- page fonts (CT-25) -----------------------------------------------------------
+
+  /**
+   * Bring an open page to the page fonts that stand (`pageFontSettings`), over the DevTools
+   * protocol: the web preferences a page's contents were made with cannot be changed after,
+   * so `Page.setFontFamilies` and `Page.setFontSizes` do what a new page's preferences do. Only
+   * through a session of our own: a debugger another owner holds (DevTools on the page, an
+   * extension's `chrome.debugger`) is left alone, and the page takes the change on its next
+   * load (`did-navigate` tries again; the setting's description says so). The minimum font
+   * size has no protocol command: an open page keeps its floor until its contents are remade
+   * (a sleeping tab waking, a new tab).
+   *
+   * `Page.setFontFamilies` may be sent once per agent lifetime ("Font families can only be set
+   * once"): the session is attached for the commands and detached after, so every change gets a
+   * fresh agent; while another action of ours holds the session (dark theme for sites) a second
+   * family change recycles the session, the override re-sent on the new one.
+   */
+  refreshFonts(): void {
+    if (this.wc.isDestroyed()) return
+    const wanted = fontsKey(pageFontSettings)
+    if (wanted === this.fontsApplied) return
+    const fonts = pageFontSettings
+    this.fontsTurn = this.fontsTurn.then(() => this.sendFonts(fonts, wanted)).catch(() => {})
+  }
+
+  /**
+   * The engine re-applied the page's web preferences (a colour scheme flip re-reads them, and
+   * with them the fonts the page was made with): what a live change brought is gone, so the
+   * page reads as made and is brought to the setting again where it differs.
+   */
+  fontsChangedByEngine(): void {
+    this.fontsApplied = this.fontsBorn
+    this.familiesApplied = this.familiesBorn
+    this.refreshFonts()
+  }
+
+  private async sendFonts(fonts: PageFontSettings, key: string): Promise<void> {
+    if (this.wc.isDestroyed()) return
+    const dbg = this.wc.debugger
+    // Another owner's session is left alone: the change waits for the page's next load.
+    if (dbg.isAttached() && !this.cdpAttachedHere) return
+    const families = cdpFontFamilies(fonts, ELECTRON_FONT_DEFAULTS)
+    const familiesKey = JSON.stringify(families)
+    const sizes = chromiumFontPreferences(fonts)
+    try {
+      await this.withDebugger(async (session) => {
+        if (familiesKey !== this.familiesApplied) {
+          try {
+            await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
+          } catch (error) {
+            if (!/only be set once/i.test(String(error))) throw error
+            // Our own long-lived session (the dark theme hold) set families before: a fresh
+            // agent takes the new ones; the hold's override goes back on the new session.
+            session.detach()
+            session.attach('1.3')
+            if (this.darkeningApplied)
+              await session.sendCommand('Emulation.setAutoDarkModeOverride', { enabled: true })
+            await session.sendCommand('Page.setFontFamilies', { fontFamilies: families })
+          }
+          this.familiesApplied = familiesKey
+        }
+        await session.sendCommand('Page.setFontSizes', {
+          fontSizes: { standard: sizes.defaultFontSize, fixed: sizes.defaultMonospaceFontSize }
+        })
+      })
+      this.fontsApplied = key
+    } catch {
+      /* the page went away, or the engine refused: the next load or change tries again */
+    }
+  }
+
   // --- dark theme for sites (CT-18) -------------------------------------------------
 
   /** The core's policy for this page's site ("Apply dark theme to sites" and its exceptions). */
@@ -1547,8 +1661,29 @@ export class ElectronTabViewHost implements TabViewHost {
     // Dark theme for sites acts only while the chrome is dark: a scheme flip (the OS, the
     // Appearance setting) turns every page's override on or off.
     nativeTheme.on('updated', () => {
-      for (const view of this.byWebContentsId.values()) view.refreshDarkening()
+      for (const view of this.byWebContentsId.values()) {
+        view.refreshDarkening()
+        // The engine re-reads every page's web preferences on a scheme flip, which takes a
+        // live font change back to the fonts the page was made with: sent again.
+        view.fontsChangedByEngine()
+      }
     })
+  }
+
+  /**
+   * The page fonts (CT-25) for every page view to come – the web preferences they are made
+   * with – and for every page open now, live where the page's debugger is free
+   * (`ElectronTabView.refreshFonts`).
+   */
+  applyFonts(fonts: PageFontSettings): void {
+    pageFontSettings = fonts
+    pageFonts = chromiumFontPreferences(fonts)
+    for (const view of this.byWebContentsId.values()) view.refreshFonts()
+  }
+
+  /** The page fonts every new page view is made with right now (for the tests). */
+  static currentFonts(): PageFontSettings {
+    return pageFontSettings
   }
 
   /** Follow the window's own chrome for the keyboard, as every tab page in it is followed. */

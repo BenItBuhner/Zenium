@@ -183,7 +183,9 @@ export function androidCapabilities({
     popupSurface: false,
     qrScan: false,
     // Until boot says the device has a text-to-speech engine (`ReadAloud.kt`; `Platform.speech`).
-    readAloud: false
+    readAloud: false,
+    // WebView sends the system's languages and cannot be told the list (CT-41's recorded limit).
+    pageLanguages: false
   }
 }
 

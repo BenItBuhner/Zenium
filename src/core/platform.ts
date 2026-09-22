@@ -49,6 +49,7 @@ import type {
 } from '../shared/types'
 import type { AppIconId } from '../shared/appIcon'
 import type { DisplayMode } from '../shared/displayMode'
+import type { PageFontSettings } from '../shared/fonts'
 import type { FormsCommand, FormsEvent } from '../shared/forms'
 import type { PageHint } from '../shared/fullscreenHint'
 import type { CaptionColors } from '../shared/theme'
@@ -88,6 +89,12 @@ import type { RuleSet } from './blocking/rules'
 export interface PlatformInfo {
   os: PlatformOs
   version: string
+  /**
+   * The OS's languages (BCP 47), the UI locale first: what a profile without a preferred
+   * languages list of its own starts from (`defaultLanguages`, CT-41). Hosts that leave it out
+   * start such a profile from English.
+   */
+  locales?: readonly string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1491,6 +1498,28 @@ export interface ThemeHost {
   setSource(scheme: ColorScheme): void
 }
 
+/**
+ * The page fonts (Settings › Appearance › Customize fonts, CT-25) as the engine takes them:
+ * the Electron host puts them into every new page view's web preferences and, where the view's
+ * debugger is free, applies them to open pages through the DevTools protocol; the Android host
+ * sets every tab WebView's `WebSettings`. Called at boot and whenever the setting changes (a
+ * Settings row, a sync merge). Hosts without page fonts of their own leave this out.
+ */
+export interface PageFontsHost {
+  apply(fonts: PageFontSettings): void
+}
+
+/**
+ * The preferred languages (Settings › Languages, CT-41) as the pages see them: the Electron
+ * host sets every session's `Accept-Language` from the list (`session.setUserAgent(ua,
+ * acceptLanguages)`), at boot and on change, private session included. Android's WebView sends
+ * the system's languages and offers no way to set them (`capabilities.pageLanguages` is off
+ * there), so that host has no `LanguagesHost`; the list still drives translate and spellcheck.
+ */
+export interface LanguagesHost {
+  apply(languages: readonly string[]): void
+}
+
 // ---------------------------------------------------------------------------
 // Host-backed services (Electron-only features expose a no-op on other hosts)
 // ---------------------------------------------------------------------------
@@ -2293,6 +2322,10 @@ export interface Platform {
   readonly app: AppHost
   /** The OS colour scheme; hosts without it leave the renderer to `prefers-color-scheme`. */
   readonly theme?: ThemeHost
+  /** The page fonts in the engine's page views (CT-25); hosts without it leave pages at the engine's fonts. */
+  readonly pageFonts?: PageFontsHost
+  /** The preferred languages in the pages' `Accept-Language` (CT-41); omit when `capabilities.pageLanguages` is off. */
+  readonly languages?: LanguagesHost
   /** Cookies and storage per site; hosts without it show a sheet with the connection only. */
   readonly siteData?: SiteDataHost
   /** Native permission prompts; omit to have the chrome render the core's per-tab queue. */

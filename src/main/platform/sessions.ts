@@ -26,12 +26,29 @@ export class SessionManager implements SessionHost {
 
   constructor(
     private readonly userAgent: string,
-    private readonly languages: string = buildAcceptLanguages()
+    private languages: string = buildAcceptLanguages()
   ) {
     // `session.setUserAgent` covers frames and their requests; extension service workers read the
     // app-level fallback for `navigator.userAgent` (LastPass sees "Electron/" there and takes its
     // desktop-app path, touching `document` in a worker), so both present the same plain UA.
     app.userAgentFallback = userAgent
+  }
+
+  /** The `Accept-Language` list every session sends (comma-separated, unweighted). */
+  get acceptLanguages(): string {
+    return this.languages
+  }
+
+  /**
+   * The preferred languages (Settings › Languages, CT-41) as the sessions' `Accept-Language`:
+   * every session present – the private one included – takes the list now, and every session
+   * to come takes it as it is made. Chromium reads the list on each request, so open pages send
+   * it from their next request on; the header carries Chrome's weights (`en-US,en;q=0.9`).
+   */
+  setAcceptLanguages(list: string): void {
+    if (!list || list === this.languages) return
+    this.languages = list
+    for (const ses of this.sessions.values()) ses.setUserAgent(this.userAgent, list)
   }
 
   /** Register a hook that runs for every session (existing and future). */
@@ -133,13 +150,25 @@ export function buildUserAgent(): string {
   return chromeUserAgent(app.userAgentFallback, app.getName())
 }
 
-/** Chrome's `Accept-Language` list for this system (see `acceptLanguages`). */
-export function buildAcceptLanguages(): string {
+/**
+ * The OS's languages as BCP 47 tags, the UI locale first and the system's preferred list after
+ * it: what a fresh profile's preferred languages start from (`PlatformInfo.locales`).
+ */
+export function systemLocales(): string[] {
   let preferred: string[] = []
   try {
     preferred = app.getPreferredSystemLanguages()
   } catch {
     // Not every platform reports a list; the locale alone is still expanded.
   }
-  return acceptLanguages(app.getLocale(), preferred)
+  return [app.getLocale(), ...preferred]
+}
+
+/**
+ * Chrome's `Accept-Language` list for this system (see `acceptLanguages`): what the sessions
+ * send until the core hands the profile's preferred languages over (`setAcceptLanguages`).
+ */
+export function buildAcceptLanguages(): string {
+  const [locale, ...preferred] = systemLocales()
+  return acceptLanguages(locale, preferred)
 }

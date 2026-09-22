@@ -26,13 +26,16 @@ import {
   defaultPreferences,
   defaultTarget,
   languageRule,
+  languagesForPreferred,
   offerFor,
+  preferredFromLanguages,
   sanitizePreferences,
   siteOf,
   withLanguageRule,
   withSiteRule,
   type LanguageRule
 } from './languages'
+import { languagesKey, sanitizeLanguages } from '../../shared/languages'
 import { ModelManager } from './models'
 import {
   condenseRecords,
@@ -153,6 +156,26 @@ export class TranslateService {
       persisted?.preferences,
       defaultPreferences(this.host?.locales ?? [])
     )
+    // The languages the user reads are the preferred languages setting (CT-41). A profile from
+    // before the setting existed took the OS's languages as it loaded; the languages its
+    // translate document listed (the rows it had) are folded into that list once, so nothing the
+    // user chose is lost, and from here on the setting is the one list.
+    const state = browser.state
+    if (state.languagesDefaulted) {
+      state.languagesDefaulted = false
+      const own = (persisted?.preferences as { preferred?: unknown } | undefined)?.preferred
+      if (Array.isArray(own) && own.length > 0) {
+        const folded = sanitizeLanguages(
+          languagesForPreferred(state.settings.languages, own as string[]),
+          state.settings.languages
+        )
+        if (languagesKey(folded) !== languagesKey(state.settings.languages)) {
+          state.settings.languages = folded
+          state.commit()
+        }
+      }
+    }
+    this.prefs = this.withPreferred(this.prefs)
     const cached = persisted?.registry
     if (cached && Array.isArray(cached.models) && typeof cached.fetchedAt === 'number')
       this.registry.replace(cached.models, cached.fetchedAt)
@@ -215,9 +238,42 @@ export class TranslateService {
   // ---------------------------------------------------------------------------
 
   setPreferences(patch: Partial<TranslatePreferences>): void {
-    this.prefs = sanitizePreferences({ ...this.prefs, ...patch }, this.prefs)
+    const { preferred, ...rest } = patch
+    this.prefs = this.withPreferred(sanitizePreferences({ ...this.prefs, ...rest }, this.prefs))
     this.persist()
     this.changed()
+    // The languages the user reads are the preferred languages setting: a change to the rows
+    // is written onto the list, which comes back through `onLanguagesChanged`.
+    if (preferred) {
+      this.browser.languages.set(
+        languagesForPreferred(this.browser.state.settings.languages, preferred)
+      )
+    }
+  }
+
+  /**
+   * The preferred languages changed (a Settings row, a sync merge): the languages-you-read list
+   * follows, an open offer for a language now read comes down, the always list loses it.
+   */
+  onLanguagesChanged(): void {
+    const next = this.withPreferred(this.prefs)
+    if (next.preferred.join(',') === this.prefs.preferred.join(',')) return
+    this.prefs = next
+    for (const entry of this.tabs.values())
+      if (
+        entry.state.status === 'offered' &&
+        entry.state.source &&
+        this.prefs.preferred.includes(entry.state.source)
+      )
+        this.update(entry, { status: 'idle' })
+    this.persist()
+    this.changed()
+  }
+
+  /** `prefs` with the languages-you-read list read from the preferred languages setting. */
+  private withPreferred(prefs: TranslatePreferences): TranslatePreferences {
+    const preferred = preferredFromLanguages(this.browser.state.settings.languages)
+    return sanitizePreferences({ ...prefs, preferred }, prefs)
   }
 
   setLanguageRule(language: string, rule: LanguageRule): void {

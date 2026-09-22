@@ -121,6 +121,8 @@ import {
 } from '../shared/spellcheck'
 import { sanitizeReaderPreferences } from '../shared/reader'
 import { sanitizeReadAloudSettings, type ReadAloudState } from '../shared/readAloud'
+import { sanitizeFontSettings } from '../shared/fonts'
+import { defaultLanguages, sanitizeLanguages } from '../shared/languages'
 import {
   emptyNewTabDevice,
   migrateNewTabDevice,
@@ -473,6 +475,16 @@ export class BrowserState {
   private exiting = false
   /** The previous run did not end with a graceful shutdown (its profile lacks the marker). */
   uncleanExit = false
+  /**
+   * The OS's languages (BCP 47, the UI locale first), set by the browser before `load()`: a
+   * profile without a languages list of its own starts from them (`defaultLanguages`, CT-41).
+   */
+  systemLocales: readonly string[] = []
+  /**
+   * This load found no languages list in the profile and took the OS's (a profile from before
+   * CT-41): the translate service folds the languages its own document listed into it, once.
+   */
+  languagesDefaulted = false
 
   constructor(
     io: StoreIO,
@@ -583,6 +595,13 @@ export class BrowserState {
     this.settings.spellcheck = sanitizeSpellcheck(data.settings?.spellcheck)
     this.settings.reader = sanitizeReaderPreferences(data.settings?.reader)
     this.settings.readAloud = sanitizeReadAloudSettings(data.settings?.readAloud)
+    this.settings.fonts = sanitizeFontSettings(data.settings?.fonts)
+    // A profile from before the list existed starts from the OS's languages, as a fresh Chrome
+    // profile's `intl.accept_languages` does; one that has a list keeps it (never empty).
+    const storedLanguages = sanitizeLanguages(data.settings?.languages)
+    this.languagesDefaulted = storedLanguages.length === 0
+    this.settings.languages =
+      storedLanguages.length > 0 ? storedLanguages : defaultLanguages(this.systemLocales)
     // The new tab page's one model (v5). The migration reads the desktop's first shape and the
     // phone's key, and runs before the sanitiser, which knows nothing of the earlier fields; it
     // reads its own result unchanged, so a migrated profile loads as it was written.

@@ -238,6 +238,13 @@ export interface HostCapabilities {
    * Listen / Read aloud entry points.
    */
   readAloud: boolean
+  /**
+   * Pages receive the preferred languages (`Settings.languages`, CT-41): the desktop host sets
+   * every session's `Accept-Language` from the list. Off on Android, whose WebView sends the
+   * system's languages and cannot be told otherwise; the list still drives translate and
+   * spellcheck there, and Settings says pages receive the system languages.
+   */
+  pageLanguages: boolean
 }
 
 export interface Rect {

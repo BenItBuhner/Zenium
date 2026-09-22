@@ -78,7 +78,8 @@ const ELECTRON: HostCapabilities = {
   selectionToolbar: false,
   popupSurface: true,
   qrScan: false,
-  readAloud: true
+  readAloud: true,
+  pageLanguages: true
 }
 
 const SETTINGS_TAB = {

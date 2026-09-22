@@ -13,6 +13,9 @@ const LANGUAGE_TAG_RE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/
 /** Chrome's list is bounded in practice by its picker; more than this is noise on the wire. */
 export const LANGUAGES_MAX = 32
 
+/** What stands when neither the profile nor the OS names a language (Chrome's own fallback). */
+export const FALLBACK_LANGUAGES: readonly string[] = ['en-US', 'en']
+
 /**
  * A tag in canonical casing (`en-us` → `en-US`, `zh-hant-tw` → `zh-Hant-TW`, `es-419` stays),
  * with POSIX spellings (`en_US.UTF-8`, `de_DE@euro`) reduced to the tag; null for anything
@@ -69,24 +72,16 @@ export function sanitizeLanguages(raw: unknown, fallback: readonly string[] = []
  * English when the OS names no language at all.
  */
 export function defaultLanguages(locales: readonly string[]): string[] {
-  const expanded: string[] = []
-  for (const locale of locales) {
-    const tag = normalizeLanguageTag(locale)
-    if (!tag) continue
-    expanded.push(tag, baseLanguage(tag))
-  }
-  const list = sanitizeLanguages(expanded)
-  return list.length > 0 ? list : ['en-US', 'en']
+  const list = expandLanguages(sanitizeLanguages(locales))
+  return list.length > 0 ? list : [...FALLBACK_LANGUAGES]
 }
 
 /**
- * Chrome's `Accept-Language` list for the setting (`net::HttpUtil::ExpandLanguageList`): every
- * language in order, a region variant followed by its base language unless the list names it
- * already, no duplicates. Comma-separated, without weights – what Electron's
- * `session.setUserAgent(ua, acceptLanguages)` takes; the network layer adds the weights
- * (`acceptLanguageHeader` says which).
+ * Chrome's expansion of a language list (`net::HttpUtil::ExpandLanguageList`): every language
+ * in order, and after the last of a run of one family its base language (`en-US,en-GB,de` →
+ * `en-US,en-GB,en,de`), nothing twice. The tags are taken as they come (canonical already).
  */
-export function acceptLanguageList(languages: readonly string[]): string {
+export function expandLanguages(languages: readonly string[]): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   const add = (tag: string): void => {
@@ -95,13 +90,30 @@ export function acceptLanguageList(languages: readonly string[]): string {
     seen.add(key)
     out.push(tag)
   }
-  for (const raw of languages) {
-    const tag = normalizeLanguageTag(raw)
-    if (!tag) continue
+  for (let i = 0; i < languages.length; i++) {
+    const tag = languages[i]
     add(tag)
-    add(baseLanguage(tag))
+    const base = baseLanguage(tag)
+    const next = languages[i + 1]
+    if (next === undefined || baseLanguage(next).toLowerCase() !== base.toLowerCase()) add(base)
   }
-  return out.length > 0 ? out.join(',') : 'en-US,en'
+  return out
+}
+
+/**
+ * The `Accept-Language` list for the setting: Chrome's expansion (`expandLanguages`) of the
+ * canonical tags, comma-separated, without weights – what Electron's
+ * `session.setUserAgent(ua, acceptLanguages)` takes; the network layer adds the weights
+ * (`acceptLanguageHeader` says which). Never empty: the fallback list stands for nothing.
+ */
+export function acceptLanguageList(languages: readonly string[]): string {
+  const list = expandLanguages(sanitizeLanguages(languages))
+  return (list.length > 0 ? list : FALLBACK_LANGUAGES).join(',')
+}
+
+/** One string per list, for change detection (`en-US,en,de`). */
+export function languagesKey(languages: readonly string[]): string {
+  return languages.join(',')
 }
 
 /**

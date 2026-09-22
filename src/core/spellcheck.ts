@@ -137,9 +137,14 @@ export class SpellcheckService {
     const available = this.host.availableLanguages()
     // Languages that are no longer checked forget their dictionary state: a language switched
     // back on starts from "unknown" until Chromium reports on its dictionary again.
+    // A profile that chose no dictionary checks in the first preferred language that has one
+    // (Chrome's spell check follows its languages list, CT-41), then the UI language's.
     const next = this.host.systemLanguages
       ? []
-      : resolveSpellcheckLanguages(settings, available, this.host.locales)
+      : resolveSpellcheckLanguages(settings, available, [
+          ...this.browser.state.settings.languages,
+          ...this.host.locales
+        ])
     for (const code of this.current) if (!next.includes(code)) this.dictionaries.delete(code)
     this.current = next
     this.host.apply(settings.enabled, next)
