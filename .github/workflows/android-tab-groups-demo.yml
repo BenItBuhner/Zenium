@@ -1,0 +1,109 @@
+name: Android tab groups demo
+
+# Records tab groups on Android (matrix TAB-16, TAB-15, TABLET-04; design language v2 §9.13,
+# §9.23, §9.29, §9.36 as amended, §11.4) as two acts in parallel, each on its own
+# hardware-accelerated emulator, every press a real touch and every outcome read off the chrome's
+# DOM or the core's state (a findings file per act; the run fails on a FAIL):
+#  - phone (TabGroupsDemo, the shared recipe's Pixel 6 layout): the overview's Groups segment
+#    listing the space's groups as rows, the row's sheet with the colour swatches, Rename in the
+#    row, the Tabs pane's group card folded by a touch (its height spring traced:
+#    `overview-group-fold`) and revealed from the row, the link menu's "Open Link in New Tab in
+#    Group" opening the page in the group behind the current tab, Close Group leaving the group
+#    SAVED with its pages, Open bringing them back in order, Delete Group's §9.23 prompt and its
+#    toast's Undo;
+#  - tablet (TabletGroupsDemo, the pixel_tablet profile at 1280 x 800 dp, one px per dp as the
+#    tablet layout demo): the sidebar's group as a full-width 44 row with the colour dot, the
+#    name, the count and the chevron, its tabs indented 24 beneath, the fold and the unfold on
+#    the block's spring (traced: `tablet-group-fold`, `tablet-group-unfold`), the hold's menu as
+#    a popover at the finger (Rename Group…, Colour's cascade, New Tab in Group, Collapse Group,
+#    Ungroup, Close Group in the plain ink, Delete Group in the danger ink), Close Group leaving
+#    the saved row with the ring, a touch on it opening the group again, Ungroup.
+# Dispatch-only, like the other demos: about a quarter of an hour, and it says nothing about a
+# change being correct. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the drivers, the profiles and the displays. One more
+# boot per act when the emulator itself went away under the driver, never when the driver failed.
+# The measured scenes' frame statistics (frames.jsonl under each driver's directory) are rendered
+# into the job summary by the shared workflow and kept as its jank-report artifact; the gate is
+# the shared default, soft.
+on:
+  workflow_dispatch:
+  # TEMPORARY, for the branch's run: GitHub knows a workflow only from an event on its branch, so
+  # this push trigger registers it and is the run (#243's recipe). Removed before the final head.
+  push:
+    branches:
+      - cursor/android-tab-groups-depth-7344
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tab-groups-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phone:
+    name: Tab groups demo, phone
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabGroupsDemo
+        DEMO_DIR=tab-groups-demo
+        DEMO_OUT=artifacts/android-tab-groups-demo-phone
+        DEMO_VIDEO=android-tab-groups-demo-phone.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-tab-groups-demo-phone
+      artifact-path: artifacts/android-tab-groups-demo-phone/
+
+  phone-again:
+    name: Tab groups demo, phone, second boot
+    needs: phone
+    if: ${{ failure() && needs.phone.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabGroupsDemo
+        DEMO_DIR=tab-groups-demo
+        DEMO_OUT=artifacts/android-tab-groups-demo-phone
+        DEMO_VIDEO=android-tab-groups-demo-phone.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-tab-groups-demo-phone-second-boot
+      artifact-path: artifacts/android-tab-groups-demo-phone/
+
+  tablet:
+    name: Tab groups demo, tablet
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # A tablet AVD: the driver's claims are about the sidebar a 600 dp+ short side gets.
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletGroupsDemo
+        DEMO_DIR=tablet-groups-demo
+        DEMO_OUT=artifacts/android-tab-groups-demo-tablet
+        DEMO_VIDEO=android-tab-groups-demo-tablet.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tab-groups-demo-tablet
+      artifact-path: artifacts/android-tab-groups-demo-tablet/
+
+  tablet-again:
+    name: Tab groups demo, tablet, second boot
+    needs: tablet
+    if: ${{ failure() && needs.tablet.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      profile: pixel_tablet
+      api-level: '34'
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.TabletGroupsDemo
+        DEMO_DIR=tablet-groups-demo
+        DEMO_OUT=artifacts/android-tab-groups-demo-tablet
+        DEMO_VIDEO=android-tab-groups-demo-tablet.mp4
+        DEMO_DISPLAY=1280x800@160
+      artifact-name: android-tab-groups-demo-tablet-second-boot
+      artifact-path: artifacts/android-tab-groups-demo-tablet/
