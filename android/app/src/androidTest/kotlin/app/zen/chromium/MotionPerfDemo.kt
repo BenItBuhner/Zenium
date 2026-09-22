@@ -55,8 +55,9 @@ import kotlin.math.roundToInt
  *    (`overview.progress` follows the finger; the hero's rect-lerp runs per frame).
  *  - `overview-pull-settle`: the lift; the spring opens the rest of the way.
  *  - `overview-close-pick`: a tap on the page's own card; the hero grows back into the page.
- *  - `overview-fling-open`: a quick pull let go a quarter of the way in; the spring carries the
- *    open from there, the capture and the mount in the scene.
+ *  - `overview-fling-open`: a quick pull let go half way in (past the swipe's commit fraction,
+ *    so the release commits on position); the spring carries the open from there, the capture
+ *    and the mount in the scene.
  *  - `overview-back-drag` / `overview-back-commit` (the six tabs only): the system's back gesture
  *    from the left edge held a third of the way across, the overview receding on its progress;
  *    then the release, which closes it. The run puts the system in gesture navigation with its
@@ -101,6 +102,10 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
     private var launchedAt = 0L
     /** Gesture navigation is on (set before the launch for the overview's back scenes). */
     private var gestural = false
+    /** [beforeLaunch] changed the navigation mode; [restoreNavigation] puts it back at the end. */
+    private var navigationChanged = false
+    /** `enable_back_animation` as the system had it before the launch (`null` / empty when unset). */
+    private var backAnimationBefore = ""
 
     @Test
     fun record() {
@@ -116,6 +121,7 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
             runDemo()
         } finally {
             server.close()
+            restoreNavigation()
             File(out, "perf-motion.json").writeText(
                 JSONObject().put("package", app.packageName).put("theme", theme)
                     .put("window", JSONObject().put("width", width).put("height", height).put("density", density.toDouble()))
@@ -135,14 +141,36 @@ class MotionPerfDemo : DemoHarness("perf-motion-demo-state.json", "perf-motion",
         // navigation, whose bar has no gesture zone; the window's insets – the pill's place –
         // change with the mode, so this comes before the harness measures the window).
         if ("overview" in groups) {
+            backAnimationBefore = shellCommand("settings get global enable_back_animation").trim()
             shellCommand("cmd overlay disable com.android.internal.systemui.navbar.threebutton")
             shellCommand("cmd overlay enable com.android.internal.systemui.navbar.gestural")
             shellCommand("settings put global enable_back_animation 1")
             SystemClock.sleep(3_000)
             gestural = shellCommand("cmd overlay list").lines().any { it.contains("[x] com.android.internal.systemui.navbar.gestural") }
+            navigationChanged = true
             Log.i(tag, "navigation: ${if (gestural) "gestural" else "NOT gestural (the back scenes are skipped)"}")
         }
         launchedAt = SystemClock.uptimeMillis()
+    }
+
+    /**
+     * The system's navigation back to the shared recipe's three-button mode (and the back
+     * animation setting to what it was) once the profile is done: the functional drivers chained
+     * after it on the same boot (android-motion-perf.sh) run under the mode their own workflows
+     * give them. Only at the end – the mode change moves the window's insets, and the pill's
+     * place was measured at the launch – and only when [beforeLaunch] changed it.
+     */
+    private fun restoreNavigation() {
+        if (!navigationChanged) return
+        shellCommand("cmd overlay disable com.android.internal.systemui.navbar.gestural")
+        shellCommand("cmd overlay enable com.android.internal.systemui.navbar.threebutton")
+        if (backAnimationBefore.isEmpty() || backAnimationBefore == "null") {
+            shellCommand("settings delete global enable_back_animation")
+        } else {
+            shellCommand("settings put global enable_back_animation $backAnimationBefore")
+        }
+        val threeButton = shellCommand("cmd overlay list").lines().any { it.contains("[x] com.android.internal.systemui.navbar.threebutton") }
+        Log.i(tag, "navigation restored: ${if (threeButton) "three-button" else "NOT three-button"}; enable_back_animation ${backAnimationBefore.ifEmpty { "unset" }}")
     }
 
     // --- warm-up: the pictures, then the measured scenes ------------------------------------------

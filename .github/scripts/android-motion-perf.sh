@@ -72,7 +72,11 @@ run_driver MotionPerfDemo perf-motion "$out" "${DEMO_VIDEO:-android-perf-motion-
 if [ "${PERF_FUNCTIONAL:-1}" != "0" ]; then
   # The surfaces' functional drivers (their own workflows' drivers, their own handshake
   # directories; a class#method picks the sequence). GestureDemo's `record` is the pill's swipe,
-  # fling and the overview's pull; OverviewDemo the overview's grid, cards and groups.
+  # fling and the overview's pull; OverviewDemo the overview's grid, cards and groups. They run
+  # under the shared recipe's three-button navigation, as their own workflows have it: the profile
+  # switches the system to gesture navigation for the overview's back scenes and switches it back
+  # in its own teardown; this is the guard for a profile that never reached it.
+  adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
   run_driver 'GestureDemo#record' gesture-demo "$out/gesture-demo" gesture-demo.mp4 1 "" 300 \
     || { cat "$summary"; exit 1; }
   run_driver OverviewDemo overview-demo "$out/overview-demo" overview-demo.mp4 1 "" 300 \

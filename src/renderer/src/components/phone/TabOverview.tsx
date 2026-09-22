@@ -364,7 +364,9 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     // hero inside an open group brings its group along – the group's card first, so the header
     // is in view when the group fits (the strip's show-group chip opens the overview at the
     // group, TAB-14), then its own card, which wins when the group is taller than the grid.
-    const morphing = (phase === 'dragging' && progress < 0.05) || phase === 'settling'
+    // The progress read live: the prop's is the one at the shape's last change, and a card
+    // arriving or leaving mid-drag re-runs this with the finger well past the start.
+    const morphing = (phase === 'dragging' && liveProgress(overview) < 0.05) || phase === 'settling'
     if (cell && morphing) {
       if (heroGroup && !heroGroup.collapsed)
         flip.element(`group:${heroGroup.id}`)?.scrollIntoView({ block: 'nearest' })
