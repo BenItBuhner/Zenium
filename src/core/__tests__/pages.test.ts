@@ -1406,3 +1406,33 @@ describe('a document page on the same route', () => {
     expect(f.loaded.at(-1)).toBe('zen://library/active')
   })
 })
+
+describe('the History page’s folded device groups (ID-28)', () => {
+  it('holds the fold for the session and tells every window when it moves', () => {
+    const f = fixture({ pageTabs: true, windows: true })
+    const other = f.browser.createWindow({ kind: 'synced', from: f.win })
+    expect(f.browser.handleCommand(f.win, 'history.foldedDevices', undefined)).toEqual([])
+
+    f.browser.handleCommand(f.win, 'history.foldDevice', { deviceId: 'phone', folded: true })
+    f.browser.handleCommand(other, 'history.foldDevice', { deviceId: 'work', folded: true })
+    // Folding what is folded already is no change: nothing is sent.
+    f.browser.handleCommand(f.win, 'history.foldDevice', { deviceId: 'phone', folded: true })
+    expect(f.browser.handleCommand(other, 'history.foldedDevices', undefined)).toEqual([
+      'phone',
+      'work'
+    ])
+    const changed = f.sent.filter((s) => s.name === 'history.foldedDevicesChanged')
+    expect(changed.map((s) => [s.winId, s.payload])).toEqual([
+      [f.win.id, ['phone']],
+      [other.id, ['phone']],
+      [f.win.id, ['phone', 'work']],
+      [other.id, ['phone', 'work']]
+    ])
+
+    f.browser.handleCommand(other, 'history.foldDevice', { deviceId: 'phone', folded: false })
+    expect(f.browser.handleCommand(f.win, 'history.foldedDevices', undefined)).toEqual(['work'])
+    expect(f.sent.filter((s) => s.name === 'history.foldedDevicesChanged').at(-1)?.payload).toEqual(
+      ['work']
+    )
+  })
+})

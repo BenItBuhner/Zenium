@@ -4093,13 +4093,35 @@ export interface Commands {
   'history.deleteRange': { args: { fromMs: number; toMs: number }; result: number }
   /** Open the history page (`zen://history`). */
   'history.open': { args: void; result: void }
-  /** Context menu of a history row (open in new tab / window / private window, copy, remove…). */
-  'history.contextMenu': { args: { visitId: string; url: string } & MenuAnchor; result: void }
+  /**
+   * Context menu of a History page row (open in new tab / window / private window, copy,
+   * remove…). `visitId` null is a row that names a page but no visit – a tab from another
+   * device (ID-28) – whose menu keeps the page's items (open, copy, more from the site) and
+   * drops the visit's own (Select, Remove from History, Forget About This Page).
+   */
+  'history.contextMenu': {
+    args: { visitId: string | null; url: string } & MenuAnchor
+    result: void
+  }
   /** Menu of a day heading on the history page (delete the day). */
   'history.dayMenu': { args: { dayKey: string; count: number }; result: void }
+  /**
+   * The other devices whose groups the History page keeps folded (ID-28, "Tabs from other
+   * devices"), by device id – the session's, held by the core so a History tab closed and opened
+   * again or a second window's chrome (a renderer of its own) finds them folded still; a restart
+   * unfolds them all (Chrome's synced-device cards start open too).
+   */
+  'history.foldedDevices': { args: void; result: string[] }
+  /** Fold or unfold one device's group; every window hears `history.foldedDevicesChanged`. */
+  'history.foldDevice': { args: { deviceId: string; folded: boolean }; result: void }
 
   'session.recentlyClosed': { args: void; result: ClosedEntrySummary[] }
-  'session.restoreClosed': { args: { id: string }; result: void }
+  /**
+   * Bring back a recently closed entry. `background` (a middle or Ctrl click on the History
+   * page's row, §10.1): a tab comes back where it was without coming to the front; a window
+   * entry is a whole window and comes back as one either way.
+   */
+  'session.restoreClosed': { args: { id: string; background?: boolean }; result: void }
   'session.clearRecentlyClosed': { args: void; result: void }
 
   /**
@@ -4178,8 +4200,14 @@ export interface Commands {
   'bookmark.move': { args: { ids: string[]; parentId: string; index?: number }; result: void }
   /** Remove bookmarks and folders (folders with all their contents). */
   'bookmark.remove': { args: { ids: string[] }; result: void }
-  /** Open a bookmark (records `dateLastUsed`). */
-  'bookmark.open': { args: { id: string; newTab: boolean; tabId: string | null }; result: void }
+  /**
+   * Open a bookmark (records `dateLastUsed`); `background` with `newTab` is a tab behind the
+   * current one (a middle or Ctrl click on a manager row, §10.1), as `urlbar.submit` has it.
+   */
+  'bookmark.open': {
+    args: { id: string; newTab: boolean; tabId: string | null; background?: boolean }
+    result: void
+  }
   /** Open every bookmark in the given folders / selection in new tabs. */
   'bookmark.openAll': { args: { ids: string[] }; result: void }
   /** Open the bookmarks below the given nodes in a new (or private) window. */
@@ -5093,6 +5121,8 @@ export interface Events {
    * (v2 §10.1 – the checkbox column shows on every row while anything is picked).
    */
   'history.select': { visitId: string }
+  /** The History page's folded device groups changed (`history.foldDevice`): the ids now folded. */
+  'history.foldedDevicesChanged': string[]
   'session.recentlyClosedChanged': void
   /**
    * Safe-area insets of the host window in CSS pixels (mobile status bar, IME, cutouts), and –
