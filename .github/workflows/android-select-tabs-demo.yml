@@ -1,0 +1,61 @@
+name: Android select-tabs demo
+
+# Records the phone overview's select-tabs mode (matrix TAB-08, TAB-35, SH-12; design language v2
+# §9.6, §9.29, §9.30, §9.33, §11.4): the mode entered from the header menu's Select Tabs and from
+# a card's hold sheet, cards picked and unpicked by touch with the count following, Select all
+# (its reflow measured with the renderer's trace: no card may move for a pick) and Deselect all,
+# the × and the system back ending the mode; the action strip's Close on two picks with one
+# "2 tabs closed" toast and Undo, Group into a new group and into an existing one through the
+# picker, Bookmark all into a dated folder with the Open toast, Share to the system sheet. Every
+# press is a real touch and the driver reads each outcome off the chrome's DOM or the core's
+# state (findings text in the artifact; the run fails on a FAIL). Dispatch-only, like the tab
+# close demo: it takes about ten minutes and says nothing about a change being correct. The
+# build, the emulator and the Gradle cache live in android-emulator-demo.yml; this file only
+# picks the driver.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - cursor/android-select-tabs-mode-d62b
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-select-tabs-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Select-tabs demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SelectTabsDemo
+        DEMO_DIR=selecttabs-demo
+        DEMO_OUT=artifacts/android-select-tabs-demo
+        DEMO_VIDEO=android-select-tabs-demo.mp4
+      # The guest kernel's console in the log, should the emulator go away mid-demo.
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-select-tabs-demo
+      artifact-path: artifacts/android-select-tabs-demo/
+
+  # One more boot when the emulator itself went away under the driver (adb lost the device), and
+  # never when the driver failed: a run is then spent on the demo rather than on the runner.
+  record-again:
+    name: Select-tabs demo, second boot
+    needs: record
+    if: ${{ failure() && needs.record.outputs.emulator-died == 'true' }}
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.SelectTabsDemo
+        DEMO_DIR=selecttabs-demo
+        DEMO_OUT=artifacts/android-select-tabs-demo
+        DEMO_VIDEO=android-select-tabs-demo.mp4
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -show-kernel
+      artifact-name: android-select-tabs-demo-second-boot
+      artifact-path: artifacts/android-select-tabs-demo/
