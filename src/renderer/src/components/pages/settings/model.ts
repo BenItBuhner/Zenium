@@ -100,6 +100,13 @@ export interface ActionRow extends RowBase {
   /** A trailing 16 px glyph, only when the action leaves the page (§10.4). */
   leaves?: 'external' | 'chevron'
   /**
+   * The label is a page's title (a tab of another device): one line, truncating from the end
+   * (§6, as the History rows and Chrome's synced-tab lists; the #314 ruling) – a title names a
+   * target and is not read whole, and the host under it disambiguates a cut one. Never a row
+   * grown for a title.
+   */
+  truncate?: boolean
+  /**
    * The desktop's 32 px button (§10.5, Zen's about:preferences: "Check for updates", "Clear
    * Data…"): the row keeps its label and description and trails this button, which runs the
    * action – its confirmation dialog first for a destructive one. Without it a desktop action

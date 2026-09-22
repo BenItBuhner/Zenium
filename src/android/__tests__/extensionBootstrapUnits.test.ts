@@ -65,6 +65,7 @@ const extension = (id: string, name: string): ExtensionBoot => ({
   version: '1.0',
   manifestVersion: 3,
   permissions: ['storage'],
+  optionalPermissions: [],
   hostPermissions: ['<all_urls>'],
   manifest: { manifest_version: 3, name, version: '1.0' },
   messages: null,

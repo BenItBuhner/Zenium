@@ -34,6 +34,14 @@ export const PDF_VIEWER_ASSETS = {
   worker: 'pdf.worker.mjs'
 } as const
 
+/**
+ * The attribute on the shell's root element by which an extension's realm knows the document
+ * is the viewer's (`src/android/extensionPdfDocument.ts`: `document.contentType` answers
+ * `application/pdf` there, as Chrome's viewer document does to a content script or an
+ * `executeScript` probe).
+ */
+export const PDF_VIEWER_DOCUMENT_ATTRIBUTE = 'data-zenium-pdf'
+
 /** The address of a download shown in the viewer. */
 export function pdfPageUrl(downloadId: string): string {
   return `${PDF_PAGE_URL}?id=${encodeURIComponent(downloadId)}`
@@ -164,7 +172,7 @@ export function pdfViewerPageHtml(doc: Pick<PdfDocumentInfo, 'id' | 'name' | 'to
     src: pdfViewerDocumentUrl(),
     workerSrc: pdfViewerAssetUrl(PDF_VIEWER_ASSETS.worker)
   }).replace(/</g, '\\u003c')
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(doc.name)}</title><style>
+  return `<!doctype html><html lang="en" ${PDF_VIEWER_DOCUMENT_ATTRIBUTE}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${escapeHtml(doc.name)}</title><style>
   :root { color-scheme: light dark; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #525659; background: light-dark(#525659, #3b3b3d); touch-action: pan-x pan-y; overscroll-behavior: contain; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f0f0f5; color: light-dark(#1e1e24, #f0f0f5); }

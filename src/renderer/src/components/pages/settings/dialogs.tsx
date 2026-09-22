@@ -30,7 +30,8 @@ import {
   SheetCoveredContext,
   SheetDismissContext,
   SheetFooterContext,
-  useSheetFooterSlot
+  useSheetFooterSlot,
+  type SheetDismiss
 } from './sheetContext'
 
 /**
@@ -218,9 +219,10 @@ function HostedDialog({
   } = useSheetFooterSlot()
   // The sheet's dismiss as the forms and rows inside know it (`useSheetDismiss`): the dialog has
   // no motion to wait for, so `after` – an action that opens a surface of its own once the
-  // dialog is gone (`ActionRow.closesSheet`), a prompt's confirmed action – runs at once.
-  const dismiss = useCallback(
-    (after?: () => void): void => {
+  // dialog is gone (`ActionRow.closesSheet`, a form's Cancel), a prompt's confirmed action –
+  // runs at once.
+  const dismiss = useCallback<SheetDismiss>(
+    (after) => {
       onClose()
       after?.()
     },

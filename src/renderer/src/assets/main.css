@@ -33,7 +33,7 @@
   --zen-element-bg: rgb(var(--zen-fg-rgb) / 0.07);
   --zen-element-bg-hover: rgb(var(--zen-fg-rgb) / 0.12);
   --zen-element-bg-active: rgb(var(--zen-fg-rgb) / 0.16);
-  --zen-border: rgb(var(--zen-fg-rgb) / 0.12);
+  /* `--zen-border`, the window's hairline, is `--v2-window-border`'s alias in the v2 token block. */
   /*
    * Secondary text is the ink at 69 %, the same role as `--v2-text-deemphasized` (design
    * language v2 §1, §9.29): at 60 % it reached 4.5:1 only on near-white surfaces (a11y-30).
@@ -90,6 +90,10 @@
   --zen-corner: squircle;
   /* Zen 1.22: sidebar type got larger for readability. */
   --zen-sidebar-font: 14px;
+  /* The tab row's height – §5's 32 px row – read by the row, the folder and space headers, the
+     New Tab row and the split group's row that stands in for rows (design language v2 §9.35);
+     the coarse-pointer block raises it (a hit target, not the vocabulary). */
+  --zen-tab-row: 32px;
 }
 
 :root[data-theme='dark'] {
@@ -164,6 +168,15 @@
    */
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.08);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.14);
+  /*
+   * The window's hairline (design language v2 §9.29): the theme's ink at .12 light / .2 dark –
+   * Zen's split-group separators. `--zen-border`, the name the window chrome has drawn its
+   * hairlines in, is its alias (as `--zen-scrim` is the v2 scrim's): a hairline on a window
+   * surface draws `--zen-border`, never `--v2-border`, the page's neutral alpha. Dark
+   * redefines `--v2-window-border`; the alias follows.
+   */
+  --v2-window-border: rgb(var(--zen-fg-rgb) / 0.12);
+  --zen-border: var(--v2-window-border);
 
   /* Sidebar without a theme, its active tab and URL pill (§1). */
   --v2-sidebar-neutral: #e9e9e9;
@@ -286,6 +299,7 @@
    */
   --v2-window-fill: rgb(var(--zen-fg-rgb) / 0.15);
   --v2-window-fill-hover: rgb(var(--zen-fg-rgb) / 0.2);
+  --v2-window-border: rgb(var(--zen-fg-rgb) / 0.2);
 
   --v2-sidebar-neutral: #131313;
   --v2-tab-active: #3b3c3d;
@@ -979,6 +993,7 @@
    */
   .zen-squircle,
   .zen-tab,
+  .zen-split-row,
   .zen-essential,
   .zen-panel,
   .zen-omnibox-sheet,
@@ -1033,34 +1048,62 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 
+  /*
+   * The toolbar icon button (design language v2 §9.3): a 28 box around a 16 glyph at stroke 1.5
+   * (`TOOLBAR_STROKE`), the hover fill at radius 6 – Zen's `--toolbarbutton-border-radius` – in
+   * the window family (§9.29): `--v2-window-fill-hover` on hover, held as the pressed fill while
+   * the button's popover or menu is up (`aria-expanded`, §9.20). The resting 85 % is the GLYPH's,
+   * not the button's: a badge on the button – the ⋯ button's media dot, an extension's count –
+   * is full ink and never dimmed with it (the lead's #287 verdict; the dot reads 4.3:1 light and
+   * 5.3:1 dark at full ink, 3.4 / 4.2 dimmed). Disabled is §9.30's one number, .4 on the whole
+   * control, with no fill and the glyph undimmed inside it so nothing compounds.
+   */
   .zen-toolbar-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 9px;
+    border-radius: 6px;
     color: var(--zen-fg);
-    opacity: 0.85;
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
+  /*
+   * The glyph: the svg itself, or the slot that wraps one – the phone's two-glyph slot
+   * (`.zen-glyph-swap`), the downloads button's pulsing body (`.zen-dl-glyph-body`). Not the
+   * downloads progress ring (`.zen-dl-ring`), which is a state indicator like a badge; not an
+   * extension's icon (`img`), which is content and keeps its colours (§9.29).
+   */
+  .zen-toolbar-button > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
+    opacity: 0.85;
+    transition: opacity 120ms var(--zen-ease);
+  }
   .zen-toolbar-button:hover:not(:disabled) {
-    background: var(--zen-element-bg);
-    opacity: 1;
+    background: var(--v2-window-fill-hover);
   }
   /* The keyboard on the button: full ink, so its ring is not drawn at the resting 85 % (a11y-10). */
-  .zen-toolbar-button:focus-visible {
+  .zen-toolbar-button:is(
+      :hover:not(:disabled),
+      :focus-visible,
+      [aria-expanded='true'],
+      :disabled,
+      [data-disabled]
+    )
+    > :is(svg:not(.zen-dl-ring), .zen-glyph-swap, .zen-dl-glyph-body) {
     opacity: 1;
   }
+  .zen-toolbar-button:active:not(:disabled),
+  .zen-toolbar-button[aria-expanded='true'] {
+    background: var(--v2-window-fill-hover);
+  }
   .zen-toolbar-button:active:not(:disabled) {
-    background: var(--zen-element-bg-hover);
     transform: scale(0.96);
   }
   .zen-toolbar-button:disabled {
-    opacity: 0.3;
+    opacity: 0.4;
   }
 
   /*
@@ -1094,26 +1137,34 @@
     line-height: var(--v2-line-small);
   }
 
+  /*
+   * The sidebar's tab row (design language v2 §5, §6, §9.29; shell pass 7(a)): §5's 32 px row
+   * at radius 8 in the window family – the theme's ink at `--zen-sidebar-font`, the hover fill
+   * `--v2-window-fill-hover`, the active tab `--v2-window-fill` as one shape with no frame (the
+   * sidebar has no borders, §10.3). The folder header, the New Tab row and the split group's
+   * segments are this row; a folder header keeps the hover fill while its editor bubble stands
+   * beside it (§9.20's lit anchor).
+   */
   .zen-tab {
     position: relative;
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 36px;
+    height: var(--zen-tab-row);
     padding: 0 8px 0 10px;
-    border-radius: 11px;
+    border-radius: 8px;
     color: var(--zen-fg);
     font-size: var(--zen-sidebar-font);
     transition:
       background 120ms var(--zen-ease),
       opacity 120ms var(--zen-ease);
   }
-  .zen-tab:hover {
-    background: var(--zen-element-bg);
+  .zen-tab:hover,
+  .zen-tab[data-editing]:not([data-active='true']) {
+    background: var(--v2-window-fill-hover);
   }
   .zen-tab[data-active='true'] {
-    background: var(--zen-element-bg-active);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.05);
+    background: var(--v2-window-fill);
   }
   /* Multi-selected tabs (Ctrl / Shift+click) get the accent outline Zen uses. */
   .zen-tab[data-selected],
@@ -1182,28 +1233,146 @@
     animation: zen-progress 1.1s var(--zen-ease) infinite;
   }
 
+  /*
+   * The split group's row (design language v2 §9.35; Zen's `zen-split-view.css`): one container
+   * at the tab row's height holding the split's tabs side by side, radius 10 over segments at 8
+   * with 2 px padding (concentric, §2), in the window family (§9.29). The container takes the
+   * hover fill as one shape; when the group holds the active tab it takes `--v2-window-fill` as
+   * one shape and each segment `--v2-window-fill` again at 60 % over it, its hairlines gone, so
+   * the 2 px rim reads as the group and the segments as its tabs. No border in the expanded
+   * sidebar; the icon rail's column form below gets a 2 px inset outline.
+   */
+  .zen-split-row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    height: var(--zen-tab-row);
+    padding: 2px;
+    border-radius: 10px;
+    transition: background 120ms var(--zen-ease);
+  }
+  .zen-split-row:hover {
+    background: var(--v2-window-fill-hover);
+  }
+  .zen-split-row[data-active='true'] {
+    background: var(--v2-window-fill);
+  }
+  /*
+   * A segment: `flex: 1` at its own width, no fill of its own – the row's hover is the group's.
+   * Its padding is 8 before the favicon and 4 after the close, named once for the favicon-only
+   * form below, which has to undo the difference to centre.
+   */
+  .zen-split-row > .zen-tab {
+    --zen-split-seg-pad-start: 8px;
+    --zen-split-seg-pad-end: 4px;
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    gap: 8px;
+    padding: 0 var(--zen-split-seg-pad-end) 0 var(--zen-split-seg-pad-start);
+    border-radius: 8px;
+    container-type: inline-size;
+  }
+  .zen-split-row > .zen-tab:hover {
+    background: transparent;
+  }
+  .zen-split-row > .zen-tab[data-active='true'] {
+    background: transparent;
+    box-shadow: none;
+  }
+  .zen-split-row[data-active='true'] > .zen-tab {
+    background: color-mix(in srgb, var(--v2-window-fill) 60%, transparent);
+  }
+  /* The 1 × 16 hairline centred on the shared edge: the window's hairline, `--zen-border`. */
+  .zen-split-hairline {
+    flex: none;
+    align-self: center;
+    width: 1px;
+    height: 16px;
+    background: var(--zen-border);
+  }
+  .zen-split-row[data-active='true'] .zen-split-hairline {
+    visibility: hidden;
+  }
+  /*
+   * A segment's close is on hover only (§9.35; Zen's `.tabbrowser-tab:not(:hover)
+   * .tab-close-button { display: none }` in `vertical-tabs.css`): out of the layout at rest, so
+   * the title has the room after the favicon. The tab row's close at rest is opacity 0 in its
+   * 24 + 8 slot, which in a segment would hold 32 of the title's room while showing nothing –
+   * the 270 still's "Left pa…" at 56.5 where the title had 88.5. A coarse pointer has no hover
+   * and keeps the row's always-shown close.
+   */
+  @media (hover: hover) {
+    .zen-split-row > .zen-tab:not(:hover) .zen-tab-close {
+      display: none;
+    }
+  }
+  /*
+   * A segment's title truncates from the end while it has 56 px of room after the favicon
+   * (about eight characters at 14) and drops for the favicon alone, centred, below that – Zen's
+   * rail form for the segment, since a title cut to three letters names nothing (§9.35). The
+   * query reads the segment's content box (the container's): the 56 after the 16 favicon and the
+   * 8 gap is 80, the segment's own padding outside it. A container's queries cannot style the
+   * container, so the form is its children's: the title gone and the close with it (Zen's rail
+   * hides the label and the close together; §9.35's 70 for the close lies inside this band, so
+   * the close follows the title), the favicon centred by its auto margins and moved half the
+   * padding's difference (2 px) back onto the segment's own axis, which the 8 / 4 padding puts
+   * 2 px off the content box's. The rail column keeps its own centring (`justify-center`, no
+   * title drawn) and takes no nudge.
+   */
+  @container (width < 80px) {
+    .zen-split-row > .zen-tab .zen-tab-title,
+    .zen-split-row > .zen-tab .zen-tab-close {
+      display: none;
+    }
+    .zen-split-row:not(.zen-split-row-column) > .zen-tab .zen-tab-favicon {
+      margin-inline: auto;
+      translate: calc((var(--zen-split-seg-pad-end) - var(--zen-split-seg-pad-start)) / 2) 0;
+    }
+  }
+  /* The icon rail: the group stacks in a column with 16 × 1 hairlines and a 2 px inset outline. */
+  .zen-split-row-column {
+    flex-direction: column;
+    height: auto;
+    box-shadow: inset 0 0 0 2px var(--zen-border);
+  }
+  .zen-split-row-column > .zen-tab {
+    flex: none;
+    height: calc(var(--zen-tab-row) - 4px);
+  }
+  .zen-split-row-column > .zen-split-hairline {
+    width: 16px;
+    height: 1px;
+  }
+
+  /*
+   * An Essentials tile (§5: 44 tall, radius 8, the window fill – Zen's posters; §9.29): it
+   * spends `--v2-window-fill` at rest, so hover and the active tile take `--v2-window-fill-hover`
+   * and the active one is told apart by the window's hairline inside its edge (`--zen-border`,
+   * §9.29), as the split group's rail column is (§9.35) – the two window fills are the whole
+   * vocabulary, and nothing here adds a third.
+   */
   .zen-essential {
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     height: 44px;
-    border-radius: 14px;
-    background: rgb(var(--zen-fg-rgb) / 0.1);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.06);
+    border-radius: 8px;
+    background: var(--v2-window-fill);
     transition:
       background 120ms var(--zen-ease),
       transform 120ms var(--zen-ease);
   }
   .zen-essential:hover {
-    background: var(--zen-element-bg-hover);
+    background: var(--v2-window-fill-hover);
   }
   .zen-essential:active {
     transform: scale(0.97);
   }
   .zen-essential[data-active='true'] {
-    background: rgb(var(--zen-fg-rgb) / 0.22);
-    box-shadow: inset 0 0 0 1px rgb(var(--zen-fg-rgb) / 0.1);
+    background: var(--v2-window-fill-hover);
+    box-shadow: inset 0 0 0 1px var(--zen-border);
   }
   .zen-essential[data-discarded='true'] img {
     opacity: 0.69;
@@ -1409,6 +1578,22 @@
     background: var(--zen-bg-solid);
     border-radius: var(--zen-content-radius);
     box-shadow: var(--zen-frame-shadow);
+  }
+  /*
+   * The active pane of a split (content/SplitChrome.tsx; design language v2 §9.35, Zen's
+   * `--zen-active-split-outline-color`): a 2 px outline in the window's accent inside the pane's
+   * frame's radius – the frame's 12 outside, the view's 10 inside, concentric (§2) – on the
+   * band every pane's view keeps inside its frame (`SPLIT_OUTLINE`, lib/layout.ts). With the
+   * §9.35 group row in the sidebar it is the whole indicator: no underline under the pane's
+   * header, no glyph on the rows, no chip in the pill. `--zen-accent`, never `--v2-accent`: the
+   * frame is the window's, and a private window's accent follows.
+   */
+  .zen-split-pane-outline {
+    position: absolute;
+    pointer-events: none;
+    border-radius: var(--zen-content-radius);
+    outline: 2px solid var(--zen-accent);
+    outline-offset: -2px;
   }
 
   /*
@@ -1761,17 +1946,20 @@
    * eases over between them). The favicon that takes the ring's place fades back in over
    * 150 ms from its insertion, landing on whatever opacity its own rules give it (the globe's
    * 60 %, a sleeping row's 69 %). Reduced motion removes both (the global rule at the foot): a
-   * still ring, the favicon there at once.
+   * still ring, the favicon there at once. The ring draws in its surface's family (§9.29): the
+   * deemphasised ink and the accent of the control roles – the theme's on the sidebar's rows,
+   * the page's in tab search – and, where no surface root resolves them (the phone's overview
+   * cards), the v1 inks they alias.
    */
   .zen-tab-throbber {
-    border-color: var(--zen-muted);
+    border-color: var(--v2-control-text-deemphasized, var(--zen-muted));
     border-top-color: transparent;
     animation: zen-spin 900ms linear infinite reverse;
   }
   /* The ease sits on the second phase only: the ring enters in its colours, never eased from
      whatever stood there before. */
   .zen-tab-throbber[data-phase='loading'] {
-    border-color: var(--zen-accent);
+    border-color: var(--v2-control-accent, var(--zen-accent));
     border-top-color: transparent;
     animation-direction: normal;
     transition: border-color 150ms var(--zen-ease);
@@ -3724,17 +3912,16 @@
     display: none;
   }
   /*
-   * The overflow » (§9.3): the toolbar button, at the chips' radius rather than the toolbar's 9
-   * and in the window fills the chips take; lit with the pressed fill while its panel is open.
+   * The overflow » (§9.3): the toolbar button – radius 6 is the button's own since shell pass
+   * 7(a) – in the window fills the chips take, lit with the pressed fill while its panel is open.
+   * The open state carries `:not(:disabled)` too so it outranks the hover: the pointer is still on
+   * the » that opened the panel, and the hover's chip fill would otherwise win on specificity.
    */
-  .zen-bm-overflow {
-    border-radius: 6px;
-  }
   .zen-bm-overflow:hover:not(:disabled) {
     background: var(--v2-window-fill);
   }
   .zen-bm-overflow:active:not(:disabled),
-  .zen-bm-overflow[aria-expanded='true'] {
+  .zen-bm-overflow[aria-expanded='true']:not(:disabled) {
     background: var(--v2-window-fill-hover);
     opacity: 1;
     transform: none;
@@ -3939,9 +4126,6 @@
   .zen-group-editor-count {
     margin-left: auto;
     flex-shrink: 0;
-  }
-  .zen-tab[data-editing]:not([data-active='true']) {
-    background: var(--zen-element-bg);
   }
   /*
    * The bookmarks bar's folder panels and the overflow panel (components/bookmarks/BarMenu.tsx;
@@ -4305,11 +4489,13 @@
  * well: a pill this narrow is the address, or the name of one of Zenium's pages, and nothing
  * else, as the phone pill is (v2 §10.1); the site icon keeps the favicon slot, and the blocked
  * pop-ups chip stays, a notice rather than a tool (#62). The queries read
- * the pill's content box, 20 px inside its border box (`px-2.5`): 110 here is a 130 px pill. At
- * the default sidebar width the pill is 100 px, and the star's 26 px are what "Settings" (48 px)
- * is short of. 130: with the star the field would keep under 58 px, which no host fits, and the
- * shortest internal address (`zenium://settings`, 102 px) still needs a 149 px pill without the
- * star, so a sidebar dragged wider never trades the address for the title and back.
+ * the pill's content box, 16 px inside its border box (`px-2`, `PILL_PADDING`): 110 here is the
+ * 270 px sidebar's pill – §9.29's "130 px pill", 126 wide now that the row's buttons sit 4
+ * apart (§5). At the default sidebar width the pill's content box is 80 (the 100 px pill of
+ * §9.29's arithmetic), and the star's 26 px are what "Settings" (48 px) is short of. 110: with
+ * the star the field would keep under 58 px, which no host fits, and the shortest internal
+ * address (`zenium://settings`, 102 px) still needs a 129 px content box without the star, so a
+ * sidebar dragged wider never trades the address for the title and back.
  */
 @container (width < 110px) {
   .zen-pill-chip {
@@ -6579,9 +6765,9 @@
 :root[data-form-factor='phone'][data-text-scale] .zen-overview-card-close {
   border-top-right-radius: 8px;
 }
-:root[data-pointer='coarse'] .zen-tab {
-  height: 42px;
-  border-radius: 11px;
+/* A coarse pointer's tab row is taller (a hit target); its radius 8 is the vocabulary's (§5). */
+:root[data-pointer='coarse'] {
+  --zen-tab-row: 42px;
 }
 /* Hover-revealed row actions (close a tab, remove an entry) have nothing to hover under a finger. */
 :root[data-pointer='coarse'] .zen-tab .zen-tab-close,
@@ -6742,10 +6928,6 @@
   border-radius: 8px;
   opacity: 0.69;
 }
-:root[data-form-factor='tablet'] .zen-tab .zen-tab-close > svg {
-  width: 16px;
-  height: 16px;
-}
 :root[data-form-factor='tablet'] .zen-tab[data-active='true'] .zen-tab-close {
   opacity: 1;
 }
@@ -6882,16 +7064,17 @@
 @layer components {
   /*
    * The phone bar's controls (`BarButton`). One with nothing to do right now is drawn dimmed
-   * rather than disabled: it still takes the hold that opens the bar's editor.
+   * rather than disabled: it still takes the hold that opens the bar's editor. The dimming is
+   * §9.30's one number, .4 on the whole control (the glyph inside it undimmed, see above).
    */
   .zen-toolbar-button[data-disabled] {
-    opacity: 0.3;
+    opacity: 0.4;
   }
   .zen-toolbar-button[data-disabled]:hover,
   .zen-toolbar-button[data-disabled]:active {
     background: transparent;
     transform: none;
-    opacity: 0.3;
+    opacity: 0.4;
   }
   /* Reload and Stop share one slot: the glyph that is not current is faded out, never removed. */
   .zen-glyph-swap > * {
@@ -7881,14 +8064,13 @@
   margin-left: 0;
 }
 /*
- * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill at full ink
- * while the in-chrome menu stands, said by the `aria-expanded` the menu sets on it, as the
- * media hub's and the downloads' toolbar buttons keep theirs while their popovers are up.
+ * The app menu's anchor (§6 "Menus", §9.20): the "⋯" button keeps its pressed fill while the
+ * in-chrome menu stands, said by the `aria-expanded` the menu sets on it – the toolbar button's
+ * own `.zen-toolbar-button[aria-expanded='true']` rule (§9.3: `--v2-window-fill-hover` at radius
+ * 6, the glyph at full ink), the one the media hub's and the downloads' buttons keep theirs by.
+ * No rule of its own: an unlayered one here on the v1 `--zen-element-bg` outranked the shared
+ * rule in the components layer and left the open "⋯" on the wrong fill (.07 for .14 / .2).
  */
-[data-zen-app-menu-button][aria-expanded='true'] {
-  background: var(--zen-element-bg);
-  opacity: 1;
-}
 
 /*
  * The shared menulist (§9.34, §6, §9.13; #106 owns the rule, the look the one its review
@@ -8376,6 +8558,17 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
+/*
+ * A label that is a page's title (a tab of another device): one line, truncating from the end,
+ * as the History page's rows and every list of pages in the product (§6; the #314 ruling) – the
+ * host under it says which page a cut title is, and no row grows a line for a title.
+ */
+.zen-settings-row-truncate .zen-settings-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 .zen-settings-row-danger .zen-settings-label {
   color: var(--v2-danger);
 }
@@ -8391,6 +8584,18 @@
  */
 .zen-settings-row-disabled {
   opacity: 0.4;
+}
+/*
+ * Under the row's .4 the deemphasised parts – a description, a trailing summary – would compound
+ * to .276 of the text (1.9:1 in light); a dependent row's description is the way out ("Turn on
+ * Open tabs in What you sync to see them."), the one sentence the row is there for. §9.30 as
+ * amended on #299: a part that is deemphasised when enabled takes the label's ink while
+ * disabled, so under the .4 nothing in the row falls below .4 of the text. A `data-tone`
+ * description keeps its status ink (the row-tone rules above outrank this by specificity).
+ */
+.zen-settings-row-disabled .zen-settings-description,
+.zen-settings-row-disabled .zen-settings-summary {
+  color: var(--v2-text);
 }
 .zen-settings-row-disabled .zen-v2-button:disabled,
 .zen-settings-row-disabled .zen-v2-icon-button:disabled,
@@ -8799,6 +9004,23 @@
 .zen-settings-sheet-rows {
   display: flex;
   flex-direction: column;
+}
+/*
+ * A sheet's 48 header already holds §9.7's 16 below its title line (§9.16), and a dialog's title
+ * block ends with its 16 to the body (§9.23): the first group's heading drops its 20 above under
+ * either, as under the page's bar (#239's ruling on §10.3, read onto both here on #314) – else
+ * the two spaces add to 36. The pane's rule (`.zen-settings-pane > .zen-settings-body …`,
+ * below) is the same shape. The heading's 4 below and the 20 between groups are untouched.
+ */
+.zen-settings-sheet-body
+  > .zen-settings-sheet-rows
+  > .zen-settings-group:first-child
+  > .zen-settings-heading,
+.zen-settings-dialog-body
+  > .zen-settings-sheet-rows
+  > .zen-settings-group:first-child
+  > .zen-settings-heading {
+  margin-top: 0;
 }
 /*
  * Where two panes fit (§10.5, Zen's about:preferences; `pages/settings/desktop.tsx`): the nav
@@ -10463,11 +10685,17 @@
   /*
    * A strip across the top of the content frame (content/DefaultBrowserBanner.tsx,
    * content/CrashRestoreBanner.tsx): a window surface (§9.29, `data-surface="window"` on it) –
-   * the theme's ink on `--v2-window-fill` – with §9.7's hairline at its bottom edge, the one
-   * line it draws. It grows around its 32 px buttons to 40 (§9.21: the 4 above and below are
-   * its own padding, the control + 8 its own statement, so no strip sets `data-control` by
-   * hand – §9.34 leaves that to a row wrapper rendering a control), 16 px gutters, the sentence
-   * at 15 on 20 in the full ink (an action's line, not supplementary text), the buttons 8 apart.
+   * the theme's ink on the frame's own solid (`--zen-bg-solid`, the frame's background showing
+   * through: the strip paints no fill of its own) – with §9.7's hairline at its bottom edge, the
+   * one line it draws. A band of `--v2-window-fill` under its secondary button put the same
+   * translucent fill on itself (`--v2-control-fill` is the window fill on this surface): the
+   * button's rest a doubled tint over the frame and its hover, `-hover` over the band, a step
+   * of ~30 from that rest – the fill-on-fill the shell pass captured for the lead (PR #295); on
+   * the solid the secondary is one fill and its hover the token's own step. It grows around its
+   * 32 px buttons to 40 (§9.21: the 4 above and below are its own padding, the control + 8 its
+   * own statement, so no strip sets `data-control` by hand – §9.34 leaves that to a row wrapper
+   * rendering a control), 16 px gutters, the sentence at 15 on 20 in the full ink (an action's
+   * line, not supplementary text), the buttons 8 apart.
    */
   .zen-frame-strip {
     position: relative;
@@ -10478,17 +10706,20 @@
     min-height: calc(var(--v2-control) + 8px);
     padding: 4px var(--v2-card-padding);
     color: var(--v2-control-text);
-    background: var(--v2-window-fill);
     font-size: var(--v2-font-body);
     line-height: var(--v2-line-body);
   }
-  /* The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7). */
+  /*
+   * The hairline is the bottom pixel of the 40, as a sticky title block draws its own (§9.7) –
+   * the window hairline `--zen-border` (§9.29's `--v2-window-border`, fg .12 light / .2 dark),
+   * as the strip sits on the frame and a hairline on the window never draws `--v2-border`.
+   */
   .zen-frame-strip::after {
     content: '';
     position: absolute;
     inset: auto 0 0 0;
     height: 1px;
-    background: var(--v2-border);
+    background: var(--zen-border);
   }
   .zen-frame-strip-text {
     flex: 1;

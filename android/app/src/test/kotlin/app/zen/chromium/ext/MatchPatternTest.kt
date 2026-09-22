@@ -95,4 +95,22 @@ class MatchPatternTest {
         assertFalse(MatchPattern.anyMatches(emptyList(), "https://a.test/"))
         assertTrue(MatchPattern.anyMatches(MatchPattern.compileAll(listOf("bogus", "*://a.test/*")), "https://a.test/"))
     }
+
+    @Test
+    fun `matchesOrigin takes the scheme, host and port and leaves the path out`() {
+        val exact = MatchPattern.compile("https://mail.google.com/")!!
+        assertFalse(exact.matches("https://mail.google.com/mail/u/0/feed/atom"))
+        assertTrue(exact.matchesOrigin("https://mail.google.com/mail/u/0/feed/atom"))
+        assertFalse(exact.matchesOrigin("http://mail.google.com/"))
+        assertFalse(exact.matchesOrigin("https://www.google.com/"))
+        val sub = MatchPattern.compile("*://*.example.com/v1/*")!!
+        assertTrue(sub.matchesOrigin("http://api.example.com/v2/x"))
+        assertFalse(sub.matchesOrigin("ftp://api.example.com/v1/x"))
+        val port = MatchPattern.compile("http://localhost:8080/*")!!
+        assertTrue(port.matchesOrigin("http://localhost:8080/anything"))
+        assertFalse(port.matchesOrigin("http://localhost:9090/anything"))
+        assertTrue(MatchPattern.compile("<all_urls>")!!.matchesOrigin("https://x.test/y"))
+        assertTrue(MatchPattern.anyMatchesOrigin(listOf(exact, port), "http://localhost:8080/"))
+        assertFalse(MatchPattern.anyMatchesOrigin(listOf(exact, port), "http://localhost:81/"))
+    }
 }
