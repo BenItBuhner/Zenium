@@ -232,10 +232,11 @@ export function GroupColorPalette({ folder }: { folder: Folder }): JSX.Element {
 /**
  * A Groups pane row's sheet (TAB-16): the colour swatches under the group's name, then the menu
  * items – Title Case (§9.1) – by the group's state. An OPEN group: Show in Tabs (what the row's
- * tap does), Rename, Close Group (N Tabs) in the danger ink (its tabs close, the group stays
- * saved with their pages) and Delete Group; a SAVED one: Open (its pages come back as tabs),
- * Rename, Delete Group; an EMPTY one: Rename, Delete Group. Delete asks first when the group
- * holds anything (`DeleteGroupSheet`, §9.23); the caller decides.
+ * tap does), Rename, Close Group (N Tabs) in the plain ink (its tabs close, the group stays
+ * saved with their pages: nothing of the user's is destroyed, §6) and Delete Group in the danger
+ * ink; a SAVED one: Open (its pages come back as tabs), Rename, Delete Group; an EMPTY one:
+ * Rename, Delete Group. Delete asks first when the group holds anything (`DeleteGroupSheet`,
+ * §9.23); the caller decides.
  */
 export function GroupRowSheet({
   row,
@@ -266,7 +267,6 @@ export function GroupRowSheet({
     actions.push({
       id: 'close',
       label: `Close Group (${tabs})`,
-      destructive: true,
       onPick: () => onCloseGroup(folder)
     })
   actions.push({

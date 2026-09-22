@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Brush, ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import type { Folder, Space, Tab, UIState } from '@shared/types'
@@ -9,6 +9,7 @@ import { contextMenuAnchor } from '@renderer/lib/menuKeys'
 import { dropStore, listMotions } from '@renderer/lib/drag'
 import { viewportStore } from '@renderer/lib/formFactor'
 import { openGroupEditor } from '@renderer/lib/groupEditor'
+import { groupColorChannels } from '@renderer/lib/groups'
 import { SlideMotion } from '@renderer/lib/motion/slide'
 import { pinnedOf, regularOf } from '@renderer/lib/selectors'
 import { hint, useHint } from '@renderer/lib/shortcuts'
@@ -16,8 +17,8 @@ import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@re
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { DEFAULT_FOLDER_ICON } from '../phone/GroupCard'
 import { useLongPress } from '../phone/useLongPress'
-import { GroupChip } from './GroupChip'
 import { ListMotionContext } from './listMotion'
 import { TabItem } from './TabItem'
 import { useGroupFold } from './useGroupFold'
@@ -344,9 +345,12 @@ function FolderRow({
 }: FolderRowProps): JSX.Element {
   const renaming = uiStore.use((s) => s.renamingFolderId === folder.id)
   const editing = uiStore.use((s) => s.groupEditor?.folderId === folder.id)
-  // The tablet's row (TABLET-04): the group's colour chip in the leading slot, the fold on a
-  // spring (`useGroupFold`), and a SAVED group – its tabs closed, its pages kept (TAB-16) – as
-  // a row whose tap opens it. The desktop's row is as it was.
+  // The tablet's row (TABLET-04, v2 §9.36): the group as a full-width 44 row like Zen's folder –
+  // the colour dot or the saved ring in the glyph slot, the name, the count as a 13 aside, the
+  // chevron trailing, the tabs indented beneath while open – the phone overview's own group
+  // header on the sidebar's grid; the fold on a spring (`useGroupFold`); a SAVED group – its
+  // tabs closed, its pages kept (TAB-16) – as a row whose tap opens it. The desktop's row is as
+  // it was.
   const tablet = viewportStore.use((v) => v.formFactor === 'tablet')
   const saved = tablet && tabs.length === 0 && Boolean(folder.savedTabs?.length)
   const lastClick = useRef(0)
@@ -433,23 +437,29 @@ function FolderRow({
         {dragging && <div data-drop={`folder:${folder.id}`} className="absolute inset-0 z-10" />}
         {tablet ? (
           <>
-            <GroupChip folder={folder} count={count} saved={saved} compact={compact}>
-              {renaming ? (
+            <GroupRowGlyph folder={folder} saved={saved} />
+            {!compact &&
+              (renaming ? (
                 <FolderRename folder={folder} />
               ) : (
-                <span className="zen-group-tag-name">{folder.name}</span>
-              )}
-            </GroupChip>
-            {!compact && !saved && (
-              <>
-                <span className="min-w-0 flex-1" />
-                {folder.collapsed ? (
-                  <ChevronRight className="zen-group-row-chevron" aria-hidden />
-                ) : (
-                  <ChevronDown className="zen-group-row-chevron" aria-hidden />
-                )}
-              </>
-            )}
+                <>
+                  <span className="min-w-0 flex-1 truncate" data-testid="group-row-name">
+                    {folder.name}
+                  </span>
+                  <span className="zen-group-row-count" data-testid="group-row-count">
+                    {count}
+                  </span>
+                  {/* A saved group has nothing to fold: its chevron's box stays, empty, so the
+                      counts of saved and open rows share one edge. */}
+                  {saved ? (
+                    <span className="zen-group-row-chevron" aria-hidden />
+                  ) : folder.collapsed ? (
+                    <ChevronRight className="zen-group-row-chevron" aria-hidden />
+                  ) : (
+                    <ChevronDown className="zen-group-row-chevron" aria-hidden />
+                  )}
+                </>
+              ))}
           </>
         ) : (
           <>
@@ -497,6 +507,31 @@ function FolderRow({
         />
       ))}
     </div>
+  )
+}
+
+/**
+ * What stands for a group in the tablet row's glyph slot (the favicon's 16 box): a 10 px dot of
+ * its colour for an open group, a 2 px ring of it for a saved one – the Groups pane's two
+ * states – or the folder's own icon where the desktop gave it one, as the phone card's
+ * `GroupBadge` keeps it. `.zen-group-row-glyph` in main.css draws it.
+ */
+function GroupRowGlyph({ folder, saved }: { folder: Folder; saved: boolean }): JSX.Element {
+  const own = folder.icon && folder.icon !== DEFAULT_FOLDER_ICON ? folder.icon : null
+  return (
+    <span
+      className="zen-group-row-glyph"
+      data-saved={saved || undefined}
+      data-testid="group-row-glyph"
+      style={{ '--zen-group-rgb': groupColorChannels(folder.color) } as CSSProperties}
+      aria-hidden
+    >
+      {own ? (
+        <span className="zen-group-row-icon">{own}</span>
+      ) : (
+        <span className="zen-group-row-dot" />
+      )}
+    </span>
   )
 }
 

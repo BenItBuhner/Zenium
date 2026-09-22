@@ -6821,75 +6821,46 @@
 }
 
 /*
- * A tab group's row on the tablet sidebar (TABLET-04, `SpacePanel`'s `FolderRow` with
- * `GroupChip`): the group as a chip in the row's leading slot – a 32 pill in the group's colour
- * at 16% (`--zen-group-rgb`, the group card's tint family) 6 in from the row's edge, so its 10
- * dot centres on the favicon column's 21; the name at §9.36's 14 px in the row's ink; the count,
- * 13 tabular at 69%, after the name while the group is folded (or saved, with its kept pages);
- * the chevron a 16 glyph at 69% at the trailing edge, the desktop row's, in a 44 box – it says
- * the fold, the row's tap does it. A saved group's glyph is a 2 px ring of the colour where an
- * open group's is the dot (the Groups pane's two states); a folder given its own icon on the
- * desktop keeps it, as a glyph at 14 (§4: glyphs hold while text scales). The name being edited
- * takes the chip's text slot at the same 14. The rail shows the chip as its glyph alone, a 32
- * circle. The block of header and rows (`.zen-group-fold`) is clipped while its height runs on
- * the fold's spring (`useGroupFold`) and left alone at rest, so a lifted row's ghost and a focus
- * ring are never cut.
+ * A tab group's row on the tablet sidebar (TABLET-04, v2 §9.36; `SpacePanel`'s `FolderRow`): a
+ * row like Zen's folder, not a chip – the 44 row at full width on the list's 46 pitch, the
+ * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
+ * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
+ * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, a 2 px ring of it for a
+ * SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a folder given
+ * its own icon on the desktop keeps it, as a glyph at 14 that holds while text scales (§4).
+ * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
+ * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
+ * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
+ * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
+ * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
+ * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
+ * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
+ * rest, so a lifted row's ghost and a focus ring are never cut.
  */
-:root[data-form-factor='tablet'] .zen-tab.zen-group-row {
-  padding-left: 6px;
-  gap: 0;
-}
-:root[data-form-factor='tablet'] .zen-tab.zen-group-row.justify-center {
-  padding-left: 0;
-}
-.zen-group-tag {
+.zen-group-row-glyph {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 100%;
-  height: 32px;
-  padding: 0 12px 0 10px;
-  border-radius: 16px;
-  background: rgb(var(--zen-group-rgb) / 0.16);
-  color: var(--zen-fg);
-  font-size: 14px;
-  line-height: 20px;
-}
-.zen-group-tag-glyph-only {
-  width: 32px;
-  padding: 0;
-  justify-content: center;
-}
-.zen-group-tag-dot {
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.zen-group-row-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: rgb(var(--zen-group-rgb));
 }
-.zen-group-tag[data-saved] .zen-group-tag-dot {
+.zen-group-row-glyph[data-saved] .zen-group-row-dot {
   background: transparent;
   box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
 }
-.zen-group-tag-icon {
-  flex-shrink: 0;
-  width: 16px;
-  text-align: center;
+.zen-group-row-icon {
   font-size: calc(14px / var(--zen-text-zoom, 1));
   line-height: 1;
 }
-.zen-group-tag-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.zen-group-tag input {
-  font-size: 14px;
-}
-.zen-group-tag-count {
+.zen-group-row-count {
   flex-shrink: 0;
   color: var(--v2-control-text-deemphasized, var(--zen-muted));
   font-size: 13px;
@@ -6901,6 +6872,12 @@
   height: 16px;
   margin-right: 14px;
   opacity: 0.69;
+}
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+  margin-left: 24px;
 }
 .zen-group-fold[data-folding] {
   overflow: hidden;
