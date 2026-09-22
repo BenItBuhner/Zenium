@@ -78,6 +78,7 @@ class V2TokensPinTest {
         assertEquals(css.weight("--v2-weight-heading"), PromptSheetSpec.TITLE_WEIGHT)
         assertEquals(css.px("--v2-font-body"), PromptSheetSpec.BODY_SP)
         assertEquals(css.px("--v2-line-body"), PromptSheetSpec.BODY_LINE_SP)
+        assertEquals(css.weight("--v2-weight-body"), PromptSheetSpec.BODY_WEIGHT)
         assertEquals(css.weight("--v2-weight-button"), PromptSheetSpec.BUTTON_WEIGHT)
         // The inks a token derives from the text: the alpha each states.
         assertEquals(css.alpha("--v2-text-deemphasized"), PromptSheetSpec.DEEMPHASIZED_ALPHA, 0f)
@@ -101,14 +102,31 @@ class V2TokensPinTest {
         assertEquals(PromptSheetSpec.GRABBER_TOP_DP, px(hit, "padding-top"))
         val margin = Regex("""margin: 0 auto (-?\d+)px;""").find(hit)!!.groupValues[1].toInt()
         assertEquals(PromptSheetSpec.GRIP_STRIP_DP, px(hit, "height") + margin)
-        // §9.23: the title block's padding and its gap to the description.
+        // §9.23: the title block's padding – its 16 to the body, body copy's 16 to what it introduces – and its gap to the description.
         val block = css.rule(".zen-sheet-title-block")
         assertEquals(PromptSheetSpec.BLOCK_PADDING_DP, px(block, "padding"))
+        assertEquals(PromptSheetSpec.BODY_GAP_DP, px(block, "padding"))
         assertEquals(PromptSheetSpec.DESCRIPTION_GAP_DP, px(block, "gap"))
-        // §9.11: the footer's padding and the peers' gap.
+        // §9.7: the hairline under a scrolled title block – the border ink, 1 px, on the grip's 120 ms.
+        assertTrue(css.text.contains("box-shadow: 0 ${PromptSheetSpec.HAIRLINE_PX}px 0 var(--v2-border);"))
+        assertTrue(css.rule(".zen-sheet-grip").contains("transition: box-shadow ${PromptSheetSpec.HAIRLINE_FADE_MS}ms var(--zen-ease);"))
+        // §9.12: the label 4 above its field (`.zen-bm-label`, the one §9.12 label rule in main.css).
+        assertEquals(PromptSheetSpec.LABEL_GAP_DP, px(css.rule(".zen-bm-label"), "gap"))
+        // §9.11 / §9.25: the footer's 16 above the peers, the peers' gap, and the bottom inset.
         val footer = css.rule(".zen-sheet-footer")
         assertEquals(PromptSheetSpec.PEER_GAP_DP, px(footer, "gap"))
-        assertEquals("${PromptSheetSpec.FOOTER_TOP_DP}px ${PromptSheetSpec.GUTTER_DP}px ${PromptSheetSpec.FOOTER_BOTTOM_DP}px", declaration(footer, "padding"))
+        val footerPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues.drop(1).map { it.toInt() }
+        assertEquals(PromptSheetSpec.FOOTER_TOP_DP, footerPadding[0])
+        assertEquals(PromptSheetSpec.GUTTER_DP, footerPadding[1])
+        // §9.25: 16 from the peers to the bottom inset, the inset the host's safe area or 8 where it
+        // reports none (`BottomSheet.tsx`'s floor) – 24 to the sheet's edge there. The chassis's
+        // `.zen-sheet-footer` stands at 8 where §9.25 says 16: the one value this pin found off the
+        // spec on main. The native footer takes the spec's 16; the CSS's 8 is pinned as the known
+        // drift, so the day main.css takes §9.25's 16 this line fails and the allowance goes with it.
+        assertEquals(16, PromptSheetSpec.FOOTER_BOTTOM_DP)
+        assertEquals("main.css .zen-sheet-footer padding-bottom: the known §9.25 drift (8 where the spec says 16)", 8, footerPadding[2])
+        val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
+        assertTrue(bottomSheet.contains("paddingBottom: Math.max(${PromptSheetSpec.SHEET_INSET_FLOOR_DP}, insets.bottom)"))
         // §6: the button's floor, its sides, its press fade, the primary's pressed mix.
         val button = css.rule(".zen-v2-button")
         assertEquals(PromptSheetSpec.BUTTON_MIN_WIDTH_DP, px(button, "min-width"))
@@ -197,7 +215,7 @@ class V2TokensPinTest {
 
     private companion object {
         fun repoRoot(): File {
-            var dir: File? = File(System.getProperty("user.dir")).absoluteFile
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
             while (dir != null) {
                 if (File(dir, "package.json").isFile && File(dir, "android").isDirectory) return dir
                 dir = dir.parentFile

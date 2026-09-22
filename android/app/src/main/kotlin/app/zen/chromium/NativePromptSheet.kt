@@ -34,18 +34,20 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 
 /**
- * The numbers of the v2 prompt sheet (design language v2 §9.23 and what it names: §9.9 grabber,
- * §9.11 footer, §9.12 field, §9.14 checkbox, §6 button), each after the token or rule it is
- * taken from. `V2TokensPinTest` holds them equal to main.css, so the imitation cannot drift
- * from the sheet the chrome draws.
+ * The numbers of the v2 prompt sheet (design language v2 §9.23 and what it names: §9.7 hairline,
+ * §9.9 grabber, §9.11 footer, §9.12 field, §9.14 checkbox, §9.25 gutter and inset, §6 button),
+ * each after the token or rule it is taken from. `V2TokensPinTest` holds them equal to main.css,
+ * so the imitation cannot drift from the sheet the chrome draws.
  */
 object PromptSheetSpec {
     /** `--v2-radius-sheet`: the sheet's top corners. */
     const val SHEET_RADIUS_DP = 12
-    /** `.zen-sheet`'s `border: 1px`: the hairline round the sheet, a field, a checkbox. */
+    /** `.zen-sheet`'s `border: 1px`: the hairline round the sheet, under a scrolled title block, round a field, a checkbox. */
     const val HAIRLINE_PX = 1
     /** `SHEET_TOP_MARGIN` (lib/motion/sheet.ts): the page kept in view above an expanded sheet. */
     const val SHEET_TOP_MARGIN_DP = 40
+    /** §9.25: the bottom inset is the host's safe area, or 8 where it reports none (`BottomSheet.tsx`'s `Math.max(8, insets.bottom)`). */
+    const val SHEET_INSET_FLOOR_DP = 8
 
     /** §9.9: the grip strip, with the 32 × 4 grabber at radius 2, 8 from the top, in the text at 25 %. */
     const val GRIP_STRIP_DP = 20
@@ -63,13 +65,18 @@ object PromptSheetSpec {
     const val TITLE_SP = 17
     const val TITLE_LINE_SP = 22
     const val TITLE_WEIGHT = 600
-    /** `--v2-font-body` / `--v2-line-body`: the description, a label, a field's text. */
+    /** `--v2-font-body` / `--v2-line-body` / `--v2-weight-body`: body copy, the description, a label, a field's text. */
     const val BODY_SP = 15
     const val BODY_LINE_SP = 20
+    const val BODY_WEIGHT = 400
     /** `--v2-text-deemphasized`: the description's ink is the text at 69 %. */
     const val DEEMPHASIZED_ALPHA = 0.69f
     /** `.zen-sheet-title-block`'s gap: the description 4 under the title. */
     const val DESCRIPTION_GAP_DP = 4
+    /** §9.23: body copy 16 from what it introduces – the title block's 16 to the body (§9.7), a paragraph's 16 to the row or field after it. */
+    const val BODY_GAP_DP = 16
+    /** §9.7: the hairline under a pinned title block comes and goes on `.zen-sheet-grip`'s 120 ms. */
+    const val HAIRLINE_FADE_MS = 120
 
     /** `--v2-control` on a phone: a field's and a button's height. */
     const val CONTROL_DP = 40
@@ -77,7 +84,9 @@ object PromptSheetSpec {
     const val CONTROL_RADIUS_DP = 6
     /** `.zen-v2-field`'s `padding: 0 12px`. */
     const val FIELD_PADDING_DP = 12
-    /** The 16 gutter (§5): the body's sides, a row's sides, the footer's. */
+    /** §9.12: the label 4 above its field (`.zen-bm-label`'s gap). */
+    const val LABEL_GAP_DP = 4
+    /** The 16 gutter (§9.25): the body's sides, a row's sides, the footer's. */
     const val GUTTER_DP = 16
 
     /** `--v2-checkbox` on a phone and `--v2-radius-checkbox`; the edge at rest is the text at 30 % (`.zen-v2-checkbox`). */
@@ -91,9 +100,13 @@ object PromptSheetSpec {
     const val ROW_PAD_DP = 12
     const val ROW_GAP_DP = 12
 
-    /** `.zen-sheet-footer` (§9.11): `padding: 16px 16px 8px`, the peers at an 8 gap. */
+    /**
+     * §9.11 / §9.25: the footer's 16 above its peers (`.zen-sheet-footer`'s `padding-top`), the peers at an
+     * 8 gap, and 16 from the peers to the bottom inset – §9.25's number; main.css's `.zen-sheet-footer`
+     * stands at 8 there, the one chassis value the pin found off the spec (`V2TokensPinTest`).
+     */
     const val FOOTER_TOP_DP = 16
-    const val FOOTER_BOTTOM_DP = 8
+    const val FOOTER_BOTTOM_DP = 16
     const val PEER_GAP_DP = 8
     /** `.zen-v2-button`: `min-width: 96px`, `padding: 0 16px`, the label at `--v2-weight-button`. */
     const val BUTTON_MIN_WIDTH_DP = 96
@@ -124,16 +137,22 @@ object PromptSheetSpec {
  * theme's inks ([V2Ink]) exactly, both pinned against main.css by `V2TokensPinTest`.
  *
  * The composition, top to bottom: the panel surface with its hairline and 12 top radii, edge to
- * edge at the bottom; the §9.9 grip strip; the title block – an optional 20 glyph on the title's
- * start at the 8 gap, the title 17/600 on 22, an optional description 15 at 69 % on 20, 4 under
- * it – then, in the 16 gutter, an optional §9.12 field prefilled with its text, and an optional
- * §9.14 check row ("Don't ask again", "Don't let this page create more dialogs") whose tick is
- * submitted with the answer; 16 to the §9.11 footer: two 40 peers splitting the width at 8, the
- * secondary (Cancel, Wait) leading in the 10 % fill, the primary trailing – the accent fill with
- * the on-accent label, or, for a destructive answer, the 10 % fill with the label in the danger
- * ink (Exit page, Remove) – or one action spanning the row. A long body scrolls between the
- * grip and the footer; the sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP] under the
- * status bar. The keyboard lifts the sheet.
+ * edge at the bottom; the §9.9 grip strip; the title block, PINNED – an optional 20 glyph on the
+ * title's start at the 8 gap, the title 17/600 on 22, and an optional description 15 at 69 % on
+ * 20, 4 under it, for a sentence of OURS ("Changes you made may not be saved.", "This page isn't
+ * responding…") – 16 to the body; the body, which SCROLLS under the block with §9.7's hairline at
+ * the boundary once it has moved: optional body copy 15/400 in the text ink – the PAGE's words,
+ * an `alert`'s or `confirm`'s message, which may run long –, an optional §9.12 field under its
+ * label (a `prompt`'s message is that label, 4 above the 40 field, the value selected), an
+ * optional §9.14 check row ("Don't ask again", "Don't let this page create more dialogs") whose
+ * tick is submitted with the answer, each 16 from the last; then the §9.11 footer, PINNED, 16
+ * above its two 40 peers splitting the width at 8 – the secondary (Cancel, Wait) leading in the
+ * 10 % fill, the primary trailing in the accent fill with the on-accent label or, for a
+ * destructive answer, in the 10 % fill with the label in the danger ink (Exit page, Remove) –
+ * or one action spanning the row; and §9.25's 16 to the bottom inset, the inset the host's bar
+ * or 8 where it reports none. The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
+ * under the status bar: a long body scrolls between the pinned block and the pinned footer
+ * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
  * Motion is the 120 ms opacity fade of §11.3 in place, by default, scrim with sheet
  * ([Motion.FADE]): no slide, no drag, no recede of the page behind – the native allowance the
@@ -150,7 +169,7 @@ object PromptSheetSpec {
  * comes up); the title is a heading; the container takes the focus, as §9.22 has a
  * title-and-notice sheet and a form sheet do – never the field, whose keyboard would come up
  * with the sheet, and never Cancel, which would be the first thing read – and the field takes
- * the focus, and the keyboard with it, on the user's tap.
+ * the focus, and the keyboard with it, on the user's tap; its label is read with it.
  */
 class NativePromptSheet(
     private val context: Context,
@@ -165,13 +184,15 @@ class NativePromptSheet(
     class Content(
         /** The title line, 17/600: "example.com says", "Leave site?", the unresponsive site's host. */
         val title: CharSequence,
-        /** The description 15 at 69 %, 4 under the title: the page's message, our sentence. Line breaks kept. */
+        /** OUR sentence under the title, 15 at 69 %, 4 below it, in the pinned block: "Changes you made may not be saved." Line breaks kept. */
         val description: CharSequence? = null,
+        /** The PAGE's words as body copy, 15/400 in the text ink, in the scrolling body: an alert's or confirm's message. Line breaks kept. */
+        val body: CharSequence? = null,
         /** A 20 glyph on the title's start (a favicon, a globe in the ink: [V2Ink.glyph]); none for a dialog without an identity. */
         val glyph: Drawable? = null,
         /** The title on one line, truncated from the end (a host name); false: it wraps. */
         val titleOneLine: Boolean = false,
-        /** A §9.12 field under the block, prefilled; its text comes back with an accepting answer. */
+        /** A §9.12 field in the body, under its label, prefilled; its text comes back with an accepting answer. */
         val field: Field? = null,
         /** The label of a §9.14 check row after the body; its tick comes back with every answer. */
         val check: CharSequence? = null,
@@ -181,8 +202,16 @@ class NativePromptSheet(
         val primary: Peer
     )
 
-    /** A §9.12 field: its initial text (selected when the field takes the focus) and its hint. */
-    class Field(val text: String = "", val hint: CharSequence? = null, val inputType: Int = InputType.TYPE_CLASS_TEXT)
+    /**
+     * A §9.12 field: its label 4 above it (a `prompt`'s message), its initial text – selected, so the
+     * first keystroke replaces it, as Chrome's is – and its hint.
+     */
+    class Field(
+        val text: String = "",
+        val label: CharSequence? = null,
+        val hint: CharSequence? = null,
+        val inputType: Int = InputType.TYPE_CLASS_TEXT
+    )
 
     /** A footer button: its label and how it is drawn. */
     class Peer(val label: CharSequence, val tone: Tone = Tone.ACCENT)
@@ -214,7 +243,7 @@ class NativePromptSheet(
         val dialog = BottomSheetDialog(context, theme)
         this.dialog = dialog
         val column = content()
-        dialog.setContentView(column)
+        dialog.setContentView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         // The window's name for TalkBack is the title, as a dialog's is.
         dialog.setTitle(content.title)
         dialog.setCanceledOnTouchOutside(true)
@@ -231,12 +260,13 @@ class NativePromptSheet(
                 this@NativePromptSheet.onSlide.invoke(((parent.height - bottomSheet.top).toFloat() / bottomSheet.height).coerceIn(0f, 1f))
             }
         })
-        // §9.22: the keyboard never comes up with the sheet; the field's tap brings it. Before
-        // Android 11 the window makes room for it; from 11 on the column pads (content()).
-        dialog.window?.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN or
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) legacyResize() else 0
-        )
+        // §9.22: the keyboard never comes up with the sheet; the field's tap brings it. When it
+        // does, the Material sheet lifts itself: it pads its bottom by the window's system-window
+        // inset, which counts the keyboard under `adjustResize` (the mode the Material sheet theme
+        // sets; deprecated from Android 11 for resizing the window, still what puts the keyboard
+        // into that inset) – one lift, Material's own, on every level, and the column's cap
+        // (Column) gives the body the room the lift takes.
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN or adjustResize())
         dialog.setOnDismissListener {
             if (this.dialog !== dialog) return@setOnDismissListener
             this.dialog = null
@@ -274,8 +304,12 @@ class NativePromptSheet(
 
     // --- the composition -----------------------------------------------------------------------
 
+    /**
+     * The sheet's content: grip, the pinned title block, the scrolling body (taking what height is
+     * left under the cap, so the footer stays put), the pinned footer.
+     */
     private fun content(): View {
-        val column = LinearLayout(context).apply {
+        val column = Column().apply {
             orientation = LinearLayout.VERTICAL
             background = edge()
             // The container holds the focus on open (§9.22); it draws no ring for it.
@@ -285,44 +319,35 @@ class NativePromptSheet(
             ViewCompat.setAccessibilityPaneTitle(this, content.title)
         }
         column.addView(grip(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PromptSheetSpec.GRIP_STRIP_DP)))
-        val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        body.addView(titleBlock())
-        content.field?.let { spec ->
-            body.addView(field(spec), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PromptSheetSpec.CONTROL_DP)).apply {
-                marginStart = dp(PromptSheetSpec.GUTTER_DP)
-                marginEnd = dp(PromptSheetSpec.GUTTER_DP)
-            })
-        }
-        content.check?.let { label ->
-            // The row's own 12 above its line; after a field it is the block's 16 less that 12.
-            body.addView(checkRow(label), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                if (content.field != null) topMargin = dp(PromptSheetSpec.BLOCK_PADDING_DP - PromptSheetSpec.ROW_PAD_DP)
-            })
-        }
-        val scroller = MaxHeightScrollView(bodyMaxHeight()).apply {
-            isVerticalScrollBarEnabled = false
-            addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        column.addView(scroller, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val body = body()
+        column.addView(titleBlock(toBody = body.childCount > 0))
+        column.addView(scrollingBody(body), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         column.addView(footer())
-        // The keyboard: an edge-to-edge dialog window is not resized for it (Android 11 on), so
-        // the column pads for the part of it above the gesture bar, which the sheet pads for.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ViewCompat.setOnApplyWindowInsetsListener(column) { v, insets ->
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-            v.setPadding(0, 0, 0, (ime - bars).coerceAtLeast(0))
-            insets
+        // The status bar (the cap's start) and §9.25's floor: the sheet pads its bottom by the
+        // host's bar; where the host reports less than 8 the column makes up the difference.
+        val insets = (context as? android.app.Activity)?.window?.decorView?.let { ViewCompat.getRootWindowInsets(it) }
+        if (insets != null) column.applyInsets(insets)
+        ViewCompat.setOnApplyWindowInsetsListener(column) { v, dispatched ->
+            (v as Column).applyInsets(dispatched)
+            dispatched
         }
         return column
     }
 
-    /** The hairline round the sheet at its top radii, over the panel fill the sheet style paints. */
-    private fun edge(): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        val r = dp(PromptSheetSpec.SHEET_RADIUS_DP).toFloat()
-        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-        setColor(Color.TRANSPARENT)
-        setStroke(PromptSheetSpec.HAIRLINE_PX, ink.border)
+    /**
+     * The hairline round the sheet at its top radii, over the panel fill the sheet style paints;
+     * its bottom side pushed a stroke past the column's edge, where the clip hides it – the sheet
+     * is edge to edge, and the column ends above the bar the sheet pads for.
+     */
+    private fun edge(): Drawable {
+        val stroke = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            val r = dp(PromptSheetSpec.SHEET_RADIUS_DP).toFloat()
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            setColor(Color.TRANSPARENT)
+            setStroke(PromptSheetSpec.HAIRLINE_PX, ink.border)
+        }
+        return LayerDrawable(arrayOf(stroke)).apply { setLayerInset(0, 0, 0, 0, -PromptSheetSpec.HAIRLINE_PX) }
     }
 
     /** §9.9: the grabber in its strip; a tap on the strip dismisses (the grip is the first thing in the order). */
@@ -346,15 +371,15 @@ class NativePromptSheet(
     }
 
     /**
-     * §9.23: the glyph and the title on one line, the description 4 under, in the block's 16.
-     * The block keeps no bottom padding of its own: a field or a check row follows at the 16,
-     * and the footer brings its own 16 (`.zen-sheet-footer`).
+     * §9.23: the glyph and the title on one line, our description 4 under, in the block's 16;
+     * pinned above the body. Its 16 below is the 16 to the body (§9.7); with nothing in the body
+     * the block keeps no bottom padding, since the footer brings its own 16 (`.zen-sheet-footer`).
      */
-    private fun titleBlock(): View {
+    private fun titleBlock(toBody: Boolean): View {
         val pad = dp(PromptSheetSpec.BLOCK_PADDING_DP)
         val block = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, if (content.field != null || content.check != null) pad else 0)
+            setPadding(pad, pad, pad, if (toBody) pad else 0)
         }
         val title = TextView(context).apply {
             text = content.title
@@ -382,19 +407,100 @@ class NativePromptSheet(
             block.addView(identity, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         val description = content.description
-        if (!description.isNullOrEmpty()) block.addView(TextView(context).apply {
-            text = description
-            setTextColor(ink.textDeemphasized)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
-            TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.BODY_LINE_SP))
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        if (!description.isNullOrEmpty()) block.addView(paragraph(description, ink.textDeemphasized), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(PromptSheetSpec.DESCRIPTION_GAP_DP)
         })
         return block
     }
 
-    /** §9.12: the page surface in a hairline box at the control radius, 12 in, the accent edge while focused. */
-    private fun field(spec: Field): View {
+    /**
+     * The body, in the 16 gutter: body copy, then the field under its label, then the check row,
+     * each 16 from what precedes it (the block's 16 reaching the first). Empty for a prompt that
+     * is a title block and its footer alone.
+     */
+    private fun body(): LinearLayout {
+        val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val gutter = dp(PromptSheetSpec.GUTTER_DP)
+        val gap = { body.childCount > 0 }
+        content.body?.takeIf { it.isNotEmpty() }?.let { copy ->
+            body.addView(paragraph(copy, ink.text), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = gutter
+                marginEnd = gutter
+            })
+        }
+        content.field?.let { spec ->
+            body.addView(labelledField(spec), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = gutter
+                marginEnd = gutter
+                if (gap()) topMargin = dp(PromptSheetSpec.BODY_GAP_DP)
+            })
+        }
+        content.check?.let { label ->
+            // The row's own 12 above its line is part of the 16 to it.
+            body.addView(checkRow(label), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (gap()) topMargin = dp(PromptSheetSpec.BODY_GAP_DP - PromptSheetSpec.ROW_PAD_DP)
+            })
+        }
+        return body
+    }
+
+    /**
+     * The body in its scroller under §9.7's hairline: a 1 px line in the border ink over the body's
+     * top edge – the pinned block's bottom edge – that fades in once the body has scrolled under the
+     * block and out again at the top, on the chassis's 120 ms; nothing at rest.
+     */
+    private fun scrollingBody(body: View): View {
+        val frame = FrameLayout(context)
+        val hairline = View(context).apply {
+            setBackgroundColor(ink.border)
+            alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        var scrolled = false
+        val scroller = BodyScroller { y ->
+            val now = y > 0
+            if (now == scrolled) return@BodyScroller
+            scrolled = now
+            hairline.animate().alpha(if (now) 1f else 0f).setDuration(PromptSheetSpec.HAIRLINE_FADE_MS.toLong()).start()
+        }.apply {
+            isVerticalScrollBarEnabled = false
+            addView(body, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        frame.addView(scroller, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(hairline, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, PromptSheetSpec.HAIRLINE_PX, Gravity.TOP))
+        return frame
+    }
+
+    /** A paragraph at the body size on its line box, 15/400, in the ink given: body copy in the text, a description at 69 %. */
+    private fun paragraph(text: CharSequence, color: Int): TextView = TextView(context).apply {
+        this.text = text
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
+        typeface = weight(PromptSheetSpec.BODY_WEIGHT)
+        TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.BODY_LINE_SP))
+    }
+
+    /** §9.12: the label 15/400 in the text ink, 4 above its 40 field, read with it (`labelFor`); the field alone without one. */
+    private fun labelledField(spec: Field): View {
+        val group = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+        val input = field(spec)
+        val label = spec.label?.takeIf { it.isNotEmpty() }
+        if (label != null) {
+            input.id = View.generateViewId()
+            group.addView(paragraph(label, ink.text).apply { labelFor = input.id }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        group.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PromptSheetSpec.CONTROL_DP)).apply {
+            if (label != null) topMargin = dp(PromptSheetSpec.LABEL_GAP_DP)
+        })
+        return group
+    }
+
+    /**
+     * §9.12: the page surface in a hairline box at the control radius, 12 in, the accent edge while
+     * focused; the value selected, so it is replaced by the first keystroke when the field takes the
+     * focus on the tap (the selection stands from the start; it shows once the field has the focus).
+     */
+    private fun field(spec: Field): EditText {
         val box = { edge: Int ->
             GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
@@ -410,6 +516,7 @@ class NativePromptSheet(
             setTextColor(ink.text)
             setHintTextColor(ink.textDeemphasized)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
+            typeface = weight(PromptSheetSpec.BODY_WEIGHT)
             inputType = spec.inputType
             imeOptions = EditorInfo.IME_ACTION_DONE
             isSingleLine = true
@@ -422,6 +529,8 @@ class NativePromptSheet(
             setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_DONE) { accept(); true } else false
             }
+            // Last: the single-line and input-type setters re-set the text, and the selection with it.
+            setSelection(0, text.length)
             field = this
         }
     }
@@ -458,6 +567,7 @@ class NativePromptSheet(
             text = label
             setTextColor(ink.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, PromptSheetSpec.BODY_SP.toFloat())
+            typeface = weight(PromptSheetSpec.BODY_WEIGHT)
             TextViewCompat.setLineHeight(this, sp(PromptSheetSpec.BODY_LINE_SP))
             buttonDrawable = button
             gravity = Gravity.TOP or Gravity.START
@@ -473,7 +583,10 @@ class NativePromptSheet(
         }
     }
 
-    /** §9.11: peers splitting the width at 8, the primary trailing; one action spans the row. */
+    /**
+     * §9.11: peers splitting the width at 8, the primary trailing; one action spans the row. 16
+     * above the peers, and §9.25's 16 below them to the bottom inset the sheet pads for.
+     */
     private fun footer(): View {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -528,37 +641,57 @@ class NativePromptSheet(
     // --- measure ---------------------------------------------------------------------------
 
     /**
-     * The tallest the scrolling body may stand: the window less the status bar, the margin kept
-     * above an expanded sheet so the page shows over it, the grip and the footer, and the
-     * gesture bar the sheet pads for underneath.
+     * The sheet's column: as tall as its content up to the cap – the height the sheet is offered
+     * (the window less the bottom the Material sheet pads for: the host's bar, the keyboard while it
+     * is up) less the status bar and the margin kept above an expanded sheet so the page shows over
+     * it – with the body taking whatever the grip, the pinned block and the pinned footer leave
+     * under it. Its bottom padding is §9.25's floor: what the host's bar falls short of 8.
      */
-    private fun bodyMaxHeight(): Int {
-        val decor = (context as? android.app.Activity)?.window?.decorView
-        val insets = decor?.let { ViewCompat.getRootWindowInsets(it)?.getInsets(WindowInsetsCompat.Type.systemBars()) }
-        val window = if (decor != null && decor.height > 0) decor.height else context.resources.displayMetrics.heightPixels
-        val footer = PromptSheetSpec.FOOTER_TOP_DP + PromptSheetSpec.CONTROL_DP + PromptSheetSpec.FOOTER_BOTTOM_DP
-        return (window - (insets?.top ?: 0) - (insets?.bottom ?: 0) - dp(PromptSheetSpec.SHEET_TOP_MARGIN_DP + PromptSheetSpec.GRIP_STRIP_DP + footer))
-            .coerceAtLeast(dp(3 * PromptSheetSpec.CONTROL_DP))
-    }
+    private inner class Column : LinearLayout(context) {
+        private var insetTop = 0
 
-    /** A scroller that grows with its content up to `maxHeight`, then scrolls. */
-    private inner class MaxHeightScrollView(private val maxHeight: Int) : ScrollView(context) {
+        fun applyInsets(insets: WindowInsetsCompat) {
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val floor = (dp(PromptSheetSpec.SHEET_INSET_FLOOR_DP) - maxOf(bars.bottom, ime.bottom)).coerceAtLeast(0)
+            if (insetTop != bars.top || paddingBottom != floor) {
+                insetTop = bars.top
+                setPadding(0, 0, 0, floor)
+                requestLayout()
+            }
+        }
+
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val mode = MeasureSpec.getMode(heightMeasureSpec)
-            val size = MeasureSpec.getSize(heightMeasureSpec)
-            val capped = if (mode == MeasureSpec.UNSPECIFIED || size > maxHeight) MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST) else heightMeasureSpec
-            super.onMeasure(widthMeasureSpec, capped)
+            if (mode == MeasureSpec.EXACTLY) return super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            val offered = if (mode == MeasureSpec.UNSPECIFIED) context.resources.displayMetrics.heightPixels else MeasureSpec.getSize(heightMeasureSpec)
+            val cap = (offered - insetTop - dp(PromptSheetSpec.SHEET_TOP_MARGIN_DP)).coerceAtLeast(dp(3 * PromptSheetSpec.CONTROL_DP))
+            super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(minOf(offered, cap), MeasureSpec.AT_MOST))
         }
     }
 
-    /** Before Android 11 the window itself is resized for the keyboard (deprecated there, where the column pads instead). */
-    @Suppress("DEPRECATION")
-    private fun legacyResize(): Int = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+    /** The body's scroller: as tall as its content, or as tall as the column leaves it, and it says when it has scrolled. */
+    private inner class BodyScroller(private val onScrolled: (Int) -> Unit) : ScrollView(context) {
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+            super.onScrollChanged(l, t, oldl, oldt)
+            onScrolled(t)
+        }
+    }
 
-    /** The scale's weights (600 titles, 500 buttons) on the system font; before API 28 the nearest named face. */
+    /**
+     * `adjustResize`: deprecated from Android 11, where the window no longer resizes for the
+     * keyboard, but still the mode that counts the keyboard into the window's system-window inset,
+     * which the Material sheet pads its bottom by – its lift, and this chassis's.
+     */
+    @Suppress("DEPRECATION")
+    private fun adjustResize(): Int = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+
+    /** The scale's weights (600 titles, 500 buttons, 400 text) on the system font; before API 28 the nearest named face. */
     private fun weight(w: Int): Typeface =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) Typeface.create(Typeface.DEFAULT, w, false)
-        else if (w >= 600) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        else if (w >= 600) Typeface.DEFAULT_BOLD
+        else if (w >= 500) Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        else Typeface.DEFAULT
 
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
     private fun sp(value: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, value.toFloat(), context.resources.displayMetrics).toInt()
