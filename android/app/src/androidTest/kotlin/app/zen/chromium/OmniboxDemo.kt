@@ -144,9 +144,12 @@ class OmniboxDemo : DemoHarness("omnibox-demo-state.json", "android-omnibox", "o
             SystemClock.sleep(3_000)
             shot("03-share-sheet")
             finding("  chip ${if (touched) "touched" else "not found"}; a system window came up $sheet ${verdict(sheet)} (recorded, not asserted)")
-            back()
-            SystemClock.sleep(1_500)
+            // The system sheet goes by a back only while it is the window in front
+            // (ensureForeground's first move); a blind one here went into the chrome on the
+            // nightly's proof run. On its return the chrome shows the field again for a moment
+            // and closes it itself: closeUrlField reads that, and presses nothing against it.
             ensureForeground()
+            SystemClock.sleep(1_500)
             closeField()
         }
 

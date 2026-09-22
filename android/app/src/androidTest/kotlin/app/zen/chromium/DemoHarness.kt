@@ -1724,6 +1724,18 @@ abstract class DemoHarness(
                     field = readUrlField()
                 }
                 is UrlFieldClose.Move.PressBack -> {
+                    // The move was decided on a reading that can be a second old when the main
+                    // thread posts frames of a second (three reads, each a hop to it): on the
+                    // nightly's proof run the omnibox's Share step read the field open, the field
+                    // closed on its own meanwhile (the chrome closes it after a share) and the back
+                    // decided on went to the tab at its root, which cost the page. So the host is
+                    // asked once more, the instant before the key, and the key goes only while it
+                    // still hands the back to the chrome; else the field is read afresh.
+                    if (!chromeSurfaceUp()) {
+                        Log.i(tag, "closeUrlField: the host no longer hands a back to the chrome; the key is kept and the field read again")
+                        field = readUrlField()
+                        continue@loop
+                    }
                     val pressed = field
                     back()
                     backs++
