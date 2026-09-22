@@ -347,12 +347,14 @@ export function DownloadActions({ item }: { item: DownloadItem }): JSX.Element {
 }
 
 /**
- * Keep / Delete for a file the engine flagged, worded and weighted per verdict as Chrome's
- * bubble words them (`dangerActionLabels`). The pressed one spins until the engine answers –
- * the row leaves the danger state or goes – and the other waits disabled meanwhile.
+ * Keep / Delete for a file the engine flagged, worded as Chrome's bubble words them and weighted
+ * as §6 has it on every tier (`dangerActionLabels`): Delete, the protective verb, the filled
+ * primary; Keep the plain secondary; neither in the danger ink. The pressed one spins until the
+ * engine answers – the row leaves the danger state or goes – and the other waits disabled
+ * meanwhile.
  */
 export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
-  const labels = dangerActionLabels(item.danger)
+  const labels = dangerActionLabels()
   const [busy, setBusy] = useState<'keep' | 'discard' | null>(null)
   useEffect(() => {
     if (!busy) return
@@ -376,7 +378,7 @@ export function DangerActions({ item }: { item: DownloadItem }): JSX.Element {
         {labels.keep}
       </DlButton>
       <DlButton
-        tone={labels.prominent === 'discard' ? 'primary' : 'danger'}
+        tone={labels.prominent === 'discard' ? 'primary' : 'secondary'}
         busy={busy === 'discard'}
         disabled={busy === 'keep'}
         data-zen-dl-action="discard"

@@ -1,0 +1,42 @@
+name: Android download safety demo
+
+# Records the download safety states of the phone's downloads sheet on a hardware-accelerated
+# Android emulator and uploads the video, the screenshots, the notes and the frame statistics: an
+# insecure download blocked (a page on a trustworthy origin linking to a plain-http file on the
+# device's own network address) and kept with Keep anyway, a dangerous type (.apk, then .dng)
+# finishing into quarantine with Keep releasing the one and Delete dropping the other, and an
+# interruption whose row counts down to the downloader's automatic resumes ("Resuming in N s…"),
+# fails for good with Resume, and completes on it; DownloadSafetyDemo checks the engine's list and
+# MediaStore.Downloads at each step and every kept file's bytes against the fixtures' formula.
+# Dispatch-only, like the downloads demo: it takes about ten minutes and says nothing about a
+# change being correct. Same caveats as the gesture demo about frame rate and the software GPU.
+# Unlike the downloads demo it needs no server on the runner: the fixtures are two DemoServers in
+# the instrumentation's process – the loopback for the trustworthy origin, the device's own
+# address for the insecure one. The build, the emulator and the Gradle cache live in
+# android-emulator-demo.yml; this file picks the driver and names the artifact.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-download-safety-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    name: Download safety demo
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-gesture-demo.sh
+      # The shared driver chooses the demo from its environment (see the script's header).
+      script-env: |
+        DEMO_CLASS=app.zen.chromium.DownloadSafetyDemo
+        DEMO_DIR=download-safety-demo
+        DEMO_OUT=artifacts/android-download-safety-demo
+        DEMO_VIDEO=android-download-safety-demo.mp4
+      artifact-name: android-download-safety-demo
+      artifact-path: artifacts/android-download-safety-demo/
+      # The demo reads MediaStore.Downloads (API 29+); the downloads demo verified this image.
+      api-level: '34'

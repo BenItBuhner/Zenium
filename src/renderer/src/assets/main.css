@@ -4732,7 +4732,8 @@
  * status, the 3 px track – and reads the tokens only: rows run edge to edge at the primitive's
  * 16 gutter (§9.25), their trailing 44 icon buttons (the shared `.zen-v2-icon-button`) hang 12
  * into it so the 20 px glyph sits on the gutter, and the Keep / Delete buttons are the shared
- * `.zen-v2-button` with the extensions UI's busy rules (§9.30). Status is ink only (§1): the
+ * `.zen-v2-button` – the protective verb the accent-filled primary, the other plain (§6) – with
+ * the extensions UI's busy rules (§9.30), under the text column (§9.11). Status is ink only (§1): the
  * danger ink for a failure or a dangerous verdict, the warning ink for a lesser one, the
  * deemphasised ink otherwise; the name and glyph of a record without a file dim as the desktop
  * row's do. Motion is unchanged (v1 §7, §11): the sheet's spring and recede are the chassis's,
@@ -4797,7 +4798,14 @@
     flex-shrink: 0;
     white-space: pre;
   }
-  /* The status is the row's second 13/20 line; a verdict's sentence wraps to two, then an ellipsis (§9.2). */
+  /*
+   * The status is the row's second 13/20 line – its description in §9.2's terms (`Blocked ·
+   * Dangerous` names a waiting row's tier; `Failed · <reason>` is the engine's sentence). Every
+   * line the verbs table names fits one line at scale 1, so the two-line clamp is reached only
+   * at the larger text scales, where the longest reason ("File name or location is too long")
+   * takes a second line rather than losing its words: A11Y-05's ruling, descriptions keep their
+   * two lines. A verdict's sentence is the detail line's, clamped the same below.
+   */
   .zen-downloads-status {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -4814,7 +4822,21 @@
   .zen-downloads-status[data-tone='danger'] {
     color: var(--v2-danger);
   }
-  /* A record without a file (cancelled, failed, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
+  /*
+   * A waiting row's sentence under its `Blocked · <tier>` line (the desktop row's `.zen-dl-detail`
+   * twin): the deemphasised ink – the tier's ink is the status line's – at most two lines, then
+   * an ellipsis (§9.2).
+   */
+  .zen-downloads-detail {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small);
+    color: var(--v2-text-deemphasized);
+  }
+  /* A record without a file (cancelled, failed, blocked before a byte, deleted since) dims its glyph; a cancelled or Deleted row its name too. */
   .zen-downloads-main[data-gone] .zen-downloads-glyph {
     opacity: 0.4;
   }
@@ -4835,14 +4857,20 @@
     margin-right: -12px;
   }
   /*
-   * Keep / Delete for a flagged file: the row's own footer, under its text and spanning the
-   * row, two peers splitting the width at an 8 gap, each 40 tall (§9.11); 8 below the text.
+   * Keep / Delete for a flagged file, Keep anyway / Discard for an insecure block (the verbs
+   * table's pairs): the row's own footer under the sentence it answers, so it starts at the text
+   * column – the glyph's 20 and the row's 12 gap kept clear, Chrome's indent (§9.11) – and runs
+   * to the row's trailing edge, two peers splitting that at an 8 gap, each 40 tall; 8 below the
+   * text. Discard alone – a dangerous type Chrome offers no Keep anyway for – takes the whole
+   * of it.
    */
   .zen-downloads-decision {
     display: flex;
+    box-sizing: border-box;
     flex-basis: 100%;
     gap: 8px;
     margin-top: 8px;
+    padding-left: calc(var(--v2-icon) + 12px);
   }
   .zen-downloads-decision > * {
     flex: 1;
@@ -8043,9 +8071,26 @@
 .zen-settings-row-danger .zen-settings-label {
   color: var(--v2-danger);
 }
-/* A dependent row whose parent is off stays laid out at 40 % and takes no press (§10.4). */
+/*
+ * A dependent row whose parent is off stays laid out at 40 % and takes no press (§10.4). The .4
+ * is the row's, once (§9.30: one number on the whole control): a control inside it that is
+ * itself disabled – a control row's button or menulist, a field, a switch, the shortcut rows'
+ * icon buttons, a slider row's Radix slider (Performance › Share of installed RAM while a
+ * memory budget is set; it says `data-disabled`, not `:disabled`) – keeps `disabled` for what
+ * it does and does not take its own .4 on top, which compounded to .16 (#297's review and the
+ * desktop coordinator's nod). The same shape as the check-row primitive's rule above and the
+ * translate pane's (`translate.css`).
+ */
 .zen-settings-row-disabled {
   opacity: 0.4;
+}
+.zen-settings-row-disabled .zen-v2-button:disabled,
+.zen-settings-row-disabled .zen-v2-icon-button:disabled,
+.zen-settings-row-disabled .zen-v2-menulist:disabled,
+.zen-settings-row-disabled .zen-v2-field:disabled,
+.zen-settings-row-disabled .zen-v2-switch:disabled,
+.zen-settings-row-disabled .zen-zoom-slider[data-disabled] {
+  opacity: 1;
 }
 .zen-settings-row-disabled:active {
   background: transparent;

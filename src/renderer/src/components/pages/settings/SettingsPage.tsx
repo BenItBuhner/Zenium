@@ -15,6 +15,7 @@ import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { BackDismissal, useBackSurface } from '@renderer/lib/back'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useDownloadDirectory } from '@renderer/lib/downloadDirectory'
 import { extensionRevealStore } from '@renderer/lib/extensions/manage'
 import { useViewport } from '@renderer/lib/formFactor'
 import { privateLockStore } from '@renderer/lib/privateLock'
@@ -144,6 +145,11 @@ function PhoneSettings({
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
+  // The folder new downloads go to, while Downloads is the section shown (its Location row).
+  const downloadDirectory = useDownloadDirectory(
+    current?.id === 'downloads',
+    state.settings.downloads?.directory ?? null
+  )
   const ctx: SectionContext = {
     state,
     tab,
@@ -159,7 +165,8 @@ function PhoneSettings({
     autofill,
     screenLock,
     readAloudVoices,
-    dictionary
+    dictionary,
+    downloadDirectory
   }
   const searching = current === null && query.trim() !== ''
   // The section shown, or – while the landing's search is on – every section for its results.
