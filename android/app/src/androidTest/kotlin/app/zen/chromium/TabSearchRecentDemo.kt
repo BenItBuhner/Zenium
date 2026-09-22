@@ -22,18 +22,23 @@ import kotlin.math.roundToInt
  * pane (TAB-02; §9.17, §9.27, §10.3), every press a real touch and every outcome read off the
  * chrome's DOM or the core's state, never off the chrome's word alone:
  *
- *  1. the overview opens with the search closed: no field, no keyboard, nothing focused;
+ *  1. the overview opens with the search closed: no field, no keyboard, no field focused;
  *  2. the header's magnifier opens the §9.12 field pinned under the header, focused, the
  *     keyboard up with it (the tap is the user's ask; nothing else ever focuses it);
- *  3. typing narrows the pane's cards by TITLE ("wiki": Damping, Tea, Coffee stay, the
- *     Research group dissolved into its one match), the dropped cards departing in place and the
- *     survivors gliding (traced: `search-filter-overview`), the status region told "3 tabs found";
- *  4. a query nothing matches leaves "No tabs found" over the New Tab card, the region told;
+ *  3. typing narrows the pane's cards by TITLE ("wiki": Damping, Tea, Coffee stay; the
+ *     Research group's card stays, narrowed to Damping), the dropped cards departing in place
+ *     (counted as they mount) and the survivors gliding (traced: `search-filter-overview`), the
+ *     status region told "3 tabs found";
+ *  4. a query nothing matches leaves "No tabs found" over the New Tab card, the group's card
+ *     dissolved with its last match, the region told;
  *  5. the field's X clears the query: every card back, the field and the keyboard staying, the
  *     X now reading Close search;
- *  6. typing narrows by ADDRESS ("cern": World Wide Web alone, its title saying nothing of it);
- *  7. the system back clears the query first and closes the field second, the overview staying;
- *  8. Escape (a keyboard's) does the same;
+ *  6. typing narrows by ADDRESS ("cern": World Wide Web alone, in its group's card, its title
+ *     saying nothing of it);
+ *  7. the system back: with the keyboard up it is the keyboard's (Android's rule, Chrome's
+ *     omnibox the same), then it clears the query, then closes the field, the overview staying;
+ *  8. Escape (a hardware keyboard's) clears then closes the same way, the soft keyboard put
+ *     away first;
  *  9. a card closed by touch, then the Recent segment: Recently closed lists it; From your other
  *     devices, with sync off, reads §9.17's sentence and the row to Settings › Sync;
  * 10. the row leaves the overview for Settings › Sync;
@@ -113,7 +118,8 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         finding("\n1. The overview opens with the search closed")
         expect("no field under the header", !inDom(FIELD))
         expect("the magnifier stands in the header, collapsed: ${headerLabels()}", headerLabels() == listOf("Search tabs", "Spaces", "More"))
-        expect("nothing has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() == "BODY" && !imeShown())
+        // The Tabs button that was touched may hold the focus; what matters is that no field does.
+        expect("no field has the focus and the keyboard is down (active element: '${activeElement()}')", activeElement() != "INPUT" && !imeShown())
         // The Private segment draws only where the WebView has multi-profile (`capabilities.privateTabs`);
         // the Google APIs image's WebView has not, so the recipe reads Tabs | Recent.
         val segments = segmentLabels()
@@ -142,22 +148,19 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         finding("\n3. Typing narrows by title: 'wiki'")
         val before = cardBoxes()
         expect("every card stands before the query (${before.size} regular, ${essentialCount()} essentials)", before.size == CARDS && essentialCount() == ESSENTIALS)
-        expect("the Research group stands as a group card", inDom(GROUP))
-        var exits = 0
+        expect("the Research group stands as a group card with both its tabs: ${groupCards()}", groupCards().toSet() == setOf(WWW, DAMPING))
+        watchExits()
         traceFrames("search-filter-overview", JankBudget.Kind.SPRING) {
             keys("wiki")
             // The dropped cards leave in place (§11.4) while the survivors glide on the same frames.
-            val deadline = SystemClock.uptimeMillis() + 1_600
-            while (SystemClock.uptimeMillis() < deadline) {
-                exits = maxOf(exits, exitCount())
-                SystemClock.sleep(60)
-            }
+            SystemClock.sleep(1_600)
         }
         val after = awaitCards(setOf(DAMPING, TEA, COFFEE))
         expect("Damping, Tea and Coffee stay, the four others go: ${after.keys}", after.keys == setOf(DAMPING, TEA, COFFEE))
-        expect("the group dissolved into its one match (no group card)", !inDom(GROUP))
+        expect("the group stays a group card, narrowed to its one match: ${groupCards()}", inDom(GROUP) && groupCards() == listOf(DAMPING))
         expect("the essentials narrowed too (none match)", essentialCount() == 0)
-        finding("  ${exits} card(s) seen departing in place mid-flight")
+        val exits = exitsSeen()
+        expect("the dropped cards departed in place over the grid (§11.4): $exits exit(s) drawn", exits >= 1)
         expect("the survivors glided from where they stood (Tea moved ${moved(before, after)} of 3)", moved(before, after) >= 1)
         expect("the status region told '3 tabs found'", awaitAnnouncement("3 tabs found"))
         expect("the X reads Clear search on a query", jsString(clearLabelJs()) == "Clear search")
@@ -170,6 +173,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         finding("\n4. Nothing found: 'wikiz'")
         keys("z")
         expect("no card stands", awaitUntil(4_000) { cardBoxes().isEmpty() })
+        expect("the group dissolved with its last match (no group card)", awaitDom("!document.querySelector('$GROUP')"))
         expect("'No tabs found' reads over the grid", awaitDom("document.querySelector('$EMPTY')&&document.querySelector('$EMPTY').textContent.trim()==='No tabs found'"))
         expect("the New Tab card stays", inDom(NEW_TAB))
         expect("the status region told 'No tabs found'", awaitAnnouncement("No tabs found"))
@@ -196,34 +200,60 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         val after = awaitCards(setOf(WWW))
         expect("World Wide Web alone stays: ${after.keys}", after.keys == setOf(WWW))
         expect("its title has no 'cern' in it: '${coreTitle(WWW)}'", !coreTitle(WWW).contains("cern", ignoreCase = true))
+        expect("it stands in its group's card, the group narrowed to it: ${groupCards()}", groupCards() == listOf(WWW))
         expect("the status region told '1 tab found'", awaitAnnouncement("1 tab found"))
         still("search-cern")
     }
 
-    /** 7. Back clears the query first and closes the field second. */
+    /**
+     * 7. The system back: with the keyboard up it is the keyboard's (Android's rule – the IME
+     * window takes the key and hides; Chrome's omnibox behaves the same), then the chrome's:
+     * the query first, the field second.
+     */
     private fun backClearsThenCloses() {
-        finding("\n7. The system back: the query first, the field second")
+        finding("\n7. The system back: the keyboard, the query, the field")
+        expect("the keyboard is up with the query", imeShown())
         back()
-        expect("the first back clears the query, the field stays", awaitUntil(4_000) { value().isEmpty() } && inDom(FIELD))
+        val keyboardFirst = awaitUntil(8_000) { !imeShown() || value().isEmpty() } && value().isNotEmpty()
+        expect("with the keyboard up the back is the keyboard's: it goes, the query ('${value()}') and the field stay", keyboardFirst && !imeShown() && inDom(FIELD))
+        if (keyboardFirst) back()
+        expect("the next back clears the query, the field stays", awaitUntil(4_000) { value().isEmpty() } && inDom(FIELD))
         expect("every card is back", awaitCards(REGULAR.toSet()).size == CARDS)
         back()
-        expect("the second back closes the field", awaitUntil(4_000) { !inDom(FIELD) })
+        expect("the next back closes the field", awaitUntil(4_000) { !inDom(FIELD) })
         expect("the overview stays up", overviewOpen() || inDom(".zen-overview"))
-        expect("the keyboard went with the field", awaitIme(false, 8_000))
+        expect("the keyboard is down", awaitIme(false, 8_000))
         expect("the magnifier reads collapsed again", jsString("(function(){var b=document.querySelector('$TOGGLE');return b&&b.getAttribute('aria-expanded')==='false'?'yes':''})()") == "yes")
         still("search-closed")
     }
 
-    /** 8. Escape does what back does. */
+    /**
+     * 8. Escape does what back does – a hardware keyboard's key, so the soft keyboard has no
+     * part in it: it is put away first (on this image Gboard takes an Escape as a back, hiding
+     * itself; a hardware keyboard would have kept it down), then Escape clears, and closes.
+     */
     private fun escapeClearsThenCloses() {
         finding("\n8. Escape: the query first, the field second")
         openSearch()
         keys("tea")
         expect("'tea' leaves Tea alone", awaitCards(setOf(TEA)).keys == setOf(TEA))
+        if (imeShown()) {
+            pressKey(KeyEvent.KEYCODE_ESCAPE)
+            val keyboardFirst = awaitUntil(6_000) { !imeShown() || value().isEmpty() } && value().isNotEmpty()
+            finding("  (the keyboard was up: ${if (keyboardFirst) "the first Escape was its, the query stays" else "the chrome took the first Escape"})")
+            if (!keyboardFirst) {
+                expect("Escape cleared the query, the field stays", value().isEmpty() && inDom(FIELD))
+                pressKey(KeyEvent.KEYCODE_ESCAPE)
+                expect("the next Escape closes the field", awaitUntil(4_000) { !inDom(FIELD) })
+                expect("the overview stays up", overviewOpen() || inDom(".zen-overview"))
+                awaitIme(false, 6_000)
+                return
+            }
+        }
         pressKey(KeyEvent.KEYCODE_ESCAPE)
-        expect("the first Escape clears the query, the field stays", awaitUntil(4_000) { value().isEmpty() } && inDom(FIELD))
+        expect("Escape clears the query, the field stays", awaitUntil(4_000) { value().isEmpty() } && inDom(FIELD))
         pressKey(KeyEvent.KEYCODE_ESCAPE)
-        expect("the second Escape closes the field", awaitUntil(4_000) { !inDom(FIELD) })
+        expect("the next Escape closes the field", awaitUntil(4_000) { !inDom(FIELD) })
         expect("the overview stays up", overviewOpen() || inDom(".zen-overview"))
         awaitIme(false, 6_000)
     }
@@ -621,9 +651,27 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
     private fun essentialCount(): Int =
         jsString("(function(){return String(document.querySelectorAll('.zen-overview-grid .zen-essential').length)})()").toIntOrNull() ?: 0
 
-    /** The cards on their way out right now (rendered apart from the grid, fixed, over it). */
-    private fun exitCount(): Int =
-        jsString("(function(){return String(document.querySelectorAll('.zen-overview-card.fixed.pointer-events-none').length)})()").toIntOrNull() ?: 0
+    /** The tab ids of the cards inside the group card, in order (none when there is no group card). */
+    private fun groupCards(): List<String> =
+        jsList("Array.prototype.map.call(document.querySelectorAll('$GROUP [data-tab-id]'),function(e){return e.getAttribute('data-tab-id')})")
+
+    /**
+     * Start counting the cards drawn on their way out (`Departures`: rendered apart from the
+     * grid, fixed, over it) as they mount, through an observer in the page: an exit lasts a few
+     * frames, too few for a poll over the bridge to be sure of catching one.
+     */
+    private fun watchExits() {
+        chromeJs(
+            "(function(){var s='$EXIT';window.__zenExits=0;if(window.__zenExitWatch)window.__zenExitWatch.disconnect();" +
+                "var o=new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType!==1)return;" +
+                "window.__zenExits+=(n.matches(s)?1:0)+n.querySelectorAll(s).length})})});" +
+                "o.observe(document.body,{childList:true,subtree:true});window.__zenExitWatch=o;return 'ok'})()"
+        )
+    }
+
+    /** How many exits mounted since [watchExits]; the observer is taken down. */
+    private fun exitsSeen(): Int =
+        jsString("(function(){if(window.__zenExitWatch)window.__zenExitWatch.disconnect();return String(window.__zenExits||0)})()").toIntOrNull() ?: 0
 
     /** How many cards of `before` stand elsewhere in `after` (a pixel of tolerance for rounding). */
     private fun moved(before: Map<String, Rect>, after: Map<String, Rect>): Int =
@@ -811,6 +859,7 @@ class TabSearchRecentDemo : DemoHarness("overview-demo-state.json", "tab-search-
         private const val EMPTY = "[data-testid=\"overview-search-empty\"]"
         private const val NEW_TAB = "[data-testid=\"overview-new-tab\"]"
         private const val GROUP = ".zen-overview-grid [data-cell^=\"group:\"]"
+        private const val EXIT = ".zen-overview-card.fixed.pointer-events-none"
         private const val RECENT = "[data-testid=\"overview-recent\"]"
         private const val SYNC_OFF = "[data-testid=\"overview-recent-sync-off\"]"
         private const val SHOW_HIDDEN = "[data-testid=\"overview-recent-show-hidden\"]"
