@@ -1867,15 +1867,36 @@ export function installExtensionApi(
   }
 
   // ---------------------------------------------------------------------------
-  // tabCapture: the stream reaches the extension through this document's own getUserMedia
-  // (Chrome's binding does the same); the host turns the id it answered into the engine's for
-  // the document that consumes it, and hears how the consuming call went
+  // tabCapture and desktopCapture: the stream reaches the extension through this document's own
+  // getUserMedia (Chrome's binding does the same); the host turns the id it answered into the
+  // engine's terms for the document that consumes it – a tab stream registered for it, or the
+  // engine's own source id – and, for tabCapture, hears how the consuming call went
   // ---------------------------------------------------------------------------
 
-  if (spec.tabCapture && namespaceAllowed('tabCapture', spec.tabCapture)) {
-    const captureQualified = 'tabCapture.capture(object options, function callback)'
+  const tabCaptureAllowed = Boolean(
+    spec.tabCapture && namespaceAllowed('tabCapture', spec.tabCapture)
+  )
+  const desktopCaptureAllowed = Boolean(
+    spec.desktopCapture && namespaceAllowed('desktopCapture', spec.desktopCapture)
+  )
+  /** This document's `getUserMedia`, patched; null in a context without one (a worker). */
+  let userMedia: ((constraints: unknown) => Promise<Any>) | null = null
+
+  if (tabCaptureAllowed || desktopCaptureAllowed) {
     const SOURCE = 'chromeMediaSource'
     const SOURCE_ID = 'chromeMediaSourceId'
+    type CaptureSource = 'tab' | 'desktop'
+    /**
+     * The engine's terms for a stream id: the source to name and the id under it; `audio` false
+     * when a `chooseDesktopMedia` pick carries no sound (Chrome's `audio_share` unticked, or an
+     * OS without loopback), so an audio track asked for under the id is left out and the stream
+     * comes video-only, as Chrome's does.
+     */
+    interface Resolved {
+      source: CaptureSource
+      id: string
+      audio?: boolean
+    }
     /** The constraint sets of one track kind: `mandatory` and the `optional` list. */
     const constraintSets = (track: unknown): unknown[] => {
       if (!isObject(track)) return []
@@ -1883,30 +1904,48 @@ export function installExtensionApi(
       if (Array.isArray(track.optional)) sets.push(...track.optional)
       return sets
     }
-    /** The stream ids `constraints` names under `chromeMediaSource: "tab"`. */
-    const tabSourceIds = (constraints: unknown): string[] => {
+    /** The stream ids `constraints` names under `chromeMediaSource: source`. */
+    const sourceIds = (constraints: unknown, source: CaptureSource): string[] => {
       if (!isObject(constraints)) return []
       const ids: string[] = []
       for (const kind of ['audio', 'video']) {
         for (const set of constraintSets(constraints[kind])) {
-          if (!isObject(set) || set[SOURCE] !== 'tab') continue
+          if (!isObject(set) || set[SOURCE] !== source) continue
           const id = set[SOURCE_ID]
           if (typeof id === 'string' && !ids.includes(id)) ids.push(id)
         }
       }
       return ids
     }
-    /** The same constraints, each named tab stream id mapped through `resolve`. */
-    const withResolvedIds = (constraints: unknown, resolve: (id: string) => string): unknown => {
+    /**
+     * The same constraints, each named stream id the host resolved put in the engine's terms; an
+     * audio track asked for under a pick without sound is left out (`audio: false`).
+     */
+    const withResolvedIds = (
+      constraints: unknown,
+      resolve: (source: CaptureSource, id: string) => Resolved | null
+    ): unknown => {
       if (!isObject(constraints)) return constraints
       const out: Record<string, unknown> = { ...constraints }
-      const mapped = (set: unknown): unknown =>
-        isObject(set) && set[SOURCE] === 'tab' && typeof set[SOURCE_ID] === 'string'
-          ? { ...set, [SOURCE_ID]: resolve(set[SOURCE_ID]) }
+      const resolvedIn = (set: unknown): Resolved | null => {
+        if (!isObject(set) || typeof set[SOURCE_ID] !== 'string') return null
+        const source = set[SOURCE]
+        return source === 'tab' || source === 'desktop' ? resolve(source, set[SOURCE_ID]) : null
+      }
+      const mapped = (set: unknown): unknown => {
+        const resolved = resolvedIn(set)
+        return resolved && isObject(set)
+          ? { ...set, [SOURCE]: resolved.source, [SOURCE_ID]: resolved.id }
           : set
+      }
       for (const kind of ['audio', 'video']) {
         const track = constraints[kind]
         if (!isObject(track)) continue
+        const sets = constraintSets(track)
+        if (kind === 'audio' && sets.some((set) => resolvedIn(set)?.audio === false)) {
+          out.audio = false
+          continue
+        }
         const next: Record<string, unknown> = { ...track }
         if (track.mandatory !== undefined) next.mandatory = mapped(track.mandatory)
         if (Array.isArray(track.optional)) next.optional = track.optional.map(mapped)
@@ -1941,7 +1980,7 @@ export function installExtensionApi(
       }
       safely(() => stream.addEventListener('inactive', finish))
     }
-    /** Chromium words a tab stream the engine cannot start as an `InvalidStateError`. */
+    /** Chromium words a capture stream the engine cannot start as an `InvalidStateError`. */
     const invalidState = (error: unknown): unknown => {
       const message = error instanceof Error ? error.message : String(error)
       const DomException: Any = safely(() => real.DOMException)
@@ -1949,38 +1988,54 @@ export function installExtensionApi(
         ? new DomException(message, 'InvalidStateError')
         : error
     }
+    /** The host's terms for one id: a tab id becomes the engine's tab stream id, a desktop id what the host answers. */
+    const resolveOne = (source: CaptureSource, id: string): Promise<[string, Resolved | null]> =>
+      source === 'tab'
+        ? invoke('tabCapture', 'resolveStreamId', [id]).then(
+            (engineId: unknown): [string, Resolved | null] => [
+              id,
+              { source: 'tab', id: typeof engineId === 'string' ? engineId : id }
+            ]
+          )
+        : invoke('desktopCapture', 'resolveStreamId', [id]).then(
+            (answer: unknown): [string, Resolved | null] => [
+              id,
+              isObject(answer) &&
+              (answer.source === 'tab' || answer.source === 'desktop') &&
+              typeof answer.id === 'string'
+                ? { source: answer.source, id: answer.id, audio: answer.audio === true }
+                : null
+            ]
+          )
     /**
-     * A `getUserMedia` naming tab stream ids: the host registers each with the engine for this
-     * document and answers the engine's id, which goes in the id's place; the call's outcome
-     * is reported back as the capture's state.
+     * A `getUserMedia` naming stream ids this layer answered: the host puts each in the engine's
+     * terms for this document (registering a tab stream for it), which go in the id's place;
+     * a tab capture's outcome is reported back as the capture's state.
      */
     const capturingUserMedia = (
       native: (constraints: unknown) => Promise<Any>,
       constraints: unknown
     ): Promise<Any> => {
-      const ids = tabSourceIds(constraints)
-      if (ids.length === 0) return native(constraints)
-      return Promise.all(
-        ids.map((id) =>
-          invoke('tabCapture', 'resolveStreamId', [id]).then(
-            (engineId: unknown): [string, string] => [
-              id,
-              typeof engineId === 'string' ? engineId : id
-            ]
-          )
-        )
-      ).then(
+      const tabIds = tabCaptureAllowed ? sourceIds(constraints, 'tab') : []
+      const desktopIds = desktopCaptureAllowed ? sourceIds(constraints, 'desktop') : []
+      if (tabIds.length === 0 && desktopIds.length === 0) return native(constraints)
+      return Promise.all([
+        ...tabIds.map((id) => resolveOne('tab', id)),
+        ...desktopIds.map((id) => resolveOne('desktop', id))
+      ]).then(
         (pairs) => {
-          const map = new Map<string, string>(pairs)
-          const resolved = withResolvedIds(constraints, (id) => map.get(id) ?? id)
+          const map = new Map<string, Resolved | null>(pairs)
+          const resolved = withResolvedIds(constraints, (_source, id) => map.get(id) ?? null)
           return native(resolved).then(
             (stream: Any) => {
-              reportState(ids, 'active')
-              watchStream(stream, () => reportState(ids, 'stopped'))
+              if (tabIds.length > 0) {
+                reportState(tabIds, 'active')
+                watchStream(stream, () => reportState(tabIds, 'stopped'))
+              }
               return stream
             },
             (error: unknown) => {
-              reportState(ids, 'error')
+              if (tabIds.length > 0) reportState(tabIds, 'error')
               throw error
             }
           )
@@ -1990,8 +2045,6 @@ export function installExtensionApi(
         }
       )
     }
-    /** This document's `getUserMedia`, patched; null in a context without one (a worker). */
-    let userMedia: ((constraints: unknown) => Promise<Any>) | null = null
     if (host.kind === 'frame') {
       const nav: Any = safely(() => real.navigator)
       const devices: Any = nav ? safely(() => nav.mediaDevices) : undefined
@@ -2037,6 +2090,10 @@ export function installExtensionApi(
         )
       }
     }
+  }
+
+  if (tabCaptureAllowed) {
+    const captureQualified = 'tabCapture.capture(object options, function callback)'
     for (const root of roots) {
       const tabCapture = namespaceOn(root, 'tabCapture')
       if (host.kind !== 'frame') {
@@ -2076,13 +2133,18 @@ export function installExtensionApi(
   }
 
   // ---------------------------------------------------------------------------
-  // desktopCapture: `chooseDesktopMedia` answers its request id synchronously, the picker's
-  // choice through the callback; `cancelChooseDesktopMedia` withdraws a pending callback
+  // desktopCapture: `chooseDesktopMedia` answers its request id synchronously and the picker's
+  // choice through the callback (an empty stream id for a cancel); the host gets the request id
+  // ahead of the arguments, as in Chrome's binding, so `cancelChooseDesktopMedia` can name the
+  // call – its picker goes and its callback hears the cancel
   // ---------------------------------------------------------------------------
 
-  if (spec.desktopCapture && namespaceAllowed('desktopCapture', spec.desktopCapture)) {
+  if (desktopCaptureAllowed) {
     const chooseQualified =
-      'desktopCapture.chooseDesktopMedia(array sources, optional tabs.Tab targetTab, function callback)'
+      'desktopCapture.chooseDesktopMedia(array sources, optional tabs.Tab targetTab, optional object options, function callback)'
+    /** Chrome's `tabs.Tab` has these; `ChooseDesktopMediaOptions` has none of them. */
+    const looksLikeTab = (value: Record<string, unknown>): boolean =>
+      'id' in value || 'url' in value || 'index' in value || 'windowId' in value
     const pendingChoices = new Map<number, Listener>()
     let choiceIds = 0
     for (const root of roots) {
@@ -2090,10 +2152,16 @@ export function installExtensionApi(
       define(desktopCapture, 'chooseDesktopMedia', function (...raw: unknown[]): number {
         const callback = takeCallback(raw)
         if (!callback) throw signatureError(chooseQualified)
-        const [sources, targetTab] = normalizeArgs(chooseQualified, raw, [
+        const [sources, second, third] = normalizeArgs(chooseQualified, raw, [
           { name: 'sources', type: 'array' },
-          { name: 'targetTab', type: 'object', optional: true }
+          { name: 'targetTab', type: 'object', optional: true },
+          { name: 'options', type: 'object', optional: true }
         ])
+        // `chooseDesktopMedia(sources, options, callback)`: Chrome's matcher takes an object
+        // that is no `tabs.Tab` as the options.
+        const optionsOnly = third === undefined && isObject(second) && !looksLikeTab(second)
+        const targetTab = optionsOnly ? undefined : second
+        const options = optionsOnly ? second : third
         choiceIds += 1
         const id = choiceIds
         pendingChoices.set(id, callback)
@@ -2104,7 +2172,7 @@ export function installExtensionApi(
           if (error === undefined) callListener(pending, args)
           else withLastError(chooseQualified, error, () => callListener(pending, args))
         }
-        invoke('desktopCapture', 'chooseDesktopMedia', [sources, targetTab]).then(
+        invoke('desktopCapture', 'chooseDesktopMedia', [id, sources, targetTab, options]).then(
           (result: unknown) => {
             const streamId =
               isObject(result) && typeof result.streamId === 'string' ? result.streamId : ''
@@ -2120,7 +2188,7 @@ export function installExtensionApi(
       })
       define(desktopCapture, 'cancelChooseDesktopMedia', function (id: unknown): void {
         if (typeof id !== 'number' || !pendingChoices.has(id)) return
-        pendingChoices.delete(id)
+        // The host takes the picker down and answers the call empty, which reaches the callback.
         void invoke('desktopCapture', 'cancelChooseDesktopMedia', [id]).catch(() => undefined)
       })
     }
