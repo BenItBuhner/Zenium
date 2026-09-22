@@ -237,10 +237,19 @@ describe('a hold handed to a drag (NTP-06)', () => {
     const scroll = new Event('touchmove', { cancelable: true, bubbles: true })
     p.el.dispatchEvent(scroll)
     expect(scroll.defaultPrevented).toBe(true)
+    // The block is the document's, not the element's alone: Chromium's first-move hit test
+    // must find the whole view blocking, or the move is the browser's scroll and the pointer
+    // is cancelled (the device runs of 22 Sep). A move landing anywhere is cancelled.
+    const elsewhere = new Event('touchmove', { cancelable: true, bubbles: true })
+    document.body.dispatchEvent(elsewhere)
+    expect(elsewhere.defaultPrevented).toBe(true)
     pointer('pointerup', p.el, 100, 100)
     const after = new Event('touchmove', { cancelable: true, bubbles: true })
     p.el.dispatchEvent(after)
     expect(after.defaultPrevented).toBe(false)
+    const freed = new Event('touchmove', { cancelable: true, bubbles: true })
+    document.body.dispatchEvent(freed)
+    expect(freed.defaultPrevented).toBe(false)
     // Without a drag to hand to, a hold never blocks the scroll.
     const plain = mount(false)
     pointer('pointerdown', plain.el, 100, 100)

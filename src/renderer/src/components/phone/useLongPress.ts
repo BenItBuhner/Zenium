@@ -62,13 +62,22 @@ export interface LongPressOptions {
  * element that is then moved is dragged instead (the new tab page's shortcuts, NTP-06): the
  * touch is the drag's from there, and the hold's own callback does not run.
  *
- * A draggable hold (`onDrag`) drives the drag from the window, not from the element's own React
- * handlers. On Android's WebView the finger's moves after a long press are delivered to the
- * document, not to the element under it, so the element's `pointermove` never comes and a tile
- * would lift but never follow. The overview's cards meet the same and answer it the same way
- * (`useCardLift`): capture the pointer from the down, and listen for the moves and the lift on
- * the window (capture phase), wherever they land. The element's own handlers leave that touch to
- * the window from the hold until the next press.
+ * A draggable hold (`onDrag`) has to take the touch's moves away from the browser at the hold,
+ * before the finger moves, or no drag ever begins. Chromium decides at a touch's first move
+ * whether the page may cancel it, from the touch-action under the finger – the chrome's
+ * `manipulation` lets the browser scroll – and a move the page may not cancel becomes the
+ * browser's scroll, which cancels the pointer: a `pointercancel`, then no `pointermove` at all
+ * (on the new tab page, where nothing scrolls, the finger overscrolls the void; the four device
+ * runs of 22 Sep, read from the fourth's trace). What takes the moves away is a non-passive
+ * `touchmove` listener on the DOCUMENT, set at the hold: the whole view is then a blocking
+ * region for that first hit test, the move comes cancellable, and the block consumes it. The
+ * overview's cards (`useCardLift`), the tablet's rows (`useTabTouch`) and the spaces drawer's
+ * all do this and drag on the device; a block on the element alone did not. The element carries
+ * one too, since the WebView keeps sending a touch's events to the node it began on even after
+ * React re-mounts it. Both go with the hold. The moves and the lift are heard on the window
+ * (capture phase), as the cards hear them, with the pointer captured from the down, so the drag
+ * outlives whatever happens to the element; its own handlers leave that touch to the window
+ * from the hold until the next press.
  */
 export function useLongPress(
   onLongPress: (at: LongPressPoint) => void,
@@ -172,10 +181,11 @@ export function useLongPress(
           }
           const o = opts.current
           if (o?.onDrag) {
-            // The finger from here is the drag's, heard on the window (the WebView sends it there
-            // after the long press, not to the element). The scroll is blocked on the element the
-            // touch began on, whose touch events follow it out of the document; both go with the
-            // hold, so a touch that never became a drag leaves nothing behind.
+            // The finger from here is the drag's: its moves are taken from the browser's scroll
+            // on the document (see the hook's note – the block that makes the first move
+            // cancellable) and on the element the touch began on (whose touch events follow it
+            // out of the document), and heard on the window. All of it goes with the hold, so a
+            // touch that never became a drag leaves nothing behind.
             const block = (ev: TouchEvent): void => {
               if (ev.cancelable) ev.preventDefault()
             }
@@ -219,6 +229,7 @@ export function useLongPress(
               if (held.current) opts.current?.onHoldEnd?.()
               held.current = false
             }
+            document.addEventListener('touchmove', block, { passive: false })
             el.addEventListener('touchmove', block, { passive: false })
             window.addEventListener('pointermove', onWinMove, true)
             window.addEventListener('pointerup', onWinUp, true)
@@ -227,6 +238,7 @@ export function useLongPress(
             holding.current = {
               el,
               unblock: () => {
+                document.removeEventListener('touchmove', block)
                 el.removeEventListener('touchmove', block)
                 window.removeEventListener('pointermove', onWinMove, true)
                 window.removeEventListener('pointerup', onWinUp, true)
