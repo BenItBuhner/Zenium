@@ -126,16 +126,52 @@ adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
 logcat_pid=$!
 
-collect() {
-  for name in $(adb shell run-as "$app_id" ls files/ext-compat-sweep 2> /dev/null | tr -d '\r'); do
+# The driver's files (results.json, rewritten after every row; the numbered screenshots; a row's
+# text files) copied to the artifact as they appear, so an emulator that goes away under the
+# driver (qemu gone, the guest frozen: run 35778999040's 113 job, 11 rows in) loses the row in
+# flight alone and the rows before it keep their reading and their evidence. Every file once,
+# results.json every time (every file again at the end, `pull_new all`, so a shot pulled while
+# the driver was still writing it is whole); each adb call bounded, as a frozen guest answers
+# nothing.
+pull_new() {
+  for name in $(timeout 60 adb shell run-as "$app_id" ls files/ext-compat-sweep 2> /dev/null | tr -d '\r'); do
     case "$name" in
-      *.png | *.json | *.txt) adb exec-out run-as "$app_id" cat "files/ext-compat-sweep/$name" > "$out/$name" 2> /dev/null || true ;;
+      results.json) ;;
+      *.png | *.json | *.txt) [ "${1:-}" != all ] && [ -s "$out/$name" ] && continue ;;
+      *) continue ;;
     esac
+    if timeout 60 adb exec-out run-as "$app_id" cat "files/ext-compat-sweep/$name" > "$out/$name.part" 2> /dev/null && [ -s "$out/$name.part" ]; then
+      mv -f "$out/$name.part" "$out/$name"
+    else
+      rm -f "$out/$name.part"
+    fi
   done
+}
+
+collect() {
+  pull_new all
   adb exec-out run-as "$app_id" cat files/zen/extensions.json > "$out/extensions.json" 2> /dev/null || true
   adb shell run-as "$app_id" find files/zen/extensions -maxdepth 2 > "$out/install-tree.txt" 2> /dev/null || true
   adb shell run-as "$app_id" ls -la cache/ext-packages > "$out/package-cache.txt" 2> /dev/null || true
   grep -E 'CompatSweep|ZenExtStore|ZenPackageFetcher|\[zen\] extensions|ZenExt' "$out/logcat.txt" > "$out/sweep-log.txt" 2> /dev/null || true
+}
+
+# The emulator went away under the driver (adb has no device, or the guest answers nothing within
+# 30 s: qemu alive with a frozen guest looks like a device to adb): the marker the shared workflow
+# reads (its `emulator-died` output; a caller boots once more on that alone and sweeps the rows
+# left, tmp-ext-android-13-sweep.yml), with what the host saw of the death.
+note_emulator_death() {
+  if [ "$(timeout 30 adb get-state 2> /dev/null || true)" != "device" ] || [ "$(timeout 30 adb shell echo alive 2> /dev/null | tr -d '\r' || true)" != "alive" ]; then
+    {
+      echo "adb lost the device before the driver was done ($(date +%T))"
+      echo "== emulator process: $(pgrep -f qemu-system-x86_64 || echo gone)"
+      echo "== host monitor, last lines"
+      tail -n 12 "$out/host-monitor.txt" 2> /dev/null || true
+      echo "== host kernel log"
+      sudo dmesg 2> /dev/null | tail -n 40 || true
+    } > "$out/emulator-died"
+    echo "::warning::the emulator went away under the sweep driver (see emulator-died in the artifact)"
+  fi
 }
 
 # --- The sweep --------------------------------------------------------------------------------
@@ -165,7 +201,8 @@ if [ "$ready" -ne 1 ]; then
 fi
 adb shell run-as "$app_id" touch files/ext-compat-sweep/recording
 
-# Progress in the job log while the driver runs: one line per graded row.
+# Progress in the job log while the driver runs: one line per graded row, and the driver's
+# files pulled as they land (pull_new).
 seen=0
 while kill -0 "$driver_pid" 2> /dev/null; do
   sleep 30
@@ -174,13 +211,15 @@ while kill -0 "$driver_pid" 2> /dev/null; do
   if [ "$rows" -gt "$seen" ]; then
     grep 'CompatSweep: ROW ' "$out/logcat.txt" | tail -n $((rows - seen)) | sed 's/^.*CompatSweep: /  /'
     seen=$rows
+    pull_new
   fi
-  if adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
+  if timeout 60 adb shell run-as "$app_id" test -f files/ext-compat-sweep/done 2> /dev/null; then break; fi
 done
 wait "$driver_pid" || true
 sleep 2
 kill "$logcat_pid" "$monitor_pid" "$http_pid" "$memory_pid" 2> /dev/null || true
 
+note_emulator_death
 collect
 echo "--- peak RSS per process (KB)"
 awk '{ if ($3 + 0 > peak[$4] + 0) peak[$4] = $3 } END { for (p in peak) printf "%10d KB  %s\n", peak[p], p }' \

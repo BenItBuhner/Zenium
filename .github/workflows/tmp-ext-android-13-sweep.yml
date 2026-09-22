@@ -13,6 +13,12 @@ name: TEMPORARY - compat round 10 sweep and frame budget trigger
 #   - `[stills]` in the commit message: the two sheet stills for the design gate alone
 #     (ExtensionSheetStills through android-ext-sheet-stills.sh: the extension sheet hosting Dark
 #     Reader's popup and the install prompt on the fallback path, light and dark).
+# A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
+# gone or the guest frozen, as run 35778999040's 113 job 11 rows in; or the runner action's SDK
+# download coming down broken, as its 156 job) boots once more and sweeps the rows the first boot
+# did not grade (read off the results.json the sweep script pulls after every row), the row that
+# was in flight at the death last so a row that kills the emulator loses no row after it; the
+# second boot's artifact is the first's name with `-2`.
 on:
   push:
     branches:
@@ -52,6 +58,98 @@ jobs:
         WEBVIEW_APK=artifacts/webview/SystemWebView.apk
         SOFT_FAIL=1
         SWEEP_ONLY=nlbejmccbhkncgokjcmghpfloaajcffj,bjogjfinolnhfhkbipphpdlldadpnmhc,cppjkneekbjaeellbfkmgnhonkkjfpdn,ohcpnigalekghcmgcdcenkpelffpdolg,jbojhlhhggfmmkpefknmbdhlaghehini,ekmeppjgajofkpiofbebgcbohbmfldaf,bkpenclhmiealbebdopglffmfdiilejc,hnfanknocfeofbddgcijnmhnfnkdnaad,cfnpidifppmenkapgihekkeednfoenal,fadndhdgpmmaapbmfcknlfgcflmmmieb,njmehopjdpcckochcggncklnlmikcbnb,lmhkpmbekcpmknklioeibfkpmmfibljd,mjbepbhonbojpoaenhckjocchgfiaofo,pcblbflgdkdfdjpjifeppkljdnaekohj,jfiihjeimjpkpoaekpdpllpaeichkiod,jjicbefpemnphinccgikpdaagjebbnhg,cnjifjpddelmedmihgijeibhnjfabmlf,pbhelknnhilelbnhfpcjlcabhmfangik,donbcfbmhbcapadipfkeojnmajbakjdc,oakfpjifgmfpainopanfgfckhkcfgacb,mokknliiomknodkdmpcellamkopbdmao,blipmdconlkpinefehnmjammfjpmpbjk,jhhclmfgfllimlhabjkgkeebkbiadflb,ojplelelocihfchkdaebocpankipadmp,bgdpkilkheacbboffppjgceiplijhfpd,kglhbbefdnlheedjiejgomgmfplipfeb,ajphlblkfpppdpkgokiejbjfohfohhmk,epbobagokhieoonfplomdklollconnkl,mloajfnmjckfjbeeofcdaecbelnblden,ifajfiofeifbbhbionejdliodenmecna
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 210
+
+  # The rows a sweep whose emulator died did not grade, for its second boot: results.json's order
+  # minus its graded rows (the row in flight at the death is the first left, and runs last there);
+  # every row when the driver never wrote one (the emulator never came up).
+  remaining-system-webview:
+    if: always() && contains(github.event.head_commit.message, '[sweep]')
+    needs: system-webview
+    name: Rows left after an emulator death - System WebView
+    runs-on: ubuntu-latest
+    outputs:
+      boot: ${{ steps.left.outputs.boot }}
+      ids: ${{ steps.left.outputs.ids }}
+      last: ${{ steps.left.outputs.last }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: android-ext-compat-sweep
+          path: first
+      - id: left
+        env:
+          DIED: ${{ needs.system-webview.outputs.emulator-died }}
+          ALL_IDS: nlbejmccbhkncgokjcmghpfloaajcffj,bjogjfinolnhfhkbipphpdlldadpnmhc,cppjkneekbjaeellbfkmgnhonkkjfpdn,ohcpnigalekghcmgcdcenkpelffpdolg,jbojhlhhggfmmkpefknmbdhlaghehini,ekmeppjgajofkpiofbebgcbohbmfldaf,bkpenclhmiealbebdopglffmfdiilejc,hnfanknocfeofbddgcijnmhnfnkdnaad,cfnpidifppmenkapgihekkeednfoenal,fadndhdgpmmaapbmfcknlfgcflmmmieb,njmehopjdpcckochcggncklnlmikcbnb,lmhkpmbekcpmknklioeibfkpmmfibljd,mjbepbhonbojpoaenhckjocchgfiaofo,pcblbflgdkdfdjpjifeppkljdnaekohj,jfiihjeimjpkpoaekpdpllpaeichkiod,jjicbefpemnphinccgikpdaagjebbnhg,cnjifjpddelmedmihgijeibhnjfabmlf,pbhelknnhilelbnhfpcjlcabhmfangik,donbcfbmhbcapadipfkeojnmajbakjdc,oakfpjifgmfpainopanfgfckhkcfgacb,mokknliiomknodkdmpcellamkopbdmao,blipmdconlkpinefehnmjammfjpmpbjk,jhhclmfgfllimlhabjkgkeebkbiadflb,ojplelelocihfchkdaebocpankipadmp,bgdpkilkheacbboffppjgceiplijhfpd,kglhbbefdnlheedjiejgomgmfplipfeb,ajphlblkfpppdpkgokiejbjfohfohhmk,epbobagokhieoonfplomdklollconnkl,mloajfnmjckfjbeeofcdaecbelnblden,ifajfiofeifbbhbionejdliodenmecna
+        run: node .github/scripts/ext-compat-rows-left.mjs first/results.json >> "$GITHUB_OUTPUT"
+      - run: cat "$GITHUB_OUTPUT"
+
+  system-webview-2:
+    if: always() && needs.remaining-system-webview.outputs.boot == 'true'
+    needs: remaining-system-webview
+    name: System WebView (API 34 image), second boot
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-2
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=${{ needs.remaining-system-webview.outputs.ids }}
+        SWEEP_LAST=${{ needs.remaining-system-webview.outputs.last }}
+      timeout-minutes: 210
+
+  remaining-modern-webview:
+    if: always() && contains(github.event.head_commit.message, '[sweep]')
+    needs: modern-webview
+    name: Rows left after an emulator death - modern WebView
+    runs-on: ubuntu-latest
+    outputs:
+      boot: ${{ steps.left.outputs.boot }}
+      ids: ${{ steps.left.outputs.ids }}
+      last: ${{ steps.left.outputs.last }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        continue-on-error: true
+        with:
+          name: android-ext-compat-sweep-modern-webview
+          path: first
+      - id: left
+        env:
+          DIED: ${{ needs.modern-webview.outputs.emulator-died }}
+          ALL_IDS: nlbejmccbhkncgokjcmghpfloaajcffj,bjogjfinolnhfhkbipphpdlldadpnmhc,cppjkneekbjaeellbfkmgnhonkkjfpdn,ohcpnigalekghcmgcdcenkpelffpdolg,jbojhlhhggfmmkpefknmbdhlaghehini,ekmeppjgajofkpiofbebgcbohbmfldaf,bkpenclhmiealbebdopglffmfdiilejc,hnfanknocfeofbddgcijnmhnfnkdnaad,cfnpidifppmenkapgihekkeednfoenal,fadndhdgpmmaapbmfcknlfgcflmmmieb,njmehopjdpcckochcggncklnlmikcbnb,lmhkpmbekcpmknklioeibfkpmmfibljd,mjbepbhonbojpoaenhckjocchgfiaofo,pcblbflgdkdfdjpjifeppkljdnaekohj,jfiihjeimjpkpoaekpdpllpaeichkiod,jjicbefpemnphinccgikpdaagjebbnhg,cnjifjpddelmedmihgijeibhnjfabmlf,pbhelknnhilelbnhfpcjlcabhmfangik,donbcfbmhbcapadipfkeojnmajbakjdc,oakfpjifgmfpainopanfgfckhkcfgacb,mokknliiomknodkdmpcellamkopbdmao,blipmdconlkpinefehnmjammfjpmpbjk,jhhclmfgfllimlhabjkgkeebkbiadflb,ojplelelocihfchkdaebocpankipadmp,bgdpkilkheacbboffppjgceiplijhfpd,kglhbbefdnlheedjiejgomgmfplipfeb,ajphlblkfpppdpkgokiejbjfohfohhmk,epbobagokhieoonfplomdklollconnkl,mloajfnmjckfjbeeofcdaecbelnblden,ifajfiofeifbbhbionejdliodenmecna
+        run: node .github/scripts/ext-compat-rows-left.mjs first/results.json >> "$GITHUB_OUTPUT"
+      - run: cat "$GITHUB_OUTPUT"
+
+  modern-webview-2:
+    if: always() && needs.remaining-modern-webview.outputs.boot == 'true'
+    needs: remaining-modern-webview
+    name: Best effort - Chromium snapshot WebView on an AOSP image, second boot
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-modern-webview-2
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=${{ needs.remaining-modern-webview.outputs.ids }}
+        SWEEP_LAST=${{ needs.remaining-modern-webview.outputs.last }}
       setup-script: |
         base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
         rev=$(curl -fsSL "$base/LAST_CHANGE")
