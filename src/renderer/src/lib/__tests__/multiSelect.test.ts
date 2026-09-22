@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  deselectAll,
   NO_SELECTION,
   orderedSelection,
   pruneSelection,
@@ -38,6 +39,17 @@ describe('multiSelect', () => {
     const s = selectAll(['a', 'b', 'c'])
     expect(s.active).toBe(true)
     expect(s.ids.size).toBe(3)
+  })
+
+  it("deselect all unpicks every row and keeps the mode: the header's, not a tap's last unpick", () => {
+    const s = deselectAll()
+    expect(s.active).toBe(true)
+    expect(s.ids.size).toBe(0)
+    // Pruning against the list leaves it as it is; the next tap picks again within the mode.
+    expect(pruneSelection(s, ['a', 'b'])).toBe(s)
+    const picked = toggleSelected(s, 'b')
+    expect(picked.active).toBe(true)
+    expect([...picked.ids]).toEqual(['b'])
   })
 
   it('pruning drops rows that vanished and ends the mode when none remain', () => {

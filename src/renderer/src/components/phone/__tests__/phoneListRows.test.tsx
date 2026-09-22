@@ -4,7 +4,13 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { PhoneEmptyNote, PhoneGroupHeading, PhoneIconButton, PhoneListRow } from '../PhoneList'
+import {
+  PhoneEmptyNote,
+  PhoneGroupHeading,
+  PhoneIconButton,
+  PhoneListRow,
+  PhoneSelectionHeader
+} from '../PhoneList'
 
 /*
  * The phone history and bookmarks rows on the shared row primitive (design language v2 draft
@@ -247,5 +253,69 @@ describe('phone list rows on the shared row primitive (§9.34)', () => {
       expect(row.firstElementChild!.getAttribute('role')).toBe('button')
     }
     expect(css).not.toMatch(/data-static/)
+  })
+})
+
+describe('the selection header (§9.6)', () => {
+  // A button's name: its label, or the words it shows (the §9.18 button carries its own).
+  const buttons = (el: ParentNode): string[] =>
+    [...el.querySelectorAll<HTMLElement>('button')].map(
+      (b) => b.getAttribute('aria-label') ?? b.textContent!
+    )
+  const bulk = (el: ParentNode): HTMLButtonElement =>
+    [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+      /select all/i.test(b.textContent ?? '')
+    )!
+
+  it('offers Select all as the one trailing secondary button after the list’s actions, with the count, until every shown row is picked', () => {
+    const picks: boolean[] = []
+    const el = render(
+      <PhoneSelectionHeader
+        count={2}
+        total={5}
+        onSelectAll={(all) => picks.push(all)}
+        onExit={noop}
+        actions={
+          <PhoneIconButton label="Remove from history" onClick={noop}>
+            <svg />
+          </PhoneIconButton>
+        }
+      />
+    )
+    expect(el.querySelector('h2')!.textContent).toBe('2 selected')
+    expect(buttons(el)).toEqual(['Stop selecting', 'Remove from history', 'Select all'])
+    const selectAllButton = bulk(el)
+    // §9.6: the bulk toggle is a §9.18 secondary `zen-v2-button` with the words, never an
+    // icon button or a text button; the same composition as the overview's select-tabs header.
+    expect(selectAllButton.classList.contains('zen-v2-button')).toBe(true)
+    expect(selectAllButton.hasAttribute('data-primary')).toBe(false)
+    expect(selectAllButton.classList.contains('zen-v2-icon-button')).toBe(false)
+    act(() => selectAllButton.click())
+    expect(picks).toEqual([true])
+  })
+
+  it('flips to Deselect all once every shown row is picked, and asks for the unpick', () => {
+    const picks: boolean[] = []
+    const el = render(
+      <PhoneSelectionHeader
+        count={5}
+        total={5}
+        onSelectAll={(all) => picks.push(all)}
+        onExit={noop}
+        actions={null}
+      />
+    )
+    expect(buttons(el)).toEqual(['Stop selecting', 'Deselect all'])
+    act(() => bulk(el).click())
+    expect(picks).toEqual([false])
+  })
+
+  it('has no Select all for a list that does not ask for one, and a disabled one over an empty list', () => {
+    const el = render(<PhoneSelectionHeader count={1} onExit={noop} actions={null} />)
+    expect(buttons(el)).toEqual(['Stop selecting'])
+    const empty = render(
+      <PhoneSelectionHeader count={0} total={0} onSelectAll={noop} onExit={noop} actions={null} />
+    )
+    expect(bulk(empty).disabled).toBe(true)
   })
 })

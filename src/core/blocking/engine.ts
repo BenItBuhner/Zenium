@@ -581,10 +581,11 @@ export class RuleEngine implements BlockingEngine {
     })
     const hasFilterText =
       input.filterText !== undefined ? input.filterText.length > 0 : Boolean(options.hasFilterText)
+    // A caller that prepared the text (`prepareListText`, in the background worker) knows the
+    // count; the megabytes are not scanned again for it.
     const filterCount =
-      input.filterText !== undefined
-        ? countNetworkFilters(input.filterText)
-        : (options.filterCount ?? 0)
+      options.filterCount ??
+      (input.filterText !== undefined ? countNetworkFilters(input.filterText) : 0)
     const summary: RuleSetSummary = {
       id: input.id,
       source: input.source,

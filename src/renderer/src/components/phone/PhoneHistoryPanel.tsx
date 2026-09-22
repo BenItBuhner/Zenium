@@ -12,9 +12,11 @@ import {
 } from '@renderer/lib/historyAdapter'
 import { visitTime, type DayGroup } from '@renderer/lib/historyGroups'
 import {
+  deselectAll,
   NO_SELECTION,
   orderedSelection,
   pruneSelection,
+  selectAll,
   startSelection,
   toggleSelected,
   type Selection
@@ -215,9 +217,13 @@ export function PhoneHistoryPanel({ state }: { state: UIState }): JSX.Element {
   // Render
   // ---------------------------------------------------------------------------
 
+  // Select all picks every visit the list shows – the loaded page of them, as Ctrl+A on the
+  // History page does – and Deselect all unpicks them with the mode kept (the X leaves it).
   const header = selection.active ? (
     <PhoneSelectionHeader
       count={selection.ids.size}
+      total={order.length}
+      onSelectAll={(all) => setSelection(all ? selectAll(order) : deselectAll())}
       onExit={exitSelection}
       actions={
         <>

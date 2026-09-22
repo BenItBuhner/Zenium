@@ -1,4 +1,4 @@
-import type { InternalPageId } from '@shared/internalPages'
+import type { InternalPageId, InternalPageQuery } from '@shared/internalPages'
 import { isChromePageUrl } from '@shared/internalPages'
 import type { Tab } from '@shared/types'
 import { run } from './api'
@@ -17,13 +17,21 @@ import { closeUrlbar, openImportDialog, openOverlay, overlayAvailable } from './
  * that sent the deep link.
  */
 
-/** Open a page, or move its tab to `section` (`null` = the landing; left out = where it is). */
-export function openPage(id: InternalPageId, section?: string | null): void {
-  run('page.open', { id, section })
+/**
+ * Open a page, or move its tab to `section` (`null` = the landing; left out = where it is), with
+ * the page's own parameters when the entry has some (`InternalPageQuery`: History's `q`,
+ * Privacy's `site`).
+ */
+export function openPage(
+  id: InternalPageId,
+  section?: string | null,
+  query?: InternalPageQuery
+): void {
+  run('page.open', query ? { id, section, query } : { id, section })
 }
 
-export function openSettings(section?: string | null): void {
-  openPage('settings', section)
+export function openSettings(section?: string | null, query?: InternalPageQuery): void {
+  openPage('settings', section, query)
 }
 
 /**

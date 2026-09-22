@@ -406,7 +406,7 @@ export class RuleSetStore {
       if (text.hasFilterText) text.file = previous?.file ?? fileNameFor(set.id)
     } else if (set.filterText && set.filterText.length > 0) {
       text.hasFilterText = true
-      text.filterCount = countNetworkFilters(set.filterText)
+      text.filterCount = change.summary?.filterCount ?? countNetworkFilters(set.filterText)
       text.file = fileNameFor(set.id)
       this.enqueue(`${BLOCKING_DIR}/${text.file}`, JSON.stringify(set))
     } else if (previous?.file) {

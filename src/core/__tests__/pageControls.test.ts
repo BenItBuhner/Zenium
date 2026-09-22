@@ -259,6 +259,45 @@ describe('page controls in the browser', () => {
     expect(browser.state.settings.pageControls.desktopSites).toEqual({})
   })
 
+  it('follows the large-screen class at a tab’s load, not a live resize (desktopSite: auto)', () => {
+    const { browser, platform, win } = start()
+    const tab = browser.tabs.createTab({ url: 'https://en.wikipedia.org/', active: true }, win)
+    const record = platform.records.get(tab.id)!
+    expect(record.desktop).toEqual([false])
+    expect(browser.pageControls.isDesktop(tab)).toBe(false)
+
+    // The phone window crosses 600 dp (split screen): the host reports a large screen. The rules
+    // for the next loads change; the loaded page keeps its user agent, its layout and its scroll
+    // (Chrome's rule), and the menu still reads it as the mobile site it is.
+    browser.pageControls.setEnvironment({
+      largeScreen: true,
+      pointerAndKeyboard: false,
+      fontScale: 1
+    })
+    expect(last(platform.rules)!.desktop.default).toBe(true)
+    expect(record.desktop).toEqual([false])
+    expect(record.reloads).toBe(0)
+    expect(browser.pageControls.isDesktop(tab)).toBe(false)
+
+    // The next load takes the class as it stands then.
+    record.navigate('https://en.wikipedia.org/wiki/Tea')
+    expect(last(record.desktop)).toBe(true)
+    expect(browser.pageControls.isDesktop(browser.tabs.tab(tab.id)!)).toBe(true)
+
+    // And back under 600: the desktop page stays one until its next load.
+    browser.pageControls.setEnvironment({
+      largeScreen: false,
+      pointerAndKeyboard: false,
+      fontScale: 1
+    })
+    expect(last(platform.rules)!.desktop.default).toBe(false)
+    expect(record.desktop).toEqual([false, true])
+    expect(browser.pageControls.isDesktop(browser.tabs.tab(tab.id)!)).toBe(true)
+    record.navigate('https://en.wikipedia.org/wiki/Zen')
+    expect(last(record.desktop)).toBe(false)
+    expect(browser.pageControls.isDesktop(browser.tabs.tab(tab.id)!)).toBe(false)
+  })
+
   it('darkens sites under the switch minus their exceptions', () => {
     const { browser, platform, win } = start()
     const tab = browser.tabs.createTab({ url: 'https://github.com/', active: true }, win)

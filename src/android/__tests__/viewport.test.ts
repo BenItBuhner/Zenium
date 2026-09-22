@@ -100,11 +100,46 @@ describe('the viewport controller', () => {
   })
 
   it('supplies a viewport meta for a page without one and removes it again', async () => {
-    const controller = install(config({ desktop: { default: true, sites: {} } }))
+    const controller = install(config({ zoom: { default: 1.25, sites: {}, scale: 1 } }))
     await tick()
-    expect(viewportMetas()).toEqual(['width=980'])
+    expect(viewportMetas()).toEqual(['width=784'])
     controller.update(config())
     expect(viewportMetas()).toEqual([])
+  })
+
+  it('keeps the desktop layout it started with when the rules change under a loaded page', async () => {
+    // `desktopSite: auto` on a phone window that crosses 600 dp in split screen: the host pushes
+    // rules with the large-screen default, and the loaded page must not be laid out again at
+    // 980 (which drops its scroll). The width, the zoom and the force-zoom stay live.
+    const controller = install(config())
+    const meta = addMeta('width=device-width, initial-scale=1')
+    await tick()
+    expect(meta.getAttribute('content')).toBe('width=device-width, initial-scale=1')
+
+    controller.update(config({ desktop: { default: true, sites: {} } }, 640))
+    expect(meta.getAttribute('content')).toBe('width=device-width, initial-scale=1')
+    expect(controller.current().desktop).toBe(false)
+    expect(controller.current().deviceWidth).toBe(640)
+
+    controller.update(
+      config(
+        { desktop: { default: true, sites: {} }, zoom: { default: 1.25, sites: {}, scale: 1 } },
+        640
+      )
+    )
+    expect(meta.getAttribute('content')).toBe('width=512, initial-scale=1.25')
+    expect(viewportMetas()).toHaveLength(1)
+  })
+
+  it('keeps a desktop site’s layout when the window leaves the large-screen class', async () => {
+    // The other way round: the page started as a desktop site (its user agent is the desktop
+    // one too) and stays laid out as one until its next load; its own meta is not taken away.
+    const controller = install(config({ desktop: { default: true, sites: {} } }, 800))
+    await tick()
+    expect(viewportMetas()).toEqual(['width=980'])
+    controller.update(config({}, 412))
+    expect(viewportMetas()).toEqual(['width=980'])
+    expect(controller.current().desktop).toBe(true)
   })
 
   it('gives way to the page’s own meta when it arrives late', async () => {

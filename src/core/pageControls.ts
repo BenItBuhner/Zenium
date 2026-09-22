@@ -43,6 +43,16 @@ function matches(only: SiteMatch, url: string): boolean {
 }
 
 export class PageControls {
+  /**
+   * The layout each live page loaded with: whether it was requested and laid out as a desktop
+   * site. Chrome's rule (`TabImpl.switchUserAgentIfNeeded`): the desktop-site default follows the
+   * large-screen class at the tab's load, not live resizes – a phone window crossing 600 dp in
+   * split screen changes what the NEXT load gets, never the loaded page's layout or scroll – so
+   * the decision is taken here at each load and remembered for the menu's checkbox, which reads
+   * the page as it is rather than the policy as it stands.
+   */
+  private readonly loadedDesktop = new WeakMap<TabView, boolean>()
+
   constructor(private readonly browser: Browser) {}
 
   /** The full set – desktop site, darkening, the rules push – as opposed to zoom memory alone. */
@@ -71,9 +81,14 @@ export class PageControls {
     return resolvePageControls(this.settings, url, this.environment)
   }
 
-  /** Whether "Desktop site" is on for the tab's site (the menu checkbox). */
+  /**
+   * Whether the tab shows the desktop site (the menu checkbox): the layout its live page loaded
+   * with, or – for a page without a view, a sleeping tab – what a load would get now.
+   */
   isDesktop(tab: Tab): boolean {
-    return resolveDesktop(this.settings, tab.url, this.environment)
+    const view = this.browser.tabs.view(tab.id)
+    const loaded = view && isWebPage(tab.url) ? this.loadedDesktop.get(view) : undefined
+    return loaded ?? resolveDesktop(this.settings, tab.url, this.environment)
   }
 
   /** Whether the tab's site is darkened while the chrome is dark (the menu checkbox). */
@@ -132,7 +147,7 @@ export class PageControls {
       this.undarken(view)
       return
     }
-    tab.zoom = this.applyTo(view, tab.url)
+    this.load(tab, view)
   }
 
   /**
@@ -146,7 +161,14 @@ export class PageControls {
       this.undarken(view)
       return
     }
-    tab.zoom = this.applyTo(view, tab.url)
+    this.load(tab, view)
+  }
+
+  /** A load: the page gets every control for its URL, and its desktop-site decision is taken. */
+  private load(tab: Tab, view: TabView): void {
+    const r = this.applyTo(view, tab.url, true)
+    tab.zoom = r.zoom
+    if (this.enabled) this.loadedDesktop.set(view, r.desktop)
   }
 
   /**
@@ -164,28 +186,32 @@ export class PageControls {
   }
 
   /**
-   * Apply the resolved controls for `url` to a live page; returns the effective zoom. Darkening
-   * is its own capability (the desktop has it without the rest of the page controls); the host
-   * acts on it only while its chrome is dark.
+   * Apply the resolved controls for `url` to a live page. Darkening is its own capability (the
+   * desktop has it without the rest of the page controls); the host acts on it only while its
+   * chrome is dark. The desktop site goes to the view only when `desktop` says: at a load, and
+   * for the pages of a site whose own setting changed (their user agent for the next load);
+   * a device change leaves every loaded page as it is (see `loadedDesktop`).
    */
-  private applyTo(view: TabView, url: string): number {
+  private applyTo(view: TabView, url: string, desktop: boolean): ResolvedPageControls {
     const r = this.resolve(url)
     view.setZoom(r.zoom)
     if (this.darkening) view.setDarkening?.(r.darken)
-    if (this.enabled) view.setDesktopMode?.(r.desktop)
-    return r.zoom
+    if (this.enabled && desktop) view.setDesktopMode?.(r.desktop)
+    return r
   }
 
   /**
    * Re-apply to every live page (a policy or device change), or to every page `only` picks out
-   * (the pages of the site or host whose control changed); desktop mode waits for its next load.
+   * (the pages of the site or host whose control changed); desktop mode waits for its next load,
+   * and a policy or device change does not even switch the user agent a loaded page keeps: the
+   * host decides that from the pushed rules at the next navigation.
    */
   private applyAll(only?: SiteMatch): void {
     for (const [tabId, view] of this.browser.tabs.allViews()) {
       const tab = this.browser.tabs.tab(tabId)
       if (!tab || view.isDestroyed()) continue
       if (only ? !matches(only, tab.url) : !this.enabled && !isWebPage(tab.url)) continue
-      tab.zoom = this.applyTo(view, tab.url)
+      tab.zoom = this.applyTo(view, tab.url, only !== undefined).zoom
     }
   }
   // ---------------------------------------------------------------------------
@@ -236,7 +262,10 @@ export class PageControls {
       desktopByDefault(s, this.environment)
     )
     this.afterChange({ site: key })
-    // Only the tab the user asked in reloads; other tabs of the site follow on their next load.
+    // Only the tab the user asked in reloads, and the reload underway is the load its decision
+    // stands for; other tabs of the site follow on their next load.
+    const view = this.browser.tabs.view(tabId)
+    if (view) this.loadedDesktop.set(view, this.resolve(tab.url).desktop)
     this.browser.tabs.reload(tabId)
   }
 

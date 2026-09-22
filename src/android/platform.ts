@@ -49,6 +49,7 @@ import type {
   NetHost,
   PasswordsHost,
   PickedTextFile,
+  PerformanceHost,
   Platform,
   PlatformInfo,
   PrivacyHost,
@@ -71,6 +72,7 @@ import type {
 import { KeyWrapError, type KeyWrapFailure } from '@core/platform'
 import { PBKDF2_PARAMS, deriveWithWebCrypto } from '@core/credentials/kdf'
 import { fromBase64, toBase64 } from '@core/credentials/crypto'
+import type { BackgroundWorkerHandle } from '@core/background/work'
 import type { RuleSet } from '@core/blocking/rules'
 import type { PrivacyFlags, SafeBrowsingHit, SafeBrowsingThreat } from '@shared/privacy'
 import readabilityJs from '@mozilla/readability/Readability.js?raw'
@@ -356,6 +358,14 @@ export interface BootInfo {
    * in old hosts and in the preview host.
    */
   screenLock?: boolean
+  /**
+   * The demo harness asked for the startup sweeps (the filter lists', the Safe Browsing feeds')
+   * to wait for its scenes: the launch intent's `holdBackgroundWork` extra, which debuggable
+   * builds alone honour (`Host.kt`). `PerformanceHost.holdBackgroundWork` says it until the
+   * `background.release` host event or the `performance.releaseBackgroundWork` command. Absent
+   * (never held) in old hosts, in production and in the preview host.
+   */
+  holdBackgroundWork?: boolean
 }
 
 /**
@@ -426,6 +436,12 @@ export interface HostEventPayloads {
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
+  /**
+   * The demo harness's scenes are over (`Host.releaseBackgroundWork`): the startup sweeps held
+   * by `BootInfo.holdBackgroundWork` may run – the same as the `performance.releaseBackgroundWork`
+   * command. Idempotent; nothing where nothing was held.
+   */
+  'background.release': void
   /**
    * The system is short of memory (`onTrimMemory`, graded by `HostLifecycle.memoryPressure`):
    * hidden pages go to sleep ahead of their timeout, all of them when the process is about to
@@ -987,6 +1003,26 @@ export function bundledListFrom(raw: unknown): BundledFilterList | null {
 }
 
 /**
+ * The chrome's background worker (`backgroundWorker.ts`), a module Web Worker Vite bundles
+ * beside the chrome the way the translate engine's is (`renderer/translate/engine.ts`); null
+ * where the document has no `Worker` (the tests), and the core's work stays on the main thread.
+ */
+function spawnBackgroundWorker(): BackgroundWorkerHandle | null {
+  if (typeof Worker === 'undefined') return null
+  const worker = new Worker(new URL('./backgroundWorker.ts', import.meta.url), { type: 'module' })
+  return {
+    postMessage: (message, transfer) => worker.postMessage(message, transfer),
+    onMessage: (listener) =>
+      worker.addEventListener('message', (event: MessageEvent<unknown>) => listener(event.data)),
+    onError: (listener) =>
+      worker.addEventListener('error', (event) =>
+        listener(event.message || 'the background worker failed')
+      ),
+    terminate: () => worker.terminate()
+  }
+}
+
+/**
  * Zen's browser core running inside the chrome WebView on Android. Kotlin owns the tab
  * WebViews, downloads, permissions and dialogs; this class turns the `Platform` contract into
  * bridge calls and routes Kotlin's events back into the core.
@@ -1012,6 +1048,11 @@ export class AndroidPlatform implements Platform {
   readonly autofill: AndroidAutofillHost
   readonly blocking: BlockingHost
   readonly privacy: PrivacyHost
+  /**
+   * The background worker the core's heavy parsing runs in (`backgroundWorker.ts`, a module Web
+   * Worker of the chrome document) and the demo harness's hold on the startup sweeps.
+   */
+  readonly performance: PerformanceHost
   readonly translate: AndroidTranslateHost
   readonly shortcuts: ShortcutHost
   readonly voice: VoiceHost
@@ -1086,6 +1127,11 @@ export class AndroidPlatform implements Platform {
     this.siteData = new AndroidSiteData(bridge)
     this.blocking = new AndroidBlockingHost(bridge)
     this.privacy = new AndroidPrivacyHost(bridge)
+    const holdBackgroundWork = boot.holdBackgroundWork === true
+    this.performance = {
+      createBackgroundWorker: () => spawnBackgroundWorker(),
+      holdBackgroundWork: () => holdBackgroundWork
+    }
     this.translate = new AndroidTranslateHost(bridge)
     this.menus = new RendererMenuHost()
     this.windows = {
@@ -1500,6 +1546,9 @@ export class AndroidPlatform implements Platform {
         browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
         return
       }
+      case 'background.release':
+        browser.background.release()
+        return
       case 'download.started': {
         const p = payload as HostEventPayloads['download.started']
         const containerId = p.containerId || DEFAULT_CONTAINER_ID

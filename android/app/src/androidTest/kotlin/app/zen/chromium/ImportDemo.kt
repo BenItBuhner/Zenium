@@ -2,7 +2,6 @@ package app.zen.chromium
 
 import android.content.ContentValues
 import android.graphics.Rect
-import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
@@ -558,12 +557,8 @@ class ImportDemo : PageControlsDemo("import-demo-state.json", MEDIA_PREFIX, "imp
         }
     }
 
-    /**
-     * UiAutomation's accessibility node cache dropped (API 34's `clearCache`), so the next read
-     * of the tree goes to the app rather than to what the cache kept of it; false where the
-     * platform has no such call or the cache was not cleared.
-     */
-    private fun dropTreeCache(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ui.clearCache()
+    // `dropTreeCache` (UiAutomation's node cache dropped, API 34) is the harness's now, shared
+    // with the other drivers.
 
     /**
      * What the tree reads right now for the app's windows: the first `limit` labelled nodes

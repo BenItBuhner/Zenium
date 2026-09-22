@@ -3,6 +3,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Download, Smartphone, Star } from 'lucide-react'
 import { ErrorBoundary, Root } from '@renderer/Root'
+// The root's `data-input` (a hardware keyboard's ring on the pill and the bar, A11Y-09): the
+// desktop entry (`renderer/main.tsx`) has the same import; the chrome's stylesheet reads it.
+import '@renderer/lib/lastInput'
 import { dismissBanner, pushToast, showBanner, startBrowserSync } from '@renderer/lib/ui'
 import { bootAndroid } from './boot'
 import { installPreviewStates } from './previewStates'
