@@ -81,26 +81,34 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
   const ready = useFloatingChrome({ pageHadFocus: !fromKeyboard })
   const [box, setBox] = useState<PopoverBox>(place)
   const entries = mediaHubEntries(state)
+  // The row's word on its fold (§9.29): the button returns and folds in the row's own width
+  // observer's pass – a sidebar drag, with no state push behind it – and the row publishes the
+  // change from its commit's layout phase, so the anchor is read again right then, in the same
+  // frame, not at the next push.
+  const buttonUp = mediaHubUi.use((s) => s.buttonUp)
 
   // Hangs from the button in its row, measured again on every state push (the row's buttons
-  // come and go with the tab) and on resize; the box only changes when the measurement does.
+  // come and go with the tab), on the row's fold and on resize; the box only changes when the
+  // measurement does.
   useLayoutEffect(() => {
     const measure = (): void => setBox((prev) => (sameBox(prev, place()) ? prev : place()))
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [state])
+  }, [state, buttonUp])
 
   // The anchor wears the pressed fill and says what it has open for the popover's life (§9.20):
   // the hub's toolbar button while it is in the row, the "⋯" it has folded into at the 240
   // sidebar (§9.29). Read after each commit like the placement, so a fold that moves the anchor
-  // moves the hold with it; the shared count lets the "⋯" carry the app menu's own hold beside
-  // this one – the hub opens from that menu's "Now Playing…" row as the menu leaves – and gives
-  // the anchor back its rest state only when the last of the two goes.
+  // – a state push's or the row's width's – moves the hold with it in the commit that moves
+  // the button: no frame with both anchors expanded, none with neither; the shared count lets
+  // the "⋯" carry the app menu's own hold beside this one – the hub opens from that menu's
+  // "Now Playing…" row as the menu leaves – and gives the anchor back its rest state only when
+  // the last of the two goes.
   useLayoutEffect(() => {
     const anchor = mediaHubAnchor()
     return anchor ? holdExpanded(anchor) : undefined
-  }, [state])
+  }, [state, buttonUp])
 
   // Nothing left to control: the hub goes with the last player, as Chrome's does.
   useEffect(() => {
