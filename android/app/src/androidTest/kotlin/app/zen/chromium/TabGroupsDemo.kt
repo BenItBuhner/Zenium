@@ -283,9 +283,11 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
 
         openRowSheet()
         touchUntil("Delete Group in the sheet", { sheetRow("Delete Group") }, { inDom(DELETE_PROMPT) }, waitMs = SHEET_WAIT)
+        // Open (act 7) made the group's tabs afresh from the kept pages: the members by their live ids.
+        val members = groupTabs().map { it.first }
         val deleted = touchUntil("Delete", { domRect(DELETE_CONFIRM) }, { folder() == null }, waitMs = 8_000)
         check("Delete removes the group's record", deleted, "folder ${folder()}")
-        check("its tabs close with it", awaitCore { !tabExists(ALPHA, it) && !tabExists(BETA, it) }, "alpha ${tabExists(ALPHA)}")
+        check("its tabs close with it", members.size == 3 && awaitCore { s -> members.none { tabExists(it, s) } }, "members $members, live ${members.filter { tabExists(it) }}")
         val toast = awaitToast("3 tabs closed")
         check("one toast, \"3 tabs closed\"", toast != null, "toast '$toast'")
         check("the pane at none reads No tab groups", awaitDom(GROUPS_EMPTY, 6_000) && textOf("$GROUPS_EMPTY h2") == "No tab groups", "empty ${textOf("$GROUPS_EMPTY h2")}")
@@ -293,7 +295,13 @@ class TabGroupsDemo : GroupsDemoBase("tab-groups", "tab-groups-demo") {
         SystemClock.sleep(600)
         still("deleted-empty")
         val undone = undo()
-        check("Undo brings the tabs back, loose", undone && awaitCore { tabExists(ALPHA, it) && tabExists(BETA, it) && folderOf(ALPHA, it) == null && folderOf(BETA, it) == null }, "alpha in ${folderOf(ALPHA)}, exists ${tabExists(ALPHA)}")
+        // Recently closed keeps a tab's id, the one Open gave it: the pages are the constant.
+        val pages = listOf(ALPHA_URL, LINKED_URL, BETA_URL)
+        check(
+            "Undo brings the three tabs back, loose",
+            undone && awaitCore { s -> pages.all { url -> tabIdAt(url, s)?.let { folderOf(it, s) == null } == true } },
+            "back ${pages.map { url -> url.removePrefix(ORIGIN) + " " + (tabIdAt(url)?.let { "as $it in ${folderOf(it)}" } ?: "missing") }}"
+        )
         check("the group's record stays gone", folder() == null, "folder ${folder()}")
         SystemClock.sleep(1_000)
     }

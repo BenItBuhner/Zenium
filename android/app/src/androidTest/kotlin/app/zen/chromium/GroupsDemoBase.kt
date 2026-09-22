@@ -394,6 +394,15 @@ abstract class GroupsDemoBase(shotPrefix: String, handshakeDir: String) :
     protected fun groupTabs(state: JSONObject = coreState()): List<Pair<String, String>> =
         trackOrder(state).filter { it.second == FOLDER }.map { (id, _) -> id to tabUrl(id, state).orEmpty() }
 
+    /**
+     * The live tab at `url` in the space's track (the first in order), or null. A page that has
+     * been closed and brought back is a new tab (Open Group makes its tabs afresh from the kept
+     * pages; Recently closed keeps a tab's id, which after Open Group is the fresh one), so a
+     * claim past the reopen finds a member by its page, not by the seeded id.
+     */
+    protected fun tabIdAt(url: String, state: JSONObject = coreState()): String? =
+        trackOrder(state).firstOrNull { (id, _) -> tabUrl(id, state) == url }?.first
+
     protected fun activeTabId(state: JSONObject = coreState()): String? = activeCoreTab(state)?.optString("id")?.takeIf { it.isNotEmpty() }
 
     protected fun awaitCore(timeoutMs: Long = 8_000, test: (JSONObject) -> Boolean): Boolean =

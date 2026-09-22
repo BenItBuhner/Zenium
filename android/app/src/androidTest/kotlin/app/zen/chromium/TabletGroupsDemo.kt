@@ -49,6 +49,10 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
     override val findingsFile = "tablet-groups-findings.txt"
     override val title = "Zenium Android tablet sidebar: the tab group's row, its fold and its menu"
 
+    /** The group's members: the seeded tabs until Open Group makes new tabs of the kept pages (act 8). */
+    private var alphaId = ALPHA
+    private var betaId = BETA
+
     @Test
     fun record() = recordDemo()
 
@@ -253,7 +257,11 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         check("in their order: Alpha, Beta", groupTabs().map { it.second } == listOf(ALPHA_URL, BETA_URL), "urls ${groupTabs().map { it.second.removePrefix(ORIGIN) }}")
         check("the kept pages are gone from the record (the group is open again)", awaitCore { savedUrls(it).isEmpty() }, "saved ${savedUrls()}")
         check("the row is the open group's again", awaitJs("(function(){var r=document.querySelector('$GROUP_ROW');return !!r&&!r.hasAttribute('data-saved')&&r.getAttribute('aria-expanded')==='true'})()", true, 4_000), "saved '${attrOf(GROUP_ROW, "data-saved")}', expanded '${attrOf(GROUP_ROW, "aria-expanded")}'")
-        check("the rows stand under it again", awaitDom(row(ALPHA), 4_000) && awaitDom(row(BETA), 1_000), "alpha ${inDom(row(ALPHA))}, beta ${inDom(row(BETA))}")
+        // The pages came back as new tabs: the rows and the claims from here on go by them.
+        alphaId = tabIdAt(ALPHA_URL) ?: alphaId
+        betaId = tabIdAt(BETA_URL) ?: betaId
+        finding("  (the kept pages are tabs again: Alpha $alphaId, Beta $betaId)")
+        check("the rows stand under it again", awaitDom(row(alphaId), 4_000) && awaitDom(row(betaId), 1_000), "alpha ${inDom(row(alphaId))}, beta ${inDom(row(betaId))}")
         check("the dot is back, in the group's colour", dotColour() == GREEN_RGB, "dot ${dotColour()}")
         SystemClock.sleep(1_500)
         still("reopened")
@@ -267,9 +275,9 @@ class TabletGroupsDemo : GroupsDemoBase("tablet-groups", "tablet-groups-demo") {
         val before = trackOrder().map { it.first }
         val ungrouped = touchUntil("Ungroup", { menuRow("Ungroup") }, { folder() == null }, waitMs = 6_000)
         check("Ungroup removes the group's record", ungrouped, "folder ${folder()}")
-        check("its tabs stay, loose, where they were", tabExists(ALPHA) && tabExists(BETA) && folderOf(ALPHA) == null && folderOf(BETA) == null && trackOrder().map { it.first } == before, "order ${trackOrder()}")
-        check("the row leaves the sidebar, the tabs' rows staying", awaitDomGone(GROUP_ROW, 4_000) && inDom(row(ALPHA)) && inDom(row(BETA)), "row ${inDom(GROUP_ROW)}")
-        val alpha = domRect(row(ALPHA))
+        check("its tabs stay, loose, where they were", tabExists(alphaId) && tabExists(betaId) && folderOf(alphaId) == null && folderOf(betaId) == null && trackOrder().map { it.first } == before, "order ${trackOrder()}")
+        check("the row leaves the sidebar, the tabs' rows staying", awaitDomGone(GROUP_ROW, 4_000) && inDom(row(alphaId)) && inDom(row(betaId)), "row ${inDom(GROUP_ROW)}, alpha ${inDom(row(alphaId))}, beta ${inDom(row(betaId))}")
+        val alpha = domRect(row(alphaId))
         val home = domRect(row(HOME))
         check("the tabs' rows lose the indent", alpha != null && home != null && abs(alpha.left - home.left) <= 1, "alpha ${alpha?.left}, Home ${home?.left}")
         SystemClock.sleep(1_000)
