@@ -534,6 +534,19 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
         leaveSettings()
         SystemClock.sleep(1_500)
         finding("bar carried to the top: hide ${hideValue()}, page ${pageInnerHeight()} px, frame ${frameHeight()} px")
+        // The picker wrote the setting with its sheet still up: the layout reporter measured the
+        // page's frame then, through the recede's scale(.97), and nothing measured again at the
+        // recede's rest (PERF-4's finding 2) – the page stood 20 to 24 CSS px short here (the
+        // stale `page 783 vs 805` of every run) until toTop()'s hide / return refreshed the box,
+        // which is what the growth claims below flaked on. Read at the rest, before any hide or
+        // return: the page's viewport is the chrome's viewport for it, to the rounding px.
+        val viewport = chromeViewportHeight()
+        val laidOut = awaitChrome(6_000) { abs(pageInnerHeight() - chromeViewportHeight()) <= 1.0 }
+        check(
+            "top dock: the page is laid out to the chrome's viewport at the picker's rest, before any hide or return (PERF-4 finding 2)",
+            laidOut,
+            "page ${pageInnerHeight()} vs chrome viewport ${"%.1f".format(viewport)} CSS px, frame ${frameHeight()} px, recede ${recedeValue()}"
+        )
         // Back near the page's top for the second half, with the bar home (the page may already be
         // at its top: a plain drag down from there would be a pull-to-refresh).
         toTop()
@@ -1169,6 +1182,22 @@ class BarHideDemo : DemoHarness("bar-hide-demo-state.json", "bar-hide-$THEME", "
             line = view.barHide.describe() + " tabHost=" + (host.tabs.barHide?.let { "${it.edge} ${it.offsetPx}/${it.travelPx}px" } ?: "null")
         }
         return line
+    }
+
+    /**
+     * The chrome's viewport for the page – the layout reporter's element (`[data-tear-zone]`,
+     * ContentArea) – as painted, CSS px: the page view's layout box while no sheet recedes the
+     * frame. -1 with no such element.
+     */
+    private fun chromeViewportHeight(): Double {
+        val raw = chromeJs("(function(){var v=document.querySelector('.zen-content-frame [data-tear-zone]');return v?v.getBoundingClientRect().height:-1})()")
+        return raw.toDoubleOrNull() ?: -1.0
+    }
+
+    /** The chrome's `--zen-recede` as computed on its root: 0 with no sheet up. */
+    private fun recedeValue(): String {
+        val raw = chromeJs("getComputedStyle(document.documentElement).getPropertyValue('--zen-recede').trim()")
+        return (JSONTokener(raw).nextValue() as? String)?.ifEmpty { "0" } ?: "0"
     }
 
     /** The page WebView's laid-out height in device px, less what it is translated by (its frame on screen at rest). */

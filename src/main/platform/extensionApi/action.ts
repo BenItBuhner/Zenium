@@ -4,6 +4,7 @@ import { deflateSync } from 'node:zlib'
 import type { ExtensionAction } from '../../../shared/types'
 import type { ZenWindow } from '../../../core/window'
 import type { ExtensionManifest } from '../../../core/extensions/manifest'
+import { parseCssColor } from '../../../core/extensions/api/cssColor'
 import {
   ApiError,
   extensionUrl,
@@ -288,7 +289,10 @@ function actionOf(manifest: ExtensionManifest): ExtensionManifest['action'] {
   return manifest.action ?? manifest.browser_action ?? manifest.page_action
 }
 
-/** Chrome accepts `[r, g, b, a]` arrays and CSS colours (`#rgb`, `#rrggbb`, `rgb()`, `rgba()`). */
+/**
+ * Chrome accepts `[r, g, b, a]` arrays and CSS colour strings (`content::ParseCssColorString`:
+ * hex, `rgb()` / `rgba()`, `hsl()` / `hsla()` and the named colours, `white` among them).
+ */
 export function parseColor(raw: unknown): ColorArray | null {
   if (Array.isArray(raw)) {
     if (raw.length < 3 || raw.length > 4 || raw.some((n) => !isInteger(n) || n < 0 || n > 255))
@@ -296,25 +300,7 @@ export function parseColor(raw: unknown): ColorArray | null {
     return [raw[0], raw[1], raw[2], raw.length === 4 ? raw[3] : 255]
   }
   if (typeof raw !== 'string') return null
-  const text = raw.trim()
-  let m = /^#([0-9a-f]{3,4})$/i.exec(text)
-  if (m) {
-    const digits = m[1].split('').map((c) => parseInt(c + c, 16))
-    return [digits[0], digits[1], digits[2], digits[3] ?? 255]
-  }
-  m = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.exec(text)
-  if (m) {
-    const hex = m[1]
-    const at = (i: number): number => parseInt(hex.slice(i, i + 2), 16)
-    return [at(0), at(2), at(4), hex.length === 8 ? at(6) : 255]
-  }
-  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(text)
-  if (m) {
-    const clamp = (n: number): number => Math.max(0, Math.min(255, Math.round(n)))
-    const alpha = m[4] === undefined ? 255 : clamp(Number(m[4]) * 255)
-    return [clamp(Number(m[1])), clamp(Number(m[2])), clamp(Number(m[3])), alpha]
-  }
-  return null
+  return parseCssColor(raw)
 }
 
 function cssColor([r, g, b, a]: ColorArray): string {
