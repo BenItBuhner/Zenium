@@ -43,6 +43,10 @@ describe('AndroidExtensionRuntime: attaching records', () => {
     const late = JSON.parse(String(served.late)) as Record<string, unknown>
     expect(late.late).toBe(true)
     expect((late.extension as Record<string, unknown>).groups).toEqual([])
+    // The stylesheet substitution map Kotlin localizes every served `text/css` file from, as
+    // Chrome's renderer does for a `chrome-extension://` stylesheet: the predefined names with
+    // the extension's id, the locale spelled as a `_locales` directory is.
+    expect(served.cssMessages).toMatchObject({ '@@extension_id': ID, '@@ui_locale': 'en_US' })
     expect(h.kt.calledWith('ext.background.start')).toEqual([{ id: ID }])
     expect(h.runtime.configureStats(ID)?.units[0].key).toBe('isolated:https://example.com')
   })

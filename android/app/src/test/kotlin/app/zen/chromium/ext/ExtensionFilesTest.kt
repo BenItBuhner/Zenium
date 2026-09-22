@@ -322,6 +322,28 @@ class ExtensionFilesTest {
         assertEquals("a file at the limit is not quoted into a bridge answer", null, ExtensionFiles.bridgeText(large))
     }
 
+    // --- served stylesheets ----------------------------------------------------------------------
+
+    @Test
+    fun localizeCssSubstitutesTheMapsNamesCaseInsensitivelyAndLeavesTheRest() {
+        val map = mapOf(
+            "@@extension_id" to ID,
+            "@@bidi_start_edge" to "left",
+            "accentcolor" to "#1b2838"
+        )
+        // Steam Inventory Helper's `<link>`-loaded sheets name their images by the extension's id.
+        val css = ".flag{background:url(chrome-extension://__MSG_@@extension_id__/img/flags/de.svg)}" +
+            ".panel{float:__MSG_@@bidi_start_edge__;color:__MSG_AccentColor__;--x:__MSG_missing__}"
+        assertEquals(
+            ".flag{background:url(chrome-extension://$ID/img/flags/de.svg)}" +
+                ".panel{float:left;color:#1b2838;--x:__MSG_missing__}",
+            ExtensionFiles.localizeCss(css, map)
+        )
+        val plain = "body{color:red}"
+        assertTrue("a sheet without placeholders is the same object", plain === ExtensionFiles.localizeCss(plain, map))
+        assertTrue("no map, no substitution", css === ExtensionFiles.localizeCss(css, emptyMap()))
+    }
+
     companion object {
         const val ID = "ddkjiahejlhfcafbddmgiahcphecmpfh"
         const val OTHER_ID = "eimadpbcbfnmbkopoojfekhnkhdbieeh"

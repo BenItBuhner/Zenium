@@ -111,13 +111,37 @@ export function localizeCss(
   messages: LocaleMessages | null
 ): string {
   if (!text.includes('__MSG_')) return text
-  const predefined = predefinedMessages(uiLocale, extensionId)
-  return text.replace(MSG_PLACEHOLDER, (whole, name: string) => {
-    const reserved = predefined[name.toLowerCase()]
-    if (reserved !== undefined) return reserved
-    const resolved = getMessage(messages, name)
-    return resolved || whole
-  })
+  return substituteFromMap(text, cssSubstitutionMap(extensionId, uiLocale, messages))
+}
+
+/**
+ * The substitution map of an extension's stylesheets (Chromium's `SharedL10nMap`, built once per
+ * extension and applied by `ExtensionLocalizationThrottle` to every `chrome-extension://`
+ * response whose type is `text/css`, whatever asked for it: a `<link>`, an `@import`, a fetch):
+ * the predefined messages with `@@extension_id`, then the extension's own for the UI locale,
+ * every name lowercased (a lookup is case-insensitive). A host that serves the extension's files
+ * itself takes the map at configure time and localizes what it serves as `text/css`.
+ */
+export function cssSubstitutionMap(
+  extensionId: string,
+  uiLocale: string,
+  messages: LocaleMessages | null
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (messages) {
+    for (const name of Object.keys(messages)) {
+      const resolved = getMessage(messages, name)
+      if (resolved) out[name.toLowerCase()] = resolved
+    }
+  }
+  // The predefined names win over an extension's own of the same spelling.
+  Object.assign(out, predefinedMessages(uiLocale, extensionId))
+  return out
+}
+
+/** Every `__MSG_name__` in `text` replaced from a substitution map (unknown names stay). */
+export function substituteFromMap(text: string, map: Record<string, string>): string {
+  return text.replace(MSG_PLACEHOLDER, (whole, name: string) => map[name.toLowerCase()] ?? whole)
 }
 
 /** `chrome.i18n.getMessage`'s second argument: one string or up to nine, everything else ignored. */

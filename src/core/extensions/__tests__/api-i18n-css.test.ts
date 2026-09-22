@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { localizeCss, predefinedMessages, type LocaleMessages } from '../api/i18n'
+import {
+  cssSubstitutionMap,
+  localizeCss,
+  predefinedMessages,
+  substituteFromMap,
+  type LocaleMessages
+} from '../api/i18n'
 
 const ID = 'cmeakgjggjdlcpncigglobpjbkabhmjl'
 
@@ -58,5 +64,37 @@ html[dir=ltr] .sih-panel{float:left;margin-right:4px}
   it('returns a sheet without placeholders as it is', () => {
     const css = 'body{color:red}'
     expect(localizeCss(css, ID, 'en', MESSAGES)).toBe(css)
+  })
+})
+
+describe('cssSubstitutionMap', () => {
+  it("is the flat map a host localizes served stylesheets from: the extension's names lowercased, the predefined ones on top", () => {
+    const map = cssSubstitutionMap(ID, 'pt-BR', {
+      ...MESSAGES,
+      empty: { message: '' },
+      // An extension may spell a predefined name itself; Chrome's reserved messages win.
+      '@@ui_locale': { message: 'nope' }
+    })
+    expect(map).toEqual({
+      accentcolor: '#1b2838',
+      font_stack: '"Motiva Sans", sans-serif',
+      '@@ui_locale': 'pt_BR',
+      '@@bidi_dir': 'ltr',
+      '@@bidi_reversed_dir': 'rtl',
+      '@@bidi_start_edge': 'left',
+      '@@bidi_end_edge': 'right',
+      '@@extension_id': ID
+    })
+    expect(cssSubstitutionMap(ID, 'en', null)).toEqual(predefinedMessages('en', ID))
+  })
+
+  it('substitutes a sheet through the map exactly as localizeCss does', () => {
+    const css =
+      '.a{color:__MSG_AccentColor__;background:url(chrome-extension://__MSG_@@extension_id__/i.png)}.b{--x:__MSG_missing__}'
+    const map = cssSubstitutionMap(ID, 'en-US', MESSAGES)
+    expect(substituteFromMap(css, map)).toBe(localizeCss(css, ID, 'en-US', MESSAGES))
+    expect(substituteFromMap(css, map)).toBe(
+      `.a{color:#1b2838;background:url(chrome-extension://${ID}/i.png)}.b{--x:__MSG_missing__}`
+    )
   })
 })

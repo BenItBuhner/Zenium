@@ -242,6 +242,32 @@ class ExtensionFiles(val root: File) {
             return ServedBody(SequenceInputStream(parts.elements()), head.size + length + tail.size)
         }
 
+        /**
+         * A stylesheet the runtime serves on the extension's origin is at most this long to be
+         * localized; a larger one (none seen: Steam Inventory Helper's 514-flag sheet is 60 KB)
+         * streams as it is, its placeholders in.
+         */
+        const val LOCALIZED_CSS_LIMIT = 2L * 1024 * 1024
+
+        private val MESSAGE_PLACEHOLDER = Regex("__MSG_([A-Za-z0-9_@]+)__")
+
+        /**
+         * A `text/css` body as Chrome's renderer hands it to the page: every `__MSG_name__` replaced
+         * from the extension's substitution map (`ExtensionLocalizationThrottle` in Chromium runs
+         * `SharedL10nMap::ReplaceMessages` over every `chrome-extension://` response whose type is
+         * `text/css`, whatever asked for it: a `<link>`, an `@import`, a `fetch`). The map is the
+         * core's (`ext.configure`'s `served.cssMessages`): the predefined `@@extension_id`,
+         * `@@ui_locale` and `@@bidi_*` and the extension's own messages for the UI locale, keys
+         * lowercased. A name the map has not stays as written, and the text is returned as it
+         * came when it has no placeholder. Steam Inventory Helper's `<link>`-loaded `flag-icon.css`
+         * and `manrope.css` name their 517 images and fonts as
+         * `chrome-extension://__MSG_@@extension_id__/...` (compat round 9, row 4).
+         */
+        fun localizeCss(text: String, messages: Map<String, String>): String {
+            if (messages.isEmpty() || !text.contains("__MSG_")) return text
+            return MESSAGE_PLACEHOLDER.replace(text) { match -> messages[match.groupValues[1].lowercase()] ?: match.value }
+        }
+
         private fun stagingToken(): String {
             val bytes = ByteArray(8).also(random::nextBytes)
             return "${System.currentTimeMillis().toString(36)}-${bytes.joinToString("") { "%02x".format(it) }}"

@@ -7,7 +7,11 @@ import type { ZenWindow } from '@core/window'
 import { JsonStore } from '@core/store/JsonStore'
 import type { EngineContextKind } from '@core/extensions/api/engine'
 import type { EventDelivery } from '@core/extensions/api/shim'
-import { localeCandidates, type LocaleMessages } from '@core/extensions/api/i18n'
+import {
+  cssSubstitutionMap,
+  localeCandidates,
+  type LocaleMessages
+} from '@core/extensions/api/i18n'
 import {
   matchesAnyUrlFilter,
   normalizeEventFilters,
@@ -956,7 +960,15 @@ export class AndroidExtensionRuntime implements ExtensionRuntimeHooks, ApiHost, 
         groups: unit.groups,
         css: unit.css
       })),
-      served: { ...units.served, late: JSON.stringify(late) },
+      served: {
+        ...units.served,
+        late: JSON.stringify(late),
+        // Kotlin localizes what it serves as `text/css` from this map, as Chrome's renderer does
+        // for every `chrome-extension://` stylesheet response (a `<link>`, an `@import`, a
+        // fetch): `url(chrome-extension://__MSG_@@extension_id__/...)` in a sheet an extension
+        // page or a content script links, not only in a CSS content script.
+        cssMessages: cssSubstitutionMap(id, env.uiLanguage, ext.messages)
+      },
       debug: this.debug
     })
     ext.units = units

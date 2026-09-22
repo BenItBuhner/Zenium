@@ -134,7 +134,14 @@ class Extensions(private val host: Host) {
         /** Page-mode boot config (JSON) without `context`; set per WebView kind. */
         val pageConfig: String,
         /** Content-mode boot config (JSON) of a late boot: no groups, `with` isolation. */
-        val lateConfig: String
+        val lateConfig: String,
+        /**
+         * The substitution map of the extension's stylesheets (`cssSubstitutionMap` in the core):
+         * every `text/css` file served on the extension's origin has its `__MSG_name__`
+         * placeholders replaced from it, as Chrome's renderer does for a `chrome-extension://`
+         * stylesheet response (`ExtensionFiles.localizeCss`).
+         */
+        val cssMessages: Map<String, String> = emptyMap()
     )
 
     /**
@@ -463,7 +470,8 @@ class Extensions(private val host: Host) {
                 backgroundHtml = s.strOrNull("backgroundHtml"),
                 backgroundUrl = s.strOrNull("backgroundUrl"),
                 pageConfig = s.str("page", "{}"),
-                lateConfig = s.str("late", "{}")
+                lateConfig = s.str("late", "{}"),
+                cssMessages = s.obj("cssMessages").let { m -> m.keys().asSequence().associateWith { k -> m.optString(k, "") } }
             )
             val compiled = compiler.compile(id, servedNow.version, args.arr("units"), debug) { path ->
                 fileIn(dir, path)?.takeIf { it.isFile }?.readText()
@@ -1143,10 +1151,14 @@ class Extensions(private val host: Host) {
             !ext.webAccessible.any { it.matches(path) } -> reply(null, null, "$path is not a web-accessible resource")
             else -> io.execute {
                 val bytes = fileIn(ext.dir, path)?.takeIf { it.isFile }?.let { f -> runCatching { f.readBytes() }.getOrNull() }
+                val mime = ExtensionScripts.mimeType(path)
                 when {
                     bytes == null -> reply(null, null, "$path was not found")
                     bytes.size > MAX_RELAYED_FILE_BYTES -> reply(null, null, "$path is ${bytes.size} bytes, more than the bridge carries ($MAX_RELAYED_FILE_BYTES)")
-                    else -> reply(bytes, ExtensionScripts.mimeType(path), null)
+                    // A stylesheet relayed over the bridge is the one the origin would have served: localized.
+                    mime == "text/css" && ext.cssMessages.isNotEmpty() ->
+                        reply(ExtensionFiles.localizeCss(String(bytes, Charsets.UTF_8), ext.cssMessages).toByteArray(), mime, null)
+                    else -> reply(bytes, mime, null)
                 }
             }
         }
@@ -1357,13 +1369,21 @@ class Extensions(private val host: Host) {
         }
         val file = fileIn(ext.dir, path) ?: return notFound()
         if (!file.isFile) return notFound()
+        val mime = ExtensionScripts.mimeType(path)
+        // A stylesheet is localized as Chrome's renderer localizes a `chrome-extension://` one
+        // (`ExtensionLocalizationThrottle`): read whole, its placeholders substituted, whatever
+        // linked it. Anything else streams from disk.
+        if (mime == "text/css" && ext.cssMessages.isNotEmpty() && file.length() <= ExtensionFiles.LOCALIZED_CSS_LIMIT) {
+            val text = runCatching { file.readText() }.getOrNull() ?: return notFound()
+            return response(mime, 200, "OK", ExtensionFiles.localizeCss(text, ext.cssMessages).toByteArray())
+        }
         // Streamed from disk, the module bracket on either side (ExtensionFiles.servedBody).
         val body = ExtensionFiles.servedBody(
             file,
             moduleChromeFor?.let(ExtensionScripts::moduleChromeOpen),
             moduleChromeFor?.let(ExtensionScripts::moduleChromeClose)
         ) ?: return notFound()
-        return response(ExtensionScripts.mimeType(path), 200, "OK", body.stream, body.length)
+        return response(mime, 200, "OK", body.stream, body.length)
     }
 
     private fun response(mime: String, status: Int, reason: String, body: ByteArray, extra: Map<String, String> = emptyMap()): WebResourceResponse =
