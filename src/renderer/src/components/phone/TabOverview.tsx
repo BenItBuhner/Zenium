@@ -292,7 +292,10 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
   const heroRef = useRef<HTMLDivElement>(null)
   const heroHeaderRef = useRef<HTMLDivElement>(null)
   const fadeGrid = useFadeEdges<HTMLDivElement>({ axis: 'y' })
-  const [heroCell, setHeroCell] = useState<Rect | null>(null)
+  // Where the hero's own card sits (measured below): a ref, not state – the morph's writer reads
+  // it as it writes, and a measurement is not a render of the grid (each phase change, each
+  // scroll of the grid re-measures; as state each one rendered every card again, PERF-5).
+  const heroCell = useRef<Rect | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
   /**
    * A sheet has left: forget it – unless the row it was dismissed for has put the next sheet up
@@ -340,7 +343,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const root = rootRef.current
     const cell = heroCellKey ? flip.element(heroCellKey) : null
     if (!root || !cell) {
-      setHeroCell(null)
+      heroCell.current = null
       return
     }
     const r = cell.getBoundingClientRect()
@@ -348,12 +351,12 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const scale = root.offsetWidth ? rr.width / root.offsetWidth : 1
     const cx = rr.left + rr.width / 2
     const cy = rr.top + rr.height / 2
-    setHeroCell({
+    heroCell.current = {
       x: cx + (r.left - cx) / scale,
       y: cy + (r.top - cy) / scale,
       width: r.width / scale,
       height: r.height / scale
-    })
+    }
   }
   useLayoutEffect(() => {
     const cell = heroCellKey ? flip.element(heroCellKey) : null
@@ -1064,7 +1067,6 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
     const reduced = reducedMotion()
     const shadowTo = cardShadow(isDark)
     const headerHeight = cardHeaderHeight()
-    const to = heroCell ?? shrunk(area)
     morph.current = (p) => {
       const root = rootRef.current
       if (root) {
@@ -1074,7 +1076,7 @@ export function TabOverview({ state, overview, area, edge }: Props): JSX.Element
       }
       const el = heroRef.current
       if (!el) return
-      const r = lerpRect(area, to, p)
+      const r = lerpRect(area, heroCell.current ?? shrunk(area), p)
       el.style.left = `${r.x}px`
       el.style.top = `${r.y}px`
       el.style.width = `${r.width}px`
