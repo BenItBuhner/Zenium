@@ -45,13 +45,30 @@ export function currentScreenCaptureRequest(state: UIState): ScreenCaptureReques
 export const PICKER_TITLE = 'Choose what to share'
 
 /**
- * Who is asking: the site, or the extension – and, when the extension captures for a site's
- * tab (`chooseDesktopMedia`'s `targetTab`), whom it shares with, as Chrome's picker says.
+ * The line under the title, in parts: who is asking – the site, as its host, or the extension,
+ * by name – "wants to share the contents of your screen", and, when the extension captures for
+ * a site's tab (`chooseDesktopMedia`'s `targetTab`), "with" whom, as Chrome's picker says. The
+ * hosts are kept apart from the words: an identity the user is asked to trust is never elided
+ * (§9.23), so the picker renders each with its break opportunities (`hostLabels`).
  */
-export function pickerDescription(request: ScreenCaptureRequest): string {
-  if (!request.extension) return `${request.origin} wants to share the contents of your screen`
-  const who = `${request.extension.name} wants to share the contents of your screen`
-  return request.origin ? `${who} with ${request.origin}` : who
+export const PICKER_ASKS = 'wants to share the contents of your screen'
+
+export function pickerDescription(request: ScreenCaptureRequest): {
+  who: { host: string } | { name: string }
+  sharesWith: string | null
+} {
+  if (!request.extension) return { who: { host: request.origin }, sharesWith: null }
+  return { who: { name: request.extension.name }, sharesWith: request.origin || null }
+}
+
+/**
+ * A host's labels, each keeping its dot: `a.b.c` gives `a.`, `b.`, `c`. The picker puts a
+ * `<wbr>` between them, so a host too long for its line wraps at its dots rather than in the
+ * middle of a label (a lone label longer than the line still wraps, by the span's
+ * `overflow-wrap: anywhere`); the text reads the same.
+ */
+export function hostLabels(host: string): string[] {
+  return host.split(/(?<=\.)/)
 }
 
 /** The sources of one pane, in the core's order (the calling tab first in the tab pane). */

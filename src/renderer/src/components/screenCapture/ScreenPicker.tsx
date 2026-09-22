@@ -1,5 +1,5 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { AppWindow, Globe, Monitor } from 'lucide-react'
 import type { ScreenCaptureRequest, ScreenCaptureSource, UIState } from '@shared/types'
 import { useChromeSurface } from '@renderer/hooks/useChromeSurface'
@@ -7,6 +7,7 @@ import { usePopover } from '@renderer/hooks/usePopover'
 import { run } from '@renderer/lib/api'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
 import {
+  PICKER_ASKS,
   PICKER_TITLE,
   type PickerPane,
   closeScreenPicker,
@@ -14,6 +15,7 @@ import {
   effectiveSelection,
   emptyPaneText,
   gridMove,
+  hostLabels,
   initialPane,
   openScreenPicker,
   paneColumns,
@@ -62,9 +64,11 @@ export function ScreenPickerLayer({ state }: { state: UIState }): JSX.Element | 
  * is Cancel. Cancel is the page's refusal (NotAllowedError), as Chrome's.
  *
  * An extension's request (`chrome.desktopCapture.chooseDesktopMedia`) is the same dialog with
- * the extension's icon at the title's start and its name where the site's goes – "with
- * <site>" when it captures for a site's tab – and only the panes it asked for: one pane stands
- * alone, with no segment over it, as Chrome's does.
+ * the extension's icon at the title's start (§9.23: the requester's identity as the glyph) and
+ * its name where the site's goes – "with <site>" when it captures for a site's tab – and only
+ * the panes it asked for: one pane stands alone, with no segment over it, as Chrome's does. A
+ * host in that line is never elided (§9.23): it wraps at its dots when it is too long for the
+ * line (`Host`).
  */
 function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -160,9 +164,14 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
   }
 
   useFrameDialog()
+  // The keyboard starts on a card (§9.22). A page's request opens on the tab pane, whose calling
+  // card is there at mount; an extension's may open on the Window or Entire screen pane while
+  // the OS's list is still on its way, with no card to land on: the dialog itself holds the
+  // keyboard then (`tabIndex -1`, named by its title, the list `aria-busy`) – not Cancel, the way
+  // out, which §9.22 names the failure case – and Tab still wraps inside, Escape still cancels.
   usePopover(ref, {
     onClose: cancel,
-    initial: (root) => root.querySelector<HTMLElement>('[role="radio"]'),
+    initial: (root) => root.querySelector<HTMLElement>('[role="radio"]') ?? root,
     returnTo: null
   })
 
@@ -173,30 +182,18 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
     sources[0]?.id ??
     null
 
-  // The keyboard starts on a card (§9.22). A page's request opens on the tab pane, whose calling
-  // card is there at mount; an extension's may open on the Window or Entire screen pane while
-  // the OS's list is still on its way, with nothing to land on, so the popover's fallback (the
-  // segment, or Cancel with one pane) holds it – the pane's roving stop takes it when the list
-  // is in, once, and only from that fallback.
+  // Once the list is in, the one move: the pane's roving stop takes the keyboard from the dialog,
+  // if it is still there – a user who has moved on (to the segment, to Cancel) keeps their place,
+  // and later list changes move nothing.
   const placed = useRef(false)
   useEffect(() => {
     if (placed.current || loading) return
+    placed.current = true
     const dialog = ref.current
-    const active = document.activeElement
-    if (!dialog || !active || !dialog.contains(active)) return
-    if (active.getAttribute('role') === 'radio') {
-      placed.current = true
-      return
-    }
-    const fallback =
-      active === dialog ||
-      active.getAttribute('role') === 'tab' ||
-      (active.tagName === 'BUTTON' && !active.hasAttribute('role'))
-    if (!fallback || !stop) return
+    if (!dialog || document.activeElement !== dialog || !stop) return
     dialog
       .querySelector<HTMLElement>(`[role="radio"][data-source-id="${cssEscape(stop)}"]`)
       ?.focus()
-    placed.current = true
   }, [loading, stop])
 
   return (
@@ -206,6 +203,7 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
       aria-modal="true"
       aria-labelledby={TITLE_ID}
       aria-describedby={DESCRIPTION_ID}
+      tabIndex={-1}
       data-screen-picker={pane}
       className="zen-v2 zen-v2-dialog zen-animate-pop zen-scpick flex max-h-[calc(100%-32px)] max-w-[calc(100%-32px)] flex-col"
       style={{ width: POPOVER_WIDTH.table }}
@@ -219,7 +217,11 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
             <ExtensionIcon icon={request.extension.icon} size={16} box={16} />
           ) : undefined
         }
-        description={<span id={DESCRIPTION_ID}>{pickerDescription(request)}</span>}
+        description={
+          <span id={DESCRIPTION_ID}>
+            <Description request={request} />
+          </span>
+        }
       />
       {panes.length > 1 && (
         <div
@@ -314,6 +316,45 @@ function ScreenPicker({ request }: { request: ScreenCaptureRequest }): JSX.Eleme
         </V2Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * The line under the title: "<site> wants to share the contents of your screen", or for an
+ * extension "<name> wants to share the contents of your screen[ with <site>]" (Chrome's
+ * delegated line). Every host in it is a `Host`.
+ */
+function Description({ request }: { request: ScreenCaptureRequest }): JSX.Element {
+  const { who, sharesWith } = pickerDescription(request)
+  return (
+    <>
+      {'host' in who ? <Host host={who.host} /> : who.name} {PICKER_ASKS}
+      {sharesWith && (
+        <>
+          {' with '}
+          <Host host={sharesWith} />
+        </>
+      )}
+    </>
+  )
+}
+
+/**
+ * A host in the description, as the user is asked to trust it: never elided (§9.23). Too long
+ * for its line, it wraps at its dots – a `<wbr>` after each – and in the middle of a label only
+ * when that label alone is longer than the line (`overflow-wrap: anywhere`, main.css).
+ */
+function Host({ host }: { host: string }): JSX.Element {
+  const labels = hostLabels(host)
+  return (
+    <span className="zen-scpick-origin">
+      {labels.map((label, index) => (
+        <Fragment key={index}>
+          {label}
+          {index < labels.length - 1 && <wbr />}
+        </Fragment>
+      ))}
+    </span>
   )
 }
 

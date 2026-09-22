@@ -12,7 +12,7 @@ vi.mock('@renderer/lib/api', () => ({
 
 import { run } from '@renderer/lib/api'
 import { FrameDialogHost, closeAllPopovers } from '@renderer/lib/portals'
-import { effectiveSelection, gridMove, paneColumns } from '@renderer/lib/screenPicker'
+import { effectiveSelection, gridMove, hostLabels, paneColumns } from '@renderer/lib/screenPicker'
 import { rememberThumbnail } from '@renderer/lib/thumbnails'
 import { uiStore } from '@renderer/lib/ui'
 import { ScreenPickerLayer } from '../ScreenPicker'
@@ -492,6 +492,45 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
     )
   })
 
+  it('a long origin is never elided: it wraps, with a break opportunity after each of its dots and none inside a label (§9.23)', () => {
+    const host = 'meetings.europe-west-2.collaboration-platform.example-organisation-holdings.co.uk'
+    const el = render(layer(stateWith([{ ...EXTENSION_REQUEST, origin: host }])))
+    const description = el.querySelector<HTMLElement>('#zen-scpick-description')!
+    // The whole host is in the text, nothing cut, no ellipsis.
+    expect(description.textContent).toBe(
+      `Screen Recorder wants to share the contents of your screen with ${host}`
+    )
+    const origin = description.querySelector<HTMLElement>('.zen-scpick-origin')!
+    expect(origin.textContent).toBe(host)
+    expect(origin.querySelectorAll('wbr')).toHaveLength(5)
+    // Each `<wbr>` sits right after a dot: the labels between them are the host's.
+    const labels: string[] = []
+    let label = ''
+    for (const node of origin.childNodes) {
+      if (node.nodeName === 'WBR') {
+        labels.push(label)
+        label = ''
+      } else label += node.textContent
+    }
+    labels.push(label)
+    expect(labels).toEqual([
+      'meetings.',
+      'europe-west-2.',
+      'collaboration-platform.',
+      'example-organisation-holdings.',
+      'co.',
+      'uk'
+    ])
+    // A site's own request names its host the same way.
+    rerender(layer(stateWith([REQUEST])))
+    const site = el.querySelector<HTMLElement>('#zen-scpick-description .zen-scpick-origin')!
+    expect(site.textContent).toBe('meet.example')
+    expect(site.querySelectorAll('wbr')).toHaveLength(1)
+    expect(el.querySelector('#zen-scpick-description')!.textContent).toBe(
+      'meet.example wants to share the contents of your screen'
+    )
+  })
+
   it('an extension without an icon gets the puzzle glyph, a site none', () => {
     const el = render(
       layer(stateWith([{ ...EXTENSION_REQUEST, extension: { name: 'Recorder', icon: null } }]))
@@ -544,7 +583,7 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
     })
   })
 
-  it('a pane that opens while the OS’s list is on its way puts the keyboard on its first card once the list is in (§9.22), and not again', async () => {
+  it('a pane that opens while the OS’s list is on its way: the dialog holds the keyboard – not Cancel (§9.22) – over the busy list, then the first card takes it once, and not again', async () => {
     const waiting: ScreenCaptureRequest = {
       ...EXTENSION_REQUEST,
       kinds: ['screen'],
@@ -553,19 +592,60 @@ describe('ScreenPicker for an extension (chrome.desktopCapture)', () => {
     }
     const el = render(layer(stateWith([waiting])))
     await settle()
-    // Nothing to land on yet: the popover's fallback, Cancel, holds the keyboard.
-    expect(document.activeElement!.textContent).toBe('Cancel')
+    const dialog = el.querySelector<HTMLElement>('[data-screen-picker="screen"]')!
+    // No card to land on yet: the dialog itself, named by its title, holds the keyboard; the
+    // list says it is busy.
+    expect(document.activeElement).toBe(dialog)
+    expect(dialog.tabIndex).toBe(-1)
+    expect(dialog.getAttribute('aria-labelledby')).toBe('zen-scpick-title')
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)!.textContent).toBe(
+      'Choose what to share'
+    )
+    expect(el.querySelector('.zen-scpick-list')!.getAttribute('aria-busy')).toBe('true')
+    expect(document.activeElement!.textContent).not.toBe('Cancel')
+    // Escape is still Cancel from there.
+    keydown(dialog, 'Escape')
+    expect(run).toHaveBeenCalledWith('screenCapture.respond', {
+      id: 'capture-2',
+      sourceId: null,
+      audio: false
+    })
+    act(() => root!.unmount())
+    root = null
+    vi.mocked(run).mockClear()
+
+    const el2 = render(layer(stateWith([waiting])))
+    await settle()
+    expect(document.activeElement).toBe(el2.querySelector('[data-screen-picker="screen"]'))
+    // The list is in: the one move, to the first card; the list is no longer busy.
     rerender(layer(stateWith([{ ...waiting, loading: false, sources: [SCREEN, SCREEN_2] }])))
     await settle()
-    expect(document.activeElement).toBe(tile(el, 'screen:1'))
+    expect(document.activeElement).toBe(tile(el2, 'screen:1'))
+    expect(el2.querySelector('.zen-scpick-list')!.getAttribute('aria-busy')).toBeNull()
     // Later list changes leave the keyboard where the user has it.
-    const cancel = [...el.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!
+    const cancel = [...el2.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!
     cancel.focus()
     rerender(
       layer(stateWith([{ ...waiting, loading: false, sources: [SCREEN, SCREEN_2, WINDOW] }]))
     )
     await settle()
     expect(document.activeElement).toBe(cancel)
+  })
+
+  it('a user who moves on while the list is on its way keeps their place when it comes in', async () => {
+    const waiting: ScreenCaptureRequest = {
+      ...EXTENSION_REQUEST,
+      kinds: ['window', 'screen'],
+      loading: true,
+      sources: []
+    }
+    const el = render(layer(stateWith([waiting])))
+    await settle()
+    expect(document.activeElement).toBe(el.querySelector('[data-screen-picker="window"]'))
+    paneTab(el, 'window')!.focus()
+    rerender(layer(stateWith([{ ...waiting, loading: false, sources: [WINDOW, SCREEN] }])))
+    await settle()
+    expect(document.activeElement).toBe(paneTab(el, 'window'))
   })
 
   it('the keyboard stays where the page’s request put it: the calling tab’s card, whatever comes in after', async () => {
@@ -624,6 +704,13 @@ describe('the picker’s pure parts', () => {
     expect(effectiveSelection('screen', [SCREEN], null)).toBe('screen:1')
     expect(effectiveSelection('screen', [SCREEN, SCREEN_2], null)).toBeNull()
     expect(effectiveSelection('window', [WINDOW], null)).toBeNull()
+  })
+
+  it('hostLabels keeps each label with its dot, and a host without dots whole', () => {
+    expect(hostLabels('meet.example')).toEqual(['meet.', 'example'])
+    expect(hostLabels('a.b.c')).toEqual(['a.', 'b.', 'c'])
+    expect(hostLabels('127.0.0.1:38777')).toEqual(['127.', '0.', '0.', '1:38777'])
+    expect(hostLabels('localhost:3000')).toEqual(['localhost:3000'])
   })
 
   it('paneColumns gives the only screen the width and everything else two across', () => {

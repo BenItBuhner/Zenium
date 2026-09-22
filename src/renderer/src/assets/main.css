@@ -5593,6 +5593,15 @@
    * the pane wide. The footer is §9.11's: hugging, right-aligned, the 8 gap; the system-audio
    * checkbox leads it, its box centred on the line rather than on a row's first text line.
    */
+  /*
+   * A host in the title block's description (the site asking, or the one an extension shares
+   * with): an identity the user is asked to trust is never elided (§9.23). The description wraps
+   * as every description does; the picker puts a `<wbr>` after each of the host's dots, so a host
+   * too long for the line breaks there, and this takes a lone label longer than the whole line.
+   */
+  .zen-scpick-origin {
+    overflow-wrap: anywhere;
+  }
   .zen-scpick-panes {
     border-bottom: 1px solid transparent;
     transition: border-color 120ms var(--zen-ease);
