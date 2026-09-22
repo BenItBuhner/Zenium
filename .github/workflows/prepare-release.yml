@@ -88,6 +88,10 @@ jobs:
             echo "::error::Tag $tag already exists; pick another version"
             exit 1
           fi
+          # The Android versionCode is derived from the version and caps patch at 99 (minor at
+          # 99, major at 2100); a version past a ceiling builds everywhere but Android, so it is
+          # refused before it is committed. The message names the bump to use instead.
+          node .github/scripts/version-limits.mjs "$version"
           {
             echo "previous=$previous"
             echo "version=$version"

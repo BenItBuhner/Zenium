@@ -14,7 +14,8 @@ export default defineConfig({
       'src/**/*.test.ts',
       'src/**/*.test.tsx',
       'scripts/**/*.test.ts',
-      '.github/smoke/**/*.test.mjs'
+      '.github/smoke/**/*.test.mjs',
+      '.github/scripts/**/*.test.mjs'
     ],
     environment: 'node',
     // Vitest empties every `.css` import, query or not; the chrome's stylesheet imported as text
