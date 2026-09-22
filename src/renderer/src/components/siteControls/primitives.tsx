@@ -26,7 +26,8 @@ import {
   type PopoverBox,
   type PopoverWidth
 } from '@renderer/lib/portals'
-import { SPRING_GENTLE, SpringAnimation } from '@renderer/lib/motion/spring'
+import { REDUCED_FADE_MS } from '@renderer/lib/motion/fade'
+import { SPRING_GENTLE, SpringAnimation, reducedMotion } from '@renderer/lib/motion/spring'
 import { usePhone, type DataAttributes } from '@renderer/lib/surfaces'
 import { contentAreaStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
@@ -187,23 +188,36 @@ export function DesktopPopover({
 
   // The collapse (§9.22): the pop reversed toward the anchor – scale .94 from the popover's
   // point on the anchored edge, fading, 180 ms – the transition CSS draws with the `closing`
-  // flag while the spring's own leave is held at its shown state.
-  const [collapsing, setCollapsing] = useState(false)
+  // flag while the spring's own leave is held at its shown state. Under reduced motion (§11.3)
+  // it is the 120 ms opacity fade in place instead, nothing travels: the component writes
+  // opacity alone, and since the reduced-motion stylesheet removes an inline transition like
+  // any other, main.css re-declares the fade on `.zen-desktop-popover[data-collapsing]`
+  // (`!important`, past the global rule) – either way the popover unmounts on `transitionend`.
+  const [collapsing, setCollapsing] = useState<false | 'pop' | 'fade'>(false)
   const collapsed = useRef(false)
   useEffect(() => {
     if (!closing) return
     if (collapse && dialog.current) {
       if (collapsed.current) return
       collapsed.current = true
-      setCollapsing(true)
+      setCollapsing(reducedMotion() ? 'fade' : 'pop')
       const el = dialog.current
-      const done = (): void => onClosed(byKey.current)
-      el.addEventListener('transitionend', done, { once: true })
-      // Reduced motion, or a compositor that never fires: the fallback lands a frame later.
+      let ended = false
+      const done = (): void => {
+        if (ended) return
+        ended = true
+        onClosed(byKey.current)
+      }
+      // The popover's own transition ending, not a child's bubbling up before it.
+      const onEnd = (event: Event): void => {
+        if (event.target === el) done()
+      }
+      el.addEventListener('transitionend', onEnd)
+      // A compositor that never fires: the fallback lands a frame later.
       const timer = window.setTimeout(done, 240)
       return () => {
         window.clearTimeout(timer)
-        el.removeEventListener('transitionend', done)
+        el.removeEventListener('transitionend', onEnd)
       }
     }
     close()
@@ -234,30 +248,38 @@ export function DesktopPopover({
     return () => release?.()
   }, [])
 
-  // The same two functions as the spring's shown state, so the transition interpolates each.
-  const motion: CSSProperties = collapsing
-    ? {
-        opacity: 0,
-        transform: 'scale(0.94) translateY(0px)',
-        transformOrigin: origin,
-        transition: 'opacity 180ms var(--zen-ease), transform 180ms var(--zen-ease)',
-        pointerEvents: 'none'
-      }
-    : style
+  // The same two functions as the spring's shown state, so the transition interpolates each;
+  // the reduced-motion fade names opacity alone, at §11.3's one length.
+  const motion: CSSProperties =
+    collapsing === 'pop'
+      ? {
+          opacity: 0,
+          transform: 'scale(0.94) translateY(0px)',
+          transformOrigin: origin,
+          transition: 'opacity 180ms var(--zen-ease), transform 180ms var(--zen-ease)',
+          pointerEvents: 'none'
+        }
+      : collapsing === 'fade'
+        ? {
+            opacity: 0,
+            transition: `opacity ${REDUCED_FADE_MS}ms var(--zen-ease)`,
+            pointerEvents: 'none'
+          }
+        : style
 
   return (
     <ChromePortal>
       <div
         ref={dialog}
         className={cn(
-          'fixed flex flex-col overflow-hidden rounded-[var(--v2-radius-card)] border border-[var(--v2-border)] bg-[var(--v2-panel)] text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)] outline-none',
+          'zen-desktop-popover fixed flex flex-col overflow-hidden rounded-[var(--v2-radius-card)] border border-[var(--v2-border)] bg-[var(--v2-panel)] text-[var(--v2-text)] shadow-[var(--v2-shadow-panel)] outline-none',
           className
         )}
         style={{ ...popoverStyle(placement), ...motion }}
         role="dialog"
         aria-labelledby={labelledBy}
         tabIndex={-1}
-        data-collapsing={collapsing || undefined}
+        data-collapsing={collapsing ? 'true' : undefined}
         {...data}
       >
         {children({ close })}

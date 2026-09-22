@@ -1918,6 +1918,19 @@
     }
   }
   /*
+   * The desktop popover's way out when it collapses into its anchor (§9.22; `DesktopPopover`
+   * in siteControls/primitives.tsx draws the reversed pop as an inline 180 ms transition on
+   * opacity and transform): under reduced motion the same 120 ms opacity fade in place as the
+   * frame dialogs' `zen-fade-out`, nothing travels. The component writes opacity alone for it,
+   * but an inline transition is removed by the global rule at the foot like any other, so the
+   * fade is declared here, `!important`, and the popover unmounts on its `transitionend`.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .zen-desktop-popover[data-collapsing] {
+      transition: opacity 120ms var(--zen-ease) !important;
+    }
+  }
+  /*
    * The hidden top toolbar (compact mode's switch, the window's fullscreen) slides in from the
    * top edge on the cursor's touch and back out when it leaves – Edge's reveal, about 200 ms on
    * the ease – a transition, so a cursor returning mid-way turns it around where it is. The
