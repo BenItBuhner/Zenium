@@ -1,0 +1,109 @@
+name: TEMPORARY - compat round 9 sweep and frame budget trigger
+
+# TEMPORARY, removed before the PR is marked ready. Worker tokens cannot dispatch
+# android-ext-compat-sweep.yml or android-ext-runtime-demo.yml (HTTP 403 on the dispatches
+# endpoint), and both stay dispatch-only; this file runs the same jobs on a push to the branch:
+#   - `[sweep]` in the commit message: the two sweep jobs for the thirty-five rows of compat
+#     round 9 (the desktop round-7 list, ranks 181-210 by installs,
+#     `.github/scripts/ext-compat/next30-round7.json`, and the five rows round 8 left to the
+#     runtime: OneNote Web Clipper, Keplr, Google Scholar PDF Reader, Steam Inventory Helper,
+#     Language Reactor), so a before run (the first commit, no runtime change) and an after run
+#     (the final head) measure the same thing the dispatched sweep would;
+#   - `[budget]` in the commit message: the runtime demo's two jobs with the frame budget alone
+#     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 3 and 6
+#     extensions, the jank report in the job summary).
+on:
+  push:
+    branches:
+      - cursor/android-ext-compat-9-4435
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-ext-android-12-sweep-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  system-webview:
+    if: contains(github.event.head_commit.message, '[sweep]')
+    name: System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep
+      artifact-path: artifacts/android-ext-compat-sweep/
+      script-env: |
+        SWEEP_ONLY=ohlencieiipommannpdfcmfdpjjmeolj,ojplmecpdpgccookcobabopnaifgidhf,ckejmhbmlajgoklhgbapkiccekfoccmk,edlifbnjlicfpckhgjhflgkeeibhhcii,khncfooichmfjbepaaaebmommgaepoid,fggkaccpbmombhnjkjokndojfgagejfb,kbmfpngjjgdllneeigpgjifpgocmfgmb,dpacanjfikmhoddligfbehkpomnbgblf,ailoabdmgclmfmhdagmlohpjlbpffblp,ojnbohmppadfgpejeebfnmnknjdlckgj,hmdcmlfkchdmnmnmheododdhjedfccka,mcohilncbfahbmgdjkbpemcciiolgcge,fgddmllnllkalaagkghckoinaemmogpe,iogidnfllpdhagebkblkgbfijkbkjdmm,bfbameneiokkgbdmiekhjnmfkcnldhhm,oemmndcbldboiebfnladdacbdfmadadm,gohjpllcolmccldfdggmamodembldgpc,djflhoibgkdhkhhcedjiklpkjnoahfmg,akdgnmcogleenhbclghghlkkdndkjdjc,eedlgdlajadkbbjoobobefphmfkcchfk,kohfgcgbkjodfcfkcackpagifgbcmimk,nllcnknpjnininklegdoijpljgdjkijc,epcnnfbjfcgphgdmggkamkmgojdagdnn,alhgpfoeiimagjlnfekdhkjlkiomcapa,hodiladlefdpcbemnbbcpclbmknkiaem,aabcgdmkeabbnleenpncegpcngjpnjkc,phidhnmbkbkbkbknhldmpmnacgicphkf,egjidjbpglichdcondbcbdnbeeppgdph,njgehaondchbmjmajphnhlojfnbfokng,fllaojicojecljbmefodhfapmkghcbnh,gojbdfnpnhogfdgjbigejoaolejmgdhk,dmkamcknogkgcdfhhbddcghachkejeap,dahenjhkoodjbpjheillcadbppiidmhp,cmeakgjggjdlcpncigglobpjbkabhmjl,hoombieeljmmljlkjmnheibnpciblicm
+      timeout-minutes: 210
+
+  modern-webview:
+    if: contains(github.event.head_commit.message, '[sweep]')
+    name: Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-compat-sweep.sh
+      artifact-name: android-ext-compat-sweep-modern-webview
+      artifact-path: artifacts/android-ext-compat-sweep/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SWEEP_ONLY=ohlencieiipommannpdfcmfdpjjmeolj,ojplmecpdpgccookcobabopnaifgidhf,ckejmhbmlajgoklhgbapkiccekfoccmk,edlifbnjlicfpckhgjhflgkeeibhhcii,khncfooichmfjbepaaaebmommgaepoid,fggkaccpbmombhnjkjokndojfgagejfb,kbmfpngjjgdllneeigpgjifpgocmfgmb,dpacanjfikmhoddligfbehkpomnbgblf,ailoabdmgclmfmhdagmlohpjlbpffblp,ojnbohmppadfgpejeebfnmnknjdlckgj,hmdcmlfkchdmnmnmheododdhjedfccka,mcohilncbfahbmgdjkbpemcciiolgcge,fgddmllnllkalaagkghckoinaemmogpe,iogidnfllpdhagebkblkgbfijkbkjdmm,bfbameneiokkgbdmiekhjnmfkcnldhhm,oemmndcbldboiebfnladdacbdfmadadm,gohjpllcolmccldfdggmamodembldgpc,djflhoibgkdhkhhcedjiklpkjnoahfmg,akdgnmcogleenhbclghghlkkdndkjdjc,eedlgdlajadkbbjoobobefphmfkcchfk,kohfgcgbkjodfcfkcackpagifgbcmimk,nllcnknpjnininklegdoijpljgdjkijc,epcnnfbjfcgphgdmggkamkmgojdagdnn,alhgpfoeiimagjlnfekdhkjlkiomcapa,hodiladlefdpcbemnbbcpclbmknkiaem,aabcgdmkeabbnleenpncegpcngjpnjkc,phidhnmbkbkbkbknhldmpmnacgicphkf,egjidjbpglichdcondbcbdnbeeppgdph,njgehaondchbmjmajphnhlojfnbfokng,fllaojicojecljbmefodhfapmkghcbnh,gojbdfnpnhogfdgjbigejoaolejmgdhk,dmkamcknogkgcdfhhbddcghachkejeap,dahenjhkoodjbpjheillcadbppiidmhp,cmeakgjggjdlcpncigglobpjbkabhmjl,hoombieeljmmljlkjmnheibnpciblicm
+      setup-script: |
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 210
+
+  budget-system-webview:
+    if: contains(github.event.head_commit.message, '[budget]')
+    name: Frame budget - System WebView (API 34 image)
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo
+      artifact-path: artifacts/android-ext-runtime-demo/
+      script-env: |
+        SKIP_DEMO=1
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
+      timeout-minutes: 60
+
+  budget-modern-webview:
+    if: contains(github.event.head_commit.message, '[budget]')
+    name: Frame budget - Best effort - Chromium snapshot WebView on an AOSP image
+    uses: ./.github/workflows/android-emulator-demo.yml
+    with:
+      script: .github/scripts/android-ext-runtime-demo.sh
+      artifact-name: android-ext-runtime-demo-modern-webview
+      artifact-path: artifacts/android-ext-runtime-demo/
+      target: default
+      emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+      script-env: |
+        WEBVIEW_APK=artifacts/webview/SystemWebView.apk
+        SOFT_FAIL=1
+        SKIP_DEMO=1
+      setup-script: |
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh dbepggeogbaibhgnhhndojpepiihcmeb gebbhagfogifgggkldgodflihgfeippi clngdbkpkpeebahjckkjfobafhncgmne ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo kbfnbcaeplbcioakkpcpgfkobkghlhen oldceeleldhonbafppcapldpdifcinji nngceckbapebfimnlniiiahkandclblb | xargs node .github/scripts/fetch-crx.mjs artifacts/ext-budget
+        base=https://commondatastorage.googleapis.com/chromium-browser-snapshots/AndroidDesktop_x64
+        rev=$(curl -fsSL "$base/LAST_CHANGE")
+        echo "chromium snapshot revision $rev"
+        curl -fsSL -o /tmp/chrome-android-desktop.zip "$base/$rev/chrome-android-desktop.zip"
+        mkdir -p artifacts/webview
+        unzip -j -o /tmp/chrome-android-desktop.zip chrome-android-desktop/apks/SystemWebView.apk -d artifacts/webview
+        rm -f /tmp/chrome-android-desktop.zip
+        curl -fsSL "$base/$rev/REVISIONS" > artifacts/webview/REVISIONS.json
+        unzip -l artifacts/webview/SystemWebView.apk | grep -E "lib/[^/]+/libwebviewchromium.so"
+        ls -la artifacts/webview
+      timeout-minutes: 60

@@ -700,6 +700,39 @@ class Extensions(private val host: Host) {
     }
 
     /**
+     * Instrumentation only: `code` run in `extensionId`'s content scope on `view`'s main frame
+     * the way `scripting.executeScript({ code })` runs it ([exec]'s main-frame path) – the
+     * isolated world where the frame has one, else the main world's `with` scope through the
+     * bootstrap (a late boot when the document has no scope for the extension yet) – with the
+     * guarded JSON handed back as the WebView gave it (`{"v": …}` or `{"e": …}`), null when
+     * nothing answered. The driver reads what a content script's own `window.postMessage`
+     * does in that scope. Main thread.
+     */
+    fun evalInScope(view: WebView, extensionId: String, code: String, callback: (String?) -> Unit) {
+        val ext = served[extensionId]
+        if (ext == null) {
+            callback(null)
+            return
+        }
+        val mine = endpoints.values.filter { it.view === view && it.extensionId == extensionId && it.context == "content" && it.isMainFrame }
+        val world = if (isolatedWorlds) mine.firstOrNull { it.world } else null
+        if (world != null) {
+            val call = ExtensionScripts.execScript(token, extensionId, "js", JSONObject(), code, emptyList(), null, null, null, false, false)
+            val delivered = runCatching {
+                world.proxy.executeJavaScript(call, object : androidx.webkit.WebViewOutcomeReceiver<String, androidx.webkit.JavaScriptExecutionException> {
+                    override fun onResult(result: String?) { callback(result) }
+                    override fun onError(error: androidx.webkit.JavaScriptExecutionException) { callback(null) }
+                })
+            }.isSuccess
+            if (!delivered) callback(null)
+            return
+        }
+        val prefix = if (mine.none { !it.world }) ExtensionScripts.lateBoot(bootstrap, ext.lateConfig, debug) else null
+        val script = ExtensionScripts.execScript(token, extensionId, "js", JSONObject(), code, emptyList(), null, null, prefix, true, true)
+        view.evaluateJavascript(script) { result -> callback(result) }
+    }
+
+    /**
      * `scripting.executeScript` / `insertCSS` / MV2 `tabs.executeScript` into a frame of a tab.
      * The code runs through the bootstrap's `__zenExtExec` in the extension's scope: in its
      * isolated world through the world endpoint's reply proxy when the frame has one; else in
