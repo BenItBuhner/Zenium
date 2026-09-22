@@ -422,6 +422,12 @@ export interface HostEventPayloads {
     originX?: number
     originY?: number
   }
+  /**
+   * Paste and go / Paste and search touched in the omnibox field's floating toolbar
+   * (`ChromeWebView.kt`'s `FieldActionMode`, OMN-23): which of the two, and the tab the field
+   * was editing for (null for a field whose submit opens a new tab).
+   */
+  'urlbar.paste': { action: 'go' | 'search'; tabId: string | null }
   pause: void
   /** The window is coming back on screen after being hidden (screen off, another app in front). */
   resume: void
@@ -1477,6 +1483,22 @@ export class AndroidPlatform implements Platform {
             ? { x: action.originX, y: action.originY }
             : undefined
         browser.menus.runSelectionAction(action.tabId, action.id, action.text, origin)
+        return
+      }
+      case 'urlbar.paste': {
+        // The host's payload, checked before it runs anything: one of the two actions.
+        const p = (payload ?? {}) as Partial<HostEventPayloads['urlbar.paste']>
+        if (p.action !== 'go' && p.action !== 'search') return
+        const tabId = typeof p.tabId === 'string' ? p.tabId : null
+        // As the chrome context menu's item (core/menus.ts, #119): an open bar closes, as a
+        // submit does, and the command reads the clipboard once and goes where typed text
+        // would, or searches it whatever it looks like.
+        browser.emit('urlbar.close', undefined, this.window)
+        browser.handleCommand(
+          this.window,
+          p.action === 'go' ? 'urlbar.pasteAndGo' : 'urlbar.pasteAndSearch',
+          { tabId }
+        )
         return
       }
       case 'pause':

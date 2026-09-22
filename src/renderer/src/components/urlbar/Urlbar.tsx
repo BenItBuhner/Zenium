@@ -1091,9 +1091,10 @@ export function Urlbar({ state, urlbar, area, phoneEdge, anchor }: Props): JSX.E
   }, [floating, area, anchor])
 
   const placeholder = inKeyword ? `Search with ${engine.name}` : 'Search or enter address'
-  // The field's native context menu ("Paste and Go") acts on the tab a submit would: the current
-  // one while editing, a new one from the new-tab bar (`data-zen-menu`, read by the main process).
-  const menuTabId = urlbar.mode === 'new-tab' || !tab ? undefined : tab.id
+  // The field's native context menu ("Paste and Go") and the phone field's floating toolbar
+  // ("Paste and go", OMN-23) act on the tab a submit would: the current one while editing, a new
+  // one from the new-tab bar (`data-zen-menu`, read by the main process and by `ChromeWebView`).
+  const menuTabId = tab && !submitsToNewTab() ? tab.id : undefined
 
   // What the desktop rows emphasise (omnibox-21): the typed terms – a `@keyword`'s query alone
   // – and nothing while the field still holds the page's own address, untouched (the rows are

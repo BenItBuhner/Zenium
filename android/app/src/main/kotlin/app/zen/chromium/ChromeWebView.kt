@@ -4,8 +4,13 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.util.Log
+import android.view.ActionMode
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View
 import android.webkit.ConsoleMessage
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -270,11 +275,103 @@ class ChromeWebView(context: Context, private val host: Host) : WebView(context)
         onReady { js("window.__zenHost&&__zenHost.newPrivateTab()") }
     }
 
+    // --- the omnibox field's floating toolbar (see FieldToolbar.kt) --------------------------
+
+    /**
+     * The WebView starts the system's floating action mode over the chrome's text fields with
+     * its own callback (Paste and Select all at the insertion handle; Cut, Copy, Paste, Share,
+     * Select all over a selection); wrapped, so the omnibox field's carries Paste and go / Paste
+     * and search after the system's Paste (OMN-23, `FieldToolbar`). The mode itself – floating
+     * type, handles, position – is the system's. Anything else (a primary action mode, another
+     * caller's callback) passes through untouched.
+     */
+    override fun startActionMode(callback: ActionMode.Callback, type: Int): ActionMode? {
+        if (type != ActionMode.TYPE_FLOATING || callback !is ActionMode.Callback2) return super.startActionMode(callback, type)
+        return super.startActionMode(FieldActionMode(callback), type)
+    }
+
+    /**
+     * The WebView's field callback with Zenium's item added (`FieldToolbar.plan`). Which field
+     * is in focus is asked of the chrome on every prepare of a menu with Paste in it
+     * (`FieldToolbar.Listing`: the answer is asynchronous, so the system's items show at once
+     * and ours joins within the toolbar's own entrance, the mode invalidated once the chrome has
+     * said the field is the omnibox's); what the clipboard holds is read off its description on
+     * the spot (`ClipboardPeek.pasteAction`, never its content). A touch on the item sends
+     * `urlbar.paste` to the core and finishes the mode.
+     */
+    private inner class FieldActionMode(private val system: ActionMode.Callback2) : ActionMode.Callback2() {
+        private var mode: ActionMode? = null
+        private var finished = false
+        /** The item as last planned, the one a touch acts on. */
+        private var planned: FieldToolbar.Item? = null
+        private val listing = FieldToolbar.Listing(
+            readField = { onField -> evaluateJavascript(FieldToolbar.FIELD_SCRIPT) { raw -> onField(FieldToolbar.parseField(raw)) } },
+            invalidate = { mode?.invalidate() }
+        )
+        private val strings by lazy {
+            FieldToolbar.Strings(
+                paste = context.getString(android.R.string.paste),
+                pasteAndGo = context.getString(R.string.paste_and_go),
+                pasteAndSearch = context.getString(R.string.paste_and_search)
+            )
+        }
+
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            this.mode = mode
+            return system.onCreateActionMode(mode, menu)
+        }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            val prepared = system.onPrepareActionMode(mode, menu)
+            menu.removeGroup(FieldToolbar.GROUP)
+            val systemItems = (0 until menu.size()).map(menu::getItem)
+            val plan = FieldToolbar.plan(
+                systemItems.map { FieldToolbar.SystemItem(it.groupId, it.order, it.title?.toString() ?: "") },
+                listing.field,
+                ClipboardPeek.pasteAction(context),
+                strings
+            )
+            Log.d(FIELD_TAG, "field mode prepared: anchored ${plan.anchored}, field ${listing.field}, item ${plan.item?.action}")
+            // A menu with Paste is a field the clipboard has something for: ask which field.
+            if (plan.anchored) listing.onPrepare()
+            planned = plan.item
+            plan.item?.let { item ->
+                menu.add(FieldToolbar.GROUP, FieldToolbar.ITEM_ID, plan.order, item.title).apply {
+                    setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS or MenuItem.SHOW_AS_ACTION_WITH_TEXT)
+                    contentDescription = item.title
+                }
+            }
+            return prepared || plan.item != null
+        }
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.groupId != FieldToolbar.GROUP) return system.onActionItemClicked(mode, item)
+            val ours = planned ?: return true
+            Log.d(FIELD_TAG, "field mode: ${ours.action} touched for ${listing.field}")
+            hostEvent("urlbar.paste", FieldToolbar.action(ours.action, listing.field?.tabId))
+            if (!finished) mode.finish()
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) {
+            finished = true
+            listing.finish()
+            this.mode = null
+            Log.d(FIELD_TAG, "field mode destroyed after ${listing.asks} ask(s)")
+            system.onDestroyActionMode(mode)
+        }
+
+        override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
+            system.onGetContentRect(mode, view, outRect)
+        }
+    }
+
     private fun js(code: String) {
         if (ready) evaluateJavascript(code, null) else whenReady.add { evaluateJavascript(code, null) }
     }
 
     companion object {
+        private const val FIELD_TAG = "ZenFieldMode"
         const val APP_HOST = "appassets.androidplatform.net"
         const val APP_ORIGIN = "https://$APP_HOST"
         /** Package files by token (`extensionStoreIo.ts` PACKAGES_PATH). */
