@@ -17,6 +17,14 @@
 # not stop the ones after it; the chain stops only when the emulator itself went away (the shared
 # script's emulator-died marker, copied to the artifact's root so the workflow can boot once more).
 #
+# The functional drivers take the profile's instrumentation arguments (DEMO_ARGS), the hold on the
+# core's startup sweeps among them: a cleared app runs its 20 s and 35 s sweeps again, and on the
+# one boot they land in the driver's own gestures – run 35757175517's OverviewDemo pulled the
+# overview while the blocker parsed its filter lists (snapshots of 2–9 s each) and Safe Browsing
+# wrote 430 k prefixes on the three cores; the chrome's thread missed the touch's ack and the
+# WebView cancelled the pull under the finger. The drivers' own workflows are untouched: one
+# driver alone on a fresh boot, sweeps and all.
+#
 #   PERF_OUT     – where the artifacts go (the profile's at this root, a directory per functional
 #                  driver below it)
 #   DEMO_THEME, DEMO_SCENES, DEMO_ARGS, DEMO_HANDSHAKE_S, DEMO_VIDEO – the profile's, as
@@ -77,10 +85,10 @@ if [ "${PERF_FUNCTIONAL:-1}" != "0" ]; then
   # switches the system to gesture navigation for the overview's back scenes and switches it back
   # in its own teardown; this is the guard for a profile that never reached it.
   adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton || true
-  run_driver 'GestureDemo#record' gesture-demo "$out/gesture-demo" gesture-demo.mp4 1 "" 300 \
-    || { cat "$summary"; exit 1; }
-  run_driver OverviewDemo overview-demo "$out/overview-demo" overview-demo.mp4 1 "" 300 \
-    || { cat "$summary"; exit 1; }
+  run_driver 'GestureDemo#record' gesture-demo "$out/gesture-demo" gesture-demo.mp4 1 \
+    "${DEMO_ARGS:-}" 300 || { cat "$summary"; exit 1; }
+  run_driver OverviewDemo overview-demo "$out/overview-demo" overview-demo.mp4 1 \
+    "${DEMO_ARGS:-}" 300 || { cat "$summary"; exit 1; }
 fi
 
 echo "== motion perf: the drivers on this boot"
