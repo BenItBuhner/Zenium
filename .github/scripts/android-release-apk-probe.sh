@@ -96,7 +96,9 @@ for n in root.iter('node'):
         button = n
     elif d == 'Address' and group is None:
         group = n
-n = (group if want == 'group' else button) or button or group
+n = group if want == 'group' else button
+if n is None:
+    n = button if button is not None else group
 if n is None:
     sys.exit(0)
 m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', n.get('bounds') or '')
@@ -235,7 +237,8 @@ tap_probe() { # $1 tag, $2 scene, $3 tap name, $4 x, $5 y, $6 pill line, $7 tree
 }
 
 scene() { # $1 tag, $2 scene name
-  local tag=$1 scene=$2 id="$tag-$scene" line group x1 y1 x2 y2 gx1 gy1 gx2 gy2 cx cy
+  local tag=$1 scene=$2 id line group x1 y1 x2 y2 gx1 gy1 gx2 gy2 cx cy
+  id="$tag-$scene"
   launch
   if ! line=$(wait_pill "$out/trees/$id-arrival.xml"); then
     note "$tag $scene: NO PILL after the launch (tree: trees/$id-arrival.xml)"
@@ -258,6 +261,11 @@ scene() { # $1 tag, $2 scene name
   tap_probe "$tag" "$scene" url-text $(( x1 + (x2 - x1) / 6 )) "$cy" "$line" "$id-2-url-text"
   # The leading glyph: 22 dp (38 px at 280 dpi) in from the pill's left edge.
   tap_probe "$tag" "$scene" leading-glyph $(( gx1 + 38 )) $(( (gy1 + gy2) / 2 )) "$line" "$id-3-leading-glyph"
+  # The whole pill's centre (the group labelled "Address"): where a driver aiming at the first
+  # node that starts with "Address" lands when the group comes before the button.
+  if [ -n "$group" ]; then
+    tap_probe "$tag" "$scene" group-centre $(( (gx1 + gx2) / 2 )) $(( (gy1 + gy2) / 2 )) "$line" "$id-4-group-centre"
+  fi
 }
 
 # --- the APKs -----------------------------------------------------------------------------------
