@@ -143,9 +143,7 @@ export class BackgroundWork {
     if (!worker) return this.inline(task, input)
     this.clearIdle()
     try {
-      const output = await this.post(worker, task, input, transfer)
-      this.runs.worker++
-      return output
+      return await this.post(worker, task, input, transfer)
     } finally {
       this.scheduleIdle()
     }
@@ -209,6 +207,7 @@ export class BackgroundWork {
     const waiter = this.pending.get(reply.id)
     if (!waiter) return
     this.pending.delete(reply.id)
+    this.runs.worker++
     if (reply.ok === true) {
       waiter.resolve(reply.output)
       return
