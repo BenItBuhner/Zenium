@@ -76,15 +76,14 @@ export const RECENT_SEARCHES_MAX = 8
  * the clipboard row, an extension's omnibox rows – belong to no section and stand with the
  * default match at the field's end.
  */
-export const CARD_SECTIONS: ReadonlyArray<{ label: string; kinds: readonly SuggestionKind[] }> =
-  [
-    { label: 'Pages', kinds: ['url', 'history', 'bookmark', 'entity'] },
-    { label: 'Searches', kinds: ['search'] },
-    { label: 'Open tabs', kinds: ['tab'] },
-    { label: 'Commands', kinds: ['command'] },
-    { label: 'Spaces', kinds: ['space'] },
-    { label: 'Search engines', kinds: ['engine'] }
-  ]
+export const CARD_SECTIONS: ReadonlyArray<{ label: string; kinds: readonly SuggestionKind[] }> = [
+  { label: 'Pages', kinds: ['url', 'history', 'bookmark', 'entity'] },
+  { label: 'Searches', kinds: ['search'] },
+  { label: 'Open tabs', kinds: ['tab'] },
+  { label: 'Commands', kinds: ['command'] },
+  { label: 'Spaces', kinds: ['space'] },
+  { label: 'Search engines', kinds: ['engine'] }
+]
 
 export interface SuggestOptions {
   /**
@@ -893,9 +892,7 @@ export function groupForCard(rows: Suggestion[], query: string): Suggestion[] {
   const filled = sections.filter((s) => s.length > 0)
   // One kind throughout, the default match included: Chrome's flat list, no heading.
   const lone =
-    filled.length === 1 &&
-    loose.length === 1 &&
-    cardSection(top) === sections.indexOf(filled[0])
+    filled.length === 1 && loose.length === 1 && cardSection(top) === sections.indexOf(filled[0])
   const out = [...loose, ...filled.flat()]
   return lone ? out.map(ungroup) : out
 }
