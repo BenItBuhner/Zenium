@@ -24,10 +24,22 @@ import java.util.Locale
  * `WebResourceResponse`): the tab loads the `Location`, and that navigation is decided afresh, so
  * a header rule sees every hop, as the desktop engine's headers-received stage does.
  *
+ * The relay is also where a `modifyHeaders` rule's edits happen on this platform: it builds the
+ * request's headers itself and serves the response, so a document the request stage decided
+ * [Decision.Action.MODIFY_HEADERS] comes here too; the decision's request edits are applied to
+ * the headers it sends (a `User-Agent` a rule sets goes out in place of WebView's), the header
+ * stage's decision – whose response edits contain the request stage's, capped as Chrome caps
+ * them – is applied to the response before it is served (the desktop's `onBeforeSendHeaders` /
+ * `onHeadersReceived`). Documents only: `shouldInterceptRequest` cannot edit the headers of a
+ * request WebView loads itself, and relaying subresources is not acceptable, so a `modifyHeaders`
+ * rule selecting a subresource is not honoured on Android (recorded limit). The cookie policy's
+ * word stays above the rules: a relay without cookies carries no `Cookie` a rule sets and keeps
+ * no `Set-Cookie` a rule adds.
+ *
  * Narrow by construction: only documents whose request-side conditions selected a
- * header-conditioned rule come here (ordinary traffic never pays the relay), and only `GET` /
- * `HEAD` ones (a `POST`'s body is not at hand; the request-stage allow stands). A relay that
- * fails to connect hands the request back to WebView unchanged.
+ * header-conditioned or a `modifyHeaders` rule come here (ordinary traffic never pays the relay),
+ * and only `GET` / `HEAD` ones (a `POST`'s body is not at hand; the request-stage decision stands,
+ * its edits unapplied). A relay that fails to connect hands the request back to WebView unchanged.
  */
 class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher = HttpFetcher()) {
     /** The profile's cookie jar (WebView's `CookieManager` for the partition). */
@@ -52,6 +64,14 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
                 if (key != null && key.equals(name, ignoreCase = true)) return values?.firstOrNull()
             }
             return null
+        }
+
+        /** This response with `ops` applied to its headers ([HeaderOp.applyToResponse]); itself without any. */
+        fun edited(ops: List<HeaderOp>): Response {
+            if (ops.isEmpty()) return this
+            val out = LinkedHashMap<String?, List<String>?>(headers)
+            HeaderOp.applyToResponse(out, ops)
+            return Response(status, reason, out, body)
         }
     }
 
@@ -96,11 +116,12 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
     }
 
     /**
-     * Relay `req` (already decided [Decision.needsHeaders] at the request stage) and answer for
-     * it, or null to let WebView load it. `requestHeaders` are the request's own; `observer` hears
-     * the header stage's decision when it names another match than `requestDecision`, the request
-     * stage's (the desktop's `sameMatch`, contract 5.5: a re-reported request-stage allow would
-     * count twice). Runs on the intercept thread.
+     * Relay `req` (decided [Decision.needsHeaders] or [Decision.Action.MODIFY_HEADERS] at the
+     * request stage) and answer for it, or null to let WebView load it. `requestHeaders` are the
+     * request's own; `requestDecision` is the request stage's, whose [Decision.requestHeaderEdits]
+     * the relay applies to the headers it sends; `observer` hears the header stage's decision
+     * when it names another match than `requestDecision` (the desktop's `sameMatch`, contract
+     * 5.5: a re-reported request-stage match would count twice). Runs on the intercept thread.
      *
      * The profile's cookie jar rides only on a first-party relay. WebView attaches `Cookie` at the
      * network layer, after the intercept, under the profile's third-party cookie policy and
@@ -108,7 +129,9 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
      * without cookies and its `Set-Cookie` is not stored. `withCookies` false is the cookie
      * policy's word ([RequestPolicy.cookiesWithheld]: a never-site's document, every unlisted
      * one under "block all cookies"): the relay then carries no `Cookie` at all – the request's
-     * own header goes too – and keeps no `Set-Cookie`, the desktop header stage's strip.
+     * own header goes too, and one a rule sets – and keeps no `Set-Cookie`, the desktop header
+     * stage's strip. The jar is attached before the rules edit the headers, as the desktop's
+     * `onBeforeSendHeaders` sees the cookies Chromium attached: a rule may remove or replace it.
      */
     fun relay(
         snap: EngineSnapshot,
@@ -121,19 +144,28 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
     ): Answer? {
         if (req.method != "GET" && req.method != "HEAD") return null
         val headers = relayHeaders(requestHeaders)
-        if (!withCookies) headers.keys.filter { it.equals("Cookie", ignoreCase = true) }.forEach { headers.remove(it) }
         val withJar = withCookies && !req.isThirdParty
         if (withJar && headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
             cookies.cookieHeader(tab.containerId, req.url)?.let { headers["Cookie"] = it }
         }
+        if (requestDecision.requestHeaderEdits.isNotEmpty()) {
+            HeaderOp.applyToRequest(headers, requestDecision.requestHeaderEdits)
+            // The framing and conditional headers are the connection's, whatever a rule wrote.
+            headers.keys.filter { it.lowercase(Locale.ROOT) in DROPPED_REQUEST_HEADERS }.forEach { headers.remove(it) }
+        }
+        if (!withCookies) headers.keys.filter { it.equals("Cookie", ignoreCase = true) }.forEach { headers.remove(it) }
         val started = System.nanoTime()
-        val response = fetcher.fetch(req.url, req.method, headers) ?: return null
-        val indexed = HeaderCondition.index(response.headers)
+        val fetched = fetcher.fetch(req.url, req.method, headers) ?: return null
+        val indexed = HeaderCondition.index(fetched.headers)
         val decision = snap.decide(req, indexed)
         if (observer != null && decision.matchedSet != null && !sameMatch(decision, requestDecision)) {
             observer.onDecision(tab, req, decision, System.nanoTime() - started, -1L)
         }
-        val setCookie = indexed["set-cookie"]
+        // The header stage's edits (they contain the request stage's, capped) shape everything
+        // read from the response after this point: the cookies stored, a `Location` mirrored,
+        // the headers served.
+        val response = fetched.edited(decision.responseHeaderEdits)
+        val setCookie = (if (response === fetched) indexed else HeaderCondition.index(response.headers))["set-cookie"]
         if (withJar && !setCookie.isNullOrEmpty()) cookies.store(tab.containerId, req.url, setCookie)
         val isMainFrame = req.type == ResourceType.MAIN_FRAME
         return when (val outcome = outcome(decision, response, req.url)) {
@@ -230,10 +262,11 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
 
         /**
          * The header stage's outcome for `decision` (the rules' word with the response's headers)
-         * on `response` to `requestUrl`: a block or redirect of the rules first; then the origin's
-         * own `3xx`, mirrored as a redirect to its `Location` (resolved against the request); a
-         * `3xx` without one, or a status WebView cannot carry, hands the request back; anything
-         * else is served as it is.
+         * on `response` to `requestUrl` (its headers already edited by the decision): a block or
+         * redirect of the rules first; then the origin's own `3xx`, mirrored as a redirect to its
+         * `Location` (resolved against the request); a `3xx` without one, or a status WebView
+         * cannot carry, hands the request back; anything else – an allow, header edits – is
+         * served as it is.
          */
         fun outcome(decision: Decision, response: Response, requestUrl: String): Outcome {
             when (decision.action) {
@@ -242,7 +275,7 @@ class HeaderStage(private val cookies: CookieStore, private val fetcher: Fetcher
                     val target = decision.redirectUrl
                     if (target != null && decision.matchedSet != Decision.TEXT_SET_ID) return Outcome.Redirect(target, byRule = true)
                 }
-                Decision.Action.ALLOW -> Unit
+                Decision.Action.ALLOW, Decision.Action.MODIFY_HEADERS -> Unit
             }
             if (response.status in 300..399) {
                 val location = response.header("Location") ?: return Outcome.PassThrough
