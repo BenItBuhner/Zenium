@@ -2117,6 +2117,11 @@
   .zen-message-button:active:not(:disabled) {
     transform: scale(0.98);
   }
+  /* A destroying action on a card – the capture card's Delete, whose file is the user's data –
+     takes §6's danger ink as `.zen-v2-button[data-danger]` does: ink only, the fill stays. */
+  .zen-message-button[data-danger] {
+    color: var(--v2-danger);
+  }
   .zen-message-button:disabled,
   .zen-message-close:disabled {
     opacity: 0.4;
@@ -2266,6 +2271,174 @@
     width: var(--v2-icon);
     height: var(--v2-icon);
     stroke-width: var(--v2-icon-stroke);
+  }
+  /*
+   * Take Screenshot's preview card (SH-07): the toast's card with the picture for its glyph. A
+   * grid of three columns – the thumbnail, the text, the trailing slot – and two rows: the
+   * title with its detail, and under them, from the text edge to the card's trailing edge,
+   * the decision pair Share | Delete (§9.11: a pair inside a row is the row's own footer, the
+   * glyph column kept clear). The trailing slot (Capture more, the close) centres on the two
+   * text lines, as a banner's does on its title (§9.18).
+   */
+  .zen-screenshot-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: start;
+    column-gap: 8px;
+    row-gap: 8px;
+    padding-bottom: 11px;
+  }
+  .zen-screenshot-card.zen-message-toast {
+    padding-right: 6px;
+  }
+  .zen-screenshot-thumb {
+    grid-row: 1 / span 2;
+    display: block;
+    height: 64px;
+    max-width: 96px;
+    margin-top: var(--zen-message-text-inset);
+    overflow: hidden;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-control);
+    background: var(--v2-panel);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-screenshot-thumb:active {
+    transform: scale(0.97);
+  }
+  .zen-screenshot-thumb:focus-visible {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 2px;
+  }
+  .zen-screenshot-thumb img {
+    display: block;
+    height: 100%;
+    width: auto;
+    max-width: 96px;
+    object-fit: cover;
+  }
+  .zen-screenshot-text {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0;
+  }
+  .zen-screenshot-title {
+    font-weight: var(--v2-weight-heading);
+  }
+  .zen-screenshot-trailing {
+    grid-column: 3;
+    grid-row: 1;
+    height: calc(var(--v2-line-body-box) + var(--v2-line-small-box));
+    margin-top: var(--zen-message-text-inset);
+  }
+  .zen-screenshot-actions {
+    grid-column: 2 / span 2;
+    grid-row: 2;
+    display: flex;
+    gap: 8px;
+    margin-right: 8px;
+  }
+  .zen-screenshot-actions > .zen-message-button {
+    flex: 1 1 0;
+    justify-content: center;
+    padding: 0 8px;
+  }
+  /*
+   * The long-screenshot editor (SH-08; `phone/LongScreenshotSheet.tsx`): the picture in a frame
+   * at the sheet's 16 gutter with room above and below for a handle's band to stand half past
+   * the frame's edge, the crop's edges as two handles – §9.9's 32 × 4 grabber on a small panel
+   * pill (the hairline, the panel shadow) across an accent line – and the scrim over what the
+   * crop leaves out. The frame's radius is the inner one (§9.20: a picture inside a panel),
+   * the hairline the page family's. The sheet mounts with the picture in hand (the host
+   * stitches the page before the editor opens); the body asks for the whole viewport, so the
+   * sheet's expanded detent is the chassis's ceiling (the body is the document: the sheet opens
+   * there) rather than whatever the frame measures – the frame in turn is fitted to the body's
+   * box at that detent (`useSheetRest`), once, not to the scroller's height as the sheet rises.
+   */
+  .zen-longshot-body {
+    min-height: 100vh;
+    padding: 22px 16px 4px;
+  }
+  .zen-longshot-frame {
+    position: relative;
+    margin: 0 auto;
+  }
+  .zen-longshot-picture {
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+    border: 1px solid var(--v2-border);
+    border-radius: var(--v2-radius-inner);
+    background: var(--v2-panel);
+  }
+  .zen-longshot-picture img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .zen-longshot-dim {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: var(--v2-scrim);
+    pointer-events: none;
+  }
+  .zen-longshot-handle {
+    position: absolute;
+    left: -8px;
+    right: -8px;
+    height: 44px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    cursor: ns-resize;
+    outline: none;
+  }
+  .zen-longshot-line {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    background: var(--v2-accent);
+    border-radius: 1px;
+  }
+  .zen-longshot-grip {
+    position: relative;
+    display: flex;
+    width: 56px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--v2-border);
+    border-radius: 10px;
+    background: var(--v2-panel);
+    box-shadow: var(--v2-shadow-panel);
+    transition: transform 120ms var(--zen-ease);
+  }
+  .zen-longshot-handle[data-dragging='true'] .zen-longshot-grip {
+    transform: scale(1.08);
+  }
+  .zen-longshot-handle[data-dragging='true'] .zen-sheet-handle {
+    background: rgb(var(--v2-text-rgb) / 0.4);
+  }
+  .zen-longshot-handle:focus-visible .zen-longshot-grip {
+    outline: 2px solid var(--v2-ring);
+    outline-offset: 2px;
+  }
+  .zen-longshot-caption {
+    padding-top: 18px;
+    text-align: center;
+    font-size: var(--v2-font-small);
+    line-height: var(--v2-line-small-box);
+    color: var(--v2-text-deemphasized);
+    font-variant-numeric: tabular-nums;
   }
 
   /* The sidebar of Android's wide layouts: the toast's row, clipped so the card slides in from below it. */

@@ -47,11 +47,15 @@ import {
   closeReaderPreferences,
   closeTabsMenu,
   closeUrlbar,
+  closeLongScreenshot,
   dismissBanner,
   dismissToast,
   forgetBanner,
+  forgetScreenshotCard,
   forgetToast,
+  holdScreenshotCard,
   openExtensionsSheet,
+  pickScreenshotAction,
   openSendTabSheet,
   openMediaSheet,
   openOverlay,
@@ -61,7 +65,8 @@ import {
   openZoom,
   pushToast,
   showBanner,
-  uiStore
+  uiStore,
+  type UiState
 } from '@renderer/lib/ui'
 import {
   customListId,
@@ -113,6 +118,7 @@ import {
   type PreviewStep,
   type PreviewWebAppSurface
 } from './previewSpec'
+import { holdPreviewScreenshots, resetPreviewScreenshots } from './previewScreenshots'
 import { hideUnresponsivePrompt, showUnresponsivePrompt } from './previewUnresponsive'
 import { EMPTY_MEDIA_REPORT, type MediaReport } from '@shared/mediaSession'
 
@@ -132,7 +138,7 @@ const PRESS_SETTLE_MS = PRESS_HOLD_MS + 250 + STEP_SETTLE_MS
  * promo's (`default-browser`, the sheet `sheet=promo` raises; its back is a "Not now").
  */
 const SHEET_SURFACE =
-  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$)/
+  /^(?:settings-(?:options|field|confirm|form|item|detail):|pdf-|default-browser$|long-screenshot$)/
 /** How long a dismissed sheet may take to leave (its motion) before the reset gives up on it. */
 const SHEET_LEAVE_MS = 1500
 /** How long a seeded state may take to arrive in the store before the spec is reported reached anyway. */
@@ -266,6 +272,9 @@ function apply(browser: Browser, spec: string): void {
     cancelVoiceSearch()
     cancelQrScan()
     resetBarHide()
+    // A flash a `screenshot=` state held, and the long-screenshot editor it opened, go too.
+    resetPreviewScreenshots()
+    closeLongScreenshot()
     // The unresponsive-page prompt's stand-in goes at once (no answer: nothing hangs here).
     hideUnresponsivePrompt()
     // A read-aloud session a previous state scripted ends: its docked player goes with it.
@@ -1036,6 +1045,8 @@ function reach(browser: Browser, spec: string, securityAtRest: Promise<void>): v
   } else if (target.kind === 'error' && tab) {
     failLoad(tab.id, target.code, target.url ?? tab.url)
     requestAnimationFrame(finish)
+  } else if (target.kind === 'screenshot' && tab) {
+    applyScreenshot(target, tab.id, finish)
   } else if (target.kind === 'network' && tab) {
     playConnectivity(tab, target.variant, finish)
   } else if (target.kind === 'crash' && tab) {
@@ -2904,6 +2915,111 @@ function showMessages(
 }
 
 /**
+ * Take Screenshot's gallery flow (SH-07, SH-08) on the active tab, the way the menu item runs it:
+ * the stand-in host flashes the page and answers with the picture, the core's `screenshot.saved`
+ * puts the preview card up. `flash` holds the flash sheet part-way (`holdPreviewScreenshots`) so
+ * the still shows the frame mid-flash; `card` holds the card off its clock (a finger's hold) so
+ * it stays for the still; `editor` presses the card's Capture more and waits for the editor to
+ * come up with the page's picture (the sheet mounts once the stand-in host has answered the
+ * long capture, as the real one does), then, with `drag`, presses one handle and moves the
+ * pointer `by` px down without letting go – the handle's own drag, held mid-way.
+ */
+function applyScreenshot(
+  target: Extract<ReturnType<typeof parsePreviewSpec>, { kind: 'screenshot' }>,
+  tabId: string,
+  finish: () => void
+): void {
+  holdPreviewScreenshots({ flash: target.surface === 'flash' })
+  run('page.screenshot', { tabId })
+  if (target.surface === 'flash') {
+    afterFrames(3, finish)
+    return
+  }
+  untilUi(
+    (ui) => ui.screenshotCards.some((c) => !c.leaving),
+    () => {
+      const card = uiStore.get().screenshotCards.find((c) => !c.leaving)
+      if (!card) {
+        finish()
+        return
+      }
+      if (target.surface === 'card') {
+        holdScreenshotCard(card.id, true)
+        // The flash's fade has cleared by then (its 120 ms and the sheet's removal).
+        setTimeout(finish, 200)
+        return
+      }
+      pickScreenshotAction(card.id, 'more')
+      untilUi(
+        (ui) => ui.longScreenshot !== null,
+        () => {
+          const drag = target.drag
+          // The sheet's entrance and the picture's layout settle before a handle is taken.
+          setTimeout(() => {
+            if (!drag) {
+              finish()
+              return
+            }
+            const handle = document.querySelector<HTMLElement>(
+              `[data-testid="longshot-handle-${drag.edge}"]`
+            )
+            if (!handle) {
+              finish()
+              return
+            }
+            const box = handle.getBoundingClientRect()
+            const x = box.left + box.width / 2
+            const y = box.top + box.height / 2
+            const pointer = (type: string, clientY: number): void => {
+              handle.dispatchEvent(
+                new PointerEvent(type, {
+                  bubbles: true,
+                  cancelable: true,
+                  pointerId: 7,
+                  pointerType: 'touch',
+                  isPrimary: true,
+                  button: 0,
+                  buttons: 1,
+                  clientX: x,
+                  clientY
+                })
+              )
+            }
+            pointer('pointerdown', y)
+            const steps = 6
+            for (let i = 1; i <= steps; i++) pointer('pointermove', y + (drag.by * i) / steps)
+            afterFrames(2, finish)
+          }, STEP_SETTLE_MS)
+        }
+      )
+    }
+  )
+}
+
+/** Runs `fn` once the ui store satisfies `test`, or once waiting stops being worth it. */
+function untilUi(test: (ui: UiState) => boolean, fn: () => void): void {
+  if (test(uiStore.get())) {
+    fn()
+    return
+  }
+  let settled = false
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    unsubscribe()
+    window.clearTimeout(timer)
+    fn()
+  }
+  const unsubscribe = uiStore.subscribe(() => {
+    if (test(uiStore.get())) settle()
+  })
+  const timer = window.setTimeout(() => {
+    console.warn('[zen preview] the ui state did not arrive; reporting the spec reached anyway')
+    settle()
+  }, SETTLE_TIMEOUT_MS)
+}
+
+/**
  * Every message off at once, and the load a previous `progress` state left running on
  * `loadingTabId` finished, so the next state starts clean.
  */
@@ -2913,6 +3029,7 @@ function clearMessages(loadingTabId: string | null): void {
     dismissToast(t.id)
     forgetToast(t.id)
   }
+  for (const c of ui.screenshotCards) forgetScreenshotCard(c.id)
   for (const b of ui.banners) {
     dismissBanner(b.id)
     forgetBanner(b.id)

@@ -58,9 +58,17 @@ object CapturePlan {
     const val MODE_VIEWPORT = "viewport"
     const val MODE_FULL_PAGE = "fullPage"
     const val MODE_REGION = "region"
+    /** The long screenshot's capture (SH-08): from the viewport's top down to about ten screens. */
+    const val MODE_LONG = "long"
 
     /** Very long pages are cut here, not failed – the same limit as the desktop host (CSS px). */
     const val MAX_PAGE_HEIGHT = 12_000.0
+
+    /** Chrome's long screenshot reaches about this many screens of the page and no further. */
+    const val LONG_MAX_SCREENS = 10.0
+    /** The long capture's output caps (image px): its width at the device's scale, its height so the bitmap stays within reach. */
+    const val LONG_MAX_WIDTH = 1_440.0
+    const val LONG_MAX_HEIGHT = 12_000.0
 
     /** Output caps in image pixels: a full page is downscaled to fit, a region or viewport too. */
     const val MAX_FULL_PAGE_WIDTH = 1_600.0
@@ -85,8 +93,23 @@ object CapturePlan {
         return when (mode) {
             MODE_FULL_PAGE -> Box(0.0, 0.0, document.width, min(document.height, MAX_PAGE_HEIGHT))
             MODE_REGION -> region?.intersect(document)
+            MODE_LONG -> longTarget(metrics)
             else -> metrics.visible
         }
+    }
+
+    /**
+     * The long screenshot's page rectangle: the visual viewport's width, from the viewport's top
+     * down to [LONG_MAX_SCREENS] screens – pulled up over what the document lacks below, so a
+     * page read near its end still fills the capture, and never past the document's top. What
+     * the user sees is always in it.
+     */
+    fun longTarget(metrics: PageMetrics): Box {
+        val vh = metrics.viewportHeight
+        val documentHeight = max(metrics.documentHeight, vh)
+        val height = min(documentHeight, vh * LONG_MAX_SCREENS)
+        val y = max(0.0, min(metrics.pageTop, documentHeight - height))
+        return Box(metrics.pageLeft, y, metrics.viewportWidth, height)
     }
 
     /** Image pixels per CSS pixel for the output. */
@@ -97,6 +120,15 @@ object CapturePlan {
                 FULL_PAGE_MAX_SCALE,
                 MAX_FULL_PAGE_WIDTH / target.width,
                 MAX_FULL_PAGE_HEIGHT / target.height
+            )
+            // The long capture keeps the device's sharpness while its height allows, and gives
+            // up sharpness rather than screens past the height cap (a ten-screen phone page
+            // comes out ~540 px wide; a three-screen one at the device's scale).
+            MODE_LONG -> minOf(
+                deviceScale,
+                FULL_PAGE_MAX_SCALE,
+                LONG_MAX_WIDTH / target.width,
+                LONG_MAX_HEIGHT / target.height
             )
             else -> min(deviceScale, MAX_SIDE / max(target.width, target.height))
         }

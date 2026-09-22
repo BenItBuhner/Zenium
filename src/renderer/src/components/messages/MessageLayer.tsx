@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBarHideBinding } from '@renderer/hooks/useBarHideBinding'
 import { claimMessageCards, coverBandStore, uiStore } from '@renderer/lib/ui'
 import { BannerCard } from './BannerCard'
+import { ScreenshotCard } from './ScreenshotCard'
 import { bannerSlots, coverFor } from './stack'
 import { ToastCard } from './ToastCard'
 
@@ -23,6 +24,7 @@ import { ToastCard } from './ToastCard'
  */
 export function MessageLayer(): JSX.Element | null {
   const toasts = uiStore.use((s) => s.toasts)
+  const cards = uiStore.use((s) => s.screenshotCards)
   const banners = uiStore.use((s) => s.banners)
   const [heights, setHeights] = useState<Record<number, number>>({})
   const measure = useCallback((id: number, height: number): void => {
@@ -53,7 +55,8 @@ export function MessageLayer(): JSX.Element | null {
   const live = banners.filter((b) => !b.leaving)
   const { y, height: stackHeight } = bannerSlots(banners.map((b) => heights[b.id] ?? 0))
   const liveStack = bannerSlots(live.map((b) => heights[b.id] ?? 0)).height
-  const liveToast = toasts.find((t) => !t.leaving)
+  // The toast's slot holds one live card: a toast, or a screenshot's preview (SH-07).
+  const liveToast = toasts.find((t) => !t.leaving) ?? cards.find((c) => !c.leaving)
   const { top, bottom } = coverFor(liveStack, liveToast ? (heights[liveToast.id] ?? 0) : 0)
 
   useEffect(() => {
@@ -63,7 +66,7 @@ export function MessageLayer(): JSX.Element | null {
   // Leaving the phone layout takes the cover with it.
   useEffect(() => () => coverBandStore.set({ top: 0, bottom: 0 }), [])
 
-  if (toasts.length === 0 && banners.length === 0) return null
+  if (toasts.length === 0 && cards.length === 0 && banners.length === 0) return null
   return (
     <div className="zen-message-layer" data-surface="page">
       {banners.length > 0 && (
@@ -81,10 +84,13 @@ export function MessageLayer(): JSX.Element | null {
           ))}
         </div>
       )}
-      {toasts.length > 0 && (
+      {(toasts.length > 0 || cards.length > 0) && (
         <div ref={bindToasts} className="zen-message-toasts">
           {toasts.map((t) => (
             <ToastCard key={t.id} toast={t} onMeasure={measure} />
+          ))}
+          {cards.map((c) => (
+            <ScreenshotCard key={`shot-${c.id}`} card={c} onMeasure={measure} />
           ))}
         </div>
       )}

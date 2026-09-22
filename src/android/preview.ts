@@ -16,6 +16,7 @@ import type { RawArticle } from '@core/reader'
 import { extensionPageOf } from '@shared/url'
 import { previewRangeAnswer } from './previewRange'
 import { createPreviewDownloads } from './previewDownloads'
+import { createPreviewScreenshots } from './previewScreenshots'
 import { previewPdfVariantOf } from './previewPdf'
 import { emulateTextZoom } from './previewTextZoom'
 import { CHUNK_CHARS } from './storeIo'
@@ -1113,6 +1114,8 @@ export function createPreviewBridge(): NativeBridge {
       }
     },
     ...createPreviewDownloads(host, DOWNLOADS_DIR),
+    // Take Screenshot's gallery flow (SH-07, SH-08): the flash, the card's picture, the long capture.
+    ...createPreviewScreenshots((tabId) => views.get(tabId), snapshotFrame),
     'profile.clear': () => undefined,
     'profile.clearBrowsingData': () => undefined,
     // No jar or cache to measure in the preview, as on a device (the WebView cannot list cookies).

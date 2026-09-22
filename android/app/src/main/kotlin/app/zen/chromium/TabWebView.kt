@@ -598,7 +598,9 @@ class TabWebView(
             PageMessageRoute.DomReady -> if (domReady.scriptReady()) host.viewEvent(tabId, "domReady", null)
             is PageMessageRoute.Fullscreen ->
                 host.fullscreenVideo(this, route.active, route.videoWidth, route.videoHeight, mainFrame = isMainFrame)
-            is PageMessageRoute.Forward -> host.viewEvent(tabId, "pageMessage", route.message)
+            is PageMessageRoute.Forward ->
+                if (route.message.optString("type") == "share") host.preparePageMessage(route.message) { host.viewEvent(tabId, "pageMessage", it) }
+                else host.viewEvent(tabId, "pageMessage", route.message)
         }
     }
 
@@ -1614,11 +1616,11 @@ class TabWebView(
             }
             return
         }
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val location = IntArray(2)
-        getLocationInWindow(location)
-        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
-        val encode = {
+        copyViewport { bitmap ->
+            if (bitmap == null) {
+                callback(null)
+                return@copyViewport
+            }
             encoder.execute {
                 val out = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -1626,13 +1628,69 @@ class TabWebView(
                 Handler(Looper.getMainLooper()).post { callback(out.toByteArray()) }
             }
         }
+    }
+
+    /**
+     * The visible area's pixels at full resolution (the caller's to recycle), or null when the
+     * window refuses: Take Screenshot's picture (SH-07), before the flash so it is not in it.
+     */
+    fun copyViewport(callback: (Bitmap?) -> Unit) {
+        if (width <= 0 || height <= 0 || !isShown) {
+            callback(null)
+            return
+        }
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val rect = Rect(location[0], location[1], location[0] + width, location[1] + height)
         try {
             PixelCopy.request(host.activity.window, rect, bitmap, { result ->
-                if (result == PixelCopy.SUCCESS) encode() else callback(null)
+                if (result == PixelCopy.SUCCESS) callback(bitmap) else {
+                    bitmap.recycle()
+                    callback(null)
+                }
             }, Handler(Looper.getMainLooper()))
         } catch (e: Exception) {
+            bitmap.recycle()
             callback(null)
         }
+    }
+
+    /**
+     * The long screenshot's capture (SH-08): the page from the viewport's top down to Chrome's
+     * ~10 screens, stitched by [PageCapture] as a bitmap the caller crops and writes. The strips
+     * are copies of the window where the page is, so the page must be on screen and alone in its
+     * frame throughout: the chrome mounts the editor only once the picture is in its hands (the
+     * chrome lies under the pages; a sheet over the page would hide it), and the card whose
+     * Capture more asked is on its way out as this is called – its strip along the frame's
+     * bottom edge is the chrome's, not the page's ([cover]), and the copies wait for the strip
+     * to close over the page again. A strip that stays – a banner at rest above the page
+     * (default browser, add to home screen) – is not waited on: past the deadline the cover is
+     * held at 0 for the capture, so the page draws over the banner and every copy of the frame
+     * is the page alone, and released with the result ([ContentCover.hold]).
+     */
+    fun captureLong(callback: (PageCapture.Capture?) -> Unit) {
+        val radius = radiusPx
+        val square = { on: Boolean ->
+            radiusPx = if (on) 0f else radius
+            invalidateOutline()
+        }
+        val capture = PageCapture(this, host.activity.window, encoder, square, ::evaluate)
+        val deadline = SystemClock.uptimeMillis() + COVER_CLEAR_WAIT_MS
+        fun whenUncovered() {
+            if (!cover.active) {
+                capture.runBitmap(CapturePlan.MODE_LONG, null, callback)
+            } else if (SystemClock.uptimeMillis() >= deadline) {
+                cover.hold()
+                capture.runBitmap(CapturePlan.MODE_LONG, null) { result ->
+                    cover.release()
+                    callback(result)
+                }
+            } else {
+                postOnAnimation { whenUncovered() }
+            }
+        }
+        whenUncovered()
     }
 
     /**
@@ -2179,6 +2237,13 @@ class TabWebView(
 
         /** Longer than any tool budget (browser_wait_for allows 30 s) but shorter than the socket's. */
         private const val EVAL_TIMEOUT_MS = 45_000L
+
+        /**
+         * The most [captureLong] waits for the message strip at the frame's edge to close over
+         * the page (the card's exit and the strip's spring take a fraction of it); a strip still
+         * there at the end of it stays for good, and is held out of the capture instead.
+         */
+        private const val COVER_CLEAR_WAIT_MS = 1_500L
 
         /** A redirect chain or a burst of pushStates must not copy the window once per hop. */
         private const val REMEMBER_THROTTLE_MS = 300L

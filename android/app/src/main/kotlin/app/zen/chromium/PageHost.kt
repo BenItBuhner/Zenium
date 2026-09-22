@@ -76,6 +76,13 @@ interface PageHost {
     fun viewEvent(tabId: String, name: String, payload: Any?)
 
     /**
+     * A page's message on its way to the core, for a host that keeps part of it for itself: the
+     * browser window writes a share call's files to its cache and forwards their addresses
+     * (`Share.spillPageShare`, SH-14). The default forwards as is. Main thread, `then` once.
+     */
+    fun preparePageMessage(message: JSONObject, then: (JSONObject) -> Unit) = then(message)
+
+    /**
      * `tab`'s renderer went (`onRenderProcessGone`). Every WebView of the app shares the one
      * renderer, so the browser window classifies the exit once for every page on screen and
      * remembers it across the chrome's rebuild ([RendererExits]); the answer is the `crashed`

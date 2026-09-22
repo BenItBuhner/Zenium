@@ -1181,6 +1181,7 @@ export class TabManager {
     this.browser.fullscreen.onTabGone(tabId)
     this.browser.screenCapture.cancelForTab(tabId)
     this.browser.shares.cancelForTab(tabId)
+    this.browser.textFragments.cancelForTab(tabId)
     this.browser.geolocation.onTabGone(tabId)
     this.browser.readAloud.onTabGone(tabId)
     if (this.owners.has(tabId)) view.detach()
