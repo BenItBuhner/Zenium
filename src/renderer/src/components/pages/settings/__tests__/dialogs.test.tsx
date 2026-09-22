@@ -129,6 +129,33 @@ describe('a desktop item dialog and its rows (§9.24)', () => {
     expect(onPress).not.toHaveBeenCalled()
   })
 
+  it('the container carries the shared no-ring mark and its controls do not: role=dialog with tabindex=-1 (§1, §9.22)', () => {
+    const row = itemRow(
+      () => undefined,
+      () => undefined
+    )
+    const groups: RowGroup[] = [{ id: 'sync-devices', heading: 'Other devices', rows: [row] }]
+    const h = render(
+      <FrameDialogHost>
+        <DialogStack
+          requests={[{ kind: 'item', rowId: row.id }]}
+          groups={groups}
+          ctx={ctx}
+          closeTop={() => undefined}
+        />
+      </FrameDialogHost>
+    )
+    // main.css: `:root [role='dialog'][tabindex='-1']:focus-visible { outline: none }` – the
+    // one shared rule (focusRing.test.ts pins it) reaches the root and nothing inside it.
+    const mark = "[role='dialog'][tabindex='-1']"
+    const dialog = h.querySelector<HTMLElement>('[data-dialog]')!
+    expect(dialog.matches(mark)).toBe(true)
+    expect(dialog.classList.contains('zen-v2-dialog')).toBe(true)
+    const controls = [...dialog.querySelectorAll<HTMLElement>('button, input, [tabindex]')]
+    expect(controls.length).toBeGreaterThan(0)
+    expect(controls.filter((el) => el.matches(mark))).toEqual([])
+  })
+
   it('the first group’s heading drops its 20 under the title block, which carries its own 16 (§9.23, §10.3 as ruled on #239)', () => {
     const row = itemRow(
       () => undefined,

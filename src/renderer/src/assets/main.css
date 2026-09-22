@@ -383,6 +383,22 @@
   outline-offset: var(--v2-ring-offset);
 }
 
+/*
+ * A container that holds the focus by design draws no ring (§1, §9.22): a dialog's root – the
+ * settings dialogs, a prompt, a popover or a sheet with `role="dialog"` – takes the focus as it
+ * opens when it has no field to hand it to, and gives it up to the first Tab. It is not a
+ * control, and a ring round a whole panel with nothing tabbable inside marked nothing. The mark
+ * is `tabindex="-1"`: a container the keyboard is sent to and cannot reach by Tab – so the
+ * dialog's own controls keep their ring, and no dialog states `outline: none` for itself. The
+ * `:root` carries the weight over the coarse-pointer form of the v2 ring rule above (0,4,0),
+ * which a phone's `data-pointer` would otherwise put ahead; the rule sits under it so it wins
+ * the tie, and beats the base floor and the plain form outright.
+ */
+:root [role='dialog'][tabindex='-1']:focus-visible,
+:root [role='alertdialog'][tabindex='-1']:focus-visible {
+  outline: none;
+}
+
 /* Zen clamps its primary colour's lightness before using it as ink or a fill; so does the chrome. */
 @supports (color: oklch(from red clamp(0.3, l, 0.6) c h)) {
   :root {
@@ -882,8 +898,10 @@
  * bookmarks strip's clip or a bar the control fills to the edge cannot cut it, and a control
  * scrolled flush to a scroller's edge keeps the whole ring. The base layer is the floor: a
  * component's own rule wins – the `zen-v2-` primitives' shared ring, a field's, a chip whose ring
- * its pill or face carries – and so does `outline-none` on a container that focuses itself by
- * design (a popover, a dialog, a listbox, a menu whose cursor is its row's fill) and shows no ring.
+ * its pill or face carries – and so does the shared no-ring rule for a container that focuses
+ * itself by design (`[role='dialog'][tabindex='-1']:focus-visible` beside the v2 ring rule: a
+ * dialog, a popover or a sheet), or `outline-none` on a listbox or a menu whose cursor is its
+ * row's fill.
  *
  * The ring snaps on whole, as Chrome's does. At rest every element already holds the ring's
  * colour, width and offset – with the style at `none` nothing shows – so a control's own
@@ -3371,10 +3389,6 @@
     corner-shape: var(--zen-corner);
     transform-origin: 50% 100%;
     will-change: transform;
-  }
-  /* The dialog takes the focus itself when its first control must not (BottomSheet); no ring. */
-  .zen-sheet:focus {
-    outline: none;
   }
   /*
    * The header after the grip strip: 48 tall, the title 17/600 at line-height 22 centred over
