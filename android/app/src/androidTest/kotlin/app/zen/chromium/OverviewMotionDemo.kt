@@ -953,7 +953,8 @@ class OverviewMotionDemo : DemoHarness("overview-motion-demo-state.json", "overv
         private const val DELTA = "tab_delta"
         private const val RESEARCH = "folder_research"
         private const val GROUP = ".zen-group"
-        private const val GROUP_HEADER = "[aria-label=\"Group Research\"]"
+        /** The group's header, by the accessible name the chrome gives it, matched without its count ([groupCard]). */
+        private val GROUP_HEADER = groupCard("Research").selector
         private const val NEW_TAB = ".zen-overview-new"
         private const val SPACES = "[aria-label=\"Spaces\"]"
         /** The names the sampler logs the group card and the New Tab card under. */

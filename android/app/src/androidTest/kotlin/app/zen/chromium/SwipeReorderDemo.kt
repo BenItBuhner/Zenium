@@ -49,7 +49,7 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         f.moveBy(0f, -0.75f * overviewTravel + n, 400)
         f.up()
         SystemClock.sleep(3_000)
-        tap("Group Research")
+        tap(RESEARCH)
         SystemClock.sleep(2_500)
 
         // 2. Swipe Coffee a third of the way and hold: it follows the finger, tilted and a little
@@ -110,7 +110,7 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
 
         // 7. Hold the new group's header for its sheet and close the group: the whole card
         //    collapses out.
-        val header = show("Group Group")
+        val header = show(NEW_GROUP)
         f.press(header.exactCenterX(), header.exactCenterY())
         f.hold(300)
         f.up()
@@ -124,7 +124,7 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
         waitForGone("Close Group (2 Tabs)", 8_000)
         if (!gridBack(6_000)) {
             touchFault("the grid did not come back into the tree after the group sheet")
-        } else if (waitForGone("Group Group", 6_000)) {
+        } else if (waitForGone(NEW_GROUP, 6_000)) {
             Log.i(tag, "the group closed under the finger")
         } else {
             touchFault("the touch on the group sheet's Close group left the group's card in the grid")
@@ -141,25 +141,31 @@ class SwipeReorderDemo : DemoHarness("overview-demo-state.json", "overview-swipe
     private fun show(vararg labels: String): Rect =
         reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
 
+    /** [show] for a group's card ([groupCard]: its name carries the group's count, so it is matched, not read). */
+    private fun show(card: GroupCard): Rect = reveal(card) ?: error("no $card exists")
+
     /** Whether the grid's other cards (the folded Research group, the RFC card) are back in the tree within `timeoutMs`. */
     private fun gridBack(timeoutMs: Long): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
-            if (findAny("Group Research", RFC_TITLE) != null) return true
+            if (findByLabel(RESEARCH) != null || findByLabel(RFC_TITLE) != null) return true
             SystemClock.sleep(200)
         }
         return false
     }
 
-    /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
-    private fun tap(label: String) {
-        waitFor(label) ?: error("no $label to tap")
-        val target = show(label)
+    /** Tap the group's card once it exists, scrolled into view: its header, which folds and unfolds the group. */
+    private fun tap(card: GroupCard) {
+        waitFor(card) ?: error("no $card to tap")
+        val target = show(card)
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 
     private companion object {
         const val RFC_TITLE = "RFC 2324: Hyper Text Coffee Pot Control Protocol (HTCPCP/1.0)"
+        /** The seeded Research group's card, and the card of the group step 6 makes (named "Group", the chrome's default). */
+        val RESEARCH = groupCard("Research")
+        val NEW_GROUP = groupCard("Group")
         /** The lifted finger's pause where nothing is pending before its one move onto the merge target (step 6). */
         const val EDGE_PAUSE = 400L
     }

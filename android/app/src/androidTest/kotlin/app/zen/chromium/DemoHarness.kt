@@ -410,7 +410,35 @@ abstract class DemoHarness(
             Rect().also { node.getBoundsInScreen(it) }
         }
 
+    /** [findByLabel] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    protected fun findByLabel(matches: (String) -> Boolean): Rect? =
+        findNode(matches)?.let { node -> Rect().also { node.getBoundsInScreen(it) } }
+
     private fun findNode(label: String): AccessibilityNodeInfo? = findNode { it == label }
+
+    /**
+     * The overview's card for the tab group named `name`, by the accessible name the chrome gives
+     * its header since #237 – "NAME, tab group, N tabs" (`groupCardLabel`, overviewLabels.ts) –
+     * matched on the name and the words "tab group" alone, never on the count: the count moves as
+     * tabs join and leave the group, and a driver that read the whole name broke the first time
+     * the name changed under it (three drivers read "Group Research", the name before #237, until
+     * #315's run 35711026068 found none). One matcher for both ways a driver reads the grid: the
+     * card is the predicate for the accessibility tree ([findByLabel], [reveal], [waitFor] and
+     * [waitForGone] take it where they take a label), [GroupCard.selector] the same match for the
+     * grid's DOM.
+     */
+    class GroupCard internal constructor(name: String) : (String) -> Boolean {
+        /** What stands before the count in the card's accessible name: "Research, tab group". */
+        val head: String = name.trim().let { if (it.isEmpty()) "Tab group" else "$it, tab group" }
+
+        /** Whether an accessible name – the tree's, or a DOM `aria-label` – is this card's. */
+        override fun invoke(label: String): Boolean = label == head || label.startsWith("$head,")
+
+        /** The card's header in the grid's DOM, for a driver that reads it with `document.querySelector`. */
+        val selector: String = "[aria-label^=\"$head\"]"
+
+        override fun toString(): String = head
+    }
 
     /**
      * A control of the phone bar's pill by its label – the site-information glyph, the lock, a
@@ -529,6 +557,14 @@ abstract class DemoHarness(
         return findByLabel(label)
     }
 
+    /** [reveal] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    protected fun reveal(matches: (String) -> Boolean): Rect? {
+        val node = findNode(matches) ?: return null
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+        SystemClock.sleep(1_500)
+        return findByLabel(matches)
+    }
+
     /**
      * Click the nearest clickable ancestor of a labelled node through the accessibility tree – the
      * bounds it reports for content inside a scrolled list lag behind on the emulator, so a touch
@@ -561,6 +597,26 @@ abstract class DemoHarness(
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             if (findByLabel(label) == null) return true
+            SystemClock.sleep(200)
+        }
+        return false
+    }
+
+    /** [waitFor] for the first node whose label or text satisfies `matches` (a [groupCard]). */
+    protected fun waitFor(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Rect? {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            findByLabel(matches)?.let { return it }
+            SystemClock.sleep(200)
+        }
+        return null
+    }
+
+    /** [waitForGone] for every node whose label or text satisfies `matches` (a [groupCard]). */
+    protected fun waitForGone(matches: (String) -> Boolean, timeoutMs: Long = 5_000): Boolean {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (findByLabel(matches) == null) return true
             SystemClock.sleep(200)
         }
         return false
@@ -1892,6 +1948,9 @@ abstract class DemoHarness(
         /** The bar's three-dot button, and the grabber of the menu sheet it opens. */
         const val MENU_LABEL = "Menu"
         const val MENU_HANDLE_LABEL = "Resize menu"
+
+        /** The overview's card for the tab group named `name`, matched without its count: [GroupCard]. */
+        fun groupCard(name: String): GroupCard = GroupCard(name)
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
         /**

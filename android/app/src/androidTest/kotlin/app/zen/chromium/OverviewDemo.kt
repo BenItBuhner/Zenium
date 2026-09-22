@@ -70,7 +70,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(2_500)
 
         // 3. Collapse the Research group (it also keeps the loose cards in reach below).
-        tap("Group Research")
+        tap(groupCard("Research"))
         SystemClock.sleep(2_000)
 
         // 4. Hold a card and let go: its actions. Make a group and name it. Tabs that were never
@@ -101,7 +101,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
 
         // 6. Move a tab between groups: Tea out of the new group onto the News group above it.
-        val news = show("Group News")
+        val news = show(groupCard("News"))
         val teaAgain = show("Tea - Wikipedia")
         f.press(teaAgain.exactCenterX(), teaAgain.exactCenterY())
         f.moveBy(0f, -n, 120)
@@ -111,7 +111,7 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         SystemClock.sleep(3_000)
 
         // 7. Expand Research again: three groups on screen.
-        tap("Group Research")
+        tap(groupCard("Research"))
         SystemClock.sleep(2_500)
         shot("05-groups")
 
@@ -140,10 +140,20 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
     private fun show(vararg labels: String): Rect =
         reveal(*labels) ?: error("none of ${labels.joinToString()} exists")
 
+    /** [show] for a group's card ([groupCard]: its name carries the group's count, so it is matched, not read). */
+    private fun show(card: GroupCard): Rect = reveal(card) ?: error("no $card exists")
+
     /** Tap the element with this label once it exists, scrolled into view if it is in the grid. */
     private fun tap(label: String) {
         waitFor(label) ?: error("no $label to tap")
         val target = show(label)
+        Finger().tap(target.exactCenterX(), target.exactCenterY())
+    }
+
+    /** [tap] for a group's card: its header, which folds and unfolds the group. */
+    private fun tap(card: GroupCard) {
+        waitFor(card) ?: error("no $card to tap")
+        val target = show(card)
         Finger().tap(target.exactCenterX(), target.exactCenterY())
     }
 }
