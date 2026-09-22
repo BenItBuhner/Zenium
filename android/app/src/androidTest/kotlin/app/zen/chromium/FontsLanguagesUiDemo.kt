@@ -76,10 +76,13 @@ import java.io.File
  *
  * The tree is read past UiAutomation's cache wherever a claim rests on it ([awaitRow],
  * [fingerWhere], [poll]: the cache dropped and a frame asked of the chrome each round, the
- * harness's remedy above [dropTreeCache]): the first run read Look and Feel 1.2 s after its
- * drill-in and found no row while the screen showed them all, and every section after it went
- * the same way. A text field is found by its hint ([findField]): the WebView keeps a field's
- * name there, not in its text.
+ * harness's remedy above [dropTreeCache]). Where the WebView's tree lags a section's drill-in
+ * from the landing – it did for every Settings row in runs 35747286900 and 35754718133, fifteen
+ * seconds on, while the screen and the chrome's document had them all, as in #305's run – the
+ * chrome's own document places the finger ([awaitRow], [rowPoint], [controlPoint],
+ * [optionPoint]) and the finding says so; a sheet's claims are the document's word ([sheetUp],
+ * [sheetLists]) with the tree's noted beside it. A text field is found by its hint
+ * ([findField]): the WebView keeps a field's name there, not in its text.
  */
 @RunWith(AndroidJUnit4::class)
 class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json", MEDIA_PREFIX, "fonts-languages-demo") {
@@ -247,27 +250,137 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     }
 
     /**
-     * The Settings row starting with `label` scrolled into view ([revealRow]), waited for past
-     * UiAutomation's cache first: the tree trails a section's drill-in by seconds on the software
-     * GPU, so each round drops the cache and asks the chrome for a frame ([freshNodes],
-     * [nudgeFrame]) for up to `timeoutMs`. Null, with a finding naming what the chrome's document
-     * holds instead, when the tree never listed the row.
+     * The Settings row `rowId` (its label `label`) scrolled into view, and where it is on screen.
+     * The tree first: read past UiAutomation's cache ([freshNodes], a frame asked of the chrome
+     * between reads) for up to `timeoutMs`, then [revealRow]'s bounds. When the tree never lists
+     * it, the chrome's own box for `[data-row=rowId]` once the document has scrolled the row to
+     * the middle ([domRow]) – with a finding saying the document stood in. Null, with the rows
+     * the document holds, when the document has no such row either.
+     *
+     * Why the document stands in: the WebView's accessibility tree trails a section's drill-in
+     * from the landing (the landing turning inert as the pane mounts) and stays behind until a
+     * later change – a sheet coming up – wakes it: runs 35747286900 and 35754718133 polled fifteen
+     * seconds for Colour scheme while the screen and the document had every row, and #305's run
+     * met the same (its finger went to the DOM's box too), while a section opened straight at
+     * its URL (the warm-up's `page.open`, #305's deep-linked Privacy) is listed at once. Chromium
+     * itself serialises the transition within a frame (the AX tree read over CDP in the preview
+     * host has the region and its rows 100 ms after the tap, the inert landing's rows gone), so
+     * the rows are there for assistive tech; the emulator's WebView is what lags.
      */
-    private fun awaitRow(label: String, timeoutMs: Long = ROW_WAIT_MS): Rect? {
+    private fun awaitRow(rowId: String, label: String, timeoutMs: Long = ROW_WAIT_MS): Rect? {
         val start = SystemClock.uptimeMillis()
-        while (true) {
+        while (SystemClock.uptimeMillis() - start < timeoutMs) {
             if (freshNodes { it.startsWith(label) }.isNotEmpty()) {
                 val took = SystemClock.uptimeMillis() - start
                 if (took > 1_000) finding("  (the tree listed the $label row after $took ms)")
-                return revealRow(label)
-            }
-            if (SystemClock.uptimeMillis() - start >= timeoutMs) {
-                finding("  (the tree did not list the $label row within $timeoutMs ms; the chrome's rows: ${domRows()})")
-                return null
+                revealRow(label)?.let { return it }
+                break
             }
             nudgeFrame()
             SystemClock.sleep(250)
         }
+        val box = domRow(rowId)
+        if (box == null) {
+            finding("  (neither the tree nor the chrome's document has the $label row; the document's rows: ${domRows()})")
+            return null
+        }
+        finding("  (the tree has not listed the $label row ${SystemClock.uptimeMillis() - start} ms after the drill-in; the chrome's document stands in: its box $box)")
+        return box
+    }
+
+    /**
+     * The chrome document's box for the Settings row `rowId`, scrolled to the middle of its pane
+     * first (an instant scroll, so the box is at rest when read); null when the document has no
+     * such row.
+     */
+    private fun domRow(rowId: String): Rect? {
+        val scrolled = chromeString(
+            "(function(){var r=document.querySelector('[data-row=\"$rowId\"]');if(!r)return 'none';" +
+                "r.scrollIntoView({block:'center',behavior:'instant'});return 'ok'})()"
+        )
+        if (scrolled != "ok") return null
+        SystemClock.sleep(400)
+        return chromeRect("[data-row=\"$rowId\"]")?.takeUnless { it.isEmpty }
+    }
+
+    /**
+     * Where a finger lands on the Settings row `rowId` reading `label`: [awaitRow]'s box – the
+     * tree's when it lists the row, the document's otherwise – inside the touchable window. Null,
+     * with a finding, when neither has the row or no part of it can be touched.
+     */
+    private fun rowPoint(rowId: String, label: String): PointF? {
+        val box = awaitRow(rowId, label) ?: return null
+        return touchPoint(box) ?: run {
+            finding("  no part of the $label row ($box) is inside the touchable window")
+            null
+        }
+    }
+
+    /**
+     * Where a finger lands on a control reading `label` inside the section or a sheet: the
+     * tree's node ([fingerOn]'s match, `prefix` as there) when the tree lists it within
+     * `timeoutMs`, else the chrome document's box for `element` (a script evaluating to the
+     * element, [chromeRectOf]) – the same lag as [awaitRow]'s, met on a row's own control (a
+     * language row's ⋯) or, should a sheet not wake the tree, its options. A finding says when
+     * the document stood in; null when neither has the control.
+     */
+    private fun controlPoint(label: String, element: String, prefix: Boolean = false, timeoutMs: Long = CONTROL_WAIT_MS): PointF? {
+        val node = awaitFresh(timeoutMs, "'$label'") {
+            it == label || (prefix && (it.startsWith("$label ") || it.startsWith("$label\n") || it.startsWith("$label,")))
+        }
+        if (node != null) {
+            val bounds = steadyBounds(node)
+            val point = bounds?.let { touchPoint(it) }
+            if (point != null) return point
+            finding("  '$label' is in the tree but not to touch (${bounds ?: "gone"}); the document is asked")
+        }
+        val box = chromeRectOf(element)?.takeUnless { it.isEmpty } ?: run {
+            finding("  nothing on screen reads '$label' (the tree within $timeoutMs ms, the document neither)")
+            return null
+        }
+        finding("  (the tree has not listed '$label'; the chrome's document stands in: its box $box)")
+        return touchPoint(box) ?: run {
+            finding("  no part of '$label' ($box) is inside the touchable window")
+            null
+        }
+    }
+
+    /**
+     * A sheet's option or item reading `text` – a picker's radio row, a menu sheet's item, the
+     * language picker's row – through [controlPoint], the document's element the open sheet's
+     * control whose label starts with `text` ([sheetControlJs]).
+     */
+    private fun optionPoint(text: String, prefix: Boolean = false): PointF? = controlPoint(text, sheetControlJs(text), prefix = prefix)
+
+    /**
+     * A script evaluating to the open sheet's control (a radio row, a menu item, an option, a
+     * button) whose label – its `.zen-settings-label`, else its own text – is `text` or starts
+     * with it before a space or a line; null without a sheet or such a control.
+     */
+    private fun sheetControlJs(text: String): String =
+        "(function(){var q=${JSONObject.quote(text)};var root=document.querySelector('.zen-sheet, [role=\"dialog\"]');if(!root)return null;" +
+            "var cs=Array.from(root.querySelectorAll('[role=\"radio\"], [role=\"menuitem\"], [role=\"option\"], button'));" +
+            "return cs.find(function(c){var l=c.querySelector('.zen-settings-label')||c;var t=(l.textContent||'').trim();" +
+            "return t===q||t.indexOf(q+' ')===0||t.indexOf(q+'\\n')===0})||null})()"
+
+    /** Whether a sheet (a picker, a menu sheet, the Text preferences) stands in the chrome's document. */
+    private fun sheetUp(): Boolean = chromeHas(".zen-sheet, [role=\"dialog\"]")
+
+    /** Whether the open sheet lists a control whose label starts with `text` (the document's word, past the tree's lag). */
+    private fun sheetLists(text: String): Boolean = chromeJs("Boolean(${sheetControlJs(text)})").trim() == "true"
+
+    /**
+     * Whether the value row `rowId` reads `label` … `value` – the tree's word ([rowReads]) or, past
+     * its lag, the document's: the row's accessible name (`aria-label`, "Colour scheme, Dark"
+     * since #305) else its text.
+     */
+    private fun rowValueReads(rowId: String, label: String, value: String): Boolean {
+        if (rowReads(label, value)) return true
+        val name = chromeString(
+            "(function(){var r=document.querySelector('[data-row=\"$rowId\"]');if(!r)return '';" +
+                "return (r.getAttribute('aria-label')||r.textContent||'').replace(/\\s+/g,' ').trim()})()"
+        )
+        return name.startsWith(label) && name.endsWith(value)
     }
 
     /** The bar's Menu button, where [tapMenuButton] puts the finger. */
@@ -355,16 +468,14 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
      * `measured`. True once the row reads `to`.
      */
     private fun colourScheme(from: String, to: String, measured: Boolean): Boolean {
-        if (awaitRow(COLOR_SCHEME_ROW) == null) {
-            check("Look and Feel lists the $COLOR_SCHEME_ROW row", false)
+        val row = rowPoint(COLOR_SCHEME_ROW_ID, COLOR_SCHEME_ROW) ?: run {
+            check("Look and Feel lists the $COLOR_SCHEME_ROW row to touch", false)
             return false
         }
         SystemClock.sleep(600)
-        val row = fingerOn(COLOR_SCHEME_ROW, prefix = true) ?: run {
-            check("the $COLOR_SCHEME_ROW row is on screen to touch", false)
-            return false
-        }
-        val listed = { findNode { it == to } != null && findNode { it == "Follow system" } != null }
+        // The picker is up once the document's sheet lists the option and Follow system (the
+        // tree is asked too, and noted when it lags: the sheet has woken it in every run so far).
+        val listed = { sheetLists(to) && sheetLists("Follow system") }
         val opened = if (measured) {
             scene("colour-scheme-picker-open", JankBudget.Kind.OPEN, took = listed) { Finger().tap(row) }
         } else {
@@ -384,19 +495,20 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             snap("colour-scheme-picker")
             beat()
         }
-        val option = fingerOn(to) ?: run {
+        finding("  the tree's word on the picker: $to ${if (findNode { it == to } != null) "listed" else "not listed"}, Follow system ${if (findNode { it == "Follow system" } != null) "listed" else "not listed"}")
+        val option = optionPoint(to) ?: run {
             check("the picker lists $to to touch", false)
             back()
             return false
         }
-        val reads = { rowReads(COLOR_SCHEME_ROW, to) && findNode { it == "Follow system" } == null }
+        val reads = { rowValueReads(COLOR_SCHEME_ROW_ID, COLOR_SCHEME_ROW, to) && !sheetUp() }
         val took = if (measured) {
             scene("colour-scheme-picker-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = reads) { Finger().tap(option) }
         } else {
             Finger().tap(option)
             poll(8_000, reads)
         }
-        finding("  $COLOR_SCHEME_ROW: $from -> ${if (took) to else "still $from"} (the pick closed the sheet: ${findNode { it == "Follow system" } == null})")
+        finding("  $COLOR_SCHEME_ROW: $from -> ${if (took) to else "still $from"} (the pick closed the sheet: ${!sheetUp()}; the tree reads the row: ${rowReads(COLOR_SCHEME_ROW, to)})")
         if (!took) touchFault("a touch on $to did not take: the $COLOR_SCHEME_ROW row does not read $to with the picker gone")
         check("a finger on $to closes the picker with the row reading $to (§9.13)", took)
         return took
@@ -412,7 +524,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("Look and Feel opens for the fonts group", false)
             return
         }
-        if (awaitRow(FONT_SIZE_ROW) == null) {
+        if (awaitRow(FONT_SIZE_ROW_ID, FONT_SIZE_ROW) == null) {
             check("Look and Feel carries the Customise fonts group with its Font size row", false)
             ensureChromeClear()
             return
@@ -446,7 +558,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         snap("customise-fonts-size-20")
 
         // Minimum font size: to 12 px. The article's 11 px small print is lifted to 12.
-        awaitRow(MINIMUM_FONT_SIZE_ROW)
+        awaitRow(MINIMUM_FONT_SIZE_ROW_ID, MINIMUM_FONT_SIZE_ROW)
         SystemClock.sleep(600)
         val minimumTook = dragSlider("fonts-minimum-size", MINIMUM_FONT_SIZE_MAX_INDEX, MINIMUM_FONT_SIZE_TARGET_INDEX, "minimum-font-size-slider-drag") {
             fonts().optInt("minimumSize") == 12
@@ -458,23 +570,22 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Standard font: the action row opens the phone's picker sheet (each face drawn in
         // itself), Cursive under a finger sets the family and closes the sheet.
-        awaitRow(STANDARD_FONT_ROW)
+        val familyRow = rowPoint(STANDARD_FONT_ROW_ID, STANDARD_FONT_ROW)
         SystemClock.sleep(600)
-        val familyRow = fingerOn(STANDARD_FONT_ROW, prefix = true)
         if (familyRow != null) {
-            val listed = { findNode { it == "Cursive" } != null && findNode { it == "Serif monospace" } != null }
+            val listed = { sheetLists("Cursive") && sheetLists("Serif monospace") }
             val opened = scene("font-family-picker-open", JankBudget.Kind.OPEN, took = listed) { Finger().tap(familyRow) }
             check("a finger on Standard font opens the family picker sheet listing the fonts.xml aliases", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val faces = pickerFaces()
-                finding("  the picker's rows and the face each is drawn in: $faces")
+                finding("  the picker's rows and the face each is drawn in: $faces; the tree lists Cursive: ${findNode { it == "Cursive" } != null}")
                 check("each family row is drawn in its own face (RadioOption.font)", faces.count { it.second.contains("cursive") } >= 1 && faces.count { it.second.contains("monospace") } >= 1)
                 snap("standard-font-picker")
                 beat()
-                val cursive = fingerOn("Cursive")
+                val cursive = optionPoint("Cursive")
                 if (cursive != null) {
-                    val set = { fonts().optString("standard") == "cursive" && findNode { it == "Serif monospace" } == null }
+                    val set = { fonts().optString("standard") == "cursive" && !sheetUp() }
                     val took = scene("font-family-picker-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = set) { Finger().tap(cursive) }
                     val family = poll(6_000) { articleValue(BODY_FONT_FAMILY_JS) == "cursive" }
                     finding("  after Cursive: settings.fonts.standard=${fonts().optString("standard")}, the row reads ${rowText("fonts-standard-phone")}, the article's body font-family behind Settings ${articleValue(BODY_FONT_FAMILY_JS)} (cursive: $family)")
@@ -493,7 +604,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Off the defaults: the Reset row is listed; the preview follows the committed values.
         SystemClock.sleep(800)
-        val reset = awaitRow(RESET_ROW)
+        val reset = awaitRow(RESET_ROW_ID, RESET_ROW)
         val after = groupRows("fonts")
         finding("  the group now: $after; preview ${previewMetrics()}")
         check("the Reset fonts row appears once anything stands off the defaults", reset != null && "fonts-reset" in after)
@@ -561,11 +672,12 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         // Reset fonts: the action row under a finger; the open article back at 16 px, no floor,
         // the platform's face – in place.
         var reset = false
-        if (awaitRow(RESET_ROW) != null) {
+        val resetRow = rowPoint(RESET_ROW_ID, RESET_ROW)
+        if (resetRow != null) {
             SystemClock.sleep(600)
-            reset = pressExpecting(RESET_ROW, "settings.fonts back at the defaults", timeoutMs = 6_000, prefix = true) {
-                fonts().let { it.optInt("size") == 16 && it.optInt("minimumSize") == 0 && it.isNull("standard") }
-            }
+            Finger().tap(resetRow)
+            reset = poll(6_000) { fonts().let { it.optInt("size") == 16 && it.optInt("minimumSize") == 0 && it.isNull("standard") } }
+            if (!reset) touchFault("a touch on '$RESET_ROW' did not take: settings.fonts not back at the defaults within 6000 ms (${fonts()})")
             val behind = poll(6_000) { articleValue(BODY_FONT_SIZE_JS) == "16px" && articleValue(SMALL_FONT_SIZE_JS) == "11px" && articleValue(BODY_FONT_FAMILY_JS) != "cursive" }
             finding("  after Reset fonts: fonts ${fonts()}; behind Settings the article's body ${articleValue(BODY_FONT_SIZE_JS)} ${articleValue(BODY_FONT_FAMILY_JS)}, small print ${articleValue(SMALL_FONT_SIZE_JS)} (back at the defaults: $behind); the Reset row listed: ${"fonts-reset" in groupRows("fonts")}")
             check("Reset fonts puts settings.fonts back at the defaults and the row leaves the group", reset && "fonts-reset" !in groupRows("fonts"))
@@ -599,7 +711,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
             check("the app menu's Settings opens Languages", false)
             return
         }
-        if (awaitRow(ADD_LANGUAGE_ROW) == null) {
+        if (awaitRow(ADD_LANGUAGE_ROW_ID, ADD_LANGUAGE_ROW) == null) {
             check("Languages carries the Preferred languages group with its Add language row", false)
             ensureChromeClear()
             return
@@ -618,21 +730,21 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // German's ⋯: the menu sheet titled German – Move Up, Move Down (at .4, the last row),
         // Remove – and Move Up under a finger puts German first.
-        val dots = fingerOn("Options for German")
+        val dots = controlPoint("Options for German", "document.querySelector('[data-row=\"languages-preferred:de\"] [aria-label=\"Options for German\"]')")
         if (dots != null) {
-            val listed = { findNode { it == "Move Up" } != null && findNode { it == "Remove" } != null }
+            val listed = { sheetLists("Move Up") && sheetLists("Remove") }
             val opened = scene("language-menu-open", JankBudget.Kind.OPEN, took = listed) { Finger().tap(dots) }
             check("a finger on German's ⋯ opens its menu sheet (Move Up / Move Down / Remove)", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val items = menuItems()
-                finding("  the menu's items: $items")
+                finding("  the menu's items: $items; the tree lists Move Up: ${findNode { it == "Move Up" } != null}")
                 check("Move Down is disabled on the last row, Move Up and Remove enabled (§9.30: listed at .4, never dropped)", items.any { it.startsWith("Move Down") && it.endsWith("disabled") } && items.any { it.startsWith("Move Up") && it.endsWith("enabled") } && items.any { it.startsWith("Remove") && it.endsWith("enabled") })
                 snap("language-menu")
                 beat()
-                val up = fingerOn("Move Up")
+                val up = optionPoint("Move Up")
                 if (up != null) {
-                    val moved = { languages().let { it.size == 2 && it[0] == "de" } && findNode { it == "Move Up" } == null }
+                    val moved = { languages().let { it.size == 2 && it[0] == "de" } && !sheetUp() }
                     val took = scene("language-menu-move-up", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = moved) { Finger().tap(up) }
                     finding("  after Move Up: languages ${languages()}; rows ${groupRows("preferred")}")
                     check("Move Up puts German first (settings.languages de, en-US) and the rows follow the order", took && groupRows("preferred").take(2) == listOf("languages-preferred:de", "languages-preferred:en-US"))
@@ -653,20 +765,19 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
 
         // Add language: the picker sheet with its filter field; `basq` typed narrows the list to
         // Basque; Basque under a finger adds it and closes the sheet.
-        awaitRow(ADD_LANGUAGE_ROW)
+        val add = rowPoint(ADD_LANGUAGE_ROW_ID, ADD_LANGUAGE_ROW)
         SystemClock.sleep(600)
-        val add = fingerOn(ADD_LANGUAGE_ROW, prefix = true)
         if (add != null) {
-            // The sheet is up once the chrome's document has the filter field and the tree lists
-            // the catalogue's first row (the field itself is an EditText named by its hint, which
-            // the label reads never see: [findField]).
-            val listed = { chromeHas(FILTER_SELECTOR) && findNode { it.startsWith("Afrikaans") } != null }
+            // The sheet is up once the chrome's document has the filter field and the catalogue's
+            // first row (the field itself is an EditText named by its hint, which the label reads
+            // never see: [findField]); whether the tree lists the row is noted below.
+            val listed = { chromeHas(FILTER_SELECTOR) && sheetLists("Afrikaans") }
             val opened = scene("add-language-picker-open", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = listed) { Finger().tap(add) }
             check("a finger on Add language opens the picker sheet with the filter field pinned over the list", opened)
             if (opened) {
                 SystemClock.sleep(800)
                 val all = pickerCount()
-                finding("  the picker lists $all languages; the filter field reads \"${filterValue()}\"; the tree's field: ${describeNode(findField(FILTER_LABEL))}")
+                finding("  the picker lists $all languages; the filter field reads \"${filterValue()}\"; the tree's field: ${describeNode(findField(FILTER_LABEL))}; the tree lists Afrikaans: ${findNode { it.startsWith("Afrikaans") } != null}")
                 snap("add-language-picker")
                 beat()
                 val field = fieldPoint(FILTER_LABEL, FILTER_SELECTOR)
@@ -677,7 +788,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                     finding("  the filter field under a finger: focused=$focused, keyboard up=$ime")
                     if (!focused) touchFault("a touch on the filter field did not focus it")
                     typeText("basq")
-                    val narrowed = poll(6_000) { pickerCount() == 1 && findNode { it.startsWith("Basque") } != null }
+                    val narrowed = poll(6_000) { pickerCount() == 1 && pickerLabels().firstOrNull() == "Basque" }
                     finding("  typed basq: the field reads \"${filterValue()}\", the list has ${pickerCount()} row(s): ${pickerLabels()}")
                     check("the filter narrows the list as it is typed (basq → Basque alone)", narrowed && filterValue() == "basq")
                     SystemClock.sleep(600)
@@ -689,7 +800,7 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
                         SystemClock.sleep(800)
                         check("the back with the keyboard up puts the keyboard away and leaves the sheet standing", !imeShown() && chromeHas(FILTER_SELECTOR) && filterValue() == "basq")
                     }
-                    val basque = fingerWhere("Basque") { it == "Basque" || it.startsWith("Basque ") || it.startsWith("Basque\n") }
+                    val basque = optionPoint("Basque", prefix = true)
                     if (basque != null) {
                         val added = { languages().contains("eu") && !chromeHas(FILTER_SELECTOR) }
                         val took = scene("add-language-pick", JankBudget.Kind.OPEN, timeoutMs = 8_000, took = added) { Finger().tap(basque) }
@@ -902,9 +1013,12 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
     // --- the chrome's document ---------------------------------------------------------------------------
 
     /** Where the first chrome element matching `selector` is on screen (device px), or null. */
-    private fun chromeRect(selector: String): Rect? {
+    private fun chromeRect(selector: String): Rect? = chromeRectOf("document.querySelector(${JSONObject.quote(selector)})")
+
+    /** Where the chrome element the script `element` evaluates to is on screen (device px), or null. */
+    private fun chromeRectOf(element: String): Rect? {
         val raw = chromeString(
-            "(function(){var e=document.querySelector(${JSONObject.quote(selector)});if(!e)return '';" +
+            "(function(){var e=$element;if(!e)return '';" +
                 "var r=e.getBoundingClientRect();return JSON.stringify({x:r.left,y:r.top,w:r.width,h:r.height})})()"
         )
         val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
@@ -1158,11 +1272,25 @@ class FontsLanguagesUiDemo : PageControlsDemo("fonts-languages-demo-state.json",
         private const val STANDARD_FONT_ROW = "Standard font"
         private const val RESET_ROW = "Reset fonts"
         private const val ADD_LANGUAGE_ROW = "Add language"
+        /** The rows' `data-row` ids in the chrome's document (`sections.tsx`, `fonts.tsx`, `languages.tsx`), for [awaitRow]'s document path. */
+        private const val COLOR_SCHEME_ROW_ID = "color-scheme"
+        private const val FONT_SIZE_ROW_ID = "fonts-size"
+        private const val MINIMUM_FONT_SIZE_ROW_ID = "fonts-minimum-size"
+        private const val STANDARD_FONT_ROW_ID = "fonts-standard-phone"
+        private const val RESET_ROW_ID = "fonts-reset"
+        private const val ADD_LANGUAGE_ROW_ID = "languages-add"
         private const val FILTER_LABEL = "Find a language"
         /** The picker sheet's filter field in the chrome's document (`LanguagePickList.tsx`). */
         private const val FILTER_SELECTOR = ".zen-settings-pick-filter input"
-        /** How long a Settings row is waited for past the cache after a section's drill-in ([awaitRow]). */
-        private const val ROW_WAIT_MS = 15_000L
+        /**
+         * How long the tree is given to list a Settings row after a section's drill-in before the
+         * chrome's document stands in ([awaitRow]): a tree that has the row lists it within a
+         * second or two even on the software GPU; one that lags the drill-in stays behind (fifteen
+         * seconds bought nothing in runs 35747286900 and 35754718133).
+         */
+        private const val ROW_WAIT_MS = 4_000L
+        /** The same for a control inside a row or a sheet ([controlPoint]); sheets have woken the tree in every run so far. */
+        private const val CONTROL_WAIT_MS = 4_000L
         /** The app menu's row that opens the sheet (`core/menus.ts`; U+2026). */
         private const val PREFERENCES_ITEM = "Text Preferences…"
         /** `FONT_SIZE_STEPS` has 25 stops (index 7 is 16 px, index 10 is 20 px); `MINIMUM_FONT_SIZE_STEPS` 17 (index 7 is 12 px). */
