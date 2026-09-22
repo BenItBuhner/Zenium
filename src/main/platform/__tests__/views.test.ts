@@ -77,6 +77,11 @@ vi.mock('electron', async () => {
     readonly debugger = new FakeDebugger()
     /** Events sent to the main frame's widget (`sendInputEvent`, the fallback path). */
     readonly widgetEvents: Array<Record<string, unknown>> = []
+    /** The renderer's OS process; a test moves the page to another renderer by changing it. */
+    pid = 1000
+    getOSProcessId(): number {
+      return this.pid
+    }
     isDestroyed(): boolean {
       return this.closed
     }
@@ -677,6 +682,35 @@ describe('page fonts (CT-25)', () => {
     ;(view.webContents as unknown as EventEmitter).emit('did-navigate', {}, 'https://a.example/')
     await settle()
     expect(dbg.log).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+  })
+
+  it('sends a live change again when a navigation moved the page to another renderer with no session on it', async () => {
+    const host = new ElectronTabViewHost(sessions)
+    const { view, dbg } = page(host, 'tab_fonts_swap')
+    const wc = view.webContents as unknown as EventEmitter & { pid: number }
+    host.applyFonts(FONTS)
+    await settle()
+    expect(dbg.log).toHaveLength(4)
+    // The same renderer keeps the page's settings across the document: nothing to send.
+    wc.emit('did-navigate', {}, 'https://a.example/next')
+    await settle()
+    expect(dbg.log).toHaveLength(4)
+    // Another renderer starts from the web preferences the page was made with.
+    wc.pid = 2000
+    wc.emit('did-navigate', {}, 'https://b.example/')
+    await settle()
+    expect(dbg.log.slice(4)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach'
+    ])
+    // With a session attached across the swap the agent restored its own state: nothing to send.
+    dbg.attached = true
+    wc.pid = 3000
+    wc.emit('did-navigate', {}, 'https://c.example/')
+    await settle()
+    expect(dbg.log).toHaveLength(8)
   })
 
   it('shares the session the resource governor holds, and recycles it for a second family change', async () => {

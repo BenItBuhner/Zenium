@@ -312,13 +312,12 @@ export class ElectronTabView implements TabView {
     const wc = this.wc
     const ev = events
     const id = wc.id
+    this.fontsRenderer = this.rendererPid()
     wc.on('did-start-loading', () => ev.onStartLoading())
     wc.on('did-stop-loading', () => ev.onStopLoading())
     wc.on('did-navigate', (_e, url) => {
       ev.onNavigated(url, false)
-      // A new document takes the web preferences its contents were made with: a page whose
-      // fonts changed since is brought to the setting again (the debugger permitting).
-      this.refreshFonts()
+      this.fontsAfterNavigation()
     })
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) ev.onNavigated(url, true)
@@ -1148,6 +1147,36 @@ export class ElectronTabView implements TabView {
   fontsChangedByEngine(): void {
     this.fontsApplied = this.fontsBorn
     this.familiesApplied = this.familiesBorn
+    this.refreshFonts()
+  }
+
+  /** The renderer process the page's fonts were last accounted for in (seeded in `wire`). */
+  private fontsRenderer: number | null = null
+
+  private rendererPid(): number | null {
+    try {
+      return this.wc.getOSProcessId() || null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * A navigation committed. Within one renderer the page's settings – and a live font change
+   * with them – outlive the document; a new renderer starts from the web preferences the
+   * contents were made with, unless a DevTools session stayed attached across the swap and
+   * restored what it had set (the agent's state travels with the session). So a swap without a
+   * session reads the page as made, and the setting goes out again where it differs.
+   */
+  private fontsAfterNavigation(): void {
+    if (this.wc.isDestroyed()) return
+    const renderer = this.rendererPid()
+    const swapped = this.fontsRenderer !== null && renderer !== this.fontsRenderer
+    this.fontsRenderer = renderer
+    if (swapped && !this.wc.debugger.isAttached()) {
+      this.fontsApplied = this.fontsBorn
+      this.familiesApplied = this.familiesBorn
+    }
     this.refreshFonts()
   }
 
