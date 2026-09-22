@@ -1515,6 +1515,10 @@ export interface PageFontsHost {
  * acceptLanguages)`), at boot and on change, private session included. Android's WebView sends
  * the system's languages and offers no way to set them (`capabilities.pageLanguages` is off
  * there), so that host has no `LanguagesHost`; the list still drives translate and spellcheck.
+ *
+ * Recorded limit (desktop): only the request header follows. Electron fills a renderer's
+ * `navigator.languages` from the application locale when its WebContents is made and exposes
+ * no way to set it, so a page's script reads the app locale while its requests carry the list.
  */
 export interface LanguagesHost {
   apply(languages: readonly string[]): void
