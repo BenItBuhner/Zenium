@@ -156,16 +156,13 @@ class V2TokensPinTest {
         assertTrue(css.rule(".zen-sheet-grip").contains("transition: box-shadow ${PromptSheetSpec.HAIRLINE_FADE_MS}ms var(--zen-ease);"))
         // §9.12: the label 4 above its field (`.zen-bm-label`, the one §9.12 label rule in main.css).
         assertEquals(PromptSheetSpec.LABEL_GAP_DP, px(css.rule(".zen-bm-label"), "gap"))
-        // §9.11 / §9.25: the footer's 16 above the peers, the peers' gap, its 8 below them, and the
-        // sheet's floor under that (`BottomSheet.tsx`) – one 16 gutter at the bottom edge.
+        // §9.11 / §9.25: the footer's 16 above the peers, the peers' gap, the gutter at its sides;
+        // its bottom is §9.25's formula, pinned in theFooterStandsSixteenAboveTheHostsInset.
         val footer = css.rule(".zen-sheet-footer")
         assertEquals(PromptSheetSpec.PEER_GAP_DP, px(footer, "gap"))
         val footerPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues.drop(1).map { it.toInt() }
         assertEquals(PromptSheetSpec.FOOTER_TOP_DP, footerPadding[0])
         assertEquals(PromptSheetSpec.GUTTER_DP, footerPadding[1])
-        assertEquals(PromptSheetSpec.FOOTER_BOTTOM_DP, footerPadding[2])
-        val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
-        assertTrue(bottomSheet.contains("paddingBottom: Math.max(${PromptSheetSpec.SHEET_INSET_FLOOR_DP}, insets.bottom)"))
         // §6: the button's floor, its sides, its press fade, the primary's pressed mix.
         val button = css.rule(".zen-v2-button")
         assertEquals(PromptSheetSpec.BUTTON_MIN_WIDTH_DP, px(button, "min-width"))
@@ -206,32 +203,33 @@ class V2TokensPinTest {
     }
 
     /**
-     * §9.25's arithmetic is the chrome's, exactly: from the footer's peers to the sheet's edge is the
-     * footer's padding plus the inset or the floor, whichever is larger (`BottomSheet.tsx` pads the
-     * sheet `Math.max(8, insets.bottom)`, `.zen-sheet-footer` its 8 above that) – the one 16 gutter
-     * at the bottom edge where the host reports no inset, 8 over the bar where it reports one. Two
-     * cases – no inset, a 24 bar – hold the chassis equal to the chrome read from the CSS.
+     * §9.25's formula, not the CSS as it stands: the footer's buttons stand 16 above the host's
+     * safe-area inset – the gutter plus the inset the host reports, with its three hosts: 16 where
+     * it reports none (the preview host), 40 over a 24 dp gesture bar, 64 over a 48 dp three-button
+     * bar. The one native constant is the gutter; the Material sheet pads the inset under it.
+     *
+     * KNOWN DRIFT, the web chassis's: `.zen-sheet-footer` stands 8 over `BottomSheet.tsx`'s
+     * `Math.max(8, insets.bottom)` – `8 + max(8, inset)`, the inset in place of the 8 floor rather
+     * than added to the 16 – equal to the formula only where the host reports none (16) and 8
+     * short over a real inset (32 over a 24 bar). Android primitives pass 4 corrects that line; the
+     * drift assertions below fail when it lands, and this pin flips to equality with the CSS then.
      */
     @Test
-    fun theFooterArithmeticIsTheChromes() {
+    fun theFooterStandsSixteenAboveTheHostsInset() {
+        assertEquals("the footer's bottom is the gutter", PromptSheetSpec.GUTTER_DP, PromptSheetSpec.FOOTER_BOTTOM_DP)
+        for ((inset, edge) in listOf(0 to 16, 24 to 40, 48 to 64)) {
+            assertEquals("inset $inset: §9.25's 16 + inset", edge, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, inset))
+        }
+        // The web chassis as it stands, read from the CSS and BottomSheet.tsx.
         val footer = css.rule(".zen-sheet-footer")
         val cssPadding = Regex("""^(\d+)px (\d+)px (\d+)px$""").find(declaration(footer, "padding"))!!.groupValues[3].toInt()
         val bottomSheet = File(root, "src/renderer/src/components/sheet/BottomSheet.tsx").readText()
-        val cssFloor = Regex("""paddingBottom: Math\.max\((\d+), insets\.bottom\)""").find(bottomSheet)!!.groupValues[1].toInt()
-        assertEquals(cssPadding, PromptSheetSpec.FOOTER_BOTTOM_DP)
-        assertEquals(cssFloor, PromptSheetSpec.SHEET_INSET_FLOOR_DP)
-        for (inset in listOf(0, 24)) {
-            val chrome = cssPadding + maxOf(cssFloor, inset)
-            val native = PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, inset)
-            assertEquals("inset $inset: the chassis's footer-to-edge is the chrome's", chrome, native)
-            // The column's share: the sheet pads the inset, the footer its padding, the column what the inset falls short of the floor.
-            assertEquals("inset $inset: the column's padding makes the whole", native, PromptSheetSpec.FOOTER_BOTTOM_DP + inset + PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, inset))
-        }
-        // §9.25: one 16 gutter at the bottom edge where the host reports none; 8 over a 24 bar.
-        assertEquals("no inset: the 16 gutter", 16, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, 0))
-        assertEquals("a 24 bar: 8 over it", 32, PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, PromptSheetSpec.SHEET_INSET_FLOOR_DP, 24))
-        assertEquals("under a 24 bar the column pads nothing", 0, PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, 24))
-        assertEquals("with no bar the column pads the floor", 8, PromptSheetSpec.floorPadding(PromptSheetSpec.SHEET_INSET_FLOOR_DP, 0))
+        val cssFloor = Regex("""paddingBottom: Math\.max\((\d+), insets\.bottom\)""").find(bottomSheet)?.groupValues?.get(1)?.toInt()
+            ?: error("BottomSheet.tsx no longer pads Math.max(floor, insets.bottom): primitives pass 4 has landed – flip this pin to equality with the CSS")
+        val web = { inset: Int -> cssPadding + maxOf(cssFloor, inset) }
+        assertEquals("known drift: the web chassis's 8 over an 8 floor", 8 to 8, cssPadding to cssFloor)
+        assertEquals("no inset: the web chassis meets the formula", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 0), web(0))
+        assertEquals("a 24 bar: the web chassis 8 short – primitives pass 4's line", PromptSheetSpec.footerToEdge(PromptSheetSpec.FOOTER_BOTTOM_DP, 24) - 8, web(24))
     }
 
     // --- the stylesheet, read ------------------------------------------------------------------

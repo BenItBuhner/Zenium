@@ -57,8 +57,6 @@ object PromptSheetSpec {
     const val HAIRLINE_DP = 1
     /** `SHEET_TOP_MARGIN` (lib/motion/sheet.ts): the page kept in view above an expanded sheet. */
     const val SHEET_TOP_MARGIN_DP = 40
-    /** §9.25: the bottom inset is the host's safe area, or 8 where it reports none (`BottomSheet.tsx`'s `Math.max(8, insets.bottom)`). */
-    const val SHEET_INSET_FLOOR_DP = 8
 
     /**
      * The hairline in device pixels: [HAIRLINE_DP] at the density, rounded, never under one pixel – 1
@@ -68,20 +66,16 @@ object PromptSheetSpec {
     fun hairlinePx(density: Float): Int = maxOf(1, Math.round(HAIRLINE_DP * density))
 
     /**
-     * §9.25's arithmetic, the chrome's exactly (`BottomSheet.tsx` pads the sheet `Math.max(8,
-     * insets.bottom)` and `.zen-sheet-footer` its 8 above that): from the footer's peers to the
-     * sheet's edge is the footer's padding plus the inset or the floor, whichever is larger – the
-     * one 16 gutter at the bottom edge where the host reports no inset (8 and the 8 floor), and 8
-     * over the host's bar where it reports one (32 over a 24 bar). `V2TokensPinTest` holds the
-     * padding to the CSS's and the two cases to the chrome's.
+     * §9.25's formula: the footer's buttons stand 16 above the host's safe-area inset, so the gap
+     * from the peers to the sheet's bottom edge is the gutter plus the inset the host reports – its
+     * three hosts: 16 where it reports none (the preview host), 40 over a 24 gesture bar, 64 over a
+     * 48 three-button bar, the sheet running edge to edge beneath the bar. Natively the Material
+     * sheet pads its bottom by the inset and the footer brings the 16 ([FOOTER_BOTTOM_DP]).
+     * `V2TokensPinTest` holds the three hosts to the formula – and the web chassis's
+     * `8 + max(8, inset)` (`.zen-sheet-footer` over `BottomSheet.tsx`'s floor) as the known
+     * drift over a real inset, until Android primitives pass 4 adds the inset to its 16 too.
      */
-    fun footerToEdge(padding: Int, floor: Int, inset: Int): Int = padding + maxOf(floor, inset)
-
-    /**
-     * The column's share of [footerToEdge]: the sheet pads its bottom by the inset itself, the
-     * footer brings its padding, and the column adds what the inset falls short of the floor.
-     */
-    fun floorPadding(floor: Int, inset: Int): Int = (floor - inset).coerceAtLeast(0)
+    fun footerToEdge(gutter: Int, inset: Int): Int = gutter + inset
 
     /** §9.9: the grip strip, with the 32 × 4 grabber at radius 2, 8 from the top, in the text at 25 %. */
     const val GRIP_STRIP_DP = 20
@@ -136,11 +130,13 @@ object PromptSheetSpec {
 
     /**
      * §9.11 / §9.25: the footer's 16 above its peers (`.zen-sheet-footer`'s `padding-top`), the peers at an
-     * 8 gap, and its 8 below them (`padding-bottom`) – which over the sheet's 8 floor is §9.25's one 16
-     * gutter at the bottom edge, and over the host's bar the 8 above it ([footerToEdge]).
+     * 8 gap, and §9.25's 16 below them, above the host's safe-area inset the sheet pads for
+     * ([footerToEdge]: 16 + the inset to the sheet's edge). The web chassis's `.zen-sheet-footer`
+     * stands at 8 over `BottomSheet.tsx`'s 8 floor – the same 16 where the host reports no inset, 8
+     * short over a real one: the line Android primitives pass 4 changes, pinned as the drift till then.
      */
     const val FOOTER_TOP_DP = 16
-    const val FOOTER_BOTTOM_DP = 8
+    const val FOOTER_BOTTOM_DP = 16
     const val PEER_GAP_DP = 8
     /** `.zen-v2-button`: `min-width: 96px`, `padding: 0 16px`, the label at `--v2-weight-button`. */
     const val BUTTON_MIN_WIDTH_DP = 96
@@ -187,10 +183,11 @@ object PromptSheetSpec {
  * above its two 40 peers splitting the width at 8 – the secondary (Cancel, Wait) leading in the
  * 10 % fill, the primary trailing in the accent fill with the on-accent label or, for a
  * destructive answer, in the 10 % fill with the label in the danger ink (Exit page, Remove) –
- * or one action spanning the row; and §9.25's one 16 gutter at the bottom edge – the footer's 8
- * under the peers over the sheet's 8 floor, or over the host's bar where it reports one
- * ([PromptSheetSpec.footerToEdge]: the padding plus the larger of the floor and the inset, the
- * chrome's arithmetic exactly). The sheet stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
+ * or one action spanning the row; and §9.25's 16 under the peers, above the host's safe-area
+ * inset the sheet pads for – 16 to the edge where it reports none, 40 over a 24 gesture bar, 64
+ * over a 48 three-button bar ([PromptSheetSpec.footerToEdge]: the gutter plus the inset, §9.25's
+ * formula, the web chassis's `8 + max(8, inset)` the drift primitives pass 4 corrects). The sheet
+ * stands at most [PromptSheetSpec.SHEET_TOP_MARGIN_DP]
  * under the status bar: a long body scrolls between the pinned block and the pinned footer
  * rather than pushing either off. The keyboard lifts the sheet and takes its room from the body.
  *
@@ -349,8 +346,8 @@ class NativePromptSheet(
         column.addView(titleBlock(toBody = body.childCount > 0))
         column.addView(scrollingBody(body), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         column.addView(footer())
-        // The status bar (the cap's start) and §9.25's floor: the sheet pads its bottom by the
-        // host's bar; where the host reports less than 8 the column makes up the difference.
+        // The status bar, where the column's cap starts; the bottom is the Material sheet's, which
+        // pads for the host's bar (or the keyboard over it) – §9.25's inset under the footer's 16.
         val insets = (context as? android.app.Activity)?.window?.decorView?.let { ViewCompat.getRootWindowInsets(it) }
         if (insets != null) column.applyInsets(insets)
         ViewCompat.setOnApplyWindowInsetsListener(column) { v, dispatched ->
@@ -653,8 +650,8 @@ class NativePromptSheet(
 
     /**
      * §9.11: peers splitting the width at 8, the primary trailing; one action spans the row. 16
-     * above the peers, and 8 below them – over the sheet's 8 floor or the bar it pads for, §9.25's
-     * one 16 gutter at the edge.
+     * above the peers, and §9.25's 16 below them – above the host's inset the sheet pads for, so
+     * 16 to the edge where it reports none and 40 over a 24 bar ([PromptSheetSpec.footerToEdge]).
      */
     private fun footer(): View {
         val row = LinearLayout(context).apply {
@@ -717,20 +714,16 @@ class NativePromptSheet(
      * (the window less the bottom the Material sheet pads for: the host's bar, the keyboard while it
      * is up) less the status bar and the margin kept above an expanded sheet so the page shows over
      * it – with the body taking whatever the grip, the pinned block and the pinned footer leave
-     * under it. Its bottom padding is its share of §9.25's arithmetic ([PromptSheetSpec.footerToEdge]):
-     * the sheet pads for the bar (or the keyboard over it), the footer brings its padding, and the
-     * column adds what the bar falls short of the 8 floor.
+     * under it. It pads nothing at the bottom: §9.25's arithmetic ([PromptSheetSpec.footerToEdge])
+     * is the sheet's padding for the bar (or the keyboard over it) under the footer's 16.
      */
     private inner class Column : LinearLayout(context) {
         private var insetTop = 0
 
         fun applyInsets(insets: WindowInsetsCompat) {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            val floor = PromptSheetSpec.floorPadding(dp(PromptSheetSpec.SHEET_INSET_FLOOR_DP), maxOf(bars.bottom, ime.bottom))
-            if (insetTop != bars.top || paddingBottom != floor) {
+            if (insetTop != bars.top) {
                 insetTop = bars.top
-                setPadding(0, 0, 0, floor)
                 requestLayout()
             }
         }
