@@ -26,7 +26,9 @@ export const PREVIEW_PULL_MAX = 2.5
 /**
  * A step taken on a page once it is open, in order: `tap` presses the first button whose label
  * or text reads so (a row opens its sheet, a sheet's row stacks another, a destructive action
- * asks first), `hold` long-presses it (a row's menu opens), `type` fills the field with that id
+ * asks first), `hold` long-presses it (a row's menu opens), `press` rests a finger on it for
+ * the long-press time and lifts in place (an overview card's hold sheet, which the pointer's
+ * timer opens, not the `contextmenu` a row's hold takes), `type` fills the field with that id
  * the way a keyboard would and leaves it (the field is touched: a form's validation shows),
  * `back` is one system back (the top sheet closes, a section pops), `overview` opens the tab
  * overview over the page, `urlbar` opens the pill for editing.
@@ -34,6 +36,7 @@ export const PREVIEW_PULL_MAX = 2.5
 export type PreviewStep =
   | { kind: 'tap'; text: string }
   | { kind: 'hold'; text: string }
+  | { kind: 'press'; text: string }
   | { kind: 'type'; id: string; text: string }
   | { kind: 'back' }
   | { kind: 'overview' }
@@ -410,8 +413,16 @@ export type PreviewState =
       kind: 'voice'
       script: string
     }
-  /** The tab overview over the active page, as a pull on the pill opens it. */
-  | { kind: 'overview' }
+  | {
+      /** The tab overview over the active page, as a pull on the pill opens it. */
+      kind: 'overview'
+      /**
+       * Steps taken once the grid is up: `tap:More;tap:Select Tabs` enters the select-tabs mode
+       * from the header's menu, `press:<card title>` opens a card's hold sheet, `tap:<card
+       * title>` picks a card while the mode is on, `tap:Group` opens the action row's picker.
+       */
+      then?: PreviewStep[]
+    }
   | {
       /** The pill's editor (the phone omnibox) over the active tab, or over a new tab. */
       kind: 'urlbar'
@@ -726,7 +737,12 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const voice = params.get('voice')
   if (voice !== null) return { kind: 'voice', script: voice || 'heard' }
-  if (params.has('overview')) return { kind: 'overview' }
+  if (params.has('overview')) {
+    const state: Extract<PreviewState, { kind: 'overview' }> = { kind: 'overview' }
+    const then = parsePreviewSteps(params.get('then'))
+    if (then.length > 0) state.then = then
+    return state
+  }
   const urlbar = params.get('urlbar')
   if (urlbar !== null) {
     const state: Extract<PreviewState, { kind: 'urlbar' }> = {
@@ -765,18 +781,18 @@ function parsePrivate(value: string, params: URLSearchParams): PreviewState {
 }
 
 /**
- * The `then=` list: `tap:<text>;hold:<text>;type:<id>=<text>;back;overview;urlbar`; blanks and
- * unknown steps are dropped.
+ * The `then=` list: `tap:<text>;hold:<text>;press:<text>;type:<id>=<text>;back;overview;urlbar`;
+ * blanks and unknown steps are dropped.
  */
 export function parsePreviewSteps(list: string | null): PreviewStep[] {
   if (!list) return []
   const steps: PreviewStep[] = []
   for (const raw of list.split(';')) {
     const step = raw.trim()
-    if (step.startsWith('tap:') || step.startsWith('hold:')) {
-      const kind = step.startsWith('tap:') ? 'tap' : 'hold'
-      const text = step.slice(kind.length + 1).trim()
-      if (text) steps.push({ kind, text })
+    const pressing = (['tap', 'hold', 'press'] as const).find((k) => step.startsWith(`${k}:`))
+    if (pressing) {
+      const text = step.slice(pressing.length + 1).trim()
+      if (text) steps.push({ kind: pressing, text })
     } else if (step.startsWith('type:')) {
       const at = step.indexOf('=')
       const id = at === -1 ? '' : step.slice('type:'.length, at).trim()
