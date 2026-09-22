@@ -16,8 +16,9 @@ name: Android nightly drivers
 # predictive back, the sheet leave and recede, the wake and status bar, the two profiling
 # drivers), webview for the demos that need the Chromium snapshot WebView swapped into an AOSP
 # image (private tabs, media, fullscreen, the accessibility demo's private scene, the fakebox
-# morph's private act) and tablet for the pixel_tablet layout. A new driver is one line in the
-# manifest. The extension compatibility sweep (hours long, the extension program's) is skipped
+# morph's private act), tablet for the pixel_tablet layout and tablet-webview for the tablet
+# layout on that swapped-in WebView (the sidebar's private mode). A new driver is one line in
+# the manifest. The extension compatibility sweep (hours long, the extension program's) is skipped
 # there with its reason.
 #
 # The summary job puts the one table in the run's summary (driver, result, scenes / checks,
@@ -45,6 +46,7 @@ on:
           - api35
           - webview
           - tablet
+          - tablet-webview
       ref:
         description: The commit, branch or tag to sweep (the workflow's own ref when empty)
         type: string
