@@ -7,13 +7,17 @@
 #     Dark Reader's unpacked folder zipped and handed to the activity's VIEW intent before the
 #     chrome is up, so the store's start() installs it with no live window and the prompt is the
 #     chassis's, not the renderer's sheet – ext-android-13-prompt-fallback-{light,dark}.png;
-#   - the extension sheet (ext/ExtensionSheet.kt) hosting Dark Reader's popup, with its one dp
-#     open-path hairline and the token inks – ext-android-13-sheet-popup-{light,dark}.png.
+#   - the extension sheet (ext/ExtensionSheet.kt) hosting uBlock Origin Lite's popup (a seeded
+#     install; Dark Reader's popup stays empty on the phone, its background admitting its own
+#     pages by sender.url against runtime.getURL), with its one dp open-path hairline and the
+#     token inks – ext-android-13-sheet-popup-{light,dark}.png.
 #
 # Standalone (a workflow job of its own) it prepares the device, installs the APKs and pushes the
-# folder; at the end of android-ext-runtime-demo.sh it runs on the device that script prepared
-# (DEVICE_PREPARED=1 SKIP_INSTALL=1). Environment: EXT_DIR (the unpacked extensions, default
-# artifacts/ext; Dark Reader's folder is the one it needs), STILLS_OUT (default
+# folders; at the end of android-ext-runtime-demo.sh it runs on the device that script prepared
+# (DEVICE_PREPARED=1 SKIP_INSTALL=1). The seeded tab behind the sheets is the probe page
+# (http://10.0.2.2:8765/probe.html, ext-demo-state.json), served from the runner here for the
+# stills' own run. Environment: EXT_DIR (the unpacked extensions, default artifacts/ext; Dark
+# Reader's and uBlock Origin Lite's folders are the ones it needs), STILLS_OUT (default
 # artifacts/android-ext-sheet-stills), SOFT_FAIL=1 (report, never fail the job).
 set -euo pipefail
 
@@ -21,7 +25,9 @@ app_id=io.github.benitbuhner.zenium.debug
 runner=io.github.benitbuhner.zenium.debug.test/androidx.test.runner.AndroidJUnitRunner
 out=${STILLS_OUT:-artifacts/android-ext-sheet-stills}
 ext_dir=${EXT_DIR:-artifacts/ext}
+pages=.github/scripts/ext-demo-pages
 dark_reader=eimadpbcbfnmbkopoojfekhnkhdbieeh
+ubol=ddkjiahejlhfcafbddmgiahcphecmpfh
 mkdir -p "$out"
 
 fail() {
@@ -67,15 +73,25 @@ if [ -z "${SKIP_INSTALL:-}" ]; then
   adb install -r -g "$test_apk"
 fi
 
-# Dark Reader's folder, flat, as the driver zips it; a laid-out install a driver before left goes first.
+# Dark Reader's folder, flat, as the driver zips it, and uBlock Origin Lite's for the popup; a
+# laid-out install a driver before left goes first.
 [ -f "$ext_dir/$dark_reader/manifest.json" ] || fail "no unpacked Dark Reader under $ext_dir/$dark_reader (fetch-crx.mjs)"
+[ -f "$ext_dir/$ubol/manifest.json" ] || fail "no unpacked uBlock Origin Lite under $ext_dir/$ubol (fetch-crx.mjs)"
 adb shell am force-stop "$app_id" || true
-adb shell run-as "$app_id" rm -rf "files/zen/extensions/$dark_reader" files/ext-sheets || true
-tar -C "$ext_dir" --exclude='*.crx' --exclude='*.zip' --exclude='fetch.json' -cf /tmp/ext-stills.tar "./$dark_reader"
+adb shell run-as "$app_id" rm -rf "files/zen/extensions/$dark_reader" "files/zen/extensions/$ubol" files/ext-sheets || true
+tar -C "$ext_dir" --exclude='*.crx' --exclude='*.zip' --exclude='fetch.json' -cf /tmp/ext-stills.tar "./$dark_reader" "./$ubol"
 adb push /tmp/ext-stills.tar /data/local/tmp/ext-stills.tar
 adb shell run-as "$app_id" mkdir -p files/zen/extensions
 adb shell run-as "$app_id" tar -xf /data/local/tmp/ext-stills.tar -C files/zen/extensions
 adb shell rm /data/local/tmp/ext-stills.tar || true
+
+# The probe page behind the sheets, from the runner (the emulator's host loopback is 10.0.2.2);
+# the runtime demo's own server is gone by the time it hands over to this script.
+http_pid=
+if ! curl -sf -o /dev/null http://127.0.0.1:8765/probe.html; then
+  python3 -m http.server 8765 --bind 0.0.0.0 --directory "$pages" > "$out/http-server.txt" 2>&1 &
+  http_pid=$!
+fi
 
 adb logcat -c || true
 adb logcat -v time > "$out/logcat.txt" &
@@ -96,6 +112,7 @@ done
 wait "$driver_pid" || true
 sleep 2
 kill "$logcat_pid" 2> /dev/null || true
+[ -n "$http_pid" ] && kill "$http_pid" 2> /dev/null || true
 
 for name in $(adb shell run-as "$app_id" ls files/ext-sheets 2>/dev/null | tr -d '\r'); do
   case "$name" in

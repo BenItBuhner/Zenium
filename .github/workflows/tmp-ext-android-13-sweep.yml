@@ -11,8 +11,8 @@ name: TEMPORARY - compat round 10 sweep and frame budget trigger
 #     (ExtensionScrollBudget under SKIP_DEMO=1: the long fixture scrolled with 0, 2, 3 and 6
 #     extensions, the jank report in the job summary);
 #   - `[stills]` in the commit message: the two sheet stills for the design gate alone
-#     (ExtensionSheetStills through android-ext-sheet-stills.sh: the extension sheet hosting Dark
-#     Reader's popup and the install prompt on the fallback path, light and dark).
+#     (ExtensionSheetStills through android-ext-sheet-stills.sh: the extension sheet hosting
+#     uBlock Origin Lite's popup and the install prompt on the fallback path, light and dark).
 # A sweep whose emulator went away under the driver (the shared workflow's `emulator-died`: qemu
 # gone or the guest frozen, as run 35778999040's 113 job 11 rows in; or the runner action's SDK
 # download coming down broken, as its 156 job) boots once more and sweeps the rows the first boot
@@ -172,7 +172,7 @@ jobs:
       artifact-name: android-ext-sheet-stills
       artifact-path: artifacts/android-ext-sheet-stills/
       setup-script: |
-        echo eimadpbcbfnmbkopoojfekhnkhdbieeh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
+        echo eimadpbcbfnmbkopoojfekhnkhdbieeh ddkjiahejlhfcafbddmgiahcphecmpfh | xargs node .github/scripts/fetch-crx.mjs artifacts/ext
       timeout-minutes: 45
 
   budget-system-webview:

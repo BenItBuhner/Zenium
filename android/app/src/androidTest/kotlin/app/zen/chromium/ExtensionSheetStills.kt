@@ -35,9 +35,12 @@ import java.util.zip.ZipOutputStream
  *
  * The workflow script pushes the demo's unpacked extensions under `files/zen/extensions/`; the
  * driver lays them out as installs (as `ExtensionDemo` does) except Dark Reader, which it zips
- * into the cache and hands over as the sideload: the light prompt is answered with Add extension
- * (so its popup is the extension sheet's still), the dark one – after the install is removed
- * again – with Cancel. Stills: `ext-android-13-prompt-fallback-{light,dark}.png` and
+ * into the cache and hands over as the sideload: the light prompt is answered with Add extension,
+ * the dark one – after the install is removed again – with Cancel. The popup in the extension
+ * sheet is uBlock Origin Lite's, a seeded install: its popup draws whole on the phone, where Dark
+ * Reader's background admits its own pages by `sender.url` against `runtime.getURL` (the two
+ * spellings of an extension page's URL, round 8 section 6; the popup document stays empty).
+ * Stills: `ext-android-13-prompt-fallback-{light,dark}.png` and
  * `ext-android-13-sheet-popup-{light,dark}.png` under `files/ext-sheets/`.
  */
 @RunWith(AndroidJUnit4::class)
@@ -81,6 +84,7 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
             installed.put(dir.name, versionDir.name)
         }
         results.put("seededInstalls", installed)
+        check(installed.has(POPUP_ID)) { "the driver script must push $POPUP_NAME's unpacked folder to ${File(root, POPUP_ID).path} (the popup still's subject)" }
         File(zen, "extensions.json").writeText(ExtensionSeed.registry(records).toString())
     }
 
@@ -97,15 +101,15 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         val id = installed.getString("id")
         results.put("installedAs", installed)
 
-        // 2. Dark Reader's popup in the extension sheet, light.
-        results.put("popupLight", popupStill(id, "light"))
+        // 2. uBlock Origin Lite's popup in the extension sheet, light.
+        results.put("popupLight", popupStill(POPUP_ID, "light"))
 
         // 3. The dark scheme: the chrome's setting and the system's night mode together.
         coreInvoke("settings.update", """{"colorScheme":"dark"}""")
         shellCommand("cmd uimode night yes")
         SystemClock.sleep(4_000)
         ensureForeground()
-        results.put("popupDark", popupStill(id, "dark"))
+        results.put("popupDark", popupStill(POPUP_ID, "dark"))
 
         // 4. The install removed, the same handover again in the dark: the prompt, then Cancel.
         coreInvoke("extension.remove", """{"id":${JSONObject.quote(id)}}""")
@@ -165,11 +169,25 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
 
     // --- the popup in the extension sheet --------------------------------------------------------
 
+    /**
+     * The extension's popup opened through the core and shot once its text is in. The runtime's
+     * `openPopup` answers nothing for an id it has not attached yet (a record the store lists
+     * before its units are configured), so the open waits for the configure and is asked again
+     * while no sheet comes up.
+     */
     private fun popupStill(id: String, scheme: String): JSONObject {
-        coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
-        val ready = waitUntil(45_000) {
+        val configured = waitUntil(60_000) { configured(id) }
+        var opens = 0
+        val openDeadline = SystemClock.uptimeMillis() + 30_000
+        while (popupView() == null && SystemClock.uptimeMillis() < openDeadline) {
+            opens++
+            coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
+            waitUntil(5_000) { popupView() != null }
+        }
+        val up = popupView() != null
+        val ready = up && waitUntil(45_000) {
             val view = popupView() ?: return@waitUntil false
-            eval(view, "String(!!(document.body && document.body.innerText.length > 40))") == "true"
+            eval(view, "String(!!(document.body && document.body.innerText.length > 20))") == "true"
         }
         // The sheet's rise and the popup's own layout after its text is in.
         SystemClock.sleep(3_000)
@@ -177,6 +195,8 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         awaitShots()
         val view = popupView()
         val report = JSONObject()
+            .put("configured", configured)
+            .put("opens", opens)
             .put("ready", ready)
             .put("url", view?.let { eval(it, "location.href") })
             .put("textLength", view?.let { eval(it, "String(document.body ? document.body.innerText.length : -1)") })
@@ -185,6 +205,13 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         waitUntil(10_000) { popupView() == null }
         SystemClock.sleep(1_000)
         return report
+    }
+
+    /** The runtime has configured the extension's units (its `configure` statistics are in): `openPopup` knows the id. */
+    private fun configured(id: String): Boolean {
+        var yes = false
+        instrumentation.runOnMainSync { yes = host.extensions.configureStats.containsKey(id) }
+        return yes
     }
 
     private fun popupView(): ExtensionWebView? {
@@ -291,6 +318,9 @@ class ExtensionSheetStills : DemoHarness("ext-demo-state.json", "ext-android-13"
         const val SIDELOAD_ID = "eimadpbcbfnmbkopoojfekhnkhdbieeh"
         /** Dark Reader's name as the record lists it (the manifest's `__MSG_extension_name__` resolved). */
         const val SIDELOAD_NAME = "Dark Reader"
+        /** uBlock Origin Lite, the seeded install whose popup the extension sheet hosts for the still. */
+        const val POPUP_ID = "ddkjiahejlhfcafbddmgiahcphecmpfh"
+        const val POPUP_NAME = "uBlock Origin Lite"
         /** The prompt's verbs (`promptCopy.ts`). */
         private val ACCEPT_LABELS = setOf("Add extension", "Update extension", "Allow")
         private const val CANCEL_LABEL = "Cancel"
