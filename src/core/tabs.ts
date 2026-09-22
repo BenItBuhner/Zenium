@@ -1575,7 +1575,8 @@ export class TabManager {
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
     // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16).
-    if (tab.folderId && m.folders[tab.folderId]) m.folders[tab.folderId].lastUsedAt = tab.lastActiveAt
+    if (tab.folderId && m.folders[tab.folderId])
+      m.folders[tab.folderId].lastUsedAt = tab.lastActiveAt
     if (previousActive && previousActive.id !== tab.id) {
       previousActive.lastActiveAt = Date.now()
       // The user left the previous tab of their own accord: its close no longer returns to its
