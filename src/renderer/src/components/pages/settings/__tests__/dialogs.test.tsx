@@ -543,4 +543,24 @@ describe('Escape gives the focus back down the stack one hop at a time (§9.22, 
     expect(document.activeElement).toBe(other)
     other.remove()
   })
+
+  it('follows the hold that is left: an outer inert standing after the nearest went is watched in its turn', async () => {
+    const { h, removeRow } = stackTwo()
+    // Two holds, one inside the other (none nests today – the chrome hold and a dialog's cover
+    // are siblings – but the return must not depend on it): the control refuses under both.
+    const inner = h.querySelector<HTMLElement>('[data-cover]')!
+    inner.setAttribute('inert', '')
+    h.setAttribute('inert', '')
+    escape()
+    expect(h.querySelector(LIVE_PROMPT)).toBeNull()
+    expect(document.activeElement).toBe(document.body)
+    // The nearest hold goes; the outer still refuses, and the watch moves to it.
+    inner.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(document.body)
+    // The outer goes: the control takes the focus – not after the wait's cap, now.
+    h.removeAttribute('inert')
+    await tick()
+    expect(document.activeElement).toBe(removeRow)
+  })
 })

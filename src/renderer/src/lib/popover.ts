@@ -88,15 +88,18 @@ const RETURN_WAIT_MS = 1000
  * ended), so a toolbar button or a button on one of the frame's strips refuses as the dialog
  * unmounts; and a control of a dialog a prompt opened over refuses while that dialog is still
  * covered – `inert` from a state its owner drops a render later than the prompt's cleanup runs.
- * The refusal is watched for on the inert root: as its `inert` goes – not one fixed frame later
- * – the control takes the focus, unless something else took it meanwhile (a dialog opened over
- * the way out), the control is gone, or the hold outlasts `RETURN_WAIT_MS` (a dialog stacked on
- * the leaving one, whose own return governs).
+ * The refusal is watched for on the nearest inert root: as its `inert` goes – not one fixed
+ * frame later – the control takes the focus, unless something else took it meanwhile (a dialog
+ * opened over the way out), the control is gone, or the hold outlasts `RETURN_WAIT_MS` (a dialog
+ * stacked on the leaving one, whose own return governs). The hold is resolved again at every
+ * change: should the nearest go while an outer one stands (the chrome hold and a dialog's cover
+ * are siblings today, never nested, but the watch does not depend on it), the outer is watched
+ * in its turn, and a hold that comes up between the control and the one watched is too.
  */
 export function returnFocusTo(target: HTMLElement): void {
   target.focus({ preventScroll: true })
   if (document.activeElement === target) return
-  const held = target.closest<HTMLElement>('[inert]')
+  let held = target.closest<HTMLElement>('[inert]')
   if (!held || typeof MutationObserver === 'undefined') return
   let watching = true
   const stop = (): void => {
@@ -106,15 +109,26 @@ export function returnFocusTo(target: HTMLElement): void {
     document.removeEventListener('focusin', stop, true)
     clearTimeout(timer)
   }
+  const watch = (root: HTMLElement): void => {
+    held = root
+    observer.observe(root, { attributes: true, attributeFilter: ['inert'] })
+  }
   const observer = new MutationObserver(() => {
-    if (target.closest('[inert]')) return
+    const still = target.closest<HTMLElement>('[inert]')
+    if (still) {
+      if (still !== held) {
+        observer.disconnect()
+        watch(still)
+      }
+      return
+    }
     stop()
     if (!target.isConnected) return
     const active = document.activeElement
     if (active && active !== document.body) return
     target.focus({ preventScroll: true })
   })
-  observer.observe(held, { attributes: true, attributeFilter: ['inert'] })
+  watch(held)
   document.addEventListener('focusin', stop, true)
   const timer = setTimeout(stop, RETURN_WAIT_MS)
 }
