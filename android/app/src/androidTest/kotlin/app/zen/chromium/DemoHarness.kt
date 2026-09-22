@@ -229,6 +229,28 @@ abstract class DemoHarness(
         }
     }
 
+    /**
+     * Where a finger tapping the address pill goes: the tree's pill when its centre is in the
+     * window's touchable band, the measured [pill] when the tree has it in a system bar (a stale
+     * tree mid-relaunch put the omnibox polish run's dark warm-up tap on the home button and the
+     * browser's task behind the launcher; [ensureForeground] tells the rest). A finger never goes
+     * where the system takes the touch. Shared: every driver that taps the pill by its label is
+     * open to the same stale tree.
+     */
+    protected fun pillPoint(): PointF {
+        ensureForeground()
+        val found = findByLabelPrefix(PILL_LABEL)
+        val target = when {
+            found == null -> pill
+            touchable.contains(found.centerX(), found.centerY()) -> found
+            else -> {
+                Log.w(tag, "the tree's pill $found is outside the touchable band $touchable; the measured pill $pill instead")
+                pill
+            }
+        }
+        return PointF(target.exactCenterX(), target.exactCenterY())
+    }
+
     /** The device's home screen (the launcher), by the system's own answer; null when it has none. */
     private val homePackage: String? by lazy {
         val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
