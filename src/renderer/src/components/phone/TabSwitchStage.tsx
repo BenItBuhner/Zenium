@@ -102,8 +102,13 @@ function StageCard({
       const tabs = stageStore.get().tabs
       if (tabs.phase === 'idle') return
       const at = placement(index, tabs)
-      if (at.transform === last) return
-      last = at.transform
+      // The dim follows the position as the transform does; the ribbon follows the ORIGIN too.
+      // The commit sets `origin` to the landed card while the spring's last step has already put
+      // `position` there (`spring.ts` snaps its final step to the target), so the transform is
+      // unchanged at the moment the ribbon has to go out: keying on the transform alone kept it up.
+      const key = `${at.transform}|${at.ribbon}`
+      if (key === last) return
+      last = key
       if (card.current) card.current.style.transform = at.transform
       if (dim.current) dim.current.style.opacity = String(at.dim)
       if (ribbon.current) ribbon.current.style.opacity = String(at.ribbon)

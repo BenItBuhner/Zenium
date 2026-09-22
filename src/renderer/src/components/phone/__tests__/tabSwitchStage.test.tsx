@@ -189,6 +189,26 @@ describe('the tab track follows the finger from the store, not through a render'
     expect(card('b').style.transform).toBe(placement(1, 0.61))
   })
 
+  it("the commit's move of the origin onto the landed card takes the ribbon out, though the transform is already there", () => {
+    // The drag from `a` towards `b` … the spring's last step lands exactly on 1 (`spring.ts`
+    // snaps it), the ribbon full.
+    mount(0.2)
+    act(() => track(1, 0))
+    expect(card('b').style.transform).toBe(placement(1, 1))
+    expect(Number(layer('b', '.zen-group-ribbon').style.opacity)).toBe(1)
+    // The commit (`stage.ts`): the same position, the origin moved onto it – the transform does
+    // not change, the ribbon's distance from the origin does (to 0: it fades with movement, and
+    // the landed page is at rest again).
+    act(() =>
+      stageStore.set({
+        tabs: { phase: 'committing', order: ORDER, position: 1, origin: 1, advance: ADVANCE }
+      })
+    )
+    expect(card('b').style.transform).toBe(placement(1, 1))
+    expect(Number(layer('b', '.zen-group-ribbon').style.opacity)).toBe(0)
+    expect(previews.length).toBe(3)
+  })
+
   it('the finger crossing a card mounts the next one, standing where the track is from its first frame', () => {
     mount(0.2)
     expect(document.querySelectorAll('.zen-stage-card')).toHaveLength(3)
