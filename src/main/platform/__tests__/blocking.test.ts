@@ -498,6 +498,93 @@ describe('GhosteryTextMatcher', () => {
     expect(fourth.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
   })
 
+  it('compiles in the background when given the compile: the old engine answers meanwhile, changes fold into one build after, and a failed compile keeps what was there', async () => {
+    const cacheDir = join(tempDir(), 'cache')
+    const s = source()
+    const { FiltersEngine, Request } = await import('@ghostery/adblocker')
+    const { GHOSTERY_COMPILE_TASK, compileGhosteryEngine } = await import('../blockingCompile')
+    // The compile as the worker runs it, but held until the test lets each one go.
+    const gates: Array<() => void> = []
+    let fail = false
+    const compile = vi.fn(async (parts: string[]) => {
+      await new Promise<void>((resolve) => gates.push(resolve))
+      if (fail) throw new Error('the worker choked')
+      return GHOSTERY_COMPILE_TASK.run({ parts })
+    })
+    const matcher = new GhosteryTextMatcher(s, cacheDir, 'v1', 0, compile)
+    s.engine.setRuleSet(textSet('excerpt', EXCERPT))
+    matcher.rebuild()
+    // Out for compiling: nothing adopted yet, `ready` says so, nothing matches.
+    expect(compile).toHaveBeenCalledTimes(1)
+    expect(matcher.ready).toBe(false)
+    expect(matcher.builds).toBe(0)
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toBeNull()
+    // Two more sets land while the build is out: one build after it covers both.
+    s.engine.setRuleSet(textSet('a', '||a.example^'))
+    matcher.rebuild()
+    s.engine.setRuleSet(textSet('b', '||b.example^'))
+    matcher.rebuild()
+    expect(compile).toHaveBeenCalledTimes(1)
+    gates.shift()!()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.builds).toBe(1)
+    expect(matcher.compiledInBackground).toBe(1)
+    expect(matcher.match(ctx('https://ad.doubleclick.net/x'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://a.example/'))).toBeNull()
+    // The folded build went out by itself, with the later sets' unpersisted text.
+    expect(compile).toHaveBeenCalledTimes(2)
+    expect([...compile.mock.calls[1]![0]].sort()).toEqual(
+      [EXCERPT, '||a.example^', '||b.example^'].sort()
+    )
+    gates.shift()!()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.builds).toBe(2)
+    expect(matcher.ready).toBe(true)
+    expect(matcher.match(ctx('https://a.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://phish.example/', { type: 'main_frame' }))).toMatchObject({
+      action: 'block'
+    })
+    // The cache holds the worker's bytes as they came: the next start deserialises them.
+    expect(Buffer.from(readFileSync(join(cacheDir, 'engine.bin')))).toEqual(
+      Buffer.from(compileGhosteryEngine(compile.mock.calls[1]![0]).engine.serialize())
+    )
+    expect(
+      FiltersEngine.deserialize(new Uint8Array(readFileSync(join(cacheDir, 'engine.bin')))).match(
+        Request.fromRawDetails({ url: 'https://a.example/', type: 'script' })
+      ).match
+    ).toBe(true)
+    expect(readFileSync(join(cacheDir, 'documents.txt'), 'utf8')).toBe(
+      '||phish.example^$all\n@@||trusted.example^$document'
+    )
+
+    // A compile that fails leaves the engine as it was, and the build is over.
+    fail = true
+    s.engine.setRuleSet(textSet('c', '||c.example^'))
+    matcher.rebuild()
+    gates.shift()!()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(matcher.builds).toBe(3)
+    expect(matcher.ready).toBe(true)
+    expect(matcher.match(ctx('https://b.example/'))).toMatchObject({ action: 'block' })
+    expect(matcher.match(ctx('https://c.example/'))).toBeNull()
+  })
+
+  it('hands back the same engine from the worker task as the parse on the spot', async () => {
+    const { FiltersEngine } = await import('@ghostery/adblocker')
+    const { GHOSTERY_COMPILE_TASK, compileGhosteryEngine } = await import('../blockingCompile')
+    const parts = [EXCERPT, '||a.example^\n||b.example^$third-party']
+    const output = GHOSTERY_COMPILE_TASK.run({ parts })
+    // Moved, not copied: the task names its buffer.
+    expect(GHOSTERY_COMPILE_TASK.transferables!(output)).toEqual([output.engine.buffer])
+    const cloned = structuredClone(output, { transfer: [output.engine.buffer] })
+    expect(output.engine.byteLength).toBe(0)
+    const fromWorker = FiltersEngine.deserialize(cloned.engine)
+    const onTheSpot = compileGhosteryEngine(parts)
+    expect(Buffer.from(fromWorker.serialize())).toEqual(Buffer.from(onTheSpot.engine.serialize()))
+    expect(cloned.documents).toBe(onTheSpot.documents.lines.join('\n'))
+  })
+
   it('keeps the cached lists while the master switch has every list off', () => {
     const cacheDir = join(tempDir(), 'cache')
     const s = source()

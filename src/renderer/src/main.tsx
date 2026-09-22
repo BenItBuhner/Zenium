@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { AutofillSurface } from './components/autofill/AutofillSurface'
 import { ErrorBoundary, Root } from './Root'
 import { chromeSurface } from './lib/formFactor'
+import './lib/lastInput'
 import { startBrowserSync } from './lib/ui'
 import { startEngineRelay } from './translate/engine'
 

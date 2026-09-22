@@ -220,6 +220,15 @@ describe('opening a page', () => {
     ])
     expect(invoke.mock.calls.every(([name]) => name === 'page.open')).toBe(true)
   })
+
+  it("carries the page's own parameters when the entry has some (Privacy asked for a site)", () => {
+    openSettings('privacy', { site: 'https://news.example' })
+    expect(invoke).toHaveBeenCalledWith('page.open', {
+      id: 'settings',
+      section: 'privacy',
+      query: { site: 'https://news.example' }
+    })
+  })
 })
 
 describe('the page overlays on a host with page tabs', () => {

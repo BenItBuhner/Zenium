@@ -494,9 +494,10 @@ export const INTERNAL_PAGE_IDS: readonly InternalPageId[] = Object.keys(
 
 /**
  * A page's own parameters, carried as the address's query (`zen://history?q=example.com`,
- * `zen://bookmarks?folder=<id>`): what the page opens on besides its section – a filter, a
- * folder – as Chrome's `chrome://history/?q=` and `chrome://bookmarks/?id=` carry theirs. Never
- * a section, and never in the alias the pill shows ({@link internalPageAliasUrl}).
+ * `zen://bookmarks?folder=<id>`, `zen://settings/privacy?site=<origin>`): what the page opens on
+ * besides its section – a filter, a folder, a site – as Chrome's `chrome://history/?q=`,
+ * `chrome://bookmarks/?id=` and `chrome://settings/content/siteDetails?site=` carry theirs.
+ * Never a section, and never in the alias the pill shows ({@link internalPageAliasUrl}).
  */
 export type InternalPageQuery = Readonly<Record<string, string>>
 

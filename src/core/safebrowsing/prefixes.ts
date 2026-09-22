@@ -119,6 +119,20 @@ export class PrefixTable {
     return new PrefixTable(unique === values.length ? values : values.slice(0, unique))
   }
 
+  /**
+   * Adopt a table another thread built ({@link sortedValues} of a `PrefixTable`, its buffer moved
+   * across a worker boundary): no copy, no sort. The caller vouches for the order; values that
+   * are not sorted and distinct would answer {@link has} wrongly.
+   */
+  static fromSortedValues(values: BigUint64Array): PrefixTable {
+    return new PrefixTable(values)
+  }
+
+  /** The table as it is held: sorted, distinct; the buffer to move to another thread (do not write to it). */
+  sortedValues(): BigUint64Array {
+    return this.values
+  }
+
   /** Sorted big-endian prefixes, {@link PREFIX_BYTES} each. */
   toBytes(): Uint8Array {
     const out = new Uint8Array(this.values.length * PREFIX_BYTES)
