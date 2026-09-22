@@ -44,12 +44,7 @@ import kotlin.math.max
  *  - LONG TASKS: top-level slices (nothing on the thread encloses them) longer than
  *    [LONG_TASK_US]: the 50 ms of the Long Tasks API; [Reading.busyMs] is the top-level slices'
  *    total, the thread's busy time in the window, and [Reading.scriptMs] the `FunctionCall` and
- *    `EvaluateScript` slices' total;
- *  - the SAMPLING PROFILE ([Reading.profile], from the `disabled-by-default-v8.cpu_profiler`
- *    category's `Profile` / `ProfileChunk` events): the script by function – the frames with the
- *    most self time over the window and inside the longest task, each named with its script's
- *    file, line and column (the chrome's bundle is minified: its names are short, the positions
- *    resolve through the build's source map).
+ *    `EvaluateScript` slices' total.
  *
  * The [Window] cuts the trace to the scene (the block's `System.nanoTime()` bounds, in µs: the
  * same clock as `ts`); an event belongs to the window its `ts` falls in. When the window holds no
@@ -85,22 +80,6 @@ object BlinkTrace {
      * whose events are `performance.mark()` calls by name, and V8's compile events (PERF-5: the
      * first touch of a swipe after the app sat idle was one 55 ms listener with nothing traced
      * inside it; a compile shows in this category and nowhere else, at no cost when none happens).
-     *
-     * `disabled-by-default-v8.cpu_profiler` is V8's SAMPLING PROFILER riding the trace, as the
-     * DevTools Performance panel records it: a `Profile` event when it starts and `ProfileChunk`
-     * events with the JS stack the main thread was in at every millisecond (`nodes`: the call
-     * frames by function name, script URL, line and column; `samples` and `timeDeltas`). It names
-     * the script a scene runs where the timeline's `FunctionCall` cannot (WebView's argument
-     * filter strips the timeline's names; the profiler's are on its allow-list), and inside a
-     * long task it names what the task ran. Read into [Reading.profile]: the top self-time frames
-     * of the window and of the longest task. The sampler's cost on the main thread is the signal
-     * per millisecond and a stack walk, under a percent of it.
-     *
-     * `toplevel` is every thread's tasks (`ThreadControllerImpl::RunTask`), the browser side's
-     * among them – the app's UI thread, where the host answers the chrome's commands and draws
-     * the WebViews: not read into the reading (the renderer main thread's outermost slices are
-     * the same tasks the timeline's `RunTask` names), kept in the trace for a reader that asks
-     * what the host was doing under a long task of the chrome (the Perfetto UI on the saved trace).
      */
     val CATEGORIES: List<String> = listOf(
         "blink",
@@ -109,44 +88,10 @@ object BlinkTrace {
         "v8",
         "renderer.scheduler",
         "input",
-        "toplevel",
         "devtools.timeline",
         "disabled-by-default-devtools.timeline",
         "disabled-by-default-devtools.timeline.frame",
-        "disabled-by-default-v8.compile",
-        "disabled-by-default-v8.cpu_profiler"
-    )
-
-    /** One call frame of the sampling profile with its self time over a stretch of samples, ms. */
-    data class Frame(
-        /** The function's name; V8's own nodes are named in parentheses: `(program)`, `(garbage collector)`. */
-        val fn: String,
-        /** The script's URL, empty for V8's own nodes. */
-        val url: String,
-        /** 1-based line and column of the function in its script (as DevTools shows them), 0 without a script. */
-        val line: Int,
-        val col: Int,
-        /** The samples that had this frame on top, as time, ms. */
-        val selfMs: Double
-    ) {
-        /** `name (file:line:col)`, the file the URL's last segment. */
-        fun label(): String {
-            val name = fn.ifEmpty { "(anonymous)" }
-            if (url.isEmpty()) return name
-            return "$name (${url.substringAfterLast('/')}:$line:$col)"
-        }
-    }
-
-    /** The sampling profile's reading over the window: what the main thread's script was, by function. */
-    data class Profile(
-        /** Samples in the window. */
-        val samples: Int,
-        /** The mean time between samples, ms (V8 samples every millisecond by default). */
-        val intervalMs: Double,
-        /** The frames with the most self time in the window, most first (V8's `(root)` and `(idle)` left out). */
-        val top: List<Frame>,
-        /** The same over the longest task alone; empty without a long task, or when no sample fell in it. */
-        val longestTask: List<Frame>
+        "disabled-by-default-v8.compile"
     )
 
     /** A stretch of the trace's clock, µs (`CLOCK_MONOTONIC`, as `System.nanoTime() / 1000`). */
@@ -212,9 +157,7 @@ object BlinkTrace {
         /** The window's length, ms – the trace's own span when the whole trace was read. */
         val windowMs: Double,
         /** The whole trace was read: no window was given, or the window held no main-thread event. */
-        val whole: Boolean,
-        /** V8's sampling profile over the window; null when the trace carried none (the category off, or its args stripped). */
-        val profile: Profile? = null
+        val whole: Boolean
     ) {
         /** `count` per frame – per one frame when the trace saw none, so a count without frames still reads. */
         fun perFrame(count: Int): Double = count.toDouble() / max(frames, 1)
@@ -259,30 +202,7 @@ object BlinkTrace {
             sb.append(",\"threads\":").append(threads)
             sb.append(",\"windowMs\":").append(FrameStats.number(windowMs, 1))
             sb.append(",\"whole\":").append(whole)
-            if (profile != null) {
-                sb.append(",\"profile\":{\"samples\":").append(profile.samples)
-                    .append(",\"intervalMs\":").append(FrameStats.number(profile.intervalMs, 2))
-                    .append(",\"top\":")
-                frames(sb, profile.top)
-                sb.append(",\"longestTask\":")
-                frames(sb, profile.longestTask)
-                sb.append("}")
-            }
             return sb.append("}").toString()
-        }
-
-        private fun frames(sb: StringBuilder, frames: List<Frame>) {
-            sb.append("[")
-            frames.forEachIndexed { i, f ->
-                if (i > 0) sb.append(",")
-                sb.append("{\"fn\":").append(FrameStats.quote(f.fn))
-                if (f.url.isNotEmpty()) {
-                    sb.append(",\"url\":").append(FrameStats.quote(f.url))
-                        .append(",\"line\":").append(f.line).append(",\"col\":").append(f.col)
-                }
-                sb.append(",\"ms\":").append(FrameStats.number(f.selfMs, 2)).append("}")
-            }
-            sb.append("]")
         }
 
         /** The reading for a human, one line (what the scene's table carries). */
@@ -307,12 +227,6 @@ object BlinkTrace {
             if (compileMs >= 0.5) sb.append(" (compiling ").append(f0(compileMs)).append(")")
             sb.append(", style ").append(f0(styleRecalcMs)).append(", layout ").append(f0(layoutMs))
                 .append(", paint ").append(f0(paintMs)).append(" ms")
-            if (profile != null && profile.top.isNotEmpty()) {
-                sb.append("; script by function: ").append(profile.top.take(3).joinToString(", ") { "${it.label()} ${f0(it.selfMs)}" })
-                if (profile.longestTask.isNotEmpty()) {
-                    sb.append(" (the longest task's: ").append(profile.longestTask.take(3).joinToString(", ") { "${it.label()} ${f0(it.selfMs)}" }).append(")")
-                }
-            }
             return sb.toString()
         }
     }
@@ -383,89 +297,6 @@ object BlinkTrace {
     /** One pass' result: the reading, and how many events the thread read (or every thread, when none was found) had in the whole trace. */
     private class Pass(val reading: Reading, val everything: Int)
 
-    /** A call frame of the profile, as `ProfileChunk.args.data.cpuProfile.nodes[].callFrame` carries it. */
-    private class Node(val fn: String, val url: String, val line: Int, val col: Int)
-
-    /**
-     * One V8 profile as its trace events build it: the `Profile` event (on the thread sampled, with
-     * the profile's start on the trace's clock) and the `ProfileChunk` events (from the sampler's
-     * own thread, tied to it by `id`), each a batch of new nodes, the sampled node per sample and
-     * the time since the previous sample.
-     */
-    private class ProfileAcc(var thread: Long) {
-        var startUs: Double? = null
-        val nodes = HashMap<Long, Node>()
-        val samples = ArrayList<Long>()
-        val deltasUs = ArrayList<Double>()
-
-        fun chunk(data: Map<*, *>) {
-            val cpu = data["cpuProfile"] as? Map<*, *>
-            (cpu?.get("nodes") as? List<*>)?.forEach { n ->
-                val node = n as? Map<*, *> ?: return@forEach
-                val id = (node["id"] as? Number)?.toLong() ?: return@forEach
-                val frame = node["callFrame"] as? Map<*, *>
-                nodes[id] = Node(
-                    fn = frame?.get("functionName") as? String ?: "",
-                    url = frame?.get("url") as? String ?: "",
-                    line = (frame?.get("lineNumber") as? Number)?.toInt() ?: -1,
-                    col = (frame?.get("columnNumber") as? Number)?.toInt() ?: -1
-                )
-            }
-            (cpu?.get("samples") as? List<*>)?.forEach { s -> (s as? Number)?.let { samples += it.toLong() } }
-            (data["timeDeltas"] as? List<*>)?.forEach { d -> (d as? Number)?.let { deltasUs += it.toDouble() } }
-        }
-
-        /**
-         * The profile read over `window` (every sample with null): a sample's time is the profile's
-         * start plus the deltas up to it, its self time the gap to the next sample – capped at five
-         * times the usual gap (the median delta), so a stretch the sampler missed (the thread off
-         * the CPU, the sampler's own thread starved) is not booked to the frame before it; the last
-         * sample gets the usual gap. `longest` is the longest task's stretch, µs, for its own top list.
-         */
-        fun read(window: Window?, longest: ClosedFloatingPointRange<Double>?): Profile? {
-            val start = startUs ?: return null
-            val n = minOf(samples.size, deltasUs.size)
-            if (n == 0) return null
-            val times = DoubleArray(n)
-            var t = start
-            for (i in 0 until n) {
-                t += deltasUs[i]
-                times[i] = t
-            }
-            val gapUs = deltasUs.subList(0, n).sorted()[n / 2].coerceAtLeast(1.0)
-            val inWindow = ArrayList<Pair<Long, Double>>() // node, self µs
-            val inTask = ArrayList<Pair<Long, Double>>()
-            for (i in 0 until n) {
-                if (window != null && !window.holds(times[i])) continue
-                val self = if (i + 1 < n) (times[i + 1] - times[i]).coerceIn(0.0, 5 * gapUs) else gapUs
-                inWindow += samples[i] to self
-                if (longest != null && times[i] in longest) inTask += samples[i] to self
-            }
-            if (inWindow.isEmpty()) return null
-            return Profile(
-                samples = inWindow.size,
-                intervalMs = gapUs / 1e3,
-                top = top(inWindow, 8),
-                longestTask = top(inTask, 5)
-            )
-        }
-
-        private fun top(sampled: List<Pair<Long, Double>>, count: Int): List<Frame> {
-            val selfUs = LinkedHashMap<String, Pair<Node, Double>>()
-            for ((id, self) in sampled) {
-                val node = nodes[id] ?: continue
-                if (node.fn == "(root)" || node.fn == "(idle)") continue
-                val key = "${node.fn}\u0000${node.url}\u0000${node.line}\u0000${node.col}"
-                val had = selfUs[key]
-                selfUs[key] = node to ((had?.second ?: 0.0) + self)
-            }
-            return selfUs.values
-                .sortedByDescending { it.second }
-                .take(count)
-                .map { (node, us) -> Frame(node.fn, node.url, if (node.url.isEmpty()) 0 else node.line + 1, if (node.url.isEmpty()) 0 else node.col + 1, us / 1e3) }
-        }
-    }
-
     /** The slices' time with the ones nested in an earlier, longer slice left out, µs. */
     private fun outermostUs(slices: List<Slice>): Double {
         var end = -Double.MAX_VALUE
@@ -480,7 +311,6 @@ object BlinkTrace {
 
     private fun read(reader: Reader, window: Window?): Pass {
         val threads = LinkedHashMap<Long, ThreadAcc>()
-        val profiles = LinkedHashMap<String, ProfileAcc>()
         var everything = 0
         val json = Json(reader as? BufferedReader ?: BufferedReader(reader, 1 shl 16))
         try {
@@ -492,20 +322,6 @@ object BlinkTrace {
                 val thread = threads.getOrPut(key) { ThreadAcc() }
                 if (ph == "M") {
                     if (event["name"] == "thread_name") thread.name = (event["args"] as? Map<*, *>)?.get("name") as? String
-                    return@events
-                }
-                if (ph == "P") {
-                    // The profile's samples carry their own times: a chunk written after the window
-                    // holds samples inside it, so the chunks are read whole and cut by sample.
-                    val data = (event["args"] as? Map<*, *>)?.get("data") as? Map<*, *> ?: return@events
-                    val id = event["id"]?.toString() ?: return@events
-                    when (event["name"]) {
-                        "Profile" -> profiles.getOrPut(id) { ProfileAcc(key) }.let {
-                            it.thread = key
-                            it.startUs = (data["startTime"] as? Number)?.toDouble()
-                        }
-                        "ProfileChunk" -> profiles.getOrPut(id) { ProfileAcc(key) }.chunk(data)
-                    }
                     return@events
                 }
                 val ts = (event["ts"] as? Number)?.toDouble() ?: return@events
@@ -561,7 +377,6 @@ object BlinkTrace {
         var busyUs = 0.0
         var longTasks = 0
         var longestUs = 0.0
-        var longestTs = 0.0
         var longestCpuUs: Double? = null
         for (slice in sorted) {
             if (slice.ts < end) continue
@@ -570,16 +385,10 @@ object BlinkTrace {
             if (slice.dur > LONG_TASK_US) longTasks++
             if (slice.dur > longestUs) {
                 longestUs = slice.dur
-                longestTs = slice.ts
                 longestCpuUs = slice.cpu
             }
         }
         val frames = if (t.frameMs.isNotEmpty()) t.frameMs.size else t.frameInstants
-        // The main thread's profile: the one its `Profile` event began, else the biggest in its process.
-        val mainPid = main.key ushr 32
-        val profile = (profiles.values.firstOrNull { it.thread == main.key }
-            ?: profiles.values.filter { it.thread ushr 32 == mainPid }.maxByOrNull { it.samples.size })
-            ?.read(window, if (longTasks > 0) longestTs..(longestTs + longestUs) else null)
         return Pass(
             Reading(
                 found = true,
@@ -602,8 +411,7 @@ object BlinkTrace {
                 events = t.events,
                 threads = threads.size,
                 windowMs = windowMs,
-                whole = window == null,
-                profile = profile
+                whole = window == null
             ),
             t.everything
         )

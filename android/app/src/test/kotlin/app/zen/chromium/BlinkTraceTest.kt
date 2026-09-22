@@ -221,51 +221,6 @@ class BlinkTraceTest {
     }
 
     @Test
-    fun `V8's sampling profile names the script by function - self time per frame over the window and inside the longest task, root and idle left out, a missed stretch capped`() {
-        val url = "https://appassets.androidplatform.net/assets/www/assets/index-abc.js"
-        fun node(id: Int, fn: String, line: Int = -1, col: Int = -1, parent: Int? = null): String =
-            """{"id":$id,"callFrame":{"functionName":"$fn","url":"${if (line < 0) "" else url}","lineNumber":$line,"columnNumber":$col}${parent?.let { ",\"parent\":$it" } ?: ""}}"""
-        fun chunk(ts: Long, nodes: List<String>, samples: List<Int>, deltas: List<Int>): String =
-            """{"pid":1,"tid":20,"ts":$ts,"ph":"P","cat":"disabled-by-default-v8.cpu_profiler","name":"ProfileChunk","id":"0x1","args":{"data":{"cpuProfile":{"nodes":[${nodes.joinToString(",")}],"samples":[${samples.joinToString(",")}]},"timeDeltas":[${deltas.joinToString(",")}]}}}"""
-        val text = "[" + listOf(
-            event(7, 1_000, "X", BlinkTrace.FRAME, 8_000),
-            event(7, 20_000, "X", "RunTask", 60_000), // the long task: 20-80 ms
-            event(7, 200_000, "X", BlinkTrace.FRAME, 8_000),
-            // The profile begins on the main thread (tid 7) at 1 ms of the trace's clock; the chunks come from the sampler's thread.
-            """{"pid":1,"tid":7,"ts":900,"ph":"P","cat":"disabled-by-default-v8.cpu_profiler","name":"Profile","id":"0x1","args":{"data":{"startTime":1000}}}""",
-            // Samples at 2, 3, 4, 5, 6 ms: onMove, onMove, (program), (idle), onMove.
-            chunk(6_500, listOf(node(1, "(root)"), node(2, "(program)", parent = 1), node(3, "onMove", 41, 9, parent = 1), node(4, "(idle)", parent = 1)), listOf(3, 3, 2, 4, 3), listOf(1_000, 1_000, 1_000, 1_000, 1_000)),
-            // 21, 22, 23 ms inside the long task: render (a second node of the same function under another parent counts with the first), render, onMove;
-            // then nothing until 79 ms (the thread off the CPU: the 56 ms gap is capped at five samples' worth, as the 15 ms gap after the 6 ms sample was), (root) at 79 ms and a last render at 201 ms.
-            chunk(80_000, listOf(node(5, "render", 12, 3, parent = 2), node(6, "render", 12, 3, parent = 3)), listOf(5, 6, 3, 1, 5), listOf(15_000, 1_000, 1_000, 56_000, 122_000))
-        ).joinToString(",") + "]"
-        val whole = BlinkTrace.parse(text)
-        val profile = whole.profile!!
-        assertEquals(10, profile.samples)
-        assertEquals(1.0, profile.intervalMs, 1e-9)
-        // Self time: onMove 1 + 1 + 5 (capped from 15) + 5 (capped from 56) = 12 ms; render 1 + 1 + 1 (the last sample, the usual gap) = 3; (program) 1.
-        assertEquals(listOf("onMove (index-abc.js:42:10) 12.0", "render (index-abc.js:13:4) 3.0", "(program) 1.0"), profile.top.map { "${it.label()} ${it.selfMs}" })
-        assertEquals(listOf("onMove (index-abc.js:42:10) 5.0", "render (index-abc.js:13:4) 2.0"), profile.longestTask.map { "${it.label()} ${it.selfMs}" })
-        assertTrue(whole.describe(), whole.describe().endsWith("; script by function: onMove (index-abc.js:42:10) 12, render (index-abc.js:13:4) 3, (program) 1 (the longest task's: onMove (index-abc.js:42:10) 5, render (index-abc.js:13:4) 2)"))
-        assertTrue(
-            whole.toJson(),
-            whole.toJson().endsWith(
-                ",\"profile\":{\"samples\":10,\"intervalMs\":1,\"top\":[{\"fn\":\"onMove\",\"url\":\"$url\",\"line\":42,\"col\":10,\"ms\":12}," +
-                    "{\"fn\":\"render\",\"url\":\"$url\",\"line\":13,\"col\":4,\"ms\":3},{\"fn\":\"(program)\",\"ms\":1}]," +
-                    "\"longestTask\":[{\"fn\":\"onMove\",\"url\":\"$url\",\"line\":42,\"col\":10,\"ms\":5},{\"fn\":\"render\",\"url\":\"$url\",\"line\":13,\"col\":4,\"ms\":2}]}}"
-            )
-        )
-        // A window cuts the samples by their own times, whatever the chunk's: the first frame's window holds the first five samples alone, and no long task.
-        val first = BlinkTrace.parse(text, Window(0, 10_000))
-        assertEquals(5, first.profile!!.samples)
-        assertEquals(listOf("onMove (index-abc.js:42:10) 7.0", "(program) 1.0"), first.profile!!.top.map { "${it.label()} ${it.selfMs}" })
-        assertTrue(first.profile!!.longestTask.isEmpty())
-        // Without the category (no P events), no profile and no key.
-        assertNull(scene.profile)
-        assertFalse(scene.toJson(), scene.toJson().contains("profile"))
-    }
-
-    @Test
     fun `a trace with frames as instants alone counts them, with no main-thread time`() {
         val text = "[" + listOf(
             event(3, 100, "I", BlinkTrace.FRAME_INSTANT),
