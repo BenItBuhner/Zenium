@@ -13,6 +13,7 @@ import java.io.File
 import java.io.FileInputStream
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * The tab cards' pictures (TAB-26; BH-14 a card showing the page a tab left, BH-33 placeholder
@@ -29,9 +30,11 @@ import kotlin.math.max
  *  - [ThumbsRestoreDemo], the second act, after the workflow script force-stopped the process:
  *    the same pages answered 40 s late, so no page can have painted when the restored overview
  *    is pulled in – the purple and green cards must already show their pages from disk (BH-33:
- *    the files stamped with their documents, read for them), while the blue tab's file, replaced
- *    before the launch by a copy of the green one (a picture of a page the tab is not on, as a
- *    kill between a navigation and the next capture leaves), must be refused for the placeholder
+ *    the files stamped with their documents, read for them; a restored tab sleeps until it is
+ *    tapped and its card draws the picture at 69 %, #228, which the read undoes), while the
+ *    blue tab's file, replaced before the launch by a copy of the green one (a picture of a page
+ *    the tab is not on, as a kill between a navigation and the next capture leaves), must be
+ *    refused for the placeholder
  *    (BH-14 across the kill) and replaced once the blue page has been seen and left; a stale
  *    picture planted under a tab id the session does not have must be gone (the sweep at boot).
  *
@@ -147,19 +150,66 @@ abstract class ThumbsDemoBase(
         return Color.rgb((Color.red(a) + Color.red(b)) / 2, (Color.green(a) + Color.green(b)) / 2, (Color.blue(a) + Color.blue(b)) / 2)
     }
 
-    /** Read the card titled `label` off `shot` and judge it against `expected` (null: it must show no page). */
+    /**
+     * Read the card titled `label` off `shot` and judge it against `expected` (null: it must show
+     * no page). A sleeping page's card draws its picture at the deemphasised 69 % over the card's
+     * solid surface (#228's CT-22, `.zen-overview-card[data-discarded]`), which every restored tab
+     * but the active one is until it is tapped: such a sample is read back to the page's own
+     * colour through the document's opacity and surface ([cardLook], [unwash]) before the judgement.
+     */
     protected fun judgeCard(shot: Bitmap, label: String, expected: Int?, name: String) {
         val bounds = card(label)
         if (bounds == null) {
             check(name, false, "no card titled $label on screen")
             return
         }
-        val color = cardColor(shot, bounds)
-        if (expected != null) {
-            check(name, near(color, expected), "card $label shows ${hex(color)} (${pageOf(color)}), expected ${hex(expected)}")
+        val sampled = cardColor(shot, bounds)
+        val look = cardLook(label)?.takeIf { it.opacity < 0.995f }
+        val color = if (look != null) unwash(sampled, look) else sampled
+        val how = if (look != null) {
+            ", the sample ${hex(sampled)} read back through the sleeping card's ${(look.opacity * 100).roundToInt()} % over ${hex(look.background)}"
         } else {
-            check(name, PAGES.none { near(it.color, color) }, "card $label shows ${hex(color)} (${pageOf(color)}), expected the placeholder")
+            ""
         }
+        if (expected != null) {
+            check(name, near(color, expected), "card $label shows ${hex(color)} (${pageOf(color)})$how, expected ${hex(expected)}")
+        } else {
+            check(name, PAGES.none { near(it.color, color) }, "card $label shows ${hex(color)} (${pageOf(color)})$how, expected the placeholder")
+        }
+    }
+
+    /** How the document draws a card: whether its page sleeps, its preview's opacity, its solid surface. */
+    protected class CardLook(val discarded: Boolean, val opacity: Float, val background: Int)
+
+    /**
+     * The card titled `label` as the chrome's document draws it: whether its page sleeps
+     * (`data-discarded`), its preview's computed opacity (0.69 for a sleeping page since #228,
+     * 1 otherwise) and the card's background (`--zen-bg-solid`, a plain colour), so a sample of
+     * the picture can be read back to the page's own colour by [unwash]. Null when the document
+     * has no such card or its surface is not an rgb() the read can use.
+     */
+    protected fun cardLook(label: String): CardLook? {
+        val raw = chromeJs(
+            "(function(){var t=${JSONObject.quote(label)};" +
+                "var card=Array.prototype.find.call(document.querySelectorAll('.zen-overview-card')," +
+                "function(c){var s=c.querySelector('.zen-overview-card-title');return !!s&&s.textContent.trim()===t});" +
+                "if(!card)return null;var p=card.querySelector('.zen-overview-card-preview');" +
+                "return {discarded:card.getAttribute('data-discarded')==='true'," +
+                "opacity:p?parseFloat(getComputedStyle(p).opacity):1,bg:getComputedStyle(card).backgroundColor};})()"
+        )
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        val (r, g, b) = CSS_RGB.find(json.optString("bg"))?.destructured ?: return null
+        return CardLook(json.optBoolean("discarded"), json.optDouble("opacity", 1.0).toFloat(), Color.rgb(r.toInt(), g.toInt(), b.toInt()))
+    }
+
+    /** The page's own colour behind a picture drawn at `look.opacity` over `look.background`. */
+    protected fun unwash(sample: Int, look: CardLook): Int {
+        fun channel(s: Int, bg: Int): Int = ((s - (1f - look.opacity) * bg) / look.opacity).roundToInt().coerceIn(0, 255)
+        return Color.rgb(
+            channel(Color.red(sample), Color.red(look.background)),
+            channel(Color.green(sample), Color.green(look.background)),
+            channel(Color.blue(sample), Color.blue(look.background))
+        )
     }
 
     // --- the chrome --------------------------------------------------------------------------------
@@ -212,6 +262,8 @@ abstract class ThumbsDemoBase(
         const val HTML = "text/html; charset=utf-8"
         /** Judging tolerance per channel: JPEG at quality 80 moves a flat colour by a few steps. */
         const val TOLERANCE = 40
+        /** A computed `background-color`: `rgb(r, g, b)` or `rgba(r, g, b, a)`. */
+        val CSS_RGB = Regex("""rgba?\((\d+),\s*(\d+),\s*(\d+)""")
         val RED = Color.rgb(214, 58, 58)
         val GREEN = Color.rgb(47, 158, 91)
         val BLUE = Color.rgb(47, 111, 214)
