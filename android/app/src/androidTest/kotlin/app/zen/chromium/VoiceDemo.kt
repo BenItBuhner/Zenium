@@ -117,9 +117,16 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
 
     // --- the sequence ----------------------------------------------------------------------------
 
-    /** The bar's mic, the system's prompt, Don't allow: the sheet goes again, the toast says why. */
+    /**
+     * The bar's mic, the system's prompt, Don't allow: the sheet goes again, the toast says why.
+     * The toasts are read off the chrome's record ([watchToasts] / [awaitToastSeen]): a toast
+     * lives 2.8 s and the emulator's accessibility tree trails the screen by more than that
+     * (the nightly's proof run showed each of this driver's toasts on the recording and the tree
+     * without it for the 8 s it was given); the tree stays the way to touch Open settings.
+     */
     private fun refusedOnce() {
         finding("\nmicrophone refused once")
+        watchToasts()
         check("a touch on the bar's Voice search starts the request", touchTapLabel(BAR_MIC_LABEL))
         val prompted = awaitSystemWindow(10_000)
         check("the system's microphone prompt shows", prompted)
@@ -128,7 +135,7 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
             shot("01-permission-prompt")
             check("Don't allow is touched", touchDialog(DENY_LABELS))
         }
-        val toast = waitFor(DENIED_TOAST, 8_000) != null
+        val toast = awaitToastSeen(DENIED_TOAST, 8_000)
         check("the refusal's toast: '$DENIED_TOAST'", toast)
         check("the sheet is down after the refusal", awaitSurface(false, 4_000))
         if (toast) shot("02-denied-toast")
@@ -144,6 +151,7 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         finding("\nmicrophone refused for good")
         var fixed = false
         for (attempt in 1..3) {
+            watchToasts()
             if (!touchTapLabel(BAR_MIC_LABEL)) {
                 finding("  attempt $attempt: no Voice search control to touch")
                 break
@@ -156,11 +164,11 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
             }
             val deadline = SystemClock.uptimeMillis() + 8_000
             while (SystemClock.uptimeMillis() < deadline) {
-                if (findByLabel(FIXED_TOAST) != null) {
+                if (toastSeen(FIXED_TOAST)) {
                     fixed = true
                     break
                 }
-                if (findByLabel(DENIED_TOAST) != null) break
+                if (toastSeen(DENIED_TOAST)) break
                 SystemClock.sleep(200)
             }
             if (fixed) break
@@ -336,6 +344,7 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
     /** An error the user cannot answer in the sheet is a toast. */
     private fun networkErrorToast() {
         finding("\na network error")
+        watchToasts()
         check("a touch on the bar's Voice search starts the request", touchTapLabel(BAR_MIC_LABEL))
         val up = awaitPhase(setOf("starting", "listening"), 10_000)
         check("the sheet is up (phase ${phase()})", up)
@@ -343,7 +352,7 @@ class VoiceDemo : DemoHarness("voice-demo-state.json", "android-voice", "voice-d
         fake.ready()
         pulse(600)
         fake.error(SpeechRecognizer.ERROR_NETWORK)
-        val toast = waitFor(NETWORK_TOAST, 6_000) != null
+        val toast = awaitToastSeen(NETWORK_TOAST, 6_000)
         check("the network error's toast: '$NETWORK_TOAST'", toast)
         check("the sheet is down after the error", awaitSurface(false, 6_000))
         if (toast) shot("15-network-toast")
