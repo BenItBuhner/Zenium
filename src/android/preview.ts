@@ -178,16 +178,18 @@ export function createPreviewBridge(): NativeBridge {
     offset: number
     travel: number
     shownEdge: number
+    tall: boolean
   } | null = null
   /**
    * Like `TabHost.place`: the page's edge on the bar's side follows the bar. The chrome's content
    * column is laid out short (the bar's band free, `S`) or, once the bar is hidden and at rest,
    * tall into the band (`H`), and its report can trail the bar by a frame either way, so which
-   * one it is in is read off the frame's `shownEdge`. At rest the layout is the chrome's own;
-   * with the bar part-way the frame is laid out tall and clipped to what the bar has left:
-   * docked at the bottom it grows into the band under the clip, docked at the top it is slid up
-   * with the bar (its content moves with the bar, the page holds still under the finger) and
-   * clipped at the frame's bottom edge.
+   * one it is in is read off the frame's `shownEdge`. At either rest the layout is the chrome's
+   * own; while the frame says `tall` – from the hide's first frame to the shown rest, not the
+   * frame the bar arrives home (§11.5) – the page is laid out tall and clipped to what the bar
+   * has left: docked at the bottom it grows into the band under the clip, docked at the top it
+   * is slid up with the bar (its content moves with the bar, the page holds still under the
+   * finger) and clipped at the frame's bottom edge.
    */
   const applyFrame = (tabId: string): void => {
     const frame = views.get(tabId)
@@ -199,10 +201,10 @@ export function createPreviewBridge(): NativeBridge {
     let shift = 0
     clip.bar = 0
     if (barHide) {
-      const { edge, offset: o, travel: t, shownEdge } = barHide
+      const { edge, offset: o, travel: t, shownEdge, tall } = barHide
       if (edge === 'top') {
         const shownTop = Math.abs(r.y - shownEdge) <= Math.abs(r.y + t - shownEdge) ? r.y : r.y + t
-        if (o <= 0) top = shownTop
+        if (!tall) top = shownTop
         else if (o < t) {
           top = shownTop
           bottom = r.y + r.height + t
@@ -212,8 +214,8 @@ export function createPreviewBridge(): NativeBridge {
       } else {
         const rb = r.y + r.height
         const shownBottom = Math.abs(rb - shownEdge) <= Math.abs(rb - t - shownEdge) ? rb : rb - t
-        bottom = o <= 0 ? shownBottom : shownBottom + t
-        if (o > 0 && o < t) clip.bar = t - o
+        bottom = tall ? shownBottom + t : shownBottom
+        if (tall && o < t) clip.bar = t - o
       }
     }
     frame.style.left = `${r.x / density}px`
@@ -772,7 +774,8 @@ export function createPreviewBridge(): NativeBridge {
               edge: args.edge === 'top' ? 'top' : 'bottom',
               offset: Number(args.offset) || 0,
               travel: Number(args.travel) || 0,
-              shownEdge: Number(args.shownEdge) || 0
+              shownEdge: Number(args.shownEdge) || 0,
+              tall: args.tall === undefined ? (Number(args.offset) || 0) > 0 : args.tall === true
             }
       for (const tabId of views.keys()) applyFrame(tabId)
     },

@@ -153,17 +153,41 @@ class BarHideScrollFilterTest {
     }
 
     @Test
-    fun theChromeSayingTheBarIsHomeGatesTheNextHideAfresh() {
+    fun theChromeSayingThePageIsShortAgainGatesTheNextHideAfresh() {
         val f = filter()
         f.down(finger)
         assertEquals(Verdict.REPORT, f.page(900, 920, 200, fingerY = finger - 20f))
         assertTrue(f.hiding)
-        // The finger went back up and the bar came home (the chrome says so); a new hide within
-        // the same finger, now 40 px from the end, is refused like a first one.
+        // The finger went back up and the bar came home under it: the page is still laid out tall
+        // (the chrome's frames say so, at every offset down to 0), so a new hide within the same
+        // finger grows nothing and is not gated on the band – 40 px from the end of the tall page
+        // there is nothing to clamp.
         assertEquals(Verdict.REPORT, f.page(920, 900, 220, offset = 20f, fingerY = finger))
-        f.barAtRest()
+        f.pageLaidOut(tall = true)
+        assertTrue(f.hiding)
+        f.pageLaidOut(tall = true)
+        assertEquals(Verdict.REPORT, f.page(900, 1_080, 40, fingerY = finger - 180f))
+        // The rest: the chrome lays the page out short and says so; the next hide, 40 px from the
+        // end of the short page, is refused like a first one.
+        f.pageLaidOut(tall = false)
         assertFalse(f.hiding)
-        assertEquals(Verdict.HELD, f.page(900, 1_080, 40, fingerY = finger - 180f))
+        assertEquals(Verdict.HELD, f.page(1_080, 1_260, 40, fingerY = finger - 360f))
+    }
+
+    @Test
+    fun aFingerLandingOnAPageStillTallStartsWithNothingToGrow() {
+        // The bar came home under the last finger, which lifted with the page flinging on: the page
+        // keeps its tall layout until the fling ends and the bar rests. A finger landing before
+        // that scrolls down 30 px from the end: the bar leaves without a relayout, so no clamp.
+        val f = filter()
+        f.down(finger, pageTall = true)
+        assertTrue(f.hiding)
+        assertEquals(Verdict.REPORT, f.page(900, 920, 30, fingerY = finger - 20f))
+        // At the rest the page is short: a finger landing then is gated as before.
+        val g = filter()
+        g.down(finger, pageTall = false)
+        assertFalse(g.hiding)
+        assertEquals(Verdict.HELD, g.page(900, 920, 30, fingerY = finger - 20f))
     }
 
     @Test
