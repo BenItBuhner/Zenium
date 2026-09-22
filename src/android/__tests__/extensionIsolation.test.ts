@@ -159,6 +159,57 @@ describe('the scope proxy of the with-fallback', () => {
     expect(scope.addEventListener).toBe(scope.addEventListener)
   })
 
+  it('binds a window method the page wrapped in a Proxy that refuses a read of its length or name (a bind that throws falls back to a forwarding closure)', () => {
+    const win = fakeWindow()
+    const posted: unknown[] = []
+    // A native method has no `prototype`: a method shorthand.
+    const methods = {
+      postMessage(this: unknown, message: unknown, target: string): string {
+        if (this !== win) throw new TypeError('Illegal invocation')
+        posted.push([message, target])
+        return 'posted'
+      }
+    }
+    const native = methods.postMessage
+    Object.defineProperty(win, 'postMessage', { value: native, configurable: true, writable: true })
+    const builtins = collectBuiltins(win)
+    const operations = collectOperations(win)
+    const scope = createScopeProxy(win, builtins, operations)
+    // A page script wraps the method after document start; the wrapper throws a SecurityError
+    // from any read of a property of the function, as `Function.prototype.bind` performs.
+    win.postMessage = new Proxy(native, {
+      get(target, key, receiver) {
+        if (key === 'length' || key === 'name') throw new Error('SecurityError: refused')
+        return Reflect.get(target, key, receiver) as unknown
+      }
+    })
+    expect(() => (win.postMessage as (...a: unknown[]) => unknown).bind(win)).toThrow(
+      'SecurityError'
+    )
+    const call = new Function(
+      'window',
+      `with (window) { return window.postMessage({ topic: 't' }, '*'); }`
+    ) as (w: unknown) => unknown
+    expect(call(scope)).toBe('posted')
+    expect(posted).toEqual([[{ topic: 't' }, '*']])
+    expect(scope.postMessage).toBe(scope.postMessage)
+  })
+
+  it("binds through the native bind captured at document start, not a page's replacement of Function.prototype.bind", () => {
+    const win = fakeWindow()
+    const scope = createScopeProxy(win, collectBuiltins(win), collectOperations(win))
+    const original = Function.prototype.bind
+    Function.prototype.bind = function (): never {
+      throw new Error('the page replaced bind')
+    }
+    try {
+      const setTimeout = scope.setTimeout as (fn: () => string) => unknown
+      expect(setTimeout(() => 'ran')).toBe('ran')
+    } finally {
+      Function.prototype.bind = original
+    }
+  })
+
   it('forwards setter properties of the window (event handlers) and stores the rest', () => {
     const win = fakeWindow()
     const scope = createScopeProxy(win, collectBuiltins(win))

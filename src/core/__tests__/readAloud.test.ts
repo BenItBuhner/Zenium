@@ -468,6 +468,102 @@ describe('ReadAloudService', () => {
       expect(h.host.current.text).toBe('Hello.')
     })
 
+    it('keeps waiting through a voicesChanged whose list is still empty (an engine bound before its voice data landed), and speaks when the voices come', async () => {
+      // The nightly sweep's `reader-ui` on a fresh emulator (#332): Google's engine binds ~1 s
+      // after the tap and the host says `voicesChanged` with every voice still `notInstalled`;
+      // the locale's voice pack lands ~2 s later. The start must not fail `no-voice` in between.
+      vi.useFakeTimers()
+      let asks = 0
+      h.host.voices = () => {
+        asks++
+        return Promise.resolve(h.host.voiceList)
+      }
+      h.host.voiceList = []
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Hello.' }])
+      await vi.advanceTimersByTimeAsync(900)
+      h.host.changeVoices([])
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.service.uiState()).toMatchObject({ status: 'loading', voiceId: null })
+      expect(asks).toBe(2)
+      h.host.changeVoices([
+        { id: 'en-us-x-local', name: 'English (United States)', lang: 'en-US', local: true }
+      ])
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'playing', voiceId: 'en-us-x-local' })
+      expect(h.host.current.text).toBe('Hello.')
+      expect(asks).toBe(3)
+    })
+
+    it('gives up at the end of the grace when every voicesChanged left the list empty, asking once more at the deadline', async () => {
+      vi.useFakeTimers()
+      let asks = 0
+      h.host.voices = () => {
+        asks++
+        return Promise.resolve([])
+      }
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Hello.' }])
+      await vi.advanceTimersByTimeAsync(900)
+      h.host.changeVoices([])
+      await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS - 900 - 1)
+      expect(h.service.uiState()).toMatchObject({ status: 'loading' })
+      await vi.advanceTimersByTimeAsync(2)
+      await started
+      expect(h.service.uiState()).toMatchObject({
+        status: 'error',
+        error: 'no-voice',
+        voiceId: null
+      })
+      expect(asks).toBe(3)
+      expect(h.host.spoken).toHaveLength(0)
+    })
+
+    it('Play after no-voice chooses the voice again (the engine has its data by now) and speaks; still none, and it says no-voice again', async () => {
+      vi.useFakeTimers()
+      h.host.voiceList = []
+      h.addTab('t1', PAGE)
+      const started = h.service.start({ tabId: 't1' })
+      await flush()
+      h.answer('t1', [{ text: 'Hello.' }, { text: 'World.' }])
+      await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+      await started
+      expect(h.service.uiState()).toMatchObject({ status: 'error', error: 'no-voice' })
+
+      // Play with the engine still empty: the same wait, the same answer.
+      h.service.resume()
+      expect(h.service.uiState()).toMatchObject({ status: 'loading' })
+      expect(h.service.uiState()).not.toHaveProperty('error')
+      await vi.advanceTimersByTimeAsync(VOICES_GRACE_MS + 1)
+      expect(h.service.uiState()).toMatchObject({
+        status: 'error',
+        error: 'no-voice',
+        voiceId: null
+      })
+      expect(h.host.spoken).toHaveLength(0)
+
+      // The voice pack landed without a word from the host (no `voicesChanged`): Play asks and speaks from the top.
+      h.host.voiceList = [
+        { id: 'en-us-x-local', name: 'English (United States)', lang: 'en-US', local: true }
+      ]
+      h.service.toggle()
+      await flush()
+      expect(h.service.uiState()).toMatchObject({
+        status: 'playing',
+        voiceId: 'en-us-x-local',
+        sentenceIndex: 0,
+        sentenceCount: 2
+      })
+      expect(h.host.current).toMatchObject({
+        text: 'Hello.',
+        options: { voiceId: 'en-us-x-local' }
+      })
+    })
+
     it('fails with no-text when the page has nothing to read or never answers', async () => {
       h.addTab('t1', PAGE)
       let started = h.service.start({ tabId: 't1' })
@@ -975,6 +1071,28 @@ describe('ReadAloudService', () => {
       h.host.changeVoices(all)
       expect((await result).voices).toEqual(all)
       expect(refreshes).toBe(1)
+      expect(asks).toBe(3)
+    })
+
+    it('a query holds through a voicesChanged whose list is still empty, and answers the list that comes inside its grace', async () => {
+      vi.useFakeTimers()
+      const all = h.host.voiceList
+      let listed: ReadAloudVoice[] = []
+      let asks = 0
+      h.host.voices = () => {
+        asks++
+        return Promise.resolve(listed)
+      }
+      h.host.changeVoices([])
+      const result = h.service.voicesResult()
+      await vi.advanceTimersByTimeAsync(200)
+      // The engine bound: it says so, with nothing installed yet.
+      h.host.changeVoices([])
+      await vi.advanceTimersByTimeAsync(200)
+      expect(asks).toBe(2)
+      listed = all
+      h.host.changeVoices(all)
+      expect((await result).voices).toEqual(all)
       expect(asks).toBe(3)
     })
   })
