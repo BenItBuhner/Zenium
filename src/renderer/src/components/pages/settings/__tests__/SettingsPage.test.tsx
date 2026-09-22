@@ -80,7 +80,9 @@ const DESKTOP: HostCapabilities = {
   selectionToolbar: false,
   popupSurface: true,
   qrScan: false,
-  readAloud: true
+  readAloud: true,
+  pageLanguages: true,
+  genericFontFamilies: true
 }
 
 const ANDROID: HostCapabilities = {

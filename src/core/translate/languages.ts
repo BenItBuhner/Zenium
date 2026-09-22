@@ -18,11 +18,40 @@ export function languagesFromLocales(locales: readonly string[]): string[] {
   return out
 }
 
+/**
+ * The languages-you-read list translate works with, from the preferred languages setting
+ * (`Settings.languages`, CT-41): the BCP 47 tags reduced to the models' codes, in order,
+ * without repeats (`en-US,en,de` → `en,de`); English when nothing maps (the pivot every model
+ * reaches). The first is the default target; every one is left untranslated.
+ */
+export function preferredFromLanguages(languages: readonly string[]): string[] {
+  const preferred = languagesFromLocales(languages)
+  return preferred.length > 0 ? preferred : [TRANSLATE_PIVOT_LANGUAGE]
+}
+
+/**
+ * The preferred languages list that reads as `preferred` (translate's codes, in order): for
+ * each code the tags `languages` has of that language, in their order (`en` keeps `en-US,en`),
+ * else the code itself as a tag; tags of languages no longer read are dropped. How a change to
+ * the languages-you-read rows (make first, remove, add) and a pre-CT-41 profile's translate
+ * document are written back onto the setting.
+ */
+export function languagesForPreferred(
+  languages: readonly string[],
+  preferred: readonly string[]
+): string[] {
+  const out: string[] = []
+  for (const code of languageList(preferred)) {
+    const own = languages.filter((tag) => normalizeLanguageTag(tag) === code)
+    out.push(...(own.length > 0 ? own : [code]))
+  }
+  return out
+}
+
 /** Preferences for a fresh profile: the UI locales the user reads, offers on. */
 export function defaultPreferences(locales: readonly string[]): TranslatePreferences {
-  const preferred = languagesFromLocales(locales)
   return {
-    preferred: preferred.length > 0 ? preferred : [TRANSLATE_PIVOT_LANGUAGE],
+    preferred: preferredFromLanguages(locales),
     alwaysTranslate: [],
     neverTranslate: [],
     neverTranslateSites: [],

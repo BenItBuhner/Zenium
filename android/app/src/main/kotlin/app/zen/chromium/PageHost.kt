@@ -25,6 +25,8 @@ interface PageHost {
     val pageRules: PageRules get() = PageRules.NONE
     /** The same rules as the core sent them, handed to every page's document-start script. */
     val pageRulesJson: JSONObject get() = JSONObject()
+    /** The page fonts every page WebView's `WebSettings` take (Settings › Appearance › Customize fonts, CT-25). */
+    val pageFonts: PageFonts get() = PageFonts.DEFAULT
     /** The privacy policy the pages apply (cookies, signals, Safe Browsing's word ahead of the engine). */
     val privacy: Privacy
     val keys: Keys

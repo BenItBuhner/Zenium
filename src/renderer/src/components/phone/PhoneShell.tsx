@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { Globe, Search, VenetianMask } from 'lucide-react'
 import { internalPageOf } from '@shared/internalPages'
 import { securityIndicator } from '@shared/siteInfo'
@@ -25,6 +25,7 @@ import {
   phoneBandHeight
 } from '@renderer/lib/gestures/dock'
 import { closeOverview, overviewIsOpen, stageStore } from '@renderer/lib/gestures/stage'
+import type { TabSwitchState } from '@renderer/lib/gestures/stage'
 import { closeSpacesDrawer } from '@renderer/lib/gestures/drawer'
 import { mediaSession } from '@renderer/lib/media'
 import { barFade } from '@renderer/lib/motion/recede'
@@ -538,6 +539,16 @@ export function PhoneBar({
 }
 
 /**
+ * The pill label's slide with the tab track: up to 16 px either way, towards the nearest card,
+ * in whole pixels. The empty string at rest, so the element carries no transform then.
+ */
+function pillLabelShift(tabs: TabSwitchState): string {
+  if (tabs.phase === 'idle') return ''
+  const shift = Math.round((Math.round(tabs.position) - tabs.position) * 16)
+  return shift ? `translateX(${shift}px)` : ''
+}
+
+/**
  * What the pill says. While a swipe moves the tab track the pill follows the tab under the
  * finger – its label slides a little with the cards and swaps as the nearest card changes.
  * `interactive` renders the address as a button and the site icon and the lock as chips of
@@ -561,10 +572,17 @@ export function PillContent({
     if (s.tabs.phase === 'idle') return null
     return s.tabs.order[Math.round(s.tabs.position)] ?? null
   })
-  const shift = stageStore.use((s) => {
-    if (s.tabs.phase === 'idle') return 0
-    return Math.round((Math.round(s.tabs.position) - s.tabs.position) * 16)
-  })
+  // The label's slide with the cards is written to the element as the track moves, not
+  // rendered: a swipe would otherwise render the whole pill at every pixel of the slide
+  // (PERF-5's profile); the render gives a freshly mounted label its first offset.
+  const label = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const apply = (): void => {
+      if (label.current) label.current.style.transform = pillLabelShift(stageStore.get().tabs)
+    }
+    apply()
+    return stageStore.subscribe(apply)
+  }, [])
   const siteInfoOpen = uiStore.use((s) => s.siteInfoOpen)
   const shown = (underFinger && state.tabs[underFinger]) || tab
   // A page of an extension: the extension's name stands where the host would (as "Settings"
@@ -667,8 +685,9 @@ export function PillContent({
   return (
     <span
       key={shown?.id ?? 'empty'}
+      ref={label}
       className="zen-animate-fade flex h-full min-w-0 flex-1 items-center gap-2"
-      style={{ transform: shift ? `translateX(${shift}px)` : undefined }}
+      style={{ transform: pillLabelShift(stageStore.get().tabs) || undefined }}
     >
       <Control
         {...controlProps}
