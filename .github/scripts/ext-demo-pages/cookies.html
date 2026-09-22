@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zenium cookie fixture</title>
+    <style>
+      body {
+        font:
+          18px system-ui,
+          sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      code {
+        background: #f1f1f1;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cookie fixture</h1>
+    <p>
+      This page sets two first-party cookies on load, for the extensions that read, edit or clear
+      the cookies of the active tab (cookie editors, privacy cleaners).
+    </p>
+    <ul>
+      <li>document.cookie: <code id="cookies">pending</code></li>
+      <li>history entries in this session: <code id="history">n/a</code></li>
+    </ul>
+    <script>
+      var year = 60 * 60 * 24 * 365
+      document.cookie = 'zen_probe=round6; path=/; max-age=' + year
+      document.cookie = 'zen_session=' + Date.now() + '; path=/'
+      document.getElementById('cookies').textContent = document.cookie || '(none)'
+      window.__cookies = document.cookie
+    </script>
+  </body>
+</html>

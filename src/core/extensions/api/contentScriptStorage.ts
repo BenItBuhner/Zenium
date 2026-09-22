@@ -22,6 +22,10 @@
  * polyfilled areas derives from native `local.onChanged`, filtered to the reserved keys, and the
  * reserved keys are hidden from what the extension sees of `local`.
  *
+ * The prelude also gives the world Chrome's `chrome.extension` (`inIncognitoContext`, and an MV2
+ * extension's `getURL`), which Electron's content-script bindings leave out and extensions test
+ * for to know they run inside an extension; that part needs no `storage` permission.
+ *
  * Like the shim, the function is self-contained (no free variables besides globals): it is
  * stringified into the prelude file. The constants it spells out are exported below for the
  * shim's host side and the tests.
@@ -82,6 +86,13 @@ export function installContentScriptStorage(root?: object): ContentScriptStorage
 
   const chrome: Any = g.chrome
   if (!chrome || typeof chrome !== 'object') return { installed: false, reason: 'no-storage' }
+  const runtime: Any = safely(() => chrome.runtime)
+  // Chrome's content scripts have `chrome.extension` with `inIncognitoContext` (an MV2 one its
+  // `getURL` too); the engine's isolated world carries no `extension` binding, and extensions
+  // test `typeof chrome.extension === 'object'` to know they run inside an extension at all
+  // (Klarna's content script falls through to `tabs.getCurrent` otherwise). Before the storage
+  // layer, which needs the `storage` permission: this needs none.
+  installExtensionNamespace()
   const storage: Any = safely(() => chrome.storage)
   const local: Any = storage && typeof storage === 'object' ? safely(() => storage.local) : null
   if (
@@ -93,7 +104,32 @@ export function installContentScriptStorage(root?: object): ContentScriptStorage
     return { installed: false, reason: 'no-storage' }
   }
   if (storage[MARK]) return { installed: false, reason: 'already-installed' }
-  const runtime: Any = safely(() => chrome.runtime)
+
+  function installExtensionNamespace(): void {
+    if (safely(() => chrome.extension) !== undefined) return
+    const extension: Record<string, unknown> = {
+      // The shim's value for every context: extensions never run in a private window here.
+      inIncognitoContext: false
+    }
+    const manifest: unknown = runtime ? safely(() => runtime.getManifest()) : undefined
+    const manifestVersion =
+      manifest && typeof manifest === 'object'
+        ? (manifest as Record<string, unknown>).manifest_version
+        : undefined
+    if (manifestVersion === 2 && runtime && typeof runtime.getURL === 'function') {
+      extension.getURL = (path: unknown): unknown => runtime.getURL(path)
+    }
+    define(chrome, 'extension', extension)
+    const browser: unknown = safely(() => g.browser)
+    if (
+      browser &&
+      typeof browser === 'object' &&
+      browser !== chrome &&
+      safely(() => (browser as Record<string, unknown>).extension) === undefined
+    ) {
+      define(browser, 'extension', extension)
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers

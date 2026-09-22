@@ -87,13 +87,14 @@ export interface NamespaceSpec {
    */
   shape?: true
   /**
-   * Chrome hides permission-gated namespaces: this one exists only for extensions whose
-   * manifest lists one of these permissions, required or optional (the engine's own namespace,
-   * when it made one, is patched regardless). Declaring is what counts, not the grant: Chrome
-   * leaves an optional namespace undefined until `permissions.request` grants it and defines it
-   * then; the shim has no synchronous view of the granted set at start-up, so a declared optional
-   * namespace exists (and answers) from the first statement. Extensions written for Chrome test
-   * `chrome.tabGroups ?` before asking, and get the working namespace either way.
+   * Chrome hides permission-gated namespaces: this one exists only for extensions holding one
+   * of these permissions (the engine's own namespace, when it made one, is patched regardless).
+   * The grant is what counts, as in Chrome: a required permission is granted at install, an
+   * optional one when `permissions.request` grants it, and the shim defines the namespace then
+   * (and deletes it on `permissions.remove`) from the host's view of the granted set
+   * (`ShimOptions.granted`). Extensions test `if (chrome.webRequest)` before registering, and
+   * an optional namespace that answered before its grant threw them the permission error
+   * instead (Checker Plus for Gmail). Without a host view, declaring counts.
    */
   permissions?: readonly string[]
   /**
