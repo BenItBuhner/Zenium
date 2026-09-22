@@ -13,9 +13,6 @@ name: Android declarativeNetRequest modifyHeaders demo
 # driver and the images it runs on.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - cursor/services-dnr-modify-headers-android-24d1
 
 permissions:
   contents: read
