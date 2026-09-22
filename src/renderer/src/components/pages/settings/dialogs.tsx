@@ -241,9 +241,16 @@ function HostedDialog({
     const target = initialRef.current?.(root) ?? root.querySelector<HTMLElement>(TABBABLE) ?? root
     target.focus({ preventScroll: true })
     return () => {
-      const now = document.activeElement
-      const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
-      if (lost && opener?.isConnected) opener.focus({ preventScroll: true })
+      const restore = (): void => {
+        const now = document.activeElement
+        const lost = !now || now === document.body || now.closest('.zen-frame-dialogs') !== null
+        if (lost && opener?.isConnected) opener.focus({ preventScroll: true })
+      }
+      // An opener in the dialog this one covered (a form's Clear all under its prompt) is still
+      // `inert` as this cleanup runs – its host drops the cover on its next render – and a focus
+      // on an inert subtree is a no-op: the return waits for that frame.
+      if (opener?.closest('[inert]')) requestAnimationFrame(restore)
+      else restore()
     }
   }, [])
   return (

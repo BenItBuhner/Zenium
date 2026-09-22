@@ -43,8 +43,9 @@ import kotlin.math.roundToInt
  *
  * Every control inside a sheet is pressed with a real injected finger and the effect asserted
  * against the core's state (the rule in [DemoHarness]); the frames of the sheets' open and
- * dismiss are measured ([measureFrames]). Findings go to `<shotPrefix>-notes.txt` beside the
- * stills.
+ * dismiss are measured with the chrome's Blink trace around them ([traceFrames]: the renderer
+ * main thread's layouts and paints per frame are the numbers that carry over to a phone, the
+ * software GPU's frame times do not). Findings go to `<shotPrefix>-notes.txt` beside the stills.
  */
 abstract class SiteDataUiDemoBase(
     stateAsset: String?,
@@ -723,7 +724,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
 
         // 2. The site-information sheet: the cookies level's per-site row reads the default.
         note("\n2. the site-information sheet, cookies level")
-        measureFrames("siteinfo-sheet-open", JankBudget.Kind.OPEN) {
+        traceFrames("siteinfo-sheet-open", JankBudget.Kind.OPEN) {
             openSiteInfo()
             awaitPrefix("Cookies and site data", 8_000)
             SystemClock.sleep(MOTION_MS)
@@ -742,7 +743,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             SystemClock.sleep(1_200)
         }
         if (sheetCount() > 0) {
-            measureFrames("siteinfo-sheet-dismiss", JankBudget.Kind.SPRING) {
+            traceFrames("siteinfo-sheet-dismiss", JankBudget.Kind.SPRING) {
                 back()
                 SystemClock.sleep(MOTION_MS)
             }
@@ -765,7 +766,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         note("\n4. the default's picker")
         val defaultRow = pageRowPoint("site-data-default")
         SystemClock.sleep(300)
-        measureFrames("default-picker-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
+        traceFrames("default-picker-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
             if (defaultRow != null) Finger().tap(defaultRow.x, defaultRow.y)
             awaitNode(6_000) { it.startsWith("Block all cookies") }
             SystemClock.sleep(MOTION_MS)
@@ -803,7 +804,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
         shot("07-never-list-empty")
         val addRow = pageRowPoint("site-data-block-add")
         SystemClock.sleep(300)
-        measureFrames("add-site-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
+        traceFrames("add-site-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
             if (addRow != null) Finger().tap(addRow.x, addRow.y)
             // The sheet's Cancel: nothing on the page reads it (the row's own label span does "Add a site").
             awaitNode(6_000) { it == "Cancel" }
@@ -859,13 +860,13 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             beat()
 
             // 7. The row's picker moves the site to the clear-on-exit list.
-            note("\n7. the per-site picker: Clear when Zenium closes")
-            if (touchTapLabelExpecting("Cookies for this site", "the picker is up", prefix = true) { optionNode("Clear when Zenium closes") != null }) {
+            note("\n7. the per-site picker: Clear on exit")
+            if (touchTapLabelExpecting("Cookies for this site", "the picker is up", prefix = true) { optionNode("Clear on exit") != null }) {
                 SystemClock.sleep(800)
                 shot("14-siteinfo-picker")
                 beat()
-                if (pickOption("Clear when Zenium closes", "the site is on the clear-on-exit list") { listHolds("clearOnExit", DEMO_PATTERN) && !listHolds("block", DEMO_PATTERN) }) {
-                    awaitSettled(6_000) { nodeText("Cookies for this site")?.contains("Clear when Zenium closes") == true }
+                if (pickOption("Clear on exit", "the site is on the clear-on-exit list") { listHolds("clearOnExit", DEMO_PATTERN) && !listHolds("block", DEMO_PATTERN) }) {
+                    awaitSettled(6_000) { nodeText("Cookies for this site")?.contains("Clear on exit") == true }
                     SystemClock.sleep(600)
                     note("  per-site row: ${nodeText("Cookies for this site")}")
                     shot("15-siteinfo-cookies-clear-on-exit")
@@ -937,7 +938,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
             val viewerUp = { freshNode { it.startsWith(clearDemo) || it == "Clear all" } != null }
             val seeAll = pageRowPoint("site-data-see-all")
             SystemClock.sleep(300)
-            measureFrames("viewer-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
+            traceFrames("viewer-sheet-open", JankBudget.Kind.OPEN, baseline = "siteinfo-sheet-open") {
                 if (seeAll != null) Finger().tap(seeAll.x, seeAll.y)
                 awaitNode(8_000) { it == "Clear all" }
                 SystemClock.sleep(MOTION_MS)
@@ -968,7 +969,7 @@ class SiteDataUiDemo : SiteDataUiDemoBase("site-data-demo-state.json", "services
                     }
                 }
                 awaitSettled(4_000) { sheetCount() == 1 }
-                measureFrames("viewer-sheet-dismiss", JankBudget.Kind.SPRING, baseline = "siteinfo-sheet-dismiss") {
+                traceFrames("viewer-sheet-dismiss", JankBudget.Kind.SPRING, baseline = "siteinfo-sheet-dismiss") {
                     back()
                     SystemClock.sleep(MOTION_MS)
                 }
@@ -1112,7 +1113,7 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
 
         // 2. The site-information sheet: the site still on the clear-on-exit list.
         note("\n2. the site-information sheet after the restore")
-        measureFrames("siteinfo-sheet-open-restored", JankBudget.Kind.OPEN) {
+        traceFrames("siteinfo-sheet-open-restored", JankBudget.Kind.OPEN) {
             openSiteInfo()
             awaitPrefix("Cookies and site data", 8_000)
             SystemClock.sleep(MOTION_MS)
@@ -1121,14 +1122,14 @@ class SiteDataRestoreDemo : SiteDataUiDemoBase(null, "services-site-data-android
         if (touchTapLabelExpecting("Cookies and site data", "the cookies level is up", prefix = true) { freshNode { it.startsWith("Cookies for this site") } != null }) {
             SystemClock.sleep(800)
             val row = nodeText("Cookies for this site")
-            claim("the per-site row still reads Clear when Zenium closes", row?.contains("Clear when Zenium closes") == true, row ?: "")
+            claim("the per-site row still reads Clear on exit", row?.contains("Clear on exit") == true, row ?: "")
             shot("02-siteinfo-after-restore")
             beat()
             back()
             SystemClock.sleep(1_200)
         }
         if (sheetCount() > 0) {
-            measureFrames("siteinfo-sheet-dismiss-restored", JankBudget.Kind.SPRING) {
+            traceFrames("siteinfo-sheet-dismiss-restored", JankBudget.Kind.SPRING) {
                 back()
                 SystemClock.sleep(MOTION_MS)
             }

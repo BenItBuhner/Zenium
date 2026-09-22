@@ -9,7 +9,7 @@
 #             (Block all cookies, browser-wide, and back), the never list's Add sheet with the
 #             site's host typed in, the row it makes; the page reloaded and asking with no
 #             cookies; the sheet's cookies level reading the never state and its picker moving
-#             the site to "Clear when Zenium closes"; the allow list's Add and a row's Remove;
+#             the site to "Clear on exit"; the allow list's Add and a row's Remove;
 #             the viewer with a row's Clear and Clear all's prompt cancelled; the on-exit type
 #             "Browsing history" switched on; the page holding its cookies again, the jar flushed
 #             and the app sent home – the pending-clear marker written by the core on the way;

@@ -2951,7 +2951,13 @@ function done(spec: string): void {
       const state = browserStore.get().state
       const tab = state ? activeTab(state) : null
       if (tab) {
-        void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
+        // The desktop popover a previous spec left plays its exit after `apply`'s
+        // `dismissSiteInfo` and, once gone, dismisses whatever the store names by then
+        // (`SiteInfoDesktopLayer.onClosed`): a popover opened over it would go with it, so the
+        // next one opens once the document has none.
+        whenGone('[data-testid="site-info"]', () => {
+          void openSiteInfo(tab).then(() => whenStore(() => uiStore.get().siteInfoOpen, spec))
+        })
         return
       }
     } else if (siteInfoSteps !== spec) {
@@ -2969,6 +2975,16 @@ function done(spec: string): void {
 function afterFrames(count: number, fn: () => void): void {
   if (count <= 0) fn()
   else requestAnimationFrame(() => afterFrames(count - 1, fn))
+}
+
+/** Runs `fn` once nothing in the document matches `selector`, or after a second either way. */
+function whenGone(selector: string, fn: () => void): void {
+  const deadline = performance.now() + 1000
+  const check = (): void => {
+    if (!document.querySelector(selector) || performance.now() > deadline) fn()
+    else requestAnimationFrame(check)
+  }
+  check()
 }
 
 /** Runs `fn` once the browser state satisfies `test`, or once waiting stops being worth it. */

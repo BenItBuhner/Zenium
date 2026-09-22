@@ -81,10 +81,12 @@ export const SITE_DATA_TEXT = {
     label: 'Cookies for this site',
     picker: 'Cookies for this site',
     noSite: 'This page has no site to add',
+    // Chrome's site-details words ("Clear on exit"), which also fit the desktop popover's
+    // menulist trailing the row; the description under each says when the clear runs.
     options: {
       default: 'Use the default',
       allow: 'Always allow',
-      clearOnExit: 'Clear when Zenium closes',
+      clearOnExit: 'Clear on exit',
       block: 'Never allow'
     },
     optionDescriptions: {
