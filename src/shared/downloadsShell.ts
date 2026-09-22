@@ -87,6 +87,44 @@ export function canResumeDownload(item: Pick<DownloadItem, 'state' | 'canResume'
 }
 
 /**
+ * A transfer refused before a byte was written because a secure page started it over plain
+ * HTTP (HB-44, Chrome's rule): the row waits for Keep anyway or Discard, the way a flagged file
+ * waits for Keep or Delete, and shows neither Retry nor Resume.
+ */
+export function isInsecureBlocked(item: Pick<DownloadItem, 'state'>): boolean {
+  return item.state === 'insecure-blocked'
+}
+
+/**
+ * Whether an `insecure-blocked` row may offer Keep anyway: Chrome offers none for the most
+ * dangerous types, and neither does the engine (the core's `canKeepInsecure`, restated here so
+ * the renderer needs nothing from `core/`); the row then has Discard alone.
+ */
+export function canKeepInsecureDownload(item: Pick<DownloadItem, 'state' | 'danger'>): boolean {
+  return item.state === 'insecure-blocked' && item.danger.level !== 'dangerous'
+}
+
+/**
+ * A row that shows a Keep / Discard pair in place of its actions: a finished file the engine
+ * holds back behind its warning (`needsDangerDecision`) or a transfer it refused as insecure.
+ */
+export function awaitsDecision(
+  item: Pick<DownloadItem, 'state' | 'danger' | 'dangerAccepted'>
+): boolean {
+  return needsDangerDecision(item) || isInsecureBlocked(item)
+}
+
+/**
+ * An interrupted row the engine (or the phone's downloader) will try again on its own at
+ * `autoResumeAt` (HB-43): the row says so instead of `Failed`, and keeps Resume and Cancel.
+ */
+export function awaitsAutoResume(
+  item: Pick<DownloadItem, 'state' | 'autoResumeAt'>
+): item is Pick<DownloadItem, 'state' | 'autoResumeAt'> & { autoResumeAt: number } {
+  return item.state === 'interrupted' && typeof item.autoResumeAt === 'number'
+}
+
+/**
  * What the desktop says after `download.deleteFile` (the row's action and its menu item):
  * nothing when the file went (`deleted`) or was gone already (`missing`) – the row reads
  * Deleted either way – and an error toast when it is still there (`failed`: locked, a folder,

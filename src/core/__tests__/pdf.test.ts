@@ -315,7 +315,11 @@ describe('a PDF the tab navigates to', () => {
     f.browser.onDownloadStarted(plain.id)
     await new Promise((r) => setTimeout(r, 250))
     expect(f.browser.tabs.tab(plain.id)).toBeUndefined()
-    expect(f.sent.some((s) => s.name === 'overlay.open')).toBe(true)
+    // The sheet is revealed for the download, not asked for again: one already up stays up
+    // (the chrome toggles only a user's repeat request), the new row on top.
+    const opened = f.sent.filter((s) => s.name === 'overlay.open')
+    expect(opened).toHaveLength(1)
+    expect(opened[0].payload).toMatchObject({ kind: 'downloads', reveal: true })
   })
 })
 
