@@ -80,7 +80,11 @@ function expectAgreement(): void {
   const s = barHideStore.get()
   expect(barVar()).toBeCloseTo(s.progress, 3)
   expect(rootVar()).toBe('')
-  expect(root().dataset.barAway === 'true').toBe(s.progress > 0)
+  // The frame's tall box goes with the page's tall layout: off the shown rest at all, and on
+  // until the rest with the bar home (not the frame it arrives), never short with the bar off.
+  expect(root().dataset.barAway === 'true').toBe(s.tall)
+  if (s.progress > 0) expect(s.tall).toBe(true)
+  if (s.phase === 'rest' && s.progress === 0) expect(s.tall).toBe(false)
   const hidden = uiStore.get().barHidden
   expect(root().dataset.barHidden === 'true').toBe(hidden)
   if (hidden) expect(s.progress).toBe(1)
@@ -166,7 +170,8 @@ describe('the published hide progress', () => {
       edge: 'bottom',
       offset: 0,
       travel: 48,
-      shownEdge: 915 - 20 - 56
+      shownEdge: 915 - 20 - 56,
+      tall: false
     })
   })
 
@@ -651,12 +656,134 @@ describe('the published hide progress', () => {
       edge: 'top',
       offset: 0,
       travel: 48,
-      shownEdge: 24 + 56
+      shownEdge: 24 + 56,
+      tall: false
     })
     scroll([24])
     expect(barVar()).toBeCloseTo(0.5, 3)
     expectAgreement()
-    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'top', offset: 24 })
+    expect(hostFrames[hostFrames.length - 1]).toMatchObject({ edge: 'top', offset: 24, tall: true })
+  })
+
+  it("the page's short layout waits for the return's REST: the host hears `tall` from the hide's first frame until the bar is home and nothing drives it, never the frame it arrives (§11.5, the ruling on #270)", () => {
+    const last = (): BarHideHostFrame | null => hostFrames[hostFrames.length - 1]
+    // At rest, home: short.
+    expect(last()).toMatchObject({ offset: 0, tall: false })
+    // The hide's first frame: tall (the clip needs content to uncover) – with the frame's box.
+    scroll([12])
+    expect(last()).toMatchObject({ offset: 12, tall: true })
+    expect(root().dataset.barAway).toBe('true')
+    // The finger brings the bar all the way home and holds: the bar is at 0, the page is still
+    // tall (clipped to the bar's edge by the host: the same picture), no relayout under the finger.
+    now += 100
+    dispatchBarScroll('t1', 'move', { delta: -12, time: now })
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'dragging', tall: true })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    expect(root().dataset.barAway).toBe('true')
+    expectAgreement()
+    // Out again under the same finger: no layout either way.
+    now += 100
+    dispatchBarScroll('t1', 'move', { delta: 6, time: now })
+    expect(last()).toMatchObject({ offset: 6, tall: true })
+    now += 100
+    dispatchBarScroll('t1', 'move', { delta: -6, time: now })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    // The lift with the bar home and no fling: the rest at once, and the one short relayout with it.
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expect(last()).toMatchObject({ offset: 0, tall: false })
+    expect(root().dataset.barAway).toBeUndefined()
+    expectAgreement()
+
+    // A release short of home: the spring brings the bar in; every frame of it is tall, the
+    // frame it lands included, and the rest that follows is what lays the page out short.
+    scroll([24, -12])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get().phase).toBe('settling')
+    const framesBefore = hostFrames.length
+    settle()
+    const springFrames = hostFrames.slice(framesBefore)
+    expect(springFrames.length).toBeGreaterThan(2)
+    // Every frame with the bar off is tall; the rest is the only short one, and it is the last.
+    for (const f of springFrames.slice(0, -1)) expect(f).toMatchObject({ tall: true })
+    expect(springFrames[springFrames.length - 1]).toMatchObject({ offset: 0, tall: false })
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expectAgreement()
+
+    // A fling: a fast scroll up brings the bar home under the finger, the lift leaves the page
+    // flinging on, and the page stays tall until the fling has ended (the gap), which is the rest.
+    scroll([20])
+    now += 16
+    dispatchBarScroll('t1', 'move', { delta: -20, time: now })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    vi.useFakeTimers()
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get().phase).toBe('flinging')
+    for (let i = 0; i < 3; i++) {
+      now += 16
+      dispatchBarScroll('t1', 'move', { delta: -10, time: now })
+    }
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'flinging', tall: true })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    vi.advanceTimersByTime(200)
+    vi.useRealTimers()
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expect(last()).toMatchObject({ offset: 0, tall: false })
+    expectAgreement()
+
+    // A finger landing on the spring mid-return (`settling` → `dragging`): the bar is caught where
+    // the spring left it and the page stays tall – a return that did not rest lays nothing out.
+    scroll([24, -12])
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get().phase).toBe('settling')
+    settle(2)
+    expect(barHideStore.get()).toMatchObject({ phase: 'settling', tall: true })
+    expect(barHideStore.get().progress).toBeGreaterThan(0)
+    dispatchBarScroll('t1', 'start', null)
+    expect(barHideStore.get()).toMatchObject({ phase: 'dragging', tall: true })
+    expect(last()).toMatchObject({ tall: true })
+    expect(last()?.offset).toBeCloseTo(barHideStore.get().progress * 48, 1)
+    expect(root().dataset.barAway).toBe('true')
+    expectAgreement()
+    // That finger brings the bar home and lifts: tall under it at 0, short at the rest.
+    now += 100
+    dispatchBarScroll('t1', 'move', { delta: -12, time: now })
+    expect(last()).toMatchObject({ offset: 0, tall: true })
+    now += 16
+    dispatchBarScroll('t1', 'end', { time: now })
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expectAgreement()
+
+    // The gate closing AT ONCE mid-drag (a sheet over a bottom-docked bar, §11.1: the bar is back
+    // under the recede's fade, no spring): the reset is a rest with the bar home, so the page is
+    // short at once, with the sheet's arrival – and the host then hears there is nothing to follow.
+    scroll([12])
+    expect(last()).toMatchObject({ offset: 12, tall: true })
+    uiStore.set({ menu: { items: [] } as never })
+    expect(barHideStore.get()).toMatchObject({
+      progress: 0,
+      phase: 'rest',
+      tall: false,
+      allowed: false
+    })
+    expect(root().dataset.barAway).toBeUndefined()
+    expect(hostFrames[hostFrames.length - 2]).toMatchObject({ offset: 0, tall: false })
+    expect(last()).toBeNull()
+    expectAgreement()
+    uiStore.set({ menu: null })
+    expect(barHideStore.get().allowed).toBe(true)
+
+    // A reset from mid-gesture (an edge change, the preview's reset): home, at rest, short.
+    scroll([12])
+    expect(last()).toMatchObject({ offset: 12, tall: true })
+    resetBarHide()
+    expect(barHideStore.get()).toMatchObject({ progress: 0, phase: 'rest', tall: false })
+    expect(last()).toMatchObject({ offset: 0, tall: false })
+    expectAgreement()
   })
 
   it("the host hears the page's measured edge, so a strip between the bar and the page counts, at either dock and through the hidden rest", () => {

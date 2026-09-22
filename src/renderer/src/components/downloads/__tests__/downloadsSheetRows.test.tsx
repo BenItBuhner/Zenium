@@ -159,6 +159,135 @@ describe('the sheet row as a target or the static form (§9.34)', () => {
     expect(body(row).getAttribute('aria-label')).toMatch(/^setup\.exe\. Blocked · .+\. .+/)
     expect(row.querySelector('.zen-downloads-status')?.getAttribute('data-tone')).toBe('danger')
     expect(buttons(row).map((b) => b.trim())).toEqual(['Keep', 'Delete'])
+    // Delete, the protective verb, is the accent-filled primary and trails; Keep is the plain
+    // secondary; neither takes the danger ink (§6, §9.11).
+    const [keep, del] = [...row.querySelectorAll<HTMLButtonElement>('button')]
+    expect(keep.hasAttribute('data-primary')).toBe(false)
+    expect(keep.hasAttribute('data-danger')).toBe(false)
+    expect(del.hasAttribute('data-primary')).toBe(true)
+    expect(del.hasAttribute('data-danger')).toBe(false)
+  })
+
+  it('a flagged row names its tier: Blocked · Suspicious in the warning ink over the verdict’s sentence, Delete filled here too (HB-19 / PS-34)', () => {
+    const row = render(
+      finished({
+        filename: 'backup.iso',
+        danger: {
+          level: 'suspicious',
+          reason: 'archive',
+          message: 'This file may contain a program that could harm your device.'
+        }
+      })
+    )
+    expectStatic(row)
+    expect(row.querySelector('.zen-downloads-status')?.textContent).toBe('Blocked · Suspicious')
+    expect(row.querySelector('.zen-downloads-status')?.getAttribute('data-tone')).toBe('warn')
+    expect(row.querySelector('.zen-downloads-detail')?.textContent).toBe(
+      'This file may contain a program that could harm your device.'
+    )
+    expect(body(row).getAttribute('aria-label')).toBe(
+      'backup.iso. Blocked · Suspicious. This file may contain a program that could harm your device.'
+    )
+    expect(buttons(row).map((b) => b.trim())).toEqual(['Keep', 'Delete'])
+    // The tier names the status and its ink, not the pair: Delete is the filled primary on the
+    // suspicious tier as on the dangerous one (§6 widened for #297), Keep plain, no danger ink.
+    const [keep, del] = [...row.querySelectorAll<HTMLButtonElement>('button')]
+    expect(keep.hasAttribute('data-primary')).toBe(false)
+    expect(del.hasAttribute('data-primary')).toBe(true)
+    expect(del.hasAttribute('data-danger')).toBe(false)
+  })
+
+  it('a transfer refused as insecure (HB-44) is static behind Blocked · Insecure download with Keep anyway / Discard, and dims its glyph (nothing is on disk)', () => {
+    const row = render(
+      finished({
+        filename: 'report.pdf',
+        state: 'insecure-blocked',
+        savePath: '',
+        receivedBytes: 0,
+        url: 'http://files.test/report.pdf'
+      })
+    )
+    expectStatic(row)
+    expect(row.hasAttribute('data-flagged')).toBe(true)
+    expect(body(row).hasAttribute('data-gone')).toBe(true)
+    expect(body(row).hasAttribute('data-dim')).toBe(false)
+    expect(row.querySelector('.zen-downloads-status')?.textContent).toBe(
+      'Blocked · Insecure download'
+    )
+    expect(row.querySelector('.zen-downloads-status')?.getAttribute('data-tone')).toBe('warn')
+    expect(row.querySelector('.zen-downloads-detail')?.textContent).toBe(
+      'This file can’t be downloaded securely'
+    )
+    expect(body(row).getAttribute('aria-label')).toBe(
+      'report.pdf. Blocked · Insecure download. This file can’t be downloaded securely'
+    )
+    // Discard, the protective verb, is the filled primary and trails; Keep anyway the plain
+    // secondary; neither in the danger ink (§6, §9.11). No Retry, no Resume.
+    expect(buttons(row).map((b) => b.trim())).toEqual(['Keep anyway', 'Discard'])
+    const [keep, discard] = [...row.querySelectorAll<HTMLButtonElement>('button')]
+    expect(keep.hasAttribute('data-primary')).toBe(false)
+    expect(keep.hasAttribute('data-danger')).toBe(false)
+    expect(discard.hasAttribute('data-primary')).toBe(true)
+    expect(discard.hasAttribute('data-danger')).toBe(false)
+    act(() => keep.click())
+    expect(invoke).toHaveBeenCalledWith('download.acceptDanger', { id: 'dl-1' })
+    expect(keep.getAttribute('aria-busy')).toBe('true')
+    expect(discard.disabled).toBe(true)
+  })
+
+  it('an insecure block of a dangerous type offers Discard alone, the danger ink, both sentences', () => {
+    const row = render(
+      finished({
+        filename: 'setup.exe',
+        state: 'insecure-blocked',
+        savePath: '',
+        receivedBytes: 0,
+        danger: {
+          level: 'dangerous',
+          reason: 'executable',
+          message: 'This file type can harm your device.'
+        }
+      })
+    )
+    expectStatic(row)
+    expect(row.querySelector('.zen-downloads-status')?.textContent).toBe(
+      'Blocked · Insecure download'
+    )
+    expect(row.querySelector('.zen-downloads-status')?.getAttribute('data-tone')).toBe('danger')
+    expect(row.querySelector('.zen-downloads-detail')?.textContent).toBe(
+      'This file can’t be downloaded securely · This file type can harm your device.'
+    )
+    expect(buttons(row).map((b) => b.trim())).toEqual(['Discard'])
+    const [discard] = [...row.querySelectorAll<HTMLButtonElement>('button')]
+    // Alone, still the filled primary – the one action the app recommends – and not danger ink.
+    expect(discard.hasAttribute('data-primary')).toBe(true)
+    expect(discard.hasAttribute('data-danger')).toBe(false)
+    act(() => discard.click())
+    expect(invoke).toHaveBeenCalledWith('download.discard', { id: 'dl-1' })
+  })
+
+  it('a row the downloader will try again itself counts down in the plain ink and keeps Resume and Cancel (HB-43)', () => {
+    const row = render(
+      finished({
+        state: 'interrupted',
+        receivedBytes: 512,
+        error: 'network-disconnected',
+        errorMessage: 'Check internet connection',
+        canResume: true,
+        autoResumeAt: NOW + 4_200
+      })
+    )
+    expectStatic(row)
+    expect(row.querySelector('.zen-downloads-status')?.textContent).toBe('Resuming in 5 s…')
+    expect(row.querySelector('.zen-downloads-status')?.hasAttribute('data-tone')).toBe(false)
+    expect(row.querySelector('.zen-downloads-detail')).toBeNull()
+    expect(body(row).getAttribute('aria-label')).toBe('report.pdf. Resuming in 5 s…')
+    expect(buttons(row)).toEqual(['Resume', 'Cancel'])
+    const [resume, cancel] = [...row.querySelectorAll<HTMLButtonElement>('button')]
+    act(() => resume.click())
+    expect(invoke).toHaveBeenCalledWith('download.resume', { id: 'dl-1' })
+    act(() => cancel.click())
+    expect(invoke).toHaveBeenCalledWith('download.cancel', { id: 'dl-1' })
   })
 
   it('the row’s Retry runs the engine’s retry, the body of a static row runs nothing', () => {

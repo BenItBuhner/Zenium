@@ -1,8 +1,11 @@
 import type { DownloadDanger, DownloadInterruptReason, DownloadItem } from '@shared/types'
 import {
   allPaused,
+  awaitsAutoResume,
+  canKeepInsecureDownload,
   displayName,
   isActiveDownload,
+  isInsecureBlocked,
   needsDangerDecision
 } from '@shared/downloadsShell'
 import { formatBytes } from './utils'
@@ -88,9 +91,11 @@ export function describeDownloadError(error: DownloadInterruptReason | undefined
 }
 
 /**
- * Chrome's status for a blocked file, by the engine's verdict: `Blocked · Dangerous` for a
- * flagged file type or a dangerous URL, `Blocked · Uncommon file` for a URL verdict short of
- * dangerous, `Blocked · Insecure download` for a plaintext transfer from a secure page.
+ * Chrome's status for a blocked file, naming the engine's tier (HB-19 / PS-34): `Blocked ·
+ * Dangerous` for a dangerous file type or a dangerous URL, `Blocked · Suspicious` for a type of
+ * the lesser tier (a disk image, a macro-bearing document; Chrome's "Suspicious download
+ * blocked"), `Blocked · Uncommon file` for a URL verdict short of dangerous, `Blocked · Insecure
+ * download` for a plaintext transfer from a secure page.
  */
 export function blockedStatus(danger: DownloadDanger): string {
   switch (danger.reason) {
@@ -99,7 +104,7 @@ export function blockedStatus(danger: DownloadDanger): string {
     case 'url-verdict':
       return danger.level === 'dangerous' ? 'Blocked · Dangerous' : 'Blocked · Uncommon file'
     default:
-      return 'Blocked · Dangerous'
+      return danger.level === 'dangerous' ? 'Blocked · Dangerous' : 'Blocked · Suspicious'
   }
 }
 
@@ -134,30 +139,77 @@ export function insecureSummary(item: Pick<DownloadItem, 'danger'>): string {
 export interface DangerActionLabels {
   keep: string
   discard: string
-  /** Which of the two Chrome sets in the prominent (filled) style; null when neither. */
+  /**
+   * Which of the two is the filled primary (§6): the action the app recommends, which on every
+   * tier is the protective verb – the one that takes the file away. Never the danger ink: that
+   * is for actions that destroy the user's own data, and a verb is not danger-inked for sounding
+   * destructive. Kept a field rather than a constant so the renderers stay data-driven.
+   */
   prominent: 'keep' | 'discard' | null
 }
 
 /**
- * The Keep / Discard pair's labels for a verdict, as Chrome's bubble words them: Delete takes
- * the file away in every case; Keep releases it. A dangerous verdict makes Delete the prominent
- * one, the way Chrome fills it; a lesser warning leaves both plain.
+ * The Keep / Delete pair's labels for a flagged file, as Chrome's bubble words them: Delete takes
+ * the file away in every case; Keep releases it. Delete is the filled, recommended one on the
+ * dangerous and the suspicious tier alike (§6 as the lead widened it for #297: the primary is the
+ * protective verb; Chrome fills it on every tier of its bubble), Keep the plain secondary – so
+ * the verdict's tier no longer enters: it names the row's status and ink, not its pair.
  */
-export function dangerActionLabels(danger: DownloadDanger): DangerActionLabels {
-  return {
-    keep: 'Keep',
-    discard: 'Delete',
-    prominent: danger.level === 'dangerous' ? 'discard' : null
+export function dangerActionLabels(): DangerActionLabels {
+  return { keep: 'Keep', discard: 'Delete', prominent: 'discard' }
+}
+
+export interface DecisionLabels {
+  /** The releasing action's label; null when the row offers none (a dangerous type blocked as insecure). */
+  keep: string | null
+  discard: string
+  prominent: 'keep' | 'discard' | null
+}
+
+/**
+ * The pair a row waiting on the user shows, by its state (the interface's verbs table): a
+ * flagged file's Keep / Delete (`dangerActionLabels`; the file is on disk in quarantine, so
+ * Chrome's word is Delete), an `insecure-blocked` row's **Keep anyway** / **Discard** – nothing
+ * is on disk, so not Delete – with Keep anyway only while the engine would honour it
+ * (`canKeepInsecureDownload`). Discard is the filled primary as Delete is on the other tiers
+ * (§6: the protective verb, trailing per §9.11), Keep anyway the plain secondary. Keep and Keep
+ * anyway are one command (`download.acceptDanger`), Delete and Discard another
+ * (`download.discard`).
+ */
+export function decisionLabels(
+  item: Pick<DownloadItem, 'state' | 'danger' | 'dangerAccepted'>
+): DecisionLabels {
+  if (isInsecureBlocked(item)) {
+    return {
+      keep: canKeepInsecureDownload(item) ? 'Keep anyway' : null,
+      discard: 'Discard',
+      prominent: 'discard'
+    }
   }
+  return dangerActionLabels()
+}
+
+/**
+ * The status of an interrupted row the engine will try again on its own (HB-43): `Resuming in
+ * N s…` counting down to `autoResumeAt`, `Resuming…` once the moment has come and the host's
+ * progress has not (Chrome's own line, `IDS_DOWNLOAD_BUBBLE_STATUS_RESUMING`). N is whole
+ * seconds rounded up, so a schedule 2 s out reads 2, 1, then Resuming…
+ */
+export function autoResumeStatus(autoResumeAt: number, now: number): string {
+  const seconds = Math.ceil((autoResumeAt - now) / 1000)
+  return seconds > 0 ? `Resuming in ${seconds} s…` : 'Resuming…'
 }
 
 /**
  * The one-line status under the file name: the engine's speed and time left while running,
- * `Failed · <reason>` when interrupted (the engine's sentence as the line's tooltip), Chrome's
- * blocked status with the verdict's sentence as its detail while a flagged file waits,
- * `Deleted` for a finished file the engine found gone from disk.
+ * `Failed · <reason>` when interrupted (the engine's sentence as the line's tooltip) – or, while
+ * the engine will try the transfer again on its own (HB-43), `Resuming in N s…` in the plain
+ * ink, counting down from `now` (the row re-renders each second to move it; the failure's
+ * sentence stays the tooltip) – Chrome's blocked status with the verdict's sentence as its
+ * detail while a flagged file waits, `Deleted` for a finished file the engine found gone from
+ * disk. The interface's verbs table names each state's line.
  */
-export function downloadStatus(item: DownloadItem): DownloadStatus {
+export function downloadStatus(item: DownloadItem, now = Date.now()): DownloadStatus {
   const received = formatBytes(item.receivedBytes)
   const total = item.totalBytes > 0 ? formatBytes(item.totalBytes) : ''
   switch (item.state) {
@@ -171,6 +223,13 @@ export function downloadStatus(item: DownloadItem): DownloadStatus {
     case 'cancelled':
       return { text: 'Cancelled', tone: 'muted' }
     case 'interrupted':
+      if (awaitsAutoResume(item)) {
+        return {
+          text: autoResumeStatus(item.autoResumeAt, now),
+          tone: 'muted',
+          hint: item.errorMessage || undefined
+        }
+      }
       return {
         text: describeDownloadError(item.error),
         tone: 'danger',

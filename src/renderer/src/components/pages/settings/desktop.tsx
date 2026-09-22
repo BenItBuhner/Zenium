@@ -10,6 +10,7 @@ import type { FormFactor, Tab, UIState } from '@shared/types'
 import { run } from '@renderer/lib/api'
 import { useAutofillSettings } from '@renderer/lib/autofillSettings'
 import { useChromeShortcut } from '@renderer/lib/chromeShortcuts'
+import { useDownloadDirectory } from '@renderer/lib/downloadDirectory'
 import { useImportSources } from '@renderer/lib/importSources'
 import { privateLockStore } from '@renderer/lib/privateLock'
 import { useReadAloudVoices } from '@renderer/lib/readAloudVoices'
@@ -83,6 +84,12 @@ export function DesktopSettings({
   // The browsers on this computer likewise, while Import is the open category: its pane names
   // them (a phone in landscape draws the phone's file rows there, and asks nothing).
   const importSources = useImportSources(sectionId === 'import' && formFactor !== 'phone')
+  // The folder new downloads go to, by its path, while Downloads is the open category: its
+  // Location row shows it as Chrome's does, and asks again once the setting moves.
+  const downloadDirectory = useDownloadDirectory(
+    sectionId === 'downloads',
+    state.settings.downloads?.directory ?? null
+  )
   // Settings › Sync's setup rows keep the folder chosen before sync is on outside the browser
   // state (`syncSetupStore`); the page is rebuilt when it changes so the folder row shows it.
   syncSetupStore.use((s) => s.folder)
@@ -106,7 +113,8 @@ export function DesktopSettings({
     screenLock,
     readAloudVoices,
     dictionary,
-    importSources
+    importSources,
+    downloadDirectory
   }
 
   // The search: a query while it is not empty. A section change (the nav, back, forward)

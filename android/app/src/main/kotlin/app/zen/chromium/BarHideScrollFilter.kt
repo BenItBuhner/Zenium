@@ -5,16 +5,18 @@ package app.zen.chromium
  * [BarHideGesture]'s reporting, device px throughout. Only a finger's scroll and the fling it
  * leaves count, and of those not everything is the finger's:
  *
- * - The layout's clamp. While the bar is off its edge but not fully, the page is laid out a
- *   band taller ([TabHost.place]); Chromium then has a band less to scroll and, if the page
- *   was within that band of its end, clamps the scroll back – which reaches the view as a
- *   scroll up. Reported, that would bring the bar back, shrink the page, and the next px of the
- *   finger would grow it again: the bar and the content twitching with every frame near the end
- *   of a page, and its last band out of reach. So a hide is not started while the page has less
- *   than the bar's travel left to scroll (the exact condition for no clamp, read when the bar
- *   would leave its edge; a hide already under way keeps going, its layout has grown), and a
- *   scroll up is not the finger's when it lands the page exactly at its end, or when the finger
- *   has been moving the other way – down the page – since the last change.
+ * - The layout's clamp. From the frame the bar leaves its edge to its shown rest, the page is
+ *   laid out a band taller ([TabHost.place]); Chromium then has a band less to scroll and, if
+ *   the page was within that band of its end, clamps the scroll back – which reaches the view
+ *   as a scroll up. Reported, that would bring the bar back, shrink the page, and the next px of
+ *   the finger would grow it again: the bar and the content twitching with every frame near the
+ *   end of a page, and its last band out of reach. So a hide is not started from the short
+ *   layout while the page has less than the bar's travel left to scroll (the exact condition
+ *   for no clamp, read when the bar would leave its edge; a hide already under way keeps going,
+ *   and one from a page still laid out tall – the bar home under the finger, not yet at its rest
+ *   ([pageLaidOut]) – grows nothing), and a scroll up is not the finger's when it lands the page
+ *   exactly at its end, or when the finger has been moving the other way – down the page –
+ *   since the last change.
  * - After the finger lifts, the page's scroll is its fling for [flingGapMs] past the lift and
  *   past every change; later changes (an anchor, a script) move no bar, as in Chrome.
  * - A second finger. A pinch changes the page's scroll offset as it zooms (the offset is kept in
@@ -46,17 +48,22 @@ class BarHideScrollFilter(private val flingGapMs: Long, private val fingerTolera
     private var flingUntil = 0L
     /** Where the finger was, on the screen, at the last change that was its own. */
     private var fingerAtChange = 0f
-    /** The bar left its edge under this finger or its fling: the page is laid out tall already. */
+    /**
+     * The page is laid out tall already – the bar left its edge under this finger or its fling,
+     * or came home under it and has not rested yet ([pageLaidOut]) – so the bar's leaving grows
+     * nothing and clamps nothing.
+     */
     var hiding = false
         private set
     /** A second finger landed in this gesture: its scroll, and its fling, are nobody's ([pointerDown]). */
     var multiTouch = false
         private set
 
-    fun down(fingerY: Float) {
+    /** A finger lands, on a page laid out tall (`pageTall`: the chrome's word, [pageLaidOut]) or short. */
+    fun down(fingerY: Float, pageTall: Boolean = false) {
         touching = true
         flingUntil = 0L
-        hiding = false
+        hiding = pageTall
         multiTouch = false
         fingerAtChange = fingerY
     }
@@ -72,9 +79,13 @@ class BarHideScrollFilter(private val flingGapMs: Long, private val fingerTolera
         flingUntil = now + flingGapMs
     }
 
-    /** The chrome's word on the bar: back at its edge, the next hide starts afresh (and is gated afresh). */
-    fun barAtRest() {
-        hiding = false
+    /**
+     * The chrome's word on the page's layout, with every frame of the bar (`BarHideHostFrame.tall`):
+     * laid out short again – at the shown rest – the next hide starts afresh and is gated afresh
+     * on the band it would grow by; still tall, it is not.
+     */
+    fun pageLaidOut(tall: Boolean) {
+        hiding = tall
     }
 
     /** A scroll with no finger down is the finger's fling right now. */

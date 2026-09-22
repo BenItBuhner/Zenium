@@ -194,15 +194,17 @@ export class PageService {
    * the page is not a tab in ({@link opensAsTab}), opens as its overlay, over the asking window
    * (or a popup's opener) – private or not. `query` is the page's own parameters
    * (`InternalPageQuery`: History's `q`, the manager's `folder`); given with a reused tab it
-   * moves the tab there, as a section does. Returns the tab id; null for an overlay or an
-   * unregistered page.
+   * moves the tab there, as a section does. `reveal` marks an opening the browser makes for
+   * something that happened rather than one the user asked for: an overlay already up stays
+   * up (the chrome toggles a user's repeat request closed). Returns the tab id; null for an
+   * overlay or an unregistered page.
    */
   open(
     id: string,
     section: string | null | undefined,
     win: ZenWindow = this.browser.focusedWindow(),
     openerTabId?: string | null,
-    opts: { fromIntent?: boolean; query?: InternalPageQuery } = {}
+    opts: { fromIntent?: boolean; query?: InternalPageQuery; reveal?: boolean } = {}
   ): string | null {
     const page = Object.prototype.hasOwnProperty.call(this.pages, id) ? this.pages[id] : undefined
     if (!page || !this.available(page)) return null
@@ -214,7 +216,12 @@ export class PageService {
         // `folderId` (the phone's bookmarks panel opens on it); the rest has no overlay reading.
         this.browser.emit(
           'overlay.open',
-          { kind: page.overlay, section: section ?? undefined, folderId: opts.query?.folder },
+          {
+            kind: page.overlay,
+            section: section ?? undefined,
+            folderId: opts.query?.folder,
+            reveal: opts.reveal || undefined
+          },
           win
         )
         // An overlay sent to another window is brought to the front there.
