@@ -179,6 +179,102 @@ describe('SpringAnimation', () => {
     )
     expect(spring.current).not.toEqual(stepSpring({ x: 0, v: 0 }, 300, 0.2, SPRING_SNAPPY))
   })
+
+  /** The animation frame with a clock: `tick()` fires the one frame in flight 16 ms later. */
+  const clockedFrames = (): { pending: () => number; tick: () => void } => {
+    const pending = new Map<number, FrameRequestCallback>()
+    let id = 0
+    let now = 1000
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      pending.set(++id, cb)
+      return id
+    })
+    vi.stubGlobal('cancelAnimationFrame', (n: number) => pending.delete(n))
+    vi.stubGlobal('performance', { now: () => now })
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: false }) })
+    return {
+      pending: () => pending.size,
+      tick: () => {
+        now += 16
+        const batch = [...pending.values()]
+        pending.clear()
+        for (const cb of batch) cb(now)
+      }
+    }
+  }
+
+  it('settle() ends the motion where it is: the loop stops and the rest is reported there', () => {
+    const { pending, tick } = clockedFrames()
+    const onFrame = vi.fn()
+    const onRest = vi.fn()
+    const spring = new SpringAnimation(SPRING_GENTLE, onFrame, onRest)
+    spring.start(293, 0, 44)
+    tick()
+    tick()
+    expect(spring.running).toBe(true)
+    expect(pending()).toBe(1)
+    const at = spring.current.x
+    expect(at).toBeGreaterThan(44)
+    spring.settle()
+    expect(spring.running).toBe(false)
+    expect(pending()).toBe(0)
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(onRest).toHaveBeenCalledWith(at)
+    expect(spring.current).toEqual({ x: at, v: 0 })
+    expect(spring.destination).toBe(44)
+    expect(onFrame).toHaveBeenCalledTimes(2)
+  })
+
+  it('a settle() from inside onFrame is the rest: the frame in flight asks for no next one, and the way to the thresholds beneath a floor is not run (the fold’s tail)', () => {
+    const { pending, tick } = clockedFrames()
+    // A height folding to a 44 px header, written as max(44, x): once the spring has passed the
+    // header nothing more can show, and the owner settles there.
+    const FLOOR = 44
+    const written: number[] = []
+    const onRest = vi.fn()
+    const spring: SpringAnimation = new SpringAnimation(
+      SPRING_GENTLE,
+      (x) => {
+        written.push(Math.max(FLOOR, x))
+        if (x <= FLOOR) spring.settle()
+      },
+      onRest
+    )
+    spring.start(293, 0, FLOOR)
+    let guard = 0
+    while (spring.running && guard++ < 300) tick()
+    expect(spring.running).toBe(false)
+    expect(pending()).toBe(0)
+    expect(onRest).toHaveBeenCalledTimes(1)
+    expect(onRest).toHaveBeenCalledWith(spring.current.x)
+    expect(spring.current.x).toBeLessThanOrEqual(FLOOR)
+    // Every written height but the last stood above the header; the last is the header.
+    expect(written.slice(0, -1).every((h) => h > FLOOR)).toBe(true)
+    expect(written[written.length - 1]).toBe(FLOOR)
+    // The spring left to its thresholds would run on beneath the header – the hair of overshoot
+    // and back – for several frames more, each writing the header again.
+    const toThresholds = simulate({ x: 293, v: 0 }, FLOOR, SPRING_GENTLE, 16 / 1000).length - 1
+    expect(toThresholds - written.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('a stop() from inside onFrame holds: the frame in flight asks for no next one and nothing rests', () => {
+    const { pending, tick } = clockedFrames()
+    const onRest = vi.fn()
+    const spring: SpringAnimation = new SpringAnimation(
+      SPRING_SNAPPY,
+      (x) => {
+        if (x > 100) spring.stop()
+      },
+      onRest
+    )
+    spring.start(0, 0, 300)
+    let guard = 0
+    while (spring.running && guard++ < 300) tick()
+    expect(pending()).toBe(0)
+    expect(onRest).not.toHaveBeenCalled()
+    expect(spring.current.x).toBeGreaterThan(100)
+    expect(spring.current.x).toBeLessThan(300)
+  })
 })
 
 /*

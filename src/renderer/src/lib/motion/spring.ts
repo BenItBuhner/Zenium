@@ -73,19 +73,35 @@ export class SpringAnimation {
     return this.state
   }
 
+  /**
+   * End the motion where it is: the loop stops and `onRest` runs with the current position, as
+   * it would at the rest thresholds. For a caller that knows nothing more of the spring's way to
+   * rest can show – a height clamped at a floor once the spring has passed it runs on beneath
+   * the floor, the §7 hair of overshoot and back, drawing nothing (the fold's tail: PERF-5,
+   * #349). Fine to call from `onFrame`: the frame in flight then asks for no next one.
+   */
+  settle(): void {
+    this.cancelFrame()
+    this.state = { x: this.state.x, v: 0 }
+    this.onRest(this.state.x)
+  }
+
   private cancelFrame(): void {
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.frame = null
   }
 
   private readonly tick = (now: number): void => {
-    this.frame = null
     // A stalled tab must not turn into one huge step.
     const dt = Math.min(SPRING_STEP_CLAMP_MS / 1000, Math.max(0.001, (now - this.last) / 1000))
     this.last = now
     this.state = stepSpring(this.state, this.target, dt, this.config)
+    // The frame stays on the books through `onFrame`, so a `stop` or a `settle` made there ends
+    // the motion: the frame in flight then asks for no next one.
     this.onFrame(this.state.x, this.state.v)
+    if (this.frame === null) return
     if (isAtRest(this.state, this.target)) {
+      this.frame = null
       this.onRest(this.state.x)
       return
     }
