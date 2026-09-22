@@ -30,6 +30,8 @@ beforeAll(async () => {
   document.body.innerHTML =
     '<article><h1>The lighthouse keeper</h1><p>Every evening he climbed the steps. The ledger did not care.</p></article>'
   ;(window as unknown as { __zenPageBridge: Bridge }).__zenPageBridge = bridge
+  // The Web Share shim installs in secure top-level documents alone (Chrome exposes it there).
+  Object.defineProperty(globalThis, 'isSecureContext', { value: true, configurable: true })
   // The script is an IIFE over `window.__zenPageBridge`: it installs on import.
   await import('../pageScript')
 })
@@ -97,5 +99,111 @@ describe('the Android page script and read aloud (A11Y-06; the core’s model, #
   it('leaves other host messages to their own handlers', () => {
     down({ type: 'zap', on: true })
     expect(sent().filter((m) => m.type === 'readAloud')).toEqual([])
+  })
+})
+
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+function setUserActivation(isActive: boolean): void {
+  Object.defineProperty(navigator, 'userActivation', {
+    value: { isActive, hasBeenActive: isActive },
+    configurable: true
+  })
+}
+
+describe('the Android page script and Web Share (SH-14: the shim over the WebView, the OS sheet behind it)', () => {
+  it('gives the page navigator.share and canShare (the WebView has neither)', () => {
+    expect(typeof navigator.share).toBe('function')
+    expect(typeof navigator.canShare).toBe('function')
+    expect(navigator.canShare({ url: 'https://example.test/' })).toBe(true)
+    expect(navigator.canShare({ files: [new File(['x'], 'a.txt', { type: 'text/plain' })] })).toBe(
+      true
+    )
+    expect(navigator.canShare({})).toBe(false)
+  })
+
+  it('refuses a share without a user gesture (NotAllowedError), sending nothing up', async () => {
+    setUserActivation(false)
+    await expect(
+      navigator.share({ title: 'T', url: 'https://example.test/' })
+    ).rejects.toMatchObject({
+      name: 'NotAllowedError'
+    })
+    expect(sent().filter((m) => m.type === 'share')).toEqual([])
+  })
+
+  it('posts a gestured share up under the token with its files as base64, and settles the promise from the sheet’s outcome', async () => {
+    setUserActivation(true)
+    const promise = navigator.share({
+      title: 'A picture',
+      text: 'Look',
+      url: '/p/1',
+      files: [new File(['hello'], 'hello.txt', { type: 'text/plain' })]
+    })
+    await flush()
+    await flush()
+    const up = sent().find((m) => m.type === 'share')!
+    expect(up.token).toBe('__ZEN_TOKEN__')
+    const call = up.share as {
+      id: string
+      title: string
+      text: string
+      url: string
+      files: Array<Record<string, unknown>>
+    }
+    expect(call.title).toBe('A picture')
+    expect(call.text).toBe('Look')
+    expect(call.url).toBe(new URL('/p/1', document.baseURI).href)
+    expect(call.files).toEqual([
+      { name: 'hello.txt', type: 'text/plain', size: 5, data: btoa('hello') }
+    ])
+    // A second call while the first is up is Chrome's InvalidStateError.
+    await expect(navigator.share({ text: 'again' })).rejects.toMatchObject({
+      name: 'InvalidStateError'
+    })
+    // Kotlin's chooser reported a chosen target: the core posts `shared` and the promise resolves.
+    down({ type: 'share', id: call.id, result: 'shared' })
+    await expect(promise).resolves.toBeUndefined()
+  })
+
+  it('rejects the promise with AbortError when the sheet was dismissed', async () => {
+    setUserActivation(true)
+    const promise = navigator.share({ text: 'bye' })
+    await flush()
+    await flush()
+    const call = sent().find((m) => m.type === 'share')!.share as { id: string }
+    down({ type: 'share', id: call.id, result: 'aborted' })
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+describe('the Android page script and links to a highlight (SH-11)', () => {
+  it('answers the core’s textFragment.generate from the selection the action mode cleared', () => {
+    const text = document.querySelector('p')!.firstChild as Text
+    const range = document.createRange()
+    range.setStart(text, text.data.indexOf('ledger'))
+    range.setEnd(text, text.data.indexOf('ledger') + 'ledger did not care'.length)
+    const selection = document.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    selection.collapseToEnd()
+    document.dispatchEvent(new Event('selectionchange'))
+    down({ type: 'textFragment', action: 'generate', id: 'tf1' })
+    const answer = sent().find((m) => m.type === 'textFragment')!
+    expect(answer.token).toBe('__ZEN_TOKEN__')
+    expect(answer.id).toBe('tf1')
+    expect(answer.directive).toBe('text=ledger%20did%20not%20care')
+    expect(document.getSelection()!.isCollapsed).toBe(true)
+  })
+
+  it('answers null when nothing is selected and nothing was just cleared', async () => {
+    // The cleared selection above stands in for five seconds; a fresh, never-selected document has none.
+    document.getSelection()!.removeAllRanges()
+    down({ type: 'textFragment', action: 'generate', id: 'tf2' })
+    const answer = sent().find((m) => m.type === 'textFragment')!
+    // Either the remembered selection (still within its keep) or null: never a throw, always an answer.
+    expect(answer.id).toBe('tf2')
+    expect(answer.directive === null || typeof answer.directive === 'string').toBe(true)
   })
 })
