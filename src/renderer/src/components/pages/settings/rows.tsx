@@ -1,4 +1,4 @@
-import type { JSX, ReactNode, RefCallback } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { ChevronRight, ExternalLink, Loader2 } from 'lucide-react'
 import { cn } from '@renderer/lib/utils'
@@ -16,6 +16,7 @@ import {
   type SwitchRow,
   type ValueRow
 } from './model'
+import { attachLineCount } from './lineCount'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
 /**
@@ -42,42 +43,6 @@ import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 /** Which of the two row vocabularies a list draws (§10.4 / §10.5). */
 export type RowVariant = 'phone' | 'desktop'
 
-/** The row's text block as laid out: three lines or more, and where the label line starts. */
-function measureLines(row: HTMLElement): void {
-  const text = row.querySelector<HTMLElement>('.zen-settings-row-text')
-  const label = text?.querySelector<HTMLElement>('.zen-settings-label')
-  if (!text || !label) return
-  const line = parseFloat(getComputedStyle(label).lineHeight) || 20
-  const block = text.getBoundingClientRect()
-  const three = block.height > line * 2.5
-  if (three) {
-    row.dataset.lines = '3'
-    row.style.setProperty(
-      '--zen-settings-label-top',
-      `${(label.getBoundingClientRect().top - block.top).toFixed(2)}px`
-    )
-  } else {
-    delete row.dataset.lines
-    row.style.removeProperty('--zen-settings-label-top')
-  }
-}
-
-/**
- * Keep a row's line count current: measured once it is on screen and again whenever its text
- * block changes size (the label wraps at a new width, the description changes). Only rows with
- * something trailing the text need it.
- */
-const attachLineCount: RefCallback<HTMLElement> = (row) => {
-  if (!row) return
-  measureLines(row)
-  if (typeof ResizeObserver !== 'function') return
-  const text = row.querySelector('.zen-settings-row-text')
-  if (!text) return
-  const observer = new ResizeObserver(() => measureLines(row))
-  observer.observe(text)
-  return () => observer.disconnect()
-}
-
 /** What a row asks the page to open over it. */
 export type SheetRequest =
   | { kind: 'options'; rowId: string }
@@ -89,6 +54,12 @@ export type SheetRequest =
 
 export interface RowContext {
   open(request: SheetRequest): void
+  /**
+   * Open the drill-in page an action row names (`ActionRow.page`, §10.2) for the section the
+   * row belongs to; the phone layout's (`PhoneSettings`). Absent – the two-pane layout, a test
+   * without a page – the row falls back to its `form`.
+   */
+  openPage?(rowId: string, page: string): void
 }
 
 /**
@@ -178,7 +149,10 @@ export function RowView({
           onPress={() => row.onChange(!row.checked)}
         />
       )
-    case 'action':
+    case 'action': {
+      // A row that names a drill-in page leaves for it on the phone layout (§10.2), the chevron
+      // saying so; where the page has no way to open one it opens its form as the desktop does.
+      const opensPage = row.page !== undefined && ctx.openPage !== undefined
       return (
         <PressableRow
           row={row}
@@ -188,16 +162,18 @@ export function RowView({
           destructive={row.destructive}
           busy={row.busy}
           truncate={row.truncate}
-          haspopup={row.confirm || row.form ? 'dialog' : undefined}
-          trailing={actionGlyph(row)}
+          haspopup={!opensPage && (row.confirm || row.form || row.prompts) ? 'dialog' : undefined}
+          trailing={opensPage ? <ChevronRight aria-hidden="true" /> : actionGlyph(row)}
           onPress={() => {
-            if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
+            if (opensPage) ctx.openPage!(row.id, row.page!)
+            else if (row.confirm) ctx.open({ kind: 'confirm', rowId: row.id })
             else if (row.form) ctx.open({ kind: 'form', rowId: row.id })
             else if (row.closesSheet) dismissSheet(() => row.onPress?.())
             else row.onPress?.()
           }}
         />
       )
+    }
     case 'field':
       return (
         <PressableRow
@@ -312,9 +288,11 @@ function pressAction(row: ActionRow, ctx: RowContext, dismissSheet: SheetDismiss
 }
 
 /**
- * A model row in the desktop vocabulary. Info, item and custom rows are the phone's; a value row
- * trails a menulist, a switch row is a check row, a field row holds its field, an action with a
- * `button` trails it and any other action is the whole-row target with its leaving glyph.
+ * A model row in the desktop vocabulary. Info and custom rows are the phone's, and so is an item
+ * row unless it carries its one `action`, which then trails it as a button in place of a dialog;
+ * a value row trails a menulist, a switch row is a check row, a field row holds its field, an
+ * action with a `button` trails it and any other action is the whole-row target with its
+ * leaving glyph.
  */
 function DesktopRowView({
   row,
@@ -355,7 +333,7 @@ function DesktopRowView({
               variant={row.destructive ? 'danger' : 'secondary'}
               busy={row.busy}
               disabled={row.disabled}
-              aria-haspopup={row.confirm || row.form ? 'dialog' : undefined}
+              aria-haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
               onClick={() => pressAction(row, ctx, dismissSheet)}
             >
               {row.button}
@@ -372,7 +350,7 @@ function DesktopRowView({
           destructive={row.destructive}
           busy={row.busy}
           truncate={row.truncate}
-          haspopup={row.confirm || row.form ? 'dialog' : undefined}
+          haspopup={row.confirm || row.form || row.prompts ? 'dialog' : undefined}
           trailing={actionGlyph(row)}
           onPress={() => pressAction(row, ctx, dismissSheet)}
         />
@@ -390,6 +368,27 @@ function DesktopRowView({
           <SliderControl row={row} />
         </ControlRow>
       )
+    case 'item':
+      // A row that exists to be acted on carries its one action as the trailing 32 button on a
+      // mouse and opens no dialog (§10.5); the button is named for the row it acts on, as the
+      // viewer's Clear is, since a list of them reads "Remove" many times over.
+      if (row.action) {
+        const action = row.action
+        return (
+          <ControlRow row={row} caption={caption} description={row.description}>
+            <V2Button
+              variant={action.destructive ? 'danger' : 'secondary'}
+              busy={action.busy}
+              disabled={row.disabled}
+              aria-label={`${action.label} ${row.label}`}
+              onClick={action.onPress}
+            >
+              {action.label}
+            </V2Button>
+          </ControlRow>
+        )
+      }
+      return <RowView row={row} ctx={ctx} caption={caption} />
     default:
       return <RowView row={row} ctx={ctx} caption={caption} />
   }

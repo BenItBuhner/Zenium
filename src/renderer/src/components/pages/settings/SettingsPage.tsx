@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronLeft, Search, X } from 'lucide-react'
 import {
@@ -7,7 +7,8 @@ import {
   landingRuns,
   parseInternalPageUrl,
   type InternalPageDefinition,
-  type InternalPageSection
+  type InternalPageSection,
+  type InternalPageSubpage
 } from '@shared/internalPages'
 import type { FormFactor, Tab, UIState } from '@shared/types'
 import { useElementWidth } from '@renderer/hooks/useElementWidth'
@@ -27,22 +28,27 @@ import { openBarEditor, openOverlay } from '@renderer/lib/ui'
 import { TWO_PANE_MIN_WIDTH } from '../PageFrame'
 import { DesktopSettings } from './desktop'
 import { SECTION_GLYPH, SECTION_GLYPHS } from './glyphs'
-import { searchRows, type SectionModel } from './model'
+import { findRow, searchRows, type SectionModel } from './model'
 import { GroupList, RowView, type RowContext } from './rows'
 import { buildSection, buildSections, type SectionContext } from './sections'
 import { SheetStack } from './sheets'
+import { SiteDataPage } from './SiteDataPage'
 import { useSheetStack } from './useSheetStack'
 
 /**
- * The Settings page inside its tab (`zen://settings[/<section>]`, design language v2 §10).
+ * The Settings page inside its tab (`zen://settings[/<section>[/<page>]]`, design language v2
+ * §10).
  *
  * Phone (§10.2): a landing – title block, "Find in Settings", the category list with Zen's two
  * hairlines – and, when the tab's URL names a section, a drill-in pane over it: 56 px bar header
  * with the back chevron, then the section's groups of rows. The landing stays mounted (inert)
  * beneath the drill-in, so the predictive back gesture slides the pane off it; the chevron, the
- * bottom bar's back and the system back are all `tab.back`. Search is the landing's alone, and
- * it never focuses on its own: on tap, or when the tab claims Ctrl+F / "Find in Page"
- * (`useChromeShortcut('find.open')`) as "Find in Settings".
+ * bottom bar's back and the system back are all `tab.back`. A section's own drill-in page
+ * (`InternalPageSection.pages`: Privacy's site-data viewer, Chrome's All sites) is a second pane
+ * the same way, over the section it belongs to, reached from the row that names it
+ * (`ActionRow.page`) and standing in the tab's history above the section. Search is the
+ * landing's alone, and it never focuses on its own: on tap, or when the tab claims Ctrl+F /
+ * "Find in Page" (`useChromeShortcut('find.open')`) as "Find in Settings".
  *
  * From {@link TWO_PANE_MIN_WIDTH} of the page's own width (a desktop window, a tablet, a phone
  * in landscape): the two-pane layout (`desktop.tsx`, §10.5) – the nav column and the content
@@ -67,6 +73,15 @@ const SITE_ROW = 'tracking-site-current'
 /** A row id as `?row=` may carry it: the ids are words, colons and dashes (`sync-scope:openTabs`). */
 const ROW_ID_RE = /^[\w:-]+$/
 
+/**
+ * What draws each section's drill-in page (`InternalPageSection.pages`, §10.2), by
+ * `<section>/<page>`: the phone's second pane over the section. A page the registry names and
+ * this does not draw would be an address with nothing behind it, so the two are kept together.
+ */
+const SUBPAGES: Record<string, () => JSX.Element> = {
+  'privacy/site-data': SiteDataPage
+}
+
 interface Props {
   state: UIState
   tab: Tab
@@ -83,6 +98,9 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
   const sections = availableSections(page, state.capabilities, formFactor, state.platform)
   const ref = parseInternalPageUrl(tab.url)
   const current = sections.find((s) => s.id === ref?.section) ?? null
+  // The section's drill-in page the address names, on the phone layout; the two-pane layout
+  // shows the section for it and opens the page's content as a dialog from its row (§10.5).
+  const subpage = current?.pages?.find((p) => p.id === ref?.subpage) ?? null
   const twoPane = width >= TWO_PANE_MIN_WIDTH
   // Privacy asked for a site, or a section for one of its rows: the row's group is scrolled on
   // screen before the paint, once per address (and again should the layout change under it) – a
@@ -119,6 +137,7 @@ export function SettingsPage({ state, tab }: Props): JSX.Element {
           page={page}
           sections={sections}
           current={current}
+          subpage={subpage}
           pointer={hover}
           formFactor={formFactor}
         />
@@ -137,12 +156,15 @@ function PhoneSettings({
   page,
   sections,
   current,
+  subpage,
   pointer,
   formFactor
 }: Props & {
   page: InternalPageDefinition
   sections: InternalPageSection[]
   current: InternalPageSection | null
+  /** The section's drill-in page the address names, over the section (§10.2). */
+  subpage: InternalPageSubpage | null
   /** The host's primary pointer hovers (a mouse): rows may describe mouse gestures. */
   pointer: boolean
   formFactor: FormFactor
@@ -210,10 +232,12 @@ function PhoneSettings({
       : []
   const groups = models.flatMap((m) => m.groups)
 
-  // A section change closes whatever sheet the previous one had open.
+  // A section change – or a drill-in page coming over the section, or leaving it – closes
+  // whatever sheet the previous one had open.
   const sectionId = current?.id ?? null
+  const subpageId = subpage?.id ?? null
   const { closeAll } = sheets
-  useEffect(() => closeAll(), [sectionId, closeAll])
+  useEffect(() => closeAll(), [sectionId, subpageId, closeAll])
   // "Manage extension" from elsewhere (an extension page's site information, the Extensions
   // sheet's long-press menu): Settings › Extensions opens the extension's details sheet as the
   // section comes up, once its row is in the list.
@@ -226,9 +250,24 @@ function PhoneSettings({
     extensionRevealStore.set({ id: null })
     sheetCtx.open({ kind: 'item', rowId })
   }, [reveal, sectionId, groups, sheetCtx])
+  // A row that names its section's drill-in page (§10.2) leaves for it: the section shown, or –
+  // from the landing's search – the section whose row it is.
+  const rowCtx: RowContext = {
+    ...sheetCtx,
+    openPage: (rowId, subpageId) => {
+      const section =
+        current?.id ?? models.find((m) => findRow(m.groups, rowId) !== null)?.section.id
+      if (section) run('page.navigate', { tabId: tab.id, section, subpage: subpageId })
+    }
+  }
+  const Subpage = current && subpage ? SUBPAGES[`${current.id}/${subpage.id}`] : undefined
 
   return (
-    <div className="zen-settings-phone" data-section={sectionId ?? 'landing'}>
+    <div
+      className="zen-settings-phone"
+      data-section={sectionId ?? 'landing'}
+      data-page={subpageId ?? undefined}
+    >
       <Landing
         page={page}
         sections={sections}
@@ -236,17 +275,37 @@ function PhoneSettings({
         query={query}
         onQuery={setQuery}
         onOpen={(id) => run('page.navigate', { tabId: tab.id, section: id })}
-        ctx={sheets.ctx}
+        ctx={rowCtx}
         inert={current !== null}
         findRequest={findRequest}
       />
       {current && models[0] && (
-        <DrillIn key={current.id} model={models[0]} tab={tab} ctx={sheets.ctx} />
+        <DrillIn
+          key={current.id}
+          name={`settings-section:${current.id}`}
+          title={current.label}
+          backLabel="Back to Settings"
+          tab={tab}
+          inert={Subpage !== undefined}
+        >
+          <GroupList groups={models[0].groups} ctx={rowCtx} className="zen-settings-body" />
+        </DrillIn>
+      )}
+      {current && subpage && Subpage && (
+        <DrillIn
+          key={`${current.id}/${subpage.id}`}
+          name={`settings-page:${current.id}/${subpage.id}`}
+          title={subpage.label}
+          backLabel={`Back to ${current.label}`}
+          tab={tab}
+        >
+          <Subpage />
+        </DrillIn>
       )}
       <SheetStack
         requests={sheets.requests}
         groups={groups}
-        ctx={sheets.ctx}
+        ctx={rowCtx}
         closeTop={sheets.closeTop}
       />
     </div>
@@ -390,19 +449,30 @@ function CategoryRow({
 }
 
 /**
- * A section as the drill-in pane (§10.2): the 56 px bar header – 44 px back button, the
- * section's label at 17/600 – above the section's groups, with §9.7's hairline once the body
- * has scrolled under the bar. The pane slides in from the side it will leave by; the predictive
- * back gesture moves it with the finger and `page.back` runs once it is off.
+ * A drill-in pane (§10.2) – a section over the landing, or a section's own page over the
+ * section: the 56 px bar header – 44 px back button, the pane's title at 17/600 – above its
+ * body (the section's groups, the page's content), with §9.7's hairline once the body has
+ * scrolled under the bar. The pane slides in from the side it will leave by; the predictive
+ * back gesture moves it with the finger and `tab.back` runs once it is off – the pane mounted
+ * last answers the gesture, so a page over its section leaves first. A pane with a pane over it
+ * is `inert`, as the landing is under a section.
  */
 function DrillIn({
-  model,
+  name,
+  title,
+  backLabel,
   tab,
-  ctx
+  inert = false,
+  children
 }: {
-  model: SectionModel
+  /** For the back registry's logs. */
+  name: string
+  title: string
+  /** The back button's name: where it leads ("Back to Settings", "Back to Privacy and Security"). */
+  backLabel: string
   tab: Tab
-  ctx: RowContext
+  inert?: boolean
+  children: ReactNode
 }): JSX.Element {
   const pane = useRef<HTMLDivElement>(null)
   const [scrolled, setScrolled] = useState(false)
@@ -424,13 +494,19 @@ function DrillIn({
       dismissal.current = null
     }
   }, [tab.id])
-  useBackSurface({
-    name: `settings-section:${model.section.id}`,
-    onStart: () => dismissal.current?.start(),
-    onProgress: (progress) => dismissal.current?.setProgress(progress),
-    onCommit: () => dismissal.current?.commit(),
-    onCancel: () => dismissal.current?.cancel()
-  })
+  // A pane under another leaves the gesture to the one on top (`useBackSurface`: the surface
+  // registered last answers; an inert pane registers none).
+  useBackSurface(
+    inert
+      ? null
+      : {
+          name,
+          onStart: () => dismissal.current?.start(),
+          onProgress: (progress) => dismissal.current?.setProgress(progress),
+          onCommit: () => dismissal.current?.commit(),
+          onCancel: () => dismissal.current?.cancel()
+        }
+  )
   const back = (): void => {
     if (dismissal.current) dismissal.current.commit()
     else run('tab.back', { tabId: tab.id })
@@ -441,24 +517,25 @@ function DrillIn({
       className="zen-settings-drill-in"
       data-from={fromBack ? 'left' : 'right'}
       data-scrolled={scrolled || undefined}
-      aria-label={model.section.label}
+      aria-label={title}
+      inert={inert || undefined}
     >
       <header className="zen-settings-bar">
         <button
           type="button"
           className="zen-settings-back zen-v2-icon-button"
-          aria-label="Back to Settings"
+          aria-label={backLabel}
           onClick={back}
         >
           <ChevronLeft aria-hidden="true" />
         </button>
-        <h1 className="zen-settings-bar-title">{model.section.label}</h1>
+        <h1 className="zen-settings-bar-title">{title}</h1>
       </header>
       <div
         className="zen-settings-scroll"
         onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
       >
-        <GroupList groups={model.groups} ctx={ctx} className="zen-settings-body" />
+        {children}
       </div>
     </section>
   )

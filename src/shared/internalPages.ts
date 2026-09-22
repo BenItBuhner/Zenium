@@ -83,6 +83,22 @@ export interface InternalPageSection {
    * Android keeps its one row under About, whatever the tablet's layout.
    */
   platforms?: readonly Platform[]
+  /**
+   * The section's own drill-in pages (v2 §10.2): a list a setting opens that can run long or
+   * whose rows have their own actions – the sites that stored data – is a page of its own,
+   * `zen://settings/<section>/<page>`, with the section beneath it in history (Chrome's All
+   * sites). The phone shows it as a second drill-in; the two-pane layout keeps its dialog and
+   * shows the section for the address.
+   */
+  pages?: readonly InternalPageSubpage[]
+}
+
+/** A drill-in page of a section's own (`InternalPageSection.pages`). */
+export interface InternalPageSubpage {
+  /** The third path segment; unique within its section. */
+  id: string
+  /** The drill-in header's title ("Site data"), sentence case as a row's title is. */
+  label: string
 }
 
 /** Whether a host has what a section requires: the one capability, or any of the listed ones. */
@@ -258,7 +274,10 @@ export const SETTINGS_SECTIONS: readonly InternalPageSection[] = [
       'cookies',
       'do not track'
     ],
-    requires: 'requestBlocking'
+    requires: 'requestBlocking',
+    // See all site data and permissions: the sites that stored cookies or data, Chrome's All
+    // sites – a list that can run to a thousand rows, each with its own action (§10.2).
+    pages: [{ id: 'site-data', label: 'Site data' }]
   },
   {
     id: 'spaces',
@@ -501,21 +520,28 @@ export const INTERNAL_PAGE_IDS: readonly InternalPageId[] = Object.keys(
  */
 export type InternalPageQuery = Readonly<Record<string, string>>
 
-/** A page and the section in it (`null` = the landing page), with the page's query when it has one. */
+/**
+ * A page and the section in it (`null` = the landing page), the section's drill-in page when
+ * the address names one (`zen://settings/privacy/site-data`, {@link InternalPageSubpage}), and
+ * the page's query when it has one.
+ */
 export interface InternalPageRef {
   id: string
   section: string | null
+  /** A drill-in page of the section (`InternalPageSection.pages`); absent for the section itself. */
+  subpage?: string
   query?: InternalPageQuery
 }
 
 const PAGE_URL_RE =
-  /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?\/?(?:\?([^#]*))?(?:#.*)?$/i
+  /^(zen|zenium):\/\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*)(?:\/([a-z][a-z0-9-]*))?)?\/?(?:\?([^#]*))?(?:#.*)?$/i
 
 /**
- * Parse `zen://settings`, `zen://settings/privacy` or their `zenium://` aliases into a page
- * reference; `null` for anything that is not a registered page (documents such as `zen://error`
- * included). Unknown sections resolve to the landing page rather than failing, so a stale deep
- * link still opens Settings. Sections a host lacks are the renderer's call
+ * Parse `zen://settings`, `zen://settings/privacy`, `zen://settings/privacy/site-data` or their
+ * `zenium://` aliases into a page reference; `null` for anything that is not a registered page
+ * (documents such as `zen://error` included). Unknown sections resolve to the landing page
+ * rather than failing, so a stale deep link still opens Settings; an unknown drill-in page
+ * resolves to its section the same way. Sections a host lacks are the renderer's call
  * ({@link availableSections}); the parser is host neutral. A query comes back as the page's
  * parameters ({@link InternalPageQuery}); an address without one has none.
  */
@@ -528,10 +554,13 @@ export function parseInternalPageUrl(
   const id = m[2].toLowerCase()
   const page = Object.prototype.hasOwnProperty.call(pages, id) ? pages[id] : undefined
   if (!page) return null
-  const section = m[3]?.toLowerCase() ?? null
-  const known = section !== null && page.sections.some((s) => s.id === section)
-  const query = m[4] ? Object.fromEntries(new URLSearchParams(m[4])) : {}
-  const ref: InternalPageRef = { id, section: known ? section : null }
+  const sectionId = m[3]?.toLowerCase() ?? null
+  const section = sectionId !== null ? page.sections.find((s) => s.id === sectionId) : undefined
+  const subpage = m[4]?.toLowerCase()
+  const known = subpage !== undefined && section?.pages?.some((p) => p.id === subpage)
+  const query = m[5] ? Object.fromEntries(new URLSearchParams(m[5])) : {}
+  const ref: InternalPageRef = { id, section: section ? section.id : null }
+  if (known) ref.subpage = subpage
   if (Object.keys(query).length > 0) ref.query = query
   return ref
 }
@@ -590,25 +619,31 @@ export function internalPageOf(
   return ref ? pages[ref.id] : null
 }
 
+/** The page, its section and the section's drill-in page as path segments (`settings/privacy/site-data`). */
+function pagePath(ref: InternalPageRef): string {
+  if (!ref.section) return ref.id
+  return `${ref.id}/${ref.section}${ref.subpage ? `/${ref.subpage}` : ''}`
+}
+
 /** The canonical `zen://` address of a page reference (what `tab.url` carries), query included. */
 export function internalPageUrl(ref: InternalPageRef): string {
   const query = ref.query && Object.keys(ref.query).length > 0 ? ref.query : null
-  return `${INTERNAL_SCHEME}://${ref.id}${ref.section ? `/${ref.section}` : ''}${
+  return `${INTERNAL_SCHEME}://${pagePath(ref)}${
     query ? `?${new URLSearchParams(query).toString()}` : ''
   }`
 }
 
 /**
- * The user-facing `zenium://` form of a page address – the page and its section, never its
- * query (the pill says `zenium://history`, as `zenium://pdf` says nothing of the file's id);
- * other URLs come back unchanged.
+ * The user-facing `zenium://` form of a page address – the page, its section and the section's
+ * drill-in page, never its query (the pill says `zenium://history`, as `zenium://pdf` says
+ * nothing of the file's id); other URLs come back unchanged.
  */
 export function internalPageAliasUrl(
   url: string,
   pages: InternalPageRegistry = INTERNAL_PAGES
 ): string {
   const ref = parseInternalPageUrl(url, pages)
-  return ref ? `${INTERNAL_ALIAS_SCHEME}://${ref.id}${ref.section ? `/${ref.section}` : ''}` : url
+  return ref ? `${INTERNAL_ALIAS_SCHEME}://${pagePath(ref)}` : url
 }
 
 /** Whether the address is an internal page of either kind (as opposed to a document or a site). */
@@ -671,6 +706,17 @@ export function internalPageSection(
   const ref = parseInternalPageUrl(url, pages)
   if (!ref || !ref.section) return null
   return pages[ref.id].sections.find((s) => s.id === ref.section) ?? null
+}
+
+/** The section's drill-in page the address names (`zen://settings/privacy/site-data`), else null. */
+export function internalPageSubpage(
+  url: string,
+  pages: InternalPageRegistry = INTERNAL_PAGES
+): InternalPageSubpage | null {
+  const ref = parseInternalPageUrl(url, pages)
+  if (!ref?.subpage) return null
+  const section = internalPageSection(url, pages)
+  return section?.pages?.find((p) => p.id === ref.subpage) ?? null
 }
 
 /**

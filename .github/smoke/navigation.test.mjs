@@ -1,13 +1,112 @@
 import { describe, expect, it } from 'vitest'
 import {
   ERR_ABORTED,
+  URLBAR_FIELD_OWNER,
+  caretVerdict,
   firstRetryableFailLoad,
+  isNewTabUrl,
   isRetryableFailLoad,
+  newTabPlan,
   retryDetail,
+  rowsExpected,
   waitForTabWithRetry
 } from './navigation.mjs'
 
 const URL = 'https://example.com/'
+
+describe('isNewTabUrl', () => {
+  it('takes the new tab page bare, with a path and with a query', () => {
+    expect(isNewTabUrl('zen://newtab')).toBe(true)
+    expect(isNewTabUrl('zen://newtab/')).toBe(true)
+    expect(isNewTabUrl('zen://newtab?private=1')).toBe(true)
+  })
+  it('refuses pages, other internal pages, an empty string and non-strings', () => {
+    expect(isNewTabUrl(URL)).toBe(false)
+    expect(isNewTabUrl('zen://newtabs')).toBe(false)
+    expect(isNewTabUrl('zen://settings')).toBe(false)
+    expect(isNewTabUrl('')).toBe(false)
+    expect(isNewTabUrl(null)).toBe(false)
+    expect(isNewTabUrl(undefined)).toBe(false)
+  })
+})
+
+describe('newTabPlan', () => {
+  it('uses the bar over the blank new tab: that tab takes the URL, the row count stays', () => {
+    const plan = newTabPlan({ barVisible: true, submitTabUrl: 'zen://newtab/' })
+    expect(plan).toEqual({ way: 'use', rowsAfter: 'same' })
+    expect(rowsExpected(1, plan)).toBe(1)
+  })
+  it('uses a bar whose submit opens a new tab: one more row', () => {
+    const plan = newTabPlan({ barVisible: true, submitTabUrl: null })
+    expect(plan).toEqual({ way: 'use', rowsAfter: 'one-more' })
+    expect(rowsExpected(1, plan)).toBe(2)
+  })
+  it("closes a bar over a page's own address before Accel+T", () => {
+    expect(newTabPlan({ barVisible: true, submitTabUrl: URL })).toEqual({
+      way: 'close-then-new',
+      rowsAfter: 'one-more'
+    })
+    // A tab the app state does not list is not a blank tab.
+    expect(newTabPlan({ barVisible: true, submitTabUrl: '' })).toEqual({
+      way: 'close-then-new',
+      rowsAfter: 'one-more'
+    })
+  })
+  it('opens a tab with Accel+T when the bar is down, whatever the tab argument says', () => {
+    const plan = newTabPlan({ barVisible: false, submitTabUrl: 'zen://newtab/' })
+    expect(plan).toEqual({ way: 'new', rowsAfter: 'one-more' })
+    expect(rowsExpected(0, plan)).toBe(1)
+    expect(newTabPlan({ barVisible: false, submitTabUrl: null })).toEqual(plan)
+  })
+})
+
+describe('caretVerdict', () => {
+  const caret = (owner, bar = 'found-up', ms = 12) => ({
+    focused: owner === URLBAR_FIELD_OWNER,
+    owner,
+    ms,
+    bar
+  })
+  const withCaret = (owner) => ({ url: URL, way: 'use', caret: caret(owner) })
+
+  it("hands the detail back as it is when the bar's field held the keyboard", () => {
+    const detail = withCaret(URLBAR_FIELD_OWNER)
+    expect(caretVerdict(detail)).toBe(detail)
+    // A detail without a reading (a step that did not go through the bar) is not judged.
+    const bare = { url: URL }
+    expect(caretVerdict(bare)).toBe(bare)
+    expect(caretVerdict(bare, [undefined, null])).toBe(bare)
+  })
+
+  it('fails the step, its detail kept on the error, when the bar had no caret', () => {
+    // The state main's boot smoke was in: the field let go, the page's view holding the keyboard.
+    const detail = withCaret('tab:7')
+    let thrown = null
+    try {
+      caretVerdict(detail)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown.message).toBe(
+      'the URL bar found up had no caret: the keyboard was tab:7 for the 12 ms before the harness focused the field'
+    )
+    expect(thrown.detail).toBe(detail)
+    // The chrome page with the keyboard but the field not the active element: no caret either.
+    expect(() => caretVerdict(withCaret('chrome'))).toThrow(/the keyboard was chrome for/)
+  })
+
+  it('judges every reading it is given – the second Accel+T of the walkthrough too', () => {
+    const first = caret(URLBAR_FIELD_OWNER, 'accel-t')
+    const second = caret('tab:9', 'accel-t', 3000)
+    const detail = { first: { caret: first }, second: { caret: second } }
+    expect(caretVerdict(detail, [first, first])).toBe(detail)
+    expect(() => caretVerdict(detail, [first, second])).toThrow(
+      'the URL bar brought up with Accel+T had no caret: the keyboard was tab:9 for the 3000 ms before the harness focused the field'
+    )
+  })
+})
+
 const reset = {
   type: 'did-fail-load',
   wc: 9,

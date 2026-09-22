@@ -1,5 +1,6 @@
 import type { CSSProperties, JSX, ReactNode } from 'react'
-import { useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, CircleAlert, Copy, Globe } from 'lucide-react'
 import type {
   ContainerColor,
@@ -24,6 +25,7 @@ import { inputToUrl } from '@shared/url'
 import { cn } from '@renderer/lib/utils'
 import { ContainerIcon } from '../../ContainerIcon'
 import { ZoomStepper } from '../../ZoomStepper'
+import { SheetFooterContext } from './sheetContext'
 
 /**
  * The blocks of the phone Settings page that are not rows (v2 §10.4's image radio cards and the
@@ -391,6 +393,22 @@ export function SheetActions({
       </button>
     </div>
   )
+}
+
+/**
+ * A form's actions in the sheet's footer (§9.11), outside the body that scrolls: claims the
+ * chassis's footer slot (`SheetFooterContext`) and portals its children there – the phone's
+ * `.zen-sheet-footer` under the body, the dialog's last block – so the site-data viewer's Clear
+ * all stays in reach at the foot of a thousand rows. Outside a Settings sheet or dialog the
+ * actions draw in place, as `SheetActions` do.
+ */
+export function SheetFooter({ children }: { children: ReactNode }): JSX.Element | null {
+  const slot = useContext(SheetFooterContext)
+  const claim = slot?.claim
+  useEffect(() => claim?.(), [claim])
+  if (!slot) return <div className="zen-settings-sheet-actions">{children}</div>
+  if (!slot.element) return null
+  return createPortal(children, slot.element)
 }
 
 /** A labelled field (§9.12): label above, 4 px, the field, an optional description under it. */
