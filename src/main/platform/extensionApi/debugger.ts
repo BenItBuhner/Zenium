@@ -17,6 +17,7 @@ import {
   type DetachReason
 } from '../../../core/extensions/api/debugger'
 import type { Tab } from '../../../shared/types'
+import { addForeignDebuggerOwner, removeForeignDebuggerOwner } from '../pageDebugger'
 import {
   ApiError,
   isRecord,
@@ -37,6 +38,8 @@ interface Attachment {
   extensionId: string
   tabId: number
   wc: WebContents
+  /** Kept apart from `wc`: a destroyed WebContents no longer answers for its id. */
+  webContentsId: number
   dbg: PageDebugger
   /**
    * The engine's session was already open (Zenium's own overrides or DevTools hold it) when the
@@ -129,6 +132,7 @@ export class DebuggerApi {
       extensionId: ctx.extensionId,
       tabId,
       wc,
+      webContentsId: wc.id,
       dbg,
       shared,
       off: () => {
@@ -138,6 +142,8 @@ export class DebuggerApi {
       }
     }
     this.attachments.set(this.key(ctx.extensionId, tabId), attachment)
+    // Zenium's own holders leave the session to the extension while it is attached.
+    addForeignDebuggerOwner(wc.id)
   }
 
   private detach(ctx: ApiContext, rawTarget: unknown): void {
@@ -235,6 +241,7 @@ export class DebuggerApi {
   private end(attachment: Attachment, reason: DetachReason | null): void {
     attachment.off()
     this.attachments.delete(this.key(attachment.extensionId, attachment.tabId))
+    removeForeignDebuggerOwner(attachment.webContentsId)
     if (reason === null) {
       if (!attachment.shared && !attachment.wc.isDestroyed() && attachment.dbg.isAttached()) {
         try {

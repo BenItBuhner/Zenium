@@ -623,15 +623,33 @@ export class ReadAloudService {
     }
     const article = id ? this.browser.reader.article(id) : undefined
     if (!article) return null
-    const lang = normalizeLanguageTag(article.lang) || this.uiLanguage()
-    const blocks = blocksFromHtml(article.content, lang)
+    // The article as the document shows it: its translation while one shows (CT-36), else as written.
+    const shown = this.browser.reader.shown(article)
+    const lang = normalizeLanguageTag(shown.lang) || this.uiLanguage()
+    const blocks = blocksFromHtml(shown.content, lang)
     return {
       source: 'reader',
-      title: article.title || tabTitle,
+      title: shown.title || tabTitle,
       lang,
       blocks,
       sentences: segmentSentences(blocks, lang)
     }
+  }
+
+  /**
+   * The reader document's text changed under a session reading it (its translation came, or the
+   * Show original toggle flipped, CT-36): what is read follows what is shown, from the top, as a
+   * reader ↔ page switch does.
+   */
+  onReaderTextChanged(tabId: string): void {
+    const session = this.session
+    if (!session || session.tabId !== tabId) return
+    const active =
+      session.state.status === 'playing' ||
+      session.state.status === 'paused' ||
+      session.state.status === 'loading'
+    if (!active) return
+    void this.start({ tabId, from: 'top' })
   }
 
   /**

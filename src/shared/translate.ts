@@ -84,6 +84,29 @@ export interface TranslateUIState {
   modelLicense: string
   /** Per-tab state for tabs that left `idle`. */
   tabs: Record<string, TranslateTabState>
+  /**
+   * Reader View translations by tab (CT-36): the article translated in the core and shown in
+   * the reader document, apart from the page translations above so no offer bar stands on a
+   * reader tab. Absent for tabs whose reader never translated (and in states from older builds).
+   */
+  reader?: Record<string, ReaderTranslateState>
+}
+
+/** The reader article's translation as the chrome shows it (the Text preferences' Translate row). */
+export interface ReaderTranslateState {
+  tabId: string
+  status: 'detecting' | 'downloading' | 'translating' | 'translated' | 'error'
+  /** The article's language as detected (or as the user said), null while unknown. */
+  source: string | null
+  /** The language the article is translated into. */
+  target: string | null
+  /** Blocks finished / blocks the article has. */
+  progress: { done: number; total: number } | null
+  /** Bytes received / bytes expected while a model downloads. */
+  download: { received: number; total: number } | null
+  error: string | null
+  /** The Show original toggle is on: the article shows as written, the translation kept. */
+  showOriginal: boolean
 }
 
 /**
