@@ -2,6 +2,7 @@
 import type { JSX, ReactNode } from 'react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { AudioLines, Languages, Lock, Shield, ShieldOff } from 'lucide-react'
+import { siteOriginOf } from '@shared/blocking'
 import { internalPageOf } from '@shared/internalPages'
 import type { TranslateTabState } from '@shared/translate'
 import type { Tab, UIState } from '@shared/types'
@@ -169,10 +170,13 @@ export function phonePillChips(
   // In the sheet it is the row the count goes on – the shield glyph, the count as the value (the
   // chip's own formatting), "Off for this site" or "Blocking off" when nothing is blocked here –
   // and it leads on to Settings › Privacy and security, where the lists and the site exceptions
-  // are; the sheet leaves first, as its Site settings row does.
+  // are; the sheet leaves first, as its Site settings row does. Asked for this site
+  // (`zen://settings/privacy?site=<origin>`, Chrome's `siteDetails?site=`), the page opens with
+  // the site's own group – "Block on <host>", one screen down in Chrome's order – on screen.
   if (identity && !page && !extension && state.capabilities.requestBlocking) {
     const siteState = siteBlockingState(tab, state.blocking, state.settings.blocking)
-    if (siteState !== 'no-site') {
+    const origin = siteOriginOf(tab.url)
+    if (siteState !== 'no-site' && origin) {
       const count = tab.blockedCount
       const value =
         siteState === 'blocking'
@@ -198,7 +202,7 @@ export function phonePillChips(
           value,
           activate: () => {
             if (!overlayAvailable('settings')) dismissSiteInfo()
-            openSettings('privacy')
+            openSettings('privacy', { site: origin })
           }
         }
       })

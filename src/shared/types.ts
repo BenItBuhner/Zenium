@@ -4657,6 +4657,12 @@ export interface Commands {
   /** Ask again before loading `host` over plaintext: forget its session and stored allowance. */
   'protection.forgetPlaintext': { args: { host: string }; result: void }
   /**
+   * End the host's hold on the startup sweeps (`PerformanceHost.holdBackgroundWork`): the demo
+   * harness calls it once its scenes are over, and the held sweeps run at once. Idempotent; a
+   * no-op where nothing is held.
+   */
+  'performance.releaseBackgroundWork': { args: void; result: void }
+  /**
    * Try a Google Safe Browsing key against the API before it is kept (one lookup of a prefix on
    * no list); refused when Google rejects the key (v2 §9.30's busy form behind the key field).
    */

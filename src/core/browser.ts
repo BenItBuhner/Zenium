@@ -81,6 +81,7 @@ import { AutofillService } from './autofill'
 import { addressFormat, countries } from './credentials/address'
 import { DefaultBrowserService } from './defaultBrowser'
 import { ImportService } from './import/service'
+import { BackgroundWork } from './background/work'
 import { BlockingService } from './blocking/service'
 import { ProtectionService } from './protection/service'
 import { NoExtensions, NoSync, NoUpdateHost, NoopGovernor } from './hostDefaults'
@@ -265,6 +266,12 @@ export class Browser {
   readonly defaultBrowser: DefaultBrowserService
   /** Chrome's "Import bookmarks and settings": other browsers' profiles and picked files (ID-23). */
   readonly imports: ImportService
+  /**
+   * The heavy parsing and hashing of the services' downloads (the filter lists, the Safe Browsing
+   * feeds), in the host's worker where it has one, and the demo harness's hold on the startup
+   * sweeps (`performance.releaseBackgroundWork`).
+   */
+  readonly background: BackgroundWork
   /** Ad and tracker blocking: the rule engine, its lists and the blocked-request counters. */
   readonly blocking: BlockingService
   /** Safe Browsing, HTTPS-only mode, secure DNS, third-party cookies and the GPC / DNT signals. */
@@ -326,6 +333,11 @@ export class Browser {
     )
     this.state.liveWindows = () => this.allWindows()
     this.state.load()
+    const performance = platform.performance
+    this.background = new BackgroundWork({
+      worker: performance?.createBackgroundWorker?.bind(performance) ?? null,
+      hold: performance?.holdBackgroundWork?.bind(performance) ?? null
+    })
     if (platform.theme) {
       const theme = platform.theme
       theme.setSource(this.state.settings.colorScheme)
@@ -1844,6 +1856,7 @@ export class Browser {
     this.downloads.shutdown()
     this.protection.stop()
     this.blocking.stop()
+    this.background.stop()
     this.translate.stop()
     this.passwords.shutdown()
     // The pages on screen have scrolled since their stacks were last read.
@@ -3064,6 +3077,7 @@ export class Browser {
       'protection.checkApiKey': ({ key }) => this.protection.safeBrowsing.checkKey(key),
       'protection.checkResolver': ({ url }) => this.protection.checkResolver(url),
       'protection.openPrivateDnsSettings': (_a, win) => this.openPrivateDnsSettings(win),
+      'performance.releaseBackgroundWork': () => this.background.release(),
       'translate.page': ({ tabId, target, source }) =>
         this.translate.translatePage(tabId, { target, source }),
       'translate.revert': ({ tabId }) => this.translate.revert(tabId),

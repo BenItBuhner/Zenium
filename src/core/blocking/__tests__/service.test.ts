@@ -9,6 +9,7 @@ import {
   type BlockingSettings
 } from '../../../shared/blocking'
 import type { Tab } from '../../../shared/types'
+import { BackgroundWork } from '../../background/work'
 import type { Browser } from '../../browser'
 import { PermissionService } from '../../permissions'
 import type { BlockingHost, BundledFilterList, StoreIO } from '../../platform'
@@ -67,6 +68,7 @@ function harness(
   }
   const browser = {
     permissions,
+    background: new BackgroundWork(),
     platform: {
       io,
       blocking: options.host,

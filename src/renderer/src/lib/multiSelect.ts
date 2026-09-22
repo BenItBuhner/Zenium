@@ -31,6 +31,15 @@ export function selectAll(ids: Iterable<string>): Selection {
 }
 
 /**
+ * The header's "Deselect all": every row unpicked, the mode kept – the rows still show their
+ * checks for the next pick, and the header's close is the way out (a tap that unpicks the last
+ * row leaves the mode, this does not: it is the header's own action, taken to pick again).
+ */
+export function deselectAll(): Selection {
+  return { active: true, ids: new Set() }
+}
+
+/**
  * Rows that were selected but no longer exist (deleted elsewhere, filtered by a search) drop
  * out; an emptied selection ends the mode. Returns the same object when nothing changed.
  */

@@ -1,4 +1,5 @@
 import type {
+  ColorScheme,
   CommandArgs,
   CommandName,
   CommandResult,
@@ -41,6 +42,7 @@ import { Bridge, getNativeBridge } from './bridge'
 import { fetchDeferredDocuments, type HandoffFetch } from './handoff'
 import { showHostToast } from './hostToast'
 import { installKeyboardPolicy } from './keyboard'
+import { schemeForPages } from './pageScheme'
 import { AndroidPlatform, type BootInfo, type HostEventPayloads } from './platform'
 import { createPreviewBridge } from './preview'
 import { openShortcutPrivateTab } from './privateShortcut'
@@ -200,6 +202,8 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
   let last = ''
   let frame: number | null = null
   let painted: ThemePaintedDetail | null = null
+  // The scheme the host has for the pages' night mode (`schemeForPages`).
+  let handed: ColorScheme | null = null
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
   const fromState = (state: UIState): ThemePaintedDetail => {
     const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
@@ -208,21 +212,26 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
     const resolved = resolveTheme(space?.theme ?? null, dark)
     return { dark, background: rgbToHex(resolved.averageColor) }
   }
+  const send = (state: UIState): void => {
+    const { dark, background } = painted ?? fromState(state)
+    // `scheme` lets the host set the app's night mode, so pages' `prefers-color-scheme`
+    // follows Zenium's own Light / Dark choice and not only the system's – handed over as the
+    // chrome's paint crosses to the scheme's side, so the pages flip with the chrome and not
+    // a blend ahead of it (`pageScheme.ts`).
+    handed = schemeForPages(handed, state.settings.colorScheme, dark, systemDark.matches)
+    const scrim = computedTokenColor('--zen-scrim') ?? ''
+    const key = `${handed}|${dark}|${background}|${scrim}`
+    if (key === last) return
+    last = key
+    bridge.send('chrome.setTheme', { dark, scheme: handed, background, scrim })
+  }
   const apply = (state: UIState): void => {
-    const scheme = state.settings.colorScheme
     // The token is read back from the document a frame later, once React has written the
     // theme's variables (`useTheme`); the state event this runs on precedes that render.
     if (frame !== null) cancelAnimationFrame(frame)
     frame = requestAnimationFrame(() => {
       frame = null
-      const { dark, background } = painted ?? fromState(state)
-      const scrim = computedTokenColor('--zen-scrim') ?? ''
-      const key = `${scheme}|${dark}|${background}|${scrim}`
-      if (key === last) return
-      last = key
-      // `scheme` lets the host set the app's night mode, so pages' `prefers-color-scheme`
-      // follows Zenium's own Light / Dark choice and not only the system's.
-      bridge.send('chrome.setTheme', { dark, scheme, background, scrim })
+      send(state)
     })
   }
   const current = (): UIState => browser.state.snapshot(platform.window)
@@ -230,7 +239,11 @@ function syncNativeTheme(bridge: Bridge, platform: AndroidPlatform, browser: Bro
   systemDark.addEventListener('change', () => apply(current()))
   window.addEventListener(THEME_PAINTED_EVENT, (e) => {
     painted = (e as CustomEvent<ThemePaintedDetail>).detail
-    apply(current())
+    // A paint is on the root already (`useTheme` writes the variables before it announces):
+    // the host hears of the crossing in the same frame, and the pages flip with the chrome.
+    if (frame !== null) cancelAnimationFrame(frame)
+    frame = null
+    send(current())
   })
 }
 

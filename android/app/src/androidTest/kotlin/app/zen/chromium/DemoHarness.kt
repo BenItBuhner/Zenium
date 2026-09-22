@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.webkit.TracingConfig
@@ -30,6 +31,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -142,6 +144,8 @@ abstract class DemoHarness(
             } catch (e: RuntimeException) {
                 Log.e(tag, "the frames record could not be settled", e)
             }
+            // The scenes are measured: the sweeps this run held may go.
+            releaseBackgroundWork()
         }
         // Tell the recorder to stop while the app is still on screen: the instrumentation's exit
         // kills the process, and the launcher must not be the last frame.
@@ -187,6 +191,7 @@ abstract class DemoHarness(
     protected fun launch() {
         val intent = Intent(app, MainActivity::class.java).setAction(Intent.ACTION_MAIN)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        if (holdBackgroundWork) intent.putExtra(BackgroundWorkHold.EXTRA_HOLD, true)
         appLaunchedAt = SystemClock.uptimeMillis()
         activity = instrumentation.startActivitySync(intent)
         // The chrome is a WebView booting the browser core: wait for the address pill to show up.
@@ -799,6 +804,256 @@ abstract class DemoHarness(
     protected fun boundsOnScreen(bounds: Rect): Boolean =
         !bounds.isEmpty && bounds.centerX() in 0 until width && bounds.centerY() in 0 until height
 
+    // --- the tree read afresh (API 34), and the DOM's box for a finger the tree keeps waiting ------
+    //
+    // UiAutomation's view of the chrome WebView trails the screen by seconds after a transition
+    // on the emulator's software GPU (#237's run had it 23 s behind a dock switch; the phone fixes
+    // driver's first run had it blank on a Settings section 8 s after the drill-in and on the
+    // History panel 10 s after it rose, while the DOM had both). A read here drops UiAutomation's
+    // cache and asks the chrome document for a frame each round (Blink serialises its tree from
+    // the lifecycle, which runs with a frame), and a finger that waits on the tree only waits so
+    // long: after that it lands on the box the DOM gives for the same control. Moved here from
+    // PhoneFixesDemo (the brief: driver fixes live in the shared harness) so every driver has them.
+
+    /**
+     * A line for the driver's findings from a shared helper (how long the tree took to list a
+     * control, which aim a finger used): the log by default; a driver that keeps a findings file
+     * overrides it to write the line there as well.
+     */
+    protected open fun noteLine(line: String) {
+        Log.i(tag, line.trim())
+    }
+
+    /**
+     * UiAutomation's accessibility node cache dropped (API 34's `clearCache`), so the next read
+     * of the tree goes to the app rather than to what the cache kept of it; false where the
+     * platform has no such call or the cache was not cleared.
+     */
+    protected fun dropTreeCache(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ui.clearCache()
+
+    /**
+     * A frame asked of the chrome document (an animation frame), so Blink runs its lifecycle –
+     * and the accessibility step that serialises the tree's changes and sends its location
+     * changes – while a read waits on the tree.
+     */
+    protected fun nudgeFrame() {
+        chromeJs("(function(){requestAnimationFrame(function(){});return 1})()")
+    }
+
+    /**
+     * Every node whose label or text `matches`, read past UiAutomation's cache: the cache dropped,
+     * the active window walked, and – when it has no root or nothing matches – every window of
+     * the app's.
+     */
+    protected fun freshNodes(matches: (String) -> Boolean): List<AccessibilityNodeInfo> {
+        dropTreeCache()
+        val found = findNodes(matches)
+        if (found.isNotEmpty()) return found
+        return findInWindows(app.packageName, matches)?.let { listOf(it) } ?: emptyList()
+    }
+
+    /**
+     * Poll for the first node whose label or text `matches`, with bounds on screen, for up to
+     * `timeoutMs`: the cache dropped and a frame asked of the chrome document each round. How
+     * long the tree took to list `what` is a [noteLine] when it took over a second or never did
+     * (with the WebView's accessibility events meanwhile, when [recordA11yEvents] is on).
+     */
+    protected fun awaitFresh(timeoutMs: Long, what: String, matches: (String) -> Boolean): AccessibilityNodeInfo? {
+        val start = SystemClock.uptimeMillis()
+        val deadline = start + timeoutMs
+        while (true) {
+            val node = freshNodes(matches).firstOrNull { boundsOnScreen(Rect().also { r -> it.getBoundsInScreen(r) }) }
+            if (node != null) {
+                val took = SystemClock.uptimeMillis() - start
+                if (took > 1_000) noteLine("  (the tree listed $what after $took ms)")
+                return node
+            }
+            if (SystemClock.uptimeMillis() >= deadline) {
+                noteLine("  (the tree did not list $what within $timeoutMs ms; WebView events meanwhile: ${eventsSince(start)})")
+                return null
+            }
+            nudgeFrame()
+            SystemClock.sleep(250)
+        }
+    }
+
+    /** Every accessibility event the app's windows sent since [recordA11yEvents]: (uptime ms, type). Null until then. */
+    private var a11yEvents: MutableList<Pair<Long, Int>>? = null
+
+    /**
+     * Put the accessibility events on record: the events the WebView sends are the tree's only
+     * word that it changed (UiAutomation's cache lives on them), so the findings that say how far
+     * the tree trailed can say what the WebView sent meanwhile ([eventsSince]). One listener per
+     * UiAutomation: a driver with a listener of its own keeps it and leaves this off.
+     */
+    protected fun recordA11yEvents() {
+        val events = Collections.synchronizedList(ArrayList<Pair<Long, Int>>())
+        a11yEvents = events
+        ui.setOnAccessibilityEventListener { event -> events += SystemClock.uptimeMillis() to event.eventType }
+    }
+
+    /** The accessibility events since `markUptime`, counted by type ("WINDOW_CONTENT_CHANGED x3, …"); "none" for none, "not on record" without [recordA11yEvents]. */
+    protected fun eventsSince(markUptime: Long): String {
+        val events = a11yEvents ?: return "not on record"
+        val counts = LinkedHashMap<String, Int>()
+        synchronized(events) {
+            for ((at, type) in events) {
+                if (at < markUptime) continue
+                val name = AccessibilityEvent.eventTypeToString(type).removePrefix("TYPE_")
+                counts[name] = (counts[name] ?: 0) + 1
+            }
+        }
+        return if (counts.isEmpty()) "none" else counts.entries.joinToString(", ") { "${it.key} x${it.value}" }
+    }
+
+    /**
+     * An element's box as the chrome lays it out, in screen px: the chrome fills the window from
+     * its top-left corner, so its CSS px times the density are screen px (SettingsTouchDemo's
+     * reading), shifted by what [calibrateDomBoxes] found the tree's bounds add. `js` is an
+     * expression for the element; null when it is none.
+     */
+    protected fun domBox(js: String): Rect? {
+        val text = chromeString(
+            "(function(){var e=($js);if(!e)return '';var r=e.getBoundingClientRect();" +
+                "return [r.left,r.top,r.right,r.bottom].map(function(v){return Math.round(v*$density)}).join(',')})()"
+        )
+        val px = text.split(',').map { it.toIntOrNull() ?: return null }
+        if (px.size != 4) return null
+        return Rect(px[0], px[1], px[2], px[3]).also { it.offset(domShiftX, domShiftY) }
+    }
+
+    /** What the tree's bounds add to the DOM's box ([calibrateDomBoxes]); 0 while the two agree. */
+    protected var domShiftX = 0
+        private set
+    protected var domShiftY = 0
+        private set
+
+    /**
+     * The DOM's box against the tree's for the same control – the bar's Menu button – once, at
+     * the warm-up: the chrome fills the window from its corner on this image (the phone fixes
+     * driver's runs: the tree's 638–719 for the DOM's 641–718 px), but should the chrome sit
+     * under an inset the tree's bounds carry, the difference is taken up so every DOM-aimed
+     * finger lands where the screen has the control (ChromeA11yDemo's `calibrate`). A difference
+     * under 4 px stays 0; the shift is measured from the DOM's own pixels, so a second call does
+     * not compound on the first. The result is a [noteLine].
+     */
+    protected fun calibrateDomBoxes(timeoutMs: Long = 6_000) {
+        val node = awaitFresh(timeoutMs, "the bar's Menu button") { it == MENU_LABEL } ?: return
+        val tree = Rect().also { node.getBoundsInScreen(it) }
+        val dom = domBox(MENU_BUTTON_JS)?.also { it.offset(-domShiftX, -domShiftY) } ?: return
+        val dx = Math.round(tree.exactCenterX() - dom.exactCenterX())
+        val dy = Math.round(tree.exactCenterY() - dom.exactCenterY())
+        domShiftX = if (Math.abs(dx) >= 4) dx else 0
+        domShiftY = if (Math.abs(dy) >= 4) dy else 0
+        noteLine("  the Menu button: tree $tree, DOM $dom -> DOM boxes shifted by ${domShiftX}x$domShiftY")
+    }
+
+    /**
+     * A real touch on the control reading `label` (its prefix with `prefix`): at the tree's node
+     * once the tree lists it with bounds on screen (`treeMs`), else at the box the DOM gives for
+     * the element `domJs` evaluates to – the tree trails the screen by seconds on the emulator
+     * and the finger does not wait on it past that. The aim is a [noteLine]; the touch is the
+     * same injected finger either way, and a claim is read off what follows it, never off this.
+     * False, nothing injected, when neither the tree nor the DOM has the control inside the
+     * touchable window.
+     */
+    protected fun touchControl(label: String, domJs: String, prefix: Boolean = false, treeMs: Long = 5_000): Boolean {
+        val node = awaitFresh(treeMs, "'$label'") { it == label || (prefix && it.startsWith(label)) }
+        if (node != null) {
+            val point = touchTapPoint(node)
+            if (point != null) return true
+            noteLine("  (the tree's node for '$label' went away or lies outside the touchable window)")
+        }
+        val box = domBox(domJs) ?: run {
+            noteLine("  '$label' is in neither the tree nor the DOM")
+            return false
+        }
+        val point = touchPoint(box) ?: run {
+            noteLine("  the DOM's box for '$label' ($box) lies outside the touchable window $touchable")
+            return false
+        }
+        noteLine("  touch at ${point.x.toInt()},${point.y.toInt()} on '$label' at the DOM's box $box (the tree had not listed it)")
+        Finger().tap(point.x, point.y)
+        return true
+    }
+
+    /**
+     * [touchControl], then up to `timeoutMs` for `took` to hold – the claim of the step, named by
+     * `effect`. True when it held; a touch that went in and did not take is a [touchFault] (the
+     * run fails at its end) and false.
+     */
+    protected fun touchControlExpecting(
+        label: String,
+        domJs: String,
+        effect: String,
+        timeoutMs: Long = 6_000,
+        prefix: Boolean = false,
+        took: () -> Boolean
+    ): Boolean {
+        if (!touchControl(label, domJs, prefix)) return false
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (took()) {
+                Log.i(tag, "the touch on '$label' took: $effect")
+                return true
+            }
+            SystemClock.sleep(150)
+        }
+        touchFault("a touch on '$label' did not take: not $effect within $timeoutMs ms")
+        return false
+    }
+
+    /** [chromeJs]'s answer as text: the JSON string decoded, "" for null or no answer. */
+    private fun chromeString(code: String): String =
+        runCatching { JSONTokener(chromeJs(code)).nextValue() }.getOrNull()?.takeIf { it != JSONObject.NULL }?.toString() ?: ""
+
+    // --- what renders the screen -----------------------------------------------------------------
+
+    /** What renders this run's screen: a GPU, software (the hosted emulator's SwiftShader), or unsaid. */
+    protected enum class RendererKind { HARDWARE, SOFTWARE, UNKNOWN }
+
+    /** The renderer and where the word came from; [hardware] is true only for a GPU known to render. */
+    protected class Renderer(val kind: RendererKind, val evidence: String) {
+        val hardware: Boolean get() = kind == RendererKind.HARDWARE
+        override fun toString(): String = "${kind.name.lowercase()} ($evidence)"
+    }
+
+    /**
+     * The renderer behind the screen, read once, for a claim whose bound only a GPU can meet (the
+     * phone fixes driver's flip: two hops of 0.5–1.3 s on the emulator's software UI thread, a
+     * frame or two on a device). The `renderer` instrumentation argument when a caller says
+     * (`-e renderer hardware` or `software`), else SurfaceFlinger's own word – its dump's `GLES:`
+     * line names the GL renderer: SwiftShader (the recipe's `swangle`, ANGLE over SwiftShader
+     * Vulkan) or llvmpipe is software; on a device anything else is its GPU; an emulator (`qemu`
+     * in the properties) counts as hardware only when the line names a GPU vendor behind its
+     * translator (`-gpu host` on a machine with one) – else the EGL vendor property (a GPU's name
+     * on a device; `emulation` on every emulator says nothing). Unknown when none of them say,
+     * and a bound gated on hardware stays soft then: the safe side for a run's verdict.
+     */
+    protected val renderer: Renderer by lazy { readRenderer() }
+
+    private fun readRenderer(): Renderer {
+        when (InstrumentationRegistry.getArguments().getString(RENDERER_ARGUMENT)?.trim()?.lowercase()) {
+            "hardware" -> return Renderer(RendererKind.HARDWARE, "the renderer argument")
+            "software" -> return Renderer(RendererKind.SOFTWARE, "the renderer argument")
+        }
+        val property = { name: String -> runCatching { shellCommand("getprop $name") }.getOrDefault("").trim() }
+        val emulator = property("ro.kernel.qemu") == "1" || property("ro.boot.qemu") == "1"
+        val gles = runCatching { shellCommand("dumpsys SurfaceFlinger") }.getOrDefault("")
+            .lineSequence().map { it.trim() }.firstOrNull { it.startsWith("GLES:") }?.take(200)
+        if (gles != null) {
+            return when {
+                SOFTWARE_RENDERERS.any { gles.contains(it, ignoreCase = true) } -> Renderer(RendererKind.SOFTWARE, gles)
+                !emulator -> Renderer(RendererKind.HARDWARE, gles)
+                GPU_VENDORS.any { gles.contains(it, ignoreCase = true) } -> Renderer(RendererKind.HARDWARE, "an emulator on the host's GPU: $gles")
+                else -> Renderer(RendererKind.UNKNOWN, "an emulator whose GLES line names no GPU: $gles")
+            }
+        }
+        val egl = property("ro.hardware.egl")
+        if (!emulator && egl.isNotEmpty() && egl.lowercase() !in EMULATED_EGL) return Renderer(RendererKind.HARDWARE, "ro.hardware.egl $egl")
+        return Renderer(RendererKind.UNKNOWN, "no GLES line in SurfaceFlinger's dump; ro.hardware.egl '${egl.ifEmpty { "unset" }}'${if (emulator) ", an emulator" else ""}")
+    }
+
     // Shared by the drivers (moved here from the first-run driver): the API 34 emulator renders
     // in software and the WebView's accessibility tree trails a transition by seconds, so touches
     // wait generously for their label and window changes are polled for, not slept for.
@@ -1130,6 +1385,23 @@ abstract class DemoHarness(
      */
     protected val jankGate: JankBudget.Gate =
         JankBudget.Gate.parse(InstrumentationRegistry.getArguments().getString(JANK_GATE_ARGUMENT))
+
+    /**
+     * Whether this run holds the core's startup sweeps – the filter lists' and the Safe Browsing
+     * feeds' refreshes, 20 s and 35 s after boot, whose downloads and file writes would land in
+     * the measured scenes – until the sequence is over: the `holdBackgroundWork` instrumentation
+     * argument (`DEMO_ARGS="-e holdBackgroundWork true"`), off when absent. [launch] puts the
+     * extra on the intent and [runDemo] releases the hold after the frames are settled.
+     */
+    protected val holdBackgroundWork: Boolean =
+        InstrumentationRegistry.getArguments().getString(HOLD_BACKGROUND_WORK_ARGUMENT) == "true"
+
+    /** End the hold on the core's startup sweeps ([Host.releaseBackgroundWork]); nothing without one. */
+    protected fun releaseBackgroundWork() {
+        if (!holdBackgroundWork) return
+        instrumentation.runOnMainSync { (activity as? MainActivity)?.host?.releaseBackgroundWork() }
+        Log.i(tag, "background work released")
+    }
 
     /**
      * Every scene measured so far, in order, with the verdicts as they stand (settled at the end
@@ -1600,6 +1872,22 @@ abstract class DemoHarness(
         const val MENU_HANDLE_LABEL = "Resize menu"
         /** The instrumentation argument the gate is read from (`-e jankGate hard`). */
         const val JANK_GATE_ARGUMENT = "jankGate"
+        /**
+         * The instrumentation argument that holds the core's startup sweeps for the run
+         * (`-e holdBackgroundWork true`): the launch intent carries [BackgroundWorkHold.EXTRA_HOLD],
+         * and [releaseBackgroundWork] ends the hold once the sequence is over.
+         */
+        const val HOLD_BACKGROUND_WORK_ARGUMENT = "holdBackgroundWork"
+        /** The instrumentation argument a caller names the renderer with (`-e renderer hardware`), see [renderer]. */
+        const val RENDERER_ARGUMENT = "renderer"
+        /** GL renderer names that draw in software (SurfaceFlinger's `GLES:` line). */
+        private val SOFTWARE_RENDERERS = listOf("SwiftShader", "swangle", "llvmpipe", "softpipe", "Software Rasterizer")
+        /** GPU vendors and families a GLES line names when an emulator's translator sits on a real GPU. */
+        private val GPU_VENDORS = listOf("NVIDIA", "GeForce", "Quadro", "AMD", "Radeon", "Intel", "Iris", "Apple", "Mali", "Adreno", "PowerVR", "Xclipse", "Tegra")
+        /** EGL vendor properties that say nothing about a GPU (an emulator's translator, a software stack). */
+        private val EMULATED_EGL = setOf("emulation", "swiftshader", "angle", "mesa")
+        /** The bar's Menu button in the DOM (`BarButton.tsx`'s `data-bar-item`), for [calibrateDomBoxes]. */
+        private const val MENU_BUTTON_JS = "document.querySelector('[data-bar-item=\"menu\"]')"
         /** The frames record in the run's findings: one JSON line per measured scene, and the tables. */
         const val FRAMES_RECORD = "frames.jsonl"
         const val FRAMES_TABLES = "frames.txt"

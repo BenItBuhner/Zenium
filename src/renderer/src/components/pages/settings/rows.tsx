@@ -13,7 +13,8 @@ import {
   type RowGroup,
   type SettingsRow,
   type SliderRow,
-  type SwitchRow
+  type SwitchRow,
+  type ValueRow
 } from './model'
 import { useSheetDismiss, type SheetDismiss } from './sheetContext'
 
@@ -160,6 +161,7 @@ export function RowView({
           row={row}
           caption={caption}
           description={currentOptionLabel(row)}
+          name={valueRowName(row, caption)}
           haspopup="dialog"
           onPress={() => ctx.open({ kind: 'options', rowId: row.id })}
         />
@@ -597,6 +599,19 @@ function InlineField({ row }: { row: FieldRow }): JSX.Element {
   )
 }
 
+/**
+ * The one name a phone value row speaks: "label, value" (#237's audit had TalkBack run the two
+ * together, "Colour scheme Light"), the search result's caption first where the row shows one,
+ * as its contents read. Set as the button's label rather than left to its contents: a name from
+ * an attribute on a button – which an `aria-haspopup="dialog"` row stays – is the content
+ * description on Android's bridge, over the child text, so the row is spoken once and with the
+ * pause; a toggle or menu button would have it in the supplemental description instead
+ * (`barItems.tsx`, the Tabs button's note).
+ */
+function valueRowName(row: ValueRow, caption?: string): string {
+  return [caption, row.label, currentOptionLabel(row)].filter(Boolean).join(', ')
+}
+
 /** The 16 px glyph that says an action leaves the page (§10.4); nothing for one that stays. */
 function actionGlyph(row: ActionRow): JSX.Element | undefined {
   if (row.leaves === 'external') return <ExternalLink aria-hidden="true" />
@@ -607,12 +622,14 @@ function actionGlyph(row: ActionRow): JSX.Element | undefined {
 /**
  * The pressable row: the whole row is the target (§10.4), `role="switch"` for a boolean, a
  * dependent row whose parent is off stays laid out at 40 % and takes no press; a busy action
- * keeps its ink, trails a spinner and takes no press either (§9.30).
+ * keeps its ink, trails a spinner and takes no press either (§9.30). The row is named by its
+ * contents unless `name` says otherwise (a value row's "label, value").
  */
 function PressableRow({
   row,
   caption,
   description,
+  name,
   leading,
   trailing,
   role,
@@ -625,6 +642,7 @@ function PressableRow({
   row: SettingsRow
   caption?: string
   description?: string
+  name?: string
   leading?: ReactNode
   trailing?: ReactNode
   role?: 'switch'
@@ -641,6 +659,7 @@ function PressableRow({
       ref={trail ? attachLineCount : undefined}
       type="button"
       role={role}
+      aria-label={name}
       aria-checked={role === 'switch' ? checked : undefined}
       aria-haspopup={haspopup}
       aria-disabled={disabled || undefined}

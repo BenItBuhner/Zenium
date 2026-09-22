@@ -186,14 +186,19 @@ interface HostMessage {
   delivery?: unknown
 }
 
-/** The host's `{ unfiltered, matched }` for an event some listeners filtered by URL, or nothing. */
+/**
+ * The host's `{ unfiltered, matched }` for an event some listeners filtered by URL, or nothing;
+ * `url` when the host could not match this context's filters yet (the shim matches them).
+ */
 function eventDelivery(raw: unknown): EventDelivery | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
-  const d = raw as { unfiltered?: unknown; matched?: unknown }
-  return {
+  const d = raw as { unfiltered?: unknown; matched?: unknown; url?: unknown }
+  const delivery: EventDelivery = {
     unfiltered: d.unfiltered !== false,
     matched: Array.isArray(d.matched) ? d.matched.filter((m) => typeof m === 'number') : []
   }
+  if (typeof d.url === 'string') delivery.url = d.url
+  return delivery
 }
 
 const EXTENSION_ID = /^[a-p]{32}$/
