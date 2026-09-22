@@ -229,23 +229,31 @@ describe('the table', () => {
     )
     const { failed, markdown } = summarize(manifest, readResults(dir), { shard: 'tablet' })
     expect(failed).toEqual([])
-    expect(markdown).toMatch(/^\*\*1 passed, 0 failed/)
+    expect(markdown).toMatch(
+      new RegExp(`^\\*\\*${driversOf(manifest, 'tablet').length} passed, 0 failed`)
+    )
   })
 
   it('keeps the latest attempt of a shard that was re-run', () => {
     const dir = temp()
-    const [driver] = driversOf(manifest, 'tablet')
+    const drivers = driversOf(manifest, 'tablet')
+    const [driver, ...rest] = drivers
     shardResult(
       join(dir, 'nightly-drivers-shard-tablet-r1'),
       'tablet',
-      [row(driver.id, 'FAIL', { reason: 'cut' })],
+      [row(driver.id, 'FAIL', { reason: 'cut' }), ...rest.map((d) => row(d.id, 'PASS'))],
       {
         attempt: 1
       }
     )
-    shardResult(join(dir, 'nightly-drivers-shard-tablet-r2'), 'tablet', [row(driver.id, 'PASS')], {
-      attempt: 2
-    })
+    shardResult(
+      join(dir, 'nightly-drivers-shard-tablet-r2'),
+      'tablet',
+      drivers.map((d) => row(d.id, 'PASS')),
+      {
+        attempt: 2
+      }
+    )
     const results = readResults(dir)
     expect(results.get('tablet').dirName).toBe('nightly-drivers-shard-tablet-r2')
     expect(summarize(manifest, results, { shard: 'tablet' }).failed).toEqual([])
@@ -269,7 +277,9 @@ describe('the table', () => {
     })
     expect(markdown).toContain('**the emulator went away**')
     expect(markdown).toContain('### Not run')
-    expect(markdown).toMatch(/^\*\*0 passed, \d+ failed, 2 not run, 2 skipped\*\*/)
+    expect(markdown).toMatch(
+      new RegExp(`^\\*\\*0 passed, \\d+ failed, 2 not run, ${manifest.skip.length} skipped\\*\\*`)
+    )
     expect(failed).toHaveLength(1 + driversOf(manifest, 'webview').length - 3)
     expect(notRun).toHaveLength(2)
     expect(counts.NOT_RUN).toBe(2)

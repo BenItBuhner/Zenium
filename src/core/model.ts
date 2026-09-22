@@ -9,11 +9,12 @@
  * persisted; tabs inside it carry `windowId`. With "sync only pinned tabs" unpinned tabs of a
  * synced window also carry `windowId` and are filtered per window.
  */
-import { DEFAULT_CONTAINER_ID } from '../shared/types'
+import { DEFAULT_CONTAINER_ID, PRIVATE_CONTAINER_ID } from '../shared/types'
 import type {
   Container,
   Folder,
   FolderColor,
+  SavedGroupTab,
   Space,
   SplitGroup,
   SplitLayout,
@@ -528,6 +529,61 @@ export function deleteFolder(model: Model, folderId: string, unpack: boolean): s
   }
   delete model.folders[folderId]
   return closed
+}
+
+/** What a saved group keeps of a member (`Folder.savedTabs`): the page, as the row names it. */
+export function savedGroupTab(tab: Tab): SavedGroupTab {
+  return {
+    url: tab.url,
+    title: tab.customTitle || tab.title,
+    favicon: tab.customIcon ?? tab.favicon ?? null
+  }
+}
+
+/**
+ * The group's REGULAR live members: `folderTabs` less the private ones. A host that keeps
+ * private browsing in tabs holds them in the space among the regular tabs, and one can be
+ * dropped into a folder there; it is no member of the group for the regular profile – it does
+ * not open a saved group or count as one of its tabs, marks it neither used nor kept, and
+ * leaves no page in it – so a group's state (open, saved, empty; `isSavedFolder`) is read off
+ * these. On the desktop a private window's tabs live in a space of their own: the same list.
+ */
+export function regularFolderTabs(model: Model, folderId: string): Tab[] {
+  return folderTabs(model, folderId).filter((t) => t.containerId !== PRIVATE_CONTAINER_ID)
+}
+
+/**
+ * A saved group (TAB-16): one that holds its closed pages and no live regular tab. A group with
+ * live regular tabs is open whatever `savedTabs` still says (it is cleared as one joins).
+ */
+export function isSavedFolder(model: Model, folder: Folder): boolean {
+  return Boolean(folder.savedTabs?.length) && regularFolderTabs(model, folder.id).length === 0
+}
+
+/**
+ * A PRIVATE group: private tabs alone live in it – no regular member, nothing saved (saved pages
+ * are never private, `closeFolderTabs` keeps none). Private browsing leaks nothing outside its
+ * mode: such a group is no entry of a regular tab's folder menus (its existence and name are
+ * the private session's), as the chrome lists it on no regular surface (`isPrivateGroup` in
+ * the renderer). A private window's menus offer no folder, so the desktop is untouched by it.
+ */
+export function isPrivateFolder(model: Model, folder: Folder): boolean {
+  return (
+    folderTabs(model, folder.id).length > 0 &&
+    regularFolderTabs(model, folder.id).length === 0 &&
+    !folder.savedTabs?.length
+  )
+}
+
+/**
+ * A tab joined the group (made in it, moved into it, restored to it): the group is open, so
+ * whatever it kept as a saved group is stale and goes; the group counts as used now.
+ */
+export function folderOpened(model: Model, folderId: string | null, now: number): void {
+  const folder = folderId ? model.folders[folderId] : undefined
+  if (!folder) return
+  if (folder.savedTabs) folder.savedTabs = null
+  folder.lastUsedAt = now
 }
 
 // ---------------------------------------------------------------------------

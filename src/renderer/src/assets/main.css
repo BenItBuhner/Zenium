@@ -7240,6 +7240,69 @@
 }
 
 /*
+ * A tab group's row on the tablet sidebar (TABLET-04, v2 §9.36; `SpacePanel`'s `FolderRow`): a
+ * row like Zen's folder, not a chip – the 44 row at full width on the list's 46 pitch, the
+ * phone overview's own group header (`GroupCard`'s "Reading · 2 ▾") on the sidebar's grid. In
+ * the glyph slot – the favicon's 16 box, so the group's mark centres on the favicon column – a
+ * 10 dot of the group's colour (`--zen-group-rgb`) for an open group, a 2 px ring of it for a
+ * SAVED one, its tabs closed and its pages kept (the Groups pane's two states); a folder given
+ * its own icon on the desktop keeps it, as a glyph at 14 that holds while text scales (§4).
+ * Then the name at §9.36's 14 px in the row's ink, the count as a 13 tabular aside at 69% – the
+ * tabs it holds, or the pages a saved one keeps – and the chevron, a 16 glyph at 69% centred
+ * on the column the tab rows' close X takes (14 in from the row's 2 px end padding: 2 + 14 + 8
+ * = the X's 2 + 22); a saved row, with nothing to fold, keeps the chevron's box empty so the
+ * counts share one edge. The name being edited takes the name's slot at the same 14. The rail
+ * shows the glyph alone, centred. The rows of an open group sit 24 in (§9.36), where the
+ * desktop's indent is 20 and the rail's none. The block of header and rows (`.zen-group-fold`)
+ * is clipped while its height runs on the fold's spring (`useGroupFold`) and left alone at
+ * rest, so a lifted row's ghost and a focus ring are never cut.
+ */
+.zen-group-row-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+.zen-group-row-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(var(--zen-group-rgb));
+}
+.zen-group-row-glyph[data-saved] .zen-group-row-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px rgb(var(--zen-group-rgb));
+}
+.zen-group-row-icon {
+  font-size: calc(14px / var(--zen-text-zoom, 1));
+  line-height: 1;
+}
+.zen-group-row-count {
+  flex-shrink: 0;
+  color: var(--v2-control-text-deemphasized, var(--zen-muted));
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.zen-group-row-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: 14px;
+  opacity: 0.69;
+}
+:root[data-form-factor='tablet'] .zen-tab.zen-group-row input {
+  font-size: 14px;
+}
+:root[data-form-factor='tablet'] .zen-group-fold > .zen-tab:not(.zen-group-row, .justify-center) {
+  margin-left: 24px;
+}
+.zen-group-fold[data-folding] {
+  overflow: hidden;
+}
+
+/*
  * The drawer (`TabletDrawer`): the expanded sidebar over the page in a window too narrow to
  * dock it, on the phone Spaces drawer's panel (`.zen-drawer-panel`: the space-tinted panel
  * colour, blurred, flush with the window's edge and rounded towards the content). The sidebar's
@@ -7264,7 +7327,9 @@
  */
 :root[data-form-factor='tablet'] .zen-tablet-sidebar,
 :root[data-form-factor='tablet'] .zen-tablet-drawer-panel,
-:root[data-form-factor='tablet'] :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel) [data-tab-scroller] {
+:root[data-form-factor='tablet']
+  :is(.zen-tablet-sidebar, .zen-tablet-drawer-panel)
+  [data-tab-scroller] {
   touch-action: pan-y;
 }
 
@@ -7905,6 +7970,66 @@
   .zen-v2-segment > [role='tab']::after {
     transition: opacity 120ms var(--zen-ease) !important;
   }
+}
+
+/*
+ * The overview's Groups pane (TAB-16, `components/phone/GroupsPane.tsx`): the phone panels'
+ * rows and headings (`PhoneListRow`, `PhoneGroupHeading` – the shared `.zen-v2-row` and
+ * `.zen-v2-heading` with the panels' modifiers) and the row's 44 icon button standing on the
+ * overview's window backdrop, so they draw in the window family (§9.29): the pane resolves the
+ * page ink and fills the primitives read to the control roles the overview root's
+ * `data-surface="window"` sets – the theme's ink, its 69% for the count and the time, the
+ * window fill for the press – and the primitives' own rules draw them, gates and all (§9.34's
+ * one row rule: the disabled row of an empty group keeps its no-fill, the static rename row its
+ * no-press, with no rule of the pane's). The heading carries its count as a §10.3 aside at the
+ * gutter's end; the first heading stands under the segment (or the space strip), which already
+ * carries its air, at 4. The row's glyph is the group's colour in the 20 box: a 12 px dot for an
+ * open group, the same as a 2 px ring for a saved one, whose tabs are closed (`--zen-group-color`
+ * on the glyph). The pane at none is a list's §9.17 sentence – the phone panels' `.zen-phone-empty`
+ * note in the window ink, in the pane's flow – its first line 48 under the segment: the note's
+ * own 40 is for a list whose field carries 8 under it, and the segment carries none.
+ */
+.zen-overview-groups {
+  --v2-text: var(--v2-control-text);
+  --v2-text-deemphasized: var(--v2-control-text-deemphasized);
+  --v2-fill: var(--v2-control-fill);
+  --v2-fill-hover: var(--v2-control-fill-hover);
+}
+.zen-overview-groups .zen-v2-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zen-overview-groups > :first-child > .zen-v2-heading {
+  margin-top: 4px;
+}
+.zen-overview-groups-aside {
+  flex-shrink: 0;
+  color: var(--v2-text-deemphasized);
+  font-size: var(--v2-font-small);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-small);
+  font-variant-numeric: tabular-nums;
+}
+.zen-overview-group-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--zen-group-color);
+}
+.zen-overview-group-glyph[data-saved] {
+  border: 2px solid var(--zen-group-color);
+  background: transparent;
+}
+/* The rename field in a row's title slot: the group card's field (`GroupRename`) at the row's 15. */
+.zen-overview-groups .zen-overview-group-rename {
+  font-size: var(--v2-font-body);
+  font-weight: var(--v2-weight-body);
+  line-height: var(--v2-line-body);
+}
+.zen-overview-groups > .zen-phone-empty {
+  padding-top: 48px;
 }
 
 /* The shared image radio card (§6, §10.4): a card that wears the 2 px accent outline when picked. */
