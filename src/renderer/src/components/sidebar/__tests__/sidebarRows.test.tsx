@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { browserStore, uiStore } from '@renderer/lib/ui'
 import { SpaceGlyph } from '../../SpaceGlyph'
+import { V2_TRAILING_GLYPH } from '../../v2/controls'
 import { SpacePanel } from '../SpacePanel'
 
 const css = readFileSync(resolve(__dirname, '../../../assets/main.css'), 'utf8')
@@ -250,5 +251,58 @@ describe('the strip’s headers and rows (§5, §9.29)', () => {
     expect(row.className).toContain('text-[var(--zen-fg)]')
     const label = [...row.querySelectorAll('span')].find((s) => s.textContent === 'New Tab')!
     expect(label.className).not.toContain('text-[13px]')
+  })
+})
+
+/*
+ * The rows' trailing glyphs (§9.3: the chevron, a status alert, the row's own buttons) are 16 on
+ * both platforms at the platform's stroke (`--v2-icon-stroke`, set as a CSS property so it
+ * outranks Lucide's 2); 14 (`h-3.5`) is not a size the language has (#295's review, nit B2).
+ */
+describe('the rows’ trailing glyphs (§9.3)', () => {
+  const trailing = (svg: Element | null): void => {
+    expect(svg).not.toBeNull()
+    const cls = svg!.getAttribute('class') ?? ''
+    expect(cls).toContain(V2_TRAILING_GLYPH)
+    expect(cls).not.toMatch(/\bh-3(\.5)?\b/)
+  }
+
+  it('the space header’s and the folder’s chevrons', () => {
+    const folder: Folder = {
+      id: 'f1',
+      spaceId: 'space',
+      name: 'Work',
+      icon: '📁',
+      color: null,
+      collapsed: true
+    } as unknown as Folder
+    panel([tab('a', { pinned: true }), tab('b', { folderId: 'f1' })], [folder])
+    trailing(document.querySelector('[data-strip-item="header:space"] svg.lucide-chevron-down'))
+    trailing(document.querySelector('[data-tab-folder="f1"] svg.lucide-chevron-right'))
+  })
+
+  it('a tab’s close, its audio button, a sleeping page’s moon and the alert indicators', () => {
+    panel([
+      tab('a'),
+      tab('b', { audible: true }),
+      tab('c', { discarded: true }),
+      tab('d', { frozen: true }),
+      tab('e', { muted: true })
+    ])
+    const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="tab"]')]
+    expect(rows).toHaveLength(5)
+    for (const row of rows) trailing(row.querySelector('.zen-tab-close svg'))
+    trailing(document.querySelector('[data-tab-id="b"] .zen-tab-audio svg'))
+    trailing(document.querySelector('[data-tab-id="e"] .zen-tab-audio svg'))
+    trailing(document.querySelector('[data-tab-id="c"] .zen-tab-sleeping svg'))
+    trailing(document.querySelector('[data-tab-id="d"] svg.lucide-snowflake'))
+    // Nothing in the strip's rows is left at 14.
+    for (const svg of document.querySelectorAll('[data-testid="tab"] svg, [data-tab-folder] svg')) {
+      expect(svg.getAttribute('class') ?? '').not.toMatch(/\bh-3\.5\b/)
+    }
+  })
+
+  it('the stylesheet sets no tablet size of its own on the close glyph: 16 is every platform’s', () => {
+    expect(css).not.toMatch(/\.zen-tab-close > svg/)
   })
 })

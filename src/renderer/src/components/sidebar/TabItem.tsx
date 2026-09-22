@@ -33,6 +33,7 @@ import {
 import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@renderer/lib/tabStrip'
 import { cn } from '@renderer/lib/utils'
 import { useTabTouch } from '../tablet/useTabTouch'
+import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
 import { useListMotion } from './listMotion'
 
@@ -291,7 +292,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
           {trailing && agent && !renaming && <AgentBadge agent={agent} tabId={tab.id} />}
           {trailing && foreign && active && (
             <MonitorSmartphone
-              className="h-3.5 w-3.5 shrink-0 text-[var(--v2-control-text-deemphasized)]"
+              className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
               aria-label="Shown in another window"
             />
           )}
@@ -307,7 +308,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
                 run('tab.activate', { tabId: tab.id })
               }}
             >
-              <Moon className="h-3.5 w-3.5" />
+              <Moon className={V2_TRAILING_GLYPH} />
             </button>
           )}
           {trailing && tab.frozen && !renaming && (
@@ -321,7 +322,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
                 run('tab.wake', { tabId: tab.id })
               }}
             >
-              <Snowflake className="h-3.5 w-3.5" />
+              <Snowflake className={V2_TRAILING_GLYPH} />
             </button>
           )}
           {trailing && !tab.frozen && tab.cpuThrottle > 1 && !renaming && (
@@ -335,7 +336,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
                 run('tab.wake', { tabId: tab.id })
               }}
             >
-              <Turtle className="h-3.5 w-3.5" />
+              <Turtle className={V2_TRAILING_GLYPH} />
             </button>
           )}
           {alert && !renaming && <AlertIndicator alert={alert} />}
@@ -353,9 +354,9 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
               }}
             >
               {tab.muted ? (
-                <VolumeX className="h-3.5 w-3.5" />
+                <VolumeX className={V2_TRAILING_GLYPH} />
               ) : (
-                <Volume2 className="h-3.5 w-3.5" />
+                <Volume2 className={V2_TRAILING_GLYPH} />
               )}
             </button>
           )}
@@ -370,7 +371,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
                 run('tab.resetPinned', { tabId: tab.id })
               }}
             >
-              <RotateCcw className="h-3.5 w-3.5" />
+              <RotateCcw className={V2_TRAILING_GLYPH} />
             </button>
           ) : (
             <button
@@ -383,7 +384,7 @@ export function TabItem({ tab, active, compact, indent, parent, segment }: Props
                 run('tab.close', { tabId: tab.id })
               }}
             >
-              <X className="h-3.5 w-3.5" />
+              <X className={V2_TRAILING_GLYPH} />
             </button>
           )}
         </>
@@ -413,12 +414,12 @@ function AlertIndicator({ alert }: { alert: TabAlert }): JSX.Element {
       aria-label={label}
     >
       {alert === 'recording' && (
-        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" aria-hidden focusable="false">
+        <svg className={V2_TRAILING_GLYPH} viewBox="0 0 24 24" aria-hidden focusable="false">
           <circle cx="12" cy="12" r="7" fill="currentColor" />
         </svg>
       )}
-      {alert === 'capturing' && <ScreenShare className="h-3.5 w-3.5" aria-hidden />}
-      {alert === 'pip' && <PictureInPicture2 className="h-3.5 w-3.5" aria-hidden />}
+      {alert === 'capturing' && <ScreenShare className={V2_TRAILING_GLYPH} aria-hidden />}
+      {alert === 'pip' && <PictureInPicture2 className={V2_TRAILING_GLYPH} aria-hidden />}
     </span>
   )
 }

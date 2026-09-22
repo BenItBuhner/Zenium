@@ -15,6 +15,7 @@ import { stripFocusIn, stripFocusOut, stripKeyDown, useStripTabIndex } from '@re
 import { uiStore } from '@renderer/lib/ui'
 import { cn } from '@renderer/lib/utils'
 import { SpaceGlyph } from '../SpaceGlyph'
+import { V2_TRAILING_GLYPH } from '../v2/controls'
 import { ListMotionContext } from './listMotion'
 import { SplitGroupRow } from './SplitGroupRow'
 import { TabItem } from './TabItem'
@@ -281,9 +282,9 @@ function SpaceHeader({
       {!compact && <span className="min-w-0 flex-1 truncate text-left">{space.name}</span>}
       {!compact &&
         (space.pinnedCollapsed ? (
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className={V2_TRAILING_GLYPH} />
         ) : (
-          <ChevronDown className="h-3.5 w-3.5" />
+          <ChevronDown className={V2_TRAILING_GLYPH} />
         ))}
     </button>
   )
@@ -470,9 +471,13 @@ function FolderRow({
                 {tabs.length}
               </span>
               {folder.collapsed ? (
-                <ChevronRight className="h-3.5 w-3.5 text-[var(--v2-control-text-deemphasized)]" />
+                <ChevronRight
+                  className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
+                />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5 text-[var(--v2-control-text-deemphasized)]" />
+                <ChevronDown
+                  className={cn(V2_TRAILING_GLYPH, 'text-[var(--v2-control-text-deemphasized)]')}
+                />
               )}
             </>
           ))}

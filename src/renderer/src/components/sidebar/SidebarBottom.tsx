@@ -14,7 +14,7 @@ import { claimMessageCards, openOverlay, pickToastAction, uiStore } from '@rende
 import { cn } from '@renderer/lib/utils'
 import { ToastCard } from '../messages/ToastCard'
 import { SpaceGlyph } from '../SpaceGlyph'
-import { TOOLBAR_STROKE } from '../v2/controls'
+import { TOOLBAR_STROKE, V2_TRAILING_GLYPH } from '../v2/controls'
 import { Favicon } from './Favicon'
 
 interface Props {
@@ -114,7 +114,8 @@ export function SidebarBottom({ state, compact, isDark }: Props): JSX.Element {
               title={hint('New Space', state, 'space.new')}
               onClick={() => void openOverlay('space-editor', current?.id ?? null, null)}
             >
-              <Plus className="h-3.5 w-3.5" />
+              {/* A 16 toolbar glyph at §9.3's stroke, as the palette beside it. */}
+              <Plus className="h-4 w-4" strokeWidth={TOOLBAR_STROKE} />
             </button>
           </div>
           <button
@@ -254,7 +255,11 @@ function MediaPlayer({
         title={media.playing ? 'Pause' : 'Play'}
         onClick={() => run('media.toggle', { tabId: tab.id })}
       >
-        {media.playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+        {media.playing ? (
+          <Pause className={V2_TRAILING_GLYPH} />
+        ) : (
+          <Play className={V2_TRAILING_GLYPH} />
+        )}
       </button>
       <button
         type="button"
@@ -262,7 +267,11 @@ function MediaPlayer({
         title={tab.muted ? 'Unmute' : 'Mute'}
         onClick={() => run('tab.toggleMute', { tabId: tab.id })}
       >
-        {tab.muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+        {tab.muted ? (
+          <VolumeX className={V2_TRAILING_GLYPH} />
+        ) : (
+          <Volume2 className={V2_TRAILING_GLYPH} />
+        )}
       </button>
     </div>
   )

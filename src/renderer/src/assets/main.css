@@ -6649,10 +6649,6 @@
   border-radius: 8px;
   opacity: 0.69;
 }
-:root[data-form-factor='tablet'] .zen-tab .zen-tab-close > svg {
-  width: 16px;
-  height: 16px;
-}
 :root[data-form-factor='tablet'] .zen-tab[data-active='true'] .zen-tab-close {
   opacity: 1;
 }
