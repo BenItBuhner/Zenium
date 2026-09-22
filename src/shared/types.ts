@@ -3730,6 +3730,11 @@ export interface Commands {
        * that engine's – no address, history, bookmark or tab rows.
        */
       engineId?: string
+      /**
+       * The phone card's sectioned order (OMN-18): the rows under their group headings in
+       * Chrome for Android's order, the default match alone at the field's end.
+       */
+      grouped?: boolean
     }
     result: Suggestion[]
   }

@@ -1,4 +1,9 @@
-import { PRIVATE_CONTAINER_ID, type SearchEngine, type Suggestion } from '../shared/types'
+import {
+  PRIVATE_CONTAINER_ID,
+  type SearchEngine,
+  type Suggestion,
+  type SuggestionKind
+} from '../shared/types'
 import {
   SEARCH_SCOPES,
   buildSearchUrl,
@@ -58,8 +63,28 @@ export const RELEVANCE = {
 
 /** The "Recent searches" section of zero-suggest (omnibox-20). */
 export const RECENT_SEARCHES_GROUP = 'Recent searches'
+/** The recent pages' section of the phone card's zero-suggest (OMN-18; Chrome's heading). */
+export const RECENTLY_VISITED_GROUP = 'Recently visited'
 /** Remembered searches shown on focus at most (Chrome shows up to eight zero-suggest rows). */
 export const RECENT_SEARCHES_MAX = 8
+
+/**
+ * The phone card's sections for a typed query (OMN-18), in the order Chrome for Android lays
+ * its suggestions out: the pages first – addresses, history, bookmarks, a Wikipedia entity:
+ * Chrome's URL group – then the searches, then the open tabs where any match, then Zenium's
+ * own kinds (commands, spaces, the `@` engines). Rows of a kind not listed here – the answer,
+ * the clipboard row, an extension's omnibox rows – belong to no section and stand with the
+ * default match at the field's end.
+ */
+export const CARD_SECTIONS: ReadonlyArray<{ label: string; kinds: readonly SuggestionKind[] }> =
+  [
+    { label: 'Pages', kinds: ['url', 'history', 'bookmark', 'entity'] },
+    { label: 'Searches', kinds: ['search'] },
+    { label: 'Open tabs', kinds: ['tab'] },
+    { label: 'Commands', kinds: ['command'] },
+    { label: 'Spaces', kinds: ['space'] },
+    { label: 'Search engines', kinds: ['engine'] }
+  ]
 
 export interface SuggestOptions {
   /**
@@ -67,6 +92,12 @@ export interface SuggestOptions {
    * query is search terms for it – no address, history, bookmark, tab or command rows.
    */
   engineId?: string
+  /**
+   * The rows are for the phone's card (OMN-18): sectioned under headings in Chrome for
+   * Android's order ({@link groupForCard}), the default match alone at the field's end. The
+   * desktop popup keeps the flat relevance order with zero-suggest's one heading.
+   */
+  grouped?: boolean
 }
 
 /** Rows shown at most; Chrome's desktop popup holds eight, Zenium's field is taller. */
@@ -97,6 +128,16 @@ export class SuggestionService {
     currentTabId: string | null,
     win: ZenWindow = this.browser.focusedWindow(),
     opts: SuggestOptions = {}
+  ): Promise<Suggestion[]> {
+    const rows = await this.rows(rawQuery, currentTabId, win, opts)
+    return opts.grouped ? groupForCard(rows, rawQuery) : rows
+  }
+
+  private async rows(
+    rawQuery: string,
+    currentTabId: string | null,
+    win: ZenWindow,
+    opts: SuggestOptions
   ): Promise<Suggestion[]> {
     let query = rawQuery.trim()
     const state = this.browser.state
@@ -816,4 +857,58 @@ function finish(rows: Ranked[], query: string): Suggestion[] {
     top.inline = true
   }
   return out
+}
+
+/** The card section a row's kind is listed under, or -1 for a row of no section. */
+function cardSection(row: Suggestion): number {
+  return CARD_SECTIONS.findIndex((s) => s.kinds.includes(row.kind))
+}
+
+/**
+ * The phone card's order (OMN-18; Chrome for Android's `AndroidNonZPSSection`): the first row
+ * – the default match `finish` put there, what Enter opens – keeps the field's end with no
+ * heading, and the rows of no section (an answer, the clipboard row) stand with it; the rest
+ * are sectioned in {@link CARD_SECTIONS}' order, each section in the relevance order it had,
+ * under its heading. A card of one kind – the search suggestions alone, `@tabs`, the space
+ * mode – is one section and takes no heading: the heading names a section among others, and
+ * a lone one is the card. Zero-suggest keeps its recent searches' heading and gives the recent
+ * pages theirs (Chrome's "Recently visited"), the clipboard row alone above both.
+ */
+export function groupForCard(rows: Suggestion[], query: string): Suggestion[] {
+  if (rows.length === 0) return rows
+  if (!query.trim()) {
+    const named = rows.map((row) =>
+      row.kind === 'history' && !row.group ? { ...row, group: RECENTLY_VISITED_GROUP } : row
+    )
+    return oneSection(named) ? named.map(ungroup) : named
+  }
+  const [top, ...rest] = rows
+  const loose: Suggestion[] = [top]
+  const sections: Suggestion[][] = CARD_SECTIONS.map(() => [])
+  for (const row of rest) {
+    const i = cardSection(row)
+    if (i < 0) loose.push(row)
+    else sections[i].push({ ...row, group: CARD_SECTIONS[i].label })
+  }
+  const filled = sections.filter((s) => s.length > 0)
+  // One kind throughout, the default match included: Chrome's flat list, no heading.
+  const lone =
+    filled.length === 1 &&
+    loose.length === 1 &&
+    cardSection(top) === sections.indexOf(filled[0])
+  const out = [...loose, ...filled.flat()]
+  return lone ? out.map(ungroup) : out
+}
+
+/** Whether every row of `rows` is in one and the same section, nothing ungrouped among them. */
+function oneSection(rows: Suggestion[]): boolean {
+  const groups = new Set(rows.map((row) => row.group))
+  return groups.size === 1 && rows.every((row) => row.group)
+}
+
+function ungroup(row: Suggestion): Suggestion {
+  if (!row.group) return row
+  const copy = { ...row }
+  delete copy.group
+  return copy
 }
