@@ -100,7 +100,8 @@ for (const r of results) {
     const cells = [
       r.label,
       name,
-      String(steps.length),
+      // A scenario the harness did not run because boot left no profile for it (scenario-deps.mjs).
+      sc.skipped ? `skipped: ${sc.skipped}` : String(steps.length),
       failed.length ? failed.join(', ') : '-',
       chrome !== undefined ? `${chrome} ms` : '-',
       exit,
