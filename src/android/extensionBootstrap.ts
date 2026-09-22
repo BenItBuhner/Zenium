@@ -185,7 +185,7 @@ declare const __zenExtBoot: Boot
   const serviceWorkerEndpoints = new Map<string, ServiceWorkerEndpoint>()
   /** Content mode: extension-origin `<script>` elements the page's CSP refused (see below). */
   let scriptRecovery: ScriptRecovery | null = null
-  /** Content mode, `with` fallback: extension-origin fetches the page's CSP refused (see below). */
+  /** Content mode: extension-origin fetches the page's CSP refused, and the stylesheet recovery's reads (see below). */
   let fetchRelay: FetchRelay | null = null
   transport.listen((event) => {
     bridgeTraffic.pageBound++
@@ -626,9 +626,31 @@ declare const __zenExtBoot: Boot
   /** What the host's `exec` and a late boot run as: the extension's content scope. */
   const contentUnit: UnitContext = { world: 'isolated', messaging: true }
 
+  // A content script's `fetch` of its extension's file under the page's `connect-src`: the
+  // page's fetch first, the host's answer over the bridge for an extension-origin file the
+  // policy refused (`extensionFetchRelay.ts`). Under the `with` fallback it is the scope's
+  // `fetch`; a frame with worlds keeps the world's own fetch (beyond the page's policy, as
+  // Chrome's is) and lends the relay to the stylesheet recovery below alone.
+  fetchRelay = createFetchRelay(window, {
+    attachedIds: () => attached.map((e) => e.id),
+    request: (id, extId, url) =>
+      post(
+        primordials.stringify({
+          t: 'extFetch',
+          token: content.token,
+          ep: endpointIdFor(extId),
+          ext: extId,
+          id,
+          url
+        })
+      ),
+    error: primordials.error
+  })
+  const relay = fetchRelay
   // A page's CSP has no say over an extension's resources in Chrome; over the emulated origin it
   // has. A `<script src=<extension origin>/…>` the page's `script-src` refused runs in the main
-  // world through the host instead (`extensionScriptRecovery.ts`).
+  // world through the host instead; a `<link rel=stylesheet>` its `style-src` refused is read
+  // through the relay and adopted as a constructed sheet (`extensionScriptRecovery.ts`).
   scriptRecovery = createScriptRecovery({
     attachedIds: () => attached.map((e) => e.id),
     request: (id, extId, url) =>
@@ -642,30 +664,11 @@ declare const __zenExtBoot: Boot
           url
         })
       ),
+    readText: (_extId, url) => relay.fetch(url).then((response) => response.text()),
     error: primordials.error
   })
   const recovery = scriptRecovery
   window.addEventListener('error', (event) => recovery.onError(event), true)
-  // The same for a content script's `fetch` of its extension's file under the `with` fallback:
-  // the page's `connect-src` refuses the request, the host reads the web-accessible file and
-  // answers over the bridge (`extensionFetchRelay.ts`). A frame with worlds never needs it: the
-  // world's own fetch is beyond the page's policy, as Chrome's is.
-  if (content.extension.isolation === 'with')
-    fetchRelay = createFetchRelay(window, {
-      attachedIds: () => attached.map((e) => e.id),
-      request: (id, extId, url) =>
-        post(
-          primordials.stringify({
-            t: 'extFetch',
-            token: content.token,
-            ep: endpointIdFor(extId),
-            ext: extId,
-            id,
-            url
-          })
-        ),
-      error: primordials.error
-    })
   const builtins = collectBuiltins(realWindow)
   // The window's operations at document start, for the `with` fallback's scope proxies; read
   // once per frame, on the first proxy (a frame with worlds never needs it).
