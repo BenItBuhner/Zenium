@@ -14,6 +14,7 @@ import type {
   Container,
   Folder,
   FolderColor,
+  SavedGroupTab,
   Space,
   SplitGroup,
   SplitLayout,
@@ -528,6 +529,34 @@ export function deleteFolder(model: Model, folderId: string, unpack: boolean): s
   }
   delete model.folders[folderId]
   return closed
+}
+
+/** What a saved group keeps of a member (`Folder.savedTabs`): the page, as the row names it. */
+export function savedGroupTab(tab: Tab): SavedGroupTab {
+  return {
+    url: tab.url,
+    title: tab.customTitle || tab.title,
+    favicon: tab.customIcon ?? tab.favicon ?? null
+  }
+}
+
+/**
+ * A saved group (TAB-16): one that holds its closed pages and no live tab. A group with live
+ * tabs is open whatever `savedTabs` still says (it is cleared as a tab joins).
+ */
+export function isSavedFolder(model: Model, folder: Folder): boolean {
+  return Boolean(folder.savedTabs?.length) && folderTabs(model, folder.id).length === 0
+}
+
+/**
+ * A tab joined the group (made in it, moved into it, restored to it): the group is open, so
+ * whatever it kept as a saved group is stale and goes; the group counts as used now.
+ */
+export function folderOpened(model: Model, folderId: string | null, now: number): void {
+  const folder = folderId ? model.folders[folderId] : undefined
+  if (!folder) return
+  if (folder.savedTabs) folder.savedTabs = null
+  folder.lastUsedAt = now
 }
 
 // ---------------------------------------------------------------------------

@@ -416,8 +416,31 @@ export class Menus {
     const navigable = isNavigableUrl(url)
     const glanceAllowed = state.settings.glanceEnabled && !win.glance
     const open: Template = []
+    // Chrome for Android's pair for a tab in a group (TAB-15): "Open in new tab in group" adds
+    // the new tab to the group, behind the current tab, and "Open in new tab" then opens it
+    // outside the group, after the group's last member. The desktop keeps Chrome desktop's one
+    // item, whose tab joins the group as it always has.
+    const group =
+      win.formFactor !== 'desktop' && tab.folderId ? state.model.folders[tab.folderId] : undefined
     // `mailto:` and `tel:` links have nowhere to open in a tab: only their copy items (Chrome).
     if (navigable) {
+      if (group) {
+        open.push({
+          label: 'Open Link in New Tab in Group',
+          click: () =>
+            tabs.createTab(
+              {
+                url,
+                active: false,
+                afterTabId: tab.id,
+                containerId: tab.containerId,
+                openerTabId: tab.id,
+                folderId: group.id
+              },
+              win
+            )
+        })
+      }
       open.push({
         label: 'Open Link in New Tab',
         click: () =>
@@ -425,9 +448,14 @@ export class Menus {
             {
               url,
               active: false,
-              afterTabId: tab.essential ? undefined : tab.id,
+              afterTabId: tab.essential
+                ? undefined
+                : group
+                  ? (folderTabs(state.model, group.id).at(-1)?.id ?? tab.id)
+                  : tab.id,
               containerId: tab.containerId,
-              openerTabId: tab.id
+              openerTabId: tab.id,
+              joinGroup: group ? false : undefined
             },
             win
           )
@@ -1921,12 +1949,16 @@ export class Menus {
             ]) as Template),
         { type: 'separator' },
         // Chrome's Ungroup and Close group: the tabs stay, or go (to the recently closed list).
+        // Where groups are saved (Android, TAB-16) a close keeps the group with its pages.
         { label: 'Unpack Folder', click: () => this.browser.deleteFolder(folderId, true) },
         {
           label: count
             ? `Close Folder (${count} ${count === 1 ? 'Tab' : 'Tabs'})`
             : 'Delete Folder',
-          click: () => this.browser.deleteFolder(folderId, false)
+          click: () =>
+            count && win.formFactor !== 'desktop'
+              ? this.browser.closeFolder(folderId, win)
+              : this.browser.deleteFolder(folderId, false)
         }
       ],
       win,

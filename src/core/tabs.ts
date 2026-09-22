@@ -19,6 +19,8 @@ import {
   createTabRecord,
   dissolveSplitGroup,
   essentialsForSpace,
+  folderOpened,
+  folderTabs,
   getSpace,
   insertTabIntoSpace,
   loadProgressAfter,
@@ -32,6 +34,7 @@ import {
   removeTabFromLists,
   removeTabFromSplit,
   replaceTabInSplit,
+  savedGroupTab,
   sectionIndexOf,
   splitPlacement,
   tabVisibleIn,
@@ -132,6 +135,12 @@ export class TabManager {
    * session's own; not persisted.
    */
   private readonly openerReturn = new Set<string>()
+  /**
+   * Groups whose tabs are closing as one ("Close group", `closeFolderTabs`): the group's saved
+   * pages are the whole group's, set before the first close, and the last member's close must
+   * not narrow them to itself (the rule for members closed one by one, `closeTab`).
+   */
+  private readonly closingFolders = new Set<string>()
   /**
    * Every frame's live capture report per tab, by the frame's reporter id (tabs-43): the tab's
    * `alert` is the highest any frame asks for, so a call in an iframe lights the row and a
@@ -1199,6 +1208,12 @@ export class TabManager {
        */
       index?: number
       folderId?: string | null
+      /**
+       * Whether the tab joins its `afterTabId`'s group when none is named (the default: a tab
+       * opened from a member sits in the member's group). `false` keeps it out of the group –
+       * Android's "Open in new tab" beside "Open in new tab in group" (TAB-15).
+       */
+      joinGroup?: boolean
       load?: boolean
       /** The plain host typed into the URL bar when `url` is its https:// upgrade (http fallback). */
       upgradedFrom?: string
@@ -1266,7 +1281,7 @@ export class TabManager {
             ? openerGroupIndex(m, space, tab, after.id)
             : null
         index = grouped ?? sectionIndexOf(m, after) + 1
-        tab.folderId = tab.folderId ?? after.folderId
+        if (opts.joinGroup !== false) tab.folderId = tab.folderId ?? after.folderId
       } else if (!placed && this.settings.newTabPosition === 'after-current' && !tab.pinned) {
         const current = this.tab(win.selectedTabIn(space))
         if (current && current.spaceId === space.id && !current.pinned)
@@ -1274,6 +1289,8 @@ export class TabManager {
       }
       insertTabIntoSpace(m, space, tab, index)
     }
+    // Made in a group: the group is open (a saved one no longer), and used now (TAB-16).
+    folderOpened(m, tab.folderId, tab.createdAt)
     tab.bookmarked = this.browser.bookmarks.has(tab.url)
     // Opened by another tab: closing it while active returns to the opener until the user
     // switches away from it (tabs-30).
@@ -1557,6 +1574,8 @@ export class TabManager {
     const previousActive = this.tab(win.selectedTabIn(space))
     win.select(space, tab.id)
     tab.lastActiveAt = Date.now()
+    // A member in view is the group in use: the Tab groups pane's "last used" (TAB-16).
+    if (tab.folderId && m.folders[tab.folderId]) m.folders[tab.folderId].lastUsedAt = tab.lastActiveAt
     if (previousActive && previousActive.id !== tab.id) {
       previousActive.lastActiveAt = Date.now()
       // The user left the previous tab of their own accord: its close no longer returns to its
@@ -1684,6 +1703,7 @@ export class TabManager {
     removeTabFromSplit(m, tabId)
     removeTabFromLists(m, tabId)
     delete m.tabs[tabId]
+    this.saveFolderOnLastClose(tab, closed?.closedAt ?? Date.now())
     this.openerReturn.delete(tabId)
     this.browser.state.tabNavigation.delete(tabId)
     // Its host-state document stays only while a "Recently closed" entry holds the id.
@@ -1727,6 +1747,46 @@ export class TabManager {
   ): string | null {
     if (!this.browser.state.capabilities.privateTabs) return null
     return this.createTab({ url, active: true, containerId: PRIVATE_CONTAINER_ID }, win).id
+  }
+
+  /**
+   * The group's last live member has closed (TAB-16): the group stays as a saved one holding
+   * that page – Chrome's saved group mirrors its live tabs, so members closed one by one leave
+   * it before, and the last one is what the group keeps. A group closing as one
+   * (`closeFolderTabs`) has its pages set already, the whole group's; a private member leaves
+   * nothing behind, as it leaves no recently closed entry.
+   */
+  private saveFolderOnLastClose(tab: Tab, closedAt: number): void {
+    const folderId = tab.folderId
+    if (!folderId || this.closingFolders.has(folderId)) return
+    const folder = this.model.folders[folderId]
+    if (!folder || folderTabs(this.model, folderId).length > 0) return
+    if (!this.isPrivate(tab)) folder.savedTabs = [savedGroupTab(tab)]
+    folder.lastUsedAt = closedAt
+  }
+
+  /**
+   * Chrome's "Close group" (TAB-16): the group's tabs close – each to the recently closed list,
+   * so the close has its undo – and the group stays as a saved one holding all their pages, in
+   * the group's order. A group with no live member is left as it is. Private members close but
+   * are not kept (a private page is never filed).
+   */
+  closeFolderTabs(folderId: string, win: ZenWindow = this.browser.focusedWindow()): void {
+    const m = this.model
+    const folder = m.folders[folderId]
+    if (!folder) return
+    const members = folderTabs(m, folderId)
+    if (members.length === 0) return
+    const kept = members.filter((t) => !this.isPrivate(t))
+    folder.savedTabs = kept.length ? kept.map(savedGroupTab) : null
+    folder.lastUsedAt = Date.now()
+    this.closingFolders.add(folderId)
+    try {
+      for (const t of members) this.closeTab(t.id, true, win)
+    } finally {
+      this.closingFolders.delete(folderId)
+    }
+    this.browser.state.commit()
   }
 
   /** Every private tab (the private-session count in the chrome). */
@@ -2205,6 +2265,7 @@ export class TabManager {
     const previous = tab.folderId
     tab.folderId = folderId
     if (previous && previous !== folderId) this.browser.liveFolders.onTabLeftFolder(tabId, previous)
+    if (folderId && folderId !== previous) folderOpened(this.model, folderId, Date.now())
     this.browser.state.commit()
   }
 
