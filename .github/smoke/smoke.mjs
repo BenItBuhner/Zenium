@@ -4,7 +4,7 @@
 //
 //   node smoke.mjs --exe <executable> --label <name> --out <dir>
 //        [--scenarios boot,restore,walkthrough,crash,clear-on-exit,scale,dark]
-//        [--extra-args=--no-sandbox]
+//        [--extra-args="--no-sandbox --disable-gpu"]   (space-separated, passed to the app)
 //        [--allowlist known-failures.json] [--render-budget-ms 10000]
 //        [--first-launch-render-budget-ms 20000] [--quit-budget-ms 15000]
 //        [--step-timeout-ms 60000] [--evaluate-timeout-ms 30000] [--watchdog-min 15]
@@ -1927,13 +1927,20 @@ async function scenarioBoot() {
       // (the page runs animation frames, which the compositor's frames drive). The clicks then
       // get the same budget. Kept apart because they come apart: on 2026-09-22 (#327's merge
       // ref, ubuntu-latest) the onboarding was in the DOM 2 s after a cold launch that took 4 s
-      // to its chrome, and the window stayed blank for the 25 s after it – the GPU process was
-      // not up yet, no frame – so Playwright's click, which needs the button to hold still
-      // across two animation frames, waited its FIRST_PAINT_CLICK_MS out with nothing to
-      // measure and the failure read "locator.click: Timeout 15000ms exceeded". Now it reads
-      // what was missing, with the screen at that moment.
+      // to its chrome, and the window stayed blank for the 25 s after it – no frame, because
+      // the GPU process was still probing GL through Mesa (some 190 MB of libgallium/libLLVM
+      // paged in from a cold disk, under an Xvfb that has no GPU to find) before settling on
+      // the software compositor; the Linux job now launches with --disable-gpu, which skips
+      // that probe (ci.yml). Playwright's click, which needs the button to hold still across
+      // two animation frames, waited its FIRST_PAINT_CLICK_MS out with nothing to measure and
+      // the failure read "locator.click: Timeout 15000ms exceeded". Now it reads what was
+      // missing, with the screen at that moment and what the main process knew of the GPU
+      // (`gpu`: Electron's getGPUFeatureStatus – gpu_compositing "disabled_software" is the
+      // Xvfb norm, with or without the flag).
       const budget = s.renderBudgetMs
       const onboarding = s.chrome.locator('[data-testid="onboarding"]')
+      const gpuStatus = () =>
+        s.app.evaluate(({ app }) => app.getGPUFeatureStatus()).catch((e) => String(e.message || e))
       const t0 = Date.now()
       await onboarding.waitFor({ state: 'visible', timeout: budget })
       const visibleMs = Date.now() - t0
@@ -1941,13 +1948,18 @@ async function scenarioBoot() {
       const paintedMs = await s.waitForFrames(Math.max(1, budget - visibleMs))
       if (paintedMs === null) {
         const win = await s.window().catch(() => null)
+        const gpu = await gpuStatus()
         const where = win
           ? `window ${win.visible ? 'visible' : 'not visible'}, ${win.bounds.width}x${win.bounds.height}, title "${win.title}"`
           : 'no window'
+        const compositing =
+          gpu && typeof gpu === 'object'
+            ? `gpu_compositing ${gpu.gpu_compositing}`
+            : `gpu status: ${gpu}`
         const error = new Error(
-          `onboarding in the DOM after ${visibleMs} ms but not painted: no animation frame in the chrome page within the ${budget} ms render budget (${where})`
+          `onboarding in the DOM after ${visibleMs} ms but not painted: no animation frame in the chrome page within the ${budget} ms render budget (${where}; ${compositing})`
         )
-        error.detail = { visibleMs, paintedMs: null, renderBudgetMs: budget, window: win }
+        error.detail = { visibleMs, paintedMs: null, renderBudgetMs: budget, window: win, gpu }
         throw error
       }
       await s.shot('01-first-launch')
@@ -1955,7 +1967,13 @@ async function scenarioBoot() {
       await s.chrome.getByRole('button', { name: 'Skip tour' }).click({ timeout: budget })
       await onboarding.waitFor({ state: 'detached', timeout: 10000 })
       await s.shot('02-after-onboarding')
-      return { completed: true, visibleMs, paintedMs, renderBudgetMs: budget }
+      return {
+        completed: true,
+        visibleMs,
+        paintedMs,
+        renderBudgetMs: budget,
+        gpu: await gpuStatus()
+      }
     })
 
     await s.step('window', () => assertMainWindow(s))
