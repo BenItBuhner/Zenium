@@ -5,7 +5,9 @@ import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.util.TypedValue
@@ -227,13 +229,23 @@ class UnresponsivePrompt(
         return RippleDrawable(ColorStateList.valueOf(ColorUtils.setAlphaComponent(tokens.text, step)), fill, mask)
     }
 
-    /** The chassis's 1 px (one CSS px: a dp) hairline of the sheet, over the panel fill the sheet paints under the whole column. */
-    private fun edge(): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        val r = dp(12).toFloat()
-        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-        setColor(Color.TRANSPARENT)
-        setStroke(dp(1), tokens.border)
+    /**
+     * The chassis's hairline of the sheet (`.zen-sheet`: `border: 1px` – one CSS px, a dp as the
+     * chrome's WebView draws it – with `border-bottom: 0`), over the panel fill the sheet paints
+     * under the whole column: the top with its radii and the two sides at the screen's edges. The
+     * stroke's bottom run is set below the column's bounds, where the view's clip drops it, so no
+     * line stands between the footer and the panel under the navigation bar.
+     */
+    private fun edge(): Drawable {
+        val stroke = dp(1)
+        val line = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            val r = dp(12).toFloat()
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            setColor(Color.TRANSPARENT)
+            setStroke(stroke, tokens.border)
+        }
+        return InsetDrawable(line, 0, 0, 0, -2 * stroke)
     }
 
     /**
