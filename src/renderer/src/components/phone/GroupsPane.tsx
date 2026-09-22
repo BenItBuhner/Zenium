@@ -290,7 +290,9 @@ export function GroupRowSheet({
  * with the title block, the one paragraph, the §9.11 footer with Cancel and the verb in the
  * danger ink): an open group's tabs close with it – Undo on the toast brings them back, loose,
  * the group itself being gone – and a saved group's pages are forgotten with no way back.
- * Escape, the scrim, the back gesture and Cancel keep the group; focus starts on Cancel.
+ * Escape, the scrim, the back gesture and Cancel keep the group. Focus lands on the sheet
+ * itself, the title announced first (§9.22: a title-and-notice sheet focuses its container;
+ * landing on Cancel would announce the way out first).
  */
 export function DeleteGroupSheet({
   row,
@@ -318,7 +320,7 @@ export function DeleteGroupSheet({
         icon: <Trash2 className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />,
         description
       }}
-      focus="first"
+      focus="dialog"
       onClose={onClose}
       handleLabel="Dismiss"
       sheetRef={sheet}
