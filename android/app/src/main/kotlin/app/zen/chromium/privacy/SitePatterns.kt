@@ -8,8 +8,8 @@ import app.zen.chromium.blocking.Domains
  * same match, the same order of specificity, so the header stage's word on a request is the
  * desktop's. `[*.]example.com` covers the host and its subdomains, `example.com` the host alone;
  * a named scheme (`http` / `https`; `*://` says nothing; `ws` / `wss` are matched as the http
- * scheme they ride on) or port narrows a pattern; an IP literal takes no `[*.]`, a port goes with
- * no `[*.]`. Pure, no Android in it.
+ * scheme they ride on) or port narrows a pattern; an IP literal takes no `[*.]`. Pure, no
+ * Android in it.
  */
 class SitePattern private constructor(
     /** The canonical text, what the lists store. */
@@ -70,7 +70,7 @@ class SitePattern private constructor(
         /** Parse `input` as a pattern; null when it is not one. Whitespace and case are forgiven. */
         fun parse(input: String): SitePattern? {
             var text = input.trim().lowercase()
-            if (text.isEmpty() || FORBIDDEN.containsMatchIn(text)) return null
+            if (text.isEmpty()) return null
             var scheme: String? = null
             val schemeEnd = text.indexOf("://")
             if (schemeEnd != -1) {
@@ -81,22 +81,32 @@ class SitePattern private constructor(
                     scheme = given
                 }
             }
+            // Paths, queries, fragments and credentials are not part of the grammar.
+            if (text.isEmpty() || FORBIDDEN.containsMatchIn(text)) return null
             var subdomains = false
             if (text.startsWith(WILDCARD)) {
                 subdomains = true
                 text = text.substring(WILDCARD.length)
             }
-            if (text.isEmpty() || text.contains('*')) return null
-            val portMatch = PORT.matchEntire(text) ?: return null
-            var hostText = portMatch.groupValues[1]
+            if (text.isEmpty()) return null
+            var hostText: String
             var port: Int? = null
-            val portText = portMatch.groups[2]?.value
-            if (portText != null && portText != "*") {
-                port = portText.toIntOrNull() ?: return null
-                if (port < 1 || port > 65535) return null
-                // A port narrows one host; Chrome refuses the combination with a domain wildcard.
-                if (subdomains) return null
+            // An IPv6 literal without its brackets (`::1`) is forgiven, and takes no port: the
+            // colons would be ambiguous. With brackets, `[::1]:8443` reads like any host and port.
+            if (!text.startsWith("[") && text.indexOf(':') != text.lastIndexOf(':')) {
+                if (NonUniqueHost.parseIpv6(text) == null) return null
+                hostText = "[$text]"
+            } else {
+                val portMatch = PORT.matchEntire(text) ?: return null
+                hostText = portMatch.groupValues[1]
+                val portText = portMatch.groups[2]?.value
+                if (portText != null && portText != "*") {
+                    port = portText.toIntOrNull() ?: return null
+                    if (port < 1 || port > 65535) return null
+                }
             }
+            // `:*` above says any port; a `*` anywhere else is not a host.
+            if (hostText.contains('*')) return null
             if (hostText.endsWith(".") && hostText.length > 1) hostText = hostText.dropLast(1)
             val host = canonicalHost(hostText) ?: return null
             // An IP literal names one machine: nothing is under it.
@@ -141,7 +151,6 @@ class SitePattern private constructor(
             if (text.startsWith("[") && text.endsWith("]")) {
                 return if (NonUniqueHost.parseIpv6(text.substring(1, text.length - 1)) != null) text else null
             }
-            if (NonUniqueHost.parseIpv6(text) != null) return "[$text]"
             if (IPV4.matches(text)) return if (NonUniqueHost.parseIpv4(text) != null) text else null
             if (text.length > MAX_HOST_LENGTH) return null
             val labels = text.split('.')

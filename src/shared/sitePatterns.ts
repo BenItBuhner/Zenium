@@ -5,12 +5,13 @@
  *     [scheme://][*.]host[:port]
  *
  * - `[*.]example.com` covers `example.com` and every subdomain; `example.com` alone covers that
- *   host only. Chrome's "Add site" dialog prepends `[*.]` to a bare host, and so does
- *   {@link sitePatternForHost}: that is what a row added from the site-information sheet gets.
+ *   host only, which is what Chrome's "Add site" dialog stores for a bare host. A site added
+ *   from a page (the site-information sheet) gets `[*.]host` ({@link sitePatternForHost}), so
+ *   that the page's site is covered whole.
  * - `scheme://` (http or https; `*://` says nothing) and `:port` narrow a pattern to one scheme
- *   or one port; without them a pattern covers every scheme and port. A port cannot go with a
- *   subdomain wildcard in Chrome either. WebSocket URLs are matched as the http scheme they
- *   ride on (`ws` as `http`, `wss` as `https`), as Chromium's cookie settings look them up.
+ *   or one port; without them a pattern covers every scheme and port. WebSocket URLs are
+ *   matched as the http scheme they ride on (`ws` as `http`, `wss` as `https`), as Chromium's
+ *   cookie settings look them up.
  * - Hosts are lowercase DNS names (IDN in punycode, as URLs carry them), dotted-decimal IPv4 or
  *   bracketed IPv6 literals; an IP literal takes no `[*.]`. Paths are not part of the grammar.
  *
@@ -46,7 +47,7 @@ const WILDCARD = '[*.]'
 /** Parse `input` as a pattern; null when it is not one. Whitespace and case are forgiven. */
 export function parseSitePattern(input: string): SitePattern | null {
   let text = input.trim().toLowerCase()
-  if (!text || /[\s/\\?#@]/.test(text)) return null
+  if (!text) return null
   let scheme: string | null = null
   const schemeEnd = text.indexOf('://')
   if (schemeEnd !== -1) {
@@ -57,22 +58,32 @@ export function parseSitePattern(input: string): SitePattern | null {
       scheme = given
     }
   }
+  // Paths, queries, fragments and credentials are not part of the grammar.
+  if (!text || /[\s/\\?#@]/.test(text)) return null
   let subdomains = false
   if (text.startsWith(WILDCARD)) {
     subdomains = true
     text = text.slice(WILDCARD.length)
   }
-  if (!text || text.includes('*')) return null
+  if (!text) return null
   let port: number | null = null
-  const portMatch = /^(.*?)(?::(\*|\d{1,5}))?$/.exec(text)
-  if (!portMatch) return null
-  let hostText = portMatch[1]
-  if (portMatch[2] !== undefined && portMatch[2] !== '*') {
-    port = Number(portMatch[2])
-    if (port < 1 || port > 65535) return null
-    // A port narrows one host; Chrome refuses the combination with a domain wildcard.
-    if (subdomains) return null
+  let hostText = text
+  // An IPv6 literal without its brackets (`::1`) is forgiven, and takes no port: the colons
+  // would be ambiguous. With brackets, `[::1]:8443` reads as a host and a port like any other.
+  if (!text.startsWith('[') && text.indexOf(':') !== text.lastIndexOf(':')) {
+    if (!parseIpv6(text)) return null
+    hostText = `[${text}]`
+  } else {
+    const portMatch = /^(.*?)(?::(\*|\d{1,5}))?$/.exec(text)
+    if (!portMatch) return null
+    hostText = portMatch[1]
+    if (portMatch[2] !== undefined && portMatch[2] !== '*') {
+      port = Number(portMatch[2])
+      if (port < 1 || port > 65535) return null
+    }
   }
+  // `:*` above says any port; a `*` anywhere else is not a host.
+  if (hostText.includes('*')) return null
   if (hostText.endsWith('.') && hostText.length > 1) hostText = hostText.slice(0, -1)
   const host = canonicalHost(hostText)
   if (!host) return null
@@ -188,9 +199,7 @@ function patternText(
 /** A lowercase DNS name, dotted-decimal IPv4 or bracketed IPv6 literal; null for anything else. */
 function canonicalHost(text: string): string | null {
   if (!text) return null
-  if (text.startsWith('[') && text.endsWith(']'))
-    return parseIpv6(text.slice(1, -1)) ? text : null
-  if (parseIpv6(text)) return `[${text}]`
+  if (text.startsWith('[') && text.endsWith(']')) return parseIpv6(text.slice(1, -1)) ? text : null
   if (/^\d+(\.\d+){3}$/.test(text)) return parseIpv4(text) ? text : null
   if (text.length > MAX_HOST_LENGTH) return null
   const labels = text.split('.')

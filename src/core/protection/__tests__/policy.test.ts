@@ -6,7 +6,12 @@ import type {
   ThirdPartyCookiePrivateMode
 } from '../../../shared/privacy'
 import { DEFAULT_SITE_DATA_POLICY } from '../../../shared/siteData'
-import { blocksThirdPartyCookies, plaintextAllowed, signalHeaders } from '../policy'
+import {
+  blocksThirdPartyCookies,
+  cookiesWithheld,
+  plaintextAllowed,
+  signalHeaders
+} from '../policy'
 
 const flags = (overrides: Partial<PrivacyFlags> = {}): PrivacyFlags => ({
   safeBrowsing: true,
@@ -170,5 +175,70 @@ describe('signalHeaders', () => {
     expect(signalHeaders(flags({ gpc: true }))).toEqual({ 'Sec-GPC': '1' })
     expect(signalHeaders(flags({ dnt: true }))).toEqual({ DNT: '1' })
     expect(signalHeaders(flags({ gpc: true, dnt: true }))).toEqual({ 'Sec-GPC': '1', DNT: '1' })
+  })
+})
+
+describe('cookiesWithheld', () => {
+  const site = (overrides: Partial<PrivacyFlags['siteData']>): PrivacyFlags =>
+    flags({
+      thirdPartyCookies: 'block',
+      siteData: { ...DEFAULT_SITE_DATA_POLICY, ...overrides }
+    })
+
+  it("withholds a never-site's cookies in every context, a document's included", () => {
+    const f = site({ block: ['[*.]never.example'] })
+    expect(cookiesWithheld(f, ctx('https://never.example/', { type: 'main_frame' }))).toBe(true)
+    expect(cookiesWithheld(f, ctx('https://cdn.never.example/a.js'))).toBe(true)
+    expect(
+      cookiesWithheld(
+        f,
+        ctx('https://never.example/api', { documentUrl: 'https://never.example/' })
+      )
+    ).toBe(true)
+    // The exact host alone when the pattern has no wildcard.
+    const exact = site({ block: ['never.example'] })
+    expect(cookiesWithheld(exact, ctx('https://never.example/', { type: 'main_frame' }))).toBe(true)
+    expect(cookiesWithheld(exact, ctx('https://www.never.example/', { type: 'main_frame' }))).toBe(
+      false
+    )
+  })
+
+  it('leaves a listed site alone, the third-party rule included', () => {
+    // Under `block` the tracker's third-party request would lose its cookies …
+    expect(cookiesWithheld(site({}), ctx('https://tracker.example/p.gif'))).toBe(true)
+    // … unless the tracker is on the allow list, or the clear-on-exit list (a session's worth).
+    expect(
+      cookiesWithheld(site({ allow: ['tracker.example'] }), ctx('https://tracker.example/p.gif'))
+    ).toBe(false)
+    expect(
+      cookiesWithheld(
+        site({ clearOnExit: ['[*.]tracker.example'] }),
+        ctx('https://tracker.example/p.gif')
+      )
+    ).toBe(false)
+    // The page's own site on the allow list does not exempt the trackers it embeds.
+    expect(
+      cookiesWithheld(site({ allow: ['[*.]news.example'] }), ctx('https://tracker.example/p.gif'))
+    ).toBe(true)
+  })
+
+  it('under "block all cookies" withholds from every site the lists leave out', () => {
+    const f = flags({
+      thirdPartyCookies: 'allow',
+      siteData: { ...DEFAULT_SITE_DATA_POLICY, blockAll: true, allow: ['[*.]news.example'] }
+    })
+    expect(cookiesWithheld(f, ctx('https://news.example/', { type: 'main_frame' }))).toBe(false)
+    expect(cookiesWithheld(f, ctx('https://cdn.news.example/a.js'))).toBe(false)
+    expect(cookiesWithheld(f, ctx('https://other.example/', { type: 'main_frame' }))).toBe(true)
+    expect(cookiesWithheld(f, ctx('https://tracker.example/p.gif'))).toBe(true)
+  })
+
+  it('falls back to the third-party rule for a site on no list', () => {
+    const f = site({ block: ['never.example'] })
+    expect(cookiesWithheld(f, ctx('https://news.example/', { type: 'main_frame' }))).toBe(false)
+    expect(cookiesWithheld(f, ctx('https://tracker.example/p.gif'))).toBe(true)
+    expect(
+      cookiesWithheld({ ...f, thirdPartyCookies: 'allow' }, ctx('https://tracker.example/p.gif'))
+    ).toBe(false)
   })
 })

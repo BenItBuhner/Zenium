@@ -144,15 +144,14 @@ export class SiteDataService {
   }
 
   /**
-   * Add `input` (a pattern in Chrome's grammar, or a bare host, which gets `[*.]`) to `list`.
-   * A pattern already on another list moves. Refused with the reason when it is not a pattern
-   * or the list is full.
+   * Add `input` (a pattern in Chrome's grammar, stored as written: a bare host is that host
+   * alone, as Chrome's "Add site" dialog takes it) to `list`. A pattern already on another list
+   * moves. Refused with the reason when it is not a pattern or the list is full.
    */
   add(list: SiteDataList, input: string): SiteDataAddResult {
     if (list !== 'allow' && list !== 'clearOnExit' && list !== 'block')
       return { ok: false, problem: 'Unknown list' }
-    const trimmed = input.trim()
-    const pattern = normalizeSitePattern(trimmed) ?? sitePatternForHost(trimmed)
+    const pattern = normalizeSitePattern(input)
     if (!pattern)
       return {
         ok: false,
@@ -167,11 +166,12 @@ export class SiteDataService {
     return { ok: true, pattern }
   }
 
-  /** The site of `url` (its host, subdomains included, as Chrome's "Add" does) onto `list`. */
+  /** The site of the page at `url` – its host with its subdomains, `[*.]host` – onto `list`. */
   addSite(list: SiteDataList, url: string): SiteDataAddResult {
     const host = hostOf(url)
-    if (!host) return { ok: false, problem: 'This page has no site to add' }
-    return this.add(list, host)
+    const pattern = host ? sitePatternForHost(host) : null
+    if (!pattern) return { ok: false, problem: 'This page has no site to add' }
+    return this.add(list, pattern)
   }
 
   /** Remove `input` from whichever list holds it. */
@@ -349,19 +349,21 @@ export class SiteDataService {
   }
 
   /**
-   * The run itself: the types through the dialog's path, and the listed sites – unless the
-   * cookies are among the types, which takes every site's cookies and storage anyway. Both
-   * halves start at once, so that their first engine calls are queued before whatever follows.
+   * The run itself: the listed sites – unless the cookies are among the types, which takes
+   * every site's cookies and storage anyway – and the types through the dialog's path. Both
+   * halves start at once, so that their first engine calls are queued before whatever follows;
+   * the sites first, since they are found through the history and the permissions the types
+   * may be about to clear.
    */
   private async clear(pending: PendingClear): Promise<void> {
     const types = pending.types.filter((t): t is ClearOnExitType => CLEAR_ON_EXIT_TYPES.includes(t))
-    const typesDone =
-      types.length > 0
-        ? this.browser.privacy.clearBrowsingData('all', types as BrowsingDataType[])
-        : null
     const sitesDone =
       pending.patterns.length > 0 && !types.includes('cookies')
         ? this.clearSites(pending.patterns)
+        : null
+    const typesDone =
+      types.length > 0
+        ? this.browser.privacy.clearBrowsingData('all', types as BrowsingDataType[])
         : null
     if (typesDone) {
       const outcome = await typesDone
@@ -489,7 +491,8 @@ export class SiteDataService {
     const host = this.browser.platform.siteData
     const canonical = originOf(origin)
     if (!host || !canonical) return
-    for (const containerId of this.containerIds()) await this.clearOrigins(host, containerId, [canonical])
+    for (const containerId of this.containerIds())
+      await this.clearOrigins(host, containerId, [canonical])
     this.browser.state.commitVolatile()
   }
 
@@ -547,7 +550,10 @@ export function patternsCoverSite(patterns: readonly string[], site: string): bo
   for (const text of patterns) {
     const pattern = parseSitePattern(text)
     if (!pattern || !pattern.subdomains || pattern.scheme || pattern.port) continue
-    if (pattern.host === site || (site.endsWith(`.${pattern.host}`) && site.length > pattern.host.length))
+    if (
+      pattern.host === site ||
+      (site.endsWith(`.${pattern.host}`) && site.length > pattern.host.length)
+    )
       return true
   }
   return false
