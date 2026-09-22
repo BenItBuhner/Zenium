@@ -6344,6 +6344,27 @@
       animation-play-state: paused !important;
     }
   }
+  /*
+   * A tile that has run its entrance keeps its place in the run: a cell React moves in the DOM
+   * (a drag's draft, a removal, a pin) would start the fade again, so the page marks the cells
+   * whose fade has ended and they run none (past the reduced-motion `!important` above).
+   */
+  :root[data-form-factor='phone'] .zen-ntp-site[data-entered] {
+    animation: none !important;
+  }
+  /*
+   * The tile in the hand (NTP-06, v2 §11.4): lifted over its neighbours, the tile's fill the
+   * pressed one under the panel's shadow, and the press's shrink undone – the lift's 1.02 scale
+   * and the drag's travel are written on the button by tileReorder.ts, per move.
+   */
+  :root[data-form-factor='phone'] .zen-ntp-site[data-held] {
+    z-index: 1;
+  }
+  :root[data-form-factor='phone'] .zen-ntp-site[data-held] .zen-ntp-tile {
+    background: var(--v2-control-fill-hover);
+    box-shadow: var(--v2-shadow-panel);
+    transform: none;
+  }
   /* The phone's tiles take the space's corner shape, as the Essentials tiles do. */
   :root[data-form-factor='phone'] .zen-ntp-tile {
     corner-shape: var(--zen-corner);

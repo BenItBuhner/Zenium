@@ -1943,11 +1943,13 @@ describe('the section model', () => {
 
   it('orders Look and Feel identity, chrome, page behaviour, Glance (design lead, #134)', () => {
     // Without a layout every row shows; the phone shell's list has no Bookmarks group (no bar).
+    // Home (the phone's homepage, SET-36) follows the URL bar group: the chrome's controls.
     expect(section('look').groups.map((g) => g.id)).toEqual([
       'appearance',
       'app-icon',
       'bookmarks',
       'url-bar',
+      'home',
       'pages',
       'sites',
       'site-exceptions',
@@ -1958,6 +1960,7 @@ describe('the section model', () => {
       'appearance',
       'app-icon',
       'url-bar',
+      'home',
       'pages',
       'sites',
       'site-exceptions',

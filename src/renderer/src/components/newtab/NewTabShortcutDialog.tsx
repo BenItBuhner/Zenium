@@ -2,7 +2,7 @@ import type { JSX } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { CircleAlert } from 'lucide-react'
 import type { UIState } from '@shared/types'
-import { isNewTabUrl } from '@shared/url'
+import { isEmptyTabUrl } from '@shared/url'
 import { run } from '@renderer/lib/api'
 import { useViewport } from '@renderer/lib/formFactor'
 import { POPOVER_WIDTH, useFrameDialog } from '@renderer/lib/portals'
@@ -45,12 +45,14 @@ export function NewTabShortcutDialog({
   }, [])
 
   // The dialog belongs to the page it was asked from: it goes with that page, and with a
-  // shortcut that was removed (Settings, another window) while it was up.
+  // shortcut that was removed (Settings, another window) while it was up. The page is the
+  // served `zen://newtab` on the desktop and the blank tab the phone's chrome draws its page
+  // over (NewTabPage.tsx), so either counts as the page being there.
   const tab = activeTab(state)
   const gone =
     !tab ||
     tab.id !== request.tabId ||
-    !isNewTabUrl(tab.url) ||
+    !isEmptyTabUrl(tab.url) ||
     (editing && !shortcuts.some((s) => s.id === request.id))
   useEffect(() => {
     if (gone) closeNewTabShortcutDialog()
