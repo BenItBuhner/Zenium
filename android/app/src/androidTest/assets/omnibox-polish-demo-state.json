@@ -11,21 +11,13 @@
         "type": "gradient",
         "colors": [
           {
-            "c": [
-              96,
-              110,
-              235
-            ],
+            "c": [96, 110, 235],
             "x": 0.3,
             "y": 0.35,
             "isPrimary": true
           },
           {
-            "c": [
-              214,
-              92,
-              160
-            ],
+            "c": [214, 92, 160],
             "x": 0.7,
             "y": 0.65
           }
@@ -36,10 +28,7 @@
         "monochrome": false,
         "rotation": 40
       },
-      "tabIds": [
-        "tab_brew",
-        "tab_roast"
-      ],
+      "tabIds": ["tab_brew", "tab_roast"],
       "activeTabId": "tab_brew",
       "pinnedCollapsed": false
     }
