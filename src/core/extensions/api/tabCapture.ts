@@ -75,11 +75,16 @@ export interface DesktopCaptureResult {
 /**
  * What the shim's `resolveStreamId` gets for an id `chooseDesktopMedia` answered: the
  * `chromeMediaSource` the engine wants (`desktop` for a screen or window, `tab` for a Zenium
- * tab) and the id to name under it.
+ * tab), the id to name under it, and whether the pick carries audio (Chrome's `audio_share`:
+ * the picker's box for a screen, the tab's sound for a tab). Without it an audio track the
+ * extension asks for under the id is left out and the stream comes video-only, as Chrome's
+ * does (`DesktopCaptureAccessHandler::ShouldCaptureAudio`); the engine would otherwise open a
+ * loopback device the OS may not have and fail the whole call.
  */
 export interface DesktopStreamResolution {
   source: 'desktop' | 'tab'
   id: string
+  audio: boolean
 }
 
 // Chrome's texts (`chrome/browser/extensions/api/tab_capture/tab_capture_api.cc`).

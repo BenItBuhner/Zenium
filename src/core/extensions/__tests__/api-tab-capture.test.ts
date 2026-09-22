@@ -776,7 +776,8 @@ describe('TabCaptureApi for chrome.desktopCapture', () => {
     // The shim resolves the id: the engine's own source id, under `desktop`.
     expect(w.api.desktopHandlers.resolveStreamId(ctx, result.streamId)).toEqual({
       source: 'desktop',
-      id: 'screen:0:0'
+      id: 'screen:0:0',
+      audio: true
     })
     expect(w.registered).toEqual([])
     // The engine asks the consuming document's permission handler, once; the pick is spent by it.
@@ -812,7 +813,8 @@ describe('TabCaptureApi for chrome.desktopCapture', () => {
     expect(result.options).toEqual({ canRequestAudioTrack: true })
     expect(w.api.desktopHandlers.resolveStreamId(ctx, result.streamId)).toEqual({
       source: 'tab',
-      id: 'engine-1'
+      id: 'engine-1',
+      audio: true
     })
     expect(w.registered).toEqual([{ target: 5, consumer: 31, id: 'engine-1' }])
     // The engine's request arrives on the captured tab from the consumer's origin.
@@ -948,7 +950,8 @@ describe('TabCaptureApi for chrome.desktopCapture', () => {
     expect(result.streamId).toMatch(/^zen-desktop-capture-/)
     expect(w.api.desktopHandlers.resolveStreamId(w.frameCtx(recorder), result.streamId)).toEqual({
       source: 'desktop',
-      id: 'screen:0:0'
+      id: 'screen:0:0',
+      audio: false
     })
   })
 
@@ -1432,9 +1435,11 @@ describe('chrome.tabCapture and chrome.desktopCapture in the shim', () => {
       if (method !== 'resolveStreamId') return { ok: true, value: undefined }
       const [id] = args as [string]
       if (id === 'zen-desktop-capture-x-1')
-        return { ok: true, value: { source: 'desktop', id: 'screen:0:0' } }
+        return { ok: true, value: { source: 'desktop', id: 'screen:0:0', audio: true } }
       if (id === 'zen-desktop-capture-x-2')
-        return { ok: true, value: { source: 'tab', id: 'engine-7' } }
+        return { ok: true, value: { source: 'tab', id: 'engine-7', audio: false } }
+      if (id === 'zen-desktop-capture-x-3')
+        return { ok: true, value: { source: 'desktop', id: 'screen:0:0', audio: false } }
       return { ok: true, value: null }
     }
     const desktop = (id: string): unknown => ({
@@ -1469,6 +1474,18 @@ describe('chrome.tabCapture and chrome.desktopCapture in the shim', () => {
     })
     await g.navigator.mediaDevices.getUserMedia({ video: desktop('screen:1:0') } as Any)
     expect(getUserMedia).toHaveBeenLastCalledWith({ video: desktop('screen:1:0') })
+    // A pick without sound (the box unticked, or an OS without loopback), the extension asking
+    // for an audio track under the id all the same (Screencastify's shape): the track is left
+    // out and the stream comes video-only, as Chrome's does – the engine would open a loopback
+    // device the OS has not got and fail the call.
+    await g.navigator.mediaDevices.getUserMedia({
+      audio: desktop('zen-desktop-capture-x-3'),
+      video: desktop('zen-desktop-capture-x-3')
+    } as Any)
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      audio: false,
+      video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: 'screen:0:0' } }
+    })
     // A tab id is left to tabCapture, which this extension has not got: untouched.
     await g.navigator.mediaDevices.getUserMedia({
       video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: 'zen-tab-capture-x-1' } }

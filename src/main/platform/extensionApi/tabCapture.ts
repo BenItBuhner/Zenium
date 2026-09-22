@@ -77,6 +77,8 @@ interface DesktopPick {
   origin: string
   /** A `desktopCapturer` screen or window, or a Zenium tab. */
   source: { kind: 'desktop'; id: string } | { kind: 'tab'; tabId: string }
+  /** Chrome's `audio_share`: the pick carries audio (`canRequestAudioTrack` as answered). */
+  audio: boolean
   createdAt: number
   /** The consumer's `getUserMedia` is under way: the engine's media request may arrive. */
   armedAt: number | null
@@ -444,6 +446,7 @@ export class TabCaptureApi {
       consumer: consumer.id,
       origin,
       source,
+      audio: canRequestAudioTrack,
       createdAt: this.now(),
       armedAt: shimmed ? null : this.now(),
       spent: false
@@ -494,10 +497,10 @@ export class TabCaptureApi {
       }
       const engineId = this.registrar.register(targetWc, consumerWc)
       pick.armedAt = this.now()
-      return { source: 'tab', id: engineId }
+      return { source: 'tab', id: engineId, audio: pick.audio }
     }
     pick.armedAt = this.now()
-    return { source: 'desktop', id: pick.source.id }
+    return { source: 'desktop', id: pick.source.id, audio: pick.audio }
   }
 
   /**

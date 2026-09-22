@@ -1886,10 +1886,16 @@ export function installExtensionApi(
     const SOURCE = 'chromeMediaSource'
     const SOURCE_ID = 'chromeMediaSourceId'
     type CaptureSource = 'tab' | 'desktop'
-    /** The engine's terms for a stream id: the source to name and the id under it. */
+    /**
+     * The engine's terms for a stream id: the source to name and the id under it; `audio` false
+     * when a `chooseDesktopMedia` pick carries no sound (Chrome's `audio_share` unticked, or an
+     * OS without loopback), so an audio track asked for under the id is left out and the stream
+     * comes video-only, as Chrome's does.
+     */
     interface Resolved {
       source: CaptureSource
       id: string
+      audio?: boolean
     }
     /** The constraint sets of one track kind: `mandatory` and the `optional` list. */
     const constraintSets = (track: unknown): unknown[] => {
@@ -1911,23 +1917,35 @@ export function installExtensionApi(
       }
       return ids
     }
-    /** The same constraints, each named stream id the host resolved put in the engine's terms. */
+    /**
+     * The same constraints, each named stream id the host resolved put in the engine's terms; an
+     * audio track asked for under a pick without sound is left out (`audio: false`).
+     */
     const withResolvedIds = (
       constraints: unknown,
       resolve: (source: CaptureSource, id: string) => Resolved | null
     ): unknown => {
       if (!isObject(constraints)) return constraints
       const out: Record<string, unknown> = { ...constraints }
-      const mapped = (set: unknown): unknown => {
-        if (!isObject(set) || typeof set[SOURCE_ID] !== 'string') return set
+      const resolvedIn = (set: unknown): Resolved | null => {
+        if (!isObject(set) || typeof set[SOURCE_ID] !== 'string') return null
         const source = set[SOURCE]
-        if (source !== 'tab' && source !== 'desktop') return set
-        const resolved = resolve(source, set[SOURCE_ID])
-        return resolved ? { ...set, [SOURCE]: resolved.source, [SOURCE_ID]: resolved.id } : set
+        return source === 'tab' || source === 'desktop' ? resolve(source, set[SOURCE_ID]) : null
+      }
+      const mapped = (set: unknown): unknown => {
+        const resolved = resolvedIn(set)
+        return resolved && isObject(set)
+          ? { ...set, [SOURCE]: resolved.source, [SOURCE_ID]: resolved.id }
+          : set
       }
       for (const kind of ['audio', 'video']) {
         const track = constraints[kind]
         if (!isObject(track)) continue
+        const sets = constraintSets(track)
+        if (kind === 'audio' && sets.some((set) => resolvedIn(set)?.audio === false)) {
+          out.audio = false
+          continue
+        }
         const next: Record<string, unknown> = { ...track }
         if (track.mandatory !== undefined) next.mandatory = mapped(track.mandatory)
         if (Array.isArray(track.optional)) next.optional = track.optional.map(mapped)
@@ -1985,7 +2003,7 @@ export function installExtensionApi(
               isObject(answer) &&
               (answer.source === 'tab' || answer.source === 'desktop') &&
               typeof answer.id === 'string'
-                ? { source: answer.source, id: answer.id }
+                ? { source: answer.source, id: answer.id, audio: answer.audio === true }
                 : null
             ]
           )
