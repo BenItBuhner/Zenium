@@ -81,7 +81,9 @@ class OverviewDemo : DemoHarness("overview-demo-state.json", "overview", "overvi
         shot("03-card-held")
         f.up()
         SystemClock.sleep(1_500)
-        tap("New group")
+        // The card menu's rows are Title Case since #236 (v2 §9.1, the #207 ruling); this read
+        // "New group" until run 35726774762, the first `overview` sequence after it.
+        tap("New Group")
         SystemClock.sleep(2_000)
         instrumentation.sendStringSync("News")
         instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
