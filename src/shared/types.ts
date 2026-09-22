@@ -3200,6 +3200,19 @@ export interface CrashRestoreOffer {
 /** What Zenium does with the previous session's pages after an unclean exit. */
 export type CrashRestoreMode = 'ask' | 'always' | 'never'
 
+/**
+ * The device's connectivity as the chrome shows it (`core/connectivity.ts`): the host's raw
+ * word, debounced, so a network switch never flashes the offline banner.
+ */
+export interface NetworkStatus {
+  /**
+   * False while the device has had no validated route to the internet for the debounce window:
+   * the phone chrome shows "No internet connection" (v2 §9.33) and the error pages that mean
+   * offline reload themselves once it turns true again.
+   */
+  online: boolean
+}
+
 // ---------------------------------------------------------------------------
 // The full UI state snapshot broadcast to the renderer
 // ---------------------------------------------------------------------------
@@ -3284,6 +3297,8 @@ export interface UIState {
   passwords: PasswordsStatus
   /** Default-browser role: whether Zenium holds it and which prompt (if any) is due. */
   defaultBrowser: DefaultBrowserStatus
+  /** The device's connectivity, debounced; hosts without a monitor are online for good. */
+  network: NetworkStatus
   /** Pop-ups the blocker refused, per tab (the URL bar shows an indicator). */
   blockedPopups: Record<string, BlockedPopup[]>
   /** Every remembered per-site permission answer (Settings lists and revokes them). */
@@ -5002,6 +5017,11 @@ export interface Events {
    * sidebar's top row with the keyboard in its field (`tab.searchCandidates` lists the tabs).
    */
   'tabsearch.open': void
+  /**
+   * The crash page's Show tabs asked for the tab switcher (ERR-15: a page that crashed twice
+   * within the minute suggests closing other tabs): the phone chrome opens its overview.
+   */
+  'overview.open': void
   /**
    * The app menu's "Now Playing…" row asked for the media hub (design language v2 §9.29: the
    * hub's toolbar button folds into the menu at the 240 sidebar): the chrome opens the hub's

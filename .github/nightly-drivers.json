@@ -768,6 +768,17 @@
       "estimate": 4
     },
     {
+      "id": "offline-hung",
+      "class": "OfflineHungDemo",
+      "shard": "phone-d",
+      "mirrors": "android-offline-hung-demo.yml:light",
+      "dir": "offline-hung-demo",
+      "env": { "DEMO_THEME": "light" },
+      "timeout": 900,
+      "estimate": 4,
+      "note": "The workflow runs light and dark; the nightly runs light. The driver turns the radios off and on (svc wifi / svc data; back on in its finally) and ends the renderer through the debug hook; the hung scenes wait out WebView's ~5 s and the prompt's 15 s grace."
+    },
+    {
       "id": "passwords-engine",
       "class": "PasswordsEngineDemo",
       "shard": "phone-d",

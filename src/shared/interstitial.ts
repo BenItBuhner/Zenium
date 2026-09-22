@@ -5,13 +5,18 @@
  * the tab. Kept apart from `zenPages` so the page script bundle does not carry the page HTML.
  */
 
-export type InterstitialAction = 'back' | 'proceed' | 'continue' | 'continue-always'
+/**
+ * `show-tabs` is the crash page's (ERR-15): a page that crashed twice within the minute offers
+ * the tab switcher so other tabs can be closed; the core opens the phone's overview for it.
+ */
+export type InterstitialAction = 'back' | 'proceed' | 'continue' | 'continue-always' | 'show-tabs'
 
 export const INTERSTITIAL_ACTIONS: readonly InterstitialAction[] = [
   'back',
   'proceed',
   'continue',
-  'continue-always'
+  'continue-always',
+  'show-tabs'
 ]
 
 export interface InterstitialMessage {

@@ -385,6 +385,35 @@ export function titleForUrl(url: string): string {
 }
 
 /**
+ * The active theme's accent, `#rrggbb` per colour scheme, that an error document inlines
+ * beside the token block it cuts from the chrome's stylesheet (design language v2 §9.11): the
+ * `zen://` document cannot read the window's live `--zen-accent`, so a primary drawn from
+ * `--v2-accent` without it is the unresolved variable's black or white. The core, which knows
+ * the tab's space and whether the window is private, writes it into the page's URL when it
+ * builds one (`accent` / `accentDark`, the hex without its `#`), and every builder of the
+ * document reads it back (`errorPageAccentOf`).
+ */
+export interface ErrorPageAccent {
+  light: string
+  dark: string
+}
+
+function setAccent(params: URLSearchParams, accent: ErrorPageAccent | undefined): void {
+  if (!accent) return
+  params.set('accent', accent.light.replace(/^#/, ''))
+  params.set('accentDark', accent.dark.replace(/^#/, ''))
+}
+
+/** The accent an error page's URL carries (`setAccent`), or null when it carries none or not a colour. */
+export function errorPageAccentOf(params: URLSearchParams): ErrorPageAccent | null {
+  const hex = (value: string | null): string | null =>
+    value && /^[0-9a-f]{6}$/i.test(value) ? `#${value.toLowerCase()}` : null
+  const light = hex(params.get('accent'))
+  const dark = hex(params.get('accentDark'))
+  return light && dark ? { light, dark } : null
+}
+
+/**
  * The `zen://error` page for a failed load of `url`; a certificate failure carries the refused
  * certificate along, so the page can show it and offer to proceed (`errorPageCertificate`).
  */
@@ -392,11 +421,55 @@ export function errorPageUrl(
   code: number,
   description: string,
   url: string,
-  certificate?: CertificateDetails | null
+  certificate?: CertificateDetails | null,
+  accent?: ErrorPageAccent
 ): string {
   const params = new URLSearchParams({ code: String(code), description, url })
   if (certificate) params.set('certificate', JSON.stringify(certificate))
+  setAccent(params, accent)
   return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/**
+ * What the crash page (`zen://error?code=-1`) says besides that the page is gone (ERR-15):
+ * `crash`, the renderer crashed ("Something went wrong"); `memory`, the OS killed it to free
+ * memory while the page was in front; `hung`, the user ended an unresponsive page. A `repeat`
+ * within the minute adds the suggestion to close other tabs and the way to the tab switcher.
+ */
+export type CrashPageVariant = 'crash' | 'memory' | 'hung'
+
+export interface CrashPageOptions {
+  variant?: CrashPageVariant
+  repeat?: boolean
+  /** The theme's accent for the page's primary (the repeat variant's Reload), §9.11. */
+  accent?: ErrorPageAccent
+}
+
+/**
+ * The crash page for `url`, the page whose renderer went away: `codeName` is Chrome's name
+ * for the way it ended (`crashCodeName`), printed on the page's code line.
+ */
+export function crashPageUrl(
+  codeName: string,
+  url: string,
+  options: CrashPageOptions = {}
+): string {
+  const params = new URLSearchParams({ code: '-1', description: codeName, url })
+  if (options.variant && options.variant !== 'crash') params.set('variant', options.variant)
+  if (options.repeat) params.set('repeat', '1')
+  setAccent(params, options.accent)
+  return `${ERROR_URL_PREFIX}?${params.toString()}`
+}
+
+/** The crash page's variant and repeat flag out of its URL's parameters (the accent: `errorPageAccentOf`). */
+export function crashPageOptionsOf(
+  params: URLSearchParams
+): Required<Pick<CrashPageOptions, 'variant' | 'repeat'>> {
+  const variant = params.get('variant')
+  return {
+    variant: variant === 'memory' || variant === 'hung' ? variant : 'crash',
+    repeat: params.get('repeat') === '1'
+  }
 }
 
 /**
@@ -406,7 +479,7 @@ export function errorPageUrl(
  */
 export type InterstitialKind = 'safebrowsing' | 'https-only'
 
-export function safeBrowsingPageUrl(url: string, threat: string): string {
+export function safeBrowsingPageUrl(url: string, threat: string, accent?: ErrorPageAccent): string {
   const params = new URLSearchParams({
     code: String(-20),
     description: 'ERR_BLOCKED_BY_CLIENT',
@@ -414,16 +487,18 @@ export function safeBrowsingPageUrl(url: string, threat: string): string {
     kind: 'safebrowsing',
     threat
   })
+  setAccent(params, accent)
   return `${ERROR_URL_PREFIX}?${params.toString()}`
 }
 
-export function httpsOnlyPageUrl(httpUrl: string, code: number): string {
+export function httpsOnlyPageUrl(httpUrl: string, code: number, accent?: ErrorPageAccent): string {
   const params = new URLSearchParams({
     code: String(code),
     description: 'HTTPS_ONLY_FALLBACK',
     url: httpUrl,
     kind: 'https-only'
   })
+  setAccent(params, accent)
   return `${ERROR_URL_PREFIX}?${params.toString()}`
 }
 

@@ -619,6 +619,17 @@
 :root[data-form-factor='phone'] .zen-error-actions > * {
   flex: 1;
 }
+/*
+ * The crash page's repeat variant (ERR-15): Show tabs before Reload in the same row. The
+ * switcher it opens is the phone's overview, so the control is drawn on the phone alone; the
+ * desktop keeps the suggestion in the copy and Reload as its one control.
+ */
+.zen-error-show-tabs {
+  display: none;
+}
+:root[data-form-factor='phone'] .zen-error-show-tabs {
+  display: inline-flex;
+}
 .zen-error-advanced {
   padding: var(--v2-card-padding);
   border-radius: var(--v2-radius-card);

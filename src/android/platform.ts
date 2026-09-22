@@ -38,6 +38,7 @@ import type {
   BlockingHost,
   BundledFilterList,
   ClipboardHost,
+  ConnectivityHost,
   DialogHost,
   DownloadHost,
   EngineDataCounts,
@@ -375,6 +376,13 @@ export interface BootInfo {
    * (never held) in old hosts, in production and in the preview host.
    */
   holdBackgroundWork?: boolean
+  /**
+   * The device can reach the internet right now (`Connectivity.kt`: the default network carries
+   * internet and the system has validated it). Changes come as the `connectivity` host event;
+   * the core debounces them (`core/connectivity.ts`). Absent in old hosts and in the preview
+   * host, which are online for good.
+   */
+  online?: boolean
 }
 
 /**
@@ -463,6 +471,11 @@ export interface HostEventPayloads {
    * be killed.
    */
   memoryPressure: { level: 'low' | 'critical' }
+  /**
+   * The device's connectivity changed (`Connectivity.kt`, raw: a network switch reports a loss
+   * and a gain within a second; the core's debounce settles it, ERR-06 / ERR-07).
+   */
+  connectivity: { online: boolean }
   /** A page view's visibility change (`view.setVisible`) is on screen (`Host.setTabVisible`). */
   'view.drawn': { tabId: string; visible: boolean }
   /**
@@ -1050,6 +1063,37 @@ function spawnBackgroundWorker(): BackgroundWorkerHandle | null {
 }
 
 /**
+ * The device's connectivity as Kotlin reports it (`Connectivity.kt`): the boot payload's word,
+ * then every `connectivity` host event, raw. The core's `ConnectivityService` debounces the
+ * transitions and turns them into the banner, the toast and the error pages' reloads; a host
+ * without the word (an older APK, the preview host) starts online and is never contradicted –
+ * except by the preview host's own `connectivity` event, which is how the design stills are made.
+ */
+export class AndroidConnectivity implements ConnectivityHost {
+  private listeners: Array<(online: boolean) => void> = []
+
+  constructor(private online: boolean) {}
+
+  isOnline(): boolean {
+    return this.online
+  }
+
+  onChange(listener: (online: boolean) => void): () => void {
+    this.listeners.push(listener)
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener)
+    }
+  }
+
+  /** The host's word changed. */
+  set(online: boolean): void {
+    if (online === this.online) return
+    this.online = online
+    for (const listener of [...this.listeners]) listener(online)
+  }
+}
+
+/**
  * Zen's browser core running inside the chrome WebView on Android. Kotlin owns the tab
  * WebViews, downloads, permissions and dialogs; this class turns the `Platform` contract into
  * bridge calls and routes Kotlin's events back into the core.
@@ -1116,6 +1160,8 @@ export class AndroidPlatform implements Platform {
   readonly newTabBackground: AndroidNewTabBackground
   /** Cross-device sync over a Storage Access Framework folder (`sync.ts`; the engine is the core's). */
   readonly sync: AndroidSyncHost
+  /** The device's connectivity, from the boot payload and the `connectivity` host event (ERR-06, ERR-07). */
+  readonly connectivity: AndroidConnectivity
   browser!: Browser
   private windowHost: AndroidWindowHost | null = null
   private zenWindow: ZenWindow | null = null
@@ -1159,6 +1205,7 @@ export class AndroidPlatform implements Platform {
     this.io = io
     this.newTabBackground = new AndroidNewTabBackground(this.io)
     this.sync = new AndroidSyncHost(bridge, boot.deviceModel ?? '')
+    this.connectivity = new AndroidConnectivity(boot.online !== false)
     this.agentTransport = new AndroidAgentTransport(bridge)
     this.updateHost = new AndroidUpdateHost(bridge, boot.signer ?? null, boot.packageName ?? null)
     this.views = new AndroidTabViewHost(bridge)
@@ -1617,6 +1664,11 @@ export class AndroidPlatform implements Platform {
       case 'memoryPressure': {
         const p = payload as HostEventPayloads['memoryPressure']
         browser.tabs.unloadForMemoryPressure(p.level === 'critical' ? 'critical' : 'low')
+        return
+      }
+      case 'connectivity': {
+        const p = payload as Partial<HostEventPayloads['connectivity']> | null
+        if (typeof p?.online === 'boolean') this.connectivity.set(p.online)
         return
       }
       case 'background.release':

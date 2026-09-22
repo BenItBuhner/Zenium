@@ -115,6 +115,26 @@ export type PreviewNtpPose =
   | { kind: 'scrub'; t: number }
   | { kind: 'docked' }
 
+/**
+ * The device's connectivity as a preview state plays it (`network=<variant>`, ERR-06 / ERR-07):
+ * `offline` takes the host's word offline over the active page (the "No internet connection"
+ * banner, once the core's debounce has passed), `back-online` takes it offline and back (the
+ * "Back online" toast), `reloading` fails the active tab's load as offline first and then brings
+ * the device back (the error page in its own Reloading state, the toast beside it).
+ */
+export const PREVIEW_NETWORK_VARIANTS = ['offline', 'back-online', 'reloading'] as const
+export type PreviewNetworkVariant = (typeof PREVIEW_NETWORK_VARIANTS)[number]
+
+/**
+ * The ways the active tab's renderer may go in a preview state (`crash=<variant>`, ERR-15), the
+ * host's `crashed` report as `RendererExits.kt` classifies it: `crash` (the renderer crashed,
+ * `didCrash()`), `memory` (the OS took the memory back from the page in front), `hung` (the user
+ * chose Exit page on an unresponsive page), `repeat` (a second crash within the minute: the
+ * page's repeat variant, Show tabs beside Reload). `crash=` alone is `crash`.
+ */
+export const PREVIEW_CRASH_VARIANTS = ['crash', 'memory', 'hung', 'repeat'] as const
+export type PreviewCrashVariant = (typeof PREVIEW_CRASH_VARIANTS)[number]
+
 /** The menus a preview state may open: the app menu sheet, the Tabs button's quick menu. */
 export const PREVIEW_MENUS = ['app', 'tabs'] as const
 export type PreviewMenu = (typeof PREVIEW_MENUS)[number]
@@ -378,6 +398,37 @@ export type PreviewState =
       drag: { edge: 'top' | 'bottom'; by: number } | null
     }
   | {
+      /**
+       * The device's connectivity (ERR-06, ERR-07): `offline` puts the host's word at offline over
+       * the active page (the banner, once the debounce has passed), `back-online` takes it
+       * offline and back (the toast), `reloading` fails the active tab's load as offline and
+       * brings the device back (the error page in its own Reloading state, the toast beside it).
+       */
+      kind: 'network'
+      variant: PreviewNetworkVariant
+    }
+  | {
+      /**
+       * The active tab's renderer went (ERR-15): the crash page's variant for the way it went –
+       * a crash, the system freeing memory, a page ended for not responding – or the crash
+       * page's repeat variant (a second crash within the minute, with the way to the overview).
+       */
+      kind: 'crash'
+      variant: PreviewCrashVariant
+    }
+  | {
+      /**
+       * The unresponsive-page prompt (ERR-16) over the active page. The prompt is native on the
+       * device (the chrome shares the hung renderer, so it cannot draw it); the preview shows a
+       * stand-in of the same 9.23 composition on the phone sheet chassis. `url` names the page to
+       * hang first (a page this host can picture, `PREVIEW_SAMPLE_ORIGIN`, shows behind the
+       * sheet's scrim; a site's frame cannot be read and shows nothing); null for the active
+       * tab's own.
+       */
+      kind: 'unresponsive'
+      url: string | null
+    }
+  | {
       kind: 'messages'
       /** A toast with this text (and an action labelled `action`, an `error` when so marked). */
       toast: { message: string; action: string | null; error: boolean } | null
@@ -547,7 +598,13 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * PREVIEW_READ_ALOUD_STATUSES (`readAloud=` is `playing`; `rate=<n>` sets the speed chip,
  * `voices` opens the voice picker sheet over it), `reader=article` for the active
  * tab in Reader View on a stand-in article (`reader=preferences` opens its text preferences
- * sheet over it), `error=<code>` for the active
+ * sheet over it), `network=<variant>` for the device's connectivity played over the active tab
+ * (one of PREVIEW_NETWORK_VARIANTS: `offline` for the banner, `back-online` for the toast,
+ * `reloading` for an offline error page reloading itself as the device comes back),
+ * `crash=<variant>` for the active tab's renderer gone one of PREVIEW_CRASH_VARIANTS' ways (the
+ * crash page in that variant; `crash=` is a plain crash), `unresponsive` for the
+ * unresponsive-page prompt's stand-in over the active tab (`url=<page>` hangs that page instead:
+ * `https://sample.example/` for a page this host can picture behind the scrim), `error=<code>` for the active
  * tab's load failing with that Chromium `net::` code (with `url=<target>` for the URL that
  * failed, else the tab's own), which puts up the zen://error page, `screenshot=<surface>` for
  * Take Screenshot's gallery flow on the active tab as one of PREVIEW_SCREENSHOT_SURFACES (`flash`
@@ -579,7 +636,8 @@ const PREVIEW_MIME_TYPES: Record<string, string> = {
  * over `sheet`, `sheet` over the permission `prompt`, that over `ntp`, `ntp` over `private`,
  * `private` over `autofill`, `autofill` over `pdf`, `pdf` over `find` (which it takes along),
  * `find` over `pull`, `pull` over `barhide`, `barhide` over `zoom`, `zoom` over `readAloud`,
- * `readAloud` over `reader`, `reader` over `error`, `error` over `screenshot`, `screenshot` over
+ * `readAloud` over `reader`, `reader` over `network`, `network` over `crash`, `crash` over
+ * `unresponsive`, `unresponsive` over `error`, `error` over `screenshot`, `screenshot` over
  * the messages, the messages over
  * `webapp`, `webapp` over `media`, `media` over `download`, `download` over `popups`, `popups`
  * over the security `prompt`, that over `voice`, `voice` over `overview`, and `overview` over
@@ -718,6 +776,20 @@ export function parsePreviewSpec(spec: string): PreviewState {
   }
   const reader = params.get('reader')
   if (reader !== null) return { kind: 'reader', preferences: reader === 'preferences' }
+  const network = params.get('network')
+  if (network !== null && (PREVIEW_NETWORK_VARIANTS as readonly string[]).includes(network)) {
+    return { kind: 'network', variant: network as PreviewNetworkVariant }
+  }
+  const crash = params.get('crash')
+  if (crash !== null) {
+    return {
+      kind: 'crash',
+      variant: (PREVIEW_CRASH_VARIANTS as readonly string[]).includes(crash)
+        ? (crash as PreviewCrashVariant)
+        : 'crash'
+    }
+  }
+  if (params.has('unresponsive')) return { kind: 'unresponsive', url: params.get('url') || null }
   const error = params.get('error')
   if (error !== null && error !== '' && Number.isInteger(Number(error))) {
     return { kind: 'error', code: Number(error), url: params.get('url') || null }

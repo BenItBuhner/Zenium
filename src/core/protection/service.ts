@@ -303,7 +303,7 @@ export class ProtectionService {
       if (!tab || !view || !sameDocument(tab.url, url)) return
       tab.errorCode = BLOCKED_BY_CLIENT_CODE
       tab.loading = false
-      view.loadURL(safeBrowsingPageUrl(url, hit.threat))
+      view.loadURL(safeBrowsingPageUrl(url, hit.threat, this.browser.tabs.errorPageAccent(tabId)))
       this.browser.state.commit()
     })
   }
