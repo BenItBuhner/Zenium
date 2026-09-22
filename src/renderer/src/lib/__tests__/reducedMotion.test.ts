@@ -53,7 +53,17 @@ interface Rule {
   layered: boolean
 }
 
-const REDUCED_QUERY = /^@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*$/
+/**
+ * An `@media` prelude whose block holds under reduced motion: the feature anywhere in it – bare,
+ * or compound with another feature or a media type (`… and (max-width: …)`, `screen and …`), or
+ * in its boolean form (`(prefers-reduced-motion)`, true for `reduce`) – and not negated (`not
+ * (prefers-reduced-motion: reduce)`, or `@media not …`, holds under full motion). A shortener
+ * inside a compound block would otherwise pass the guard unseen.
+ */
+function isReducedQuery(prelude: string): boolean {
+  if (!/^@media\b/.test(prelude) || /^@media\s+not\b/.test(prelude)) return false
+  return /(?<!not\s*)\(\s*prefers-reduced-motion\s*(?::\s*reduce\s*)?\)/.test(prelude)
+}
 
 function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -112,7 +122,7 @@ function reducedRules(css: string): Rule[] {
     const c = bare[i]
     if (c === '{') {
       const prelude = bare.slice(preludeStart, i).trim().replace(/\s+/g, ' ')
-      if (REDUCED_QUERY.test(prelude)) {
+      if (isReducedQuery(prelude)) {
         let depth = 1
         let j = i + 1
         while (j < bare.length && depth > 0) {
@@ -162,6 +172,37 @@ const isRemover = (r: Rule): boolean => r.selector.split(',').some((s) => s.trim
 const times = (value: string): string[] => value.match(/\d*\.?\d+m?s\b/g) ?? []
 const where = (name: string, r: Rule, d: Decl): string =>
   `${name}: ${r.selector} { ${d.prop}: ${d.value}${d.important ? ' !important' : ''} }`
+
+describe('the walk over the reduced-motion blocks', () => {
+  it('reads a compound or boolean prelude as reduced motion, a negated or no-preference one as not', () => {
+    const css = `
+      @media (prefers-reduced-motion: reduce) { .bare { transition-duration: 1ms } }
+      @media (prefers-reduced-motion: reduce) and (max-width: 600px) { .and { animation-duration: 0.01ms } }
+      @media screen and (prefers-reduced-motion:reduce) { .screen { transition: opacity 1ms } }
+      @media (max-width: 600px) { @media ( prefers-reduced-motion : reduce ) { .nested { animation: none } } }
+      @media (prefers-reduced-motion) { .boolean { transition-duration: 1ms } }
+      @media (prefers-reduced-motion: no-preference) { .full { transition: transform 200ms } }
+      @media not (prefers-reduced-motion: reduce) { .negated { transition: transform 200ms } }
+      @media (max-width: 600px) and (not (prefers-reduced-motion: reduce)) { .negatedIn { animation: spin 1s } }
+      @layer components { @media (prefers-reduced-motion: reduce) { .layered { transition: opacity 120ms !important } } }
+    `
+    const rules = reducedRules(css)
+    expect(rules.map((r) => r.selector)).toEqual([
+      '.bare',
+      '.and',
+      '.screen',
+      '.nested',
+      '.boolean',
+      '.layered'
+    ])
+    expect(rules.map((r) => r.layered)).toEqual([false, false, false, false, false, true])
+    // The guard's first check would refuse each of the shortened ones.
+    const shortened = rules.flatMap((r) =>
+      r.decls.filter(isMotion).flatMap((d) => times(d.value).filter((t) => t !== `${REDUCED_FADE_MS}ms`))
+    )
+    expect(shortened).toEqual(['1ms', '0.01ms', '1ms', '1ms'])
+  })
+})
 
 describe('reduced motion removes, never shortens (v2 §11.3)', () => {
   const sheets = [...CHROME_SHEETS, DOCUMENTS[1]]
