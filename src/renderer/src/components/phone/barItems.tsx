@@ -146,6 +146,13 @@ export const BAR_ITEMS: Record<PhoneBarItemId, BarItem> = {
     glyph: () => <Download className={glyph} />,
     run: ({ tab }) => void openOverlay('downloads', tab?.id ?? null)
   },
+  // The name carries the count the badge draws. On Chromium 156's bridge a toggle button's
+  // name from an attribute goes to the supplemental description, its child text to the text
+  // (`ui::SupportsNamingWithChildContent` lists `kButton` and not `kToggleButton` or
+  // `kPopUpButton`; `BrowserAccessibilityAndroid::ComputeAndroidNameTo`), so TalkBack there
+  // says the badge's "6" and then "Tabs (6)". Upstream Chromium's, recorded with #237's audit:
+  // no attribute here puts a toggle's name in the content description short of giving up
+  // `aria-pressed` or naming the button by hidden text, and WebView 113 reads the name once.
   tabs: {
     id: 'tabs',
     label: 'Tabs',
