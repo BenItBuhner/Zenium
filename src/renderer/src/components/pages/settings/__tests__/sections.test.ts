@@ -1642,6 +1642,10 @@ describe('the section model', () => {
     expect(add.button).toBe('Add…')
     expect(add.disabled).toBeFalsy()
     expect(add.form?.title).toBe('Add language')
+    // The picker's body is a list (160 rows behind a filter): the desktop dialog stands at most
+    // 80 % of the frame and scrolls under its title block (§9.20, #314 (c)) rather than 16 from
+    // the frame's top and bottom like a page; the phone sheet takes its detents as ever.
+    expect(add.form?.body).toBe('list')
 
     // A full list (Chrome's 32) disables the row and says why.
     const full = Array.from({ length: 32 }, (_, i) => `x${String(i).padStart(2, '0')}`)

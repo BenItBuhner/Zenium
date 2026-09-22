@@ -84,6 +84,10 @@ export function preferredLanguagesGroups({
     button: 'Add…',
     form: {
       title: 'Add language',
+      // 160 rows behind a filter: the desktop dialog takes the list-bodied form (at most 80 % of
+      // the frame, the list scrolling under the title block, §9.20 / #314 (c)), not a form's
+      // full height; the phone sheet takes its detents as ever.
+      body: 'list',
       render: (close) => (
         <LanguagePickList
           label="Add language"
