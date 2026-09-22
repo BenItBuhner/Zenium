@@ -345,6 +345,50 @@ describe('a prompt holds the focus itself as it opens (§9.22, §9.23)', () => {
     expect(document.activeElement).toBe(verb)
   })
 
+  it('its footer hugs on the desktop (§9.11): the dialog’s own pose over the phone sheet’s split, the verb last', () => {
+    const remove = deleteRow(() => undefined)
+    const groups: RowGroup[] = [{ id: 'containers', heading: 'Containers', rows: [remove] }]
+    const h = render(<Stack groups={groups} initial={[{ kind: 'confirm', rowId: remove.id }]} />)
+    // The shape the rules key on: the footer is the dialog body's direct child, inside
+    // `.zen-settings-dialog`, Cancel then the verb.
+    const footer = h.querySelector<HTMLElement>(
+      '.zen-settings-dialog > .zen-settings-dialog-body > .zen-settings-sheet-actions'
+    )!
+    expect(footer).not.toBeNull()
+    const buttons = [...footer.querySelectorAll<HTMLButtonElement>(':scope > .zen-v2-button')]
+    expect(buttons.map((b) => b.textContent)).toEqual(['Cancel', 'Delete'])
+    expect(buttons[1]!.classList.contains('zen-settings-danger-button')).toBe(true)
+    const css = readFileSync(resolve(__dirname, '../../../../assets/main.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+    // The phone sheet's split stands as it was, and the dialog's hug follows it in the sheet:
+    // the two buttons at their own width – the primitive's 96 floor back, which the split
+    // lifts – right-aligned; 32 tall and 8 apart are the primitive's and the footer's own.
+    const split = '.zen-settings-sheet-actions > * { flex: 1 1 0; min-width: 0; }'
+    const hug =
+      '.zen-settings-dialog .zen-settings-sheet-actions { justify-content: flex-end; } ' +
+      '.zen-settings-dialog .zen-settings-sheet-actions > * { flex: 0 0 auto; min-width: 96px; }'
+    expect(css).toContain(split)
+    expect(css).toContain(hug)
+    expect(css.indexOf(hug)).toBeGreaterThan(css.indexOf(split))
+    expect(css).toContain('.zen-settings-sheet-actions { display: flex; gap: 8px; }')
+    expect(css).toContain(
+      '.zen-v2-button { display: inline-flex; align-items: center; justify-content: center; height: var(--v2-control); min-width: 96px;'
+    )
+    // The pose is the surface's, not a pointer or form-factor query's: no phone-keyed rule
+    // touches the footer, and nothing else sets the footer's `justify-content`.
+    expect(css).not.toMatch(/\[data-form-factor='phone'\][^{]*zen-settings-sheet-actions/)
+    const aligning = css
+      .split('}')
+      .map((rule) => rule.split('{') as [string, string?])
+      .filter(
+        ([selector, body]) =>
+          selector.includes('zen-settings-sheet-actions') && body?.includes('justify-content')
+      )
+      .map(([selector]) => selector.trim())
+    expect(aligning).toEqual(['.zen-settings-dialog .zen-settings-sheet-actions'])
+  })
+
   it('an item dialog still opens on its first row, a form on its field (§9.22 leaves the container to a notice)', () => {
     const remove = deleteRow(() => undefined)
     const item = containerRow(remove)

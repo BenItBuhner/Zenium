@@ -9496,9 +9496,10 @@
   stroke-width: var(--v2-icon-stroke);
 }
 /*
- * Footer actions (§9.11): two peers split the width, 8 apart, the primary trailing. In a form
- * the form's 16 gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they
- * sit at the sheet's 16 (§9.25), 16 under the title block's own padding.
+ * Footer actions (§9.11): on the phone's sheet two peers split the width, 8 apart, the primary
+ * trailing (the desktop dialog's hug is with the dialog rules below). In a form the form's 16
+ * gap and gutter place them; straight in a sheet's body (a prompt, §9.23) they sit at the
+ * sheet's 16 (§9.25), 16 under the title block's own padding.
  */
 .zen-settings-sheet-actions {
   display: flex;
@@ -9970,6 +9971,23 @@
 }
 .zen-settings-dialog-body > .zen-settings-sheet-actions {
   padding: 0 16px;
+}
+/*
+ * The desktop footer hugs (§9.11): in a dialog – a form's Cancel | Create, a prompt's Cancel |
+ * Delete – the two buttons stand at their own width, the primitive's 96 minimum (§9.20: 96 + 8 +
+ * 96) at the 32 control height, 8 apart and right-aligned in the 366 column, the primary last.
+ * Only the phone's sheet splits the width between them (`.zen-settings-sheet-actions > *`
+ * above, which also lifts the 96 floor for the split), and a dialog is never the phone's – a
+ * phone's rows open sheets (`desktop.tsx`, `SettingsPage.tsx`) – so the pose is the surface's,
+ * not a pointer query's, and the phone's rule is not touched. The busy state keeps the button's
+ * width: the label stays in the flow unpainted under the spinner (§9.30, extensions.css).
+ */
+.zen-settings-dialog .zen-settings-sheet-actions {
+  justify-content: flex-end;
+}
+.zen-settings-dialog .zen-settings-sheet-actions > * {
+  flex: 0 0 auto;
+  min-width: 96px;
 }
 
 /*
