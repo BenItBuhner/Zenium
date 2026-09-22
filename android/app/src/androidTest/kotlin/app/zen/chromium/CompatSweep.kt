@@ -498,6 +498,19 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             stage(entry, "popup", "-", "no default_popup")
             return
         }
+        // An action the extension disabled for the tab (`chrome.action.disable()`: Chrome grays
+        // the button and a click opens nothing) has no popup to open until the extension enables
+        // it again – Redux DevTools does so on a page it finds a store in (run 35787391495 waited
+        // 30 s for a sheet Chrome would not have shown either).
+        val actionState = extensionAction(row.id)
+        if (actionState != null && actionState.has("enabled") && !actionState.optBoolean("enabled", true)) {
+            stage(
+                entry, "popup", "-",
+                "the extension disabled its action for this tab (chrome.action.disable(); Chrome grays the button and a click opens nothing), so there is no popup to open here (declared=$declared)",
+                JSONObject().put("declared", declared ?: JSONObject.NULL).put("action", actionState)
+            )
+            return
+        }
         val tabsBefore = tabUrls().keys
         val activeBefore = activeCoreTab()?.optString("id")
         coreInvoke("extension.openPopup", """{"id":${JSONObject.quote(row.id)},"anchor":{"x":0,"y":0,"width":0,"height":0}}""")
@@ -946,7 +959,8 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
                 "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
                     "var isInstall=function(n){return /^(install|install script|confirm installation)$/i.test(label(n))&&visible(n)};" +
                     "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
-                    "var hit=buttons.find(isInstall)||nodes.find(isInstall);if(!hit)return JSON.stringify({clicked:false,buttons:buttons.map(label).slice(0,10)});hit.click();return JSON.stringify({clicked:true,label:label(hit)})})()"
+                    USERSCRIPT_INSTALL_DEEPEST +
+                    "if(!hit)return JSON.stringify({clicked:false,buttons:buttons.map(label).slice(0,10)});hit.click();return JSON.stringify({clicked:true,label:label(hit),tag:hit.tagName,cls:String(hit.className||'').slice(0,60)})})()"
             )
         )
         extra.put("click", click)
@@ -4977,6 +4991,14 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
         private const val FRAME_PROBE_FRAMES = 4
         private const val FRAME_PROBE_TIMEOUT_MS = 8_000L
         /**
+         * The Install control among the matches: the deepest of them. A manager's button may be
+         * a `div` whose ancestors carry the same text and nothing else (OrangeMonkey's
+         * `.confirm--box` around its `.confirm--button`), and a click on the ancestor never
+         * reaches the button's own handler (run 35787391495 clicked the box for 46 s of nothing).
+         */
+        private const val USERSCRIPT_INSTALL_DEEPEST =
+            "var deepest=function(list){var hits=list.filter(isInstall);return hits.filter(function(h){return !hits.some(function(o){return o!==h&&h.contains(o)})})[0]||null};var hit=deepest(buttons)||deepest(nodes);"
+        /**
          * A userscript manager's install page: whether its Install button is up and its spinner
          * down (Tampermonkey's `ask.html` shows "Please wait..." while its background answers),
          * the button's state, the page's text.
@@ -4985,8 +5007,9 @@ class CompatSweep : DemoHarness("ext-store-demo-state.json", "ext-android-compat
             "(function(){var label=function(n){return (n.value||n.textContent||'').trim()};var visible=function(n){return n.offsetParent!==null};" +
                 "var isInstall=function(n){return /^(install|install script|confirm installation)$/i.test(label(n))&&visible(n)};" +
                 "var buttons=Array.prototype.slice.call(document.querySelectorAll('button, input[type=button], input[type=submit]'));var nodes=Array.prototype.slice.call(document.querySelectorAll('a, [role=button], div, span'));" +
-                "var hit=buttons.find(isInstall)||nodes.find(isInstall);var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
-                "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),disabled:!!hit.disabled}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
+                USERSCRIPT_INSTALL_DEEPEST +
+                "var text=(document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim();var waiting=/please wait/i.test(text);" +
+                "return JSON.stringify({pass:!!hit&&!waiting,waiting:waiting,button:hit?{label:label(hit),tag:hit.tagName,disabled:!!hit.disabled||/(^|\\s)disabled(\\s|$)/.test(String(hit.className||''))}:null,buttons:buttons.map(label).filter(Boolean).slice(0,8),text:text.slice(0,200),readyState:document.readyState})})()"
         /** Stylus's install page: its `button.install` (present, shown, enabled, label, classes), its message box, the page's text. */
         /**
          * Stylus's install page: the Install button (in the HTML from the start; `armed` once the
