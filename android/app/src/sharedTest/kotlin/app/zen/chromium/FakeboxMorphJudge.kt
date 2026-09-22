@@ -94,6 +94,46 @@ object FakeboxMorph {
     /** The bar's pill: its box, whether it is the well (`.zen-pill-away`) and how opaque its words are (1 when it is the pill). */
     data class Pill(val box: Box, val away: Boolean, val words: Float)
 
+    /**
+     * What the stylesheet resolves to on an element this frame, off its computed style: the
+     * transition's properties (`none`, or the list) and durations, the animation's names (`none`,
+     * or the list) and durations, the durations in ms as the computed `<time>` serialises them
+     * (`0.12s`; the old rule's `0.01ms` as `1e-05s`).
+     */
+    data class Declared(
+        val transitionProperties: List<String>,
+        val transitionMs: List<Float>,
+        val animationNames: List<String>,
+        val animationMs: List<Float>
+    ) {
+        /** The transition runs (a property other than `none` is named). */
+        val transitions: Boolean get() = transitionProperties.any { it != "none" && it.isNotEmpty() }
+        /** The animation runs (a name other than `none`). */
+        val animates: Boolean get() = animationNames.any { it != "none" && it.isNotEmpty() }
+        /** Every duration that applies: the transition's when it runs, the animation's when it does. */
+        val activeMs: List<Float> get() = (if (transitions) transitionMs else emptyList()) + (if (animates) animationMs else emptyList())
+        override fun toString(): String =
+            "transition ${transitionProperties.joinToString(",")} ${transitionMs.joinToString(",") { it.f() }} ms; animation ${animationNames.joinToString(",")} ${animationMs.joinToString(",") { it.f() }} ms"
+    }
+
+    /**
+     * The sheet chassis (`BottomSheet`, `[data-sheet-layer]`) while a sheet is in the DOM: the
+     * sheet's box, its own opacity, its transform's translate-y and scale, the scrim's own
+     * opacity, what the stylesheet declares on it and how many of the layer's animations and
+     * transitions are pending on the compositor.
+     */
+    data class SheetLayer(
+        val box: Box,
+        val opacity: Float,
+        val translateY: Float,
+        val scale: Float,
+        val scrim: Float,
+        val declared: Declared?,
+        val pending: Int
+    ) {
+        val drawn: Boolean get() = opacity > EPS
+    }
+
     /** One animation frame of the chrome, `t` ms after the sampling began. */
     data class Frame(
         val t: Int,
@@ -129,7 +169,20 @@ object FakeboxMorph {
          * takes hundreds of ms over (gfxinfo: a 600 ms median frame), so a 120 ms fade can be over
          * before it is ever drawn. A frame with one pending is the emulator's, not the chrome's.
          */
-        val pending: Int = 0
+        val pending: Int = 0,
+        /** The page (`.zen-ntp`) is not `visibility: hidden` this frame; null when no page is in the DOM (or an older sampler). */
+        val pageVisible: Boolean? = null,
+        /** The content frame's transform's scale this frame: 1 at rest, .97 receded under a sheet (never under reduced motion). */
+        val frameScale: Float = 1f,
+        /**
+         * What the stylesheet declares this frame on the elements whose motion reduced motion keeps
+         * or removes, by a short name: `fades` (`.zen-ntp-fades`), `omnibox` (`.zen-omnibox-sheet`),
+         * `page` (`.zen-ntp`), `column` (`.zen-content-column`), `bar` (`.zen-phone-bar`), `frame`
+         * (`.zen-content-frame`). Empty from an older sampler; an element not in the DOM is absent.
+         */
+        val declared: Map<String, Declared> = emptyMap(),
+        /** The sheet chassis while a sheet is in the DOM (the sheet scene); null else. */
+        val sheet: SheetLayer? = null
     ) {
         val doubleDrawn: Boolean get() = (double?.coverage ?: 0f) > EPS
         val pageFieldDrawn: Boolean get() = (pageField?.opacity ?: 0f) > EPS
@@ -249,8 +302,41 @@ object FakeboxMorph {
             page = row.optDouble("pg", -1.0).toFloat(),
             barHideAllowed = row.optBoolean("ba"),
             barHide = num(row, "bh"),
-            pending = row.optInt("pa")
+            pending = row.optInt("pa"),
+            pageVisible = if (row.has("pv") && !row.isNull("pv")) row.optBoolean("pv") else null,
+            frameScale = row.optDouble("cf", 1.0).toFloat(),
+            declared = row.optJSONObject("dc")?.let { dc ->
+                dc.keys().asSequence().mapNotNull { key -> dc.optJSONObject(key)?.let { key to declared(it) } }.toMap()
+            } ?: emptyMap(),
+            sheet = row.optJSONObject("sl")?.let {
+                SheetLayer(
+                    box(it.getJSONObject("b")), num(it, "o"), num(it, "y"), it.optDouble("s", 1.0).toFloat(), num(it, "so"),
+                    it.optJSONObject("dc")?.let(::declared), it.optInt("pa")
+                )
+            }
         )
+    }
+
+    /** A declaration as the sampler writes it: `{tp, td, an, ad}`, the computed style's strings. */
+    private fun declared(o: JSONObject): Declared = Declared(
+        transitionProperties = names(o.optString("tp")),
+        transitionMs = parseTimes(o.optString("td")),
+        animationNames = names(o.optString("an")),
+        animationMs = parseTimes(o.optString("ad"))
+    )
+
+    private fun names(list: String): List<String> = list.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+    /**
+     * A computed `<time>` list in ms: `0.12s` → 120, `1e-05s` (the old rule's `0.01ms`) → 0.01,
+     * `0s, 0.12s` → 0 and 120; unparsable items read as 0.
+     */
+    fun parseTimes(list: String): List<Float> = list.split(",").map { it.trim() }.filter { it.isNotEmpty() }.map { t ->
+        when {
+            t.endsWith("ms") -> t.dropLast(2).toFloatOrNull() ?: 0f
+            t.endsWith("s") -> (t.dropLast(1).toFloatOrNull() ?: 0f) * 1000f
+            else -> t.toFloatOrNull() ?: 0f
+        }
     }
 
     private fun Float.f(): String = "%.1f".format(this)
@@ -960,6 +1046,231 @@ object FakeboxMorph {
             judged = judged || problems.isNotEmpty()
         )
     }
+
+    // --- reduced motion: no transition ------------------------------------------------------------
+
+    /**
+     * The page is visible on the first frame after the dismissal's commit and on every frame
+     * after it. The page sits under the omnibox `visibility: hidden` (`.zen-ntp[data-hidden]`,
+     * ContentArea) and comes back the frame the closing begins; a transition on the property –
+     * the old reduced-motion rule's `0.01ms` on everything – kept it hidden until the compositor
+     * took the transition's start time, 1.0 to 1.3 s on the emulator (#243's runs), and reduced
+     * motion now removes the transition rather than shortening it. Frames at `open` are the
+     * design's hidden page and are left alone; every other frame must have the page visible, the
+     * frame after an `open` one (the commit) named. NOT JUDGED when no frame carried the flag (an
+     * older sampler, or no page in the DOM).
+     */
+    fun pageShows(frames: List<Frame>): Verdict {
+        val carried = frames.count { it.pageVisible != null }
+        if (carried == 0) return Verdict("the page shows", true, "no frame carried the page's visibility (an older sampler, or no page in the DOM)", judged = false)
+        val commit = (1 until frames.size).firstOrNull { frames[it - 1].phase == "open" && frames[it].phase != "open" }
+        val commitLine = commit?.let {
+            "the commit at ${frames[it].t} ms (${frames[it - 1].phase} -> ${frames[it].phase}): the page ${if (frames[it].pageVisible == true) "visible on its first frame" else "HIDDEN on its first frame"}"
+        }
+        val hidden = frames.withIndex().filter { (_, f) -> f.pageVisible == false && !(f.phase == "open" && !f.pulled) }
+        if (hidden.isEmpty()) {
+            return Verdict("the page shows", true, "the page visible on every frame off the omnibox ($carried frame(s) carried the flag)" + (commitLine?.let { "; $it" } ?: ""))
+        }
+        val first = hidden.first()
+        val back = frames.drop(first.index).firstOrNull { it.pageVisible == true }?.t
+        return Verdict(
+            "the page shows",
+            false,
+            "${hidden.size} frame(s) with the page hidden off the omnibox; first: frame ${first.index} (${first.value.phase}, ${first.value.t} ms)" +
+                (back?.let { ", visible again at $it ms (${it - first.value.t} ms hidden)" } ?: ", never visible again in the sample") +
+                (commitLine?.let { "; $it" } ?: "")
+        )
+    }
+
+    /**
+     * No frame draws stale geometry: under reduced motion nothing travels, so every drawn
+     * incarnation of the field – the page's own, the omnibox's, the double's – and the sheet hold
+     * their boxes from one frame to the next, within [LINE_TOLERANCE]. A shortened transition on
+     * a written transform or box (the old rule's `0.01ms`) drew the start value until the
+     * compositor started it: a frame at the old pose, then the jump. The keyboard's inset is the
+     * one thing that may move a box (the omnibox's field rides it at a bottom dock, the controller
+     * a frame behind at most), so a move across a change of the inset, on this pair or the one
+     * before, is not a fault. The content frame's scale is 1 on every frame: the recede's gain is
+     * 0 under reduced motion (§11.3), the page never receding under a sheet or the omnibox.
+     */
+    fun steadyGeometry(frames: List<Frame>): Verdict {
+        var faults = 0
+        var worst: String? = null
+        var compared = 0
+        var withInset = 0
+        for (i in 1 until frames.size) {
+            val a = frames[i - 1]
+            val b = frames[i]
+            val insetMoved = abs(b.insetBottom - a.insetBottom) > 0.5f || (i >= 2 && abs(a.insetBottom - frames[i - 2].insetBottom) > 0.5f)
+            val pairs = listOfNotNull(
+                if (a.pageFieldDrawn && b.pageFieldDrawn) Triple("the page's field", a.pageField!!.box, b.pageField!!.box) else null,
+                if (a.omniDrawn && b.omniDrawn) Triple("the omnibox's field", a.omniField!!.box, b.omniField!!.box) else null,
+                if (a.doubleDrawn && b.doubleDrawn) Triple("the double", a.double!!.box, b.double!!.box) else null,
+                if (a.sheet?.drawn == true && b.sheet?.drawn == true) Triple("the sheet", a.sheet.box, b.sheet.box) else null
+            )
+            for ((what, x, y) in pairs) {
+                compared++
+                if (x.near(y, LINE_TOLERANCE)) continue
+                if (insetMoved) {
+                    withInset++
+                    continue
+                }
+                faults++
+                if (worst == null) worst = "frames ${i - 1}-$i (${b.phase}, ${b.t} ms): $what drawn at $x then at $y with the keyboard's inset unchanged (${b.insetBottom.f()} px)"
+            }
+        }
+        val scaled = frames.filter { abs(it.frameScale - 1f) > 0.005f }
+        if (scaled.isNotEmpty()) {
+            faults++
+            if (worst == null) worst = "${scaled.size} frame(s) with the content frame scaled (${scaled.first().frameScale.p()} at ${scaled.first().t} ms): the page recedes under reduced motion"
+        }
+        return Verdict(
+            "steady geometry",
+            faults == 0,
+            if (faults == 0) "$compared drawn pair(s) held their boxes within ${LINE_TOLERANCE.f()} px" +
+                (if (withInset > 0) " ($withInset moved with the keyboard's inset)" else "") + "; the content frame at scale 1 on every frame"
+            else "$faults fault(s); first: $worst"
+        )
+    }
+
+    /**
+     * What the stylesheet resolves to under reduced motion, off the computed styles the sampler
+     * carried ([Frame.declared], the sheet's [SheetLayer.declared]): no transition or animation
+     * of a duration under 2 ms remains anywhere (the old rule's `0.01ms` and its `1ms` siblings
+     * shortened; the rule now removes), every transition that runs names `opacity` alone at
+     * [REDUCED_FADE_MS], and every animation that runs is one of the fade keyframes at the same
+     * length – §11.3's kept fades, re-declared where they live, and nothing else. Each element's
+     * distinct declaration is judged once and the findings list them. NOT JUDGED when no frame
+     * carried a declaration (an older sampler).
+     */
+    fun declaredFades(frames: List<Frame>, fades: Set<String> = FADE_KEYFRAMES): Verdict {
+        val seen = LinkedHashMap<Pair<String, Declared>, Int>()
+        for (f in frames) {
+            for ((name, d) in f.declared) seen[name to d] = (seen[name to d] ?: 0) + 1
+            f.sheet?.declared?.let { seen["sheet" to it] = (seen["sheet" to it] ?: 0) + 1 }
+        }
+        if (seen.isEmpty()) return Verdict("the declarations", true, "no frame carried a declaration (an older sampler)", judged = false)
+        val problems = ArrayList<String>()
+        val kept = ArrayList<String>()
+        for ((key, count) in seen) {
+            val (name, d) = key
+            val shortened = (d.transitionMs + d.animationMs).filter { it > 0f && it < 2f }
+            if (shortened.isNotEmpty()) problems += "$name: a duration of ${shortened.joinToString { "%.2f".format(it) }} ms remains (shortened, not removed) on $count frame(s)"
+            if (d.transitions) {
+                val properties = d.transitionProperties.filter { it != "none" && it.isNotEmpty() }
+                if (properties != listOf("opacity")) problems += "$name: transitions ${properties.joinToString()} (opacity alone is kept) on $count frame(s)"
+                else if (d.transitionMs.any { abs(it - REDUCED_FADE_MS) > 2f }) problems += "$name: transitions opacity over ${d.transitionMs.joinToString { it.f() }} ms (${REDUCED_FADE_MS} kept) on $count frame(s)"
+                else kept += "$name: transition opacity ${(d.transitionMs.firstOrNull() ?: 0f).f()} ms"
+            }
+            if (d.animates) {
+                val names = d.animationNames.filter { it != "none" && it.isNotEmpty() }
+                if (!names.all { it in fades }) problems += "$name: animates ${names.joinToString()} (the fades ${fades.joinToString()} are kept) on $count frame(s)"
+                else if (d.animationMs.any { abs(it - REDUCED_FADE_MS) > 2f }) problems += "$name: animates ${names.joinToString()} over ${d.animationMs.joinToString { it.f() }} ms (${REDUCED_FADE_MS} kept) on $count frame(s)"
+                else kept += "$name: animation ${names.joinToString()} ${(d.animationMs.firstOrNull() ?: 0f).f()} ms"
+            }
+        }
+        val elements = seen.keys.map { it.first }.distinct()
+        return Verdict(
+            "the declarations",
+            problems.isEmpty(),
+            if (problems.isEmpty()) "${elements.size} element(s) (${elements.joinToString()}): nothing shortened, " +
+                (if (kept.isEmpty()) "no fade running" else "the kept fades opacity-only at ${REDUCED_FADE_MS} ms: ${kept.distinct().joinToString("; ")}")
+            else problems.joinToString("; ")
+        )
+    }
+
+    /**
+     * The sheet under reduced motion stands where the spring jumped it: on every frame it is
+     * drawn its box, its translate-y and its scale are those of its first drawn frame (within
+     * [LINE_TOLERANCE]; scale 1: nothing above it recedes it) – no frame at the pose before the
+     * jump (the stale geometry a shortened transition on the written transform drew) and no
+     * travel. A sheet drawn on no frame at all is a fault: the scene never showed it.
+     */
+    fun sheetInPlace(frames: List<Frame>): Verdict {
+        val drawn = frames.filter { it.sheet?.drawn == true }
+        if (drawn.isEmpty()) return Verdict("the sheet in place", false, "no frame drew the sheet (${frames.count { it.sheet != null }} frame(s) had one in the DOM)")
+        val first = drawn.first().sheet!!
+        var faults = 0
+        var worst: String? = null
+        for (f in drawn) {
+            val s = f.sheet!!
+            val fault = when {
+                !s.box.near(first.box, LINE_TOLERANCE) -> "at ${f.t} ms the sheet is drawn at ${s.box}, its first drawn frame had ${first.box}"
+                abs(s.translateY - first.translateY) > LINE_TOLERANCE -> "at ${f.t} ms the sheet's translate-y is ${s.translateY.f()}, its first drawn frame had ${first.translateY.f()}"
+                abs(s.scale - 1f) > 0.005f -> "at ${f.t} ms the sheet is scaled ${s.scale.p()}"
+                else -> null
+            }
+            if (fault != null) {
+                faults++
+                if (worst == null) worst = fault
+            }
+        }
+        return Verdict(
+            "the sheet in place",
+            faults == 0,
+            if (faults == 0) "${drawn.size} drawn frame(s): the sheet at ${first.box}, translate-y ${first.translateY.f()}, scale 1 throughout" else "$faults frame(s) off its place; first: $worst"
+        )
+    }
+
+    /**
+     * The sheet's appearance (`opening`) or departure is the 120 ms opacity fade §11.3 keeps, its
+     * scrim's with it: the sheet's opacity ramps one way – up to whole, or down to nothing and
+     * out of the DOM – over more than one frame and within [REDUCED_FADE_MAX_MS] on the emulator's
+     * clock, and the scrim ends drawn (opening) or gone (closing). The fade is the compositor's
+     * to draw: where a sheet frame had an animation [SheetLayer.pending] and no frame part way
+     * was seen, or the step fell between two frames at least a fade apart, NOT JUDGED rather than
+     * failed; a cut inside a narrower gap, a ramp the wrong way or one longer than the window is
+     * failed.
+     */
+    fun sheetFade(frames: List<Frame>, opening: Boolean): Verdict {
+        val check = if (opening) "the sheet's fade in" else "the sheet's fade out"
+        val withSheet = frames.filter { it.sheet != null }
+        if (withSheet.isEmpty()) return Verdict(check, false, "no frame had a sheet in the DOM")
+        val opacities = withSheet.map { it.t to it.sheet!!.opacity }
+        val ramp = opacities.filter { it.second > EPS && it.second < 1 - EPS }
+        val pending = withSheet.count { it.sheet!!.pending > 0 }
+        val problems = ArrayList<String>()
+        val unjudged = ArrayList<String>()
+        val last = withSheet.last()
+        val end = if (opening) last.sheet!!.opacity else if (frames.last().sheet == null) 0f else last.sheet!!.opacity
+        if (opening && end < 1 - EPS) problems += "the sheet ended at ${end.p()}, not whole"
+        if (!opening && frames.last().sheet != null && end > EPS) problems += "the sheet ended at ${end.p()}, still in the DOM"
+        val scrimEnd = last.sheet!!.scrim
+        if (opening && scrimEnd < 0.1f) problems += "the scrim ended at ${scrimEnd.p()}, not drawn"
+        if (!opening && frames.last().sheet != null && scrimEnd > EPS) problems += "the scrim ended at ${scrimEnd.p()}, still drawn"
+        // The step: the last frame with the sheet at its start opacity to the first at its end (closing: or the frame after the sheet left the DOM).
+        val left = frames.getOrNull(frames.indexOfLast { it.sheet != null } + 1)
+        val stepFrom = if (opening) opacities.lastOrNull { it.second <= EPS } else opacities.lastOrNull { it.second >= 1 - EPS }
+        val stepTo = if (opening) opacities.firstOrNull { it.second >= 1 - EPS } else (opacities.firstOrNull { it.second <= EPS } ?: left?.let { it.t to 0f })
+        val gap = if (stepFrom != null && stepTo != null && stepTo.first > stepFrom.first) stepTo.first - stepFrom.first else 0
+        when {
+            ramp.isNotEmpty() -> {
+                val span = ramp.last().first - ramp.first().first
+                if (span > REDUCED_FADE_MAX_MS) problems += "the fade ran $span ms (about $REDUCED_FADE_MS expected)"
+                val steps = opacities.zipWithNext { a, b -> b.second - a.second }
+                val against = if (opening) steps.count { it < -0.02f } else steps.count { it > 0.02f }
+                if (against > 0) problems += "the sheet's opacity went the wrong way on $against pair(s) of frames"
+            }
+            pending > 0 -> unjudged += "the fade was still pending on the compositor on $pending of ${withSheet.size} sheet frame(s) and no frame caught it part way"
+            gap >= REDUCED_FADE_MS -> unjudged += "the sheet went ${if (opening) "0 -> 1" else "1 -> 0"} between two frames $gap ms apart, wider than the fade"
+            gap > 0 -> problems += "the sheet cut ${if (opening) "0 -> 1" else "1 -> 0"} between two frames $gap ms apart with no frame part way"
+            else -> problems += "the sheet's opacity never stepped (${opacities.size} frame(s): ${opacities.take(3).joinToString { it.second.p() }}…${opacities.last().second.p()})"
+        }
+        val judged = unjudged.isEmpty()
+        return Verdict(
+            check,
+            problems.isEmpty(),
+            when {
+                problems.isNotEmpty() -> (problems + unjudged).joinToString("; ")
+                judged -> "the sheet faded ${if (opening) "in to ${end.p()}" else "out and left the DOM"} over ${ramp.size} part-way frame(s) (${ramp.last().first - ramp.first().first} ms), the scrim ${if (opening) "at ${scrimEnd.p()}" else "gone"}"
+                else -> "the fade the emulator never drew: " + unjudged.joinToString("; ")
+            },
+            judged = judged || problems.isNotEmpty()
+        )
+    }
+
+    /** The keyframe animations §11.3 keeps under reduced motion: fades, and nothing that moves. */
+    val FADE_KEYFRAMES: Set<String> = setOf("zen-fade", "zen-fade-in", "zen-fade-out")
 
     // --- the bar's hide --------------------------------------------------------------------------
 
