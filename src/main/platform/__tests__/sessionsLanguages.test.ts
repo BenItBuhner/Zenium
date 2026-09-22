@@ -50,7 +50,9 @@ describe('SessionManager.setAcceptLanguages', () => {
     expect(buildAcceptLanguages()).toBe('de-DE,de,en-GB,en')
     const sessions = new SessionManager(UA)
     sessions.get('default')
-    expect(made).toEqual([{ partition: 'persist:zen-default', ua: UA, languages: 'de-DE,de,en-GB,en' }])
+    expect(made).toEqual([
+      { partition: 'persist:zen-default', ua: UA, languages: 'de-DE,de,en-GB,en' }
+    ])
   })
 
   it('gives every open session the list at once, and every later one as it is made', () => {
@@ -65,7 +67,11 @@ describe('SessionManager.setAcceptLanguages', () => {
       ['zen-private', 'fr-FR,fr,en']
     ])
     sessions.get('work')
-    expect(made.at(-1)).toEqual({ partition: 'persist:zen-container-work', ua: UA, languages: 'fr-FR,fr,en' })
+    expect(made.at(-1)).toEqual({
+      partition: 'persist:zen-container-work',
+      ua: UA,
+      languages: 'fr-FR,fr,en'
+    })
   })
 
   it('sends nothing for the same list again, or for an empty one', () => {

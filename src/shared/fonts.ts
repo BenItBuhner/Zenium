@@ -32,8 +32,7 @@ export const MINIMUM_FONT_SIZE_MAX = 24
 
 /** Chrome's slider stops for "Font size" (`FONT_SIZE_RANGE` of appearance_fonts_page.ts). */
 export const FONT_SIZE_STEPS: readonly number[] = [
-  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40, 44, 48, 56, 64,
-  72
+  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 40, 44, 48, 56, 64, 72
 ]
 /** Chrome's slider stops for "Minimum font size" (0 is off). */
 export const MINIMUM_FONT_SIZE_STEPS: readonly number[] = [
@@ -72,7 +71,10 @@ const FAMILY_MAX_CHARS = 120
 
 function familyOf(value: unknown): string | null {
   if (typeof value !== 'string') return null
-  const name = value.replace(/["'<>;{}]/g, '').replace(/\s+/g, ' ').trim()
+  const name = value
+    .replace(/["'<>;{}]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (!name) return null
   return name.slice(0, FAMILY_MAX_CHARS)
 }
@@ -85,7 +87,12 @@ function sizeOf(value: unknown, fallback: number, min: number, max: number): num
 /** Bring a stored, synced or client-sent document into shape; anything off comes from the defaults. */
 export function sanitizeFontSettings(raw: unknown): PageFontSettings {
   const source = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const minimum = sizeOf(source.minimumSize, DEFAULT_FONT_SETTINGS.minimumSize, 0, MINIMUM_FONT_SIZE_MAX)
+  const minimum = sizeOf(
+    source.minimumSize,
+    DEFAULT_FONT_SETTINGS.minimumSize,
+    0,
+    MINIMUM_FONT_SIZE_MAX
+  )
   return {
     standard: familyOf(source.standard),
     serif: familyOf(source.serif),

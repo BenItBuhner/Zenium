@@ -246,7 +246,9 @@ export class ElectronTabView implements TabView {
    */
   private fontsApplied = fontsKey(pageFontSettings)
   /** The families the page has by name, so `Page.setFontFamilies` (once per session) is sent only for a change. */
-  private familiesApplied = JSON.stringify(cdpFontFamilies(pageFontSettings, ELECTRON_FONT_DEFAULTS))
+  private familiesApplied = JSON.stringify(
+    cdpFontFamilies(pageFontSettings, ELECTRON_FONT_DEFAULTS)
+  )
   /** What the page's web preferences were made from: where the engine takes it back to. */
   private readonly fontsBorn = this.fontsApplied
   private readonly familiesBorn = this.familiesApplied

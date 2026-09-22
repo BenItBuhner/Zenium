@@ -64,7 +64,8 @@ function fakePlatform(
     systemLanguages: false,
     locales,
     availableLanguages: () => options.dictionaries ?? ['en-US', 'de-DE', 'fr'],
-    apply: (enabled, languages) => void recorded.spellcheck.push({ enabled, languages: [...languages] }),
+    apply: (enabled, languages) =>
+      void recorded.spellcheck.push({ enabled, languages: [...languages] }),
     onDictionaryStatus: () => {},
     words: () => [],
     addWord: () => {},
@@ -104,7 +105,9 @@ function fakePlatform(
       setSource: (scheme) => void recorded.themes.push(scheme)
     },
     pageFonts: { apply: (fonts) => void recorded.fonts.push({ ...fonts }) },
-    ...(pageLanguages ? { languages: { apply: (list) => void recorded.languages.push([...list]) } } : {}),
+    ...(pageLanguages
+      ? { languages: { apply: (list) => void recorded.languages.push([...list]) } }
+      : {}),
     spellcheck,
     readabilitySource: () => null
   }
@@ -167,7 +170,11 @@ describe('page fonts (CT-25)', () => {
     const io = memoryIo()
     const { browser, platform, win } = started(io)
     browser.handleCommand(win, 'settings.update', { fonts: { standard: 'Georgia', size: 20 } })
-    expect(browser.state.settings.fonts).toEqual({ ...DEFAULT_FONT_SETTINGS, standard: 'Georgia', size: 20 })
+    expect(browser.state.settings.fonts).toEqual({
+      ...DEFAULT_FONT_SETTINGS,
+      standard: 'Georgia',
+      size: 20
+    })
     browser.handleCommand(win, 'settings.update', { fonts: { minimumSize: 3, size: 500 } })
     expect(browser.state.settings.fonts).toEqual({
       ...DEFAULT_FONT_SETTINGS,
@@ -229,9 +236,14 @@ describe('preferred languages (CT-41)', () => {
     const io = memoryIo()
     const { browser, platform, win } = started(io)
     expect(browser.state.settings.languages).toEqual(['en-US', 'en'])
-    browser.handleCommand(win, 'settings.update', { languages: ['fr-fr', 'FR', 'en-US', 'fr', 'C'] })
+    browser.handleCommand(win, 'settings.update', {
+      languages: ['fr-fr', 'FR', 'en-US', 'fr', 'C']
+    })
     expect(browser.state.settings.languages).toEqual(['fr-FR', 'fr', 'en-US'])
-    expect(platform.recorded.languages).toEqual([['en-US', 'en'], ['fr-FR', 'fr', 'en-US']])
+    expect(platform.recorded.languages).toEqual([
+      ['en-US', 'en'],
+      ['fr-FR', 'fr', 'en-US']
+    ])
     expect(browser.languages.acceptLanguage()).toBe('fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7')
     expect(browser.translate.preferences.preferred).toEqual(['fr', 'en'])
     expect(platform.recorded.spellcheck.at(-1)).toEqual({ enabled: true, languages: ['fr'] })

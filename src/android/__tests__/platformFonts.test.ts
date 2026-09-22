@@ -51,7 +51,14 @@ describe('AndroidPlatform.pageFonts', () => {
     expect(calls.filter((c) => c.method === 'fonts.apply')).toEqual([
       {
         method: 'fonts.apply',
-        args: { standard: 'sans-serif', serif: null, sansSerif: 'casual', fixed: null, size: 18, minimumSize: 8 }
+        args: {
+          standard: 'sans-serif',
+          serif: null,
+          sansSerif: 'casual',
+          fixed: null,
+          size: 18,
+          minimumSize: 8
+        }
       }
     ])
   })

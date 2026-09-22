@@ -507,7 +507,9 @@ export class ElectronPlatform implements Platform {
     this.downloads.bind(browser.downloads, {
       tabIdFor: (source) => this.views.tabIdForWebContents(source) ?? null,
       parentWindow: (sourceTabId) =>
-        browserWindowOf(sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow()),
+        browserWindowOf(
+          sourceTabId ? browser.tabs.windowFor(sourceTabId) : browser.focusedWindow()
+        ),
       stopNavigation: (tabId) => {
         const view = this.views.viewForTab(tabId)
         if (view && !view.isDestroyed()) view.stop()

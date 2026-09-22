@@ -637,7 +637,12 @@ describe('page fonts (CT-25)', () => {
     expect(sent(dbg, 'Page.setFontSizes')).toEqual([{ fontSizes: { standard: 24, fixed: 20 } }])
     host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24, fixed: 'Fira Code' })
     await settle()
-    expect(dbg.log.slice(3)).toEqual(['attach', 'Page.setFontFamilies', 'Page.setFontSizes', 'detach'])
+    expect(dbg.log.slice(3)).toEqual([
+      'attach',
+      'Page.setFontFamilies',
+      'Page.setFontSizes',
+      'detach'
+    ])
     host.applyFonts({ ...DEFAULT_FONT_SETTINGS, size: 24 })
     await settle()
     // Back to the engine's monospace by name: a fresh agent each time, so "once" never bites.
