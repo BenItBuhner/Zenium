@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, createElement, type ReactElement } from 'react'
+import { Fragment, act, createElement, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClipboardContent, Suggestion, Tab, UIState } from '@shared/types'
 import type { UrlbarState } from '@renderer/lib/ui'
@@ -29,6 +29,8 @@ Object.assign(window, { zen: { invoke, on: () => () => undefined } })
 const { HEADER_SWAP_FADE_MS, Urlbar } = await import('../Urlbar')
 const { isShareableUrl, showsPageHeader } = await import('../omniboxHeader')
 const { uiStore } = await import('@renderer/lib/ui')
+const { FrameDialogHost } = await import('@renderer/lib/portals')
+const { omniboxFocusSurfaces } = await import('@renderer/lib/omniboxFocus')
 
 function tab(url: string, patch: Partial<Tab> = {}): Tab {
   return {
@@ -117,13 +119,22 @@ async function render(el: ReactElement): Promise<HTMLElement> {
   return host
 }
 
+/**
+ * The phone omnibox, with the frame's dialog host after it (the shell's order): where the hold's
+ * prompt sheet mounts (OMN-17). The omnibox stays the first child, the tests' scrim.
+ */
 function phone(t: Tab, mode: UrlbarState['mode'] = 'edit'): ReactElement {
-  return createElement(Urlbar, {
-    state: state(t),
-    urlbar: urlbarState(mode),
-    area: null,
-    phoneEdge: 'top'
-  })
+  return createElement(
+    Fragment,
+    null,
+    createElement(Urlbar, {
+      state: state(t),
+      urlbar: urlbarState(mode),
+      area: null,
+      phoneEdge: 'top'
+    }),
+    createElement(FrameDialogHost, { frame: true })
+  )
 }
 
 const commands = (): string[] => invoke.mock.calls.map(([name]) => name)
@@ -234,7 +245,7 @@ describe('the search-ready header (OMN-05)', () => {
     expect(header(el)).toBeNull()
     expect(commands()).not.toContain('urlbar.submit')
     // The suggestions refresh for the address, as if it had been typed.
-    expect(callsTo('urlbar.suggest')).toContainEqual({ query: PAGE, tabId: 't1' })
+    expect(callsTo('urlbar.suggest')).toContainEqual({ query: PAGE, tabId: 't1', grouped: true })
     expect(uiStore.get().urlbar.open).toBe(true)
   })
 
@@ -366,7 +377,9 @@ describe('the Refine arrow (OMN-09)', () => {
     await tap(refine)
     expect(input(el).value).toBe('cats pictures')
     expect(commands()).not.toContain('urlbar.submit')
-    expect(callsTo('urlbar.suggest')).toEqual([{ query: 'cats pictures', tabId: 't1' }])
+    expect(callsTo('urlbar.suggest')).toEqual([
+      { query: 'cats pictures', tabId: 't1', grouped: true }
+    ])
     expect(uiStore.get().urlbar.open).toBe(true)
   })
 })
@@ -621,5 +634,448 @@ describe('the desktop bar is as it was', () => {
       await Promise.resolve()
     })
     expect(commands()).not.toContain('urlbar.submit')
+  })
+})
+
+describe('the card’s section headings (OMN-18)', () => {
+  const grouped = (): Suggestion[] => [
+    row('search', 'cats', 'cats', null),
+    {
+      ...row('history', 'Cats – Wikipedia', 'cats', 'https://en.wikipedia.org/wiki/Cat'),
+      group: 'Pages'
+    },
+    { ...row('history', 'Cat videos', 'cats', 'https://videos.example/cats'), group: 'Pages' },
+    { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' },
+    { ...row('tab', 'Cat cafe', 'cats', 'https://cafe.example/'), group: 'Open tabs' }
+  ]
+  const headings = (el: HTMLElement): HTMLElement[] =>
+    Array.from(el.querySelectorAll<HTMLElement>('[data-testid="urlbar-group-heading"]'))
+  /** The list's children in DOM order: a heading's text, or a row's title. */
+  const order = (el: HTMLElement): string[] =>
+    rows(el).map((li) =>
+      li.getAttribute('data-testid') === 'urlbar-group-heading'
+        ? `# ${li.textContent}`
+        : option(li).querySelector('span')!.textContent!.trim()
+    )
+
+  it('asks the core for the sectioned order on the phone, the flat one on desktop', async () => {
+    await render(phone(tab(PAGE)))
+    expect(callsTo('urlbar.suggest')[0]).toMatchObject({ grouped: true })
+    act(() => root?.unmount())
+    invoke.mockClear()
+    await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: { x: 0, y: 0, width: 1200, height: 800 }
+      })
+    )
+    expect(callsTo('urlbar.suggest')[0]).not.toHaveProperty('grouped')
+  })
+
+  it('draws each group’s heading over its rows at a top dock: the default match alone, then Pages, Searches, Open tabs', async () => {
+    suggestions = grouped
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    const heads = headings(el)
+    expect(heads.map((h) => h.textContent)).toEqual(['Pages', 'Searches', 'Open tabs'])
+    // The shared primitive on the card's own modifier; a heading to TalkBack (announced as one,
+    // reachable by heading navigation), not a presentational item heard as plain text.
+    for (const h of heads) {
+      expect(h.className).toContain('zen-v2-heading')
+      expect(h.className).toContain('zen-omnibox-sheet-heading')
+      expect(h.getAttribute('role')).toBe('heading')
+      expect(h.getAttribute('aria-level')).toBe('2')
+    }
+    expect(order(el)).toEqual([
+      'cats',
+      '# Pages',
+      'Cats – Wikipedia',
+      'Cat videos',
+      '# Searches',
+      'cats for adoption',
+      '# Open tabs',
+      'Cat cafe'
+    ])
+    // The options are the rows alone: the headings are not in the count a screen reader hears.
+    expect(el.querySelectorAll('[role="option"]')).toHaveLength(5)
+  })
+
+  it('follows each group’s last row in the DOM at a bottom dock, so it stands over the group on the reversed list', async () => {
+    suggestions = grouped
+    const el = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'bottom'
+      })
+    )
+    await type(input(el), 'cats')
+    expect(order(el)).toEqual([
+      'cats',
+      'Cats – Wikipedia',
+      'Cat videos',
+      '# Pages',
+      'cats for adoption',
+      '# Searches',
+      'Cat cafe',
+      '# Open tabs'
+    ])
+    expect(el.querySelector('ul[role="listbox"]')!.getAttribute('data-edge')).toBe('bottom')
+  })
+
+  it('keeps a heading’s element across a keystroke that keeps its group, so only an arriving one fades in', async () => {
+    suggestions = grouped
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cat')
+    const pages = headings(el).find((h) => h.textContent === 'Pages')!
+    suggestions = () => grouped().filter((r) => r.group !== 'Open tabs')
+    await type(input(el), 'cats')
+    expect(headings(el).map((h) => h.textContent)).toEqual(['Pages', 'Searches'])
+    expect(headings(el)[0]).toBe(pages)
+  })
+})
+
+describe('removing a suggestion by touch (OMN-17)', () => {
+  const WIKI = 'https://en.wikipedia.org/wiki/Cat'
+  const removable = (): Suggestion[] => [
+    row('search', 'cats', 'cats', null),
+    { ...row('history', 'Cats – Wikipedia', 'cats', WIKI), group: 'Pages', deletable: true },
+    {
+      ...row('history', 'Cat videos', 'cats', 'https://videos.example/cats'),
+      group: 'Pages',
+      deletable: true
+    },
+    { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' }
+  ]
+  const rowOf = (el: HTMLElement, title: string): HTMLElement | null =>
+    rows(el).find(
+      (li) =>
+        li.getAttribute('data-testid') !== 'urlbar-group-heading' &&
+        option(li).querySelector('span')!.textContent!.trim() === title
+    ) ?? null
+  const headingOf = (el: HTMLElement, group: string): HTMLElement | null =>
+    el.querySelector<HTMLElement>(`[data-testid="urlbar-group-heading"][data-group="${group}"]`)
+  /** The prompt sheet, on the frame's dialog host (v2 §9.23). */
+  const prompt = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('.zen-sheet[role="dialog"]')
+  const promptButtons = (): HTMLButtonElement[] =>
+    Array.from(prompt()?.querySelectorAll<HTMLButtonElement>('.zen-sheet-footer button') ?? [])
+  const promptButton = (label: string): HTMLButtonElement | undefined =>
+    promptButtons().find((b) => b.textContent?.trim() === label)
+  const omnibox = (el: HTMLElement): HTMLElement =>
+    el.querySelector<HTMLElement>('.zen-omnibox-sheet')!
+
+  /** A finger held on the row past the hold's 380 ms, then lifted: the click that follows is the hold's. */
+  async function hold(el: HTMLElement): Promise<void> {
+    const at = {
+      bubbles: true,
+      pointerType: 'touch',
+      pointerId: 7,
+      button: 0,
+      clientX: 40,
+      clientY: 40
+    }
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent('pointerdown', at))
+      await new Promise((r) => setTimeout(r, 420))
+      el.dispatchEvent(new PointerEvent('pointerup', at))
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+  }
+  /**
+   * Wait for a spring on real frames – the prompt's leave, the row's exit – to bring things to
+   * `until`: in short `act` spans, each of which lets React flush what the frames queued.
+   */
+  async function settle(until: () => boolean, what = 'the exit'): Promise<void> {
+    const start = Date.now()
+    while (!until()) {
+      if (Date.now() - start > 4000) throw new Error(`${what} did not settle`)
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50))
+      })
+    }
+  }
+  // The prompt's chassis needs room to stand: happy-dom lays nothing out, and a sheet whose
+  // layer and content measure 0 lands closed the moment it has risen. The layer is 800 px tall
+  // and the sheet's content 300 px, as the overview's prompt tests give theirs.
+  let sizes: Array<[string, PropertyDescriptor | undefined]> = []
+  beforeEach(() => {
+    sizes = ['clientHeight', 'offsetHeight'].map((name) => [
+      name,
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
+    ])
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('zen-sheet-scroll') ? 300 : 800
+      }
+    })
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get: () => 300
+    })
+  })
+  afterEach(() => {
+    for (const [name, descriptor] of sizes) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  })
+
+  /** The prompt is up: rendered, on the host, before its rise. */
+  async function asked(): Promise<HTMLElement> {
+    await settle(() => prompt() !== null, 'the prompt')
+    return prompt()!
+  }
+  /** The prompt's answer: the button pressed, the sheet's leave run out, its action run once it has gone. */
+  async function answer(label: string): Promise<void> {
+    const button = promptButton(label)
+    expect(button, label).toBeDefined()
+    await act(async () => {
+      button!.click()
+      await Promise.resolve()
+    })
+    await settle(() => prompt() === null, 'the prompt’s leave')
+  }
+
+  it('a hold on a history row asks first on a §9.23 prompt sheet: the question as its title, the suggestion’s text as its description, Cancel | Remove in the danger ink; nothing picked', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    const sheet = await asked()
+    // The title block, not a 48 header (§9.23): the question, the glyph on its start, one paragraph.
+    const block = sheet.querySelector<HTMLElement>('.zen-sheet-title-block')!
+    expect(block).not.toBeNull()
+    expect(sheet.querySelector('.zen-sheet-title')).toBeNull()
+    expect(block.querySelector('h2')!.textContent).toBe('Remove suggestion from history?')
+    expect(block.querySelector('h2 svg')).not.toBeNull()
+    expect(block.querySelector('p')!.textContent).toBe('Cats – Wikipedia — example.com')
+    expect(sheet.getAttribute('aria-labelledby')).toBe(block.querySelector('h2')!.id)
+    // Cancel | Remove as §9.11 peers in the footer, Remove in the danger ink (§10.4); no rows.
+    expect(
+      promptButtons().map((b) => [b.textContent?.trim(), b.hasAttribute('data-danger')])
+    ).toEqual([
+      ['Cancel', false],
+      ['Remove', true]
+    ])
+    expect(sheet.querySelector('.zen-sheet-item')).toBeNull()
+    // Cancel takes the focus as the sheet opens, so a stray Enter removes nothing (§9.22).
+    expect(document.activeElement).toBe(promptButton('Cancel'))
+    // The omnibox under the prompt is inert while it stands (§9.22).
+    expect(omnibox(el).hasAttribute('inert')).toBe(true)
+    expect(commands()).not.toContain('urlbar.submit')
+    expect(commands()).not.toContain('history.delete')
+  })
+
+  it('Remove deletes the entry through history.delete and the row leaves as a ghost before it is spliced out', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    const doomed = rowOf(el, 'Cats – Wikipedia')!
+    await hold(option(doomed))
+    await asked()
+    await answer('Remove')
+    await act(async () => {
+      await vi.waitFor(() => expect(commands()).toContain('history.delete'))
+    })
+    expect(callsTo('history.delete')[0]).toEqual({ url: WIKI })
+    // A ghost at its measured box, out of the flow (`[data-leaving]`, main.css), inert and
+    // unheard, while its exit runs (v2 §11.4).
+    expect(doomed.hasAttribute('data-leaving')).toBe(true)
+    expect(doomed.getAttribute('aria-hidden')).toBe('true')
+    expect(doomed.style.top).not.toBe('')
+    expect(doomed.style.width).not.toBe('')
+    // The other Pages row carries the heading meanwhile: it stays, and is not a ghost.
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-leaving')).toBe(false)
+    await settle(() => rowOf(el, 'Cats – Wikipedia') === null)
+    expect(rowOf(el, 'Cat videos')).not.toBeNull()
+    expect(headingOf(el, 'Pages')).not.toBeNull()
+    expect(prompt()).toBeNull()
+  })
+
+  it('the heading goes with the group’s last row, and the next heading becomes the outermost', async () => {
+    suggestions = () => removable().filter((r) => r.title !== 'Cat videos')
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-outer')).toBe(false)
+    const doomed = rowOf(el, 'Cats – Wikipedia')!
+    await hold(option(doomed))
+    await asked()
+    await answer('Remove')
+    await act(async () => {
+      await vi.waitFor(() => expect(commands()).toContain('history.delete'))
+    })
+    const pages = headingOf(el, 'Pages')!
+    expect(pages.hasAttribute('data-leaving')).toBe(true)
+    expect(pages.getAttribute('aria-hidden')).toBe('true')
+    await settle(() => headingOf(el, 'Pages') === null)
+    expect(rowOf(el, 'Cats – Wikipedia')).toBeNull()
+    expect(rowOf(el, 'cats for adoption')).not.toBeNull()
+    expect(headingOf(el, 'Searches')).not.toBeNull()
+  })
+
+  it('Cancel keeps the row and deletes nothing; the omnibox comes back from inert and the field takes the focus again', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    input(el).focus()
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    await asked()
+    expect(document.activeElement).not.toBe(input(el))
+    await answer('Cancel')
+    expect(prompt()).toBeNull()
+    expect(commands()).not.toContain('history.delete')
+    expect(rowOf(el, 'Cats – Wikipedia')!.hasAttribute('data-leaving')).toBe(false)
+    expect(omnibox(el).hasAttribute('inert')).toBe(false)
+    // Focus returns to the control that opened the prompt (§9.24): the field.
+    expect(document.activeElement).toBe(input(el))
+  })
+
+  it('a second hold while the question stands asks nothing new', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await hold(option(rowOf(el, 'Cats – Wikipedia')!))
+    await asked()
+    await hold(option(rowOf(el, 'Cat videos')!))
+    expect(document.querySelectorAll('.zen-sheet[role="dialog"]')).toHaveLength(1)
+    expect(prompt()!.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Cats – Wikipedia — example.com'
+    )
+  })
+
+  it('a right click is the hold, for a mouse; a row the core does not mark removable has none', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await act(async () => {
+      option(rowOf(el, 'cats for adoption')!).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      )
+      await new Promise((r) => setTimeout(r, 20))
+    })
+    expect(prompt()).toBeNull()
+    await act(async () => {
+      option(rowOf(el, 'Cat videos')!).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      )
+    })
+    const sheet = await asked()
+    expect(sheet.querySelector('.zen-sheet-title-block h2')!.textContent).toBe(
+      'Remove suggestion from history?'
+    )
+    expect(sheet.querySelector('.zen-sheet-title-block p')!.textContent).toBe(
+      'Cat videos — example.com'
+    )
+  })
+
+  it('a plain tap on a history row still picks it', async () => {
+    suggestions = removable
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    await tap(option(rowOf(el, 'Cats – Wikipedia')!))
+    expect(prompt()).toBeNull()
+    expect(callsTo('urlbar.submit')[0]).toMatchObject({ input: WIKI })
+  })
+
+  it('marks the outermost heading for the list’s edge margin at either dock', async () => {
+    suggestions = () => [
+      { ...row('history', 'Cats – Wikipedia', 'cats', WIKI), group: 'Pages', deletable: true },
+      { ...row('search', 'cats for adoption', 'cats for adoption', null), group: 'Searches' }
+    ]
+    const el = await render(phone(tab(PAGE)))
+    await type(input(el), 'cats')
+    expect(headingOf(el, 'Pages')!.hasAttribute('data-outer')).toBe(true)
+    expect(headingOf(el, 'Searches')!.hasAttribute('data-outer')).toBe(false)
+    act(() => root?.unmount())
+    const bottom = await render(
+      createElement(Urlbar, {
+        state: state(tab(PAGE)),
+        urlbar: urlbarState('edit'),
+        area: null,
+        phoneEdge: 'bottom'
+      })
+    )
+    await type(input(bottom), 'cats')
+    expect(headingOf(bottom, 'Pages')!.hasAttribute('data-outer')).toBe(false)
+    expect(headingOf(bottom, 'Searches')!.hasAttribute('data-outer')).toBe(true)
+  })
+})
+
+/*
+ * The omnibox's layer is one of the two elements the pill's focus motion writes its value on
+ * (MOT-07, lib/omniboxFocus.ts; PERF-2's H3: written on the root the value had the whole
+ * chrome's style recalculated every spring frame). The sheet binds the layer – the sheet's and
+ * the field's parent – so every omnibox-side reader in main.css (the sheet's opacity, the field's
+ * backdrop and children) is under the bound element; the bar is the other half,
+ * `phone/__tests__/omniboxFocusBinding.test.tsx`.
+ */
+describe('the layer carries the focus motion’s value (MOT-07, PERF-2 H3)', () => {
+  it('binds the layer element itself, with the sheet and the field under it, and releases it on unmount', async () => {
+    const el = await render(phone(tab(PAGE)))
+    const layer = el.querySelector<HTMLElement>('.zen-omnibox-layer')!
+    expect(layer).not.toBeNull()
+    expect(omniboxFocusSurfaces()).toContain(layer)
+    expect(layer.querySelector('.zen-omnibox-sheet')).not.toBeNull()
+    expect(layer.querySelector('.zen-omnibox-field')).not.toBeNull()
+    expect(layer.contains(input(el))).toBe(true)
+    // The bar's backdrop the dismissal tests press is this same element, not a wrapper over it.
+    expect(el.firstElementChild).toBe(layer)
+    act(() => root!.unmount())
+    root = null
+    expect(omniboxFocusSurfaces()).not.toContain(layer)
+  })
+})
+
+describe('the field’s engine mark (NTP-09)', () => {
+  const withEngine = (id: string): ReactElement =>
+    createElement(Urlbar, {
+      state: {
+        ...state(tab(NEW_TAB_URL)),
+        settings: { ...DEFAULT_SETTINGS, searchEngineId: id }
+      } as UIState,
+      urlbar: urlbarState('new-tab'),
+      area: null,
+      phoneEdge: 'top'
+    })
+  const slot = (el: HTMLElement): HTMLElement =>
+    el.querySelector<HTMLElement>('.zen-omnibox-field [data-testid="engine-field-glyph"]')!
+
+  it('keeps the letter tile for the vendor’s default', async () => {
+    const el = await render(withEngine('google'))
+    expect(slot(el).textContent).toBe('G')
+    expect(slot(el).getAttribute('aria-label')).toBe('Search engine: Google')
+    expect(slot(el).querySelector('img')).toBeNull()
+  })
+
+  it('shows the chosen engine’s favicon at 20 in the 28 slot once it loads, the letter until then', async () => {
+    const el = await render(withEngine('bing'))
+    const s = slot(el)
+    expect(s.getAttribute('aria-label')).toBe('Search engine: Bing')
+    const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.getAttribute('src')).toBe('https://www.bing.com/favicon.ico')
+    expect(s.textContent).toBe('B')
+    act(() => {
+      img.dispatchEvent(new Event('load'))
+    })
+    expect(s.textContent).toBe('')
+    expect(s.className).not.toContain('rounded-full')
+    expect(img.className).toContain('h-5 w-5')
+    // The favicon keeps its own colours; the wrapper is still the 28 slot the double lays out.
+    expect(s.className).toContain('h-7 w-7')
+  })
+
+  it('shows a favicon that loaded once this session at once, with no letter first', async () => {
+    // Bing's loaded in the test above; a fresh field shows it from its first frame.
+    const el = await render(withEngine('bing'))
+    const s = slot(el)
+    expect(s.textContent).toBe('')
+    const img = s.querySelector<HTMLImageElement>('[data-testid="engine-field-favicon"]')!
+    expect(img.className).not.toContain('invisible')
+    expect(img.dataset.arrived).toBeUndefined()
   })
 })

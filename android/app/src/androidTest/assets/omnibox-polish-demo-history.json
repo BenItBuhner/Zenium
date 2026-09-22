@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "url": "http://127.0.0.2:18136/roasters.html",
+      "title": "Roasters near you",
+      "visitCount": 9,
+      "lastVisit": "{{now-2h}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.2:18136/profiles.html",
+      "title": "Roast profiles for home roasting",
+      "visitCount": 7,
+      "lastVisit": "{{now-5h}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.2:18136/drum.html",
+      "title": "Drum roasting basics",
+      "visitCount": 4,
+      "lastVisit": "{{now-9h}}",
+      "favicon": null
+    },
+    {
+      "url": "http://127.0.0.1:18136/guide.html",
+      "title": "Brewing guide",
+      "visitCount": 6,
+      "lastVisit": "{{now-3h}}",
+      "favicon": null
+    }
+  ]
+}
