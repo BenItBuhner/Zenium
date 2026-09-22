@@ -18,7 +18,7 @@ import {
 } from '@renderer/lib/menuPath'
 import { sourceTitle } from '@renderer/lib/menuTitle'
 import { useSheetLeave } from '@renderer/lib/motion/presence'
-import { openedFromKeyboard } from '@renderer/lib/popover'
+import { holdExpanded, openedFromKeyboard } from '@renderer/lib/popover'
 import {
   ChromePortal,
   besideOrigin,
@@ -398,12 +398,11 @@ function Popover({ menu }: { menu: MenuDescriptor }): JSX.Element {
   const panelEls = useRef<(HTMLDivElement | null)[]>([])
 
   // The button keeps its pressed fill and says what it has open while the menu stands (§9.20);
-  // at rest it is the toolbar's own again.
-  useLayoutEffect(() => {
-    if (!button) return
-    button.setAttribute('aria-expanded', 'true')
-    return () => button.removeAttribute('aria-expanded')
-  }, [button])
+  // at rest it is the toolbar's own again. Held through the shared count, since the media hub's
+  // popover hangs from the same "⋯" while its toolbar button has folded (§9.29) and opens from
+  // this menu's "Now Playing…" row as the menu leaves: the button stays expanded while either
+  // stands, and the menu's leave takes nothing off it that the hub still holds.
+  useLayoutEffect(() => (button ? holdExpanded(button) : undefined), [button])
 
   // The control the menu opened from – what had the focus as the menu mounted, the ··· the
   // pointer pressed or the keyboard opened from, else the app menu's button itself – for

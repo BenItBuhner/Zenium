@@ -27,6 +27,7 @@ import {
   mediaHubUi,
   mediaTitle
 } from '@renderer/lib/mediaHub'
+import { holdExpanded } from '@renderer/lib/popover'
 import { useLightDismiss } from '@renderer/lib/popoverStore'
 import {
   ChromePortal,
@@ -88,6 +89,17 @@ function MediaHubPopover({ state }: { state: UIState }): JSX.Element | null {
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
+  }, [state])
+
+  // The anchor wears the pressed fill and says what it has open for the popover's life (§9.20):
+  // the hub's toolbar button while it is in the row, the "⋯" it has folded into at the 240
+  // sidebar (§9.29). Read after each commit like the placement, so a fold that moves the anchor
+  // moves the hold with it; the shared count lets the "⋯" carry the app menu's own hold beside
+  // this one – the hub opens from that menu's "Now Playing…" row as the menu leaves – and gives
+  // the anchor back its rest state only when the last of the two goes.
+  useLayoutEffect(() => {
+    const anchor = mediaHubAnchor()
+    return anchor ? holdExpanded(anchor) : undefined
   }, [state])
 
   // Nothing left to control: the hub goes with the last player, as Chrome's does.
